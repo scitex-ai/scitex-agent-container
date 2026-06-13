@@ -1,14 +1,28 @@
-"""P3a-2 default-bind helpers — single-shared-store fleet wiring.
+"""Fleet-default bind helpers.
 
-Operator directive ``feedback_scitex_todo_single_shared_store``
-(lead-learnings/22, P3a unlock). Lead a2a
-``214dd26d3fd24e088c75a34329895fa4`` — every agent's apptainer
-container mounts the host's ``~/.scitex/todo/`` so scitex-todo's
-precedence-4 user-scope store resolves to the SAME global
-``tasks.yaml`` fleet-wide. The dotfiles ``_base/spec.yaml`` carries
-the explicit bind line for immediate coverage; THIS module makes
-the bind survive spec churn — every sac-launched agent gets the
-default bind even if its spec doesn't carry the explicit line.
+Two classes of fleet-wide bind live here today:
+
+* **P3a-2 single-shared-store** — every agent's apptainer container
+  mounts the host's ``~/.scitex/todo/`` so scitex-todo's precedence-4
+  user-scope store resolves to the SAME global ``tasks.yaml``
+  fleet-wide. Operator directive
+  ``feedback_scitex_todo_single_shared_store``
+  (lead-learnings/22, P3a unlock). Lead a2a
+  ``214dd26d3fd24e088c75a34329895fa4``. The dotfiles
+  ``_base/spec.yaml`` carries the explicit bind line for immediate
+  coverage; this module makes the bind survive spec churn — every
+  sac-launched agent gets the default bind even if its spec doesn't
+  carry the explicit line.
+
+* **2026-06-13 SAC overlay stopgap** — bind the host's working
+  ``scitex_agent_container`` source over the in-SIF install so
+  agents pick up new CLI surface (e.g., ``sac pytest spartan run``
+  from PR #375) WITHOUT a 30-minute SIF rebuild. Read-only because
+  the host-side tree is the source of truth; nothing inside the
+  container should mutate it. Lead a2a ``b6f3916cdf3544a9`` opened
+  this as the fast-path for the spartan-pytest hook rollout.
+  Removable: delete the overlay entry once a SIF rebuild folds the
+  new package version back into the canonical install.
 
 Mechanism — see :func:`apply_default_binds`:
   * The list of default binds is :data:`_FLEET_DEFAULT_BINDS` —
@@ -19,9 +33,9 @@ Mechanism — see :func:`apply_default_binds`:
     wins; we de-dupe by destination, not by full string).
   * Missing host source dir → SKIP that default silently. The
     operator may not have a ``~/.scitex/todo/`` yet (clean
-    install, fresh laptop); we don't create it from sac code
-    because the operator's todo init is a separate workflow
-    that owns the layout.
+    install, fresh laptop), or a fresh deploy host may not have
+    the canonical ``~/proj/scitex-agent-container/`` checkout —
+    we don't create either from sac code.
 
 This module is intentionally tiny so the sites that consume the
 default-bind list (``_apptainer_runtime.py``) stay under the
@@ -46,6 +60,29 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # P3a-2 — scitex-todo single shared store (operator directive
     # feedback_scitex_todo_single_shared_store).
     "~/.scitex/todo:/home/agent/.scitex/todo:rw",
+    # 2026-06-13 STOPGAP (lead a2a b6f3916c) — bind the host's working
+    # ``scitex_agent_container`` source over the in-SIF install so
+    # agents pick up new CLI surface (e.g., ``sac pytest spartan run``
+    # from PR #375) WITHOUT a 30-minute SIF rebuild. Read-only because
+    # the host-side tree is the source of truth; nothing inside the
+    # container should mutate it.
+    #
+    # Removable: delete this entry once a SIF rebuild folds the new
+    # package version back into the canonical install. The
+    # ``default_binds_for_host`` skip-if-missing filter makes the
+    # entry a no-op on hosts that don't carry the canonical repo
+    # path (e.g., a fresh deploy box). Per-agent spec overrides via
+    # ``apptainer.binds`` for the SAME destination still win
+    # through ``apply_default_binds``'s de-dup-by-destination merge.
+    #
+    # Pinned to python3.12 because every SAC SIF def
+    # (apptainer-base.def + apptainer-scitex.def) uses ``/opt/venv-sac``
+    # with Python 3.12 today; the bind silently skips if a future SIF
+    # moves to 3.13 (the destination dir won't exist inside that SIF,
+    # apptainer surfaces a benign warning) — operator notices and
+    # either updates the entry or drops it after the SIF refresh.
+    "~/proj/scitex-agent-container/src/scitex_agent_container"
+    ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro",
 )
 
 
