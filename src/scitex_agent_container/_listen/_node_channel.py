@@ -29,7 +29,11 @@ from .._state.state_db_channel import (
     mark_delivered,
     persist_event,
 )
-from ..a2a._inbox_bus import mint_deny_notification, mint_event
+from ..a2a._inbox_bus import (
+    mint_acl_deny_synthetic_notification,
+    mint_deny_notification,
+    mint_event,
+)
 from ._acl import check_send_acl, deny_response
 from ._acl_approve_prompt import (
     _looks_like_cross_group_deny,
@@ -193,6 +197,34 @@ async def node_message_send(request: Request) -> Response:
             row_id = persist_event(target=name, event=notif)
             notif["_row_id"] = row_id
             await broker.publish(name, notif)
+
+            # sac-comms item D (lead a2a c42b3e3c, merged with
+            # lead-sac-acl-blocked-attempt-notification). REPLACES
+            # parent/child auto-grant. Publish a synthetic
+            # system-level notification at the TARGET embedding the
+            # exact ``sac a2a grant`` command, ACL-bypassing so the
+            # operator can grant proactively. Rate-limited per
+            # (sender, target) pair via the
+            # ``acl_deny_notify_log`` table (cool-down default
+            # 30 min, env-overridable via
+            # ``SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S``) so a misbehaving
+            # sender cannot flood the receiver. ``should_notify_acl_deny``
+            # is atomic (check + upsert in one tx) so a concurrent
+            # burst publishes at most one synthetic frame per window.
+            if sender_id:
+                from .._state.state_db_acl_deny_notify import (
+                    should_notify_acl_deny,
+                )
+
+                if should_notify_acl_deny(sender=sender_id, target=name):
+                    synth = mint_acl_deny_synthetic_notification(
+                        target=name,
+                        sender=sender_id,
+                        reason=reason or "ACL deny",
+                    )
+                    synth_row_id = persist_event(target=name, event=synth)
+                    synth["_row_id"] = synth_row_id
+                    await broker.publish(name, synth)
 
             # Task #27 — ACL approve-prompt flow (post-amendment).
             # On a CROSS-GROUP deny (the only deny reason the

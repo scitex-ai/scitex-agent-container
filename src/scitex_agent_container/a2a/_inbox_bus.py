@@ -191,4 +191,68 @@ def mint_deny_notification(
     )
 
 
-__all__ = ["Broker", "mint_event", "mint_deny_notification"]
+def mint_acl_deny_synthetic_notification(
+    *,
+    target: str,
+    sender: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Mint the rate-limited synthetic system notification for ACL-deny.
+
+    sac-comms item D (lead a2a ``c42b3e3c`` — merged with
+    ``lead-sac-acl-blocked-attempt-notification``). When an outbound
+    ``a2a_send(sender, target)`` is ACL-denied, the receiver gets ONE
+    synthetic system-level notification per cool-down window (default
+    30 min, see :mod:`_state.state_db_acl_deny_notify`).
+
+    Differences from :func:`mint_deny_notification`:
+
+    * ``from_agent`` is the literal ``"system"`` (not the would-be
+      sender) — the receiver MUST know the notification did not
+      originate from a granted peer (the message body never leaks
+      pre-decision, and surfacing the sender as the apparent author
+      is the same leak in a different shape).
+    * ``content`` carries a human-readable, operator-actionable
+      string embedding the exact ``sac a2a grant`` command keyed to
+      the actual ``<sender>`` / ``<target>`` names. This is the
+      "synthetic notification that bypasses ACL" the operator can
+      act on without scrolling structured fields.
+    * ``kind`` is ``"acl_deny_notify"`` so receivers can distinguish
+      a SYNTHETIC system frame from a real (granted-and-delivered)
+      message or the per-attempt ``"denied_attempt"`` envelope.
+
+    The ``extra`` block carries the structured fields a richer
+    client (Telegram bridge / dedicated UI) can branch on without
+    re-parsing the content string.
+
+    REPLACES the prior parent/child auto-grant policy: the operator
+    sees the attempt and grants if intended, rather than the system
+    auto-granting on a lineage heuristic.
+    """
+    content = (
+        f"[system] Sender {sender!r} attempted a send to {target!r} "
+        "and was blocked by ACL.\n"
+        f"Grant via `sac a2a grant {sender} {target}` if intended."
+    )
+    return mint_event(
+        target,
+        content=content,
+        from_agent="system",
+        priority="normal",
+        kind="acl_deny_notify",
+        extra={
+            "acl_deny_notify": True,
+            "blocked_sender": sender,
+            "blocked_target": target,
+            "deny_reason": reason,
+            "grant_command": f"sac a2a grant {sender} {target}",
+        },
+    )
+
+
+__all__ = [
+    "Broker",
+    "mint_event",
+    "mint_deny_notification",
+    "mint_acl_deny_synthetic_notification",
+]
