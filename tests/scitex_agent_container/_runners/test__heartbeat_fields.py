@@ -29,6 +29,21 @@ def _write_jsonl(state_dir: Path, *, size: int) -> None:
     (state_dir / "session.jsonl").write_bytes(b"x" * size)
 
 
+def _write_subagent_session(state_dir: Path, *, name: str, size: int) -> None:
+    sub = state_dir / "subagents" / name
+    sub.mkdir(parents=True, exist_ok=True)
+    (sub / "session.jsonl").write_bytes(b"y" * size)
+
+
+def _write_task_output(
+    state_dir: Path, *, layout: str, task_id: str, size: int
+) -> None:
+    # layout is ".tasks" or "tasks"
+    task = state_dir / layout / task_id
+    task.mkdir(parents=True, exist_ok=True)
+    (task / "output").write_bytes(b"z" * size)
+
+
 # ---------------------------------------------------------------------------
 # session_jsonl_bytes
 # ---------------------------------------------------------------------------
@@ -159,3 +174,95 @@ def test_missing_session_jsonl_returns_zero_not_error(tmp_path: Path) -> None:
     fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
     # Assert
     assert fields["session_jsonl_bytes"] == 0
+
+
+# ---------------------------------------------------------------------------
+# subagent_jsonl_bytes / subagent_jsonl_delta_bytes
+#
+# Closes the PR #370 false-idle CAVEAT: an active subagent + idle main
+# beat used to show ``delta=0``; now the operator sees the subagent
+# production summed across every candidate layout.
+# ---------------------------------------------------------------------------
+
+
+def test_subagent_keys_absent_when_no_subagent_dirs_exist(tmp_path: Path) -> None:
+    # Arrange — only the main session.jsonl; no subagents/, .tasks/, tasks/.
+    _write_jsonl(tmp_path, size=1000)
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert — ABSENT (not zero) so operator distinguishes "no
+    # subagent infra" from "subagents present but idle".
+    assert (
+        "subagent_jsonl_bytes" not in fields
+        and "subagent_jsonl_delta_bytes" not in fields
+    )
+
+
+def test_subagent_jsonl_bytes_sums_subagents_layout(tmp_path: Path) -> None:
+    # Arrange — two subagent dirs under subagents/<name>/session.jsonl.
+    _write_jsonl(tmp_path, size=0)
+    _write_subagent_session(tmp_path, name="sub-a", size=300)
+    _write_subagent_session(tmp_path, name="sub-b", size=700)
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert
+    assert fields["subagent_jsonl_bytes"] == 1000
+
+
+def test_subagent_jsonl_bytes_sums_all_three_layouts(tmp_path: Path) -> None:
+    # Arrange — one file per supported layout, simultaneously present.
+    _write_jsonl(tmp_path, size=0)
+    _write_subagent_session(tmp_path, name="sub-1", size=100)
+    _write_task_output(tmp_path, layout=".tasks", task_id="t-dot", size=200)
+    _write_task_output(tmp_path, layout="tasks", task_id="t-plain", size=400)
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert — 100 + 200 + 400 across the three candidate globs.
+    assert fields["subagent_jsonl_bytes"] == 700
+
+
+def test_subagent_delta_bytes_matches_sum_growth(tmp_path: Path) -> None:
+    # Arrange — prior beat saw subagent total of 500; now files sum to 1200.
+    _write_jsonl(tmp_path, size=0)
+    _write_subagent_session(tmp_path, name="sub-a", size=800)
+    _write_task_output(tmp_path, layout="tasks", task_id="t1", size=400)
+    (tmp_path / "heartbeat.json").write_text(
+        json.dumps({"ts": 90.0, "session_jsonl_bytes": 0, "subagent_jsonl_bytes": 500}),
+        encoding="utf-8",
+    )
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert — 800 + 400 - 500 == 700.
+    assert fields["subagent_jsonl_delta_bytes"] == 700
+
+
+def test_subagent_delta_clamped_to_zero_on_rotate(tmp_path: Path) -> None:
+    # Arrange — prior saw 5000 subagent bytes; a subagent dir got cleaned
+    # up and current sums to 100. Negative delta would mislead operator.
+    _write_jsonl(tmp_path, size=0)
+    _write_subagent_session(tmp_path, name="sub-survivor", size=100)
+    (tmp_path / "heartbeat.json").write_text(
+        json.dumps(
+            {"ts": 90.0, "session_jsonl_bytes": 0, "subagent_jsonl_bytes": 5000}
+        ),
+        encoding="utf-8",
+    )
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert
+    assert fields["subagent_jsonl_delta_bytes"] == 0
+
+
+def test_subagent_delta_absent_when_no_prior_subagent_bytes(tmp_path: Path) -> None:
+    # Arrange — prior heartbeat exists but pre-dates the new field; the
+    # delta cannot be computed and must be ABSENT (not a misleading 0).
+    _write_jsonl(tmp_path, size=0)
+    _write_subagent_session(tmp_path, name="sub-a", size=300)
+    _write_prior_beat(tmp_path, ts=90.0, jsonl_bytes=0)
+    # Act
+    fields = heartbeat_jsonl_fields(tmp_path, now=100.0)
+    # Assert — current size IS reported, delta is not.
+    assert (
+        fields["subagent_jsonl_bytes"] == 300
+        and "subagent_jsonl_delta_bytes" not in fields
+    )
