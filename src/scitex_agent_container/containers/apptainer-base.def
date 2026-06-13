@@ -274,8 +274,17 @@ From: ubuntu:24.04
     # it explicitly rather than rely on the build shell.
     python3 -m venv /opt/venv-sac
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
+    # P3a-1.5 (operator directive feedback_scitex_todo_single_shared_store,
+    # lead a2a 5c0c1fe32a9a43888e01151d6fc0fb9e): scitex-todo[mcp] is part
+    # of EVERY agent's runtime so the in-container `scitex-todo mcp start`
+    # path (the P3a MCP wiring) succeeds even on the minimal base layer.
+    # The [mcp] extra pulls in fastmcp>=2.0 — the FastMCP server backing
+    # `scitex_todo._mcp_server:mcp`. scitex-todo's hard deps (click,
+    # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
+    # plumbing, so the [mcp] extra adds just fastmcp.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk==0.2.87" \
+        "scitex-todo[mcp]>=0.3.0" \
         /opt/scitex-agent-container-src
 
     # Surface the SDK's bundled claude CLI on PATH so humans can
