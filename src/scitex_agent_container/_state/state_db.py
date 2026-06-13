@@ -342,6 +342,7 @@ KNOWN_TABLES = (
     "comms_grants",
     "comms_nodes",
     "node_comms_policy",
+    "acl_deny_notify_log",
 )
 
 
@@ -412,11 +413,18 @@ def init_schema(db_path: Path | None = None) -> Path:
         # migration step. The owning modules expose the schema
         # strings; we pull them through the same connection so
         # ``init_schema`` stays atomic.
+        from . import state_db_acl_deny_notify as _adn
         from . import state_db_blocks as _blocks
         from . import state_db_pending_approval as _pp
 
         conn.executescript(_pp._SCHEMA)
         conn.executescript(_blocks._SCHEMA)
+        # sac-comms item D (lead a2a c42b3e3c): rate-limit log for
+        # synthetic ACL-deny notifications published at the target
+        # receiver. One row per (sender, target) pair carrying the
+        # last-notify timestamp; the check + update lives in
+        # :func:`state_db_acl_deny_notify.should_notify_acl_deny`.
+        conn.executescript(_adn._SCHEMA)
         conn.commit()
     return path
 

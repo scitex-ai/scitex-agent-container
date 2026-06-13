@@ -862,22 +862,25 @@ def test_listen_denied_send_returns_403_to_sender(denied_send_channel_rows):
     assert status == 403, resp.text
 
 
-def test_listen_denied_send_persists_exactly_two_channel_events_rows(
+def test_listen_denied_send_persists_three_channel_events_rows(
     denied_send_channel_rows,
 ):
-    """Task #27 (ACL block/unblock approve-flow) — a cross-group deny
-    now persists TWO rows on the receiver: (1) the existing metadata-
-    only ``denied_attempt`` (comms item D) AND (2) the new
-    ``approval_prompt`` push embedding the ``sac a2a unblock`` /
-    ``sac a2a block`` CLI commands. Pre-task-#27 this assertion was
-    ``n == 1``; the contract change is intentional and ships in
-    v0.21.8."""
+    """Task #27 (ACL block/unblock approve-flow) + sac-comms item-D
+    (ACL-deny synthetic notify to target receiver, lead a2a c42b3e3c)
+    — a cross-group deny persists THREE rows on the receiver: (1) the
+    existing metadata-only ``denied_attempt`` (comms item D pre-#27),
+    (2) the ADDITIVE synthetic ``acl_deny_notify`` push to the target
+    receiver (rate-limited per sender/target, PR #389), (3) the
+    operator-facing ``approval_prompt`` push embedding the
+    ``sac a2a unblock`` / ``sac a2a block`` CLI commands. The two
+    push rows have different audiences: synthetic notify → target
+    agent that should grant; approval_prompt → operator with CLI."""
     # Arrange
     rows = denied_send_channel_rows["rows"]
     # Act
     n = len(rows)
     # Assert
-    assert n == 2, rows
+    assert n == 3, rows
 
 
 def test_listen_denied_send_persisted_first_row_kind_is_denied_attempt(
@@ -892,15 +895,19 @@ def test_listen_denied_send_persisted_first_row_kind_is_denied_attempt(
     assert kind == "denied_attempt"
 
 
-def test_listen_denied_send_persisted_second_row_is_approval_prompt(
+def test_listen_denied_send_persisted_third_row_is_approval_prompt(
     denied_send_channel_rows,
 ):
-    """Second row added by task #27 — the receiver-facing prompt
+    """Third row preserved from task #27 — the operator-facing prompt
     (``kind="message"`` so existing inbox renderers surface it via
     the normal-message path; structured fields ride in
-    ``extra.approval_prompt``)."""
+    ``extra.approval_prompt``). Shifted from index [1] to [2] when
+    PR #389 added the additive synthetic ``acl_deny_notify`` push
+    between the existing ``denied_attempt`` and ``approval_prompt``
+    rows (synthetic notify targets the receiver-agent; approval_prompt
+    targets the operator with CLI commands)."""
     # Arrange
-    row = denied_send_channel_rows["rows"][1]
+    row = denied_send_channel_rows["rows"][2]
     meta = json.loads(row["meta_json"])
     # Act
     is_prompt = (meta.get("extra") or {}).get("approval_prompt")
@@ -953,10 +960,12 @@ def test_listen_denied_send_approval_prompt_embeds_unblock_command(
     denied_send_channel_rows,
 ):
     """The approve-prompt push MUST embed the ``sac a2a unblock``
-    command so the receiver can act without leaving the inbox.
-    Task #27 contract: prompt body is self-contained."""
+    command so the operator can act without leaving the inbox.
+    Task #27 contract: prompt body is self-contained. Row index
+    shifted to [2] after PR #389 inserted the additive synthetic
+    notify between [0] and the approval_prompt."""
     # Arrange
-    row = denied_send_channel_rows["rows"][1]
+    row = denied_send_channel_rows["rows"][2]
     # Act
     body = row["content"] or ""
     # Assert
@@ -967,9 +976,10 @@ def test_listen_denied_send_approval_prompt_embeds_block_command(
     denied_send_channel_rows,
 ):
     """Task #27 contract: the prompt embeds BOTH the unblock AND
-    block commands so the receiver picks one verb."""
+    block commands so the operator picks one verb. Row index [2]
+    after PR #389 (additive synthetic notify slots at [1])."""
     # Arrange
-    row = denied_send_channel_rows["rows"][1]
+    row = denied_send_channel_rows["rows"][2]
     # Act
     body = row["content"] or ""
     # Assert
@@ -982,9 +992,9 @@ def test_listen_denied_send_approval_prompt_does_not_leak_sender_body(
     """Task #27 contract: the approval prompt MUST NOT echo the
     denied message body — receivers decide on IDENTITY, not on
     content. The sender's original body (``_DENIED_BODY``) is
-    NEVER copied into the prompt push."""
+    NEVER copied into the prompt push. Row index [2] after PR #389."""
     # Arrange
-    row = denied_send_channel_rows["rows"][1]
+    row = denied_send_channel_rows["rows"][2]
     # Act
     body = row["content"] or ""
     # Assert
