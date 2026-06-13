@@ -28,8 +28,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 from .conftest import _git
 
 # The hook script lives next to its siblings under
