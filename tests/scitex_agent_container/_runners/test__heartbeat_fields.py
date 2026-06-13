@@ -9,7 +9,9 @@ mocks. STX-TQ002 AAA + STX-TQ007 one-assert.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -282,10 +284,39 @@ def test_subagent_delta_absent_when_no_prior_subagent_bytes(tmp_path: Path) -> N
 
 
 @pytest.fixture(autouse=True)
-def _clear_phase_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Tests assert on default behaviour; an env leak from a parent
-    # shell that exported SAC_AGENT_PHASE would corrupt every test.
-    monkeypatch.delenv("SAC_AGENT_PHASE", raising=False)
+def _clear_phase_env() -> Iterator[None]:
+    """Drop SAC_AGENT_PHASE before each test, restore after.
+
+    Tests assert on default behaviour; an env leak from a parent shell
+    that exported SAC_AGENT_PHASE would corrupt every test. Plain
+    os.environ pop + try/finally — no monkeypatch fixture (banned by
+    PA-306 §3 no-mocks).
+    """
+    saved = os.environ.pop("SAC_AGENT_PHASE", None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ["SAC_AGENT_PHASE"] = saved
+        else:
+            os.environ.pop("SAC_AGENT_PHASE", None)
+
+
+@pytest.fixture
+def set_phase_env() -> Iterator[callable]:
+    """Manual SAC_AGENT_PHASE setter; restores prior value on teardown.
+
+    Returns a setter function each test calls with the desired value;
+    keeps the env mutation reversible without monkeypatch.
+    """
+    saved = os.environ.get("SAC_AGENT_PHASE")
+    try:
+        yield lambda value: os.environ.__setitem__("SAC_AGENT_PHASE", value)
+    finally:
+        if saved is not None:
+            os.environ["SAC_AGENT_PHASE"] = saved
+        else:
+            os.environ.pop("SAC_AGENT_PHASE", None)
 
 
 def test_progress_defaults_capped_false_phase_empty(tmp_path: Path) -> None:
@@ -296,11 +327,9 @@ def test_progress_defaults_capped_false_phase_empty(tmp_path: Path) -> None:
     assert fields == {"capped": False, "current_phase": ""}
 
 
-def test_progress_current_phase_from_env_var(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_progress_current_phase_from_env_var(tmp_path: Path, set_phase_env) -> None:
     # Arrange
-    monkeypatch.setenv("SAC_AGENT_PHASE", "ingesting-records")
+    set_phase_env("ingesting-records")
     # Act
     fields = heartbeat_progress_fields(tmp_path)
     # Assert
@@ -316,11 +345,9 @@ def test_progress_current_phase_from_sidecar_file(tmp_path: Path) -> None:
     assert fields["current_phase"] == "compiling-report"
 
 
-def test_progress_env_var_beats_sidecar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_progress_env_var_beats_sidecar(tmp_path: Path, set_phase_env) -> None:
     # Arrange — both sources present; env wins (resolution order).
-    monkeypatch.setenv("SAC_AGENT_PHASE", "env-wins")
+    set_phase_env("env-wins")
     (tmp_path / "phase.txt").write_text("sidecar-loses\n", encoding="utf-8")
     # Act
     fields = heartbeat_progress_fields(tmp_path)
@@ -328,12 +355,10 @@ def test_progress_env_var_beats_sidecar(
     assert fields["current_phase"] == "env-wins"
 
 
-def test_progress_phase_truncated_to_max_chars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_progress_phase_truncated_to_max_chars(tmp_path: Path, set_phase_env) -> None:
     # Arrange — agent published an over-long phrase; payload must not
     # break, but the prefix is preserved so the operator still sees it.
-    monkeypatch.setenv("SAC_AGENT_PHASE", "x" * 500)
+    set_phase_env("x" * 500)
     # Act
     fields = heartbeat_progress_fields(tmp_path)
     # Assert — exact cap value lives in _PHASE_MAX_CHARS (120); we
