@@ -577,6 +577,29 @@ def test_setup_no_role_when_unset(tmp_path):
     assert "Role:" not in (tmp_path / ".claude" / "CLAUDE.md").read_text()
 
 
+def test_setup_emits_todo_store_conventions_section(tmp_path):
+    # Arrange
+    cfg = _cfg(name="todo-section")
+    # Act
+    setup_claude_md(cfg, str(tmp_path))
+    # Assert
+    assert (
+        "### Todo Store Conventions" in (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    )
+
+
+def test_setup_todo_scope_substitutes_agent_id(tmp_path):
+    # Arrange
+    cfg = _cfg(name="alpha")
+    cfg.env = {"SCITEX_AGENT_CONTAINER_ID": "alpha-prime"}
+    # Act
+    setup_claude_md(cfg, str(tmp_path))
+    # Assert
+    assert (
+        'scope="agent:alpha-prime"' in (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    )
+
+
 # ---------------------------------------------------------------------------
 # cleanup_claude_md
 # ---------------------------------------------------------------------------
