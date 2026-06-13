@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
+from ._session_dead_recovery import handle_dead_session_resume
 from ._session_state import (
     append_session_message,
     read_session_id,
@@ -258,7 +258,6 @@ async def run_conversation(
     # terminates instead of spinning forever. One per distinct dead id is
     # the realistic ceiling — the latest + every forked id in the history.
     dead_session_recoveries = 0
-    _MAX_DEAD_SESSION_RECOVERIES = 5
     last_exc: BaseException | None = None
     while True:
         # Resume target, with history fallback. On the first attempt this
@@ -438,109 +437,41 @@ async def run_conversation(
             # no-op there since the captured text is already a substring.)
             captured_stderr = stderr_capture.text()
             enriched = enrich_detail_with_stderr(str(exc), captured_stderr)
-            write_stderr_log(state_dir, captured_stderr)
+            # ``stderr_log_path`` becomes a stable on-disk pointer the lead
+            # can read directly (``<state_dir>/runner-stderr.log``); ``None``
+            # when nothing was captured. Both this path and the captured
+            # text are splatted onto every error event below so the lead
+            # has the real stderr without having to parse it back out of
+            # the bounded ``detail`` string (sac-log-assistant-text
+            # PARTIAL fix — closes the STDERR-capture gap).
+            stderr_log_path = write_stderr_log(state_dir, captured_stderr)
+            stderr_event_fields: dict[str, Any] = {}
+            if captured_stderr:
+                stderr_event_fields["stderr"] = captured_stderr
+            if stderr_log_path is not None:
+                stderr_event_fields["stderr_log"] = str(stderr_log_path)
 
-            # Dead-session resume — the SDK rejected our --resume target
-            # ("No conversation found with session ID: <uuid>"). This is
-            # SELF-HEALING, not a crash: walking session_id_history toward
-            # the same (or equally-dead forked) id just re-crashes until
-            # max_restarts is exhausted and the conversation loop dies mute
-            # (the clew/neurovista 5h outage, 2026-05-24). Instead, purge
-            # the dead id from BOTH the latest marker and the history, then
-            # retry as a FRESH session (resume=None) — independent of the
-            # max_restarts budget. Bounded by _MAX_DEAD_SESSION_RECOVERIES.
-            from ._dead_session import (
-                DEAD_SESSION_CAUSE,
-                extract_dead_session_id,
-                is_dead_session_resume,
-            )
-            from ._session_id import (
-                discard_dead_session,
-                read_session_id,
-            )
-
-            if (
-                is_dead_session_resume(enriched)
-                and not stop.is_set()
-                and dead_session_recoveries < _MAX_DEAD_SESSION_RECOVERIES
+            # Dead-session resume — the SDK rejected our --resume target.
+            # Delegate the recoverable-vs-not classification, purge, and
+            # event emission to ``_session_dead_recovery`` (extracted to
+            # keep this file under the per-file line cap). Returns ``True``
+            # when handled → reset the attempt counter and re-enter the
+            # supervisor loop for a fresh start.
+            if handle_dead_session_resume(
+                enriched=enriched,
+                state_dir=state_dir,
+                name=name,
+                host=host,
+                attempt=attempt,
+                current_sid=current_sid,
+                stderr_event_fields=stderr_event_fields,
+                append_session_message=append_session_message,
+                report_sdk_error=report_sdk_error,
+                db_writer=db_writer,
+                stop_is_set=stop.is_set(),
+                dead_session_recoveries=dead_session_recoveries,
             ):
-                # ``current_sid`` is the ground truth — it IS the resume
-                # target the SDK just rejected. Prefer it; fall back to the
-                # id parsed out of the error string, then to the on-disk
-                # marker, so we always have a concrete id to purge.
-                dead_id = (
-                    current_sid
-                    or extract_dead_session_id(enriched)
-                    or read_session_id(state_dir)
-                )
-                # INFORMATIVE (#192, Part B #3): before the last-resort fresh
-                # start, enumerate the conversations that ARE resumable for
-                # this agent and surface them — both to the log (LOUD) and to
-                # session.jsonl, so the operator can `sac agents send --resume
-                # <chosen>` / restart with a chosen id rather than only ever
-                # getting the silent fresh start. The fresh start below is the
-                # documented LAST RESORT for the autonomous runner (it cannot
-                # prompt interactively); the operator-facing CLI path
-                # (`agents start --resume <uuid>`) is where the choice is made
-                # synchronously (see cli_pkg/lifecycle/_resume_preflight.py).
-                from ._session_candidates import (
-                    format_candidates,
-                    list_session_candidates,
-                )
-
-                candidates = list_session_candidates(os.getcwd())
-                candidate_listing = format_candidates(candidates)
-                logger.warning(
-                    "claude-session DEAD SESSION for %s: resume id %s is gone. "
-                    "Resumable conversations for this agent:\n%s\n"
-                    "Last resort: starting a FRESH session (resume=None). To "
-                    "resume a specific one instead, restart with "
-                    "`sac agents start %s --resume <session-id>`.",
-                    name,
-                    dead_id,
-                    candidate_listing,
-                    name,
-                )
-                if dead_id:
-                    discard_dead_session(state_dir, dead_id)
-                append_session_message(
-                    state_dir,
-                    {
-                        "type": "error",
-                        "kind": "dead_session",
-                        "detail": enriched,
-                        "attempt": attempt,
-                    },
-                )
-                if host:
-                    report_sdk_error(
-                        name=name,
-                        host=host,
-                        cause=DEAD_SESSION_CAUSE,
-                        detail=enriched,
-                        db_writer=db_writer,
-                    )
-                append_session_message(
-                    state_dir,
-                    {
-                        "type": "supervisor",
-                        "event": "dead-session-fresh-start",
-                        "discarded_session_id": dead_id,
-                        "resumable_candidates": [
-                            {
-                                "session_id": c.session_id,
-                                "mtime_iso": c.mtime_iso,
-                                "first_message": c.first_message,
-                            }
-                            for c in candidates
-                        ],
-                    },
-                )
                 dead_session_recoveries += 1
-                # Reset the resume-attempt walk to 0: with the dead id now
-                # purged from the history, _resume_candidate(attempt=0)
-                # returns None (no history left) and the next loop opens a
-                # genuinely fresh session.
                 attempt = 0
                 resume_session_id = None
                 continue
@@ -567,6 +498,7 @@ async def run_conversation(
                     "kind": error_kind,
                     "detail": detail,
                     "attempt": attempt,
+                    **stderr_event_fields,
                 },
             )
             if host:
