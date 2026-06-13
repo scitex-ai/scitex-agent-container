@@ -224,14 +224,21 @@ def format_reset_hhmm(
     reset_iso: str | datetime | None,
     *,
     env: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> str:
-    """Render a 5h-window reset timestamp as ``→HH:MM`` (local-tz).
+    """Render a 5h-window reset timestamp as ``→HH:MM (in 2h 14m)`` (local-tz).
 
     Operator gripe #2 (2026-06-09): ``5h%`` never said WHEN the
-    rolling window resets. This renders just the local wall-clock
-    time because a 5h window always resets within a one-day horizon
-    (or, at the day boundary, very early tomorrow — context makes it
-    obvious which).
+    rolling window resets. P3 follow-up (operator 12866, lead a2a
+    b1be44d0): the absolute time alone forces the operator to
+    compute the remaining-time delta by hand. Now appends a
+    countdown ``(in Xh Ym)`` qualifier so the operator sees the
+    delta and the wall clock in the same cell.
+
+    ``now`` is an injection seam for tests; defaults to ``datetime.
+    now(tz)`` at call time. Past resets render the time without the
+    qualifier (the API hasn't observed the rollover yet — surfacing
+    "0s / -3m" would be louder than useful).
 
     Returns ``""`` when the timestamp is missing/unparseable so the
     caller can fall back to the bare percentage cell rather than
@@ -242,22 +249,30 @@ def format_reset_hhmm(
         return ""
     tz = local_timezone(env)
     local = dt.astimezone(tz) if tz is not None else dt.astimezone()
-    return f"→{local.strftime('%H:%M')}"
+    delta_hint = _format_countdown_delta(local, now=now)
+    head = f"→{local.strftime('%H:%M')}"
+    return f"{head} ({delta_hint})" if delta_hint else head
 
 
 def format_reset_day_hour(
     reset_iso: str | datetime | None,
     *,
     env: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> str:
-    """Render a 7d-window reset timestamp as ``→Day HHh`` (local-tz).
+    """Render a 7d-window reset timestamp as ``→Day HHh (in 1d 4h 23m)``.
 
     Operator gripe #2 (2026-06-09): ``7d%`` never said WHEN the
-    rolling 7-day window resets. Because the answer can land any day
-    of the next week, we include the day-of-week abbreviation in
-    addition to the hour. Minute resolution is intentionally dropped
-    — for a 7d window the hour is the operationally useful
-    resolution and the cell stays narrow.
+    rolling 7-day window resets. P3 follow-up (operator 12866):
+    appends a countdown ``(in Xd Yh Zm)`` qualifier so the operator
+    sees both the wall day-hour and the time-until-reset in the
+    same cell. The day-of-week prefix already pins the absolute
+    side; the qualifier covers the "is that THIS Sun or NEXT Sun"
+    ambiguity directly.
+
+    ``now`` is an injection seam for tests; defaults to ``datetime.
+    now(tz)`` at call time. Past resets render without the
+    qualifier — the API hasn't observed the rollover yet.
 
     Returns ``""`` on missing/unparseable input — never fabricates.
     """
@@ -266,7 +281,54 @@ def format_reset_day_hour(
         return ""
     tz = local_timezone(env)
     local = dt.astimezone(tz) if tz is not None else dt.astimezone()
-    return f"→{local.strftime('%a %Hh')}"
+    delta_hint = _format_countdown_delta(local, now=now)
+    head = f"→{local.strftime('%a %Hh')}"
+    return f"{head} ({delta_hint})" if delta_hint else head
+
+
+def _format_countdown_delta(target: datetime, *, now: datetime | None = None) -> str:
+    """Render ``in Xd Yh Zm`` for the gap between ``now`` and ``target``.
+
+    Used by :func:`format_reset_hhmm` / :func:`format_reset_day_hour`
+    to append a delta-from-now to the rendered reset timestamp.
+
+    Output by remaining magnitude:
+      * ``target`` already past   → ``""`` (caller falls through).
+      * ``< 60 s``                → ``"in <1m"``.
+      * ``< 60 m``                → ``"in Ym"``.
+      * ``< 24 h``                → ``"in Xh Ym"`` (Ym dropped when zero).
+      * ``>= 24 h``               → ``"in Dd Xh Ym"`` (zero Y/m dropped
+                                    only at the tail; "in 1d 0h 5m"
+                                    keeps the 0h so the unit grid stays
+                                    aligned).
+
+    ``now`` defaults to ``datetime.now(target.tzinfo)`` so the
+    subtraction is timezone-aware. Returns ``""`` whenever the
+    delta cannot be rendered (None inputs, parse failure, past).
+    """
+    if target is None:
+        return ""
+    n = now if now is not None else datetime.now(target.tzinfo)
+    delta = target - n
+    total = int(delta.total_seconds())
+    if total <= 0:
+        return ""
+    if total < 60:
+        return "in <1m"
+    minutes_total = total // 60
+    if minutes_total < 60:
+        return f"in {minutes_total}m"
+    hours_total = minutes_total // 60
+    minutes_part = minutes_total - hours_total * 60
+    if hours_total < 24:
+        return (
+            f"in {hours_total}h {minutes_part}m"
+            if minutes_part
+            else f"in {hours_total}h"
+        )
+    days = hours_total // 24
+    hours_part = hours_total - days * 24
+    return f"in {days}d {hours_part}h {minutes_part}m"
 
 
 __all__ = [
