@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROJECT_YAML = _REPO_ROOT / ".scitex" / "dev" / "config" / "forbidden-words.yaml"
 _BASELINE_YAML = (
     _REPO_ROOT
@@ -90,8 +90,10 @@ def _entries(data: dict) -> list[dict]:
 )
 class TestForbiddenWordsYaml:
     def test_yaml_loads_cleanly(self, path: Path) -> None:
-        # Arrange / Act
-        data = _load(path)
+        # Arrange
+        loader = _load
+        # Act
+        data = loader(path)
         # Assert
         assert isinstance(data.get("forbidden_word"), list)
 

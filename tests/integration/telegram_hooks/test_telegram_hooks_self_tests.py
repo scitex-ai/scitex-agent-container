@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 _HOOKS_DIR = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[3]
     / "src"
     / "scitex_agent_container"
     / "_baseline_assets"
@@ -44,10 +44,12 @@ def _run_self_test(script_name: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _assert_self_test_clean(result: subprocess.CompletedProcess[str]) -> None:
+def _summary_tail(result: subprocess.CompletedProcess[str]) -> str:
+    """Helper for the failure message: surface the script's own
+    `pass=N fail=M` summary line plus a tail of stdout/stderr.
+    """
     summary = result.stdout.splitlines()[-1] if result.stdout else ""
-    assert result.returncode == 0, (
-        f"self-test returned rc={result.returncode}; expected 0.\n"
+    return (
         f"summary line: {summary!r}\n"
         f"stdout tail:\n{result.stdout[-800:]}\n"
         f"stderr tail:\n{result.stderr[-400:]}"
@@ -56,37 +58,47 @@ def _assert_self_test_clean(result: subprocess.CompletedProcess[str]) -> None:
 
 def test_enforce_telegram_no_bare_issue_self_test_passes():
     # Arrange
-    result = _run_self_test("enforce_telegram_no_bare_issue.sh")
-    # Act / Assert
-    _assert_self_test_clean(result)
+    script_name = "enforce_telegram_no_bare_issue.sh"
+    # Act
+    result = _run_self_test(script_name)
+    # Assert
+    assert result.returncode == 0, _summary_tail(result)
 
 
 def test_enforce_telegram_no_filler_self_test_passes():
     # Arrange
-    result = _run_self_test("enforce_telegram_no_filler.sh")
-    # Act / Assert
-    _assert_self_test_clean(result)
+    script_name = "enforce_telegram_no_filler.sh"
+    # Act
+    result = _run_self_test(script_name)
+    # Assert
+    assert result.returncode == 0, _summary_tail(result)
 
 
 def test_enforce_telegram_numbering_self_test_passes():
     # Arrange
-    result = _run_self_test("enforce_telegram_numbering.sh")
-    # Act / Assert
-    _assert_self_test_clean(result)
+    script_name = "enforce_telegram_numbering.sh"
+    # Act
+    result = _run_self_test(script_name)
+    # Assert
+    assert result.returncode == 0, _summary_tail(result)
 
 
 def test_enforce_telegram_use_lists_self_test_passes():
     # Arrange
-    result = _run_self_test("enforce_telegram_use_lists.sh")
-    # Act / Assert
-    _assert_self_test_clean(result)
+    script_name = "enforce_telegram_use_lists.sh"
+    # Act
+    result = _run_self_test(script_name)
+    # Assert
+    assert result.returncode == 0, _summary_tail(result)
 
 
 def test_encourage_telegram_terse_style_self_test_passes():
     # Arrange
-    result = _run_self_test("encourage_telegram_terse_style.sh")
-    # Act / Assert
-    _assert_self_test_clean(result)
+    script_name = "encourage_telegram_terse_style.sh"
+    # Act
+    result = _run_self_test(script_name)
+    # Assert
+    assert result.returncode == 0, _summary_tail(result)
 
 
 @pytest.mark.parametrize(
