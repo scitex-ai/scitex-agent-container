@@ -129,6 +129,26 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
         except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
             pass
 
+    # OP-PRIO-1 (split from #343) — refresh the ACL grant ``<self> →
+    # lead`` on EVERY successful start. Without this, a previous
+    # container that died outside agent_stop (kernel OOM, host reboot,
+    # kill -9) leaves the grant either absent (fresh state.db) or
+    # untouched-but-correct; the recurrence forced operators to run
+    # ``sac a2a grant <agent> lead`` by hand after each restart.
+    # ``grant_send`` is idempotent (re-granting the same pair is a
+    # no-op, no timestamp bump), so repeat starts do not duplicate
+    # the row.
+    try:
+        from .._state.state_db_nodes import grant_send
+
+        grant_send(
+            sender=config.name,
+            target="lead",
+            note="auto-grant on agent_start (op-2026-06-09)",
+        )
+    except Exception:  # stx-allow: fallback (reason: never block agent start on grant write; missing grant degrades to operator running `sac a2a grant <name> lead` manually until next start)
+        pass
+
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
