@@ -352,6 +352,17 @@ def agent_start(
     _verify = (
         liveness_verifier if liveness_verifier is not None else _verify_real_liveness
     )
+    # Stale-lease cleanup (operator pain point — replaces the manual
+    # ``sqlite3 … DELETE FROM instances …`` workaround). When the
+    # runtime PID is dead, any active ``instances`` row for this agent
+    # name is stale (the previous container died without going through
+    # agent_stop). Clear those rows so the third liveness signal does
+    # not pin the no-op branch on a zombie lease. Live runtimes are
+    # NEVER touched — the gate is the precondition.
+    if not runtime.is_running(config):
+        from ._stale_lease import clear_stale_instance_lease
+
+        clear_stale_instance_lease(config.name)
     really_running = (
         registry.exists(config.name)
         and runtime.is_running(config)
