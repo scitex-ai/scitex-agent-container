@@ -84,6 +84,7 @@ From: ubuntu:24.04
         nano jq \
         fd-find ripgrep bat eza \
         git-delta \
+        tmux ncurses-term \
         tini
     locale-gen en_US.UTF-8
 
