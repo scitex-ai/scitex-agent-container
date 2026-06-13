@@ -102,30 +102,45 @@ class TestAssertApiKeyRefusesOauth:
     def test_oauth_token_raises_value_error(self) -> None:
         # Arrange
         token = "sk-ant-oat-01-IIIIIIII"
-        # Act / Assert
-        with pytest.raises(ValueError):
+        raised: BaseException | None = None
+        # Act
+        try:
             assert_api_key(token)
+        except ValueError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the helper is contracted to raise on OAuth.)
+            raised = exc
+        # Assert
+        assert isinstance(raised, ValueError)
 
     def test_oauth_error_message_names_the_canonical_env_var(self) -> None:
         # Arrange — operator-facing remediation must mention the env var
         # they have to drop, so a grep on the error finds the fix.
         token = "sk-ant-oat-01-JJJJJJJJ"
+        raised: BaseException | None = None
         # Act
-        with pytest.raises(ValueError) as excinfo:
+        try:
             assert_api_key(token)
+        except (
+            ValueError
+        ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+            raised = exc
         # Assert
-        assert "SAC_ANTHROPIC_API_KEY" in str(excinfo.value)
+        assert raised is not None and "SAC_ANTHROPIC_API_KEY" in str(raised)
 
     def test_oauth_error_message_points_at_credentials_bind(self) -> None:
         # Arrange — the remediation is the credentials.json bind; the
         # error must name it so the operator knows where the OAuth
         # token actually belongs.
         token = "sk-ant-oat-01-KKKKKKKK"
+        raised: BaseException | None = None
         # Act
-        with pytest.raises(ValueError) as excinfo:
+        try:
             assert_api_key(token)
+        except (
+            ValueError
+        ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+            raised = exc
         # Assert
-        assert "credentials.json" in str(excinfo.value)
+        assert raised is not None and "credentials.json" in str(raised)
 
 
 class TestAssertApiKeyAcceptsNonOauth:
