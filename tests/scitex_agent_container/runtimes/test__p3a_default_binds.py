@@ -221,3 +221,36 @@ def test_apply_default_binds_lets_explicit_spec_override_sac_overlay(
         if "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
     ]
     assert sac_entries == [custom_override]
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-13 literal-~ regression guard (lead a2a 8db5081b8aed)
+#
+# apptainer's ``--bind`` does NOT expand ``~`` — it treats the leading
+# ``~`` as a literal directory relative to CWD and aborts container
+# creation with a FATAL mount failure. Every fleet agent that restarted
+# through ``default_binds_for_host()`` crashed at boot because the
+# helper handed back the un-expanded ``~/.scitex/todo:...`` form. The
+# fix is to expand against ``$HOME`` before returning, so the bind
+# source is always an ABSOLUTE host path with NO leading ``~``.
+# ---------------------------------------------------------------------------
+
+
+def test_default_binds_for_host_returns_absolute_host_paths_only(
+    fake_home: Path,
+) -> None:
+    # Arrange — both fleet-default host sources EXIST so every entry in
+    # _FLEET_DEFAULT_BINDS produces a bind string we must inspect.
+    (fake_home / ".scitex" / "todo").mkdir(parents=True)
+    (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    ).mkdir(parents=True)
+    # Act
+    binds = default_binds_for_host()
+    # Assert — every bind's host source (the chunk before the first
+    # colon) is an absolute path with no leading ``~``. A single
+    # violation would re-introduce the fleet-wide boot crash.
+    host_sources = [b.partition(":")[0] for b in binds]
+    assert all(
+        not src.startswith("~") and Path(src).is_absolute() for src in host_sources
+    )

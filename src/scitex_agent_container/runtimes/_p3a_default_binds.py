@@ -8,11 +8,11 @@ Two classes of fleet-wide bind live here today:
   fleet-wide. Operator directive
   ``feedback_scitex_todo_single_shared_store``
   (lead-learnings/22, P3a unlock). Lead a2a
-  ``214dd26d3fd24e088c75a34329895fa4``. The dotfiles
-  ``_base/spec.yaml`` carries the explicit bind line for immediate
-  coverage; this module makes the bind survive spec churn — every
-  sac-launched agent gets the default bind even if its spec doesn't
-  carry the explicit line.
+  ``214dd26d3fd24e088c75a34329895fa4``. This module is the SOLE
+  source of the bind — no fleet ``_base/spec.yaml`` carries an
+  explicit ``~/.scitex/todo:`` line (lead audit 2026-06-13 a2a
+  ``f33cbc78c2074594b513439d93748810``), so the helper here is what
+  every sac-launched agent picks up at boot.
 
 * **2026-06-13 SAC overlay stopgap** — bind the host's working
   ``scitex_agent_container`` source over the in-SIF install so
@@ -110,17 +110,25 @@ def default_binds_for_host() -> tuple[str, ...]:
     the host (the bound layout's ownership lives with whoever owns
     the source tree, e.g. scitex-todo for ``~/.scitex/todo/``).
 
-    The returned tuple uses the ORIGINAL (un-expanded) ``~`` form so
-    the caller can hand it directly to apptainer's ``--bind``, which
-    expands ``~`` itself per its own resolution rules.
+    The returned tuple uses the EXPANDED absolute host path —
+    apptainer's ``--bind`` does NOT expand ``~`` (it resolves it as a
+    literal dir relative to CWD, causing a FATAL mount failure), so we
+    expand against ``$HOME`` here before handing it to ``--bind``.
     """
     out: list[str] = []
     for bind_str in _FLEET_DEFAULT_BINDS:
         if ":" not in bind_str:
             continue
-        host_src, _, _ = bind_str.partition(":")
-        if Path(host_src).expanduser().is_dir():
-            out.append(bind_str)
+        host_src, _, rest = bind_str.partition(":")
+        expanded = Path(host_src).expanduser()
+        if expanded.is_dir():
+            # Return the EXPANDED absolute host path. apptainer's
+            # ``--bind`` does NOT expand ``~`` (it treats it as a
+            # literal dir relative to CWD -> FATAL mount failure), so
+            # we must hand it an absolute source. Bug fix 2026-06-13:
+            # the literal ``~/.scitex/todo`` form broke every agent's
+            # boot on restart.
+            out.append(f"{expanded}:{rest}")
     return tuple(out)
 
 
