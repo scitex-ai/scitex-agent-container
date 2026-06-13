@@ -109,8 +109,10 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
 def test_clear_stale_instance_lease_reports_one_row_cleared_on_dead_pid(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    cleared, _active, _raw = _drive_clear_dead_pid_scenario("dead-count")
+    # Arrange
+    name = "dead-count"
+    # Act
+    cleared, _active, _raw = _drive_clear_dead_pid_scenario(name)
     # Assert
     assert cleared == 1
 
@@ -118,8 +120,10 @@ def test_clear_stale_instance_lease_reports_one_row_cleared_on_dead_pid(
 def test_clear_stale_instance_lease_leaves_no_active_row_after_dead_pid_clear(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, active, _raw = _drive_clear_dead_pid_scenario("dead-active")
+    # Arrange
+    name = "dead-active"
+    # Act
+    _cleared, active, _raw = _drive_clear_dead_pid_scenario(name)
     # Assert
     assert active == []
 
@@ -127,8 +131,10 @@ def test_clear_stale_instance_lease_leaves_no_active_row_after_dead_pid_clear(
 def test_clear_stale_instance_lease_sets_exit_reason_to_stale_cleared(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, _active, raw = _drive_clear_dead_pid_scenario("audit-reason")
+    # Arrange
+    name = "audit-reason"
+    # Act
+    _cleared, _active, raw = _drive_clear_dead_pid_scenario(name)
     # Assert
     assert raw["exit_reason"] == "stale-cleared"
 
@@ -136,8 +142,10 @@ def test_clear_stale_instance_lease_sets_exit_reason_to_stale_cleared(
 def test_clear_stale_instance_lease_writes_ended_at_when_dead_pid_cleared(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, _active, raw = _drive_clear_dead_pid_scenario("audit-ended-at")
+    # Arrange
+    name = "audit-ended-at"
+    # Act
+    _cleared, _active, raw = _drive_clear_dead_pid_scenario(name)
     # Assert
     assert raw["ended_at"] is not None
 
@@ -169,15 +177,19 @@ def _drive_live_pid_scenario(name: str) -> tuple[int, list[dict]]:
 def test_clear_stale_instance_lease_reports_zero_clears_on_live_pid(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    cleared, _active = _drive_live_pid_scenario("live-count")
+    # Arrange
+    name = "live-count"
+    # Act
+    cleared, _active = _drive_live_pid_scenario(name)
     # Assert
     assert cleared == 0
 
 
 def test_clear_stale_instance_lease_keeps_live_row_active(db_path: Path) -> None:
-    # Arrange + Act
-    _cleared, active = _drive_live_pid_scenario("live-active")
+    # Arrange
+    name = "live-active"
+    # Act
+    _cleared, active = _drive_live_pid_scenario(name)
     # Assert
     assert len(active) == 1
 
@@ -185,8 +197,10 @@ def test_clear_stale_instance_lease_keeps_live_row_active(db_path: Path) -> None
 def test_clear_stale_instance_lease_leaves_ended_at_unset_for_live_row(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, active = _drive_live_pid_scenario("live-ended-at")
+    # Arrange
+    name = "live-ended-at"
+    # Act
+    _cleared, active = _drive_live_pid_scenario(name)
     # Assert
     assert active[0]["ended_at"] is None
 
@@ -220,15 +234,19 @@ def _drive_name_scoped_scenario() -> tuple[int, set[str]]:
 def test_clear_stale_instance_lease_reports_one_when_scoped_to_target(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    cleared, _by_name = _drive_name_scoped_scenario()
+    # Arrange
+    scenario = _drive_name_scoped_scenario
+    # Act
+    cleared, _by_name = scenario()
     # Assert
     assert cleared == 1
 
 
 def test_clear_stale_instance_lease_removes_only_named_target(db_path: Path) -> None:
-    # Arrange + Act
-    _cleared, by_name = _drive_name_scoped_scenario()
+    # Arrange
+    scenario = _drive_name_scoped_scenario
+    # Act
+    _cleared, by_name = scenario()
     # Assert
     assert "target" not in by_name
 
@@ -236,8 +254,10 @@ def test_clear_stale_instance_lease_removes_only_named_target(db_path: Path) -> 
 def test_clear_stale_instance_lease_preserves_bystander_agent_row(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, by_name = _drive_name_scoped_scenario()
+    # Arrange
+    scenario = _drive_name_scoped_scenario
+    # Act
+    _cleared, by_name = scenario()
     # Assert
     assert "bystander" in by_name
 
@@ -268,15 +288,19 @@ def _drive_null_pid_scenario(name: str) -> tuple[int, list[dict]]:
 def test_clear_stale_instance_lease_reports_zero_clears_on_null_pid(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    cleared, _active = _drive_null_pid_scenario("null-count")
+    # Arrange
+    name = "null-count"
+    # Act
+    cleared, _active = _drive_null_pid_scenario(name)
     # Assert
     assert cleared == 0
 
 
 def test_clear_stale_instance_lease_keeps_null_pid_row_active(db_path: Path) -> None:
-    # Arrange + Act
-    _cleared, active = _drive_null_pid_scenario("null-active")
+    # Arrange
+    name = "null-active"
+    # Act
+    _cleared, active = _drive_null_pid_scenario(name)
     # Assert
     assert len(active) == 1
 
@@ -284,8 +308,10 @@ def test_clear_stale_instance_lease_keeps_null_pid_row_active(db_path: Path) -> 
 def test_clear_stale_instance_lease_leaves_ended_at_unset_for_null_pid_row(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _cleared, active = _drive_null_pid_scenario("null-ended-at")
+    # Arrange
+    name = "null-ended-at"
+    # Act
+    _cleared, active = _drive_null_pid_scenario(name)
     # Assert
     assert active[0]["ended_at"] is None
 
@@ -398,21 +424,24 @@ def _drive_dead_runtime_start_scenario(
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
     db_path: Path, tmp_path: Path
 ) -> None:
-    # Arrange + Act
-    _runtime, rows, dead_pid = _drive_dead_runtime_start_scenario(tmp_path)
+    # Arrange
+    scenario = _drive_dead_runtime_start_scenario
+    # Act
+    _runtime, rows, dead_pid = scenario(tmp_path)
     # Assert — no surviving active row carries the dead pid; the start
     # path either ended the zombie row or superseded it with a fresh
     # local-instance row that has a different (NULL or live) pid.
     survivors_with_dead_pid = [r for r in rows if r.get("pid") == dead_pid]
-    # Assert
     assert survivors_with_dead_pid == []
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
     db_path: Path, tmp_path: Path
 ) -> None:
-    # Arrange + Act
-    runtime, _rows, _dead_pid = _drive_dead_runtime_start_scenario(tmp_path)
+    # Arrange
+    scenario = _drive_dead_runtime_start_scenario
+    # Act
+    runtime, _rows, _dead_pid = scenario(tmp_path)
     # Assert — runtime.start was actually invoked (the start path did
     # not no-op on the zombie lease).
     assert runtime.start_calls
@@ -446,8 +475,10 @@ def _drive_live_lease_preserve_scenario() -> tuple[int, int, list[dict]]:
 def test_clear_stale_instance_lease_reports_zero_clears_when_runtime_is_alive(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _instance_id, cleared, _rows = _drive_live_lease_preserve_scenario()
+    # Arrange
+    scenario = _drive_live_lease_preserve_scenario
+    # Act
+    _instance_id, cleared, _rows = scenario()
     # Assert
     assert cleared == 0
 
@@ -455,8 +486,10 @@ def test_clear_stale_instance_lease_reports_zero_clears_when_runtime_is_alive(
 def test_clear_stale_instance_lease_leaves_exactly_one_live_row_for_livepin(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Arrange
+    scenario = _drive_live_lease_preserve_scenario
+    # Act
+    _instance_id, _cleared, rows = scenario()
     # Assert
     assert len(rows) == 1
 
@@ -464,8 +497,10 @@ def test_clear_stale_instance_lease_leaves_exactly_one_live_row_for_livepin(
 def test_clear_stale_instance_lease_preserves_original_live_row_id(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Arrange
+    scenario = _drive_live_lease_preserve_scenario
+    # Act
+    instance_id, _cleared, rows = scenario()
     # Assert
     assert rows[0]["id"] == instance_id
 
@@ -473,7 +508,9 @@ def test_clear_stale_instance_lease_preserves_original_live_row_id(
 def test_clear_stale_instance_lease_leaves_ended_at_unset_on_live_row(
     db_path: Path,
 ) -> None:
-    # Arrange + Act
-    _instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Arrange
+    scenario = _drive_live_lease_preserve_scenario
+    # Act
+    _instance_id, _cleared, rows = scenario()
     # Assert
     assert rows[0]["ended_at"] is None
