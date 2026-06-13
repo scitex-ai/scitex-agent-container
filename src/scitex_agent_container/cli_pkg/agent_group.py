@@ -14,6 +14,7 @@ import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
 from ._helpers import HelpRecursiveGroup
+from ._new import new as _new_impl
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
@@ -47,7 +48,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            ["new", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
         ("Interact", ["send"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
@@ -64,6 +65,10 @@ def agent_group() -> None:
 
 
 # Lifecycle verbs
+# `new` scaffolds a fresh v3 spec.yaml + to_home/ skeleton (card
+# sac-fresh-agent-specs, 2026-06-13). Placed FIRST in the lifecycle
+# block — authoring precedes start/stop.
+agent_group.add_command(_rebind(_new_impl, "new"))
 agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
