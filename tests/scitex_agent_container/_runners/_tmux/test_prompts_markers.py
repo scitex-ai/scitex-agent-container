@@ -186,7 +186,8 @@ def test_handler_present_in_registry(expected_name: str):
     discrepancy.
     """
     # Arrange
-    names = {h.name for h in P.PROMPT_HANDLERS}
-
-    # Act / Assert
+    handlers = P.PROMPT_HANDLERS
+    # Act
+    names = {h.name for h in handlers}
+    # Assert
     assert expected_name in names
