@@ -47,6 +47,7 @@ COMMAND_CATEGORIES = [
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Diagnostics", ["doctor"]),
+    ("Remote testing", ["pytest"]),
     ("Introspection", ["mcp", "list-python-apis", "skills"]),
     ("Developer", ["dev"]),
 ]
@@ -80,6 +81,12 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Spartan pytest runner (operator directive 2026-06-13). Phase 1
+        # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
+        # mapping resolves to the ``pytest_group`` click group exported
+        # by the ``spartan_pytest`` package; ``spartan run`` lives
+        # underneath.
+        "pytest": f"{_PKG}.spartan_pytest:pytest_group",
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
@@ -251,6 +258,7 @@ class _MainGroup(LazyGroup):
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "listen": "Boot the sac listen HTTP/JSON control-plane server.",
+        "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }
