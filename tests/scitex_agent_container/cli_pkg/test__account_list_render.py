@@ -550,6 +550,96 @@ def test_format_reset_day_hour_unparseable_returns_empty():
     assert rendered == ""
 
 
+# ---------------------------------------------------------------------------
+# P3 task — countdown delta on the per-window reset hint (op 12866 / lead a2a
+# b1be44d0). The 5h / 7d reset cells now carry an ``(in Xh Ym)`` /
+# ``(in Xd Yh Zm)`` qualifier so the operator sees the wall time AND the
+# time-until-reset in the same cell. ``now`` is injected so tests are
+# deterministic.
+# ---------------------------------------------------------------------------
+
+
+def test_format_reset_hhmm_appends_countdown_delta_under_one_hour(env_save_restore):
+    # Arrange — 12:05 UTC = 21:05 JST; now = 10:55 UTC (= 19:55 JST) →
+    # delta = 1h10m → "in 1h 10m".
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 5, 31, 10, 55, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
+    # Assert
+    assert rendered == "→21:05 (in 1h 10m)"
+
+
+def test_format_reset_hhmm_omits_minute_when_zero(env_save_restore):
+    # Arrange — exactly 2h ahead.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 5, 31, 10, 5, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
+    # Assert
+    assert rendered == "→21:05 (in 2h)"
+
+
+def test_format_reset_hhmm_uses_in_under_one_min_for_sub_minute_delta(
+    env_save_restore,
+):
+    # Arrange — only 30 seconds out.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 5, 31, 12, 4, 30, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
+    # Assert
+    assert rendered == "→21:05 (in <1m)"
+
+
+def test_format_reset_hhmm_drops_delta_when_target_already_past(
+    env_save_restore,
+):
+    # Arrange — reset already in the past; cell falls back to bare time.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 5, 31, 13, 0, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
+    # Assert
+    assert rendered == "→21:05"
+
+
+def test_format_reset_day_hour_appends_multi_day_countdown(env_save_restore):
+    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST → Thu 17h.
+    # now = 2026-06-03 03:36 UTC → delta = 1d 4h 24m → "in 1d 4h 24m".
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 6, 3, 3, 36, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
+    # Assert
+    assert rendered == "→Thu 17h (in 1d 4h 24m)"
+
+
+def test_format_reset_day_hour_drops_delta_when_target_already_past(
+    env_save_restore,
+):
+    # Arrange — reset is in the past for this fake now.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    now = datetime(2026, 6, 5, 8, 0, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
+    # Assert
+    assert rendered == "→Thu 17h"
+
+
+def test_format_reset_day_hour_handles_under_one_day_delta(env_save_restore):
+    # Arrange — same-day reset still uses Day Hh prefix; delta falls in
+    # the ``X h Y m`` branch.
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    # 2026-06-04 08:00 UTC = 17:00 JST (Thu 17h); now = 2026-06-04
+    # 05:00 UTC = 14:00 JST → delta = 3h.
+    now = datetime(2026, 6, 4, 5, 0, tzinfo=timezone.utc)
+    # Act
+    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
+    # Assert
+    assert rendered == "→Thu 17h (in 3h)"
+
+
 def test_render_stored_table_5h_cell_carries_reset_hint(env_save_restore):
     """5h% cell renders ``42% (→HH:MM)`` when ``reset_at_5h`` is present."""
     # Arrange — 12:05 UTC = 21:05 JST.
