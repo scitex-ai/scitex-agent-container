@@ -55,16 +55,21 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .._runners._tmux.tmux import TmuxManager
 from ..config import AgentConfig
+from ._to_home import deploy_to_home
 from .base import RuntimeBase
+from .claude_md import setup_claude_md
 
-__all__ = ["TuiSessionRuntime", "session_name_for"]
+__all__ = ["TuiSessionRuntime", "session_name_for", "state_dir_for_config"]
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
+
+_REQUIRED_CONFIG_ATTRS = ("expanded_workdir", "skills", "claude", "env", "labels")
 
 
 def session_name_for(config: AgentConfig) -> str:
@@ -76,6 +81,36 @@ def session_name_for(config: AgentConfig) -> str:
     can probe its own session deterministically across processes.
     """
     return f"tui-{config.name}"
+
+
+def state_dir_for_config(config: AgentConfig) -> Path:
+    """Per-agent state dir on the host: project-local if the agent's
+    spec lives under a project-scope ``.scitex/agent-container/`` tree
+    (a git repo with that subdir), else
+    ``~/.scitex/agent-container/runtime/<name>/``.
+
+    Mirrors ``ClaudeSessionRuntime._state_dir`` so the TUI runtime
+    lands per-agent files in the same place the SDK runtime would —
+    the operator's ``sac agents status`` / ``sac agents prune-claude``
+    / external tooling can address ``<state>/`` uniformly regardless
+    of which runtime is selected.
+    """
+    from .._runners import claude_session as _runner
+
+    src = getattr(config, "config_path", "") or ""
+    root: Path | None = None
+    if src:
+        try:
+            from scitex_config._ecosystem import local_state
+
+            scope = local_state.find_project_scope(
+                "agent-container", start=Path(src).parent
+            )
+            if scope is not None:
+                root = scope / "runtime"
+        except Exception:  # stx-allow: fallback (reason: scitex-config optional; degrade to home-scope state — the same fallback the SDK runtime uses, see runtimes/claude_session.py::_project_runtime_root)
+            root = None
+    return _runner.state_dir_for(config.name, root=root)
 
 
 class TuiSessionRuntime(RuntimeBase):
@@ -103,6 +138,30 @@ class TuiSessionRuntime(RuntimeBase):
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
 
+    def materialize_workspace(self, config: AgentConfig) -> Path | None:
+        """Materialise per-agent ``to_home/`` + CLAUDE.md into
+        ``<state>/home/`` and return that path.
+
+        Mirrors ``ClaudeSessionRuntime._materialize_workspace``: writes
+        the sac-managed CLAUDE.md skill chain into ``<state>/home/CLAUDE.md``
+        and overlays the per-agent ``to_home/`` (.mcp.json, .env,
+        .claude/{hooks,skills,settings.json}) on top of the shared
+        baseline. The result is a self-contained $HOME tree the TUI
+        ``claude`` binary will read on launch — same SkillsSpec / MCP
+        / hook surface the SDK runtime provides.
+
+        Returns ``None`` for stub configs lacking the full AgentConfig
+        surface (unit-test ``SimpleNamespace`` fixtures); the caller
+        treats that as "skip materialise, run with bare $HOME".
+        """
+        if not all(hasattr(config, a) for a in _REQUIRED_CONFIG_ATTRS):
+            return None
+        home_dir = state_dir_for_config(config) / "home"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        setup_claude_md(config, str(home_dir))
+        deploy_to_home(config, str(home_dir))
+        return home_dir
+
     def start(
         self,
         config: AgentConfig,
@@ -113,26 +172,40 @@ class TuiSessionRuntime(RuntimeBase):
     ) -> bool:
         """Launch ``claude`` inside a detached tmux session sac owns.
 
+        Materialises the per-agent ``to_home/`` + CLAUDE.md into
+        ``<state>/home/`` before launching tmux, then exports
+        ``HOME=<state>/home`` + ``CLAUDE_CONFIG_DIR=<state>/home/.claude``
+        into the tmux session so the in-tmux ``claude`` TUI sees the
+        agent's skills, MCP servers, hooks, and settings.json — same
+        surface the SDK runtime provides via apptainer bind-mount.
+
         ``force=True`` stops any existing session for this agent
         before starting (the same idempotent-restart contract the
-        supervisor relies on). ``dry_run=True`` skips the actual
-        ``tmux new-session`` — the hedge doesn't materialise any
-        on-disk workspace state yet, so dry-run is a no-op that
-        returns True. ``foreground`` is ignored (a tmux session
-        whose whole point is detachment has no meaningful foreground
-        mode — same convention as the screen runner).
+        supervisor relies on). ``dry_run=True`` materialises the
+        workspace but skips the actual ``tmux new-session`` — lets
+        the operator verify the rendered tree without spawning a
+        process. ``foreground`` is ignored (a tmux session whose
+        whole point is detachment has no meaningful foreground mode
+        — same convention as the screen runner).
         """
         name = session_name_for(config)
         if force and self._mux.exists(name):
             self._mux.stop(name)
+        home_dir = self.materialize_workspace(config)
         if dry_run:
             return True
         workdir = getattr(config, "workdir", "") or "/tmp"
+        env_exports = ""
+        if home_dir is not None:
+            env_exports = (
+                f"export HOME={home_dir}\nexport CLAUDE_CONFIG_DIR={home_dir}/.claude\n"
+            )
         return bool(
             self._mux.start(
                 session_name=name,
                 command=self._claude_bin,
                 workdir=str(workdir),
+                env_exports=env_exports,
             )
         )
 
