@@ -4,7 +4,7 @@ The operator's failure mode: a previous container died WITHOUT going
 through ``agent_stop``, leaving an active ``instances`` row whose
 recorded PID is dead. Before this helper, the operator had to run::
 
-    sqlite3 ~/.scitex/agent-container/state.db \
+    sqlite3 ~/.scitex/agent-container/state.db \\
         "DELETE FROM instances WHERE name='<name>' AND ended_at IS NULL"
 
 …otherwise the next ``sac agents start`` no-op'd on the zombie lease.
@@ -14,7 +14,7 @@ These tests use a real on-disk SQLite ``state.db`` (per-test, via the
 oracle (the test process's own ``os.getpid()`` for the "alive" case;
 a known-dead PID we just forked-and-waited for the "dead" case). No
 ``unittest.mock`` / ``MagicMock`` / ``monkeypatch`` anywhere — STX-TQ002
-+ STX-TQ007.
++ STX-TQ007 + one assertion per test.
 """
 
 from __future__ import annotations
@@ -70,62 +70,76 @@ def _spawn_dead_pid() -> int:
 
 # ---------------------------------------------------------------------------
 # Stale row + dead pid → cleared
+#
+# Split into one-assertion tests so CI red names exactly which half of
+# the contract broke (the count, the absence of active rows, the
+# audit-trail exit_reason, the ended_at timestamp).
 # ---------------------------------------------------------------------------
 
 
-def test_clear_stale_instance_lease_clears_row_with_dead_pid(db_path: Path) -> None:
-    # Arrange — write an active instances row whose recorded PID is a
-    # reaped child (guaranteed-dead). The helper should mark the row
-    # ended.
+def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
+    """Arrange + Act helper: write an active instances row with a dead
+    PID, call the cleaner, then snapshot the post-call state.
+
+    Returns ``(cleared, active_for_name, raw_row)`` so per-fact tests
+    can assert exactly one observation each.
+    """
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
     from scitex_agent_container._state.state_db import (
         list_active_instances,
-        record_instance_start,
-    )
-
-    dead_pid = _spawn_dead_pid()
-    record_instance_start(name="stale-1", host="h", pid=dead_pid)
-
-    # Act
-    cleared = clear_stale_instance_lease("stale-1")
-
-    # Assert — exactly one row cleared; no active rows remain for this name.
-    assert cleared == 1
-    active = [r for r in list_active_instances() if r["name"] == "stale-1"]
-    assert active == []
-
-
-def test_clear_stale_instance_lease_sets_exit_reason_stale_cleared(
-    db_path: Path,
-) -> None:
-    # Arrange — verify the audit trail. A cleared row's exit_reason must
-    # be 'stale-cleared' so operators / log scrapers can distinguish
-    # zombie-cleared rows from normal stops.
-    from scitex_agent_container._lifecycle._stale_lease import (
-        clear_stale_instance_lease,
-    )
-    from scitex_agent_container._state.state_db import (
         open_db,
         record_instance_start,
     )
 
     dead_pid = _spawn_dead_pid()
-    record_instance_start(name="audit-1", host="h", pid=dead_pid)
-
-    # Act
-    clear_stale_instance_lease("audit-1")
-
-    # Assert
+    record_instance_start(name=name, host="h", pid=dead_pid)
+    cleared = clear_stale_instance_lease(name)
+    active = [r for r in list_active_instances() if r["name"] == name]
     with open_db() as conn:
         cur = conn.execute(
             "SELECT exit_reason, ended_at FROM instances WHERE name=?",
-            ("audit-1",),
+            (name,),
         )
-        row = cur.fetchone()
-    assert row["exit_reason"] == "stale-cleared"
-    assert row["ended_at"] is not None
+        raw = dict(cur.fetchone())
+    return cleared, active, raw
+
+
+def test_clear_stale_instance_lease_reports_one_row_cleared_on_dead_pid(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    cleared, _active, _raw = _drive_clear_dead_pid_scenario("dead-count")
+    # Assert
+    assert cleared == 1
+
+
+def test_clear_stale_instance_lease_leaves_no_active_row_after_dead_pid_clear(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, active, _raw = _drive_clear_dead_pid_scenario("dead-active")
+    # Assert
+    assert active == []
+
+
+def test_clear_stale_instance_lease_sets_exit_reason_to_stale_cleared(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, _active, raw = _drive_clear_dead_pid_scenario("audit-reason")
+    # Assert
+    assert raw["exit_reason"] == "stale-cleared"
+
+
+def test_clear_stale_instance_lease_writes_ended_at_when_dead_pid_cleared(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, _active, raw = _drive_clear_dead_pid_scenario("audit-ended-at")
+    # Assert
+    assert raw["ended_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +147,11 @@ def test_clear_stale_instance_lease_sets_exit_reason_stale_cleared(
 # ---------------------------------------------------------------------------
 
 
-def test_clear_stale_instance_lease_preserves_row_with_live_pid(
-    db_path: Path,
-) -> None:
-    # Arrange — our own ``os.getpid()`` is guaranteed-alive for the
-    # duration of this test. The helper must NOT touch it.
+def _drive_live_pid_scenario(name: str) -> tuple[int, list[dict]]:
+    """Arrange + Act helper: write a row pointing at our own
+    (guaranteed-alive) PID, call the cleaner, return the count + the
+    post-call active rows for ``name``.
+    """
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
@@ -146,15 +160,34 @@ def test_clear_stale_instance_lease_preserves_row_with_live_pid(
         record_instance_start,
     )
 
-    record_instance_start(name="live-1", host="h", pid=os.getpid())
+    record_instance_start(name=name, host="h", pid=os.getpid())
+    cleared = clear_stale_instance_lease(name)
+    active = [r for r in list_active_instances() if r["name"] == name]
+    return cleared, active
 
-    # Act
-    cleared = clear_stale_instance_lease("live-1")
 
-    # Assert — nothing cleared; the row stays active.
+def test_clear_stale_instance_lease_reports_zero_clears_on_live_pid(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    cleared, _active = _drive_live_pid_scenario("live-count")
+    # Assert
     assert cleared == 0
-    active = [r for r in list_active_instances() if r["name"] == "live-1"]
+
+
+def test_clear_stale_instance_lease_keeps_live_row_active(db_path: Path) -> None:
+    # Arrange + Act
+    _cleared, active = _drive_live_pid_scenario("live-active")
+    # Assert
     assert len(active) == 1
+
+
+def test_clear_stale_instance_lease_leaves_ended_at_unset_for_live_row(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, active = _drive_live_pid_scenario("live-ended-at")
+    # Assert
     assert active[0]["ended_at"] is None
 
 
@@ -163,9 +196,11 @@ def test_clear_stale_instance_lease_preserves_row_with_live_pid(
 # ---------------------------------------------------------------------------
 
 
-def test_clear_stale_instance_lease_is_name_scoped(db_path: Path) -> None:
-    # Arrange — two agents, both with stale rows. The helper must only
-    # touch the named one.
+def _drive_name_scoped_scenario() -> tuple[int, set[str]]:
+    """Arrange + Act helper: two agents, both stale; clear only
+    ``target``. Return the cleared-count plus the post-call set of
+    still-active names so per-fact tests can isolate one observation.
+    """
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
@@ -177,14 +212,33 @@ def test_clear_stale_instance_lease_is_name_scoped(db_path: Path) -> None:
     dead_pid = _spawn_dead_pid()
     record_instance_start(name="target", host="h", pid=dead_pid)
     record_instance_start(name="bystander", host="h", pid=dead_pid)
-
-    # Act
     cleared = clear_stale_instance_lease("target")
+    by_name = {r["name"] for r in list_active_instances()}
+    return cleared, by_name
 
+
+def test_clear_stale_instance_lease_reports_one_when_scoped_to_target(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    cleared, _by_name = _drive_name_scoped_scenario()
     # Assert
     assert cleared == 1
-    by_name = {r["name"] for r in list_active_instances()}
+
+
+def test_clear_stale_instance_lease_removes_only_named_target(db_path: Path) -> None:
+    # Arrange + Act
+    _cleared, by_name = _drive_name_scoped_scenario()
+    # Assert
     assert "target" not in by_name
+
+
+def test_clear_stale_instance_lease_preserves_bystander_agent_row(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, by_name = _drive_name_scoped_scenario()
+    # Assert
     assert "bystander" in by_name
 
 
@@ -193,12 +247,10 @@ def test_clear_stale_instance_lease_is_name_scoped(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_clear_stale_instance_lease_skips_rows_with_null_pid(db_path: Path) -> None:
-    # Arrange — pre-existing local-start rows have ``pid=NULL`` (the
-    # legacy local-start path did not record a PID). The helper must
-    # NOT clear those — without a PID we have no per-row proof of
-    # deadness, and clearing on the runtime-is-dead precondition is
-    # the caller's policy.
+def _drive_null_pid_scenario(name: str) -> tuple[int, list[dict]]:
+    """Arrange + Act helper: write a row with the default (NULL) PID,
+    call the cleaner, return the count + post-call active rows.
+    """
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
@@ -207,15 +259,34 @@ def test_clear_stale_instance_lease_skips_rows_with_null_pid(db_path: Path) -> N
         record_instance_start,
     )
 
-    record_instance_start(name="nullpid", host="h")  # pid defaults to None
+    record_instance_start(name=name, host="h")  # pid defaults to None
+    cleared = clear_stale_instance_lease(name)
+    active = [r for r in list_active_instances() if r["name"] == name]
+    return cleared, active
 
-    # Act
-    cleared = clear_stale_instance_lease("nullpid")
 
-    # Assert — row preserved.
+def test_clear_stale_instance_lease_reports_zero_clears_on_null_pid(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    cleared, _active = _drive_null_pid_scenario("null-count")
+    # Assert
     assert cleared == 0
-    active = [r for r in list_active_instances() if r["name"] == "nullpid"]
+
+
+def test_clear_stale_instance_lease_keeps_null_pid_row_active(db_path: Path) -> None:
+    # Arrange + Act
+    _cleared, active = _drive_null_pid_scenario("null-active")
+    # Assert
     assert len(active) == 1
+
+
+def test_clear_stale_instance_lease_leaves_ended_at_unset_for_null_pid_row(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _cleared, active = _drive_null_pid_scenario("null-ended-at")
+    # Assert
     assert active[0]["ended_at"] is None
 
 
@@ -251,21 +322,24 @@ class _DeadRuntime:
         return d
 
 
-def test_agent_start_clears_stale_lease_when_runtime_is_dead(
-    db_path: Path, tmp_path: Path
-) -> None:
-    # Arrange — operator scenario: previous container died, leaving an
-    # active instances row whose PID is dead. The runtime now says
-    # "not running". The new agent_start call must clear the stale row
-    # and reach runtime.start (not no-op on the zombie lease).
-    from scitex_agent_container._state.state_db import (
-        list_active_instances,
-        record_instance_start,
-    )
+class _Handover:
+    def ensure_instance_uuid(self, _c):
+        pass
 
-    # Real validator-passing v3 spec YAML. Production ``load_config``
-    # derives the agent name from the parent directory (dir-as-SSoT),
-    # so the spec must live at ``<name>/spec.yaml``.
+    def hydrate_from_hub(self, _c):
+        pass
+
+    def start_failback_poller(self, _c):
+        pass
+
+
+def _write_zombie_spec(tmp_path: Path) -> Path:
+    """Materialise a v3 ``spec.yaml`` for an agent named ``zombie``.
+
+    Production ``load_config`` derives the agent name from the parent
+    directory (dir-as-SSoT), so the spec must live at
+    ``<name>/spec.yaml``.
+    """
     agent_dir = tmp_path / "zombie"
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
@@ -283,30 +357,33 @@ def test_agent_start_clears_stale_lease_when_runtime_is_dead(
         "    pre_stop: []\n"
         "    post_stop: []\n"
     )
+    return spec
 
-    # Pre-seed: a stale active row pointing at a dead PID.
+
+def _drive_dead_runtime_start_scenario(
+    tmp_path: Path,
+) -> tuple[_DeadRuntime, list[dict], int]:
+    """Arrange + Act helper: pre-seed a stale row with a dead PID,
+    drive ``agent_start`` against a runtime that reports ``is_running
+    == False``, then return ``(runtime, post_call_rows, dead_pid)``.
+
+    Per-fact tests assert one observation each so a CI failure pinpoints
+    the broken contract (start was not reached, or the zombie row
+    survived) without coupling them.
+    """
+    from scitex_agent_container._lifecycle import lifecycle as lc
+    from scitex_agent_container._state.registry import Registry
+    from scitex_agent_container._state.state_db import (
+        list_active_instances,
+        record_instance_start,
+    )
+
+    spec = _write_zombie_spec(tmp_path)
     dead_pid = _spawn_dead_pid()
     record_instance_start(name="zombie", host="h", pid=dead_pid)
 
     runtime = _DeadRuntime()
-
-    # Use a non-autostart Registry rooted in tmp_path.
-    from scitex_agent_container._lifecycle import lifecycle as lc
-    from scitex_agent_container._state.registry import Registry
-
     reg = Registry(registry_dir=tmp_path / "reg")
-
-    class _Handover:
-        def ensure_instance_uuid(self, _c):
-            pass
-
-        def hydrate_from_hub(self, _c):
-            pass
-
-        def start_failback_poller(self, _c):
-            pass
-
-    # Act
     lc.agent_start(
         str(spec),
         registry=reg,
@@ -314,25 +391,44 @@ def test_agent_start_clears_stale_lease_when_runtime_is_dead(
         handover_mod=_Handover(),
         sleep_fn=lambda _s: None,
     )
-
-    # Assert — the stale row was cleared by the start path. Either it
-    # is gone (ended_at set) or it was superseded by the new row that
-    # ``record_local_instance`` writes. The contract is "no zombie row
-    # pinned with a dead PID survives the start path".
     rows = [r for r in list_active_instances() if r["name"] == "zombie"]
-    # At most one active row (the fresh local instance); none of them
-    # carries the dead pid.
-    for row in rows:
-        assert row.get("pid") != dead_pid
-    # And runtime.start was actually reached — not no-op'd.
-    assert runtime.start_calls, "runtime.start should have been called"
+    return runtime, rows, dead_pid
 
 
-def test_agent_start_does_not_touch_live_lease_when_runtime_is_alive(
+def test_agent_start_clears_dead_pid_from_active_zombie_rows(
     db_path: Path, tmp_path: Path
 ) -> None:
-    # Arrange — the runtime says alive. agent_start must NOT clear any
-    # row, and the existing live lease must survive untouched.
+    # Arrange + Act
+    _runtime, rows, dead_pid = _drive_dead_runtime_start_scenario(tmp_path)
+    # Assert — no surviving active row carries the dead pid; the start
+    # path either ended the zombie row or superseded it with a fresh
+    # local-instance row that has a different (NULL or live) pid.
+    survivors_with_dead_pid = [r for r in rows if r.get("pid") == dead_pid]
+    # Assert
+    assert survivors_with_dead_pid == []
+
+
+def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
+    db_path: Path, tmp_path: Path
+) -> None:
+    # Arrange + Act
+    runtime, _rows, _dead_pid = _drive_dead_runtime_start_scenario(tmp_path)
+    # Assert — runtime.start was actually invoked (the start path did
+    # not no-op on the zombie lease).
+    assert runtime.start_calls
+
+
+# ---------------------------------------------------------------------------
+# Wire-in negative: live lease is NOT cleared
+# ---------------------------------------------------------------------------
+
+
+def _drive_live_lease_preserve_scenario() -> tuple[int, int, list[dict]]:
+    """Arrange + Act helper: pre-seed a row pointing at the live test
+    PID, then call the helper directly. Return the recorded
+    ``instance_id``, the cleared count, and the post-call active rows
+    for ``livepin`` so per-fact tests can assert one observation each.
+    """
     from scitex_agent_container._lifecycle._stale_lease import (
         clear_stale_instance_lease,
     )
@@ -341,15 +437,43 @@ def test_agent_start_does_not_touch_live_lease_when_runtime_is_alive(
         record_instance_start,
     )
 
-    # Pre-seed: an active row with the test's own (live) pid.
     instance_id = record_instance_start(name="livepin", host="h", pid=os.getpid())
-
-    # Sanity: a direct helper call on a live pid clears nothing.
     cleared = clear_stale_instance_lease("livepin")
+    rows = [r for r in list_active_instances() if r["name"] == "livepin"]
+    return instance_id, cleared, rows
 
+
+def test_clear_stale_instance_lease_reports_zero_clears_when_runtime_is_alive(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _instance_id, cleared, _rows = _drive_live_lease_preserve_scenario()
     # Assert
     assert cleared == 0
-    rows = [r for r in list_active_instances() if r["name"] == "livepin"]
+
+
+def test_clear_stale_instance_lease_leaves_exactly_one_live_row_for_livepin(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Assert
     assert len(rows) == 1
+
+
+def test_clear_stale_instance_lease_preserves_original_live_row_id(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Assert
     assert rows[0]["id"] == instance_id
+
+
+def test_clear_stale_instance_lease_leaves_ended_at_unset_on_live_row(
+    db_path: Path,
+) -> None:
+    # Arrange + Act
+    _instance_id, _cleared, rows = _drive_live_lease_preserve_scenario()
+    # Assert
     assert rows[0]["ended_at"] is None
