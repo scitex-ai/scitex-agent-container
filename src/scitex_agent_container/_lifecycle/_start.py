@@ -462,6 +462,20 @@ def agent_start(
     _run_hooks(config.hooks.get("pre_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "pre_start", config.hooks.get("pre_start", []))
 
+    # Pre-start orphan MCP-child cleanup (bug "MCP-on-restart 409 orphan").
+    # Scan for any stdio-MCP server child belonging to this agent's PREVIOUS
+    # incarnation (matched by env-injected agent name + MCP-cmdline marker)
+    # and SIGKILL it BEFORE we boot the runtime's replacement poller. Without
+    # this, an orphaned ``claude-code-telegrammer`` poller continues to hold
+    # Telegram's getUpdates long-poll slot, the new poller hits HTTP 409
+    # ("terminated by other getUpdates request"), and the operator sees
+    # "telegrammer dead, agent alive but silent". The helper NEVER raises —
+    # orphan cleanup is best-effort defence and must not wedge start. See
+    # :mod:`._orphan_mcp_cleanup` for the match policy and seam contract.
+    from ._orphan_mcp_cleanup import kill_orphan_mcp_children
+
+    kill_orphan_mcp_children(config.name)
+
     # Start — ``force`` is propagated to the runtime. The legacy
     # ``config.remote.no_preflight`` override was retired with
     # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the
