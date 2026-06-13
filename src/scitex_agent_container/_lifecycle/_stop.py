@@ -96,6 +96,16 @@ def agent_stop(
     except Exception:
         traceback.print_exc()
 
+    # Fleet-default pre-stop rescue (operator priority, lead a2a
+    # efa48850daf248ed9fe3ae5232677b2b). Commits + pushes every dirty
+    # worktree (or diff-tarballs them on protected/push-failure) before
+    # the agent dies, so restart never silently loses uncommitted work.
+    # NEVER raises — bounded by RESCUE_GRACE_SECONDS; whatever finished
+    # before the budget elapsed is preserved.
+    from ._pre_stop_rescue import run_pre_stop_rescue
+
+    run_pre_stop_rescue(config)
+
     # Pre-stop hooks
     # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)
     try:
