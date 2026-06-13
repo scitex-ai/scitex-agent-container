@@ -64,8 +64,11 @@ class TestWorktreeRemove:
         # Assert
         assert result.returncode == 0
 
-    def test_remove_with_empty_stdin_exits_nonzero(self) -> None:
-        # Arrange
+    def test_remove_with_empty_stdin_exits_zero_with_warning(self) -> None:
+        # Arrange — parser-contract violation; the remove-hook MUST NOT
+        # wedge SDK teardown on these (lead a2a 07a9187b/777d0a5a):
+        # operator's F-CS8 prune cron catches any orphan, so wedging
+        # buys nothing. Soft-fail = WARN on stderr + exit 0.
         script = REMOVE_SCRIPT
         # Act
         result = subprocess.run(
@@ -74,11 +77,27 @@ class TestWorktreeRemove:
             capture_output=True,
             text=True,
         )
-        # Assert
-        assert result.returncode != 0
+        # Assert — exit 0 (soft-fail), the WARN message is asserted separately.
+        assert result.returncode == 0
 
-    def test_remove_with_missing_worktree_path_exits_nonzero(self) -> None:
-        # Arrange
+    def test_remove_with_empty_stdin_warns_on_stderr(self) -> None:
+        # Arrange — operator must still SEE the parser-contract bug
+        # (just not as a hard fail). The stderr WARN names the issue.
+        script = REMOVE_SCRIPT
+        # Act
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            input="",
+            capture_output=True,
+            text=True,
+        )
+        # Assert — stderr mentions "stdin" so the bug surfaces in logs.
+        assert "stdin" in result.stderr
+
+    def test_remove_with_missing_worktree_path_exits_zero_with_warning(self) -> None:
+        # Arrange — same soft-fail policy: missing field is a parser
+        # contract bug, not a teardown-blocker. Operator cron handles
+        # any orphan via F-CS8 audit surface.
         payload = {
             "hook_event_name": "WorktreeRemove",
             "session_id": "s",
@@ -96,4 +115,74 @@ class TestWorktreeRemove:
             text=True,
         )
         # Assert
-        assert result.returncode != 0
+        assert result.returncode == 0
+
+    def test_remove_with_missing_worktree_path_warns_on_stderr(self) -> None:
+        # Arrange
+        payload = {
+            "hook_event_name": "WorktreeRemove",
+            "session_id": "s",
+            "transcript_path": "/tmp/t",
+            "permission_mode": "default",
+            "agent_id": "a",
+            "agent_type": "t",
+            "cwd": "/tmp",
+        }
+        # Act
+        result = subprocess.run(
+            [sys.executable, str(REMOVE_SCRIPT)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+        )
+        # Assert — stderr names the missing field so the operator can fix it.
+        assert "worktree_path" in result.stderr
+
+    def test_remove_with_malformed_json_exits_zero_with_warning(self) -> None:
+        # Arrange — bad JSON is a parser-contract violation; same
+        # soft-fail policy as the other two parser bugs.
+        script = REMOVE_SCRIPT
+        # Act
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            input="not json at all {[}",
+            capture_output=True,
+            text=True,
+        )
+        # Assert
+        assert result.returncode == 0
+
+    def test_remove_genuine_git_failure_still_exits_nonzero(
+        self, ephemeral_repo: Path
+    ) -> None:
+        # Arrange — the OPPOSITE of soft-fail: when we located the git
+        # root AND the worktree IS registered AND git itself refuses
+        # to remove it, we DO exit 2. That's a surface the operator
+        # can act on, not env drift.
+        #
+        # Construct that state: create a worktree, then make its
+        # contents dirty + drop a read-only marker file that prevents
+        # plain ``git worktree remove`` AND simulate the --force path
+        # also failing by removing write perms on the parent dir.
+        #
+        # In practice the simplest reproducer is: create the worktree,
+        # then chmod 000 the worktree dir so git can't traverse it.
+        # We restore perms in the teardown so the tmp fixture cleans.
+        import os
+        import stat
+
+        created = _run_hook(
+            CREATE_SCRIPT, _create_payload("hard-fail-probe", ephemeral_repo)
+        ).stdout.strip()
+        target = Path(created)
+        # Make the worktree unreadable so even ``--force`` git refuses.
+        os.chmod(target, 0)
+        try:
+            payload = _remove_payload(created, ephemeral_repo)
+            # Act
+            result = _run_hook(REMOVE_SCRIPT, payload)
+            # Assert — exit 2 surfaces the genuinely-actionable failure.
+            returncode = result.returncode
+        finally:
+            os.chmod(target, stat.S_IRWXU)
+        assert returncode == 2

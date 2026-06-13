@@ -55,12 +55,22 @@ Policy
   worktree to it (worktree add without ``-b``). Lets the operator/agent
   resume a worktree across restarts without manual fixup.
 
-Failure mode
-------------
-Every failure exits non-zero with a diagnostic on stderr. The SDK
-surfaces stderr in its ``WorktreeCreate hook failed`` error so the
-operator sees what went wrong instead of a silent fall-through to the
-hardcoded default.
+Graceful degradation (operator priority — fleet-wide WorktreeCreate hook
+breakage observed 2026-06-13, lead a2a 07a9187b/777d0a5a):
+* The HARD FAILURE that broke the fleet was an interpreter-path drift —
+  the dotfiles JSON wired ``/opt/venv-agent/bin/python3`` which was
+  absent in some SIFs. That has been fixed at the wiring layer (PATH-
+  based ``python3``). THIS file additionally hardens the SCRIPT
+  itself: when the .worktrees/<name> policy CANNOT be honoured (the
+  cwd isn't a git repo, git is missing, the directory is read-only, …),
+  the hook falls back to the SDK's own default location
+  ``<cwd>/.claude/worktrees/<name>``, creates a real git worktree there,
+  and echoes that path. Operator sees a WARN on stderr explaining the
+  policy was skipped; the Agent SPAWN PROCEEDS. The operator's prune
+  cron eventually catches the .claude/worktrees/ bloat through the
+  existing F-CS8 audit surface.
+* Only when BOTH the policy AND the fallback fail do we exit 2 with a
+  diagnostic — there is no plausible recovery beyond that.
 """
 
 from __future__ import annotations
@@ -120,11 +130,96 @@ def _resolve_base(git_root: str) -> str:
     return "HEAD"
 
 
+def _try_policy_target(name: str, cwd: str) -> str | None:
+    """Try the ``<git-root>/.worktrees/<name>`` relocation policy.
+
+    Returns the absolute path on success; ``None`` on any failure
+    (graceful-degradation entry point — the caller falls back to the
+    SDK default location on ``None``).
+    """
+    try:
+        git_root = _run_git("rev-parse", "--show-toplevel", cwd=cwd)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    if not git_root:
+        return None
+
+    target = Path(git_root) / ".worktrees" / name
+    branch = f"claude/{name}"
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+
+    try:
+        if _worktree_already_exists(git_root, target):
+            return str(target)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+
+    base = _resolve_base(git_root)
+
+    if _branch_exists(git_root, branch):
+        ok, _err = _try_git(
+            "worktree", "add", str(target), branch, cwd=git_root
+        )
+    else:
+        ok, _err = _try_git(
+            "worktree", "add", "-b", branch, str(target), base, cwd=git_root
+        )
+
+    if not ok or not target.is_dir():
+        return None
+    return str(target)
+
+
+def _try_sdk_default_fallback(name: str, cwd: str) -> str | None:
+    """Create a worktree at the SDK's default ``<cwd>/.claude/worktrees/<name>``.
+
+    Used when ``_try_policy_target`` fails so the Agent spawn proceeds
+    instead of hard-failing. NO bookkeeping for the prune cron — the
+    operator's F-CS8 audit surface still picks the .claude/worktrees
+    bloat up via the existing daily sweep.
+    """
+    target = Path(cwd).resolve() / ".claude" / "worktrees" / name
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    # Use the same git-worktree-add machinery so the dir is a real
+    # worktree the SDK can drive. Discover the git root again here
+    # so the fallback doesn't require the policy walk to have succeeded.
+    try:
+        git_root = _run_git("rev-parse", "--show-toplevel", cwd=cwd)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    if not git_root:
+        return None
+    branch = f"claude/{name}"
+    if _branch_exists(git_root, branch):
+        ok, _err = _try_git(
+            "worktree", "add", str(target), branch, cwd=git_root
+        )
+    else:
+        base = _resolve_base(git_root)
+        ok, _err = _try_git(
+            "worktree", "add", "-b", branch, str(target), base, cwd=git_root
+        )
+    if not ok or not target.is_dir():
+        return None
+    return str(target)
+
+
 def main() -> int:
     """Read the hook input from stdin, create the worktree, echo its path.
 
-    Returns the process exit code (0 on success; non-zero with stderr
-    diagnostic on any failure, so the SDK shows the real reason).
+    Graceful-degradation order:
+      1. Try the ``.worktrees/<name>`` policy target.
+      2. On failure, fall back to the SDK's ``.claude/worktrees/<name>``
+         default (WARN on stderr; the Agent spawn still proceeds).
+      3. Only exit 2 when BOTH paths fail — no plausible recovery
+         beyond that, so surface the SDK's "hook failed" error.
     """
     raw = sys.stdin.read()
     if not raw.strip():
@@ -149,7 +244,7 @@ def main() -> int:
 
     # ``name`` arrives from Claude Code's session bookkeeping; we treat
     # it as a path segment and reject any traversal/separator nasties
-    # so the hook can never write outside ``<git-root>/.worktrees/``.
+    # so the hook can never write outside the worktree roots.
     if "/" in name or ".." in name.split("."):
         print(
             f"WorktreeCreate hook: invalid 'name' (path-traversal): {name!r}",
@@ -157,64 +252,33 @@ def main() -> int:
         )
         return 2
 
-    try:
-        git_root = _run_git("rev-parse", "--show-toplevel", cwd=cwd)
-    except subprocess.CalledProcessError as exc:
-        print(
-            f"WorktreeCreate hook: {cwd!r} is not in a git repository: {exc.stderr.strip()}",
-            file=sys.stderr,
-        )
-        return 2
-    if not git_root:
-        print(
-            f"WorktreeCreate hook: 'git rev-parse' returned empty toplevel for {cwd!r}",
-            file=sys.stderr,
-        )
-        return 2
-
-    target = Path(git_root) / ".worktrees" / name
-    branch = f"claude/{name}"
-
-    # Pre-create the .worktrees container so `git worktree add` has
-    # somewhere to land. Idempotent.
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    if _worktree_already_exists(git_root, target):
-        # Resume case — operator/agent restart picked the same name.
-        print(str(target))
+    policy_path = _try_policy_target(name, cwd)
+    if policy_path is not None:
+        print(policy_path)
         return 0
 
-    base = _resolve_base(git_root)
-
-    if _branch_exists(git_root, branch):
-        # Branch lingered from a previous worktree; attach without -b so
-        # the existing branch stays the source of truth.
-        ok, err = _try_git("worktree", "add", str(target), branch, cwd=git_root)
-    else:
-        ok, err = _try_git(
-            "worktree", "add", "-b", branch, str(target), base, cwd=git_root
-        )
-
-    if not ok:
+    # Policy failed — fall back to SDK default so the Agent spawn still
+    # proceeds. Operator sees a single-line WARN naming the fallback so
+    # the prune cron is the implicit cleanup contract.
+    fallback_path = _try_sdk_default_fallback(name, cwd)
+    if fallback_path is not None:
         print(
-            f"WorktreeCreate hook: 'git worktree add' failed for "
-            f"name={name!r} target={target} branch={branch} base={base}: {err}",
+            f"WorktreeCreate hook: policy target .worktrees/{name} failed; "
+            f"falling back to SDK default {fallback_path} so the Agent "
+            f"spawn proceeds (operator F-CS8 audit + prune cron applies).",
             file=sys.stderr,
         )
-        return 2
+        print(fallback_path)
+        return 0
 
-    if not target.is_dir():
-        # SDK enforces this — fail loud rather than letting the SDK's
-        # generic "not a directory" error swallow our diagnostic.
-        print(
-            f"WorktreeCreate hook: target {target} not a directory after "
-            "'git worktree add' (filesystem race or post-create deletion)",
-            file=sys.stderr,
-        )
-        return 2
-
-    print(str(target))
-    return 0
+    print(
+        f"WorktreeCreate hook: BOTH policy target .worktrees/{name} AND "
+        f"SDK fallback .claude/worktrees/{name} failed; no plausible "
+        f"recovery. cwd={cwd!r}. Check git availability + write "
+        f"permissions on both candidate paths.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
