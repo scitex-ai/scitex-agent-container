@@ -14,6 +14,7 @@ import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
 from ._helpers import HelpRecursiveGroup
+from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
@@ -53,7 +54,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
-        ("Maintenance", ["prune-claude"]),
+        ("Maintenance", ["prune-claude", "archive-claude-bloat"]),
     ]
 
 
@@ -93,5 +94,11 @@ agent_group.add_command(_rebind(_send_impl, "send"))
 # F-CS8 prune — dry-run-by-default purge of the two known workdir
 # bloat sources (.pending/ records + merged-only worktrees/agent-*).
 agent_group.add_command(_rebind(_prune_claude_impl, "prune-claude"))
+# F-CS8 audit-driven archive — closes the start-hook banner-to-action
+# loop by moving every audit ``bloat_sources`` entry to
+# ``<workdir>/.claude/.archived-<UTC>/<rel_path>/``. Complements
+# ``prune-claude`` (the narrower, dry-run-first, two-bucket scheme):
+# this command is the wide audit-driven button.
+agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloat"))
 
 __all__ = ["agent_group"]
