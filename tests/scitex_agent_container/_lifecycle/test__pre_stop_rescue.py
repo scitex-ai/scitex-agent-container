@@ -93,32 +93,59 @@ def _make_dirty(root: Path) -> None:
 
 
 def test_is_protected_branch_main_blocks_push():
-    # Arrange + Act + Assert (constant policy — single boolean answer)
-    assert is_protected_branch("main") is True
+    # Arrange
+    branch = "main"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is True
 
 
 def test_is_protected_branch_master_blocks_push():
-    assert is_protected_branch("master") is True
+    # Arrange
+    branch = "master"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is True
 
 
 def test_is_protected_branch_release_prefix_blocks_push():
-    assert is_protected_branch("release/2.0") is True
+    # Arrange
+    branch = "release/2.0"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is True
 
 
 def test_is_protected_branch_feature_branch_allows_push():
-    assert is_protected_branch("feature/topic") is False
+    # Arrange
+    branch = "feature/topic"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is False
 
 
 def test_is_protected_branch_release_notes_is_not_protected():
     # Arrange — guard the prefix-match against false positives on names
     # that just begin with the same letters but don't share the ``/``.
-    assert is_protected_branch("release-notes") is False
+    branch = "release-notes"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is False
 
 
 def test_is_protected_branch_empty_branch_is_protected():
     # Arrange — detached HEAD / unknown branch returns "" from the
     # branch query; refuse to push the unclassifiable.
-    assert is_protected_branch("") is True
+    branch = ""
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is True
 
 
 # ---------------------------------------------------------------------------
