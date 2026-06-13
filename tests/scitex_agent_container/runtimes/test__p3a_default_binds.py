@@ -157,3 +157,67 @@ def test_apply_default_binds_preserves_explicit_spec_bind_order(
     result = apply_default_binds(spec_binds)
     # Assert — spec order preserved AFTER the defaults.
     assert result[-2:] == spec_binds
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-13 SAC overlay stopgap — host scitex_agent_container -> in-SIF install
+# (lead a2a b6f3916c; removable once a SIF rebuild folds in the new install)
+# ---------------------------------------------------------------------------
+
+
+def test_default_binds_returns_sac_overlay_when_host_repo_exists(
+    fake_home: Path,
+) -> None:
+    # Arrange — synthesise the canonical host repo path under the
+    # sandboxed $HOME so the helper's expanduser() check picks it up.
+    sac_src = (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    )
+    sac_src.mkdir(parents=True)
+    # Act
+    binds = default_binds_for_host()
+    # Assert — destination path is the in-SIF site-packages location.
+    assert any(
+        ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro" in b
+        for b in binds
+    )
+
+
+def test_default_binds_skips_sac_overlay_when_host_repo_missing(
+    fake_home: Path,
+) -> None:
+    # Arrange — fake_home (tmp_path) has no proj/scitex-agent-container
+    # subtree; deploy-host case where the operator hasn't cloned the
+    # repo at the canonical path.
+    # Act
+    binds = default_binds_for_host()
+    # Assert
+    assert not any(
+        "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
+        for b in binds
+    )
+
+
+def test_apply_default_binds_lets_explicit_spec_override_sac_overlay(
+    fake_home: Path,
+) -> None:
+    # Arrange — operator pins a custom host source for the overlay
+    # via spec; the spec entry MUST win (de-dup by destination).
+    sac_src = (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    )
+    sac_src.mkdir(parents=True)
+    custom_override = (
+        "/opt/local-sac-src"
+        ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:rw"
+    )
+    spec_binds = [custom_override]
+    # Act
+    result = apply_default_binds(spec_binds)
+    # Assert — exactly one entry whose destination is the in-SIF install path.
+    sac_entries = [
+        b
+        for b in result
+        if "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
+    ]
+    assert sac_entries == [custom_override]
