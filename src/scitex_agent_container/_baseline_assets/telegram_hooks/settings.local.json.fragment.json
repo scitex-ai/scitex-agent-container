@@ -1,0 +1,30 @@
+{
+  "_comment_telegram_format_hooks": "OP-PRIO-FMT (2026-06-09 operator priority) — splice this matcher block into _shared/to_home/.claude/settings.local.json under hooks.PreToolUse. Matcher MUST be the FQ MCP tool name mcp__claude-code-telegrammer__reply (OP-PRIO-2 hard prerequisite). See _baseline_assets/telegram_hooks/README.md for the full deployment recipe.",
+  "PreToolUse": [
+    {
+      "matcher": "mcp__claude-code-telegrammer__reply",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_numbering.sh"
+        },
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_no_bare_issue.sh"
+        },
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_use_lists.sh"
+        },
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_no_filler.sh"
+        },
+        {
+          "type": "command",
+          "command": "$HOME/.claude/hooks/pre-tool-use/encourage_telegram_terse_style.sh"
+        }
+      ]
+    }
+  ]
+}
