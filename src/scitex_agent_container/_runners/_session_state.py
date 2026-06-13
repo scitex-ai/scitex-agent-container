@@ -267,6 +267,15 @@ def write_heartbeat(
     payload = {"ts": now, "pid": pid, "state": state}
     payload.update(_heartbeat_usage_fields(state_dir, now))
     payload.update(_tmp_pressure_fields())
+    # Operator-requested (feedback_sac_heartbeat_observability):
+    # surface session.jsonl movement next to liveness so one read
+    # answers "alive AND producing?". Extracted helper — see
+    # ``_heartbeat_fields`` for the field semantics + the subagent
+    # caveat (active subagents write to a SUBAGENT jsonl, so delta=0
+    # on the main beat is a false-idle).
+    from ._heartbeat_fields import heartbeat_jsonl_fields
+
+    payload.update(heartbeat_jsonl_fields(state_dir, now))
     tmp = state_dir / "heartbeat.json.tmp"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(state_dir / "heartbeat.json")
