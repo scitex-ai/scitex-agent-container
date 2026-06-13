@@ -273,9 +273,14 @@ def write_heartbeat(
     # ``_heartbeat_fields`` for the field semantics + the subagent
     # caveat (active subagents write to a SUBAGENT jsonl, so delta=0
     # on the main beat is a false-idle).
-    from ._heartbeat_fields import heartbeat_jsonl_fields
+    # ``heartbeat_progress_fields`` adds ``capped`` (bool) +
+    # ``current_phase`` (str) for card sac-heartbeat-progress-signal
+    # so ``sac agents list`` can color CAPPED + board v3 dot strip
+    # flips green→amber/red without scraping session.jsonl downstream.
+    from ._heartbeat_fields import heartbeat_jsonl_fields, heartbeat_progress_fields
 
     payload.update(heartbeat_jsonl_fields(state_dir, now))
+    payload.update(heartbeat_progress_fields(state_dir))
     tmp = state_dir / "heartbeat.json.tmp"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(state_dir / "heartbeat.json")

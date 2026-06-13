@@ -284,6 +284,25 @@ def test_subsequent_heartbeat_writes_overwrite_state(tmp_path: Path) -> None:
     assert hb is not None and hb["state"] == runner.STATE_IDLE
 
 
+def test_heartbeat_carries_capped_field_default_false(tmp_path: Path) -> None:
+    # Arrange — write a fresh beat with no cap evidence anywhere.
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert — schema-stable False (not absent) so downstream readers
+    # (`sac agents list` CAPPED color) can branch unconditionally.
+    assert hb is not None and hb["capped"] is False
+
+
+def test_heartbeat_carries_current_phase_field_default_empty(tmp_path: Path) -> None:
+    # Arrange — no SAC_AGENT_PHASE env, no phase.txt sidecar.
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    # Act
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["current_phase"] == ""
+
+
 # ---------------------------------------------------------------------------
 # started_at (session start time) + heartbeat enrichment
 # ---------------------------------------------------------------------------

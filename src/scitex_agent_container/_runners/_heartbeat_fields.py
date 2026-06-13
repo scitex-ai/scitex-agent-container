@@ -50,9 +50,42 @@ main ``session_jsonl_delta_bytes``.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-__all__ = ["heartbeat_jsonl_fields"]
+from .._account.rate_limit_signals import scan_textual_cap_markers
+
+__all__ = ["heartbeat_jsonl_fields", "heartbeat_progress_fields"]
+
+# Max bytes of session.jsonl tail to scan when deciding `capped`. The
+# weekly-cap phrasing fits in the last few KB of a single assistant
+# turn; we read more to survive interleaved tool-result blocks but cap
+# the read so the heartbeat loop stays cheap on long sessions (the
+# session.jsonl can grow to many MB over hours).
+_CAPPED_TAIL_BYTES = 16 * 1024
+
+# Max chars accepted for ``current_phase``. Free-form short string —
+# anything longer is truncated rather than rejected so an over-eager
+# agent doesn't break the heartbeat payload (and the operator still
+# sees the leading meaningful prefix in `sac agents list`).
+_PHASE_MAX_CHARS = 120
+
+# Env var the agent (or its launcher) sets to publish the current
+# phase. Read fresh on each beat so a long-running runner can swap
+# phases without a restart.
+_PHASE_ENV = "SAC_AGENT_PHASE"
+
+# Sidecar file fallback — used when ``SAC_AGENT_PHASE`` is unset.
+# The agent process can ``echo "ingesting" > <state_dir>/phase.txt``
+# from any tool (Bash, hook, etc) without having to manipulate its
+# own env.
+_PHASE_SIDECAR = "phase.txt"
+
+# Sidecar file that, when present, FORCES ``capped=True`` regardless
+# of session.jsonl content. Lets an out-of-band detector (e.g. the
+# account-rotation supervisor) mark an agent capped immediately
+# without waiting for the textual marker to land in session.jsonl.
+_CAPPED_SIDECAR = "capped"
 
 
 # Subagent / background-work jsonl candidate globs (relative to state_dir).
@@ -87,6 +120,112 @@ def _sum_subagent_jsonl_bytes(state_dir: Path) -> int | None:
             except OSError:
                 continue
     return total if found else None
+
+
+def _read_phase(state_dir: Path) -> str:
+    """Return the current free-form phase string, or ``""`` if unset.
+
+    Resolution order (first non-empty wins):
+
+      1. ``SAC_AGENT_PHASE`` env var — read fresh each beat so the
+         agent can swap phases without a runner restart.
+      2. ``<state_dir>/phase.txt`` sidecar — first non-empty line.
+         Lets a tool / hook publish the phase without manipulating
+         the runner's env.
+
+    Always returns a string (empty when unset). Truncated to
+    :data:`_PHASE_MAX_CHARS` so an over-eager agent can't break
+    the heartbeat payload with a huge phrase. NEVER raises — any
+    sidecar read failure degrades to an empty string.
+    """
+    env_value = os.environ.get(_PHASE_ENV, "").strip()
+    if env_value:
+        return env_value[:_PHASE_MAX_CHARS]
+    sidecar = state_dir / _PHASE_SIDECAR
+    try:
+        text = sidecar.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        candidate = line.strip()
+        if candidate:
+            return candidate[:_PHASE_MAX_CHARS]
+    return ""
+
+
+def _read_jsonl_tail(state_dir: Path, max_bytes: int) -> str:
+    """Return the last ``max_bytes`` of ``session.jsonl`` as text.
+
+    Used for cap-marker scanning. Reads the trailing slice only
+    (the cap phrasing always lives in the most recent turn, and
+    session.jsonl can grow into the MB on long sessions). Decode
+    errors degrade to empty — a partial UTF-8 boundary at the
+    slice point must not crash the heartbeat loop.
+    """
+    jsonl = state_dir / "session.jsonl"
+    try:
+        size = jsonl.stat().st_size
+    except OSError:
+        return ""
+    if size <= 0:
+        return ""
+    try:
+        with jsonl.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            blob = fh.read()
+    except OSError:
+        return ""
+    try:
+        return blob.decode("utf-8", errors="ignore")
+    except UnicodeDecodeError:  # stx-allow: defensive (reason: errors='ignore' should never raise but a bytes-like decoder edge-case must not crash the heartbeat loop)
+        return ""
+
+
+def _detect_capped(state_dir: Path) -> bool:
+    """Return True when the agent has hit a provider cap.
+
+    Two evidence sources (OR):
+
+      1. ``<state_dir>/capped`` sidecar file exists — lets the
+         account-rotation supervisor (or any out-of-band watcher)
+         force the flag without waiting for the next assistant
+         turn to land in session.jsonl.
+      2. The tail of ``session.jsonl`` matches a textual cap
+         marker (re-uses :func:`scan_textual_cap_markers`'s
+         operator-tunable pattern list — same regex bank the
+         rate-limit classifier uses, so "hit your weekly limit"
+         / "weekly limit" / "quota exceeded" / etc all qualify).
+
+    Always returns a bool — False (not absent) when there is no
+    evidence. Downstream readers (``sac agents list`` CAPPED
+    color, board v3 dot strip) can rely on the key existing
+    every beat.
+    """
+    if (state_dir / _CAPPED_SIDECAR).exists():
+        return True
+    tail = _read_jsonl_tail(state_dir, _CAPPED_TAIL_BYTES)
+    if not tail:
+        return False
+    return scan_textual_cap_markers(tail) is not None
+
+
+def heartbeat_progress_fields(state_dir: Path) -> dict:
+    """Return ``{capped, current_phase}`` — the PARTIAL-fix progress signal.
+
+    ``capped`` is always present (bool); ``current_phase`` is always
+    present (string, ``""`` when unset). Both fields are written
+    EVERY beat so downstream readers (``sac agents list`` color
+    code, board v3 fleet-liveness dot strip) can rely on a stable
+    schema without an absence-check fallback.
+
+    NEVER raises — every helper degrades to a safe default on IO
+    failure so a heartbeat-loop crash here is impossible.
+    """
+    return {
+        "capped": _detect_capped(state_dir),
+        "current_phase": _read_phase(state_dir),
+    }
 
 
 def heartbeat_jsonl_fields(state_dir: Path, now: float) -> dict:

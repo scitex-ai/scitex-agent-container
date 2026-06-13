@@ -11,8 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scitex_agent_container._runners._heartbeat_fields import (
     heartbeat_jsonl_fields,
+    heartbeat_progress_fields,
 )
 
 
@@ -266,3 +269,143 @@ def test_subagent_delta_absent_when_no_prior_subagent_bytes(tmp_path: Path) -> N
         fields["subagent_jsonl_bytes"] == 300
         and "subagent_jsonl_delta_bytes" not in fields
     )
+
+
+# ---------------------------------------------------------------------------
+# heartbeat_progress_fields — capped + current_phase (card
+# sac-heartbeat-progress-signal PARTIAL fix).
+#
+# Both fields are ALWAYS present (False / "" default) so downstream
+# consumers (`sac agents list` CAPPED color, board v3 dot strip) can
+# rely on a stable schema without absence checks.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_phase_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests assert on default behaviour; an env leak from a parent
+    # shell that exported SAC_AGENT_PHASE would corrupt every test.
+    monkeypatch.delenv("SAC_AGENT_PHASE", raising=False)
+
+
+def test_progress_defaults_capped_false_phase_empty(tmp_path: Path) -> None:
+    # Arrange — empty state dir; no env, no sidecar, no session.jsonl.
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert — both keys present with safe defaults.
+    assert fields == {"capped": False, "current_phase": ""}
+
+
+def test_progress_current_phase_from_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    monkeypatch.setenv("SAC_AGENT_PHASE", "ingesting-records")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["current_phase"] == "ingesting-records"
+
+
+def test_progress_current_phase_from_sidecar_file(tmp_path: Path) -> None:
+    # Arrange — agent wrote its phase to <state_dir>/phase.txt.
+    (tmp_path / "phase.txt").write_text("compiling-report\n", encoding="utf-8")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["current_phase"] == "compiling-report"
+
+
+def test_progress_env_var_beats_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange — both sources present; env wins (resolution order).
+    monkeypatch.setenv("SAC_AGENT_PHASE", "env-wins")
+    (tmp_path / "phase.txt").write_text("sidecar-loses\n", encoding="utf-8")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["current_phase"] == "env-wins"
+
+
+def test_progress_phase_truncated_to_max_chars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange — agent published an over-long phrase; payload must not
+    # break, but the prefix is preserved so the operator still sees it.
+    monkeypatch.setenv("SAC_AGENT_PHASE", "x" * 500)
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert — exact cap value lives in _PHASE_MAX_CHARS (120); we
+    # assert the public contract: truncated below the original length.
+    assert len(fields["current_phase"]) == 120
+
+
+def test_progress_capped_true_when_sidecar_file_present(tmp_path: Path) -> None:
+    # Arrange — out-of-band watcher dropped the sentinel file.
+    (tmp_path / "capped").write_text("", encoding="utf-8")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["capped"] is True
+
+
+def test_progress_capped_true_on_weekly_limit_marker_in_session_jsonl(
+    tmp_path: Path,
+) -> None:
+    # Arrange — most-recent assistant turn carries the operator's
+    # observed cap phrasing ("hit your weekly limit · resets ...").
+    record = (
+        '{"type":"assistant","text":'
+        '"You\'ve hit your weekly limit \\u00b7 resets 2026-06-18T05:00Z"}'
+    )
+    (tmp_path / "session.jsonl").write_text(record + "\n", encoding="utf-8")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["capped"] is True
+
+
+def test_progress_capped_false_when_session_jsonl_has_no_cap_marker(
+    tmp_path: Path,
+) -> None:
+    # Arrange — normal assistant turn, no cap phrasing anywhere.
+    (tmp_path / "session.jsonl").write_text(
+        '{"type":"assistant","text":"hello, the build is green"}\n',
+        encoding="utf-8",
+    )
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert
+    assert fields["capped"] is False
+
+
+def test_progress_capped_scans_only_tail_of_large_jsonl(tmp_path: Path) -> None:
+    # Arrange — old assistant turn long ago hit the cap, then 64KB of
+    # subsequent traffic recovered (e.g. account rotated). The CURRENT
+    # state is healthy; the tail (the only thing we scan) carries no
+    # cap marker, so we must NOT report capped=True.
+    cap_line = '{"type":"assistant","text":"hit your weekly limit (old turn)"}\n'
+    healthy_filler = (
+        '{"type":"assistant","text":"ok working on the next task"}\n' * 2000
+    )
+    (tmp_path / "session.jsonl").write_text(cap_line + healthy_filler, encoding="utf-8")
+    # Act
+    fields = heartbeat_progress_fields(tmp_path)
+    # Assert — tail-only scan keeps the heartbeat cheap on long sessions
+    # AND avoids permanently flagging an agent that has since recovered.
+    assert fields["capped"] is False
+
+
+def test_progress_never_raises_on_corrupted_state_dir(tmp_path: Path) -> None:
+    # Arrange — session.jsonl is a DIR (not a file); reads would EISDIR.
+    (tmp_path / "session.jsonl").mkdir()
+    raised: BaseException | None = None
+    # Act
+    try:
+        fields = heartbeat_progress_fields(tmp_path)
+    except Exception as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; heartbeat_progress_fields is contracted to NEVER raise)
+        raised = exc
+        fields = {}
+    # Assert — degrades cleanly to safe defaults; never crashes the loop.
+    assert raised is None and fields == {"capped": False, "current_phase": ""}
