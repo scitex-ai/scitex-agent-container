@@ -1,5 +1,5 @@
 {
-  "_comment_worktree_hooks": "Claude Code WorktreeCreate / WorktreeRemove hook wiring. Source-of-truth verified 2026-06-06 against the JS function VRH (executeWorktreeCreateHook) in claude_agent_sdk._bundled.claude. Merge into the baseline settings.local.json under `hooks`. Scripts live next to this fragment as worktree_create.py / worktree_remove.py and must be deployed to $HOME/.claude/hooks/claude_worktree_hooks/ on every agent via to_home materialization.",
+  "_comment_worktree_hooks": "Claude Code WorktreeCreate / WorktreeRemove / SessionStart hook wiring. WorktreeCreate/Remove source-of-truth verified 2026-06-06 against the JS function VRH (executeWorktreeCreateHook) in claude_agent_sdk._bundled.claude. SessionStart added 2026-06-14 for card sac-stale-worktree-autoreap-enable: reaps the agent's OWN stale worktrees BEFORE the SDK's first bloat-scan, closing the F-CS8 recurrence window left open after PR #93 made the predicate safe but not automatic. Merge into the baseline settings.local.json under `hooks`. Scripts live next to this fragment and must be deployed to $HOME/.claude/hooks/claude_worktree_hooks/ on every agent via to_home materialization. python3 is PATH-based (NOT pinned to /opt/venv-agent/bin/python3) because fleet-wide WorktreeCreate breakage on 2026-06-13 (lead a2a 07a9187b/777d0a5a) traced to an interpreter-path drift across SIFs.",
 
   "hooks": {
     "WorktreeCreate": [
@@ -18,6 +18,16 @@
           {
             "type": "command",
             "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_remove.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/session_start_reap_stale.py"
           }
         ]
       }
