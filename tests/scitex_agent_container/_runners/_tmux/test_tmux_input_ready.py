@@ -136,9 +136,11 @@ class TestWaitForInputReadyTimeout:
     def test_timeout_raises_named_exception(self) -> None:
         # Arrange — capture never yields the marker; tiny timeout.
         capture = _ScriptedCapture(["no marker here\n"])
-        # Act / Assert
+        # Act
+        wait = TmuxManager.wait_for_input_ready
+        # Assert
         with pytest.raises(TuiInputNotReadyError, match="input-ready marker"):
-            TmuxManager.wait_for_input_ready(
+            wait(
                 "s",
                 capture_fn=capture,
                 sleep_fn=_zero_sleep,
@@ -147,11 +149,15 @@ class TestWaitForInputReadyTimeout:
             )
 
     def test_timeout_message_includes_marker_repr(self) -> None:
-        # Arrange
+        # Arrange — match on the marker repr proves the error message
+        # carries the marker so the operator's remedy is unambiguous;
+        # one assertion (pytest.raises match).
         capture = _ScriptedCapture(["nope\n"])
         # Act
-        with pytest.raises(TuiInputNotReadyError) as exc_info:
-            TmuxManager.wait_for_input_ready(
+        wait = TmuxManager.wait_for_input_ready
+        # Assert
+        with pytest.raises(TuiInputNotReadyError, match="'CUSTOM-READY'"):
+            wait(
                 "s",
                 marker="CUSTOM-READY",
                 capture_fn=capture,
@@ -159,8 +165,6 @@ class TestWaitForInputReadyTimeout:
                 poll_s=0.0,
                 timeout_s=0.01,
             )
-        # Assert
-        assert "'CUSTOM-READY'" in str(exc_info.value)
 
 
 class TestWaitForInputReadyCustomMarker:
@@ -363,9 +367,11 @@ class TestSendTextVerifiedAllRetriesDropped:
         empty_capture = _ScriptedCapture([""])
         send_text = _Recorder()
         send_enter = _Recorder()
-        # Act / Assert
+        # Act
+        verified = TmuxManager.send_text_and_submit_verified
+        # Assert
         with pytest.raises(TuiKeystrokeDropError, match="dropped"):
-            TmuxManager.send_text_and_submit_verified(
+            verified(
                 "s",
                 text,
                 capture_fn=empty_capture,
