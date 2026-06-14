@@ -114,7 +114,7 @@ Update this section as steps complete. Pattern: `[x]` + commit SHA +
 short note.
 
 - [x] step 1 — `509a6de1` materialise to_home + CLAUDE.md
-- [ ] step 2 — real tmux + claude TUI smoke
+- [x] step 2 — `3f65122f` real tmux+claude smoke (test_tui_session_real_smoke.py)
 - [ ] step 3 — one verified a2a turn through TUI runtime
 - [ ] step 4 — tui-alive probe (pane-activity or heartbeat)
 - [ ] integration PR opened (link here)
