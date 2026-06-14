@@ -66,13 +66,17 @@ from .._runners._tmux.tmux import (
 from ..config import AgentConfig
 from . import prompts as _prompts
 from ._to_home import deploy_to_home
+from ._tui_auth_stage import TuiAuthStageError, stage_tui_auth
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
+from .onboarding import ensure_project_onboarding
 
 __all__ = [
+    "TuiAuthStageError",
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
     "session_name_for",
+    "stage_tui_auth",
     "state_dir_for_config",
 ]
 
@@ -158,8 +162,8 @@ class TuiSessionRuntime(RuntimeBase):
         self._claude_bin = claude_bin
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
-        """Materialise per-agent ``to_home/`` + CLAUDE.md into
-        ``<state>/home/`` and return that path.
+        """Materialise per-agent ``to_home/`` + CLAUDE.md + TUI-auth
+        files into ``<state>/home/`` and return that path.
 
         Mirrors ``ClaudeSessionRuntime._materialize_workspace``: writes
         the sac-managed CLAUDE.md skill chain into ``<state>/home/CLAUDE.md``
@@ -168,6 +172,20 @@ class TuiSessionRuntime(RuntimeBase):
         baseline. The result is a self-contained $HOME tree the TUI
         ``claude`` binary will read on launch — same SkillsSpec / MCP
         / hook surface the SDK runtime provides.
+
+        ADDITIONAL TUI-auth staging (lead a2a
+        ``910ff436642948eb85f8b3100204ed9b``, 2026-06-14): the
+        interactive ``claude`` TUI checks TWO files the SDK runner
+        does not — ``$HOME/.claude/.credentials.json`` (live OAuth
+        token) and ``$HOME/.claude.json`` (onboarding state). Before
+        this hook, every ``sac agents start --runtime tui`` agent sat
+        on the login picker because neither file was present in the
+        materialised HOME. :func:`stage_tui_auth` lands both, sourced
+        by default from the apptainer auth bind + ``${HOME}/.claude.json``
+        and overridable via ``SAC_TUI_AUTH_CREDENTIALS_SRC`` /
+        ``SAC_TUI_AUTH_CLAUDE_JSON_SRC``. Fail-loud: a missing source
+        raises :class:`TuiAuthStageError` with a remedy rather than
+        letting the TUI silently stall on the picker.
 
         Returns ``None`` for stub configs lacking the full AgentConfig
         surface (unit-test ``SimpleNamespace`` fixtures); the caller
@@ -179,6 +197,32 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir.mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, str(home_dir))
         deploy_to_home(config, str(home_dir))
+        # Pass config so the resolver can consult spec.claude.account
+        # for the per-account snapshot path on host starts (lead a2a
+        # 1781e82a, 2026-06-14).
+        stage_tui_auth(home_dir, config=config)
+        # Pre-seed the projects entry so the TUI skips the per-workspace
+        # onboarding wizard (theme picker / dev-channels approval) on
+        # first launch. Without this, the dogfood (2026-06-14) caught
+        # the bundled ``claude`` showing "Choose the text style" before
+        # mounting its input field — which would wedge ``send_turn``
+        # against a modal overlay. ``ensure_project_onboarding`` is the
+        # same primitive the SDK runtime uses (see
+        # ``_runners/_tmux/claude_code.py``); calling it here gives the
+        # TUI runtime parity with the SDK path on workspace onboarding.
+        # The seed must use the SAME workdir the tmux session is
+        # launched in (see ``start()`` below). Both call sites use
+        # ``expanded_workdir`` so a tilde-prefixed default resolves
+        # to an absolute path before mkdir/cd/seed; a mismatch
+        # (e.g. seeding ``expanded_workdir`` while claude runs in
+        # raw ``workdir``) would leave the picker live against the
+        # actual cwd. Single source of truth.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
+        ensure_project_onboarding(workdir, home=home_dir)
         return home_dir
 
     def start(
@@ -213,7 +257,21 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir = self.materialize_workspace(config)
         if dry_run:
             return True
-        workdir = getattr(config, "workdir", "") or "/tmp"
+        # Use expanded_workdir so a tilde-prefixed default (the
+        # AgentConfig default ``~/.scitex/agent-container/runtime/agents/<name>``)
+        # resolves to an absolute path. The raw ``config.workdir``
+        # may still carry the literal ``~`` — passed straight to
+        # ``Path(...).mkdir`` it materialises a directory NAMED ``~``
+        # under the launching cwd, and the shell ``cd '~/.scitex/...'``
+        # (single-quoted, so no tilde expansion) lands in a bogus
+        # path. Both observed in the 2026-06-14 dogfood, which then
+        # broke the per-workspace onboarding seed below because the
+        # picker fired against a different workdir than the seed.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
         env_exports = ""
         if home_dir is not None:
             env_exports = (

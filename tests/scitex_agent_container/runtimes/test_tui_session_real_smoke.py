@@ -47,6 +47,10 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config import load_config
+from scitex_agent_container.runtimes._tui_auth_stage import (
+    CLAUDE_JSON_SRC_ENV,
+    CREDENTIALS_SRC_ENV,
+)
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
     session_name_for,
@@ -218,6 +222,36 @@ class _SmokeProbes:
     state_home: Path
 
 
+def _stage_fake_auth_sources(
+    tmp_path: Path, env_save_restore_class: object
+) -> tuple[Path, Path]:
+    """Stage realistic-but-fake credentials + .claude.json sources and
+    point the auth-stage env vars at them.
+
+    The TUI runtime now materialises both files into ``<state>/home/``
+    (lead a2a ``910ff436642948eb85f8b3100204ed9b``) so every test that
+    calls ``runtime.start`` needs them present somewhere. For smoke /
+    nonce tests we don't need REAL OAuth tokens — fake files satisfy
+    ``stage_tui_auth``'s existence check and the inner claude TUI then
+    falls back to the login picker (which is what the smoke tests
+    already expect to see anyway).
+    """
+    fake_creds = tmp_path / "fake_creds" / ".credentials.json"
+    fake_creds.parent.mkdir(parents=True, exist_ok=True)
+    fake_creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "fake", "refreshToken": "fake",'
+        ' "expiresAt": 9999999999999, "subscriptionType": "max"}}'
+    )
+    fake_claude_json = tmp_path / "fake_claude_json" / ".claude.json"
+    fake_claude_json.parent.mkdir(parents=True, exist_ok=True)
+    fake_claude_json.write_text(
+        '{"hasCompletedOnboarding": false, "oauthAccount": null}'
+    )
+    env_save_restore_class.set(CREDENTIALS_SRC_ENV, str(fake_creds))
+    env_save_restore_class.set(CLAUDE_JSON_SRC_ENV, str(fake_claude_json))
+    return fake_creds, fake_claude_json
+
+
 @pytest.fixture(scope="class")
 def smoke_probes(request, tmp_path_factory, env_save_restore_class) -> "_SmokeProbes":
     """Drive ONE real tmux + real claude launch and capture every probe
@@ -233,6 +267,7 @@ def smoke_probes(request, tmp_path_factory, env_save_restore_class) -> "_SmokePr
     home_root = tmp_path / "home_root"
     home_root.mkdir()
     env_save_restore_class.set("HOME", str(home_root))
+    _stage_fake_auth_sources(tmp_path, env_save_restore_class)
 
     config = load_config(spec_path)
     runtime = TuiSessionRuntime()
@@ -447,6 +482,7 @@ def nonce_probes(tmp_path_factory, env_save_restore_class) -> "_NonceProbes":
     home_root = tmp_path / "home_root"
     home_root.mkdir()
     env_save_restore_class.set("HOME", str(home_root))
+    _stage_fake_auth_sources(tmp_path, env_save_restore_class)
 
     config = load_config(spec_path)
     runtime = TuiSessionRuntime(claude_bin=_BASH_ECHO_READER)
@@ -517,6 +553,40 @@ class TestTuiRuntimeNonceRoundTrip:
         observed = expected in pane
         # Assert
         assert observed is True
+
+
+# ---------------------------------------------------------------------------
+# Auth-stage materialisation (lead a2a ``910ff436642948eb85f8b3100204ed9b``)
+#
+# The materialise step now lands the two files the interactive TUI
+# checks on launch. The smoke fixture above points the env vars at
+# fake auth so the stage doesn't read host creds; these tests prove
+# the files arrived where the inner ``claude`` will look for them.
+# ---------------------------------------------------------------------------
+
+
+class TestTuiRuntimeAuthStaged:
+    """Step-3 of the 2026-06-14 TUI hedge: ``.claude/.credentials.json``
+    and ``.claude.json`` land in ``<state>/home/`` automatically. Shares
+    the same smoke launch (no extra wall).
+    """
+
+    def test_credentials_file_in_state_home(self, smoke_probes: _SmokeProbes) -> None:
+        # Arrange
+        path = smoke_probes.state_home / ".claude" / ".credentials.json"
+        # Act
+        present = path.is_file()
+        # Assert
+        assert present is True
+
+    def test_claude_json_in_state_home(self, smoke_probes: _SmokeProbes) -> None:
+        # Arrange
+        path = smoke_probes.state_home / ".claude.json"
+        # Act
+        present = path.is_file()
+        # Assert
+        assert present is True
+
 
 
 # EOF
