@@ -501,7 +501,12 @@ def nonce_probes(tmp_path_factory, env_save_restore_class) -> "_NonceProbes":
         # TmuxManager.start sleeps 2s but the bash subshell needs a tick
         # more before stdin is bound to the read.
         time.sleep(0.5)
-        probes.delivered = runtime.send_turn(config, nonce)
+        # ``wait_ready=False``: the bash stand-in reader has no
+        # ``? for shortcuts`` input-ready footer; this test
+        # exercises the delivery primitive in isolation. The
+        # state-table modal drain is covered by the real-claude
+        # live-turn class where the marker DOES appear.
+        probes.delivered = runtime.send_turn(config, nonce, wait_ready=False)
         try:
             probes.pane = _wait_for_tui_banner(
                 session,

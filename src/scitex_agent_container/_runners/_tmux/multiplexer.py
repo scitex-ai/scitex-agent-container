@@ -42,6 +42,25 @@ class MultiplexerProtocol(Protocol):
     def send_text_and_submit(session_name: str, text: str) -> None: ...
 
     @staticmethod
+    def send_text_and_submit_verified(
+        session_name: str,
+        text: str,
+        **kwargs: object,
+    ) -> int:
+        """Send text + Enter with echo-verify retry. See
+        :meth:`TmuxManager.send_text_and_submit_verified`. Returns the
+        1-indexed attempt number that succeeded.
+
+        Added 2026-06-14 (TUI Ink-drop fix, lead a2a
+        ``910ff436642948eb85f8b3100204ed9b``) — every multiplexer the
+        TUI runtime drives must expose this. ScreenManager (not in
+        tree but referenced by get_multiplexer) is unused by the
+        active fleet today; once it lands, it inherits the same
+        contract.
+        """
+        ...
+
+    @staticmethod
     def attach(session_name: str) -> None: ...
 
 

@@ -18,6 +18,7 @@ from typing import Iterator
 
 import pytest
 
+from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
     session_name_for,
@@ -117,6 +118,26 @@ class _MemoryMultiplexer:
         if sess is None:
             return
         sess.pane.append(text)
+
+    @classmethod
+    def send_text_and_submit_verified(
+        cls,
+        session_name: str,
+        text: str,
+        **_: object,
+    ) -> int:
+        """In-memory analogue of the verified send: trivially "delivers"
+        on attempt 1, since the memory backend has no Ink renderer race
+        to simulate. The runtime's ``send_turn`` calls this primitive
+        (lead a2a ``910ff436642948eb85f8b3100204ed9b``); the memory mux
+        returns 1 to mirror the real TmuxManager's "delivered on first
+        attempt" contract.
+        """
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return 0
+        sess.pane.append(text)
+        return 1
 
     @classmethod
     def attach(cls, session_name: str) -> None:
@@ -424,14 +445,19 @@ def test_tui_runtime_logs_returns_empty_when_session_absent(
 def test_tui_runtime_send_turn_delivers_text_to_session_pane(
     mux: type[_MemoryMultiplexer],
 ) -> None:
-    # Arrange — start the session so the multiplexer has somewhere to deliver.
+    # Arrange — start the session so the multiplexer has somewhere
+    # to deliver. The in-memory multiplexer fake doesn't render an
+    # input-ready marker, so the wait_ready=False path exercises
+    # the delivery primitive in isolation; the registry-driven
+    # ``wait_until_input_ready`` path is covered separately below.
     runtime = TuiSessionRuntime(multiplexer=mux)
     config = _Config(name="omicron")
     runtime.start(config)
     # Act
-    runtime.send_turn(config, "hello-omicron")
-    # Assert — _MemoryMultiplexer.send_text_and_submit appends to the
-    # pane list, so a single send shows up as exactly one entry.
+    runtime.send_turn(config, "hello-omicron", wait_ready=False)
+    # Assert — _MemoryMultiplexer.send_text_and_submit_verified
+    # appends to the pane list, so a single send shows up as exactly
+    # one entry.
     assert mux._sessions["tui-omicron"].pane == ["hello-omicron"]
 
 
@@ -443,7 +469,7 @@ def test_tui_runtime_send_turn_returns_true_when_session_alive(
     config = _Config(name="pi")
     runtime.start(config)
     # Act
-    delivered = runtime.send_turn(config, "ping")
+    delivered = runtime.send_turn(config, "ping", wait_ready=False)
     # Assert
     assert delivered is True
 
@@ -455,7 +481,7 @@ def test_tui_runtime_send_turn_returns_false_when_no_session(
     runtime = TuiSessionRuntime(multiplexer=mux)
     config = _Config(name="rho")
     # Act
-    delivered = runtime.send_turn(config, "lost-turn")
+    delivered = runtime.send_turn(config, "lost-turn", wait_ready=False)
     # Assert
     assert delivered is False
 
@@ -467,8 +493,117 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
     runtime = TuiSessionRuntime(multiplexer=mux)
     config = _Config(name="sigma")
     # Act
-    runtime.send_turn(config, "lost-turn")
+    runtime.send_turn(config, "lost-turn", wait_ready=False)
     # Assert — the multiplexer's session registry stays empty, proving
     # the runtime guarded the send instead of letting it create a
     # phantom entry via the implicit dict-insert path.
     assert "tui-sigma" not in mux._sessions
+
+
+# ---------------------------------------------------------------------------
+# wait_until_input_ready — state-table dispatch via runtimes/prompts.py
+#
+# Lead a2a 286ce8f6 (2026-06-14): reuse the existing 12-handler
+# registry (theme picker / login picker / file-trust / dev-channels /
+# etc.) rather than ad-hoc inline detection. The new method polls
+# capture-pane and dispatches matched handlers via the registry.
+# ---------------------------------------------------------------------------
+
+
+
+
+class _PrimedMemoryMultiplexer(_MemoryMultiplexer):
+    """In-memory mux whose ``capture_content`` returns a scripted
+    sequence so the wait_until_input_ready tests can simulate the
+    pane evolving from "modal up" → "marker present" deterministically.
+    Real class, not a mock; mirrors the priority-0 STX-policy.
+    """
+
+    _scripted_frames: list[str]
+
+    @classmethod
+    def prime(cls, frames: list[str]) -> None:
+        cls._scripted_frames = list(frames)
+
+    @classmethod
+    def capture_content(cls, session_name: str) -> str:
+        if not cls._scripted_frames:
+            return "? for shortcuts"
+        frame = cls._scripted_frames[0]
+        if len(cls._scripted_frames) > 1:
+            cls._scripted_frames = cls._scripted_frames[1:]
+        return frame
+
+
+@pytest.fixture
+def primed_mux():
+    class _PerTestPrimedMux(_PrimedMemoryMultiplexer):
+        pass
+
+    _PerTestPrimedMux.reset()
+    _PerTestPrimedMux._scripted_frames = []
+    yield _PerTestPrimedMux
+
+
+def test_wait_until_input_ready_returns_true_when_marker_present(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — first frame already has the marker.
+    primed_mux.prime(["? for shortcuts"])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    config = _Config(name="ready-immediate")
+    runtime.start(config)
+    # Act
+    ready = runtime.wait_until_input_ready(
+        config, timeout_s=1.0, poll_s=0.0, sleep_fn=lambda _s: None
+    )
+    # Assert
+    assert ready is True
+
+
+def test_wait_until_input_ready_dismisses_theme_picker_then_returns(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — frame 0: theme picker active; frames 1+: ready marker.
+    theme_pane = "Choose the text style\n1. Auto (match terminal)\n"
+    primed_mux.prime([theme_pane, "? for shortcuts"])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    config = _Config(name="theme-dismiss")
+    runtime.start(config)
+    # Act
+    runtime.wait_until_input_ready(
+        config, timeout_s=2.0, poll_s=0.0, sleep_fn=lambda _s: None
+    )
+    # Assert — the registry's "theme-selection" handler keystrokes
+    # ["1", "Enter"] landed in the pane via the memory mux's
+    # send_keys hook. Sess.pane accumulates them in order.
+    delivered = primed_mux._sessions["tui-theme-dismiss"].pane
+    assert delivered == ["1", "Enter"]
+
+
+def test_wait_until_input_ready_raises_when_marker_never_appears(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — no marker, no modal: poll loop spins until timeout.
+    primed_mux.prime(["just some noise"])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    config = _Config(name="never-ready")
+    runtime.start(config)
+    # Act
+    do_wait = runtime.wait_until_input_ready
+    # Assert
+    with pytest.raises(TuiInputNotReadyError, match="input-ready marker"):
+        do_wait(config, timeout_s=0.01, poll_s=0.0, sleep_fn=lambda _s: None)
+
+
+def test_wait_until_input_ready_raises_when_session_missing(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — no start() call; session does not exist.
+    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    config = _Config(name="ghost")
+    # Act
+    do_wait = runtime.wait_until_input_ready
+    # Assert
+    with pytest.raises(TuiInputNotReadyError, match="does not exist"):
+        do_wait(config, timeout_s=0.01, poll_s=0.0, sleep_fn=lambda _s: None)
