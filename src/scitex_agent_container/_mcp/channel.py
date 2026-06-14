@@ -70,6 +70,14 @@ from ._channel_auto_ack import (  # noqa: E402,F401
     _post_auto_ack,
     _should_auto_ack,
 )
+from ._channel_post_deliver import run_post_deliver_receipts  # noqa: E402
+from ._channel_reaction_ack import (  # noqa: E402,F401
+    absorb_reaction_ack,
+    is_reaction_event,
+    post_reaction_ack,
+    reaction_ack_enabled,
+    should_emit_reaction_ack,
+)
 from ._channel_self_register import (  # noqa: E402
     refresh_node as _refresh_comms_node,
 )
@@ -240,9 +248,24 @@ async def _push_channel_event(
     The auto-ack is a best-effort side-effect: it runs only *after* delivery
     and its failure is logged loudly but never re-raised, so a flaky receipt
     can neither block delivery nor kill the long-lived SSE consumer.
+
+    **Reaction-ack ABSORPTION (sender-side)** — a ``kind="reaction"``
+    event is the receiver's structural 👀 receipt to one of OUR previous
+    sends. It is absorbed (dispatch ledger updated to ``STATUS_REACTED``)
+    and NOT injected into the running session — receipts are a wire
+    signal, not a user-visible message. See ``_channel_reaction_ack``.
     """
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
+
+    # Sender-side absorption: a structural reaction-ack updates the
+    # dispatch ledger and is then suppressed from session injection.
+    # The event is still buffered into ``_recent`` so a2a_inbox callers
+    # can audit that the receipt landed.
+    if is_reaction_event(event):
+        _recent.append(event)
+        absorb_reaction_ack(event)
+        return
 
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.
     _recent.append(event)
@@ -269,30 +292,16 @@ async def _push_channel_event(
         )
         await session.send_message(SessionMessage(msg))
 
-    # Stage-2 receipt: auto-ack AFTER successful delivery. Best-effort —
-    # never let an ack failure propagate past this point.
-    if (
-        agent_name is not None
-        and listen_url is not None
-        and _auto_ack_enabled()
-        and _should_auto_ack(event)
-        # _should_auto_ack guarantees a truthy ``from_agent`` above, so the
-        # short-circuit makes this index safe; the cap is the last gate.
-        and _auto_ack_rate_allow(event["from_agent"])
-    ):
-        try:
-            await _post_auto_ack(
-                event,
-                agent_name=agent_name,
-                listen_url=listen_url,
-                bearer=bearer,
-            )
-        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
-            log.warning(
-                "sac channel: auto-ack to %r failed: %s",
-                event.get("from_agent"),
-                exc,
-            )
+    # Post-delivery receipts: contentless auto-ack (legacy noise-filtered
+    # path) + structural reaction-ack (the comm-miss-detectable signal,
+    # lead a2a 1781e82a). Both are best-effort and share the per-sender
+    # rate cap; see ``_channel_post_deliver.run_post_deliver_receipts``.
+    await run_post_deliver_receipts(
+        event,
+        agent_name=agent_name,
+        listen_url=listen_url,
+        bearer=bearer,
+    )
 
 
 async def _serve(

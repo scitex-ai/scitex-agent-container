@@ -267,6 +267,17 @@ async def node_message_send(request: Request) -> Response:
             status_code=400,
         )
 
+    # ``extra`` rides under metadata so structured side-channels (e.g.
+    # the structural reaction-ack's ``reacted_dispatch_id``) survive the
+    # publish path intact. A non-dict ``extra`` is dropped silently —
+    # this is a permissive forwarder, not a schema validator, and the
+    # consumers (reaction-ack updater, custom handlers) defensively
+    # check shape before reading. Empty dicts are also dropped to keep
+    # the persisted event row compact.
+    extra_meta = sac_meta.get("extra")
+    if not isinstance(extra_meta, dict) or not extra_meta:
+        extra_meta = None
+
     event = mint_event(
         name,
         content=text,
@@ -278,6 +289,7 @@ async def node_message_send(request: Request) -> Response:
         ack=bool(sac_meta.get("ack", False)),
         dispatch_id=sac_meta.get("dispatch_id"),
         kind=kind_meta,
+        extra=extra_meta,
     )
 
     # Implicit registration — handoff §4 "A2A compliance without a

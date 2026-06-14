@@ -53,9 +53,23 @@ _TEXT_SUMMARY_LIMIT = 500
 # fails loudly instead of silently writing an unqueryable status.
 STATUS_SENT = "sent"
 STATUS_DELIVERED = "delivered"
+# STATUS_REACTED — the receiver's channel adapter posted a structural
+# reaction ack back to the sender (👀 marker). Distinct from
+# ``delivered`` (which is the listen-server publish HTTP 200 — does NOT
+# prove the recipient's adapter actually picked up the event). REACTED
+# is the operator's "comm-miss detectable" signal: absence of a reacted
+# row within the SLO = the recipient never injected the message.
+# See ``feat/comm-reaction-ack`` PR and lead a2a 1781e82a (2026-06-14).
+STATUS_REACTED = "reacted"
 STATUS_TIMEOUT = "timeout"
 STATUS_FAILED = "failed"
-VALID_STATUSES = (STATUS_SENT, STATUS_DELIVERED, STATUS_TIMEOUT, STATUS_FAILED)
+VALID_STATUSES = (
+    STATUS_SENT,
+    STATUS_DELIVERED,
+    STATUS_REACTED,
+    STATUS_TIMEOUT,
+    STATUS_FAILED,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS dispatches (
@@ -191,6 +205,84 @@ def update_dispatch_status(
         return cur.rowcount > 0
 
 
+def mark_dispatch_reacted(
+    dispatch_id: str,
+    *,
+    db_path: Path | None = None,
+) -> bool:
+    """Mark a dispatch as REACTED (receiver injected, structural ack received).
+
+    Thin convenience wrapper over :func:`update_dispatch_status` that
+    pins the status to :data:`STATUS_REACTED`. Used by the sender-side
+    channel adapter when it receives a ``kind="reaction"`` envelope
+    whose ``extra.reacted_dispatch_id`` matches an outbound row.
+
+    Idempotent at the SQL layer (a second call simply re-writes the
+    same status). Returns ``True`` iff a row matched — a ``False``
+    result is the audit signal that the reaction landed for a
+    dispatch this sender never minted (out-of-order replay, wrong
+    sender, or stale ledger).
+    """
+    return update_dispatch_status(dispatch_id, STATUS_REACTED, db_path=db_path)
+
+
+def list_unreacted_dispatches(
+    *,
+    older_than_s: float,
+    from_agent: str | None = None,
+    to_agent: str | None = None,
+    db_path: Path | None = None,
+) -> list[dict]:
+    """Return dispatches the receiver has not REACTED to within the SLO.
+
+    "Comm-miss detection" surface (lead a2a 1781e82a, 2026-06-14):
+    structural reaction-ack means the SENDER can poll this helper and
+    see exactly which outbound messages never produced a 👀 from the
+    recipient's channel adapter. Absence of a reaction past
+    ``older_than_s`` seconds = the recipient never injected the
+    message (their adapter is down, disconnected, or wedged).
+
+    Filters:
+
+    * ``older_than_s`` (REQUIRED) — only rows with ``ts <= now -
+      older_than_s`` are returned. A freshly-minted dispatch that has
+      simply not had time to be REACTED yet is NOT a miss; the SLO is
+      the operator's choice (e.g. 30s for interactive, 5min for
+      batch).
+    * ``from_agent`` / ``to_agent`` — narrow to one sender / receiver
+      pair when the caller cares about a specific peer.
+
+    The query excludes terminal-failure rows (``failed``, ``timeout``)
+    — those are *already* known not to have landed and would just be
+    noise in a comm-miss dashboard. ``reacted`` rows are also
+    excluded (they're the success case). Result: ``sent`` and
+    ``delivered`` rows older than the SLO with no reaction.
+    """
+    cutoff = time.time() - float(older_than_s)
+    clauses: list[str] = [
+        "status IN (?, ?)",
+        "ts <= ?",
+    ]
+    params: list[object] = [STATUS_SENT, STATUS_DELIVERED, cutoff]
+    if from_agent is not None:
+        clauses.append("from_agent = ?")
+        params.append(from_agent)
+    if to_agent is not None:
+        clauses.append("to_agent = ?")
+        params.append(to_agent)
+    where = " WHERE " + " AND ".join(clauses)
+
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        _ensure_table(conn)
+        rows = conn.execute(
+            f"SELECT * FROM dispatches{where} ORDER BY ts DESC",
+            tuple(params),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def list_dispatches(
     *,
     from_agent: str | None = None,
@@ -246,11 +338,14 @@ def list_dispatches(
 __all__ = [
     "STATUS_DELIVERED",
     "STATUS_FAILED",
+    "STATUS_REACTED",
     "STATUS_SENT",
     "STATUS_TIMEOUT",
     "VALID_STATUSES",
     "init_ledger_schema",
     "list_dispatches",
+    "list_unreacted_dispatches",
+    "mark_dispatch_reacted",
     "new_dispatch_id",
     "record_dispatch",
     "update_dispatch_status",

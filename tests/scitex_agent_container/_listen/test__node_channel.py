@@ -190,3 +190,70 @@ def test_non_string_kind_400_names_metadata_field(kind_env) -> None:
     err = resp.json().get("error", "")
     # Assert
     assert "metadata.kind" in err
+
+
+# ---------------------------------------------------------------------------
+# ``extra`` forwarding (feat/comm-reaction-ack, 2026-06-14).
+#
+# Structural reaction-ack rides ``params.metadata.extra.reacted_dispatch_id``
+# through the receive route. The receiver must persist the extra block on
+# the channel_events row so the sender's adapter can absorb the
+# dispatch_id and mark the ledger row REACTED. Without this forwarding the
+# whole reaction-ack contract collapses to "we sent 👀 to a void".
+# ---------------------------------------------------------------------------
+
+
+def test_extra_dict_round_trips_onto_event(kind_env) -> None:
+    # Arrange
+    app = create_app(token=TOKEN, local_host="127.0.0.1")
+    headers = {"authorization": f"Bearer {TOKEN}"}
+    body = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "message/send",
+        "params": {
+            "message": {
+                "message_id": "m1",
+                "role": "ROLE_USER",
+                "parts": [{"text": "ping"}],
+            },
+            "metadata": {
+                "from_agent": "alice",
+                "kind": "reaction",
+                "extra": {"reacted_dispatch_id": "did-abc"},
+            },
+        },
+    }
+    # Act
+    with TestClient(app) as client:
+        client.post("/agents/lead/message:send", json=body, headers=headers)
+    rows = list_undelivered(target="lead")
+    extra = rows[0]["event"].get("extra") or {}
+    # Assert
+    assert extra.get("reacted_dispatch_id") == "did-abc"
+
+
+def test_empty_extra_does_not_land_on_event(kind_env) -> None:
+    # Arrange — an empty ``extra`` dict is morally absent; the receiver
+    # MUST keep the persisted envelope compact (no empty placeholder key).
+    app = create_app(token=TOKEN, local_host="127.0.0.1")
+    headers = {"authorization": f"Bearer {TOKEN}"}
+    body = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "message/send",
+        "params": {
+            "message": {
+                "message_id": "m1",
+                "role": "ROLE_USER",
+                "parts": [{"text": "ping"}],
+            },
+            "metadata": {"from_agent": "alice", "extra": {}},
+        },
+    }
+    # Act
+    with TestClient(app) as client:
+        client.post("/agents/lead/message:send", json=body, headers=headers)
+    rows = list_undelivered(target="lead")
+    # Assert
+    assert "extra" not in rows[0]["event"]
