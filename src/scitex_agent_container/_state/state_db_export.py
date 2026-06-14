@@ -82,6 +82,10 @@ def _table_filter_clauses(
         # acl_deny_notify_log — rate-limit ledger keyed on (sender, target);
         # the ts-equivalent column is ``last_notified_at`` (REAL).
         "acl_deny_notify_log": ("WHERE last_notified_at >= ?", (since,)),
+        # structural_alerts (feat/mutual-heartbeat-watch, 2026-06-14) —
+        # advance on ``last_seen_at`` so a still-firing dedup'd alert
+        # ships on every subsequent pull (the ts column is REAL).
+        "structural_alerts": ("WHERE last_seen_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 

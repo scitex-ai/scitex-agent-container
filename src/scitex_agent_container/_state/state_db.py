@@ -343,6 +343,7 @@ KNOWN_TABLES = (
     "comms_nodes",
     "node_comms_policy",
     "acl_deny_notify_log",
+    "structural_alerts",
 )
 
 
@@ -425,6 +426,13 @@ def init_schema(db_path: Path | None = None) -> Path:
         # last-notify timestamp; the check + update lives in
         # :func:`state_db_acl_deny_notify.should_notify_acl_deny`.
         conn.executescript(_adn._SCHEMA)
+        # Mutual heartbeat watch (feat/mutual-heartbeat-watch, 2026-06-14):
+        # structural_alerts table — typed evidence that observer watched
+        # peer and the peer failed a freshness check. Additive; see the
+        # state_db_alerts module docstring for the alert shape.
+        from . import state_db_alerts as _alerts
+
+        _alerts.ensure_schema(conn)
         conn.commit()
     return path
 
