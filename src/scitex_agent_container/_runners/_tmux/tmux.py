@@ -114,11 +114,20 @@ class TmuxManager:
                 activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
+        # Env snapshot file (lead a2a 4303f855, 2026-06-14): the
+        # /proc/<pid>/environ + ps-walk verify in TuiSessionRuntime
+        # could mis-attribute to another claude under another tmux
+        # session. Writing the env to a known per-session file
+        # IMMEDIATELY before ``exec command`` gives SAC a structural
+        # source-of-truth for verification independent of any PID
+        # hunting.
+        env_snapshot_path = f"/tmp/sac-tui-env-{session_name}.txt"
         shell_script = (
             f"cd '{workdir}' || exit 1\n"
             f"{venv_activate}"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
+            f"env > '{env_snapshot_path}' 2>/dev/null || true\n"
             f"exec {command}\n"
         )
 

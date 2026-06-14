@@ -143,60 +143,57 @@ def _verify_tui_process_env(
     expected_claude_config_dir: str,
     settle_s: float = 1.5,
 ) -> None:
-    """Assert the inner ``claude`` process has the staged HOME +
-    CLAUDE_CONFIG_DIR set in its environ.
+    """Assert the staged HOME + CLAUDE_CONFIG_DIR reached the inner
+    shell that ``exec``'d ``claude`` by reading a SESSION-SCOPED env
+    snapshot file written by the launch script.
 
-    Lead a2a ``7a453a2a7ce0464ba67fd4b0c1d525fb`` (2026-06-14): when
-    the staged env did not stick on the inner ``claude`` process,
-    the operator saw the agent silently sit at the OAuth login URL
-    screen for hours — the only signal was a manual `tmux capture-
-    pane`. This helper closes that gap by reading
-    ``/proc/<claude-pid>/environ`` post-launch and FAILING LOUD via
-    :class:`TuiAuthStageError` when the values are missing /
-    mismatched. The SAC start path then surfaces a structural error
-    instead of stranding the operator at OAuth.
+    Lead a2a ``4303f855a2184614954077e0ff466ad8`` (2026-06-14): the
+    previous ``/proc/<pid>/environ`` + ``ps`` walk version was not
+    session-scoped — it returned the FIRST claude-under-any-tmux on
+    the host, which on the operator's machine matched HIS own
+    interactive claude (HOME=/home/ywatanabe). The verify raised
+    spuriously while the actual TUI agent's env was fine.
 
-    Best-effort: when ``ps`` / ``/proc`` cannot resolve the claude
-    PID (BSD host, container with PID-namespace isolation), we log
-    a one-line warning and return — the structural-alerts table
-    catches the boot-drain timeout that follows. We never silently
-    pass a wrong env.
+    New design (decoupled from PID hunting): TmuxManager.start writes
+    ``env > /tmp/sac-tui-env-<session_name>.txt`` IMMEDIATELY before
+    ``exec claude`` so the file captures the exact env passed to the
+    final ``exec``. We read that file and assert HOME +
+    CLAUDE_CONFIG_DIR. Cannot mis-attribute — the file name embeds
+    the session.
+
+    Best-effort: when the file is absent (very slow tmux startup,
+    container with no /tmp write, or the operator pulled this PR but
+    didn't restart sac with the new code), log a one-line warning
+    and return. Structural-alerts boot-drain timeout catches the
+    downstream symptom.
     """
     import logging
-    import subprocess
     import time as _time
 
-    if settle_s > 0:
-        _time.sleep(settle_s)
+    snapshot_path = Path(f"/tmp/sac-tui-env-{session_name}.txt")
+    deadline = _time.monotonic() + max(settle_s, 0.5)
+    while _time.monotonic() < deadline:
+        if snapshot_path.is_file() and snapshot_path.stat().st_size > 0:
+            break
+        _time.sleep(0.1)
 
-    pid = _find_claude_pid_under_session(session_name)
-    if pid is None:
+    if not snapshot_path.is_file() or snapshot_path.stat().st_size == 0:
         logging.getLogger(__name__).warning(
-            "TuiSessionRuntime: could not locate claude PID under "
-            "tmux session %s; skipping environ verification.",
-            session_name,
-        )
-        return
-
-    try:
-        environ_raw = Path(f"/proc/{pid}/environ").read_bytes()
-    except (FileNotFoundError, PermissionError) as exc:
-        logging.getLogger(__name__).warning(
-            "TuiSessionRuntime: cannot read /proc/%s/environ for "
-            "TUI env verification (%s); skipping.",
-            pid,
-            exc,
+            "TuiSessionRuntime: env-snapshot %s missing/empty; "
+            "skipping env verification (boot-drain timeout will "
+            "catch downstream symptoms).",
+            snapshot_path,
         )
         return
 
     env: dict[str, str] = {}
-    for entry in environ_raw.split(b"\0"):
-        if not entry or b"=" not in entry:
+    for line in snapshot_path.read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines():
+        if "=" not in line:
             continue
-        key_b, value_b = entry.split(b"=", 1)
-        env[key_b.decode("utf-8", errors="replace")] = value_b.decode(
-            "utf-8", errors="replace"
-        )
+        key, value = line.split("=", 1)
+        env[key] = value
 
     observed_home = env.get("HOME", "")
     observed_config_dir = env.get("CLAUDE_CONFIG_DIR", "")
@@ -204,69 +201,25 @@ def _verify_tui_process_env(
         observed_home != expected_home
         or observed_config_dir != expected_claude_config_dir
     ):
-        # Late import to dodge a circular dep (the auth-stage module
-        # already imports name_for / state_dir helpers from this one
-        # via ``stage_tui_auth``'s caller).
         from ._tui_auth_stage import TuiAuthStageError
 
         raise TuiAuthStageError(
-            "TUI auth: inner claude process is NOT using the staged "
-            "HOME. Operator-symptom: TUI parks at the OAuth login URL "
-            "screen because claude reads the host ~/.claude/ instead "
-            "of the staged <state>/home/.claude/. Diagnostic: "
+            "TUI auth: env snapshot at exec-claude time does NOT "
+            "match the staged values. Operator-symptom: TUI parks "
+            "at the OAuth login URL screen because claude reads the "
+            "host ~/.claude/ instead of the staged <state>/home/.claude/. "
+            "Diagnostic: "
             f"observed HOME={observed_home!r} / "
             f"CLAUDE_CONFIG_DIR={observed_config_dir!r}; expected "
             f"HOME={expected_home!r} / "
             f"CLAUDE_CONFIG_DIR={expected_claude_config_dir!r}. "
-            f"Pid={pid}, session={session_name!r}. Common root: "
-            "the launcher shell sourced login init files that "
-            "overwrote HOME (mitigation: TmuxManager now passes the "
-            "env via `tmux new-session -e` and drops the bash `-l` "
-            "flag — this error indicates the mitigation regressed)."
+            f"Snapshot file: {snapshot_path}, session={session_name!r}. "
+            "Common roots: stale sac install (operator did `git pull` "
+            "but the installed sac is from PyPI — run `pip install "
+            "-e ~/proj/scitex-agent-container` to use develop) OR a "
+            "shell init file resetting HOME after the exports OR the "
+            "tmux version doesn't support `-e KEY=VAL` (needs >=3.2)."
         )
-    _ = subprocess  # keep import resolved for type-checkers / linters
-
-
-def _find_claude_pid_under_session(session_name: str) -> int | None:
-    """Walk ``ps -eo pid,ppid,comm`` for a ``claude`` process whose
-    parent chain rises through the tmux server. Returns ``None`` when
-    the host's ``ps`` lacks the columns we expect (BSD-style) or no
-    matching process is running yet.
-    """
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["ps", "-eo", "pid,ppid,comm"], capture_output=True, text=True
-        )
-    except (FileNotFoundError, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-    parent: dict[int, tuple[int, str]] = {}
-    for line in result.stdout.splitlines()[1:]:
-        parts = line.split(None, 2)
-        if len(parts) < 3:
-            continue
-        try:
-            pid = int(parts[0])
-            ppid = int(parts[1])
-        except ValueError:
-            continue
-        parent[pid] = (ppid, parts[2])
-    for pid, (_ppid, comm) in parent.items():
-        if comm != "claude" and not comm.startswith("claude"):
-            continue
-        cursor = pid
-        for _ in range(10):
-            ppid, _ = parent.get(cursor, (0, ""))
-            ancestor = parent.get(ppid)
-            if ancestor is None:
-                break
-            if "tmux" in ancestor[1] or "tmux" in str(parent.get(ppid, ("", ""))[1]):
-                return pid
-            cursor = ppid
-    return None
 
 
 class TuiSessionRuntime(RuntimeBase):
