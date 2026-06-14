@@ -527,19 +527,18 @@ class TuiSessionRuntime(RuntimeBase):
             # an input-ready marker (the modal drain has no work
             # to do anyway). Real-binary callers always wait.
             self.wait_until_input_ready(config)
-        # Structural fix for the Ink-drop race (lead a2a
-        # ``910ff436642948eb85f8b3100204ed9b`` / ``b591f42c4c4944d18``,
-        # 2026-06-14). ``send_text_and_submit_verified`` polls
-        # capture-pane for the echo of ``text`` before committing
-        # Enter and re-sends on silent drops — defeats the React/Ink
-        # renderer race where keystrokes arriving mid-frame are
-        # eaten without trace. The plain ``send_text_and_submit``
-        # path is retained on TmuxManager / MultiplexerProtocol for
-        # the salvaged ``claude_code._run_startup_commands`` (which
-        # talks to its own UI state machine), but the runtime's
-        # turn delivery uses the verified primitive so each agent
-        # turn either lands or fails loud (TuiKeystrokeDropError).
-        self._mux.send_text_and_submit_verified(name, text)
+        # Bare send (lead a2a c6707941, 2026-06-14): operator's
+        # diagnostic on the live host proved `tmux send-keys <text>`
+        # + `tmux send-keys Enter` reaches the claude TUI input
+        # field and submits cleanly every time. The verified
+        # variant's echo-detection (substring match on Ink-rendered
+        # capture-pane glyphs) was raising TuiKeystrokeDropError
+        # despite the keystrokes landing — net effect was a 60s
+        # `sac agents send` timeout despite a working pipeline.
+        # Switch the default back to the bare primitive (the same
+        # one claude_code._run_startup_commands uses against
+        # startup_prompts).
+        self._mux.send_text_and_submit(name, text)
         return True
 
     def wait_until_input_ready(
