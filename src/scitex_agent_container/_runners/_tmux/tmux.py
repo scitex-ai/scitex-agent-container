@@ -19,6 +19,42 @@ from typing import Callable
 _DEFAULT_INTER_KEY_DELAY_S = float(os.environ.get("SAC_KEY_DELAY_S", "0.1"))
 _DEFAULT_SUBMIT_SETTLE_S = float(os.environ.get("SAC_SUBMIT_SETTLE_S", "0.3"))
 
+# Structural fix for the Ink-drop race (lead a2a
+# ``910ff436642948eb85f8b3100204ed9b``, 2026-06-14): the interactive
+# claude TUI occasionally drops a keystroke that arrives mid-render
+# (the React/Ink renderer eats the input event before binding the
+# next listener). The cure is observation-based — wait for the
+# input-ready marker before sending, then verify the sent text
+# echoed back in the pane before committing Enter, then retry the
+# whole text send if the echo never appeared.
+#
+# Default marker: the claude TUI prints ``? for shortcuts`` in its
+# footer when the input field is bound and accepting keystrokes.
+# Overridable per call so non-claude callers can pass a different
+# signal.
+_DEFAULT_INPUT_READY_MARKER = "? for shortcuts"
+
+
+class TuiInputNotReadyError(RuntimeError):
+    """Raised when the TUI input-ready marker never appeared.
+
+    The wait_for_input_ready primitive raises this instead of timing
+    out silently so the caller reports "TUI never mounted its input
+    field" rather than a generic timeout — the operator can then tell
+    at a glance whether auth failed (login picker stuck) vs. render
+    hung (Ink wedged).
+    """
+
+
+class TuiKeystrokeDropError(RuntimeError):
+    """Raised when send_text_and_submit_verified exhausted its retries
+    without observing the sent text echo in the pane.
+
+    The Ink renderer dropped every send. Fail loud rather than silently
+    submitting an empty Enter (which the TUI would treat as "no input"
+    and the operator would see as "agent ignored the prompt").
+    """
+
 
 class TmuxManager:
     """Helpers for tmux session lifecycle."""
@@ -277,6 +313,141 @@ class TmuxManager:
             ["tmux", "send-keys", "-t", session_name, "Enter"],
             check=False,
             capture_output=True,
+        )
+
+    @staticmethod
+    def wait_for_input_ready(
+        session_name: str,
+        *,
+        marker: str = _DEFAULT_INPUT_READY_MARKER,
+        timeout_s: float = 30.0,
+        poll_s: float = 0.25,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        capture_fn: Callable[[str], str] | None = None,
+    ) -> bool:
+        """Block until ``marker`` appears in the session pane content.
+
+        Structural fix for the Ink-drop race (lead a2a
+        ``910ff436642948eb85f8b3100204ed9b``): the bundled claude TUI
+        takes a beat to mount its input field after the welcome banner
+        renders, and any keystroke sent during that mount window is
+        silently eaten. Callers gate ``send_text_and_submit_verified``
+        on this primitive so the FIRST send always lands on a bound
+        input.
+
+        ``marker`` defaults to ``? for shortcuts`` — claude's footer
+        text once input is bound. Non-claude callers (bash stand-ins,
+        screen runners) pass their own signal.
+
+        ``capture_fn`` injects the pane-capture step so unit tests can
+        feed a deterministic transcript without invoking real tmux.
+        Defaults to :meth:`capture_content`.
+
+        Raises :class:`TuiInputNotReadyError` on timeout — never
+        returns False (a False return would let a caller silently
+        continue and submit into a not-yet-bound input). Returns True
+        when the marker is observed.
+        """
+        capture = capture_fn or TmuxManager.capture_content
+        deadline = time.monotonic() + timeout_s
+        last = ""
+        while time.monotonic() < deadline:
+            last = capture(session_name)
+            if marker in last:
+                return True
+            if poll_s > 0:
+                sleep_fn(poll_s)
+        raise TuiInputNotReadyError(
+            f"TUI input-ready marker {marker!r} not seen in pane "
+            f"{session_name!r} within {timeout_s:.1f}s. Last pane "
+            f"content:\n{last}"
+        )
+
+    @staticmethod
+    def send_text_and_submit_verified(
+        session_name: str,
+        text: str,
+        *,
+        max_resends: int = 3,
+        echo_wait_s: float = 2.0,
+        poll_s: float = 0.25,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        capture_fn: Callable[[str], str] | None = None,
+        send_text_fn: Callable[[str, str], None] | None = None,
+        send_enter_fn: Callable[[str], None] | None = None,
+        echo_excerpt_len: int = 20,
+    ) -> int:
+        """Send ``text`` then Enter, retrying if the TUI dropped the keys.
+
+        Algorithm — purely observation-driven, no sleep-hacks:
+
+          1. send-keys the text.
+          2. poll capture-pane until the first ``echo_excerpt_len`` chars
+             of ``text`` echo back in the pane (proves the TUI accepted
+             and rendered the keystrokes). Time-bounded by ``echo_wait_s``.
+          3. on success → send Enter as a separate keystroke, return.
+          4. on echo-not-seen → re-send the text, retry up to
+             ``max_resends`` times. Each retry restarts the echo poll
+             from scratch.
+          5. on all retries dropped → raise :class:`TuiKeystrokeDropError`.
+
+        The Enter is sent as its own keystroke (not as part of the text)
+        because tmux's ``send-keys text\\r`` is interpreted as raw input
+        — claude's TUI occasionally swallows the trailing CR if it
+        re-renders mid-keystroke. A separate Enter call hits the input
+        field after the text has visibly settled.
+
+        Returns the 1-indexed attempt number that succeeded — surfaces
+        to the operator as "delivered on retry N" telemetry without
+        coupling the caller to a counter.
+
+        All injection seams (``capture_fn``, ``send_text_fn``,
+        ``send_enter_fn``, ``sleep_fn``) match the existing module
+        pattern (see :meth:`send_keys`); tests use them to skip
+        subprocess calls.
+        """
+        capture = capture_fn or TmuxManager.capture_content
+        send_text = send_text_fn or (
+            lambda session, payload: subprocess.run(
+                ["tmux", "send-keys", "-t", session, payload],
+                check=False,
+                capture_output=True,
+            )
+        )
+        send_enter = send_enter_fn or (
+            lambda session: subprocess.run(
+                ["tmux", "send-keys", "-t", session, "Enter"],
+                check=False,
+                capture_output=True,
+            )
+        )
+
+        excerpt = text[:echo_excerpt_len]
+        last_pane = ""
+        for attempt in range(1, max_resends + 2):
+            send_text(session_name, text)
+            # Do-while: always capture at least once immediately after
+            # the send, then poll until the echo deadline. This makes
+            # ``echo_wait_s=0.0`` mean "one capture per attempt" rather
+            # than "no captures at all" (which would silently bypass
+            # the verification).
+            last_pane = capture(session_name)
+            if excerpt and excerpt in last_pane:
+                send_enter(session_name)
+                return attempt
+            echo_deadline = time.monotonic() + echo_wait_s
+            while time.monotonic() < echo_deadline:
+                if poll_s > 0:
+                    sleep_fn(poll_s)
+                last_pane = capture(session_name)
+                if excerpt and excerpt in last_pane:
+                    send_enter(session_name)
+                    return attempt
+            # Echo never appeared within echo_wait_s; loop and resend.
+        raise TuiKeystrokeDropError(
+            f"TUI dropped {max_resends + 1} send attempts of {text!r} "
+            f"into pane {session_name!r}. Echo excerpt {excerpt!r} never "
+            f"appeared. Last pane content:\n{last_pane}"
         )
 
     @staticmethod

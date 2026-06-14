@@ -119,6 +119,26 @@ class _MemoryMultiplexer:
         sess.pane.append(text)
 
     @classmethod
+    def send_text_and_submit_verified(
+        cls,
+        session_name: str,
+        text: str,
+        **_: object,
+    ) -> int:
+        """In-memory analogue of the verified send: trivially "delivers"
+        on attempt 1, since the memory backend has no Ink renderer race
+        to simulate. The runtime's ``send_turn`` calls this primitive
+        (lead a2a ``910ff436642948eb85f8b3100204ed9b``); the memory mux
+        returns 1 to mirror the real TmuxManager's "delivered on first
+        attempt" contract.
+        """
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return 0
+        sess.pane.append(text)
+        return 1
+
+    @classmethod
     def attach(cls, session_name: str) -> None:
         return None
 

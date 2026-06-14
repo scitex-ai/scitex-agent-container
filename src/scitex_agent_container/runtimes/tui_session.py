@@ -306,7 +306,19 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
-        self._mux.send_text_and_submit(name, text)
+        # Structural fix for the Ink-drop race (lead a2a
+        # ``910ff436642948eb85f8b3100204ed9b`` / ``b591f42c4c4944d18``,
+        # 2026-06-14). ``send_text_and_submit_verified`` polls
+        # capture-pane for the echo of ``text`` before committing
+        # Enter and re-sends on silent drops — defeats the React/Ink
+        # renderer race where keystrokes arriving mid-frame are
+        # eaten without trace. The plain ``send_text_and_submit``
+        # path is retained on TmuxManager / MultiplexerProtocol for
+        # the salvaged ``claude_code._run_startup_commands`` (which
+        # talks to its own UI state machine), but the runtime's
+        # turn delivery uses the verified primitive so each agent
+        # turn either lands or fails loud (TuiKeystrokeDropError).
+        self._mux.send_text_and_submit_verified(name, text)
         return True
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
