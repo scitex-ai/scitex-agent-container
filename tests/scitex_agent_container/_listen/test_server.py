@@ -219,12 +219,17 @@ class TestBearerAuthMiddleware:
 
 class TestListAgents:
     def test_empty_registry_returns_empty_list(self, client, auth_headers):
-        # Arrange
+        # Arrange — the self-peer + comms-node auto-registration feature
+        # (origin/feat/self-peer-self-register, merged 2026-06-13) means
+        # /agents always surfaces the self-peer row even when no MANAGED
+        # agents have been registered. Filter comms-node rows to recover
+        # the original "empty managed registry" assertion.
         url = "/agents"
         # Act
         body = client.get(url, headers=auth_headers).json()
+        managed = [a for a in body["agents"] if a.get("kind") != "comms-node"]
         # Assert
-        assert body == {"agents": []}
+        assert managed == []
 
     def test_registered_agent_appears_in_list(self, client, auth_headers, isolated_env):
         # Arrange
