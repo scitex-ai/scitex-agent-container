@@ -34,7 +34,6 @@ import pytest_asyncio
 
 pytest.importorskip("mcp.types")
 
-from scitex_agent_container._mcp import channel as channel_mod  # noqa: E402
 from scitex_agent_container._mcp.channel import _recent  # noqa: E402
 
 # Reuse the test_channel FakeListen (real SSE + JSON over asyncio TCP).
