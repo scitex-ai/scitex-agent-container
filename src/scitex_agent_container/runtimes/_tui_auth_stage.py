@@ -255,6 +255,118 @@ def _resolve_settings_json_src() -> Path | None:
     return host_settings if host_settings.is_file() else None
 
 
+def _assert_credentials_usable(dst: Path, *, source: Path) -> None:
+    """Post-copy sanity check on the staged credentials file.
+
+    Lead a2a ``3b85d17b3a2f492fac55fad7f94aa73e`` (2026-06-14): the
+    three live host-side TUI agents stalled at the OAuth login URL
+    screen because a silently-broken or expired credentials file
+    was staged — the TUI rejected it and fell to interactive OAuth.
+    Now we sanity-check the destination after copy and FAIL LOUD
+    with a remedy. No silent broken stage.
+
+    Asserts:
+      - file is non-empty and parses as JSON.
+      - ``claudeAiOauth.accessToken`` is a non-empty string.
+      - ``claudeAiOauth.expiresAt`` is a numeric ms-since-epoch in
+        the future (TUI rejects expired tokens).
+    """
+    import time
+
+    if not dst.is_file() or dst.stat().st_size == 0:
+        raise TuiAuthStageError(
+            f"TUI auth: staged credentials at {dst} is missing or empty "
+            f"(source was {source}). Re-stage by running "
+            "`sac accounts save <acct>` on the credential-holding host "
+            "or `sac accounts sync-live`."
+        )
+    try:
+        payload = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TuiAuthStageError(
+            f"TUI auth: staged credentials at {dst} did not parse as "
+            f"JSON ({exc}). Source was {source}. First 200 bytes:\n"
+            f"{dst.read_bytes()[:200]!r}"
+        ) from exc
+    oauth = payload.get("claudeAiOauth") if isinstance(payload, dict) else None
+    if not isinstance(oauth, dict):
+        raise TuiAuthStageError(
+            f"TUI auth: staged credentials at {dst} has no "
+            f"`claudeAiOauth` block (source was {source}). The TUI "
+            "needs the full OAuth payload — re-stage via "
+            "`claude /login` to the target account then "
+            "`sac accounts sync-live`."
+        )
+    access = oauth.get("accessToken")
+    if not isinstance(access, str) or not access:
+        raise TuiAuthStageError(
+            f"TUI auth: staged credentials at {dst} has empty "
+            f"`claudeAiOauth.accessToken` (source was {source}). "
+            "Re-stage the credential via `claude /login`."
+        )
+    expires_at = oauth.get("expiresAt")
+    now_ms = time.time() * 1000.0
+    if not isinstance(expires_at, (int, float)) or expires_at <= now_ms:
+        raise TuiAuthStageError(
+            f"TUI auth: staged credentials at {dst} are expired "
+            f"(expiresAt={expires_at!r}, now_ms={int(now_ms)}). "
+            f"Source was {source}. Refresh via `sac accounts "
+            "sync-live` (operator) or `claude /login` then re-stage."
+        )
+
+
+def _assert_claude_json_oauth_ready(dst: Path, *, source: Path) -> None:
+    """Post-copy sanity check on the staged onboarding state.
+
+    The bundled TUI shows the OAuth login screen even when the
+    credentials file is valid IF ``hasCompletedOnboarding`` is not
+    ``True`` OR ``oauthAccount`` is null/absent. Operator host
+    .claude.json sometimes lacks these fields (SDK-only flow never
+    wrote them). FAIL LOUD with the missing-field name so the
+    operator's remedy is unambiguous.
+    """
+    if not dst.is_file() or dst.stat().st_size == 0:
+        raise TuiAuthStageError(
+            f"TUI auth: staged .claude.json at {dst} is missing or "
+            f"empty (source was {source})."
+        )
+    try:
+        payload = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TuiAuthStageError(
+            f"TUI auth: staged .claude.json at {dst} did not parse "
+            f"as JSON ({exc}). Source was {source}."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise TuiAuthStageError(
+            f"TUI auth: staged .claude.json at {dst} is not a JSON "
+            f"object (got {type(payload).__name__}). Source was {source}."
+        )
+    if payload.get("hasCompletedOnboarding") is not True:
+        raise TuiAuthStageError(
+            f"TUI auth: staged .claude.json at {dst} has "
+            f"hasCompletedOnboarding={payload.get('hasCompletedOnboarding')!r}; "
+            "the TUI will show the OAuth/login flow regardless of "
+            "credentials. Source was {source}. Stage a .claude.json "
+            "that has `hasCompletedOnboarding: true` AND a non-null "
+            "`oauthAccount` block (typically materialised by `claude "
+            "/login` on the host that holds the OAuth account)."
+        )
+    oauth_account = payload.get("oauthAccount")
+    if not isinstance(oauth_account, dict) or not oauth_account:
+        raise TuiAuthStageError(
+            f"TUI auth: staged .claude.json at {dst} has empty/missing "
+            f"`oauthAccount` (got {oauth_account!r}); the TUI will "
+            f"show the OAuth login URL. Source was {source}. The "
+            "field must include `accountUuid` + `emailAddress` + "
+            "`organizationUuid` + `organizationType` — typically "
+            "materialised by `claude /login` on the host. Set "
+            f"{CLAUDE_JSON_SRC_ENV} to a .claude.json that has those "
+            "fields, or run `claude /login` to the target account "
+            "and re-stage."
+        )
+
+
 def _follow_and_copy(src: Path, dst: Path) -> None:
     """``cp -Lf`` semantics: follow source symlinks, overwrite dst.
 
@@ -333,9 +445,11 @@ def stage_tui_auth(
     creds_dst = claude_dir / ".credentials.json"
     _follow_and_copy(creds_src, creds_dst)
     creds_dst.chmod(0o600)
+    _assert_credentials_usable(creds_dst, source=creds_src)
 
     claude_json_dst = home_dir / ".claude.json"
     _follow_and_copy(claude_json_src, claude_json_dst)
+    _assert_claude_json_oauth_ready(claude_json_dst, source=claude_json_src)
 
     settings_json_dst = claude_dir / "settings.json"
     if not settings_json_dst.exists():

@@ -136,6 +136,139 @@ def state_dir_for_config(config: AgentConfig) -> Path:
     return _runner.state_dir_for(config.name, root=root)
 
 
+def _verify_tui_process_env(
+    *,
+    session_name: str,
+    expected_home: str,
+    expected_claude_config_dir: str,
+    settle_s: float = 1.5,
+) -> None:
+    """Assert the inner ``claude`` process has the staged HOME +
+    CLAUDE_CONFIG_DIR set in its environ.
+
+    Lead a2a ``7a453a2a7ce0464ba67fd4b0c1d525fb`` (2026-06-14): when
+    the staged env did not stick on the inner ``claude`` process,
+    the operator saw the agent silently sit at the OAuth login URL
+    screen for hours — the only signal was a manual `tmux capture-
+    pane`. This helper closes that gap by reading
+    ``/proc/<claude-pid>/environ`` post-launch and FAILING LOUD via
+    :class:`TuiAuthStageError` when the values are missing /
+    mismatched. The SAC start path then surfaces a structural error
+    instead of stranding the operator at OAuth.
+
+    Best-effort: when ``ps`` / ``/proc`` cannot resolve the claude
+    PID (BSD host, container with PID-namespace isolation), we log
+    a one-line warning and return — the structural-alerts table
+    catches the boot-drain timeout that follows. We never silently
+    pass a wrong env.
+    """
+    import logging
+    import subprocess
+    import time as _time
+
+    if settle_s > 0:
+        _time.sleep(settle_s)
+
+    pid = _find_claude_pid_under_session(session_name)
+    if pid is None:
+        logging.getLogger(__name__).warning(
+            "TuiSessionRuntime: could not locate claude PID under "
+            "tmux session %s; skipping environ verification.",
+            session_name,
+        )
+        return
+
+    try:
+        environ_raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except (FileNotFoundError, PermissionError) as exc:
+        logging.getLogger(__name__).warning(
+            "TuiSessionRuntime: cannot read /proc/%s/environ for "
+            "TUI env verification (%s); skipping.",
+            pid,
+            exc,
+        )
+        return
+
+    env: dict[str, str] = {}
+    for entry in environ_raw.split(b"\0"):
+        if not entry or b"=" not in entry:
+            continue
+        key_b, value_b = entry.split(b"=", 1)
+        env[key_b.decode("utf-8", errors="replace")] = value_b.decode(
+            "utf-8", errors="replace"
+        )
+
+    observed_home = env.get("HOME", "")
+    observed_config_dir = env.get("CLAUDE_CONFIG_DIR", "")
+    if (
+        observed_home != expected_home
+        or observed_config_dir != expected_claude_config_dir
+    ):
+        # Late import to dodge a circular dep (the auth-stage module
+        # already imports name_for / state_dir helpers from this one
+        # via ``stage_tui_auth``'s caller).
+        from ._tui_auth_stage import TuiAuthStageError
+
+        raise TuiAuthStageError(
+            "TUI auth: inner claude process is NOT using the staged "
+            "HOME. Operator-symptom: TUI parks at the OAuth login URL "
+            "screen because claude reads the host ~/.claude/ instead "
+            "of the staged <state>/home/.claude/. Diagnostic: "
+            f"observed HOME={observed_home!r} / "
+            f"CLAUDE_CONFIG_DIR={observed_config_dir!r}; expected "
+            f"HOME={expected_home!r} / "
+            f"CLAUDE_CONFIG_DIR={expected_claude_config_dir!r}. "
+            f"Pid={pid}, session={session_name!r}. Common root: "
+            "the launcher shell sourced login init files that "
+            "overwrote HOME (mitigation: TmuxManager now passes the "
+            "env via `tmux new-session -e` and drops the bash `-l` "
+            "flag — this error indicates the mitigation regressed)."
+        )
+    _ = subprocess  # keep import resolved for type-checkers / linters
+
+
+def _find_claude_pid_under_session(session_name: str) -> int | None:
+    """Walk ``ps -eo pid,ppid,comm`` for a ``claude`` process whose
+    parent chain rises through the tmux server. Returns ``None`` when
+    the host's ``ps`` lacks the columns we expect (BSD-style) or no
+    matching process is running yet.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,ppid,comm"], capture_output=True, text=True
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    parent: dict[int, tuple[int, str]] = {}
+    for line in result.stdout.splitlines()[1:]:
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        parent[pid] = (ppid, parts[2])
+    for pid, (_ppid, comm) in parent.items():
+        if comm != "claude" and not comm.startswith("claude"):
+            continue
+        cursor = pid
+        for _ in range(10):
+            ppid, _ = parent.get(cursor, (0, ""))
+            ancestor = parent.get(ppid)
+            if ancestor is None:
+                break
+            if "tmux" in ancestor[1] or "tmux" in str(parent.get(ppid, ("", ""))[1]):
+                return pid
+            cursor = ppid
+    return None
+
+
 class TuiSessionRuntime(RuntimeBase):
     """Interactive tmux-backed Claude TUI runtime.
 
@@ -275,18 +408,40 @@ class TuiSessionRuntime(RuntimeBase):
             or "/tmp"
         )
         env_exports = ""
+        session_env: dict[str, str] = {}
         if home_dir is not None:
             env_exports = (
                 f"export HOME={home_dir}\nexport CLAUDE_CONFIG_DIR={home_dir}/.claude\n"
             )
+            # Structural fix (lead a2a 8f910ea7, 2026-06-14): live
+            # host agents launched with `bash -l` which re-sourced
+            # login init files that reset HOME to the operator's
+            # real home; the inner `claude` then read the operator's
+            # `~/.claude/` instead of the staged `<state>/home/.claude/`
+            # and fell to interactive OAuth. Pass HOME +
+            # CLAUDE_CONFIG_DIR via tmux `new-session -e KEY=VAL`
+            # (and TmuxManager drops the bash `-l` flag) so the
+            # staged values can no longer be overwritten.
+            session_env = {
+                "HOME": str(home_dir),
+                "CLAUDE_CONFIG_DIR": f"{home_dir}/.claude",
+                "CLAUDE_DISABLE_AUTO_UPDATE": "1",
+            }
         started = bool(
             self._mux.start(
                 session_name=name,
                 command=self._claude_bin,
                 workdir=str(workdir),
                 env_exports=env_exports,
+                session_env=session_env or None,
             )
         )
+        if started and home_dir is not None:
+            _verify_tui_process_env(
+                session_name=name,
+                expected_home=str(home_dir),
+                expected_claude_config_dir=f"{home_dir}/.claude",
+            )
         if started and drain_pickers_at_boot:
             # URGENT (lead a2a 278159b5, 2026-06-14): drain the
             # picker registry AT BOOT so the supervisor + downstream
