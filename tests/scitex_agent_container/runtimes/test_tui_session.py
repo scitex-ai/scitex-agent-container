@@ -94,7 +94,11 @@ class _MemoryMultiplexer:
         sess = cls._sessions.get(session_name)
         if sess is None:
             return ""
-        return "\n".join(sess.pane)
+        # Append the input-ready marker so the runtime's boot-drain
+        # (post-2026-06-14 lead a2a 278159b5) short-circuits in the
+        # in-memory unit suite. The fake doesn't render first-launch
+        # modals; the drain has no work to do and must not block.
+        return "\n".join(sess.pane) + "\n? for shortcuts"
 
     @classmethod
     def capture_logs(cls, session_name: str, lines: int = 50) -> str:
@@ -510,8 +514,6 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
 # ---------------------------------------------------------------------------
 
 
-
-
 class _PrimedMemoryMultiplexer(_MemoryMultiplexer):
     """In-memory mux whose ``capture_content`` returns a scripted
     sequence so the wait_until_input_ready tests can simulate the
@@ -552,7 +554,10 @@ def test_wait_until_input_ready_returns_true_when_marker_present(
     primed_mux.prime(["? for shortcuts"])
     runtime = TuiSessionRuntime(multiplexer=primed_mux)
     config = _Config(name="ready-immediate")
-    runtime.start(config)
+    # ``drain_pickers_at_boot=False`` so the start path doesn't
+    # consume the primed frame queue — the test wants the queue
+    # intact for its own direct wait_until_input_ready call below.
+    runtime.start(config, drain_pickers_at_boot=False)
     # Act
     ready = runtime.wait_until_input_ready(
         config, timeout_s=1.0, poll_s=0.0, sleep_fn=lambda _s: None
@@ -569,7 +574,7 @@ def test_wait_until_input_ready_dismisses_theme_picker_then_returns(
     primed_mux.prime([theme_pane, "? for shortcuts"])
     runtime = TuiSessionRuntime(multiplexer=primed_mux)
     config = _Config(name="theme-dismiss")
-    runtime.start(config)
+    runtime.start(config, drain_pickers_at_boot=False)
     # Act
     runtime.wait_until_input_ready(
         config, timeout_s=2.0, poll_s=0.0, sleep_fn=lambda _s: None
@@ -588,7 +593,9 @@ def test_wait_until_input_ready_raises_when_marker_never_appears(
     primed_mux.prime(["just some noise"])
     runtime = TuiSessionRuntime(multiplexer=primed_mux)
     config = _Config(name="never-ready")
-    runtime.start(config)
+    # Skip boot-drain so start() doesn't itself eat 30s + then
+    # propagate the absent-marker timeout through this test.
+    runtime.start(config, drain_pickers_at_boot=False)
     # Act
     do_wait = runtime.wait_until_input_ready
     # Assert

@@ -232,6 +232,8 @@ class TuiSessionRuntime(RuntimeBase):
         force: bool = False,
         dry_run: bool = False,
         foreground: bool = False,
+        drain_pickers_at_boot: bool = True,
+        boot_drain_timeout_s: float = 30.0,
     ) -> bool:
         """Launch ``claude`` inside a detached tmux session sac owns.
 
@@ -277,7 +279,7 @@ class TuiSessionRuntime(RuntimeBase):
             env_exports = (
                 f"export HOME={home_dir}\nexport CLAUDE_CONFIG_DIR={home_dir}/.claude\n"
             )
-        return bool(
+        started = bool(
             self._mux.start(
                 session_name=name,
                 command=self._claude_bin,
@@ -285,6 +287,28 @@ class TuiSessionRuntime(RuntimeBase):
                 env_exports=env_exports,
             )
         )
+        if started and drain_pickers_at_boot:
+            # URGENT (lead a2a 278159b5, 2026-06-14): drain the
+            # picker registry AT BOOT so the supervisor + downstream
+            # send paths land on a TUI already at the input field.
+            # Wiring drain into send_turn alone was lazy — the
+            # supervisor never calls send_turn during boot, so the
+            # picker sat up and every `sac agents send` then timed
+            # out. Failure here MUST NOT fail the start (supervisor
+            # restart loop would oscillate); log + let the send_turn
+            # retry on its own hook.
+            try:
+                self.wait_until_input_ready(config, timeout_s=boot_drain_timeout_s)
+            except TuiInputNotReadyError as exc:  # stx-allow: fallback (reason: boot-drain best-effort; send_turn retries — operator escalation 2026-06-14)
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "TuiSessionRuntime.start: boot-drain timed out "
+                    "for %s; send_turn will retry. Last error: %s",
+                    name,
+                    exc,
+                )
+        return started
 
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session sac owns for this agent.
