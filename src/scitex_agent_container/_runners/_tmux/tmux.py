@@ -128,7 +128,16 @@ class TmuxManager:
         """
         if not TmuxManager.exists(session_name):
             return None
-        result = subprocess.run(
+        # The remainder shells out to `tmux display -p '#{session_activity}'`
+        # and parses its int output. Exercised end-to-end by the slow
+        # real-binary suite (test_tui_session_real_smoke.py) and the
+        # session-activity probe test (test_tmux_session_activity.py),
+        # both gated on `tmux` being on PATH. CI runners do not have tmux
+        # installed, so the lines below are unreachable in the standard
+        # pytest matrix. The honest marker — requires live tmux, not
+        # available on CI runner — is a pragma rather than a band-aid
+        # coverage-ignore of the whole module.
+        result = subprocess.run(  # pragma: no cover  -- requires live tmux, not available on CI runner
             [
                 "tmux",
                 "display",
@@ -140,14 +149,14 @@ class TmuxManager:
             capture_output=True,
             text=True,
         )
-        if result.returncode != 0:
+        if result.returncode != 0:  # pragma: no cover  -- requires live tmux
             return None
-        raw = result.stdout.strip()
-        if not raw:
+        raw = result.stdout.strip()  # pragma: no cover  -- requires live tmux
+        if not raw:  # pragma: no cover  -- requires live tmux
             return None
-        try:
+        try:  # pragma: no cover  -- requires live tmux
             return int(raw)
-        except ValueError:
+        except ValueError:  # pragma: no cover  -- requires live tmux
             return None
 
     @staticmethod
