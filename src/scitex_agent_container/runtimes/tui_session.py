@@ -65,6 +65,7 @@ from ._to_home import deploy_to_home
 from ._tui_auth_stage import TuiAuthStageError, stage_tui_auth
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
+from .onboarding import ensure_project_onboarding
 
 __all__ = [
     "TuiAuthStageError",
@@ -195,6 +196,22 @@ class TuiSessionRuntime(RuntimeBase):
         # for the per-account snapshot path on host starts (lead a2a
         # 1781e82a, 2026-06-14).
         stage_tui_auth(home_dir, config=config)
+        # Pre-seed the projects entry so the TUI skips the per-workspace
+        # onboarding wizard (theme picker / dev-channels approval) on
+        # first launch. Without this, the dogfood (2026-06-14) caught
+        # the bundled ``claude`` showing "Choose the text style" before
+        # mounting its input field — which would wedge ``send_turn``
+        # against a modal overlay. ``ensure_project_onboarding`` is the
+        # same primitive the SDK runtime uses (see
+        # ``_runners/_tmux/claude_code.py``); calling it here gives the
+        # TUI runtime parity with the SDK path on workspace onboarding.
+        # The seed must use the SAME workdir the tmux session is
+        # launched in (see ``start()`` below — ``config.workdir or
+        # "/tmp"``). A mismatch (e.g. seeding ``expanded_workdir``
+        # while claude runs in ``workdir``) leaves the picker live
+        # against the actual workdir.
+        workdir = getattr(config, "workdir", "") or "/tmp"
+        ensure_project_onboarding(workdir, home=home_dir)
         return home_dir
 
     def start(
