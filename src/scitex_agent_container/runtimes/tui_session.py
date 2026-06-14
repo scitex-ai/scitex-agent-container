@@ -191,7 +191,10 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir.mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, str(home_dir))
         deploy_to_home(config, str(home_dir))
-        stage_tui_auth(home_dir)
+        # Pass config so the resolver can consult spec.claude.account
+        # for the per-account snapshot path on host starts (lead a2a
+        # 1781e82a, 2026-06-14).
+        stage_tui_auth(home_dir, config=config)
         return home_dir
 
     def start(

@@ -21,7 +21,10 @@ import pytest
 
 from scitex_agent_container.runtimes._tui_auth_stage import (
     CLAUDE_JSON_SRC_ENV,
+    CREDENTIALS_FALLBACK_CHAIN_ENV,
     CREDENTIALS_SRC_ENV,
+    DEFAULT_SETTINGS_FALLBACK,
+    SETTINGS_JSON_SRC_ENV,
     TuiAuthStageError,
     stage_tui_auth,
 )
@@ -34,10 +37,25 @@ from scitex_agent_container.runtimes._tui_auth_stage import (
 
 @pytest.fixture(autouse=True)
 def _isolate_env(tmp_path: Path):
-    """Save/restore HOME and the two SAC_TUI_AUTH_* env vars."""
+    """Save/restore HOME, the SAC_TUI_AUTH_* env vars, and the
+    credentials fallback-chain override.
+
+    Test isolation note: the dev container ships a real
+    ``/tmp/sac-claude/.credentials.json`` (operator's apptainer bind).
+    To prevent the production chain from finding it during host-
+    fallback tests, the autouse fixture installs a sentinel chain
+    pointing at a tmp_path that doesn't exist — every test that
+    wants to exercise the real chain unsets the env explicitly.
+    """
     saved: dict[str, str | None] = {
         key: os.environ.get(key)
-        for key in ("HOME", CREDENTIALS_SRC_ENV, CLAUDE_JSON_SRC_ENV)
+        for key in (
+            "HOME",
+            CREDENTIALS_SRC_ENV,
+            CLAUDE_JSON_SRC_ENV,
+            SETTINGS_JSON_SRC_ENV,
+            CREDENTIALS_FALLBACK_CHAIN_ENV,
+        )
     }
     # Point HOME at a fresh dir so the default ${HOME}/.claude.json
     # source resolves under tmp_path (and is missing by default —
@@ -47,6 +65,14 @@ def _isolate_env(tmp_path: Path):
     # Unset the env overrides so each test opts in explicitly.
     os.environ.pop(CREDENTIALS_SRC_ENV, None)
     os.environ.pop(CLAUDE_JSON_SRC_ENV, None)
+    os.environ.pop(SETTINGS_JSON_SRC_ENV, None)
+    # Neutralise the production fallback chain (which would hit the
+    # dev container's real /tmp/sac-claude bind) by pointing at a
+    # tmp_path entry that doesn't exist. Tests exercising the
+    # default chain set it back explicitly.
+    os.environ[CREDENTIALS_FALLBACK_CHAIN_ENV] = str(
+        tmp_path / "nonexistent" / ".credentials.json"
+    )
     try:
         yield
     finally:
@@ -391,6 +417,243 @@ class TestStageTuiAuthIdempotent:
         # Assert — destination reflects the LATER source.
         observed = (home_dir / ".claude" / ".credentials.json").read_text()
         assert observed == '{"version": "B"}'
+
+
+# ---------------------------------------------------------------------------
+# settings.json — defeats the first-launch theme picker
+# ---------------------------------------------------------------------------
+
+
+class TestStageTuiAuthSettingsFallback:
+    """When no settings.json source exists, the fallback is written.
+
+    Covers the dogfood-2026-06-14 finding: an authenticated TUI on a
+    fresh HOME wedges on the theme picker. The fallback bypasses it.
+    """
+
+    def test_writes_fallback_settings_when_no_source(
+        self,
+        home_dir: Path,
+        staged_via_env: None,
+    ) -> None:
+        # Arrange — staged_via_env runs with creds+claude.json but no
+        # SETTINGS_JSON_SRC_ENV and no ${HOME}/.claude/settings.json,
+        # so the fallback path fires.
+        path = home_dir / ".claude" / "settings.json"
+        # Act
+        observed = json.loads(path.read_text())
+        # Assert
+        assert observed == DEFAULT_SETTINGS_FALLBACK
+
+    def test_returned_path_names_settings_destination(
+        self,
+        home_dir: Path,
+        creds_src: Path,
+        claude_json_src: Path,
+    ) -> None:
+        # Arrange
+        os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        # Act
+        staged = stage_tui_auth(home_dir)
+        # Assert
+        assert staged.settings_json_dst == home_dir / ".claude" / "settings.json"
+
+
+class TestStageTuiAuthSettingsHostSource:
+    """When ``${HOME}/.claude/settings.json`` exists, it is copied verbatim."""
+
+    def test_host_settings_copied_verbatim(
+        self,
+        home_dir: Path,
+        creds_src: Path,
+        claude_json_src: Path,
+    ) -> None:
+        # Arrange — stage a real host settings.json before the call.
+        os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        host_settings = Path(os.environ["HOME"]) / ".claude" / "settings.json"
+        host_settings.parent.mkdir(parents=True, exist_ok=True)
+        host_settings.write_text(json.dumps({"theme": "light", "custom": True}))
+        # Act
+        stage_tui_auth(home_dir)
+        # Assert — destination mirrors the host's settings verbatim.
+        observed = json.loads((home_dir / ".claude" / "settings.json").read_text())
+        assert observed == {"theme": "light", "custom": True}
+
+
+class TestStageTuiAuthSettingsEnvOverride:
+    """``SAC_TUI_AUTH_SETTINGS_JSON_SRC`` overrides the host default."""
+
+    def test_env_pointed_settings_copied(
+        self,
+        home_dir: Path,
+        creds_src: Path,
+        claude_json_src: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Arrange — settings.json at an env-pointed location.
+        custom = tmp_path / "custom-settings.json"
+        custom.write_text(json.dumps({"theme": "custom-dark"}))
+        os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        os.environ[SETTINGS_JSON_SRC_ENV] = str(custom)
+        # Act
+        stage_tui_auth(home_dir)
+        # Assert
+        observed = json.loads((home_dir / ".claude" / "settings.json").read_text())
+        assert observed == {"theme": "custom-dark"}
+
+
+class TestStageTuiAuthSettingsPreserveExisting:
+    """An existing ``<home>/.claude/settings.json`` (typically written
+    by ``deploy_to_home``'s agent overlay) is left untouched — the
+    agent's settings win on conflict.
+    """
+
+    def test_preexisting_settings_not_overwritten(
+        self,
+        home_dir: Path,
+        creds_src: Path,
+        claude_json_src: Path,
+    ) -> None:
+        # Arrange — caller already deployed a settings.json (agent overlay).
+        os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        existing = home_dir / ".claude" / "settings.json"
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_text(json.dumps({"theme": "agent-overlay-wins"}))
+        # Act
+        stage_tui_auth(home_dir)
+        # Assert
+        observed = json.loads(existing.read_text())
+        assert observed == {"theme": "agent-overlay-wins"}
+
+
+# ---------------------------------------------------------------------------
+# Pinned-account snapshot — lead a2a 1781e82a (2026-06-14): host starts
+# resolve creds from ~/.scitex/agent-container/accounts/<acct>/.credentials.json
+# when spec.claude.account is set. Without this, every pinned-account TUI
+# agent on a host failed because the default container-bind path
+# /tmp/sac-claude does not exist outside apptainer.
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class _StubClaude:
+    """Real dataclass — no MagicMock. Satisfies the shape
+    ``stage_tui_auth`` reads via ``getattr(config.claude, 'account', '')``.
+    """
+
+    account: str = ""
+
+
+@dataclass
+class _StubConfig:
+    """Minimal AgentConfig surface the resolver touches."""
+
+    claude: _StubClaude
+
+
+class TestStageTuiAuthPinnedAccountSnapshot:
+    """When ``spec.claude.account`` is set AND the snapshot exists,
+    the staging copies from the per-account snapshot dir."""
+
+    def test_pinned_account_snapshot_copied_to_dst(
+        self,
+        home_dir: Path,
+        claude_json_src: Path,
+    ) -> None:
+        # Arrange — stage a per-account snapshot under the SAC accounts
+        # tree (rooted at ${HOME}/.scitex/agent-container/accounts/).
+        acct = "ywata1989"
+        snapshot = (
+            Path(os.environ["HOME"])
+            / ".scitex"
+            / "agent-container"
+            / "accounts"
+            / acct
+            / ".credentials.json"
+        )
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        snapshot.write_text('{"version": "pinned-snapshot"}')
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        config = _StubConfig(claude=_StubClaude(account=acct))
+        # Act
+        stage_tui_auth(home_dir, config=config)
+        # Assert — destination reflects the snapshot, not the chain default.
+        observed = (home_dir / ".claude" / ".credentials.json").read_text()
+        assert observed == '{"version": "pinned-snapshot"}'
+
+    def test_pinned_account_with_missing_snapshot_falls_to_chain(
+        self,
+        home_dir: Path,
+        claude_json_src: Path,
+        creds_src: Path,
+    ) -> None:
+        # Arrange — pinned account exists in spec but no snapshot on disk.
+        # The resolver falls through to the host live chain entry, which
+        # we stage at the env-pointed creds_src for test isolation.
+        os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        config = _StubConfig(claude=_StubClaude(account="no-snapshot-here"))
+        # Act
+        stage_tui_auth(home_dir, config=config)
+        # Assert — env override (chain top) wins because no snapshot exists.
+        observed = (home_dir / ".claude" / ".credentials.json").read_text()
+        assert observed == creds_src.read_text()
+
+
+class TestStageTuiAuthHostFallbackChain:
+    """When neither env nor pinned account resolves, the chain tries
+    ``~/.claude/.credentials.json`` after the container bind.
+
+    Lead a2a 1781e82a: this is the host-start path the operator hit
+    when /tmp/sac-claude (apptainer bind) was missing.
+    """
+
+    def test_host_live_credentials_used_when_container_bind_absent(
+        self,
+        home_dir: Path,
+        claude_json_src: Path,
+    ) -> None:
+        # Arrange — stage ~/.claude/.credentials.json at the redirected
+        # HOME and override the chain so the FIRST entry is absent +
+        # SECOND entry is the staged host_live file. Without the chain
+        # override we'd hit the dev container's real /tmp/sac-claude
+        # bind, which exists and would short-circuit the test.
+        host_creds = Path(os.environ["HOME"]) / ".claude" / ".credentials.json"
+        host_creds.parent.mkdir(parents=True, exist_ok=True)
+        host_creds.write_text('{"version": "host-live"}')
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        os.environ[CREDENTIALS_FALLBACK_CHAIN_ENV] = (
+            f"/nope-container-bind/.credentials.json:{host_creds}"
+        )
+        # Act — config=None means unpinned; chain falls to host_live.
+        stage_tui_auth(home_dir, config=None)
+        # Assert
+        observed = (home_dir / ".claude" / ".credentials.json").read_text()
+        assert observed == '{"version": "host-live"}'
+
+    def test_error_lists_all_tried_paths_when_chain_exhausted(
+        self,
+        home_dir: Path,
+        claude_json_src: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Arrange — chain points at two paths that don't exist; no env
+        # override, no pinned account. The resolver must exhaust and
+        # raise naming "fallback chain" in the message.
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        os.environ[CREDENTIALS_FALLBACK_CHAIN_ENV] = (
+            f"{tmp_path}/a/.credentials.json:{tmp_path}/b/.credentials.json"
+        )
+        # Act / Assert
+        with pytest.raises(TuiAuthStageError, match="fallback chain"):
+            stage_tui_auth(home_dir, config=None)
 
 
 # EOF
