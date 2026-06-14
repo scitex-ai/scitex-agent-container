@@ -206,11 +206,17 @@ class TuiSessionRuntime(RuntimeBase):
         # ``_runners/_tmux/claude_code.py``); calling it here gives the
         # TUI runtime parity with the SDK path on workspace onboarding.
         # The seed must use the SAME workdir the tmux session is
-        # launched in (see ``start()`` below — ``config.workdir or
-        # "/tmp"``). A mismatch (e.g. seeding ``expanded_workdir``
-        # while claude runs in ``workdir``) leaves the picker live
-        # against the actual workdir.
-        workdir = getattr(config, "workdir", "") or "/tmp"
+        # launched in (see ``start()`` below). Both call sites use
+        # ``expanded_workdir`` so a tilde-prefixed default resolves
+        # to an absolute path before mkdir/cd/seed; a mismatch
+        # (e.g. seeding ``expanded_workdir`` while claude runs in
+        # raw ``workdir``) would leave the picker live against the
+        # actual cwd. Single source of truth.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
         ensure_project_onboarding(workdir, home=home_dir)
         return home_dir
 
@@ -246,7 +252,21 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir = self.materialize_workspace(config)
         if dry_run:
             return True
-        workdir = getattr(config, "workdir", "") or "/tmp"
+        # Use expanded_workdir so a tilde-prefixed default (the
+        # AgentConfig default ``~/.scitex/agent-container/runtime/agents/<name>``)
+        # resolves to an absolute path. The raw ``config.workdir``
+        # may still carry the literal ``~`` — passed straight to
+        # ``Path(...).mkdir`` it materialises a directory NAMED ``~``
+        # under the launching cwd, and the shell ``cd '~/.scitex/...'``
+        # (single-quoted, so no tilde expansion) lands in a bogus
+        # path. Both observed in the 2026-06-14 dogfood, which then
+        # broke the per-workspace onboarding seed below because the
+        # picker fired against a different workdir than the seed.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
         env_exports = ""
         if home_dir is not None:
             env_exports = (
