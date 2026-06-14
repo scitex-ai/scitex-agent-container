@@ -224,6 +224,32 @@ def agent_status(
         # Never let metadata collection break status.
         pass
 
+    # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
+    # ``session_jsonl_bytes`` / ``session_jsonl_last_write`` /
+    # ``heartbeat_at`` at the TOP level of the status JSON so the
+    # kick-cycle can read MOVEMENT objectively without scraping
+    # ``heartbeat.json`` or walking the SDK ``sdk_session`` block.
+    # All three keys are always present; missing-data renders as
+    # ``0`` / ``""`` (explicit empty values, NOT null) so consumers
+    # never need a key-existence check.
+    # stx-allow: fallback (reason: a state-dir read failure should never break
+    # the status command — degrade to the explicit empty shape)
+    try:
+        from ._session_movement import resolve_state_dir, status_movement_fields
+
+        state_dir = resolve_state_dir(name)
+        movement = status_movement_fields(state_dir)
+    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        movement = {
+            "session_jsonl_bytes": 0,
+            "session_jsonl_last_write": "",
+            "heartbeat_at": "",
+        }
+    for k, v in movement.items():
+        # Don't overwrite a field that a prior enrich step already set —
+        # the additive contract says NEW keys, not "always replaces".
+        result.setdefault(k, v)
+
     return result
 
 

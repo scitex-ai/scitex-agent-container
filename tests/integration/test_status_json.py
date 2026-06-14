@@ -816,13 +816,16 @@ def test_terse_projected_size_stays_under_4kb(
     assert len(json.dumps(projected)) < 4096
 
 
-def test_terse_whitelist_pins_34_field_contract() -> None:
-    # Arrange
+def test_terse_whitelist_pins_37_field_contract() -> None:
+    # Arrange — bumped from 34 → 37 when the operator-mandated
+    # MOVEMENT trio (session_jsonl_bytes / session_jsonl_last_write /
+    # heartbeat_at) joined the terse whitelist (lead a2a 1781e82a,
+    # 2026-06-14). Re-pin so a future schema drift is caught.
     from scitex_agent_container.terse import TERSE_STATUS_FIELDS
 
     # Act — import.
     # Assert
-    assert len(TERSE_STATUS_FIELDS) == 34
+    assert len(TERSE_STATUS_FIELDS) == 37
 
 
 def test_terse_projection_covers_whitelist_on_representative_snapshot(
