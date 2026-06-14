@@ -336,3 +336,61 @@ def test_tui_runtime_logs_returns_empty_when_session_absent(
     text = runtime.logs(config)
     # Assert
     assert text == ""
+
+
+# ---------------------------------------------------------------------------
+# send_turn — delivery primitive (step 3/4)
+# ---------------------------------------------------------------------------
+
+
+def test_tui_runtime_send_turn_delivers_text_to_session_pane(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — start the session so the multiplexer has somewhere to deliver.
+    runtime = TuiSessionRuntime(multiplexer=mux)
+    config = _Config(name="omicron")
+    runtime.start(config)
+    # Act
+    runtime.send_turn(config, "hello-omicron")
+    # Assert — _MemoryMultiplexer.send_text_and_submit appends to the
+    # pane list, so a single send shows up as exactly one entry.
+    assert mux._sessions["tui-omicron"].pane == ["hello-omicron"]
+
+
+def test_tui_runtime_send_turn_returns_true_when_session_alive(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    runtime = TuiSessionRuntime(multiplexer=mux)
+    config = _Config(name="pi")
+    runtime.start(config)
+    # Act
+    delivered = runtime.send_turn(config, "ping")
+    # Assert
+    assert delivered is True
+
+
+def test_tui_runtime_send_turn_returns_false_when_no_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — no start() call; session does not exist.
+    runtime = TuiSessionRuntime(multiplexer=mux)
+    config = _Config(name="rho")
+    # Act
+    delivered = runtime.send_turn(config, "lost-turn")
+    # Assert
+    assert delivered is False
+
+
+def test_tui_runtime_send_turn_skips_send_when_no_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — no start() call.
+    runtime = TuiSessionRuntime(multiplexer=mux)
+    config = _Config(name="sigma")
+    # Act
+    runtime.send_turn(config, "lost-turn")
+    # Assert — the multiplexer's session registry stays empty, proving
+    # the runtime guarded the send instead of letting it create a
+    # phantom entry via the implicit dict-insert path.
+    assert "tui-sigma" not in mux._sessions

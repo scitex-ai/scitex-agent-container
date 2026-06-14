@@ -310,4 +310,90 @@ class TestTuiRuntimeRealBinarySmoke:
                 )
 
 
+# ---------------------------------------------------------------------------
+# Step 3 — one verified a2a turn through the TUI runtime, nonce round-trip.
+#
+# AC (lead a2a d383f5389dc548a49a293bffe390d619 + clarification
+# edfe809e55a24640b6a42318872c8b58): drive ONE a2a turn end-to-end through
+# the TUI runtime — send a message via the runtime, confirm it is delivered
+# into the pane. Lead's clarification: keep this hermetic (no creds, no
+# network). The real-claude "produces an answer" assertion lives in step
+# 4's tui-alive integration probe, gated on credentials being present.
+#
+# Design: construct a TuiSessionRuntime with a deterministic stand-in
+# command (``bash -c 'while read line; do echo RX: $line; done'``) instead
+# of the real claude binary. send_turn → tmux send_text_and_submit → the
+# bash reader prints ``RX: <nonce>`` back into the pane. Polling
+# capture-pane for the round-trip token proves the delivery primitive
+# works against REAL tmux end-to-end without coupling to claude's UI
+# state machine (the auth/theme-picker variations that step 2 already
+# handled).
+# ---------------------------------------------------------------------------
+
+
+# bash reader loop — echoes each line as ``RX: <line>`` so the test can
+# distinguish "we delivered" from "the pane has noise". A single quote
+# layer so TmuxManager.start's ``exec {command}`` parses it correctly.
+_BASH_ECHO_READER = "bash -c 'while IFS= read -r line; do echo \"RX: ${line}\"; done'"
+
+
+class TestTuiRuntimeNonceRoundTrip:
+    def test_send_turn_round_trips_nonce_through_real_tmux(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # ---- Arrange -----------------------------------------------------
+        agent_name = f"tui-turn-{uuid.uuid4().hex[:8]}"
+        spec_path = _copy_fixture_to(tmp_path / "spec_root", agent_name=agent_name)
+        home_root = tmp_path / "home_root"
+        home_root.mkdir()
+        env_save_restore.set("HOME", str(home_root))
+
+        config = load_config(spec_path)
+        # Stand-in for claude: a bash reader loop that echoes each line
+        # back. Keeps the test hermetic (no creds, no network) while still
+        # exercising the runtime's tmux + send_text_and_submit primitive
+        # end-to-end. Per lead's step-3 scope decision (a2a clarification
+        # edfe809e55a24640b6a42318872c8b58).
+        runtime = TuiSessionRuntime(claude_bin=_BASH_ECHO_READER)
+        session = session_name_for(config)
+        nonce = f"sac-tui-nonce-{uuid.uuid4().hex[:12]}"
+
+        # ---- Act ---------------------------------------------------------
+        started = False
+        try:
+            started = runtime.start(config, force=True)
+            assert started is True
+
+            # Give the reader loop a moment to start (TmuxManager.start
+            # already sleeps 2s but the bash subshell + venv activation
+            # in the shell_script can need another tick before stdin is
+            # bound to the read).
+            time.sleep(0.5)
+
+            # Step-3 send_turn — this IS the runtime API the production
+            # path will call to deliver an a2a turn into the TUI.
+            delivered = runtime.send_turn(config, nonce)
+            assert delivered is True, (
+                "runtime.send_turn returned False even though the tmux "
+                "session was alive"
+            )
+
+            # Poll capture-pane until the reader echoes back. The bash
+            # reader prints `RX: <nonce>`; assert that exact prefix-token
+            # pair so a partial / corrupted line cannot accidentally pass.
+            pane = _wait_for_tui_banner(
+                session,
+                banner_substrings=(f"RX: {nonce}",),
+                timeout_s=10.0,
+            )
+            assert f"RX: {nonce}" in pane, (
+                f"nonce {nonce!r} did not round-trip through the pane. Pane:\n{pane}"
+            )
+        finally:
+            try:
+                runtime.stop(config)
+            except Exception:  # stx-allow: cleanup (reason: best-effort tmux kill on test teardown — failure here must not mask the real assertion failure above)
+                pass
+
+
 # EOF

@@ -232,6 +232,42 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         return bool(self._mux.exists(name))
 
+    def send_turn(self, config: AgentConfig, text: str) -> bool:
+        """Deliver one turn of input to the in-tmux TUI.
+
+        Uses the multiplexer's ``send_text_and_submit`` (text first,
+        settle delay, then a separate ``Enter`` keystroke) — the same
+        primitive the salvaged ``claude_code._run_startup_commands``
+        uses to defeat the "Enter dropped during a TUI re-render"
+        race the operator reported in #353.
+
+        Returns ``False`` (and skips the send) when sac's tmux session
+        for this agent does not exist; this is the TUI analogue of
+        the SDK runtime's "no live HTTP turn endpoint" guard — it
+        lets a caller distinguish "delivered" from "no runtime to
+        deliver to" without inspecting the multiplexer directly.
+
+        Step 3 of the TUI hedge (lead a2a
+        ``d383f5389dc548a49a293bffe390d619`` + clarification
+        ``edfe809e55a24640b6a42318872c8b58``): this is the
+        delivery-side primitive; the response-side primitive is
+        ``logs(...)`` via ``mux.capture_logs``. End-to-end turn
+        completion = ``send_turn`` then poll ``logs`` for the
+        expected response token. Step 3 is intentionally hermetic
+        (auth- and network-independent): the real-binary suite
+        exercises delivery via a deterministic stand-in command
+        (``bash -c 'cat'``) so the test proves DELIVERY through
+        real tmux without coupling to operator credentials or
+        Anthropic's API. Authenticated-claude "answers a turn"
+        verification is owned by the step-4 tui-alive integration
+        probe, gated on credentials being present.
+        """
+        name = session_name_for(config)
+        if not self._mux.exists(name):
+            return False
+        self._mux.send_text_and_submit(name, text)
+        return True
+
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output for the session.
 
