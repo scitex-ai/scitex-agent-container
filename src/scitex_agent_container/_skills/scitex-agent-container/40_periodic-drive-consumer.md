@@ -2,7 +2,7 @@
 description: |
   [TOPIC] Periodic-drive turn consumer (agent-side)
   [DETAILS] How to interpret incoming a2a inbox events with `kind == "periodic_drive"` — re-injection of standing rules, mission, and current work state from the sac periodic-drive lane (not a new task from lead/operator).
-tags: [scitex-agent-container-periodic-drive]
+tags: [scitex-agent-container-periodic-drive-consumer]
 ---
 
 # Periodic-drive turn consumer (agent-side)
