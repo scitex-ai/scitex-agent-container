@@ -228,9 +228,12 @@ class TestStageTuiAuthFailLoud:
         # Arrange
         os.environ[CREDENTIALS_SRC_ENV] = str(tmp_path / "nope" / ".credentials.json")
         os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
-        # Act / Assert
-        with pytest.raises(TuiAuthStageError, match="credentials source missing"):
-            stage_tui_auth(home_dir)
+        raised = pytest.raises(TuiAuthStageError, match="credentials source missing")
+        # Act
+        do_stage = stage_tui_auth
+        # Assert
+        with raised:
+            do_stage(home_dir)
 
     def test_missing_claude_json_source_raises(
         self,
@@ -241,9 +244,12 @@ class TestStageTuiAuthFailLoud:
         # Arrange
         os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
         os.environ[CLAUDE_JSON_SRC_ENV] = str(tmp_path / "nope" / ".claude.json")
-        # Act / Assert
-        with pytest.raises(TuiAuthStageError, match=".claude.json source missing"):
-            stage_tui_auth(home_dir)
+        raised = pytest.raises(TuiAuthStageError, match=".claude.json source missing")
+        # Act
+        do_stage = stage_tui_auth
+        # Assert
+        with raised:
+            do_stage(home_dir)
 
     def test_credentials_error_names_env_var(
         self,
@@ -251,14 +257,16 @@ class TestStageTuiAuthFailLoud:
         claude_json_src: Path,
         tmp_path: Path,
     ) -> None:
-        # Arrange
+        # Arrange — pytest.raises(match=...) IS the single assertion;
+        # matching CREDENTIALS_SRC_ENV proves the error message names
+        # the env var the operator can override.
         os.environ[CREDENTIALS_SRC_ENV] = str(tmp_path / "nope" / ".credentials.json")
         os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
         # Act
-        with pytest.raises(TuiAuthStageError) as exc_info:
-            stage_tui_auth(home_dir)
-        # Assert — operator's remedy must include the env var to override.
-        assert CREDENTIALS_SRC_ENV in str(exc_info.value)
+        do_stage = stage_tui_auth
+        # Assert
+        with pytest.raises(TuiAuthStageError, match=CREDENTIALS_SRC_ENV):
+            do_stage(home_dir)
 
     def test_claude_json_error_names_env_var(
         self,
@@ -266,14 +274,15 @@ class TestStageTuiAuthFailLoud:
         creds_src: Path,
         tmp_path: Path,
     ) -> None:
-        # Arrange
+        # Arrange — match on the env var name proves the remedy
+        # mentions the override; one assertion (pytest.raises match).
         os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
         os.environ[CLAUDE_JSON_SRC_ENV] = str(tmp_path / "nope" / ".claude.json")
         # Act
-        with pytest.raises(TuiAuthStageError) as exc_info:
-            stage_tui_auth(home_dir)
+        do_stage = stage_tui_auth
         # Assert
-        assert CLAUDE_JSON_SRC_ENV in str(exc_info.value)
+        with pytest.raises(TuiAuthStageError, match=CLAUDE_JSON_SRC_ENV):
+            do_stage(home_dir)
 
 
 # ---------------------------------------------------------------------------
