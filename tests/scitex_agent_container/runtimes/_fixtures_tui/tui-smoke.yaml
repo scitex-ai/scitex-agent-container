@@ -1,0 +1,41 @@
+# Minimal `runtime: tui` smoke fixture (TUI step-2 AC, lead a2a
+# d383f5389dc548a49a293bffe390d619). NOT a production spec —
+# tests/scitex_agent_container/runtimes/test_tui_session_real_smoke.py
+# loads it to drive a real tmux + real claude TUI inside the container.
+#
+# The shape is the bare minimum that exercises the runtime: a tui
+# runtime, a claude block (so the materialiser writes CLAUDE.md), a
+# trivial mission, and a `to_home/` next to this file that the
+# overlay step copies into <state>/home/.
+#
+# Operator can later promote this shape to a canonical
+# `examples/agents/tui-agent/` once steps 3-4 land.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+# NOTE: `metadata.name` intentionally omitted — sac v3 derives the agent
+# name from the parent directory (dir-as-SSoT). The test copies this
+# tree into ``<tmp>/<agent-name>/<agent-name>.yaml`` per run, so the
+# name varies but the spec body stays constant.
+
+metadata:
+  labels:
+    pattern: tui-runtime-real-smoke
+    in-repo: "true"
+
+spec:
+  runtime: tui
+
+  claude:
+    model: haiku
+    flags:
+      - --dangerously-skip-permissions
+
+  startup_prompts:
+    - "Reply with the string 'tui-runtime-ok' and nothing else."
+
+  restart:
+    policy: never
+
+# EOF

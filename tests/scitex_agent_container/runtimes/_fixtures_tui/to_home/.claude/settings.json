@@ -1,0 +1,4 @@
+{
+  "_comment": "TUI smoke fixture — minimal claude settings. The overlay materialises this under <state>/home/.claude/settings.json; the test asserts presence + content.",
+  "theme": "dark"
+}

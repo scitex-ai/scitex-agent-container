@@ -55,16 +55,31 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from typing import Any
 
 from .._runners._tmux.tmux import TmuxManager
 from ..config import AgentConfig
+from ._to_home import deploy_to_home
 from .base import RuntimeBase
+from .claude_md import setup_claude_md
 
-__all__ = ["TuiSessionRuntime", "session_name_for"]
+__all__ = ["TuiSessionRuntime", "session_name_for", "state_dir_for_config"]
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
+
+_REQUIRED_CONFIG_ATTRS = ("expanded_workdir", "skills", "claude", "env", "labels")
+
+# Default max-idle window for the tui-alive probe (see
+# ``TuiSessionRuntime.is_running``). 300s mirrors the SDK runtime's
+# health.interval default and gives a quiet but healthy TUI a
+# generous grace window before the supervisor's restart policy
+# fires on it. Overridable per-call via the ``max_idle_s`` kwarg
+# so a custom health policy in spec.health can tune it without a
+# code change.
+_DEFAULT_MAX_IDLE_S = 300.0
 
 
 def session_name_for(config: AgentConfig) -> str:
@@ -76,6 +91,36 @@ def session_name_for(config: AgentConfig) -> str:
     can probe its own session deterministically across processes.
     """
     return f"tui-{config.name}"
+
+
+def state_dir_for_config(config: AgentConfig) -> Path:
+    """Per-agent state dir on the host: project-local if the agent's
+    spec lives under a project-scope ``.scitex/agent-container/`` tree
+    (a git repo with that subdir), else
+    ``~/.scitex/agent-container/runtime/<name>/``.
+
+    Mirrors ``ClaudeSessionRuntime._state_dir`` so the TUI runtime
+    lands per-agent files in the same place the SDK runtime would —
+    the operator's ``sac agents status`` / ``sac agents prune-claude``
+    / external tooling can address ``<state>/`` uniformly regardless
+    of which runtime is selected.
+    """
+    from .._runners import claude_session as _runner
+
+    src = getattr(config, "config_path", "") or ""
+    root: Path | None = None
+    if src:
+        try:
+            from scitex_config._ecosystem import local_state
+
+            scope = local_state.find_project_scope(
+                "agent-container", start=Path(src).parent
+            )
+            if scope is not None:
+                root = scope / "runtime"
+        except Exception:  # stx-allow: fallback (reason: scitex-config optional; degrade to home-scope state — the same fallback the SDK runtime uses, see runtimes/claude_session.py::_project_runtime_root)
+            root = None
+    return _runner.state_dir_for(config.name, root=root)
 
 
 class TuiSessionRuntime(RuntimeBase):
@@ -103,6 +148,30 @@ class TuiSessionRuntime(RuntimeBase):
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
 
+    def materialize_workspace(self, config: AgentConfig) -> Path | None:
+        """Materialise per-agent ``to_home/`` + CLAUDE.md into
+        ``<state>/home/`` and return that path.
+
+        Mirrors ``ClaudeSessionRuntime._materialize_workspace``: writes
+        the sac-managed CLAUDE.md skill chain into ``<state>/home/CLAUDE.md``
+        and overlays the per-agent ``to_home/`` (.mcp.json, .env,
+        .claude/{hooks,skills,settings.json}) on top of the shared
+        baseline. The result is a self-contained $HOME tree the TUI
+        ``claude`` binary will read on launch — same SkillsSpec / MCP
+        / hook surface the SDK runtime provides.
+
+        Returns ``None`` for stub configs lacking the full AgentConfig
+        surface (unit-test ``SimpleNamespace`` fixtures); the caller
+        treats that as "skip materialise, run with bare $HOME".
+        """
+        if not all(hasattr(config, a) for a in _REQUIRED_CONFIG_ATTRS):
+            return None
+        home_dir = state_dir_for_config(config) / "home"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        setup_claude_md(config, str(home_dir))
+        deploy_to_home(config, str(home_dir))
+        return home_dir
+
     def start(
         self,
         config: AgentConfig,
@@ -113,26 +182,40 @@ class TuiSessionRuntime(RuntimeBase):
     ) -> bool:
         """Launch ``claude`` inside a detached tmux session sac owns.
 
+        Materialises the per-agent ``to_home/`` + CLAUDE.md into
+        ``<state>/home/`` before launching tmux, then exports
+        ``HOME=<state>/home`` + ``CLAUDE_CONFIG_DIR=<state>/home/.claude``
+        into the tmux session so the in-tmux ``claude`` TUI sees the
+        agent's skills, MCP servers, hooks, and settings.json — same
+        surface the SDK runtime provides via apptainer bind-mount.
+
         ``force=True`` stops any existing session for this agent
         before starting (the same idempotent-restart contract the
-        supervisor relies on). ``dry_run=True`` skips the actual
-        ``tmux new-session`` — the hedge doesn't materialise any
-        on-disk workspace state yet, so dry-run is a no-op that
-        returns True. ``foreground`` is ignored (a tmux session
-        whose whole point is detachment has no meaningful foreground
-        mode — same convention as the screen runner).
+        supervisor relies on). ``dry_run=True`` materialises the
+        workspace but skips the actual ``tmux new-session`` — lets
+        the operator verify the rendered tree without spawning a
+        process. ``foreground`` is ignored (a tmux session whose
+        whole point is detachment has no meaningful foreground mode
+        — same convention as the screen runner).
         """
         name = session_name_for(config)
         if force and self._mux.exists(name):
             self._mux.stop(name)
+        home_dir = self.materialize_workspace(config)
         if dry_run:
             return True
         workdir = getattr(config, "workdir", "") or "/tmp"
+        env_exports = ""
+        if home_dir is not None:
+            env_exports = (
+                f"export HOME={home_dir}\nexport CLAUDE_CONFIG_DIR={home_dir}/.claude\n"
+            )
         return bool(
             self._mux.start(
                 session_name=name,
                 command=self._claude_bin,
                 workdir=str(workdir),
+                env_exports=env_exports,
             )
         )
 
@@ -147,17 +230,84 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         return bool(self._mux.stop(name))
 
-    def is_running(self, config: AgentConfig) -> bool:
-        """True iff sac's tmux session for this agent exists.
+    def is_running(
+        self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
+    ) -> bool:
+        """True iff sac's tmux session for this agent is **responsive**.
 
-        This is risk-2's deferred half: a True return today only
-        means the multiplexer session is alive, NOT that the inner
-        ``claude`` process is responsive. The follow-up PR adds a
-        tui-alive probe (pane-activity timestamp or sidecar
-        heartbeat file) on top.
+        Step 4/4 of the TUI hedge (lead a2a
+        ``d383f5389dc548a49a293bffe390d619``): risk-2's deferred half.
+        Before step 4, this method only proved the multiplexer session
+        existed — a hung-but-alive inner ``claude`` process (e.g. an
+        infinite-loop in the Ink renderer that never exits but never
+        reads stdin either) would still return True and the supervisor
+        would never restart it. Now the probe additionally requires
+        pane activity within the last ``max_idle_s`` seconds, so the
+        supervisor's existing ``RestartPolicy`` automatically catches
+        the inner-hang case via the same is_running poll it already
+        runs.
+
+        Implementation: ``tmux display -p '#{session_activity}'``
+        advances on every pane read OR write, so a responsive TUI
+        keeps its activity stamp fresh (banner draws, periodic Ink
+        re-renders, operator input, ``send_turn``). A hung claude
+        stops writing; a deadlocked claude stops reading. Either way
+        the stamp goes stale and ``is_running`` flips False.
+
+        ``max_idle_s`` defaults to 300s — the same window the SDK
+        runtime's ``health.interval`` default uses — so a quiet but
+        healthy TUI gets a generous grace window before the
+        supervisor restarts it. Callers (notably a custom
+        ``spec.health`` policy) can tighten or loosen this per-poll.
+
+        Returns ``False`` when the session is absent, when
+        ``session_activity`` is unavailable (legacy multiplexer fakes
+        that don't implement it return ``None``), or when the stamp
+        is older than ``max_idle_s``.
         """
         name = session_name_for(config)
-        return bool(self._mux.exists(name))
+        if not self._mux.exists(name):
+            return False
+        activity = self._mux.session_activity(name)
+        if activity is None:
+            return False
+        return (time.time() - float(activity)) <= max_idle_s
+
+    def send_turn(self, config: AgentConfig, text: str) -> bool:
+        """Deliver one turn of input to the in-tmux TUI.
+
+        Uses the multiplexer's ``send_text_and_submit`` (text first,
+        settle delay, then a separate ``Enter`` keystroke) — the same
+        primitive the salvaged ``claude_code._run_startup_commands``
+        uses to defeat the "Enter dropped during a TUI re-render"
+        race the operator reported in #353.
+
+        Returns ``False`` (and skips the send) when sac's tmux session
+        for this agent does not exist; this is the TUI analogue of
+        the SDK runtime's "no live HTTP turn endpoint" guard — it
+        lets a caller distinguish "delivered" from "no runtime to
+        deliver to" without inspecting the multiplexer directly.
+
+        Step 3 of the TUI hedge (lead a2a
+        ``d383f5389dc548a49a293bffe390d619`` + clarification
+        ``edfe809e55a24640b6a42318872c8b58``): this is the
+        delivery-side primitive; the response-side primitive is
+        ``logs(...)`` via ``mux.capture_logs``. End-to-end turn
+        completion = ``send_turn`` then poll ``logs`` for the
+        expected response token. Step 3 is intentionally hermetic
+        (auth- and network-independent): the real-binary suite
+        exercises delivery via a deterministic stand-in command
+        (``bash -c 'cat'``) so the test proves DELIVERY through
+        real tmux without coupling to operator credentials or
+        Anthropic's API. Authenticated-claude "answers a turn"
+        verification is owned by the step-4 tui-alive integration
+        probe, gated on credentials being present.
+        """
+        name = session_name_for(config)
+        if not self._mux.exists(name):
+            return False
+        self._mux.send_text_and_submit(name, text)
+        return True
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output for the session.
