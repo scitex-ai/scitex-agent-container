@@ -319,6 +319,7 @@ class TuiSessionRuntime(RuntimeBase):
         dry_run: bool = False,
         foreground: bool = False,
         drain_pickers_at_boot: bool = True,
+        inject_startup_prompts: bool = True,
         boot_drain_timeout_s: float = 30.0,
     ) -> bool:
         """Launch ``claude`` inside a detached tmux session sac owns.
@@ -416,7 +417,52 @@ class TuiSessionRuntime(RuntimeBase):
                     name,
                     exc,
                 )
+        if started and inject_startup_prompts:
+            # Boot-mission injection (lead a2a 4973264a, 2026-06-14):
+            # parity with SDK runtime — feed spec.startup_prompts to
+            # claude as the first turn(s) on start. Without this a
+            # flipped TUI agent sits at an empty ❯ — operator-facing
+            # regression. Best-effort: failure logs + continues.
+            self._inject_startup_prompts(config)
         return started
+
+    def _inject_startup_prompts(self, config: AgentConfig) -> None:
+        """Feed spec.startup_prompts as the first user turn(s).
+
+        Mirrors the SDK runtime's startup-prompt parity. Each prompt
+        = separate turn via the bare ``send_text_and_submit`` (proven
+        reliable on the host canary). Empty list → no-op. Per-prompt
+        failure logged and skipped; total failure does NOT raise so
+        the supervisor restart cycle never oscillates.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
+        prompts = list(getattr(config, "startup_prompts", []) or [])
+        if not prompts:
+            return
+        name = session_name_for(config)
+        for index, prompt in enumerate(prompts, start=1):
+            if not prompt:
+                continue
+            try:
+                self._mux.send_text_and_submit(name, prompt)
+                log.info(
+                    "TuiSessionRuntime: injected startup_prompt %d/%d "
+                    "(%d chars) into %s",
+                    index,
+                    len(prompts),
+                    len(prompt),
+                    name,
+                )
+            except Exception as exc:  # stx-allow: fallback (per-prompt best-effort)
+                log.warning(
+                    "TuiSessionRuntime: startup_prompt %d/%d failed for %s: %s",
+                    index,
+                    len(prompts),
+                    name,
+                    exc,
+                )
 
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session sac owns for this agent.
