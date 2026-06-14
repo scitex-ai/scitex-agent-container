@@ -59,13 +59,22 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .._runners._tmux.tmux import TmuxManager
+from .._runners._tmux.tmux import (
+    TmuxManager,
+    TuiInputNotReadyError,
+)
 from ..config import AgentConfig
+from . import prompts as _prompts
 from ._to_home import deploy_to_home
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
 
-__all__ = ["TuiSessionRuntime", "session_name_for", "state_dir_for_config"]
+__all__ = [
+    "TuiInputNotReadyError",
+    "TuiSessionRuntime",
+    "session_name_for",
+    "state_dir_for_config",
+]
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
@@ -273,7 +282,13 @@ class TuiSessionRuntime(RuntimeBase):
             return False
         return (time.time() - float(activity)) <= max_idle_s
 
-    def send_turn(self, config: AgentConfig, text: str) -> bool:
+    def send_turn(
+        self,
+        config: AgentConfig,
+        text: str,
+        *,
+        wait_ready: bool = True,
+    ) -> bool:
         """Deliver one turn of input to the in-tmux TUI.
 
         Uses the multiplexer's ``send_text_and_submit`` (text first,
@@ -306,6 +321,22 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
+        if wait_ready:
+            # State-table dispatch (lead a2a
+            # ``286ce8f625744cd08e4ee23eddf2c7aa``, 2026-06-14):
+            # before delivering the turn, drain any first-launch /
+            # mid-session modals via the existing
+            # ``runtimes/prompts.py`` registry (theme picker, login
+            # method, file-trust, dev-channels, etc. — 12 handlers
+            # today, all keystroke-driven). The driver no longer
+            # ad-hoc-detects gates inline; the SAME registry that
+            # the SDK runtime uses serves the TUI runtime.
+            #
+            # Skippable via ``wait_ready=False`` for the in-memory
+            # unit suite where the multiplexer fake doesn't render
+            # an input-ready marker (the modal drain has no work
+            # to do anyway). Real-binary callers always wait.
+            self.wait_until_input_ready(config)
         # Structural fix for the Ink-drop race (lead a2a
         # ``910ff436642948eb85f8b3100204ed9b`` / ``b591f42c4c4944d18``,
         # 2026-06-14). ``send_text_and_submit_verified`` polls
@@ -320,6 +351,79 @@ class TuiSessionRuntime(RuntimeBase):
         # turn either lands or fails loud (TuiKeystrokeDropError).
         self._mux.send_text_and_submit_verified(name, text)
         return True
+
+    def wait_until_input_ready(
+        self,
+        config: AgentConfig,
+        *,
+        timeout_s: float = 60.0,
+        poll_s: float = 0.4,
+        sleep_fn=time.sleep,
+    ) -> bool:
+        """Drain first-launch / mid-session modals, then block until the
+        TUI input field is bound.
+
+        Lead a2a ``286ce8f625744cd08e4ee23eddf2c7aa`` (2026-06-14): the
+        TUI driving is no longer a tower of ad-hoc inline detections.
+        Each polling frame is matched against the existing
+        :mod:`runtimes.prompts` registry (12 handlers today —
+        theme-selection / login-method / file-trust / dev-channels /
+        bypass-permissions / press-enter-continue / external-imports /
+        mcp-json-edit / thinking-effort / skip-permissions-yn /
+        compose-pending-unsent / file-trust-radio); the FIRST matching
+        handler runs its registered keystrokes (``send_keys`` via the
+        multiplexer) and is added to the ``accepted`` set so a
+        re-render of the same modal doesn't double-send. Polling
+        continues until either the ``? for shortcuts`` input-ready
+        marker appears OR :class:`TuiInputNotReadyError` is raised on
+        timeout.
+
+        The 401 / rate-limited / processing / response-ready states
+        the operator named in the new spec land in the SAME registry
+        as additional handlers (see :mod:`runtimes.prompts`); when
+        their detect strings match, the registered action runs
+        without further driver changes.
+
+        ``poll_s`` defaults to 400ms — long enough that the
+        capture-pane subprocess doesn't dominate the wall, short
+        enough that Ink modal re-renders are caught within a few
+        frames.
+        """
+        name = session_name_for(config)
+        if not self._mux.exists(name):
+            raise TuiInputNotReadyError(
+                f"TUI session {name!r} does not exist; nothing to wait for."
+            )
+
+        # ``accepted`` is intentionally per-call: a fresh modal
+        # sequence on each turn (e.g. a context-window press-enter)
+        # should be dismissed afresh.
+        accepted: set[str] = set()
+        marker = "? for shortcuts"
+        deadline = time.monotonic() + timeout_s
+        last_pane = ""
+        send_keys_fn = self._mux.send_keys
+        while time.monotonic() < deadline:
+            last_pane = self._mux.capture_content(name)
+            if marker in last_pane:
+                return True
+            handled = _prompts.detect_and_respond(
+                last_pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)
+            )
+            if handled is not None:
+                accepted.add(handled)
+                # Re-capture immediately after a keystroke — the
+                # modal may dismiss in <poll_s and the input field
+                # bind on the very next frame.
+                continue
+            if poll_s > 0:
+                sleep_fn(poll_s)
+        raise TuiInputNotReadyError(
+            f"TUI input-ready marker {marker!r} not seen in pane "
+            f"{name!r} within {timeout_s:.1f}s after draining "
+            f"{len(accepted)} modal(s) ({sorted(accepted)}). "
+            f"Last pane content:\n{last_pane}"
+        )
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output for the session.
