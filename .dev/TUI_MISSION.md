@@ -115,6 +115,6 @@ short note.
 
 - [x] step 1 — `509a6de1` materialise to_home + CLAUDE.md
 - [x] step 2 — `3f65122f` real tmux+claude smoke (test_tui_session_real_smoke.py)
-- [ ] step 3 — one verified a2a turn through TUI runtime
+- [x] step 3 — `2e4f1a0b` send_turn + nonce round-trip (hermetic per lead a2a edfe809e)
 - [ ] step 4 — tui-alive probe (pane-activity or heartbeat)
 - [ ] integration PR opened (link here)
