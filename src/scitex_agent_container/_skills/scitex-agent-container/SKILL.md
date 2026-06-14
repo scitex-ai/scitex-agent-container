@@ -78,6 +78,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
+- [40_periodic-drive-consumer.md](40_periodic-drive-consumer.md) — handle `kind == "periodic_drive"` a2a inbox events (re-injection, not new task)
 - [41](41_claude-worktree-relocation.md)
 
 ## Environment
