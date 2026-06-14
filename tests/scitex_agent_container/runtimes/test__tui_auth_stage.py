@@ -651,9 +651,11 @@ class TestStageTuiAuthHostFallbackChain:
         os.environ[CREDENTIALS_FALLBACK_CHAIN_ENV] = (
             f"{tmp_path}/a/.credentials.json:{tmp_path}/b/.credentials.json"
         )
-        # Act / Assert
+        # Act
+        do_stage = stage_tui_auth
+        # Assert
         with pytest.raises(TuiAuthStageError, match="fallback chain"):
-            stage_tui_auth(home_dir, config=None)
+            do_stage(home_dir, config=None)
 
 
 # EOF
