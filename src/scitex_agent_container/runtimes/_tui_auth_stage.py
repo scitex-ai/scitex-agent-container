@@ -131,6 +131,7 @@ class StagedAuth:
 
     credentials_dst: Path
     claude_json_dst: Path
+    claude_json_config_dir_dst: Path
     settings_json_dst: Path
 
 
@@ -447,9 +448,28 @@ def stage_tui_auth(
     creds_dst.chmod(0o600)
     _assert_credentials_usable(creds_dst, source=creds_src)
 
+    # Lead a2a 66925cbf2c054ef5b8f271404e8a19e9 (2026-06-14): the
+    # bundled claude TUI reads ``.claude.json`` from CLAUDE_CONFIG_DIR
+    # (i.e. ``<home>/.claude/.claude.json``), NOT from ``<home>``.
+    # The runtime sets ``CLAUDE_CONFIG_DIR=<home>/.claude`` so the
+    # TUI's read path is the SUBDIR. Without a pre-staged file
+    # there, the TUI writes a fresh STUB at
+    # ``<home>/.claude/.claude.json`` on launch that contains the
+    # OAuth subset only (no ``hasCompletedOnboarding``); the next
+    # boot then re-runs the trust-folder / onboarding gate. The
+    # operator-symptom "Welcome back / parks at trust screen" is
+    # exactly this.
+    #
+    # Fix: stage the FULL ``.claude.json`` to BOTH paths so
+    # whichever one the TUI reads, the trust + onboarding flags
+    # are honoured. Identical content; cp source twice.
     claude_json_dst = home_dir / ".claude.json"
     _follow_and_copy(claude_json_src, claude_json_dst)
     _assert_claude_json_oauth_ready(claude_json_dst, source=claude_json_src)
+
+    claude_json_config_dir_dst = claude_dir / ".claude.json"
+    _follow_and_copy(claude_json_src, claude_json_config_dir_dst)
+    _assert_claude_json_oauth_ready(claude_json_config_dir_dst, source=claude_json_src)
 
     settings_json_dst = claude_dir / "settings.json"
     if not settings_json_dst.exists():
@@ -468,5 +488,6 @@ def stage_tui_auth(
     return StagedAuth(
         credentials_dst=creds_dst,
         claude_json_dst=claude_json_dst,
+        claude_json_config_dir_dst=claude_json_config_dir_dst,
         settings_json_dst=settings_json_dst,
     )
