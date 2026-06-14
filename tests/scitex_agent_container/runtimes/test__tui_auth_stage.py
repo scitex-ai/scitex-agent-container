@@ -331,12 +331,26 @@ class TestStageTuiAuthDefaults:
         # operator-host path we must not touch from a unit test).
         os.environ[CREDENTIALS_SRC_ENV] = str(creds_src)
         host_claude_json = Path(os.environ["HOME"]) / ".claude.json"
-        host_claude_json.write_text(json.dumps({"hasCompletedOnboarding": True}))
+        # Stage a fully-formed .claude.json — hasCompletedOnboarding=true
+        # AND a non-empty oauthAccount, because the post-2026-06-14
+        # fail-loud validators require both (a TUI staged with a partial
+        # .claude.json would fall back to interactive OAuth at runtime).
+        host_claude_json.write_text(
+            json.dumps(
+                {
+                    "hasCompletedOnboarding": True,
+                    "oauthAccount": {
+                        "accountUuid": "host-acct-uuid",
+                        "emailAddress": "host@example.com",
+                    },
+                }
+            )
+        )
         # Act
         stage_tui_auth(home_dir)
         # Assert — destination materialised from the default-resolved source.
         observed = json.loads((home_dir / ".claude.json").read_text())
-        assert observed == {"hasCompletedOnboarding": True}
+        assert observed["hasCompletedOnboarding"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -400,13 +414,36 @@ class TestStageTuiAuthIdempotent:
         claude_json_src: Path,
         tmp_path: Path,
     ) -> None:
-        # Arrange — two distinct credential sources; stage A then B.
+        # Arrange — two distinct credential sources; both must satisfy
+        # the post-2026-06-14 fail-loud validators (non-empty oauth +
+        # future expiresAt). Tags differentiate which one was staged.
+        far_future = 9999999999999
+        token_a = "sk-ant-oat01-A" + "0" * 80
+        token_b = "sk-ant-oat01-B" + "1" * 80
         creds_a = tmp_path / "a" / ".credentials.json"
         creds_a.parent.mkdir(parents=True, exist_ok=True)
-        creds_a.write_text('{"version": "A"}')
+        creds_a.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": token_a,
+                        "expiresAt": far_future,
+                    }
+                }
+            )
+        )
         creds_b = tmp_path / "b" / ".credentials.json"
         creds_b.parent.mkdir(parents=True, exist_ok=True)
-        creds_b.write_text('{"version": "B"}')
+        creds_b.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": token_b,
+                        "expiresAt": far_future,
+                    }
+                }
+            )
+        )
         os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
 
         os.environ[CREDENTIALS_SRC_ENV] = str(creds_a)
@@ -414,9 +451,9 @@ class TestStageTuiAuthIdempotent:
         # Act — re-stage with the second source.
         os.environ[CREDENTIALS_SRC_ENV] = str(creds_b)
         stage_tui_auth(home_dir)
-        # Assert — destination reflects the LATER source.
-        observed = (home_dir / ".claude" / ".credentials.json").read_text()
-        assert observed == '{"version": "B"}'
+        # Assert — destination reflects the LATER source (token B).
+        observed = json.loads((home_dir / ".claude" / ".credentials.json").read_text())
+        assert observed["claudeAiOauth"]["accessToken"] == token_b
 
 
 # ---------------------------------------------------------------------------
@@ -579,14 +616,28 @@ class TestStageTuiAuthPinnedAccountSnapshot:
             / ".credentials.json"
         )
         snapshot.parent.mkdir(parents=True, exist_ok=True)
-        snapshot.write_text('{"version": "pinned-snapshot"}')
+        # Snapshot content must satisfy the fail-loud validators
+        # (claudeAiOauth.accessToken + future expiresAt) — the
+        # snapshot stores the realistic OAuth payload.
+        snapshot.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-pinned-snapshot",
+                        "expiresAt": 9999999999999,
+                    }
+                }
+            )
+        )
         os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
         config = _StubConfig(claude=_StubClaude(account=acct))
         # Act
         stage_tui_auth(home_dir, config=config)
         # Assert — destination reflects the snapshot, not the chain default.
-        observed = (home_dir / ".claude" / ".credentials.json").read_text()
-        assert observed == '{"version": "pinned-snapshot"}'
+        observed = json.loads((home_dir / ".claude" / ".credentials.json").read_text())
+        assert (
+            observed["claudeAiOauth"]["accessToken"] == "sk-ant-oat01-pinned-snapshot"
+        )
 
     def test_pinned_account_with_missing_snapshot_falls_to_chain(
         self,
@@ -627,7 +678,18 @@ class TestStageTuiAuthHostFallbackChain:
         # bind, which exists and would short-circuit the test.
         host_creds = Path(os.environ["HOME"]) / ".claude" / ".credentials.json"
         host_creds.parent.mkdir(parents=True, exist_ok=True)
-        host_creds.write_text('{"version": "host-live"}')
+        # Host-live content must satisfy the fail-loud validators
+        # (claudeAiOauth.accessToken + future expiresAt).
+        host_creds.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-host-live",
+                        "expiresAt": 9999999999999,
+                    }
+                }
+            )
+        )
         os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
         os.environ[CREDENTIALS_FALLBACK_CHAIN_ENV] = (
             f"/nope-container-bind/.credentials.json:{host_creds}"
@@ -635,8 +697,8 @@ class TestStageTuiAuthHostFallbackChain:
         # Act — config=None means unpinned; chain falls to host_live.
         stage_tui_auth(home_dir, config=None)
         # Assert
-        observed = (home_dir / ".claude" / ".credentials.json").read_text()
-        assert observed == '{"version": "host-live"}'
+        observed = json.loads((home_dir / ".claude" / ".credentials.json").read_text())
+        assert observed["claudeAiOauth"]["accessToken"] == "sk-ant-oat01-host-live"
 
     def test_error_lists_all_tried_paths_when_chain_exhausted(
         self,

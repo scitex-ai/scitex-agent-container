@@ -72,7 +72,13 @@ class _MemoryMultiplexer:
         workdir: str,
         env_exports: str = "",
         venv: str = "",
+        session_env: dict[str, str] | None = None,
     ) -> bool:
+        # ``session_env`` is the structural fix added 2026-06-14 (lead
+        # a2a 8f910ea7) so the in-memory mux mirrors the real
+        # TmuxManager signature; the fake doesn't actually plumb it
+        # anywhere — capturing the kwarg is enough for the runtime
+        # unit suite to exercise the dispatcher.
         cls._sessions[session_name] = _MemorySession(
             name=session_name,
             command=command,

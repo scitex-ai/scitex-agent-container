@@ -76,6 +76,7 @@ class TmuxManager:
         workdir: str,
         env_exports: str = "",
         venv: str = "",
+        session_env: dict[str, str] | None = None,
     ) -> bool:
         """Launch a command inside a new detached tmux session.
 
@@ -83,8 +84,22 @@ class TmuxManager:
             session_name: Name for the tmux session.
             command: Shell command to execute.
             workdir: Working directory for the command.
-            env_exports: Newline-separated export statements to prepend.
+            env_exports: Newline-separated export statements to prepend
+                to the shell script (legacy belt-and-suspenders path —
+                see :param:`session_env` for the structural fix).
             venv: Path to virtualenv to activate before running command.
+            session_env: Mapping of env vars passed via ``tmux
+                new-session -e KEY=VAL`` so the values land on the
+                session itself and propagate to every pane / child
+                process IRRESPECTIVE of whether a login shell init
+                file would overwrite a same-named export inside the
+                script. This is the operator-mandated path for HOME +
+                CLAUDE_CONFIG_DIR on the TUI runtime (lead a2a
+                ``8f910ea7e78e4e0b959ce087376e542b``, 2026-06-14:
+                live agents launched without HOME pointing at the
+                staged $STATE/home dropped to interactive OAuth login
+                because the inner ``claude`` read the operator's
+                real ``~/.claude/`` instead of the staged one).
 
         Returns:
             True if the tmux session was created successfully.
@@ -108,20 +123,17 @@ class TmuxManager:
         )
 
         Path(workdir).mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            [
-                "tmux",
-                "new-session",
-                "-d",
-                "-s",
-                session_name,
-                "bash",
-                "-l",
-                "-c",
-                shell_script,
-            ],
-            check=False,
-        )
+        # Build argv with optional ``-e KEY=VAL`` pairs first; bash
+        # without ``-l`` so login init files cannot overwrite the
+        # tmux-side env. The script's belt-and-suspenders exports
+        # stay as a no-cost defense for any consumer that still
+        # passes env_exports without session_env.
+        argv: list[str] = ["tmux", "new-session", "-d", "-s", session_name]
+        if session_env:
+            for key, value in session_env.items():
+                argv += ["-e", f"{key}={value}"]
+        argv += ["bash", "-c", shell_script]
+        subprocess.run(argv, check=False)
 
         time.sleep(2)
         return TmuxManager.exists(session_name)
