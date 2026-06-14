@@ -63,10 +63,12 @@ class TestDefaultTickInterval:
     """The polling cadence default is documented in the module."""
 
     def test_default_tick_interval_is_60s(self) -> None:
-        # Arrange / Act
-        # (no setup — assert on the module constant)
+        # Arrange
+        constant = DEFAULT_TICK_INTERVAL_S
+        # Act
+        observed = constant
         # Assert
-        assert DEFAULT_TICK_INTERVAL_S == 60.0
+        assert observed == 60.0
 
 
 # ---------------------------------------------------------------------------
