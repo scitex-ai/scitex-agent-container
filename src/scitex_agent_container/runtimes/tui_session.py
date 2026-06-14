@@ -55,6 +55,7 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,15 @@ __all__ = ["TuiSessionRuntime", "session_name_for", "state_dir_for_config"]
 _CLAUDE_BIN_DEFAULT = "claude"
 
 _REQUIRED_CONFIG_ATTRS = ("expanded_workdir", "skills", "claude", "env", "labels")
+
+# Default max-idle window for the tui-alive probe (see
+# ``TuiSessionRuntime.is_running``). 300s mirrors the SDK runtime's
+# health.interval default and gives a quiet but healthy TUI a
+# generous grace window before the supervisor's restart policy
+# fires on it. Overridable per-call via the ``max_idle_s`` kwarg
+# so a custom health policy in spec.health can tune it without a
+# code change.
+_DEFAULT_MAX_IDLE_S = 300.0
 
 
 def session_name_for(config: AgentConfig) -> str:
@@ -220,17 +230,48 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         return bool(self._mux.stop(name))
 
-    def is_running(self, config: AgentConfig) -> bool:
-        """True iff sac's tmux session for this agent exists.
+    def is_running(
+        self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
+    ) -> bool:
+        """True iff sac's tmux session for this agent is **responsive**.
 
-        This is risk-2's deferred half: a True return today only
-        means the multiplexer session is alive, NOT that the inner
-        ``claude`` process is responsive. The follow-up PR adds a
-        tui-alive probe (pane-activity timestamp or sidecar
-        heartbeat file) on top.
+        Step 4/4 of the TUI hedge (lead a2a
+        ``d383f5389dc548a49a293bffe390d619``): risk-2's deferred half.
+        Before step 4, this method only proved the multiplexer session
+        existed — a hung-but-alive inner ``claude`` process (e.g. an
+        infinite-loop in the Ink renderer that never exits but never
+        reads stdin either) would still return True and the supervisor
+        would never restart it. Now the probe additionally requires
+        pane activity within the last ``max_idle_s`` seconds, so the
+        supervisor's existing ``RestartPolicy`` automatically catches
+        the inner-hang case via the same is_running poll it already
+        runs.
+
+        Implementation: ``tmux display -p '#{session_activity}'``
+        advances on every pane read OR write, so a responsive TUI
+        keeps its activity stamp fresh (banner draws, periodic Ink
+        re-renders, operator input, ``send_turn``). A hung claude
+        stops writing; a deadlocked claude stops reading. Either way
+        the stamp goes stale and ``is_running`` flips False.
+
+        ``max_idle_s`` defaults to 300s — the same window the SDK
+        runtime's ``health.interval`` default uses — so a quiet but
+        healthy TUI gets a generous grace window before the
+        supervisor restarts it. Callers (notably a custom
+        ``spec.health`` policy) can tighten or loosen this per-poll.
+
+        Returns ``False`` when the session is absent, when
+        ``session_activity`` is unavailable (legacy multiplexer fakes
+        that don't implement it return ``None``), or when the stamp
+        is older than ``max_idle_s``.
         """
         name = session_name_for(config)
-        return bool(self._mux.exists(name))
+        if not self._mux.exists(name):
+            return False
+        activity = self._mux.session_activity(name)
+        if activity is None:
+            return False
+        return (time.time() - float(activity)) <= max_idle_s
 
     def send_turn(self, config: AgentConfig, text: str) -> bool:
         """Deliver one turn of input to the in-tmux TUI.

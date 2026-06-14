@@ -38,7 +38,6 @@ are present on the TUI-hedge base SIF (PR #390, merged 2026-06-15).
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import time

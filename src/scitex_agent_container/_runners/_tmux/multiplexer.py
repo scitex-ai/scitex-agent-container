@@ -27,6 +27,9 @@ class MultiplexerProtocol(Protocol):
     def stop(session_name: str) -> bool: ...
 
     @staticmethod
+    def session_activity(session_name: str) -> int | None: ...
+
+    @staticmethod
     def capture_content(session_name: str) -> str: ...
 
     @staticmethod
