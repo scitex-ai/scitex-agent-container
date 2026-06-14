@@ -1,0 +1,4 @@
+{
+  "_comment": "TUI smoke fixture — minimal valid MCP config. No real servers; just proves the overlay materialised this file under <state>/home/.mcp.json.",
+  "mcpServers": {}
+}

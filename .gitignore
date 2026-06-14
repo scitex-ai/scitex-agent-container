@@ -28,6 +28,12 @@ docs/to_claude/
 !examples/agents/*/to_home/.claude/
 !examples/agents/*/to_home/.claude/**
 
+# Test fixture to_home/.claude/ trees exercise the materialiser's overlay
+# of dotted dirs (the main reason the runtime exists) — same exception
+# pattern as the examples above.
+!tests/**/_fixtures*/to_home/.claude/
+!tests/**/_fixtures*/to_home/.claude/**
+
 # dev artifacts
 .coverage
 .coverage.*
