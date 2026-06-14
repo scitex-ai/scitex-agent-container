@@ -990,14 +990,43 @@ async def test_push_channel_event_still_injects_notification(fake_listen):
     assert len(session.sent) == 1
 
 
+def _contentless_ack_posts(fake_listen) -> list:
+    """Filter the fake listen's posts down to contentless legacy acks.
+
+    A "contentless ack" carries ``metadata.ack=True`` AND an empty (or
+    missing) text body. The structural reaction-ack
+    (``feat/comm-reaction-ack``) is excluded from this filter — it
+    carries a non-empty 👀 marker so the sender-side noise filter
+    deliberately lets it pass.
+    """
+    out = []
+    for path, payload in fake_listen.posts:
+        if not isinstance(payload, dict):
+            continue
+        params = payload.get("params") or {}
+        metadata = params.get("metadata") or {}
+        if not metadata.get("ack"):
+            continue
+        message = params.get("message") or {}
+        parts = message.get("parts") or []
+        text = ""
+        if isinstance(parts, list) and parts and isinstance(parts[0], dict):
+            text = parts[0].get("text", "") or ""
+        if isinstance(text, str) and text.strip() == "":
+            out.append((path, payload))
+    return out
+
+
 @pytest.mark.asyncio
 async def test_push_channel_event_auto_ack_is_suppressed_at_sender(fake_listen):
     """Operator contract: the stage-2 read-receipt auto-ack is contentless
     (empty body + ``metadata.ack=True``), so the sender-side noise filter
-    drops it BEFORE it leaves the outbound queue. The wire stays quiet —
-    the receive-side ``_should_auto_ack`` guard remains as belt-and-
-    suspenders. Pre-filter behaviour (a POST to ``/agents/bob/message:send``)
-    is replaced by zero POSTs."""
+    drops it BEFORE it leaves the outbound queue. The wire stays quiet for
+    contentless acks — the structural reaction-ack
+    (``feat/comm-reaction-ack``) carries a 👀 marker and is the operator's
+    comm-miss-detectable signal; it is NOT suppressed (and is asserted
+    elsewhere). Pre-filter contentless behaviour (a POST to
+    ``/agents/bob/message:send``) is replaced by zero contentless POSTs."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
@@ -1011,8 +1040,9 @@ async def test_push_channel_event_auto_ack_is_suppressed_at_sender(fake_listen):
         listen_url=fake_listen.base_url,
         bearer=None,
     )
-    # Assert — no auto-ack reached the listen.
-    assert fake_listen.posts == []
+    # Assert — no CONTENTLESS auto-ack reached the listen. The structural
+    # reaction-ack (non-empty 👀 marker) is a separate, intentional signal.
+    assert _contentless_ack_posts(fake_listen) == []
 
 
 @pytest.mark.asyncio
@@ -1058,19 +1088,24 @@ async def test_push_channel_event_does_not_auto_ack_an_ack(fake_listen):
 
 
 @pytest.mark.asyncio
-async def test_two_adapters_emit_zero_acks_under_sender_side_filter(fake_listen):
+async def test_two_adapters_emit_zero_contentless_acks_under_sender_side_filter(
+    fake_listen,
+):
     """End-to-end ping-pong cannot start under the sender-side filter: A's
-    would-be auto-ack to B is dropped at A before it reaches the wire, so
-    there is nothing for B's adapter to bounce back. Pre-filter behaviour
-    (exactly one ack on the wire) is replaced by zero acks on the wire.
-    Replaces ``test_two_adapters_do_not_ping_pong_to_a_fixed_point`` —
-    the loop terminates one hop earlier."""
+    would-be CONTENTLESS auto-ack to B is dropped at A before it reaches
+    the wire, so there is nothing for B's adapter to bounce back.
+    Pre-filter behaviour (exactly one contentless ack on the wire) is
+    replaced by zero contentless acks on the wire. The structural
+    reaction-ack (``feat/comm-reaction-ack``) is a separate, intentional
+    signal carrying a 👀 marker — it DOES reach the wire so the sender can
+    detect comm-miss; the receive-side loop-guard on ``kind="reaction"``
+    prevents the ping-pong (covered by the e2e module)."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
     session_a = _CapturingSession()
     inbound_to_a = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
-    # Act — A receives B's message; the auto-ack is suppressed at A.
+    # Act — A receives B's message; the contentless ack is suppressed at A.
     await _push_channel_event(
         session_a,
         inbound_to_a,
@@ -1078,18 +1113,23 @@ async def test_two_adapters_emit_zero_acks_under_sender_side_filter(fake_listen)
         listen_url=fake_listen.base_url,
         bearer=None,
     )
-    # Assert — no ack reached the wire.
-    assert fake_listen.posts == []
+    # Assert — no CONTENTLESS ack reached the wire.
+    assert _contentless_ack_posts(fake_listen) == []
 
 
 @pytest.mark.asyncio
-async def test_auto_ack_disabled_via_env_emits_no_post(fake_listen):
+async def test_auto_ack_disabled_via_env_emits_no_contentless_post(fake_listen):
+    """Disabling the legacy contentless auto-ack via env: no contentless
+    POST reaches the wire. The structural reaction-ack
+    (``feat/comm-reaction-ack``) is gated by a SEPARATE env knob
+    (``SAC_REACTION_ACK``) and remains on by default — the operator's
+    comm-miss-detectable signal is intentional and asserted elsewhere."""
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
 
     session = _CapturingSession()
     event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
-    # Act
+    # Act — auto-ack OFF; reaction-ack default (ON).
     with _env("SAC_CHANNEL_AUTO_ACK", "0"):
         await _push_channel_event(
             session,
@@ -1098,8 +1138,8 @@ async def test_auto_ack_disabled_via_env_emits_no_post(fake_listen):
             listen_url=fake_listen.base_url,
             bearer=None,
         )
-    # Assert — injection happened, but no auto-ack POST.
-    assert fake_listen.posts == []
+    # Assert — injection happened, but no contentless auto-ack POST.
+    assert _contentless_ack_posts(fake_listen) == []
 
 
 @pytest.mark.asyncio
