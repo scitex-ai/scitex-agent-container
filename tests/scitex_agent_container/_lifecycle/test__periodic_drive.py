@@ -295,10 +295,12 @@ class TestDefaultInterval:
     constant is the documented default."""
 
     def test_default_interval_is_600s(self) -> None:
-        # Arrange / Act
-        # (no setup; assert on the module constant)
+        # Arrange
+        constant = DEFAULT_INTERVAL_S
+        # Act
+        observed = constant
         # Assert — 10 minutes as documented in the module docstring.
-        assert DEFAULT_INTERVAL_S == 600.0
+        assert observed == 600.0
 
 
 # EOF

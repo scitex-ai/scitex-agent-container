@@ -63,10 +63,12 @@ class TestDefaultTickInterval:
     """The polling cadence default is documented in the module."""
 
     def test_default_tick_interval_is_60s(self) -> None:
-        # Arrange / Act
-        # (no setup — assert on the module constant)
+        # Arrange
+        constant = DEFAULT_TICK_INTERVAL_S
+        # Act
+        observed = constant
         # Assert
-        assert DEFAULT_TICK_INTERVAL_S == 60.0
+        assert observed == 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -197,28 +199,39 @@ async def test_loop_honours_cancellation_cleanly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_loop_skips_emit_when_globally_disabled(monkeypatch) -> None:
+async def test_loop_skips_emit_when_globally_disabled() -> None:
     # Arrange — the sweep helper short-circuits when the env is set.
-    monkeypatch.setenv("SAC_PERIODIC_DRIVE_DISABLED", "1")
-    state = _AppState()
-    agents = [_due_agent("alpha")]
-    # Act
-    task = asyncio.create_task(
-        periodic_drive_loop(
-            state,
-            tick_interval_s=0.05,
-            agents_source=agents,
-        )
-    )
-    await asyncio.sleep(0.2)
-    task.cancel()
+    # Direct os.environ manipulation + save/restore (no monkeypatch
+    # per PA-306 §3 no-mocks).
+    import os as _os
+
+    saved = _os.environ.get("SAC_PERIODIC_DRIVE_DISABLED")
+    _os.environ["SAC_PERIODIC_DRIVE_DISABLED"] = "1"
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    await asyncio.sleep(0.05)
-    # Assert — no events landed in the broker.
-    assert state.inbox.events == []
+        state = _AppState()
+        agents = [_due_agent("alpha")]
+        # Act
+        task = asyncio.create_task(
+            periodic_drive_loop(
+                state,
+                tick_interval_s=0.05,
+                agents_source=agents,
+            )
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.05)
+        # Assert — no events landed in the broker.
+        assert state.inbox.events == []
+    finally:
+        if saved is None:
+            _os.environ.pop("SAC_PERIODIC_DRIVE_DISABLED", None)
+        else:
+            _os.environ["SAC_PERIODIC_DRIVE_DISABLED"] = saved
 
 
 # EOF
