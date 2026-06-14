@@ -555,7 +555,7 @@
 <span class="sd">    (per pane-state-patterns.md: classify against last 5 visible lines only).</span>
 <span class="sd">    Excluded: active tool calls and numbered radio selectors.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">l</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">l</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
     <span class="n">last</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="o">-</span><span class="mi">5</span><span class="p">:])</span> <span class="k">if</span> <span class="n">lines</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
     <span class="n">has_enter_cue</span> <span class="o">=</span> <span class="p">(</span>
         <span class="s2">&quot;Press Enter to continue&quot;</span> <span class="ow">in</span> <span class="n">last</span>
@@ -686,7 +686,6 @@
     <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 
     <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;❯[ \t]+\S&quot;</span><span class="p">,</span> <span class="n">content</span><span class="p">))</span></div>
-
 
 
 
