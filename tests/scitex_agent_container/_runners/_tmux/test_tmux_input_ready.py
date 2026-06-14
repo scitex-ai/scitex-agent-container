@@ -22,8 +22,6 @@ STX-TQ002 AAA-markers + STX-TQ007 one-assert. No mocks.
 
 from __future__ import annotations
 
-from typing import Callable
-
 import pytest
 
 from scitex_agent_container._runners._tmux.tmux import (
