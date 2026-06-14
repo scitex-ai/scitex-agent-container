@@ -60,6 +60,36 @@ def _safe_account_for(cfg) -> str:
         return "unknown"
 
 
+def _movement_fields(name: str) -> dict:
+    """Return the three movement keys for ``name`` (always all-present).
+
+    Operator mandate (lead a2a 1781e82a, 2026-06-14): the fleet view's
+    per-agent rows must carry the same ``session_jsonl_bytes`` /
+    ``session_jsonl_last_write`` / ``heartbeat_at`` trio that the
+    per-agent ``agent_status`` payload exposes, so a single fleet
+    ``--json`` read answers "is each agent producing?".
+
+    Tolerant: any state-dir resolution / IO failure degrades to the
+    all-defaults shape (zero bytes + empty ISO strings) so the list
+    command never crashes on a movement-probe hiccup.
+    """
+    # stx-allow: fallback (reason: list output must never crash on a
+    # state-dir probe hiccup; explicit empty-values shape is the right UX.)
+    try:
+        from ..._lifecycle._session_movement import (
+            resolve_state_dir,
+            status_movement_fields,
+        )
+
+        return status_movement_fields(resolve_state_dir(name))
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return {
+            "session_jsonl_bytes": 0,
+            "session_jsonl_last_write": "",
+            "heartbeat_at": "",
+        }
+
+
 def _probe_local(cfg) -> bool | None:
     """Probe an agent's liveness via ContainerRuntime.
 
@@ -273,6 +303,13 @@ def get_agent_list_data(
             # Agents sharing one label share one server-side rate limit.
             "account": _safe_account_for(cfg),
         }
+        # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
+        # session.jsonl movement + last heartbeat at the per-row level
+        # of ``sac agents status --json`` so the kick-cycle reads
+        # MOVEMENT without scraping the SDK heartbeat.json out of band.
+        # All three keys are always present; missing-data renders as
+        # ``0`` / ``""``.
+        row.update(_movement_fields(name))
         if errors:
             row["validation_errors"] = errors
         if liveness_unknown:
@@ -334,6 +371,7 @@ def get_agent_list_data(
             "a2a_port": _safe_port_for(name),
             "account": _safe_account_for(cfg),
         }
+        row.update(_movement_fields(name))
         if errors:
             row["validation_errors"] = errors
         if labels:

@@ -90,6 +90,13 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     "skills_loaded",
     "hostname_canonical",
     "machine",
+    # ---- Operator-mandated MOVEMENT trio (lead a2a 1781e82a, 2026-06-14) ---
+    # Lets the lead's kick-cycle read "is this agent producing?" in one
+    # pass without scraping ``heartbeat.json`` out of band. Always
+    # present in the source payload (``0`` / ``""`` when no state dir).
+    "session_jsonl_bytes",
+    "session_jsonl_last_write",
+    "heartbeat_at",
 )
 
 # Whitelist used by ``scitex-agent-container take-snapshot --json --terse``.
