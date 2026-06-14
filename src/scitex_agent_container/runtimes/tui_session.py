@@ -62,10 +62,17 @@ from typing import Any
 from .._runners._tmux.tmux import TmuxManager
 from ..config import AgentConfig
 from ._to_home import deploy_to_home
+from ._tui_auth_stage import TuiAuthStageError, stage_tui_auth
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
 
-__all__ = ["TuiSessionRuntime", "session_name_for", "state_dir_for_config"]
+__all__ = [
+    "TuiAuthStageError",
+    "TuiSessionRuntime",
+    "session_name_for",
+    "stage_tui_auth",
+    "state_dir_for_config",
+]
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
@@ -149,8 +156,8 @@ class TuiSessionRuntime(RuntimeBase):
         self._claude_bin = claude_bin
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
-        """Materialise per-agent ``to_home/`` + CLAUDE.md into
-        ``<state>/home/`` and return that path.
+        """Materialise per-agent ``to_home/`` + CLAUDE.md + TUI-auth
+        files into ``<state>/home/`` and return that path.
 
         Mirrors ``ClaudeSessionRuntime._materialize_workspace``: writes
         the sac-managed CLAUDE.md skill chain into ``<state>/home/CLAUDE.md``
@@ -159,6 +166,20 @@ class TuiSessionRuntime(RuntimeBase):
         baseline. The result is a self-contained $HOME tree the TUI
         ``claude`` binary will read on launch — same SkillsSpec / MCP
         / hook surface the SDK runtime provides.
+
+        ADDITIONAL TUI-auth staging (lead a2a
+        ``910ff436642948eb85f8b3100204ed9b``, 2026-06-14): the
+        interactive ``claude`` TUI checks TWO files the SDK runner
+        does not — ``$HOME/.claude/.credentials.json`` (live OAuth
+        token) and ``$HOME/.claude.json`` (onboarding state). Before
+        this hook, every ``sac agents start --runtime tui`` agent sat
+        on the login picker because neither file was present in the
+        materialised HOME. :func:`stage_tui_auth` lands both, sourced
+        by default from the apptainer auth bind + ``${HOME}/.claude.json``
+        and overridable via ``SAC_TUI_AUTH_CREDENTIALS_SRC`` /
+        ``SAC_TUI_AUTH_CLAUDE_JSON_SRC``. Fail-loud: a missing source
+        raises :class:`TuiAuthStageError` with a remedy rather than
+        letting the TUI silently stall on the picker.
 
         Returns ``None`` for stub configs lacking the full AgentConfig
         surface (unit-test ``SimpleNamespace`` fixtures); the caller
@@ -170,6 +191,7 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir.mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, str(home_dir))
         deploy_to_home(config, str(home_dir))
+        stage_tui_auth(home_dir)
         return home_dir
 
     def start(
