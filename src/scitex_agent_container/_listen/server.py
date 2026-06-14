@@ -518,12 +518,30 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # requests; teardown is a no-op (persistence is one-shot at boot).
     from contextlib import asynccontextmanager
 
+    from .._lifecycle._periodic_drive_loop import periodic_drive_loop
     from ._self_peer_persistence import persist_self_peers_on_listen_startup
 
     @asynccontextmanager
     async def _lifespan(app):  # type: ignore[no-untyped-def]
+        import asyncio as _asyncio
+        import os as _os
+
         await persist_self_peers_on_listen_startup()
-        yield
+        # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
+        # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
+        task = None
+        if _os.environ.get("SAC_PERIODIC_DRIVE_DISABLED", "") != "1":
+            task = _asyncio.create_task(periodic_drive_loop(app.state))
+            app.state.periodic_drive_task = task
+        try:
+            yield
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (_asyncio.CancelledError, Exception):
+                    pass
 
     app = Starlette(routes=routes, lifespan=_lifespan)
     # Per-app shared state for the WI-3 inbox surface.
