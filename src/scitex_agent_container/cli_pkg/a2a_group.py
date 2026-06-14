@@ -471,3 +471,93 @@ def a2a_grants(as_json: bool) -> None:
             r["note"] if r["note"] is not None else "",
         )
     console.print(table)
+
+
+@a2a.command("list")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a JSON array instead of a rich table (scripting-friendly).",
+)
+@click.option(
+    "--url",
+    "base_url",
+    default=None,
+    help=(
+        "Listen base URL. Default: $SAC_LISTEN_BASE_URL or "
+        "http://127.0.0.1:7878."
+    ),
+)
+def a2a_list(as_json: bool, base_url: str | None) -> None:
+    """List every peer registered on the local ``sac listen`` (the a2a registry).
+
+    Queries ``GET /agents`` on the local listen server -- the SAME source
+    the ``a2a_peers`` MCP tool reads. Shows container agents (Registry)
+    AND self-registered comms-nodes: any process that holds the sac MCP
+    and self-registers at startup (e.g. ``sac mcp channel --name lead``).
+
+    Fail-loud: aborts with a clear message if no listen bearer token is
+    found or the listen server is unreachable -- no silent empty result.
+
+    \b
+    Example:
+      $ sac a2a list
+      $ sac a2a list --json | jq '.[] | select(.kind == "comms-node")'
+    """
+    import os
+
+    from .._listen.tokens import default_token_path, read_token
+
+    url = base_url or os.environ.get(
+        "SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878"
+    )
+    token = os.environ.get("SAC_LISTEN_BEARER")
+    if not token:
+        token = read_token(default_token_path())
+    if not token:
+        raise SystemExit(
+            "sac a2a list: no listen bearer token found "
+            f"($SAC_LISTEN_BEARER unset and {default_token_path()} absent). "
+            "Is `sac listen` running on this host?"
+        )
+
+    req = urllib.request.Request(url.rstrip("/") + "/agents")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.URLError as exc:
+        raise SystemExit(
+            f"sac a2a list: cannot reach listen at {url}: {exc}"
+        ) from exc
+
+    agents = payload.get("agents", [])
+    if as_json:
+        click.echo(json.dumps(agents, ensure_ascii=False))
+        return
+
+    from ._helpers import console
+
+    if not agents:
+        console.print("[dim](no a2a peers)[/dim]")
+        return
+
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("name")
+    table.add_column("kind")
+    table.add_column("host")
+    table.add_column("a2a_port", justify="right")
+    table.add_column("turn_url", overflow="fold")
+    for a in agents:
+        port = a.get("a2a_port")
+        table.add_row(
+            str(a.get("name", "")),
+            str(a.get("kind", "agent")),
+            str(a.get("host", "")),
+            "" if port is None else str(port),
+            str(a.get("turn_url") or ""),
+        )
+    console.print(table)

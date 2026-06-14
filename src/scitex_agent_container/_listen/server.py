@@ -118,6 +118,39 @@ async def list_agents(_request: Request) -> JSONResponse:
             "list_agents: self-peer discovery failed (returning registry rows only): %s",
             exc,
         )
+    # Comms-node self-registrations (operator mandate 2026-06-14): ANY
+    # process that loaded the sac MCP and self-registered into the
+    # comms_nodes table (e.g. ``sac mcp channel --name lead``, or any
+    # CLI/SDK session running the channel adapter) MUST appear in
+    # ``a2a peers`` at startup -- no exceptions. Such nodes are not in
+    # the Registry (no container) and can live outside the filesystem
+    # self-peer search dirs, so without this source the lead (and any
+    # bare sac-MCP session) is invisible here. Best-effort: a read
+    # failure must not mask the rest of the response.
+    try:
+        from .._state.state_db_comms_nodes import list_comms_nodes
+
+        for node in list_comms_nodes():
+            if node["name"] in seen_names:
+                continue
+            rows.append(
+                {
+                    "name": node["name"],
+                    "host": node["host"],
+                    "a2a_port": node["a2a_port"],
+                    "kind": "comms-node",
+                    "registered_at": node.get("registered_at"),
+                    "updated_at": node.get("updated_at"),
+                }
+            )
+            seen_names.add(node["name"])
+    except Exception as exc:  # stx-allow: fallback (reason: comms-node surfacing must never block the registry response)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "list_agents: comms_nodes surfacing failed (returning prior rows): %s",
+            exc,
+        )
     # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
     # ``a2a_port`` + derived ``turn_url`` on every row so scitex-todo's
     # notify resolver (P3a-b) can dispatch nudge→turn without redeploy.
