@@ -62,15 +62,19 @@ def _write_session_jsonl(state_dir: Path, mtime: float, content: str = "x\n") ->
 
 
 def test_watch_config_default_heartbeat_threshold_is_180s():
-    # Arrange / Act
-    cfg = WatchConfig()
+    # Arrange
+    ctor = WatchConfig
+    # Act
+    cfg = ctor()
     # Assert — operator-tunable default per module docstring.
     assert cfg.heartbeat_threshold_s == 180.0
 
 
 def test_watch_config_default_jsonl_idle_threshold_is_300s():
-    # Arrange / Act
-    cfg = WatchConfig()
+    # Arrange
+    ctor = WatchConfig
+    # Act
+    cfg = ctor()
     # Assert
     assert cfg.jsonl_idle_threshold_s == 300.0
 
