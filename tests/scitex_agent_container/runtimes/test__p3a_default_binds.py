@@ -224,6 +224,95 @@ def test_apply_default_binds_lets_explicit_spec_override_sac_overlay(
 
 
 # ---------------------------------------------------------------------------
+# 2026-06-15 venv-agent overlay — host scitex_agent_container -> agent venv
+# (operator+lead fleet-tui standardisation; companion to the venv-sac
+# overlay above; removable once the SIF def is re-baked without the
+# worktree-pointing editable install).
+# ---------------------------------------------------------------------------
+
+
+def test_default_binds_returns_venv_agent_overlay_when_host_repo_exists(
+    fake_home: Path,
+) -> None:
+    # Arrange — synthesise the canonical host repo path under the
+    # sandboxed $HOME so the helper picks it up.
+    sac_src = (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    )
+    sac_src.mkdir(parents=True)
+    # Act
+    binds = default_binds_for_host()
+    # Assert — destination is the AGENT venv's install path (the second
+    # in-SIF site-packages location that the bundled `sac` console-
+    # script's interpreter actually loads from).
+    assert any(
+        ":/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container:ro" in b
+        for b in binds
+    )
+
+
+def test_default_binds_skips_venv_agent_overlay_when_host_repo_missing(
+    fake_home: Path,
+) -> None:
+    # Arrange — fake_home has no canonical repo subtree.
+    # Act
+    binds = default_binds_for_host()
+    # Assert
+    assert not any(
+        "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
+        for b in binds
+    )
+
+
+def test_apply_default_binds_lets_explicit_spec_override_venv_agent_overlay(
+    fake_home: Path,
+) -> None:
+    # Arrange — operator pins a custom host source for the venv-agent
+    # destination; the spec entry MUST win.
+    sac_src = (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    )
+    sac_src.mkdir(parents=True)
+    custom_override = (
+        "/opt/local-sac-src"
+        ":/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container:rw"
+    )
+    spec_binds = [custom_override]
+    # Act
+    result = apply_default_binds(spec_binds)
+    # Assert
+    agent_entries = [
+        b
+        for b in result
+        if "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
+    ]
+    assert agent_entries == [custom_override]
+
+
+def test_both_venv_overlays_present_when_host_repo_exists(fake_home: Path) -> None:
+    # Arrange — sanity check: both SDK-venv and agent-venv overlays
+    # are emitted together so the SAME host source feeds BOTH
+    # in-SIF install locations (parity for both ``claude`` paths and
+    # the ``sac`` console-script path).
+    sac_src = (
+        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
+    )
+    sac_src.mkdir(parents=True)
+    # Act
+    binds = default_binds_for_host()
+    venv_sac_present = any(
+        "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
+        for b in binds
+    )
+    venv_agent_present = any(
+        "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
+        for b in binds
+    )
+    # Assert
+    assert venv_sac_present and venv_agent_present
+
+
+# ---------------------------------------------------------------------------
 # 2026-06-13 literal-~ regression guard (lead a2a 8db5081b8aed)
 #
 # apptainer's ``--bind`` does NOT expand ``~`` — it treats the leading
