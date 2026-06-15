@@ -34,13 +34,16 @@ def test_example_spec_name_matches_directory_name(spec):
     sorted(EXAMPLES_DIR.glob("*/spec.yaml")),
     ids=lambda p: p.parent.name,
 )
-def test_example_spec_runtime_defaults_to_apptainer(spec):
+def test_example_spec_runtime_is_apptainer(spec):
     # Arrange
     from scitex_agent_container.config import load_config
 
     # Act
     cfg = load_config(str(spec))
-    # Assert
+    # Assert — every example spec EXPLICITLY pins runtime: apptainer
+    # (incl. the proxy/provider examples, which need the SDK path, not
+    # the interactive TUI). The DEFAULT-when-omitted is tui — covered in
+    # test_v3_spec_structure.test_runtime_defaults_to_tui_when_omitted.
     assert cfg.runtime == "apptainer"
 
 

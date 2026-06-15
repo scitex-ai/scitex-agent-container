@@ -13,7 +13,7 @@ tags: [scitex-agent-container-responsiveness-background-work, telegram-latency, 
 > **Structural enforcement**: a pre-tool-use hook
 > ``~/.claude/hooks/pre-tool-use/force_background_bash.sh`` (shipped
 > under ``examples/agents/full-agent/to_home/.claude/hooks/`` and
-> deployed fleet-wide via the ``agents/_base/to_home/`` overlay)
+> deployed fleet-wide via the ``agents/_shared/to_home/`` overlay)
 > BLOCKS any unbounded foreground Bash with a WHY message that
 > explains the relaunch routes. This skill explains the rationale;
 > the hook is the wall. If the hook blocks you, the relaunch

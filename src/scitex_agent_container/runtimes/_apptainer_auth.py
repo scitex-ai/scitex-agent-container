@@ -49,6 +49,25 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
 
     argv: list[str] = []
 
+    # Designated credentials file (spec.claude.credentials_file): the
+    # operator names ONE host ``.credentials.json`` to mount writable at
+    # the in-container ``$HOME/.claude/.credentials.json`` (single source
+    # of truth — see :func:`credentials_file_bind`, emitted last in
+    # build_run_argv so the relaxed ``--home`` tmpfs / overlay-upper bind
+    # cannot shadow it). When designated we SKIP the account/host
+    # dir-bind + ``CLAUDE_CONFIG_DIR`` redirect entirely: the file IS the
+    # agent's credentials at its default ``$HOME`` location. Still forward
+    # the pay-per-token env below (harmless; the OAuth file wins for
+    # Pro/Max).
+    claude_spec = getattr(config, "claude", None)
+    designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()
+    if designated:
+        for auth_env in ("ANTHROPIC_API_KEY", "SAC_ANTHROPIC_API_KEY"):
+            val = os.environ.get(auth_env)
+            if val:
+                argv += ["--env", f"{auth_env}={val}"]
+        return argv
+
     # Forward Anthropic auth (mirrors container.py). Order matters:
     # see runtimes/_sdk_common.py:provision_anthropic_auth — when
     # `~/.claude/.credentials.json` exists (Pro/Max OAuth flow), the
@@ -160,4 +179,46 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     return argv
 
 
-__all__ = ["auth_argv"]
+def credentials_file_bind(config: AgentConfig) -> list[str]:
+    """Render the writable file-bind for ``spec.claude.credentials_file``.
+
+    Emitted LAST in :func:`_apptainer_build_argv.build_run_argv` (after
+    the overlay-upper-home bind) so a relaxed ``--home`` tmpfs or
+    ``--bind <upper>:/home/agent`` cannot shadow the credentials file —
+    user binds apply in order and the last bind to a path wins.
+
+    Binds the designated host file ``rw`` at ``<container_home>/.claude/
+    .credentials.json`` so the in-container ``claude`` reads AND
+    refreshes that single file directly (single source of truth). No-op
+    when the field is unset, the file is missing, or a provider override
+    is active (API-key backend → no OAuth file).
+
+    Caveat: a single-file bind is on the file's inode. An in-container
+    refresh that rewrites in-place persists to the source; one that does
+    tmp+rename orphans the bind (the source keeps the pre-rename token).
+    The designated file should therefore NOT be a path concurrently
+    atomic-renamed by host-side ``sac accounts``/watch-live tooling — it
+    is the agent's private, operator-rotated credentials file.
+    """
+    if provider_active(config):
+        return []
+    claude_spec = getattr(config, "claude", None)
+    designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()
+    if not designated:
+        return []
+    src = Path(designated).expanduser()
+    if not src.is_file():
+        raise FileNotFoundError(
+            f"spec.claude.credentials_file points at {src}, which is not "
+            "a file. Designate an existing .credentials.json (the agent "
+            "mounts it writable at $HOME/.claude/.credentials.json as its "
+            "single source of truth)."
+        )
+    from ._to_home_overlay import resolve_container_home
+
+    container_home = resolve_container_home(config).rstrip("/")
+    dest = f"{container_home}/.claude/.credentials.json"
+    return ["--bind", f"{src}:{dest}:rw"]
+
+
+__all__ = ["auth_argv", "credentials_file_bind"]

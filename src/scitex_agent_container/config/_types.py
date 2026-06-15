@@ -66,6 +66,28 @@ class ClaudeSpec:
     # move a pinned agent (that is the point of pinning), and changing
     # this field requires ``sac agent restart`` to re-copy the snapshot.
     account: str = ""
+    # Explicit credentials-file designation (host path to a
+    # ``.credentials.json``). When set, the runtime BIND-MOUNTS that
+    # exact file WRITABLE at the in-container
+    # ``$HOME/.claude/.credentials.json`` — single source of truth, no
+    # copy. The in-container ``claude`` reads/refreshes that file
+    # directly, so an OAuth refresh persists straight back to the
+    # designated file and never desyncs from / corrupts a shared
+    # ``~/.claude/.credentials.json``. Designating different files for
+    # different agents is how multiple accounts run side by side
+    # (rotate by pointing agents at different credential files).
+    #
+    # Precedence: when set, this file-mount REPLACES the account /
+    # host dir-bind auth path (no ``CLAUDE_CONFIG_DIR`` redirect) — the
+    # designated file IS the agent's credentials. Mutually exclusive
+    # with ``provider`` (an API-key backend needs no OAuth file).
+    #
+    # Caveat (documented in ``_apptainer_auth``): a single-file bind is
+    # on the file's inode; a host-side atomic tmp+rename on the source
+    # orphans the bind. In-container ``claude`` refresh that writes
+    # in-place is safe; designate a path NOT concurrently atomic-renamed
+    # by host-side ``sac accounts``/watch-live tooling.
+    credentials_file: str = ""
     # Vendor-agnostic backend override (see :class:`ProviderSpec`).
     # When set, the SDK session runs against an Anthropic-SDK-compatible
     # backend (DeepSeek, a gateway, ...) on an API key instead of
@@ -417,7 +439,10 @@ class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
     name: str
-    runtime: str = "apptainer"
+    # Launch-mode selector. Default ``"tui"`` (interactive in-apptainer
+    # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
+    # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
+    runtime: str = "tui"
     # Top-level container image. Empty = use the default sac-scitex SIF.
     # (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)
     image: str = ""

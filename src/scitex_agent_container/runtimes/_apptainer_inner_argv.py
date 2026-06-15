@@ -8,6 +8,8 @@ cap. Each builder returns the full ``[tini, --, python3, -m, MODULE,
 
 from __future__ import annotations
 
+import json
+import os as _os
 import shlex
 from typing import TYPE_CHECKING
 
@@ -58,7 +60,15 @@ def _format_shell_steps(cmds: list) -> list[str]:
     return steps
 
 
-def build_inner_argv(config: "AgentConfig", *, one_shot: bool = False) -> list[str]:
+def build_inner_argv(
+    config: "AgentConfig",
+    *,
+    one_shot: bool = False,
+    tui: bool = False,
+    tui_mcp_config: str | None = None,
+    tui_channel_mcp: str | None = None,
+    tui_dev_channels: str | None = None,
+) -> list[str]:
     """Return the apptainer-inner argv. Dispatches on ``config.kind``.
 
     When ``spec.startup_commands`` is non-empty, the argv is wrapped
@@ -66,9 +76,22 @@ def build_inner_argv(config: "AgentConfig", *, one_shot: bool = False) -> list[s
     so the commands run as container-internal shell BEFORE the claude
     SDK process starts. ``exec`` replaces bash with tini, keeping PID 1
     clean. NOT a claude prompt — see ``spec.startup_prompts``.
+
+    ``tui=True`` selects the interactive ``claude`` TUI as the inner
+    process instead of the ``python -m`` SDK session runner (see
+    :func:`_tui_runner_argv`). The startup_commands wrapper still
+    applies, so container-internal bootstrap (uv venv, symlinks, ...)
+    runs before ``exec claude`` identically to the SDK path.
     """
     kind = getattr(config, "kind", "Agent")
-    if kind == "AgentProxy":
+    if tui:
+        runner_tail = _tui_runner_argv(
+            config,
+            mcp_config=tui_mcp_config,
+            channel_mcp=tui_channel_mcp,
+            dev_channels=tui_dev_channels,
+        )
+    elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
         runner_tail = (
@@ -189,6 +212,171 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
             auto.kick_text,
         ]
     return runner_argv
+
+
+_CLAUDE_TUI_BIN = "claude"
+
+
+def _tui_runner_argv(
+    config: "AgentConfig",
+    *,
+    mcp_config: str | None = None,
+    channel_mcp: str | None = None,
+    dev_channels: str | None = None,
+) -> list[str]:
+    """Argv for the interactive ``claude`` TUI (``spec.runtime: tui``).
+
+    The inner process is the bundled ``claude`` binary running its
+    interactive Ink TUI — the tmux PTY the caller wraps this argv in is
+    what gives it a terminal. Threads the declarative spec surface:
+
+      * ``spec.claude.model``  → ``--model <name>`` (when set).
+      * ``spec.claude.flags``  → appended verbatim (e.g.
+        ``--dangerously-skip-permissions``).
+
+    MCP servers: the interactive ``claude`` auto-discovers ``.mcp.json``
+    from the PROJECT ROOT (its cwd, ``--pwd``), NOT from ``$HOME`` like
+    the SDK runner. So when to_home materialised a ``$HOME/.mcp.json``,
+    the caller passes its in-container path as ``mcp_config`` and we add
+    ``--mcp-config <path>`` so the TUI loads those servers (figrecipe /
+    scitex-agent-container / scitex-todo …). Without this the TUI shows
+    "No MCP servers configured".
+
+    Channels (SDK parity — see ``runtimes._sdk_channels.apply_channels``):
+    ``spec.claude.channels`` drives two flags. ``dev_channels`` →
+    ``--dangerously-load-development-channels <set>`` (any channel).
+    ``channel_mcp`` → an inline ``--mcp-config`` JSON registering the
+    ``sac mcp channel`` stdio subscriber (``server:sac`` only) so the TUI
+    actually receives a2a-bus pushes — the interactive ``claude`` has no
+    ``--channels`` flag, so the subscriber must be injected as an MCP
+    server (the bus-auth env from ``listen_env_flags`` lets it connect).
+    Both mcp configs ride on ONE ``--mcp-config`` (it takes
+    space-separated file/JSON values).
+
+    No tini wrapper: the TUI is the foreground interactive process in the
+    tmux pane; apptainer + tmux own signal delivery. ``startup_commands``
+    wrapping (``build_inner_argv``) still ``exec``s this as the tail.
+    """
+    argv: list[str] = [_CLAUDE_TUI_BIN]
+    claude_spec = getattr(config, "claude", None)
+    model = str(getattr(claude_spec, "model", "") or "").strip()
+    if not model:
+        model = str(getattr(config, "model", "") or "").strip()
+    if model:
+        argv += ["--model", model]
+    mcp_values = [v for v in (mcp_config, channel_mcp) if v]
+    if mcp_values:
+        argv += ["--mcp-config", *mcp_values]
+    if dev_channels:
+        argv += ["--dangerously-load-development-channels", dev_channels]
+    for flag in list(getattr(claude_spec, "flags", []) or []):
+        flag = str(flag).strip()
+        if flag:
+            argv.append(flag)
+    return argv
+
+
+# Absolute path to the bundled ``sac`` console-script inside the base
+# SIF (sac-base.sif as of 2026-06-15). The script is installed under the
+# agent venv (``/opt/venv-agent/bin/sac``), NOT the SDK venv
+# (``/opt/venv-sac/bin/sac`` does not exist — verified by
+# ``ls /opt/venv-{agent,sac}/bin/sac`` in the running SIF).
+#
+# Why hardcode rather than ``shutil.which("sac")``: this constant is
+# read on the HOST when the SAC runtime builds the apptainer-exec
+# argv. The host's PATH (the SAC runtime inherits
+# ``/opt/venv-sac/bin:...``) does NOT include ``/opt/venv-agent/bin``,
+# so ``shutil.which("sac")`` would fail to find sac on the host even
+# though it exists inside the SIF. The path written here is the
+# IN-SIF absolute path the bundled claude will exec when it spawns
+# the channel-MCP subprocess; that filesystem is the SIF's, not the
+# host's, so the hardcoded SIF path is correct.
+#
+# Under ``--containall --cleanenv`` the venv bin dir is NOT on PATH,
+# so a bare ``sac`` (as the host SDK path uses) is also unresolvable
+# from an MCP subprocess inside the SIF — the channel sidecar must
+# be invoked by absolute path.
+#
+# Operator override: set ``SAC_BIN_IN_SIF`` in the agent's env (e.g.
+# ``spec.env``) to point at a different in-SIF location if the image
+# is rebuilt with sac installed elsewhere. The constant below is the
+# default for the current sac-base.sif.
+_SAC_BIN_IN_SIF_DEFAULT = "/opt/venv-agent/bin/sac"
+
+
+def resolve_sac_bin_in_sif() -> str:
+    """Return the absolute in-SIF path to the ``sac`` console script.
+
+    Resolves at MCP-config build time on the HOST. Reads the
+    ``SAC_BIN_IN_SIF`` env var override first (operator escape hatch
+    when the SIF is rebuilt with sac in a non-default location); falls
+    back to :data:`_SAC_BIN_IN_SIF_DEFAULT`. NEVER attempts a host-side
+    ``shutil.which`` — the path is INSIDE the SIF; host PATH lookups
+    are noise here (the SAC runtime's PATH typically does not include
+    ``/opt/venv-agent/bin`` so ``which`` would mis-report).
+
+    The default is the verified location for ``sac-base.sif`` as of
+    2026-06-15; see the module-level comment for the verification
+    record. Override via ``SAC_BIN_IN_SIF`` env when the SIF layout
+    changes (this avoids hardcoding-shaped breakage on SIF rebuilds).
+    """
+    override = _os.environ.get("SAC_BIN_IN_SIF", "").strip()
+    if override:
+        return override
+    return _SAC_BIN_IN_SIF_DEFAULT
+
+
+# Backward-compat alias — keep imports of ``_SAC_BIN_IN_SIF`` working
+# (e.g. external skill-doc examples that referenced the legacy constant
+# name). New call sites should call :func:`resolve_sac_bin_in_sif` so
+# the env override takes effect.
+_SAC_BIN_IN_SIF = _SAC_BIN_IN_SIF_DEFAULT
+
+
+def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
+    """Resolve ``spec.claude.channels`` into TUI channel flags.
+
+    Returns ``(dev_channels, channel_mcp_json)`` — SDK parity with
+    :func:`runtimes._sdk_channels.apply_channels`:
+
+      * ``dev_channels`` — comma-joined channel set for
+        ``--dangerously-load-development-channels`` (fires for ANY
+        channel entry), or ``None`` when no channels are declared.
+      * ``channel_mcp_json`` — inline ``--mcp-config`` JSON registering
+        the ``sac mcp channel --name <agent>`` stdio subscriber under
+        ``mcpServers.sac`` (``server:sac`` ONLY), or ``None``. The
+        subscriber's ``--listen-url`` defaults to ``$SAC_LISTEN_BASE_URL``
+        (already forwarded by ``listen_env_flags``); when the a2a port is
+        resolved it also gets ``--turn-url`` for the WAKE path.
+    """
+    claude_spec = getattr(config, "claude", None)
+    channels = [
+        str(c).strip()
+        for c in (getattr(claude_spec, "channels", []) or [])
+        if str(c).strip()
+    ]
+    if not channels:
+        return None, None
+    dev_channels = ",".join(sorted(set(channels)))
+    channel_mcp: str | None = None
+    if any(c == "server:sac" for c in channels):
+        args = ["mcp", "channel", "--name", config.name]
+        a2a_spec = getattr(config, "a2a", None)
+        port = getattr(a2a_spec, "port", None) if a2a_spec else None
+        if isinstance(port, int) and port > 0:
+            args += ["--turn-url", f"http://127.0.0.1:{port}/v1/turn"]
+        channel_mcp = json.dumps(
+            {
+                "mcpServers": {
+                    "sac": {
+                        "type": "stdio",
+                        "command": resolve_sac_bin_in_sif(),
+                        "args": args,
+                    }
+                }
+            }
+        )
+    return dev_channels, channel_mcp
 
 
 def _proxy_runner_argv(config: "AgentConfig") -> list[str]:

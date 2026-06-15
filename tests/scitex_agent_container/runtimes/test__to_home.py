@@ -24,6 +24,7 @@ from scitex_agent_container.runtimes._to_home import (
     END_MARKER,
     DanglingToHomeSymlinkError,
     WorkspaceCLAUDEMarkerError,
+    WorkspaceCredentialLeakError,
     deploy_to_home,
     materialize_to_home,
     resolve_baseline_to_home_dir,
@@ -163,6 +164,108 @@ class TestMaterializeToHomeBasics:
         materialize_to_home(spec_dir, home)
         # Assert
         assert home.is_dir()
+
+
+class TestCredentialLeakGuard:
+    """``to_home/`` must never carry a ``.credentials.json``.
+
+    Lead-reported 2026-06-15: an EXPIRED ``.credentials.json`` was
+    committed under ``proj-scitex-todo/to_home/.claude/.credentials.json``
+    and re-deployed every ``sac agents start``. Credentials are
+    operator-rotated runtime state, not workspace bootstrap content —
+    they must come from the auth-stage rw bind, not a static copy.
+    Letting a static cred file land in ``$HOME/.claude/.credentials.json``
+    masks a missing bind: the agent appears to authenticate but uses
+    a stale token, then 401s opaquely at the next refresh.
+
+    The guard is loud (raises :class:`WorkspaceCredentialLeakError`)
+    rather than silent-skip so the operator sees the offending path
+    and fixes the source.
+    """
+
+    def test_credentials_json_at_to_home_root_raises(self, tmp_path):
+        # Arrange
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / ".credentials.json").write_text('{"x":1}\n')
+        home = tmp_path / "home"
+        # Act
+        # Assert — `match=` pins the relative-path text so the audit
+        # sees one assertion (TQ007) with AAA markers on their own
+        # lines (TQ002).
+        with pytest.raises(WorkspaceCredentialLeakError, match=r"\.credentials\.json"):
+            materialize_to_home(spec_dir, home)
+
+    def test_credentials_json_under_dot_claude_raises(self, tmp_path):
+        # Arrange — the lead-reported leak shape.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / ".credentials.json").write_text(
+            '{"oauthAccount":"old"}\n'
+        )
+        home = tmp_path / "home"
+        # Act
+        # Assert
+        with pytest.raises(
+            WorkspaceCredentialLeakError, match=r"\.claude/\.credentials\.json"
+        ):
+            materialize_to_home(spec_dir, home)
+
+    def test_credentials_json_at_arbitrary_depth_raises(self, tmp_path):
+        # Arrange — guard fires regardless of nesting.
+        spec_dir = tmp_path / "spec"
+        deep = spec_dir / "to_home" / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / ".credentials.json").write_text("{}\n")
+        home = tmp_path / "home"
+        # Act
+        # Assert
+        with pytest.raises(WorkspaceCredentialLeakError):
+            materialize_to_home(spec_dir, home)
+
+    def test_other_dotfiles_in_claude_dir_pass(self, tmp_path):
+        # Arrange — settings.json, mcp.json etc. under .claude/ are fine,
+        # only `.credentials.json` is forbidden.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / "settings.json").write_text("{}\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / ".claude" / "settings.json").is_file()
+
+    def test_error_message_names_the_offending_path(self, tmp_path):
+        # Arrange
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        leak = spec_dir / "to_home" / ".claude" / ".credentials.json"
+        leak.write_text("{}\n")
+        home = tmp_path / "home"
+        # Act
+        # Assert — the operator-visible relative path must appear in
+        # the message so `rm` is one step away.
+        with pytest.raises(
+            WorkspaceCredentialLeakError, match=r"\.claude/\.credentials\.json"
+        ):
+            materialize_to_home(spec_dir, home)
+
+    def test_no_partial_destination_on_reject(self, tmp_path):
+        # Arrange — leak + other content; guard fires BEFORE any deploy.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / ".credentials.json").write_text("{}")
+        (spec_dir / "to_home" / "innocent.txt").write_text("hi")
+        home = tmp_path / "home"
+        try:
+            materialize_to_home(spec_dir, home)
+        except WorkspaceCredentialLeakError:
+            pass
+        # Act
+        leaked = home / ".claude" / ".credentials.json"
+        # Assert — the destination must NOT carry the leaked file even
+        # though the guard fired during a deploy that touched siblings.
+        assert not leaked.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +679,7 @@ class TestDeployToHomeFromConfig:
 # Layout under tmp_path:
 #   agents/<name>/spec.yaml   ← spec dir
 #   agents/<name>/to_home/    ← per-agent layer (overlay, wins on conflict)
-#   agents/_base/to_home/     ← shared baseline (applied first)
+#   agents/_shared/to_home/   ← shared baseline (applied first)
 # ---------------------------------------------------------------------------
 
 
@@ -589,7 +692,7 @@ def _build_layered(tmp_path: Path) -> tuple[Path, Path, Path]:
     agents_root = tmp_path / "agents"
     spec_dir = agents_root / "test-agent"
     per_agent = spec_dir / "to_home"
-    baseline = agents_root / "_base" / "to_home"
+    baseline = agents_root / "_shared" / "to_home"
     per_agent.mkdir(parents=True, exist_ok=True)
     baseline.mkdir(parents=True, exist_ok=True)
     return spec_dir, per_agent, baseline
@@ -605,13 +708,38 @@ class TestResolveBaselineToHomeDir:
         assert resolved == baseline
 
     def test_returns_none_when_no_base_dir_present(self, tmp_path):
-        # Arrange — spec dir without a sibling _base/to_home.
+        # Arrange — spec dir without a sibling _shared/to_home.
         spec_dir = tmp_path / "agents" / "lonely-agent"
         spec_dir.mkdir(parents=True)
         # Act
         resolved = resolve_baseline_to_home_dir(spec_dir)
         # Assert
         assert resolved is None
+
+    def test_resolves_legacy_base_dir_as_fallback(self, tmp_path):
+        # Arrange — only the legacy ``_base`` sibling exists.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        legacy = agents_root / "_base" / "to_home"
+        legacy.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == legacy
+
+    def test_shared_dir_wins_over_legacy_base_dir(self, tmp_path):
+        # Arrange — both ``_shared`` and legacy ``_base`` siblings exist.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        shared = agents_root / "_shared" / "to_home"
+        shared.mkdir(parents=True)
+        (agents_root / "_base" / "to_home").mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == shared
 
     def test_returns_none_when_spec_dir_is_none(self):
         # Arrange — no spec dir, no env override.
@@ -688,7 +816,7 @@ class TestMaterializeBaselineOverlay:
         assert (home / "agent_only.txt").read_text() == "agent\n"
 
     def test_absent_baseline_is_unchanged_current_behavior(self, tmp_path):
-        # Arrange — no _base/ sibling at all; only a per-agent to_home.
+        # Arrange — no _shared/ sibling at all; only a per-agent to_home.
         # (Matches the historical single-layer layout.)
         spec_dir = tmp_path / "spec"
         (spec_dir / "to_home").mkdir(parents=True)
@@ -704,7 +832,7 @@ class TestMaterializeBaselineOverlay:
         agents_root = tmp_path / "agents"
         spec_dir = agents_root / "test-agent"
         spec_dir.mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / "common.txt").write_text("shared\n")
         home = tmp_path / "home"
@@ -720,7 +848,7 @@ class TestDeployBaselineFromConfig:
         agents_root = tmp_path / "agents"
         spec_dir = agents_root / "test-agent"
         (spec_dir / "to_home").mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / ".bashrc").write_text("export BASE=1\n")
         cfg = AgentConfig(name="test-agent")
@@ -738,7 +866,7 @@ class TestDeployBaselineFromConfig:
         spec_dir = agents_root / "test-agent"
         per_agent = spec_dir / "to_home"
         per_agent.mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / "shared.txt").write_text("from baseline\n")
         (per_agent / "shared.txt").write_text("from agent\n")
@@ -871,7 +999,7 @@ class TestReadOnlyDestinationOverwrite:
 # ---------------------------------------------------------------------------
 # Isolation: the delivery path NEVER auto-reads host state. Host content
 # enters ONLY via an EXPLICIT symlink the operator places under to_home/
-# (e.g. ``_base/to_home/.claude/skills -> ~/.claude/skills``), which the
+# (e.g. ``_shared/to_home/.claude/skills -> ~/.claude/skills``), which the
 # materialize walk resolves to real content. The old unconditional host
 # ``~/.claude/skills`` auto-read is gone — these tests lock that.
 # ---------------------------------------------------------------------------
@@ -951,7 +1079,7 @@ class TestNoHostAutoRead:
         agents_root = tmp_path / "agents"
         base_skill = (
             agents_root
-            / "_base"
+            / "_shared"
             / "to_home"
             / ".claude"
             / "skills"

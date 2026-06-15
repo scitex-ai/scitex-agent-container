@@ -181,6 +181,18 @@ class _Config:
     workdir: str = "/tmp"
 
 
+# Deterministic stand-in for the ``apptainer exec ... claude`` argv the
+# production ``_default_argv`` resolves. Injected via ``command_builder``
+# so the tmux-dispatch glue runs without a real apptainer/SIF on the CI
+# runner — the realistic argv is exercised by the build_run_argv suite +
+# the in-apptainer dry-run smoke. Ends in ``claude`` (the inner TUI).
+_FAKE_ARGV = ["apptainer", "exec", "img.sif", "claude"]
+
+
+def _fake_builder(config: _Config) -> list[str]:
+    return list(_FAKE_ARGV)
+
+
 @pytest.fixture
 def mux() -> Iterator[type[_MemoryMultiplexer]]:
     """Per-test fresh in-memory multiplexer class.
@@ -219,7 +231,7 @@ def test_tui_runtime_start_creates_named_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="beta", workdir="/tmp/beta")
     # Act
     runtime.start(config)
@@ -231,7 +243,7 @@ def test_tui_runtime_start_returns_true_on_success(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="gamma")
     # Act
     ok = runtime.start(config)
@@ -243,19 +255,19 @@ def test_tui_runtime_start_invokes_claude_binary_in_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux, claude_bin="/usr/local/bin/claude")
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="delta")
     # Act
     runtime.start(config)
     # Assert
-    assert mux._sessions["tui-delta"].command == "/usr/local/bin/claude"
+    assert mux._sessions["tui-delta"].command == "apptainer exec img.sif claude"
 
 
 def test_tui_runtime_start_force_stops_existing_session_first(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="epsilon")
     runtime.start(config)
     pre_stop_calls = sum(1 for _ in mux._stop_log)
@@ -269,7 +281,7 @@ def test_tui_runtime_start_dry_run_does_not_create_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="zeta")
     # Act
     runtime.start(config, dry_run=True)
@@ -281,7 +293,7 @@ def test_tui_runtime_start_dry_run_returns_true(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="eta")
     # Act
     ok = runtime.start(config, dry_run=True)
@@ -298,7 +310,7 @@ def test_tui_runtime_stop_kills_named_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="theta")
     runtime.start(config)
     # Act
@@ -311,7 +323,7 @@ def test_tui_runtime_stop_returns_true_when_session_existed(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="iota")
     runtime.start(config)
     # Act
@@ -324,7 +336,7 @@ def test_tui_runtime_stop_returns_false_when_no_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="kappa")
     # Act
     ok = runtime.stop(config)
@@ -341,7 +353,7 @@ def test_tui_runtime_is_running_true_when_session_active(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="lambda")
     runtime.start(config)
     # Act
@@ -354,7 +366,7 @@ def test_tui_runtime_is_running_false_when_session_absent(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="mu")
     # Act
     alive = runtime.is_running(config)
@@ -371,7 +383,7 @@ def test_tui_runtime_is_running_false_when_activity_stale_beyond_window(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange — start session, then back-date activity beyond default window.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="nu-stale")
     runtime.start(config)
     mux._sessions["tui-nu-stale"].activity_at = time.time() - 9_999.0
@@ -385,7 +397,7 @@ def test_tui_runtime_is_running_respects_max_idle_s_override(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange — back-date activity 100s; tighten window to 50s.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="xi-tight")
     runtime.start(config)
     mux._sessions["tui-xi-tight"].activity_at = time.time() - 100.0
@@ -401,7 +413,7 @@ def test_tui_runtime_is_running_false_when_session_activity_unavailable(
     # Arrange — a legacy multiplexer fake that lacks session_activity
     # (returns None) must NOT be silently treated as "alive". The probe
     # has to fail loud to "not responsive" so the supervisor restarts.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="omicron-legacy")
     runtime.start(config)
 
@@ -426,20 +438,20 @@ def test_tui_runtime_logs_returns_captured_pane_text(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux, claude_bin="claude-foo")
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="nu", workdir="/data/nu")
     runtime.start(config)
     # Act
     text = runtime.logs(config, lines=10)
     # Assert
-    assert text == "<pane lines=10>claude-foo@/data/nu"
+    assert text == "<pane lines=10>apptainer exec img.sif claude@/data/nu"
 
 
 def test_tui_runtime_logs_returns_empty_when_session_absent(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="xi")
     # Act
     text = runtime.logs(config)
@@ -460,7 +472,7 @@ def test_tui_runtime_send_turn_delivers_text_to_session_pane(
     # input-ready marker, so the wait_ready=False path exercises
     # the delivery primitive in isolation; the registry-driven
     # ``wait_until_input_ready`` path is covered separately below.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="omicron")
     runtime.start(config)
     # Act
@@ -475,7 +487,7 @@ def test_tui_runtime_send_turn_returns_true_when_session_alive(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="pi")
     runtime.start(config)
     # Act
@@ -488,7 +500,7 @@ def test_tui_runtime_send_turn_returns_false_when_no_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange — no start() call; session does not exist.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="rho")
     # Act
     delivered = runtime.send_turn(config, "lost-turn", wait_ready=False)
@@ -500,7 +512,7 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange — no start() call.
-    runtime = TuiSessionRuntime(multiplexer=mux)
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
     config = _Config(name="sigma")
     # Act
     runtime.send_turn(config, "lost-turn", wait_ready=False)
@@ -558,7 +570,7 @@ def test_wait_until_input_ready_returns_true_when_marker_present(
 ) -> None:
     # Arrange — first frame already has the marker.
     primed_mux.prime(["? for shortcuts"])
-    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
     config = _Config(name="ready-immediate")
     # ``drain_pickers_at_boot=False`` so the start path doesn't
     # consume the primed frame queue — the test wants the queue
@@ -578,7 +590,7 @@ def test_wait_until_input_ready_dismisses_theme_picker_then_returns(
     # Arrange — frame 0: theme picker active; frames 1+: ready marker.
     theme_pane = "Choose the text style\n1. Auto (match terminal)\n"
     primed_mux.prime([theme_pane, "? for shortcuts"])
-    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
     config = _Config(name="theme-dismiss")
     runtime.start(config, drain_pickers_at_boot=False)
     # Act
@@ -597,7 +609,7 @@ def test_wait_until_input_ready_raises_when_marker_never_appears(
 ) -> None:
     # Arrange — no marker, no modal: poll loop spins until timeout.
     primed_mux.prime(["just some noise"])
-    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
     config = _Config(name="never-ready")
     # Skip boot-drain so start() doesn't itself eat 30s + then
     # propagate the absent-marker timeout through this test.
@@ -613,10 +625,78 @@ def test_wait_until_input_ready_raises_when_session_missing(
     primed_mux: type[_PrimedMemoryMultiplexer],
 ) -> None:
     # Arrange — no start() call; session does not exist.
-    runtime = TuiSessionRuntime(multiplexer=primed_mux)
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
     config = _Config(name="ghost")
     # Act
     do_wait = runtime.wait_until_input_ready
     # Assert
     with pytest.raises(TuiInputNotReadyError, match="does not exist"):
         do_wait(config, timeout_s=0.01, poll_s=0.0, sleep_fn=lambda _s: None)
+
+
+# ---------------------------------------------------------------------------
+# _drain_at_boot — dismiss first-run modals through a delayed claude start
+# ---------------------------------------------------------------------------
+
+# A bypass-permissions modal frame, then the launched (busy/idle) footer.
+_BYPASS_FRAME = (
+    "WARNING: Claude Code running in Bypass Permissions mode\n"
+    "  1. No, exit\n  2. Yes, I accept\nEnter to confirm · Esc to cancel"
+)
+_LAUNCHED_FRAME = "✽ Propagating…\n❯\n⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+
+def test_drain_at_boot_returns_true_when_marker_present(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — claude already idle at the input field.
+    primed_mux.prime(["? for shortcuts"])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
+    config = _Config(name="boot-ready")
+    runtime.start(config, drain_pickers_at_boot=False)
+    # Act
+    ready = runtime._drain_at_boot(config, timeout_s=1.0, poll_s=0.0)
+    # Assert
+    assert ready is True
+
+
+def test_drain_at_boot_dismisses_bypass_then_exits_on_is_ready(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — frame 0: bypass modal; frame 1+: launched footer (is_ready).
+    primed_mux.prime([_BYPASS_FRAME, _LAUNCHED_FRAME])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
+    config = _Config(name="boot-bypass")
+    runtime.start(config, drain_pickers_at_boot=False)
+    # Act
+    runtime._drain_at_boot(config, timeout_s=2.0, poll_s=0.0)
+    # Assert — the bypass handler's keystrokes ["2", "Enter"] landed.
+    assert primed_mux._sessions["tui-boot-bypass"].pane == ["2", "Enter"]
+
+
+def test_drain_at_boot_returns_true_after_dismissing_bypass(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — modal then launched footer.
+    primed_mux.prime([_BYPASS_FRAME, _LAUNCHED_FRAME])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
+    config = _Config(name="boot-bypass-ok")
+    runtime.start(config, drain_pickers_at_boot=False)
+    # Act
+    ready = runtime._drain_at_boot(config, timeout_s=2.0, poll_s=0.0)
+    # Assert
+    assert ready is True
+
+
+def test_drain_at_boot_returns_false_on_timeout(
+    primed_mux: type[_PrimedMemoryMultiplexer],
+) -> None:
+    # Arrange — only noise; no modal, no ready signal (claude still booting).
+    primed_mux.prime(["uv: Preparing packages... (56/169)"])
+    runtime = TuiSessionRuntime(multiplexer=primed_mux, command_builder=_fake_builder)
+    config = _Config(name="boot-slow")
+    runtime.start(config, drain_pickers_at_boot=False)
+    # Act
+    ready = runtime._drain_at_boot(config, timeout_s=0.01, poll_s=0.0)
+    # Assert — best-effort: never raises, just reports not-ready.
+    assert ready is False

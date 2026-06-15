@@ -67,7 +67,24 @@ from scitex_agent_container.runtimes.tui_session import (
 _TMUX_BIN = shutil.which("tmux")
 _CLAUDE_BIN = shutil.which("claude")
 
+# RETIRED MODEL (2026-06-15 in-apptainer TUI pivot): this harness asserts
+# the legacy host-tmux behaviour — a real ``claude`` process running on
+# the HOST with ``HOME=<state>/home`` (probed via ``/proc/<pid>/environ``)
+# and credentials COPIED into ``<state>/home``. The TUI runtime now runs
+# ``claude`` INSIDE apptainer (parity with the SDK runtime): there is no
+# host claude process to probe, the in-container ``$HOME`` is
+# ``/home/agent``, and credentials are bind-mounted (not copied). These
+# premises are gone, so the module is skipped rather than asserting a
+# retired path. FOLLOW-UP: rewrite as a true in-apptainer smoke that boots
+# the SIF and probes inside the container (needs a built SIF + valid
+# creds). The dispatch glue is covered hermetically in test_tui_session.py
+# (via the ``command_builder`` seak) and the argv assembly in the
+# build_run_argv suite.
 pytestmark = [
+    pytest.mark.skip(
+        reason="retired host-tmux TUI model — TUI now runs inside apptainer; "
+        "rewrite as in-apptainer smoke (needs built SIF + creds)"
+    ),
     pytest.mark.skipif(_TMUX_BIN is None, reason="tmux binary not on PATH"),
     pytest.mark.skipif(_CLAUDE_BIN is None, reason="claude binary not on PATH"),
     # The whole module spawns real processes and waits seconds for the
@@ -586,7 +603,6 @@ class TestTuiRuntimeAuthStaged:
         present = path.is_file()
         # Assert
         assert present is True
-
 
 
 # EOF

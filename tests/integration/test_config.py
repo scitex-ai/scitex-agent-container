@@ -121,7 +121,9 @@ class TestLoadMinimalConfig:
         config = minimal_loaded_config
         # Act
         runtime = config.runtime
-        # Assert
+        # Assert — MINIMAL_CONFIG explicitly pins runtime: apptainer.
+        # (The default-when-omitted is tui — see
+        # test_v3_spec_structure.test_runtime_defaults_to_tui_when_omitted.)
         assert runtime == "apptainer"
 
     def test_minimal_defaults_model_to_sonnet(self, minimal_loaded_config):

@@ -38,29 +38,18 @@ No fragmented "leaf-vs-mirror" distinction — every path under
 Missing ``to_home/`` dir → silent no-op (specs without one just don't
 get materialization).
 
-Baseline layer (shared/common to_home)
---------------------------------------
-Common hooks/settings shared by every agent live in ONE place instead
-of being copied into every agent's ``to_home/``. Materialization is a
-two-pass overlay:
+Baseline layer (shared/common to_home): two-pass overlay applies the
+shared baseline first (resolved via :func:`resolve_baseline_to_home_dir`
+— ``$SAC_TO_HOME_BASELINE`` override or ``<agents_dir>/_shared/to_home/``
+sibling), then the per-agent ``to_home/`` on top. Per-agent files win
+on conflict. Absent baseline → behaves as before, fully backward
+compatible.
 
-  1. Apply the COMMON baseline ``to_home/`` first.
-  2. Apply the per-agent ``<spec_dir>/to_home/`` ON TOP.
-
-Per-agent files therefore win on conflict (overlay semantics) — they
-re-run the same per-entry deploy helpers over whatever the baseline
-laid down (full overwrite, marker-protected re-wrap, symlink
-dereference-copy).
-
-Baseline location (see :func:`resolve_baseline_to_home_dir`):
-
-  - ``$SAC_TO_HOME_BASELINE`` — explicit override (absolute dir), or
-  - ``<agents_dir>/_base/to_home/`` — a sibling ``_base`` dir under the
-    agents root (agents live at ``<agents_dir>/<name>/``, so the agents
-    root is the spec dir's parent).
-
-Absent baseline dir → behaves exactly as before (no baseline = current
-behavior; fully backward compatible).
+Credential-leak guard (2026-06-15, lead-reported): a ``.credentials.json``
+under ``to_home/`` aborts the deploy with
+:class:`WorkspaceCredentialLeakError`. Credentials are operator-rotated
+runtime state from the auth-stage rw bind, never static workspace
+content — see ``_to_home_errors.py`` for context.
 """
 
 from __future__ import annotations
@@ -75,73 +64,28 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
+from ._to_home_errors import (
+    WorkspaceCLAUDEMarkerError,
+    WorkspaceCredentialLeakError,
+)
+from ._to_home_text import (
+    END_MARKER,
+    extract_user_tail,
+    interpolate_env,
+    interpolate_metadata,
+    validate_marker_invariants,
+)
 
 logger = logging.getLogger(__name__)
 
-END_MARKER = "<!-- End of scitex-agent-container generated section -->"
-START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
-
-
-class WorkspaceCLAUDEMarkerError(RuntimeError):
-    """Existing workspace marker-protected file has malformed markers.
-
-    The deploy is hard-aborted on this error rather than silently
-    overwriting or guessing — preserving user content past the End
-    marker is a safety contract and any ambiguity in marker placement
-    could destroy work.
-    """
-
-
-def _validate_marker_invariants(text: str, source_name: str) -> None:
-    """Hard-fail if Start/End markers are missing or malformed."""
-    start_count = text.count(START_MARKER_PREFIX)
-    end_count = text.count(END_MARKER)
-    if start_count != 1 or end_count != 1:
-        raise WorkspaceCLAUDEMarkerError(
-            f"{source_name}: expected exactly 1 Start marker and 1 End "
-            f"marker, found Start={start_count} End={end_count}. "
-            "Refusing to deploy to avoid data loss. Restore the markers "
-            "manually before retrying."
-        )
-    if text.find(START_MARKER_PREFIX) > text.find(END_MARKER):
-        raise WorkspaceCLAUDEMarkerError(
-            f"{source_name}: Start marker appears AFTER End marker. "
-            "This indicates a corrupted file. Refusing to deploy."
-        )
-
-
-def _extract_user_tail(workspace_path: Path) -> str:
-    if not workspace_path.exists():
-        return ""
-    try:
-        existing = workspace_path.read_text()
-    except OSError:  # stx-allow: fallback (reason: file system operation failure)
-        return ""
-    idx = existing.rfind(END_MARKER)
-    if idx == -1:
-        return ""
-    return existing[idx + len(END_MARKER) :]
-
-
-def _interpolate_env(text: str) -> str:
-    return re.sub(
-        r"\$\{(\w+)\}",
-        lambda m: os.environ.get(m.group(1), m.group(0)),
-        text,
-    )
-
-
-def _interpolate_metadata(text: str, config: AgentConfig) -> str:
-    def _replace(m: re.Match) -> str:
-        key = m.group(1)
-        if key == "metadata.name":
-            return config.name
-        if key.startswith("metadata.labels."):
-            label = key[len("metadata.labels.") :]
-            return config.labels.get(label) or m.group(0)
-        return m.group(0)
-
-    return re.sub(r"\$\{([^}]+)\}", _replace, text)
+# Marker constants + text helpers re-exported for legacy import paths
+# (e.g. tests doing ``from ...runtimes._to_home import END_MARKER``).
+# Implementations live in :mod:`_to_home_text` per the 2026-06-15
+# extraction (see GITIGNORED/REFACTORING.md when present).
+_validate_marker_invariants = validate_marker_invariants
+_extract_user_tail = extract_user_tail
+_interpolate_env = interpolate_env
+_interpolate_metadata = interpolate_metadata
 
 
 # Files that get marker-protected merge semantics (vs. full overwrite).
@@ -153,13 +97,17 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
 
 # Env var: explicit override for the shared/common baseline to_home dir.
-# Absolute path. When unset we fall back to ``<agents_dir>/_base/to_home``.
+# Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
+# (or the legacy ``_base`` sibling).
 _BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
 
-# Name of the sibling dir (under the agents root) that holds the common
+# Names of the sibling dir (under the agents root) that holds the common
 # baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
-# is the spec dir's parent and the baseline is ``<parent>/_base/to_home``.
-_BASELINE_DIR_NAME = "_base"
+# is the spec dir's parent and the baseline is ``<parent>/_shared/to_home``.
+# ``_shared`` is the current name; ``_base`` is retained as a
+# backward-compat fallback for hosts/fleets not yet renamed (first match
+# under the agents root wins, in declared order).
+_BASELINE_DIR_NAMES = ("_shared", "_base")
 
 
 # --- public API ------------------------------------------------------------
@@ -196,8 +144,9 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
 
     Resolution order:
       1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
-      2. ``<agents_dir>/_base/to_home`` — a sibling ``_base`` dir under
-         the agents root. Agents live at ``<agents_dir>/<name>/``, so the
+      2. ``<agents_dir>/_shared/to_home`` — a sibling ``_shared`` dir
+         under the agents root (``_base`` accepted as a backward-compat
+         fallback). Agents live at ``<agents_dir>/<name>/``, so the
          agents root is ``spec_dir.parent``.
 
     Returns ``None`` when no baseline dir can be resolved (no baseline =
@@ -209,8 +158,11 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
         return p if p.is_dir() else None
     if spec_dir is None:
         return None
-    p = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
-    return p if p.is_dir() else None
+    for name in _BASELINE_DIR_NAMES:
+        p = spec_dir.parent / name / "to_home"
+        if p.is_dir():
+            return p
+    return None
 
 
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
@@ -234,6 +186,11 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     root = spec_dir / "to_home"
     if baseline is None and not root.is_dir():
         return
+    # Credential-leak guard runs BEFORE any deploy (both layers).
+    if baseline is not None:
+        _scan_for_credential_leak(baseline)
+    if root.is_dir():
+        _scan_for_credential_leak(root)
     workspace_home.mkdir(parents=True, exist_ok=True)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
@@ -262,6 +219,11 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     baseline = resolve_baseline_to_home_dir(_spec_dir(config))
     if root is None and baseline is None:
         return
+    # Credential-leak guard runs BEFORE any deploy (both layers).
+    if baseline is not None:
+        _scan_for_credential_leak(baseline)
+    if root is not None:
+        _scan_for_credential_leak(root)
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
     if baseline is not None:
@@ -271,6 +233,26 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
 
 
 # --- traversal -------------------------------------------------------------
+
+
+def _scan_for_credential_leak(src_root: Path) -> None:
+    """Raise :class:`WorkspaceCredentialLeakError` on first
+    ``.credentials.json`` found at any depth under ``src_root``.
+
+    Runs BEFORE any deploy so a rejected tree cannot land partial
+    sibling content next to a leaked credential. See the error class
+    docstring for the lead-reported incident this guards against.
+    """
+    if not src_root.is_dir():
+        return
+    for leak in src_root.rglob(".credentials.json"):
+        rel = leak.relative_to(src_root)
+        raise WorkspaceCredentialLeakError(
+            f"to_home/ contains a .credentials.json at {rel} — refused. "
+            "Credentials must come from the auth-stage rw bind, not "
+            f"a static workspace copy. Remove {leak} and rely on "
+            "spec.claude.account or spec.claude.credentials_file."
+        )
 
 
 def _walk_and_apply(
@@ -286,6 +268,11 @@ def _walk_and_apply(
     messages can report a path relative to the spec. ``config`` is
     optional: when present, text-file interpolation (``${metadata.*}``
     and ``${ENV_VAR}``) runs over CLAUDE.md / state.md / .env / .mcp.json.
+
+    The caller (``materialize_to_home`` / ``deploy_to_home``) runs
+    :func:`_scan_for_credential_leak` first so a leaked
+    ``.credentials.json`` aborts the deploy before any sibling
+    content lands.
     """
     for child in sorted(src_dir.iterdir()):
         rel = child.relative_to(src_root)

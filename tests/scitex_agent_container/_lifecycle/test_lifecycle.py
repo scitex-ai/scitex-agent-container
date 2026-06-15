@@ -212,7 +212,8 @@ def _no_sleep(_seconds: float) -> None:
 
 
 def test_get_runtime_apptainer_returns_claude_session_runtime() -> None:
-    # Arrange
+    # Arrange — legacy ``"apptainer"`` (the pre-2026-06-13 container-engine
+    # selector) is back-compat-mapped to the headless SDK runner.
     cfg = AgentConfig(name="x", runtime="apptainer")
     # Act
     rt = lc._get_runtime(cfg)
@@ -222,15 +223,21 @@ def test_get_runtime_apptainer_returns_claude_session_runtime() -> None:
     assert isinstance(rt, ClaudeSessionRuntime)
 
 
-def test_get_runtime_empty_runtime_treated_as_apptainer() -> None:
-    # Arrange: explicit empty string runtime falls through to apptainer.
+def test_get_runtime_empty_runtime_defaults_to_tui() -> None:
+    # Arrange — operator directive 2026-06-15: post the SDK-pool cutoff, an
+    # empty / unset ``spec.runtime`` selects the interactive in-apptainer
+    # TUI runtime (the new default). Previously empty → ClaudeSessionRuntime;
+    # the contract flipped when ``spec.runtime`` was repurposed from
+    # container-engine selector to launch-mode selector (directive 12870 +
+    # lead a2a ``b58dd5d3``). Pin the new default here so a future
+    # accidental flip-back is caught.
     cfg = AgentConfig(name="x", runtime="")
     # Act
     rt = lc._get_runtime(cfg)
     # Assert
-    from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+    from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
-    assert isinstance(rt, ClaudeSessionRuntime)
+    assert isinstance(rt, TuiSessionRuntime)
 
 
 def test_get_runtime_unsupported_runtime_raises() -> None:

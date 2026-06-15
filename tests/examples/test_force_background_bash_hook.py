@@ -7,7 +7,7 @@ operator Telegram. Enforcement is a pre-tool-use hook — structural,
 not behavioural — so an agent CANNOT accidentally run an unbounded
 foreground Bash and queue the operator behind it.
 
-Canonical policy (mirrors the lead's _base/to_home copy, dotfiles
+Canonical policy (mirrors the lead's _shared/to_home copy, dotfiles
 commit ac582483):
 
   Allow foreground ONLY if BOUNDED:
@@ -23,7 +23,7 @@ commit ac582483):
   Escape: ``CC_ALLOW_FOREGROUND_HEAVY=1``.
 
 The hook ships in the example agent template so future agents inherit
-it; the lead's identical-policy copy in dotfiles ``_base/to_home`` is
+it; the lead's identical-policy copy in dotfiles ``_shared/to_home`` is
 the fleet rollout surface.
 
 Each test asserts a single observable invariant. AAA layout. No mocks.

@@ -294,6 +294,54 @@ def test_detect_and_respond_skips_accepted_returns_none():
     assert result is None
 
 
+# Verbatim pane captured from a live in-apptainer TUI agent (2026-06-15)
+# sitting on the bypass-permissions picker — guards the real screen
+# format, not just the minimal synthetic anchors above.
+_LIVE_BYPASS_PANE = """\
+  WARNING: Claude Code running in Bypass Permissions mode
+
+  In Bypass Permissions mode, Claude Code will not ask for your approval before running
+   potentially dangerous commands.
+
+  By proceeding, you accept all responsibility for actions taken while running in
+  Bypass Permissions mode.
+
+  https://code.claude.com/docs/en/security
+
+  ❯ 1. No, exit
+    2. Yes, I accept
+
+  Enter to confirm · Esc to cancel
+"""
+
+
+def test_detect_and_respond_handles_live_bypass_pane():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    result = detect_and_respond(_LIVE_BYPASS_PANE, set(), lambda k: sent.append(k))
+    # Assert
+    assert result == "bypass-permissions"
+
+
+def test_live_bypass_pane_sends_two_then_enter():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    detect_and_respond(_LIVE_BYPASS_PANE, set(), lambda k: sent.append(k))
+    # Assert
+    assert sent == ["2", "Enter"]
+
+
+def test_live_bypass_pane_is_not_ready_while_modal_up():
+    # Arrange — the bypass modal carries "Enter to confirm".
+    pane = _LIVE_BYPASS_PANE
+    # Act
+    ready = is_ready(pane)
+    # Assert — must NOT report ready while a blocking modal is showing.
+    assert ready is False
+
+
 def test_detect_and_respond_skips_accepted_sends_nothing():
     # Arrange
     sent: list[str] = []

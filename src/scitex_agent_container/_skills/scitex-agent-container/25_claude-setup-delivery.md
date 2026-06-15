@@ -55,7 +55,7 @@ content (see "Symlink resolution" below), never via a host auto-read.
 
 ### Scope / non-goals
 
-SAC guarantees this model only: per-agent `to_home` + the `_base` baseline, with
+SAC guarantees this model only: per-agent `to_home` + the `_shared` baseline, with
 `ro`-binds for secrets/skills. Bolder patterns — a pooled **shared `to_home`**, or
 binding the **host `$HOME`** directly — are possible via raw escape hatches but
 are explicitly **out of scope** (operator's own risk). Keeps the guarantee crisp.
@@ -84,7 +84,7 @@ agents/<name>/to_home/
                        resolved to real content — see below)
 ```
 
-A shared baseline (`<agents_dir>/_base/to_home/`, or `$SAC_TO_HOME_BASELINE`)
+A shared baseline (`<agents_dir>/_shared/to_home/`, or `$SAC_TO_HOME_BASELINE`)
 is applied first; the per-agent `to_home/` overlays on top (per-agent wins).
 See `runtimes/_to_home.py` and ADR-0006 for the per-entry semantics. **This
 is general** — `to_home` is not a `.claude` delivery mechanism, it is a `$HOME`
@@ -95,7 +95,7 @@ delivery mechanism.
 The definition is the **sole source of truth**; the runtime **never auto-reads
 host state**. Materialization enforces this at the symlink level:
 
-- **Every** symlink under `_base/to_home/` and per-agent `to_home/` is
+- **Every** symlink under `_shared/to_home/` and per-agent `to_home/` is
   **dereference-copied**: the target resolves to real content (a file or whole
   tree, nested symlinks dereferenced too) and lands at the destination. The
   container `$HOME` holds only real, self-contained files — closed to apptainer
@@ -106,7 +106,7 @@ host state**. Materialization enforces this at the symlink level:
 - **No** keep-literal / warn-and-keep / naming behavior and **no** unconditional
   host `~/.claude/skills` auto-read. Host content enters only via an
   **explicit** `to_home/` symlink — e.g.
-  `_base/to_home/.claude/skills -> ~/.claude/skills` — resolved at deploy time
+  `_shared/to_home/.claude/skills -> ~/.claude/skills` — resolved at deploy time
   (explicit-pass). Applies to skills, hooks, `.env`, etc. An in-container
   literal symlink is made via `startup_commands`.
 

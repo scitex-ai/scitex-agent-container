@@ -32,13 +32,13 @@ prevention and cleanup meet in the same tree.
 
 1. Copy `worktree_create.py` and `worktree_remove.py` to the baseline:
 
-       <agents_dir>/_base/to_home/.claude/hooks/claude_worktree_hooks/
+       <agents_dir>/_shared/to_home/.claude/hooks/claude_worktree_hooks/
 
    The runtime's `_to_home.py` materializes that tree into every
    agent's `$HOME/.claude/hooks/claude_worktree_hooks/` on each start.
 
 2. Merge the `hooks` block from `settings.local.json.fragment.json`
-   into `<agents_dir>/_base/to_home/.claude/settings.local.json`
+   into `<agents_dir>/_shared/to_home/.claude/settings.local.json`
    (under the top-level `hooks` key). The fragment's `_comment_*`
    string carries the source-of-truth audit trail and should be
    preserved.

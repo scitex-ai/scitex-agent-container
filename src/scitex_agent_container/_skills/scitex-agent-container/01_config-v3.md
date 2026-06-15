@@ -105,7 +105,7 @@ Every path under `to_home/` lands at the same relative path under
 `$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and
 `${metadata.name}` are interpolated in text files. A shared baseline
-`to_home/` (`<agents_dir>/_base/to_home`, override `$SAC_TO_HOME_BASELINE`)
+`to_home/` (`<agents_dir>/_shared/to_home`, override `$SAC_TO_HOME_BASELINE`)
 is applied first; the per-agent `to_home/` overlays on top.
 
 | Source | Destination | Mode | Semantics |
