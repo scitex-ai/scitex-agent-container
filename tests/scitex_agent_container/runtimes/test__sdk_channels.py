@@ -285,7 +285,9 @@ class TestSacBinaryResolution:
         # Arrange — wipe PATH and $SAC_BIN so no candidate resolves; the
         # resolver still checks /opt/venv-agent/bin/sac as a last resort,
         # so we exercise the raise only when that path is absent on the
-        # test host (the case for CI/dev boxes).
+        # test host (the case for CI/dev boxes). ``match=`` pins the
+        # message-content contract (operator sees "sac" in the text) so
+        # one assertion covers both raise + content (STX-TQ007).
         import os.path as _osp
 
         if _osp.isfile("/opt/venv-agent/bin/sac"):
@@ -299,76 +301,33 @@ class TestSacBinaryResolution:
         os.environ["PATH"] = str(tmp_path)  # empty dir → no `sac`
         kwargs: dict = {}
         try:
-            # Act + Assert
-            with pytest.raises(SacBinaryNotFoundError):
-                apply_channels(kwargs, ["server:sac"], 9999, "lead")
-        finally:
-            os.environ["PATH"] = saved_path
-            if saved_sac_bin is not None:
-                os.environ[SAC_BIN_ENV] = saved_sac_bin
-
-    def test_unresolvable_sac_message_names_sac(self, tmp_path):
-        # Arrange — same setup as the raise-loudly sibling; this test
-        # pins the message-content contract (operator sees "sac" in the
-        # text) so a future refactor of the message can't accidentally
-        # drop the name.
-        import os.path as _osp
-
-        if _osp.isfile("/opt/venv-agent/bin/sac"):
-            pytest.skip(
-                "/opt/venv-agent/bin/sac exists on this host; resolver "
-                "would not raise. Skipping the message-content pin."
-            )
-        saved_sac_bin = os.environ.pop(SAC_BIN_ENV, None)
-        saved_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = str(tmp_path)
-        kwargs: dict = {}
-        try:
             # Act
-            with pytest.raises(SacBinaryNotFoundError) as exc_info:
+            # Assert
+            with pytest.raises(SacBinaryNotFoundError, match=r"(?i)sac"):
                 apply_channels(kwargs, ["server:sac"], 9999, "lead")
         finally:
             os.environ["PATH"] = saved_path
             if saved_sac_bin is not None:
                 os.environ[SAC_BIN_ENV] = saved_sac_bin
-        # Assert
-        assert "sac" in str(exc_info.value).lower()
 
     def test_sac_bin_pointing_at_nonexistent_path_raises(self, tmp_path):
-        # Arrange — typo'd override must fail loudly, never silently
-        # fall back to PATH lookup (an operator typo would mask the
-        # override and the wrong binary would get spawned).
-        saved_sac_bin = os.environ.get(SAC_BIN_ENV)
-        os.environ[SAC_BIN_ENV] = str(tmp_path / "does-not-exist")
-        kwargs: dict = {}
-        try:
-            # Act + Assert
-            with pytest.raises(SacBinaryNotFoundError):
-                apply_channels(kwargs, ["server:sac"], 9999, "lead")
-        finally:
-            if saved_sac_bin is None:
-                os.environ.pop(SAC_BIN_ENV, None)
-            else:
-                os.environ[SAC_BIN_ENV] = saved_sac_bin
-
-    def test_sac_bin_typo_message_names_env_var(self, tmp_path):
-        # Arrange — sibling to the raise test; pins that the error
-        # message names the SAC_BIN_ENV env var so the operator sees
-        # which variable they need to fix.
+        # Arrange — typo'd override must fail loudly and the message
+        # MUST name the SAC_BIN_ENV env var so the operator sees which
+        # variable to fix. ``match=SAC_BIN_ENV`` pins both contracts in
+        # one assertion (STX-TQ007).
         saved_sac_bin = os.environ.get(SAC_BIN_ENV)
         os.environ[SAC_BIN_ENV] = str(tmp_path / "does-not-exist")
         kwargs: dict = {}
         try:
             # Act
-            with pytest.raises(SacBinaryNotFoundError) as exc_info:
+            # Assert
+            with pytest.raises(SacBinaryNotFoundError, match=SAC_BIN_ENV):
                 apply_channels(kwargs, ["server:sac"], 9999, "lead")
         finally:
             if saved_sac_bin is None:
                 os.environ.pop(SAC_BIN_ENV, None)
             else:
                 os.environ[SAC_BIN_ENV] = saved_sac_bin
-        # Assert
-        assert SAC_BIN_ENV in str(exc_info.value)
 
 
 class TestBothChannelsCoexist:
