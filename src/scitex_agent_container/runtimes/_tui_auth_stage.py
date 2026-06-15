@@ -208,6 +208,24 @@ def _resolve_pinned_account_credentials(
     Defensive against stub AgentConfig surfaces used in unit tests —
     a missing ``claude.account`` attribute degrades silently to
     "unpinned" without raising.
+
+    P0 #5 (2026-06-15): the snapshot root is resolved through
+    :func:`_state.account_store._store_path` so the SciTeX-config
+    CWD cascade (project-scope ``<repo>/.scitex/agent-container/accounts/``
+    wins over user-scope ``${HOME}/.scitex/agent-container/accounts/``)
+    is honoured — the SAME resolver the apptainer-runtime SDK path uses
+    via :func:`_apptainer_creds.resolve_cred_file`. Multi-host: each
+    host resolves its own LOCAL snapshot; no copy between hosts. This
+    is the "canonical single-source" model the operator's lead-learnings
+    skill #29 describes — symlink/dir-bind only, server-managed.
+
+    Caveat (carried over from :mod:`_apptainer_auth`): a single-file
+    bind on the snapshot path can be orphaned by host-side atomic-rename
+    refresh writers. The TUI staging path COPIES the snapshot into the
+    materialised ``$HOME`` rather than bind-mounting it, so the orphan
+    concern does not apply here — but a re-stage on token expiry is
+    required for long-lived TUI sessions (handled by the same
+    ``stage_tui_auth`` call on restart).
     """
     acct = ""
     try:
@@ -216,14 +234,13 @@ def _resolve_pinned_account_credentials(
         acct = ""
     if not acct:
         return None
-    snapshot = (
-        Path.home()
-        / ".scitex"
-        / "agent-container"
-        / "accounts"
-        / acct
-        / ".credentials.json"
-    )
+    # Local import keeps the module-level cost down (account_store
+    # pulls scitex_config at import) and matches the same lazy-import
+    # idiom used in ``_apptainer_creds.resolve_cred_file``.
+    from .._state.account_store import _store_path
+
+    store = _store_path(None, Path.home())
+    snapshot = store / acct / ".credentials.json"
     return snapshot if snapshot.is_file() else None
 
 

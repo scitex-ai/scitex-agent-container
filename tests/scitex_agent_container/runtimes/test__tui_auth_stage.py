@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -574,9 +575,6 @@ class TestStageTuiAuthSettingsPreserveExisting:
 # agent on a host failed because the default container-bind path
 # /tmp/sac-claude does not exist outside apptainer.
 # ---------------------------------------------------------------------------
-
-
-from dataclasses import dataclass
 
 
 @dataclass
