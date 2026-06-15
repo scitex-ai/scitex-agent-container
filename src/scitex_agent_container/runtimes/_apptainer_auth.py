@@ -180,39 +180,86 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
 
 
 def credentials_file_bind(config: AgentConfig) -> list[str]:
-    """Render the writable file-bind for ``spec.claude.credentials_file``.
+    """Render the writable file-bind for the agent's credentials file.
 
     Emitted LAST in :func:`_apptainer_build_argv.build_run_argv` (after
     the overlay-upper-home bind) so a relaxed ``--home`` tmpfs or
     ``--bind <upper>:/home/agent`` cannot shadow the credentials file —
     user binds apply in order and the last bind to a path wins.
 
-    Binds the designated host file ``rw`` at ``<container_home>/.claude/
-    .credentials.json`` so the in-container ``claude`` reads AND
-    refreshes that single file directly (single source of truth). No-op
-    when the field is unset, the file is missing, or a provider override
-    is active (API-key backend → no OAuth file).
+    Source resolution (first hit wins):
+
+      1. Explicit ``spec.claude.credentials_file`` — operator-pinned
+         host path. Wins for any agent that designates it.
+      2. ``spec.claude.account`` — per-host snapshot resolved via the
+         SAC account-store CWD cascade (same path the SDK runtime uses
+         through :func:`_apptainer_creds.resolve_cred_file`). This is
+         the canonical single-source model (operator 2026-06-15,
+         lead-learnings/29): each host writable-binds its OWN local
+         snapshot; NO COPY between hosts; the snapshot dir is
+         server-managed. A pinned-account TUI agent gets this bind
+         AUTOMATICALLY without any manual ``credentials_file:`` line.
+      3. Neither set or a provider backend is active → no bind.
+
+    Binds the resolved host file ``rw`` at ``<container_home>/.claude/
+    .credentials.json`` so the in-container ``claude`` (both SDK and
+    TUI variants) reads AND refreshes that single file directly. The
+    SAME path the interactive ``claude`` auto-discovers when no
+    ``$CLAUDE_CONFIG_DIR`` redirect is set — operator-confirmed working
+    shape (figrecipe + scitex-todo manual test 2026-06-15).
 
     Caveat: a single-file bind is on the file's inode. An in-container
-    refresh that rewrites in-place persists to the source; one that does
-    tmp+rename orphans the bind (the source keeps the pre-rename token).
-    The designated file should therefore NOT be a path concurrently
-    atomic-renamed by host-side ``sac accounts``/watch-live tooling — it
-    is the agent's private, operator-rotated credentials file.
+    refresh that rewrites in-place persists to the source; one that
+    does tmp+rename orphans the bind (the source keeps the pre-rename
+    token). For account-pinned mode the snapshot dir is owned by
+    sac-account tooling that the operator controls; coordinate writers
+    accordingly. For explicit ``credentials_file:`` the path SHOULD
+    NOT be one concurrently atomic-renamed by host-side
+    ``sac accounts``/watch-live tooling — it is the agent's private,
+    operator-rotated credentials file.
     """
     if provider_active(config):
         return []
     claude_spec = getattr(config, "claude", None)
     designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()
-    if not designated:
+    src: Path | None = None
+    src_origin = ""
+    if designated:
+        src = Path(designated).expanduser()
+        src_origin = f"spec.claude.credentials_file={designated!r}"
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"spec.claude.credentials_file points at {src}, which is "
+                "not a file. Designate an existing .credentials.json "
+                "(the agent mounts it writable at $HOME/.claude/"
+                ".credentials.json as its single source of truth)."
+            )
+    elif str(getattr(claude_spec, "account", "") or "").strip():
+        # Account-pinned auto-resolution (operator+lead 2026-06-15):
+        # delegate to the SDK-path resolver so SDK and TUI agree on
+        # snapshot location (CWD cascade via ``_store_path``). Raises
+        # :class:`PinnedAccountError` when the snapshot is absent or
+        # expired — the canonical fail-loud contract.
+        from pathlib import Path as _Path
+
+        # Import lazily so the absence of a snapshot doesn't impact
+        # unpinned/provider-backed callers, and to break import cycles
+        # with ``_apptainer_creds`` (which itself imports from this
+        # module's siblings).
+        from ._apptainer_creds import resolve_cred_file
+
+        # state_dir is unused by ``resolve_cred_file`` for the pinned
+        # branch — pass a sentinel that satisfies the signature.
+        src = resolve_cred_file(config, _Path("/dev/null"))
+        src_origin = (
+            f"spec.claude.account={getattr(claude_spec, 'account', '')!r} → {src}"
+        )
+    if src is None:
         return []
-    src = Path(designated).expanduser()
     if not src.is_file():
         raise FileNotFoundError(
-            f"spec.claude.credentials_file points at {src}, which is not "
-            "a file. Designate an existing .credentials.json (the agent "
-            "mounts it writable at $HOME/.claude/.credentials.json as its "
-            "single source of truth)."
+            f"resolved credentials path {src} ({src_origin}) is not a "
+            "file. Refusing to launch with an unverifiable credential."
         )
     from ._to_home_overlay import resolve_container_home
 
