@@ -20,6 +20,7 @@ STX-TQ002 AAA-marker + STX-TQ007 one-assert.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -278,8 +279,60 @@ def test_build_run_argv_tui_injects_channel_subscriber_mcp(tmp_path) -> None:
     )
     # Assert — the inline sac-channel subscriber rides on --mcp-config
     # (preflight-wrapped on non-relaxed specs, so check the joined argv).
+    # The command must be the in-SIF absolute path of the `sac` console
+    # script. The default is /opt/venv-agent/bin/sac (verified in
+    # sac-base.sif 2026-06-15; the old /opt/venv-sac/bin/sac hardcode
+    # was wrong — the binary lives under the agent venv, not the SDK
+    # venv). The bare command must NOT be just `sac` (PR #407 silent-
+    # exec-fail class).
     joined = " ".join(argv)
-    assert '"command": "/opt/venv-sac/bin/sac"' in joined and '"channel"' in joined
+    assert '"command": "/opt/venv-agent/bin/sac"' in joined and '"channel"' in joined
+
+
+def test_resolve_sac_bin_in_sif_returns_agent_venv_path() -> None:
+    # Arrange — no override
+    saved = os.environ.pop("SAC_BIN_IN_SIF", None)
+    try:
+        # Act
+        from scitex_agent_container.runtimes._apptainer_inner_argv import (
+            resolve_sac_bin_in_sif,
+        )
+
+        path = resolve_sac_bin_in_sif()
+        # Assert — the verified in-SIF default. If someone changes this
+        # they must verify with `ls /opt/venv-agent/bin/sac` inside the
+        # running SIF and update both the constant and this test.
+        assert path == "/opt/venv-agent/bin/sac"
+    finally:
+        if saved is not None:
+            os.environ["SAC_BIN_IN_SIF"] = saved
+
+
+def test_resolve_sac_bin_in_sif_honours_env_override(monkeypatch) -> None:
+    # Arrange — operator escape hatch for rebuilt SIFs.
+    monkeypatch.setenv("SAC_BIN_IN_SIF", "/custom/path/to/sac")
+    # Act
+    from scitex_agent_container.runtimes._apptainer_inner_argv import (
+        resolve_sac_bin_in_sif,
+    )
+
+    path = resolve_sac_bin_in_sif()
+    # Assert
+    assert path == "/custom/path/to/sac"
+
+
+def test_tui_channel_config_command_is_resolved_sac_path(tmp_path) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
+    config = load_config(str(spec))
+    # Act
+    _, channel_mcp = tui_channel_config(config)
+    # Assert — the inline JSON's command is the resolver's value
+    # (defaults to /opt/venv-agent/bin/sac for sac-base.sif). The
+    # legacy /opt/venv-sac/bin/sac would silently fail exec inside
+    # the SIF since the binary does not exist there.
+    assert channel_mcp is not None
+    assert '"command": "/opt/venv-agent/bin/sac"' in channel_mcp
 
 
 def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:

@@ -9,6 +9,7 @@ cap. Each builder returns the full ``[tini, --, python3, -m, MODULE,
 from __future__ import annotations
 
 import json
+import os as _os
 import shlex
 from typing import TYPE_CHECKING
 
@@ -275,11 +276,61 @@ def _tui_runner_argv(
     return argv
 
 
-# Absolute path to the bundled ``sac`` binary inside the base SIF. Under
-# ``--containall --cleanenv`` the venv bin dir is NOT on PATH, so a bare
-# ``sac`` (as the SDK path uses) is unresolvable from an MCP subprocess —
-# the channel sidecar must be invoked by absolute path.
-_SAC_BIN_IN_SIF = "/opt/venv-sac/bin/sac"
+# Absolute path to the bundled ``sac`` console-script inside the base
+# SIF (sac-base.sif as of 2026-06-15). The script is installed under the
+# agent venv (``/opt/venv-agent/bin/sac``), NOT the SDK venv
+# (``/opt/venv-sac/bin/sac`` does not exist — verified by
+# ``ls /opt/venv-{agent,sac}/bin/sac`` in the running SIF).
+#
+# Why hardcode rather than ``shutil.which("sac")``: this constant is
+# read on the HOST when the SAC runtime builds the apptainer-exec
+# argv. The host's PATH (the SAC runtime inherits
+# ``/opt/venv-sac/bin:...``) does NOT include ``/opt/venv-agent/bin``,
+# so ``shutil.which("sac")`` would fail to find sac on the host even
+# though it exists inside the SIF. The path written here is the
+# IN-SIF absolute path the bundled claude will exec when it spawns
+# the channel-MCP subprocess; that filesystem is the SIF's, not the
+# host's, so the hardcoded SIF path is correct.
+#
+# Under ``--containall --cleanenv`` the venv bin dir is NOT on PATH,
+# so a bare ``sac`` (as the host SDK path uses) is also unresolvable
+# from an MCP subprocess inside the SIF — the channel sidecar must
+# be invoked by absolute path.
+#
+# Operator override: set ``SAC_BIN_IN_SIF`` in the agent's env (e.g.
+# ``spec.env``) to point at a different in-SIF location if the image
+# is rebuilt with sac installed elsewhere. The constant below is the
+# default for the current sac-base.sif.
+_SAC_BIN_IN_SIF_DEFAULT = "/opt/venv-agent/bin/sac"
+
+
+def resolve_sac_bin_in_sif() -> str:
+    """Return the absolute in-SIF path to the ``sac`` console script.
+
+    Resolves at MCP-config build time on the HOST. Reads the
+    ``SAC_BIN_IN_SIF`` env var override first (operator escape hatch
+    when the SIF is rebuilt with sac in a non-default location); falls
+    back to :data:`_SAC_BIN_IN_SIF_DEFAULT`. NEVER attempts a host-side
+    ``shutil.which`` — the path is INSIDE the SIF; host PATH lookups
+    are noise here (the SAC runtime's PATH typically does not include
+    ``/opt/venv-agent/bin`` so ``which`` would mis-report).
+
+    The default is the verified location for ``sac-base.sif`` as of
+    2026-06-15; see the module-level comment for the verification
+    record. Override via ``SAC_BIN_IN_SIF`` env when the SIF layout
+    changes (this avoids hardcoding-shaped breakage on SIF rebuilds).
+    """
+    override = _os.environ.get("SAC_BIN_IN_SIF", "").strip()
+    if override:
+        return override
+    return _SAC_BIN_IN_SIF_DEFAULT
+
+
+# Backward-compat alias — keep imports of ``_SAC_BIN_IN_SIF`` working
+# (e.g. external skill-doc examples that referenced the legacy constant
+# name). New call sites should call :func:`resolve_sac_bin_in_sif` so
+# the env override takes effect.
+_SAC_BIN_IN_SIF = _SAC_BIN_IN_SIF_DEFAULT
 
 
 def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
@@ -319,7 +370,7 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
                 "mcpServers": {
                     "sac": {
                         "type": "stdio",
-                        "command": _SAC_BIN_IN_SIF,
+                        "command": resolve_sac_bin_in_sif(),
                         "args": args,
                     }
                 }
