@@ -720,4 +720,138 @@ class TestStageTuiAuthHostFallbackChain:
             do_stage(home_dir, config=None)
 
 
+# ---------------------------------------------------------------------------
+# P0 #5 (2026-06-15): TUI auto cred bind for account-pinned agents must
+# honour the SciTeX-config local_state CWD cascade — the same resolver
+# the apptainer-runtime SDK path uses via ``_account_store._store_path``.
+#
+# Previously :func:`_resolve_pinned_account_credentials` hardcoded the
+# snapshot path at ``${HOME}/.scitex/agent-container/accounts/<acct>/``,
+# bypassing project-scope ``<repo>/.scitex/agent-container/accounts/``.
+# This broke account-pinned TUI agents whose host snapshot lived in the
+# project-scope store (the canonical SciTeX layout the SDK path already
+# honours). Multi-host model: each host resolves its own local snapshot;
+# no copy between hosts — CWD cascade is host-local by construction.
+# ---------------------------------------------------------------------------
+
+
+class TestStageTuiAuthAccountStoreCwdCascade:
+    """``spec.claude.account`` snapshot resolution must walk the
+    SciTeX-config CWD cascade so a project-scope account store
+    (``<repo>/.scitex/agent-container/accounts/<acct>/``) wins over the
+    user-scope default."""
+
+    def test_project_scope_account_snapshot_wins_over_user_scope(
+        self,
+        tmp_path: Path,
+        home_dir: Path,
+        claude_json_src: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Arrange — materialise a real git-rooted project-scope account
+        # store under tmp_path/repo/. Walk-up detection requires .git/.
+        # The user-scope store also contains an obviously-wrong snapshot
+        # so that a regression (hardcoded HOME resolution) would surface
+        # immediately in the assertion: only the project-scope token can
+        # produce the expected accessToken string.
+        acct = "scitex-todo"
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        proj_snap = (
+            repo
+            / ".scitex"
+            / "agent-container"
+            / "accounts"
+            / acct
+            / ".credentials.json"
+        )
+        proj_snap.parent.mkdir(parents=True, exist_ok=True)
+        proj_snap.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-project-scope-snapshot",
+                        "expiresAt": 9999999999999,
+                    }
+                }
+            )
+        )
+        # User-scope decoy (would win under the buggy hardcoded path).
+        user_snap = (
+            Path(os.environ["HOME"])
+            / ".scitex"
+            / "agent-container"
+            / "accounts"
+            / acct
+            / ".credentials.json"
+        )
+        user_snap.parent.mkdir(parents=True, exist_ok=True)
+        user_snap.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-WRONG-user-scope-decoy",
+                        "expiresAt": 9999999999999,
+                    }
+                }
+            )
+        )
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        monkeypatch.chdir(repo)
+        config = _StubConfig(claude=_StubClaude(account=acct))
+        # Act
+        stage_tui_auth(home_dir, config=config)
+        # Assert — project-scope snapshot won the cascade.
+        observed = json.loads((home_dir / ".claude" / ".credentials.json").read_text())
+        assert (
+            observed["claudeAiOauth"]["accessToken"]
+            == "sk-ant-oat01-project-scope-snapshot"
+        )
+
+    def test_user_scope_snapshot_used_when_no_project_scope(
+        self,
+        tmp_path: Path,
+        home_dir: Path,
+        claude_json_src: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Arrange — CWD is a git repo BUT no project-scope account store
+        # exists; cascade must fall back to user-scope. The host has its
+        # own ``~/.scitex/agent-container/accounts/<acct>/`` (the
+        # per-host canonical default).
+        acct = "scitex-todo"
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        user_snap = (
+            Path(os.environ["HOME"])
+            / ".scitex"
+            / "agent-container"
+            / "accounts"
+            / acct
+            / ".credentials.json"
+        )
+        user_snap.parent.mkdir(parents=True, exist_ok=True)
+        user_snap.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-user-scope-snapshot",
+                        "expiresAt": 9999999999999,
+                    }
+                }
+            )
+        )
+        os.environ[CLAUDE_JSON_SRC_ENV] = str(claude_json_src)
+        monkeypatch.chdir(repo)
+        config = _StubConfig(claude=_StubClaude(account=acct))
+        # Act
+        stage_tui_auth(home_dir, config=config)
+        # Assert
+        observed = json.loads((home_dir / ".claude" / ".credentials.json").read_text())
+        assert (
+            observed["claudeAiOauth"]["accessToken"]
+            == "sk-ant-oat01-user-scope-snapshot"
+        )
+
+
 # EOF
