@@ -45,6 +45,10 @@ _MANAGED_KEYS = frozenset(
         "enabledMcpjsonServers",
         "hooks",
         "statusLine",
+        # spec.claude.effort → settings.effortLevel (operator directive
+        # 2026-06-15). SDK reads it from settings.json; the validator
+        # in config._validation restricts the accepted level set.
+        "effortLevel",
     }
 )
 
@@ -216,6 +220,14 @@ def setup_settings_json(config: AgentConfig, workdir: str) -> None:
 
     if _needs_skip_permissions(config):
         settings["skipDangerousModePermissionPrompt"] = True
+
+    # spec.claude.effort → settings.effortLevel (operator directive
+    # 2026-06-15). When set, the SDK runner reads the level and runs
+    # at that reasoning effort. Empty / missing = no override (SDK
+    # uses its own default). Validator restricts the accepted set.
+    effort = str(getattr(config.claude, "effort", "") or "").strip()
+    if effort:
+        settings["effortLevel"] = effort
 
     if _needs_dev_channels(config):
         settings["enableAllProjectMcpServers"] = True

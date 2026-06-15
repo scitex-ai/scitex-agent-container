@@ -34,6 +34,7 @@ from scitex_agent_container.config._parsers._claude import parse_claude
     ("attr", "expected"),
     [
         ("model", ""),
+        ("effort", ""),
         ("channels", []),
         ("flags", []),
         ("session", "continue"),

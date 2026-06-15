@@ -264,6 +264,14 @@ def _tui_runner_argv(
         model = str(getattr(config, "model", "") or "").strip()
     if model:
         argv += ["--model", model]
+    # spec.claude.effort → --effort <level> (operator directive
+    # 2026-06-15). Bundled claude 2.1.150 supports the flag — verified
+    # against ``claude --help`` in the sac-base SIF. Empty = omit the
+    # flag (claude uses its own default). Validator restricts the
+    # accepted level set.
+    effort = str(getattr(claude_spec, "effort", "") or "").strip()
+    if effort:
+        argv += ["--effort", effort]
     mcp_values = [v for v in (mcp_config, channel_mcp) if v]
     if mcp_values:
         argv += ["--mcp-config", *mcp_values]

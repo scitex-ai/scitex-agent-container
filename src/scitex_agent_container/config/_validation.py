@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from ._acl_validation import validate_phase3_acl
+from ._autonomous_validation import validate_autonomous
 from ._provider_validation import provider_is_active, validate_provider
 
 # Accepted shapes for ``spec.model`` (F-CS7).
@@ -72,6 +73,14 @@ _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 # and ``"apptainer"`` are accepted as back-compat and mapped to
 # ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.
 _VALID_RUNTIMES = frozenset({"claude-agent-sdk", "tui", "apptainer", ""})
+
+# Reasoning-effort levels accepted by the bundled claude binary
+# (2.1.150 in sac-base SIF — verified by ``claude --help``: --effort
+# <level>). The SDK reads the same set from settings.json
+# ``effortLevel``. Operator directive 2026-06-15 surfaces this knob
+# fleet-wide so every agent can run at effort=max. Empty / missing =
+# no override (claude's own default applies).
+_VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
@@ -299,6 +308,27 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "field accepts the provider's own model id instead.)"
                 )
 
+        # spec.claude.effort — reasoning-effort knob (operator directive
+        # 2026-06-15). Restricted to the documented level set so typos
+        # surface at yaml-validate time instead of as an opaque
+        # "unknown level" failure inside claude. Empty / missing is
+        # allowed (no override; claude's own default applies).
+        effort = claude_block.get("effort")
+        if effort is not None:
+            if not isinstance(effort, str):
+                errors.append(
+                    f"spec.claude.effort must be a string, got {type(effort).__name__}"
+                )
+            elif effort and effort not in _VALID_EFFORTS:
+                errors.append(
+                    f"spec.claude.effort '{effort}' is not an accepted "
+                    f"level. Use one of {sorted(_VALID_EFFORTS)} or "
+                    "leave empty for claude's own default. The bundled "
+                    "claude binary (2.1.150) accepts these via "
+                    "--effort <level>; the SDK reads the same from "
+                    "settings.json effortLevel."
+                )
+
         # spec.claude.provider + spec.claude.account are mutually
         # exclusive — an API-key backend needs no OAuth. Declaring both
         # is a config error (the runtime would otherwise have to guess
@@ -407,33 +437,10 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"got {type(hosts_val).__name__}"
                 )
 
-        # spec.autonomous (F-CS3 phase 1) — drive-until-done.
-        autonomous = spec.get("autonomous")
-        if autonomous is not None:
-            if not isinstance(autonomous, dict):
-                errors.append(
-                    "spec.autonomous must be a mapping; got "
-                    f"{type(autonomous).__name__}"
-                )
-            else:
-                drive_until = autonomous.get("drive_until")
-                if drive_until is not None and not isinstance(drive_until, str):
-                    errors.append("spec.autonomous.drive_until must be a string")
-                elif drive_until == "":
-                    errors.append("spec.autonomous.drive_until must be non-empty")
-                for fld in ("max_turns", "idle_kick_after_s"):
-                    val = autonomous.get(fld)
-                    if val is not None:
-                        if not isinstance(val, int) or isinstance(val, bool):
-                            errors.append(f"spec.autonomous.{fld} must be an integer")
-                        elif val <= 0:
-                            errors.append(f"spec.autonomous.{fld} must be > 0")
-                kick = autonomous.get("kick_text")
-                if kick is not None and not isinstance(kick, str):
-                    errors.append("spec.autonomous.kick_text must be a string")
-                enabled = autonomous.get("enabled")
-                if enabled is not None and not isinstance(enabled, bool):
-                    errors.append("spec.autonomous.enabled must be a boolean")
+        # spec.autonomous (F-CS3 phase 1) — drive-until-done. Field-by-
+        # field shape check lives in the sibling module to keep this
+        # file under the per-file cap.
+        errors.extend(validate_autonomous(spec))
 
         # kind: AgentProxy coupling rules.
         #

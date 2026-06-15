@@ -82,8 +82,16 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     raw_options = raw.get("raw_options", {}) or {}
     if not isinstance(raw_options, dict):
         raw_options = {}
+    # Reasoning-effort knob (operator directive 2026-06-15). The
+    # validator restricts the accepted value set ("low"/"medium"/"high"/
+    # "xhigh"/"max"); the parser only coerces shape (non-string → empty
+    # so the unvalidated path can't crash the runner). Empty = no
+    # override — runtime uses claude's own default.
+    effort_raw = raw.get("effort", "")
+    effort = str(effort_raw) if isinstance(effort_raw, str) else ""
     return ClaudeSpec(
         model=str(raw.get("model", "") or ""),
+        effort=effort,
         channels=raw.get("channels", []) or [],
         flags=raw.get("flags", []) or [],
         session=session,
