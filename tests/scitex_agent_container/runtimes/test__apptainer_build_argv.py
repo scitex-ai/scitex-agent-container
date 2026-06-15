@@ -240,6 +240,95 @@ def test_credentials_file_bind_missing_file_fails_loud(tmp_path) -> None:
         credentials_file_bind(config)
 
 
+def test_credentials_file_bind_resolves_account_when_no_explicit_file(
+    tmp_path: Path, _isolate_home: Path
+) -> None:
+    # Arrange — write a real snapshot at the user-scope account-store path,
+    # then declare ``spec.claude.account`` (no explicit ``credentials_file:``).
+    # ``_isolate_home`` redirects ``HOME`` so the store lands inside
+    # ``tmp_path`` and ``_store_path`` resolves to it. Multi-host
+    # canonical-single-source model (operator+lead 2026-06-15,
+    # lead-learnings/29): each host writable-binds its OWN local
+    # snapshot — no copy between hosts.
+    acct = "scitex-todo"
+    store = _isolate_home / ".scitex" / "agent-container" / "accounts" / acct
+    store.mkdir(parents=True, exist_ok=True)
+    snap = store / ".credentials.json"
+    snap.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra=f"    account: {acct}"),
+    )
+    config = load_config(str(spec))
+    # Act
+    flags = credentials_file_bind(config)
+    # Assert — single-file rw bind onto the canonical container creds path,
+    # source = the per-host snapshot. NO copy, NO CLAUDE_CONFIG_DIR redirect.
+    assert flags == [
+        "--bind",
+        f"{snap}:/home/agent/.claude/.credentials.json:rw",
+    ]
+
+
+def test_credentials_file_bind_explicit_file_wins_over_account(
+    tmp_path: Path, _isolate_home: Path
+) -> None:
+    # Arrange — both ``account:`` and ``credentials_file:`` set. Explicit
+    # wins (operator override always trumps auto-resolution).
+    acct = "scitex-todo"
+    store = _isolate_home / ".scitex" / "agent-container" / "accounts" / acct
+    store.mkdir(parents=True, exist_ok=True)
+    snap = store / ".credentials.json"
+    snap.write_text(
+        '{"claudeAiOauth": {"accessToken": "snap", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
+    explicit = tmp_path / "explicit" / ".credentials.json"
+    explicit.parent.mkdir(parents=True, exist_ok=True)
+    explicit.write_text(
+        '{"claudeAiOauth": {"accessToken": "explicit"}}', encoding="utf-8"
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(
+            extra=f"    account: {acct}\n    credentials_file: {explicit}"
+        ),
+    )
+    config = load_config(str(spec))
+    # Act
+    flags = credentials_file_bind(config)
+    # Assert — explicit file path is the source.
+    assert flags == [
+        "--bind",
+        f"{explicit}:/home/agent/.claude/.credentials.json:rw",
+    ]
+
+
+def test_credentials_file_bind_account_pinned_raises_on_missing_snapshot(
+    tmp_path: Path, _isolate_home: Path
+) -> None:
+    # Arrange — ``account:`` set but NO snapshot at the resolver's path.
+    # ``resolve_cred_file`` is the canonical fail-loud point; verify the
+    # exception propagates so ``sac agents start`` aborts at config-build
+    # time (not silently launches with an unverifiable credential).
+    from scitex_agent_container.runtimes._apptainer_creds import (
+        PinnedAccountError,
+    )
+
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra="    account: nonexistent-account"),
+    )
+    config = load_config(str(spec))
+    # Act
+    # Assert
+    with pytest.raises(PinnedAccountError, match=r"nonexistent-account"):
+        credentials_file_bind(config)
+
+
 def test_build_run_argv_tui_adds_mcp_config_when_home_has_mcp_json(
     tui_config, tmp_path
 ) -> None:
