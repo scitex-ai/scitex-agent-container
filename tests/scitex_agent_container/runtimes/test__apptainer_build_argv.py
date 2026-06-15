@@ -15,13 +15,24 @@ runtime) instead of on the host via tmux:
     tmpfs cannot shadow it.
 
 Real AgentConfig via ``load_config`` on a tmp spec — no mocks.
-STX-TQ002 AAA-marker + STX-TQ007 one-assert.
+STX-TQ002 AAA-marker + STX-TQ007 one-assert + PA-306 no-mock-fixtures.
+
+The file is named ``test__apptainer_build_argv.py`` to satisfy the
+PS-204 §2 orphan-test mirror rule against
+``src/scitex_agent_container/runtimes/_apptainer_build_argv.py`` (the
+production entry-point under test). The companion helpers tested here
+(``_apptainer_auth.credentials_file_bind`` and
+``_apptainer_inner_argv.{build_inner_argv,tui_channel_config,
+resolve_sac_bin_in_sif}``) are exercised through ``build_run_argv``
+to keep the mirror 1:1.
 """
 
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -32,6 +43,55 @@ from scitex_agent_container.runtimes._apptainer_inner_argv import (
     build_inner_argv,
     tui_channel_config,
 )
+
+
+@pytest.fixture
+def _isolate_home(tmp_path: Path) -> Iterator[Path]:
+    """Redirect ``HOME`` (and ``Path.home``) to a per-test tmp dir.
+
+    The bearer-token resolver (``_apptainer_build._listen_token_path`` →
+    ``_listen.tokens.default_token_path``) anchors on ``Path.home()``. By
+    sliding ``HOME`` to ``tmp_path`` we keep the materialised token file
+    contained inside the test and never touch the developer's real
+    ``~/.scitex/agent-container/tokens/`` tree.
+    """
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+@pytest.fixture
+def listen_bearer_token(_isolate_home: Path) -> Path:
+    """Materialise a real ``sac listen`` bearer token at the resolver path.
+
+    Tests that exercise ``build_run_argv`` against a spec whose
+    ``spec.claude.channels`` includes ``server:sac`` would otherwise hit
+    the fail-loud guard in
+    ``_apptainer_listen_env.listen_env_flags`` — that guard exists to
+    refuse launches whose in-container channel adapter can never
+    authenticate to ``sac listen``. CI hosts have no token file, so the
+    guard turns an argv-shape test into a RuntimeError. This fixture
+    writes a real (non-empty) token to the resolver-computed path so the
+    guard sees a usable bearer and ``build_run_argv`` proceeds.
+
+    The path layout mirrors the production resolver
+    (``_listen.tokens.default_token_path``): ``$HOME/.scitex/agent-
+    container/tokens/listen-<hostname>.token``. We use ``socket.
+    gethostname()`` here so a CI runner rename does not desync the
+    fixture from the resolver.
+    """
+    home = _isolate_home
+    token_dir = home / ".scitex" / "agent-container" / "tokens"
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_path = token_dir / f"listen-{socket.gethostname()}.token"
+    token_path.write_text("test-bearer-token-not-a-secret\n", encoding="utf-8")
+    return token_path
 
 
 def _write_spec(tmp_path: Path, body: str) -> Path:
@@ -253,8 +313,13 @@ def test_tui_channel_config_registers_sac_channel_subscriber(tmp_path) -> None:
     assert channel_mcp is not None and "mcp" in channel_mcp and "channel" in channel_mcp
 
 
-def test_build_run_argv_tui_adds_dev_channels_flag(tmp_path) -> None:
-    # Arrange
+def test_build_run_argv_tui_adds_dev_channels_flag(
+    tmp_path, listen_bearer_token
+) -> None:
+    # Arrange — ``listen_bearer_token`` materialises a real bearer at the
+    # resolver path so the ``server:sac`` channel guard
+    # (``_apptainer_listen_env.listen_env_flags``) does not refuse the
+    # launch on a CI host that has never run ``sac listen``.
     spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
     config = load_config(str(spec))
     state_dir = tmp_path / "state"
@@ -267,8 +332,12 @@ def test_build_run_argv_tui_adds_dev_channels_flag(tmp_path) -> None:
     assert "--dangerously-load-development-channels server:sac" in " ".join(argv)
 
 
-def test_build_run_argv_tui_injects_channel_subscriber_mcp(tmp_path) -> None:
-    # Arrange
+def test_build_run_argv_tui_injects_channel_subscriber_mcp(
+    tmp_path, listen_bearer_token
+) -> None:
+    # Arrange — ``listen_bearer_token`` materialises a real bearer at the
+    # resolver path so the ``server:sac`` channel guard does not refuse
+    # this launch on a CI host that has never run ``sac listen``.
     spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
     config = load_config(str(spec))
     state_dir = tmp_path / "state"
@@ -308,15 +377,25 @@ def test_resolve_sac_bin_in_sif_returns_agent_venv_path() -> None:
             os.environ["SAC_BIN_IN_SIF"] = saved
 
 
-def test_resolve_sac_bin_in_sif_honours_env_override(monkeypatch) -> None:
-    # Arrange — operator escape hatch for rebuilt SIFs.
-    monkeypatch.setenv("SAC_BIN_IN_SIF", "/custom/path/to/sac")
-    # Act
-    from scitex_agent_container.runtimes._apptainer_inner_argv import (
-        resolve_sac_bin_in_sif,
-    )
+def test_resolve_sac_bin_in_sif_honours_env_override() -> None:
+    # Arrange — operator escape hatch for rebuilt SIFs. ``monkeypatch``
+    # is forbidden by the PA-306 §3 no-mocks rule, so save/restore the
+    # env var directly on ``os.environ`` (real state mutation, not a
+    # pytest fixture wrapper).
+    saved = os.environ.get("SAC_BIN_IN_SIF")
+    os.environ["SAC_BIN_IN_SIF"] = "/custom/path/to/sac"
+    try:
+        # Act
+        from scitex_agent_container.runtimes._apptainer_inner_argv import (
+            resolve_sac_bin_in_sif,
+        )
 
-    path = resolve_sac_bin_in_sif()
+        path = resolve_sac_bin_in_sif()
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_BIN_IN_SIF", None)
+        else:
+            os.environ["SAC_BIN_IN_SIF"] = saved
     # Assert
     assert path == "/custom/path/to/sac"
 
