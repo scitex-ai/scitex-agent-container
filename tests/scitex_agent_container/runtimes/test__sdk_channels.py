@@ -281,21 +281,20 @@ class TestSacBinaryResolution:
             if saved_sac_bin is not None:
                 os.environ[SAC_BIN_ENV] = saved_sac_bin
 
+    @pytest.mark.skipif(
+        os.path.isfile("/opt/venv-agent/bin/sac"),
+        reason=(
+            "/opt/venv-agent/bin/sac exists on this host; resolver will "
+            "find it via the candidate fallback. Test cannot drive the "
+            "unresolvable branch without further isolation."
+        ),
+    )
     def test_unresolvable_sac_raises_loudly(self, tmp_path):
         # Arrange — wipe PATH and $SAC_BIN so no candidate resolves; the
         # resolver still checks /opt/venv-agent/bin/sac as a last resort,
         # so we exercise the raise only when that path is absent on the
         # test host (the case for CI/dev boxes). ``match=`` pins the
-        # message-content contract (operator sees "sac" in the text) so
-        # one assertion covers both raise + content (STX-TQ007).
-        import os.path as _osp
-
-        if _osp.isfile("/opt/venv-agent/bin/sac"):
-            pytest.skip(
-                "/opt/venv-agent/bin/sac exists on this host; resolver "
-                "will find it via the candidate fallback. Test cannot "
-                "drive the unresolvable branch without further isolation."
-            )
+        # message-content contract (one assertion = STX-TQ007 clean).
         saved_sac_bin = os.environ.pop(SAC_BIN_ENV, None)
         saved_path = os.environ.get("PATH", "")
         os.environ["PATH"] = str(tmp_path)  # empty dir → no `sac`
