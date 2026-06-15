@@ -24,6 +24,7 @@ from scitex_agent_container.runtimes._to_home import (
     END_MARKER,
     DanglingToHomeSymlinkError,
     WorkspaceCLAUDEMarkerError,
+    WorkspaceCredentialLeakError,
     deploy_to_home,
     materialize_to_home,
     resolve_baseline_to_home_dir,
@@ -163,6 +164,102 @@ class TestMaterializeToHomeBasics:
         materialize_to_home(spec_dir, home)
         # Assert
         assert home.is_dir()
+
+
+class TestCredentialLeakGuard:
+    """``to_home/`` must never carry a ``.credentials.json``.
+
+    Lead-reported 2026-06-15: an EXPIRED ``.credentials.json`` was
+    committed under ``proj-scitex-todo/to_home/.claude/.credentials.json``
+    and re-deployed every ``sac agents start``. Credentials are
+    operator-rotated runtime state, not workspace bootstrap content —
+    they must come from the auth-stage rw bind, not a static copy.
+    Letting a static cred file land in ``$HOME/.claude/.credentials.json``
+    masks a missing bind: the agent appears to authenticate but uses
+    a stale token, then 401s opaquely at the next refresh.
+
+    The guard is loud (raises :class:`WorkspaceCredentialLeakError`)
+    rather than silent-skip so the operator sees the offending path
+    and fixes the source.
+    """
+
+    def test_credentials_json_at_to_home_root_raises(self, tmp_path):
+        # Arrange
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home").mkdir(parents=True)
+        (spec_dir / "to_home" / ".credentials.json").write_text('{"x":1}\n')
+        home = tmp_path / "home"
+        # Act + Assert
+        with pytest.raises(WorkspaceCredentialLeakError) as exc_info:
+            materialize_to_home(spec_dir, home)
+        assert ".credentials.json" in str(exc_info.value)
+
+    def test_credentials_json_under_dot_claude_raises(self, tmp_path):
+        # Arrange — the lead-reported leak shape.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / ".credentials.json").write_text(
+            '{"oauthAccount":"old"}\n'
+        )
+        home = tmp_path / "home"
+        # Act + Assert
+        with pytest.raises(WorkspaceCredentialLeakError) as exc_info:
+            materialize_to_home(spec_dir, home)
+        assert ".credentials.json" in str(exc_info.value)
+
+    def test_credentials_json_at_arbitrary_depth_raises(self, tmp_path):
+        # Arrange — guard fires regardless of nesting.
+        spec_dir = tmp_path / "spec"
+        deep = spec_dir / "to_home" / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / ".credentials.json").write_text("{}\n")
+        home = tmp_path / "home"
+        # Act + Assert
+        with pytest.raises(WorkspaceCredentialLeakError):
+            materialize_to_home(spec_dir, home)
+
+    def test_other_dotfiles_in_claude_dir_pass(self, tmp_path):
+        # Arrange — settings.json, mcp.json etc. under .claude/ are fine,
+        # only `.credentials.json` is forbidden.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / "settings.json").write_text("{}\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        assert (home / ".claude" / "settings.json").is_file()
+
+    def test_error_message_names_the_offending_path(self, tmp_path):
+        # Arrange
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        leak = spec_dir / "to_home" / ".claude" / ".credentials.json"
+        leak.write_text("{}\n")
+        home = tmp_path / "home"
+        # Act + Assert
+        with pytest.raises(WorkspaceCredentialLeakError) as exc_info:
+            materialize_to_home(spec_dir, home)
+        # The message must point the operator at the offending source so
+        # they can `rm` it. Relative path (from to_home/) is enough.
+        msg = str(exc_info.value)
+        assert ".claude/.credentials.json" in msg
+
+    def test_no_partial_destination_on_reject(self, tmp_path):
+        # Arrange — leak + other content; guard must fire BEFORE any deploy.
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "to_home" / ".claude").mkdir(parents=True)
+        (spec_dir / "to_home" / ".claude" / ".credentials.json").write_text("{}")
+        # Sibling content that would otherwise deploy:
+        (spec_dir / "to_home" / "innocent.txt").write_text("hi")
+        home = tmp_path / "home"
+        # Act + Assert
+        with pytest.raises(WorkspaceCredentialLeakError):
+            materialize_to_home(spec_dir, home)
+        # The destination home dir is created but the deploy was rejected
+        # before any file landed (or it MAY contain partial content — the
+        # important contract is no .credentials.json was copied).
+        assert not (home / ".claude" / ".credentials.json").exists()
 
 
 # ---------------------------------------------------------------------------
