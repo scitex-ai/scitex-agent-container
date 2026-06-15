@@ -45,9 +45,80 @@ from __future__ import annotations
 import json as _json
 import logging as _logging
 import os as _os
+import shutil as _shutil
 from pathlib import Path as _Path
 
 _log = _logging.getLogger(__name__)
+
+
+class SacBinaryNotFoundError(RuntimeError):
+    """The ``sac`` console script could not be resolved for the SDK to spawn.
+
+    Raised at MCP-config build time (inside ``apply_channels``) when the
+    operator requests ``server:sac`` but no executable ``sac`` exists on
+    PATH and no override is set. Letting the MCP config carry an
+    unresolvable bare ``sac`` command makes the SDK fail to spawn the
+    channel adapter SILENTLY — the agent then has no a2a inbox consumer
+    and lead/peer messages accumulate undelivered (smoke-tested
+    2026-06-15 on proj-scitex-agent-container: ``sac`` lived at
+    ``/opt/venv-agent/bin/sac`` while the SDK's PATH was
+    ``/opt/venv-sac/bin:...``, so the MCP child exec'd ``sac`` not found
+    and the inbox queued silently for hours). Failing loudly here makes
+    the misconfig visible at agent start, not three lead messages later.
+    """
+
+
+# Operator escape hatch: explicit absolute path overrides PATH lookup.
+# Set in env when ``sac`` is installed somewhere PATH does not see.
+SAC_BIN_ENV = "SAC_BIN"
+
+
+def _resolve_sac_binary() -> str:
+    """Return an absolute, executable path to the ``sac`` console script.
+
+    Resolution order (first hit wins):
+
+      1. ``$SAC_BIN`` env override — must point at an existing executable
+         file (raises ``SacBinaryNotFoundError`` when set but unusable, so
+         a typo'd override is loud rather than silently falling back to
+         the PATH search).
+      2. ``shutil.which("sac")`` — standard PATH lookup. Works on any host
+         that ships ``sac`` in its PATH (developer workstations, CI).
+      3. Known container candidate ``/opt/venv-agent/bin/sac`` — the SAC
+         agent-image install location. The SDK runner's PATH does not
+         include this directory (it inherits the SAC runtime's PATH which
+         is ``/opt/venv-sac/bin:...``), so the PATH search above misses
+         it; explicit candidate fixes the spawn for the in-container case.
+
+    Raises ``SacBinaryNotFoundError`` when no candidate resolves.
+    """
+    override = _os.environ.get(SAC_BIN_ENV)
+    if override:
+        if _Path(override).is_file() and _os.access(override, _os.X_OK):
+            return override
+        raise SacBinaryNotFoundError(
+            f"{SAC_BIN_ENV}={override!r} is set but the path is not an "
+            f"executable file. Fix the env or unset it to fall back to "
+            f"PATH lookup."
+        )
+
+    found = _shutil.which("sac")
+    if found:
+        return found
+
+    for candidate in ("/opt/venv-agent/bin/sac",):
+        if _Path(candidate).is_file() and _os.access(candidate, _os.X_OK):
+            return candidate
+
+    raise SacBinaryNotFoundError(
+        "Cannot resolve the `sac` console script: not on PATH and not at "
+        "any known candidate location (/opt/venv-agent/bin/sac). The MCP "
+        "sidecar config would carry a bare `sac` command that fails exec "
+        "silently in the SDK subprocess — the agent's a2a inbox would "
+        "have no consumer and lead messages would queue undelivered. "
+        f"Fix: install `sac` on PATH, or set ${SAC_BIN_ENV} to its "
+        "absolute path."
+    )
 
 
 def merge_home_mcp_servers(mcp_servers: dict) -> dict:
@@ -166,9 +237,15 @@ def apply_channels(
                     "--turn-url",
                     f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
                 ]
+            # Resolve `sac` to an absolute path so the SDK subprocess can
+            # spawn the channel adapter regardless of its PATH. A bare
+            # ``"sac"`` command silently fails exec when the SDK's PATH
+            # does not contain the agent venv's bin dir — exactly the bug
+            # that left this agent's a2a inbox unsubscribed for hours on
+            # 2026-06-15 (see ``_resolve_sac_binary`` docstring).
             mcps["sac"] = {
                 "type": "stdio",
-                "command": "sac",
+                "command": _resolve_sac_binary(),
                 "args": sidecar_args,
             }
 

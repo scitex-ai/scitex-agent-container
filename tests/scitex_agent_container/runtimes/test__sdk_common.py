@@ -893,7 +893,19 @@ class TestChannelSidecar:
     """
 
     @pytest.fixture
-    def _sac_channel_opts(self, sdk_env: _Env, tmp_path):
+    def _fake_sac_bin(self, sdk_env: _Env, tmp_path):
+        """Materialize an executable fake ``sac`` and point ``$SAC_BIN`` at it
+        so ``apply_channels``' binary resolver returns a deterministic
+        absolute path instead of raising ``SacBinaryNotFoundError``. Yields
+        the absolute path so assertions can pin the exact value."""
+        fake = tmp_path / "sac"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        sdk_env.setenv("SAC_BIN", str(fake))
+        return str(fake)
+
+    @pytest.fixture
+    def _sac_channel_opts(self, sdk_env: _Env, tmp_path, _fake_sac_bin):
         # Arrange: a VALID cred file present so auth needs no env mutation.
         _write_valid_cred(sdk_env, tmp_path)
         sdk_env.delenv("ANTHROPIC_API_KEY")
@@ -907,13 +919,13 @@ class TestChannelSidecar:
         )
         return opts
 
-    def test_registers_sac_stdio_mcp(self, _sac_channel_opts):
+    def test_registers_sac_stdio_mcp(self, _sac_channel_opts, _fake_sac_bin):
         # Arrange
         servers = _sac_channel_opts.mcp_servers  # type: ignore[operator]
         # Act
         sac = servers.get("sac")
-        # Assert
-        assert sac is not None and sac["command"] == "sac"
+        # Assert — resolver wires the SAC_BIN-overridden absolute path
+        assert sac is not None and sac["command"] == _fake_sac_bin
 
     def test_sidecar_args_subscribe_to_named_agent_inbox(self, _sac_channel_opts):
         # Arrange
@@ -963,8 +975,12 @@ class TestChannelSidecar:
         # Assert
         assert listen_url is None or listen_url == os.environ.get("SAC_LISTEN_BASE_URL")
 
-    def test_no_error_when_a2a_port_absent(self, sdk_env: _Env, tmp_path):
+    def test_no_error_when_a2a_port_absent(
+        self, sdk_env: _Env, tmp_path, _fake_sac_bin
+    ):
         # Arrange: valid cred present; channels set but NO _a2a_port threaded.
+        # ``_fake_sac_bin`` provides $SAC_BIN so the binary resolver does not
+        # raise SacBinaryNotFoundError on test hosts that lack ``sac`` on PATH.
         _write_valid_cred(sdk_env, tmp_path)
         sdk_env.delenv("ANTHROPIC_API_KEY")
         sdk_env.delenv(_SAC_KEY)

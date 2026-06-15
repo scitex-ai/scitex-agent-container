@@ -25,11 +25,34 @@ import os
 import pytest
 
 from scitex_agent_container.runtimes._sdk_channels import (
+    SAC_BIN_ENV,
+    SacBinaryNotFoundError,
     TelegrammerWakeWiringError,
     apply_channels,
     merge_home_mcp_servers,
     validate_telegrammer_wake_wiring,
 )
+
+
+@pytest.fixture
+def fake_sac_bin(tmp_path):
+    """Materialize an executable fake ``sac`` script and point ``$SAC_BIN``
+    at it. Yields the absolute path so tests can assert on the exact value.
+
+    Yield-based save/restore of ``$SAC_BIN`` (PA-306: no monkeypatch).
+    """
+    fake = tmp_path / "sac"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    saved = os.environ.get(SAC_BIN_ENV)
+    os.environ[SAC_BIN_ENV] = str(fake)
+    try:
+        yield str(fake)
+    finally:
+        if saved is None:
+            os.environ.pop(SAC_BIN_ENV, None)
+        else:
+            os.environ[SAC_BIN_ENV] = saved
 
 
 @pytest.fixture
@@ -153,10 +176,11 @@ class TestTelegrammerWakeWiring:
             "http://operator.example/v1/turn"
         )
 
-    def test_no_injection_without_telegrammer_channel(self):
+    def test_no_injection_without_telegrammer_channel(self, fake_sac_bin):
         # Arrange
         kwargs = self._kwargs_with_telegrammer_mcp()
-        # Act — channel not requested, only the MCP entry present
+        # Act — channel not requested, only the MCP entry present.
+        # ``fake_sac_bin`` so the sac sidecar resolver does not raise.
         apply_channels(kwargs, ["server:sac"], 19007, "clew")
         # Assert
         env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
@@ -172,9 +196,13 @@ class TestTelegrammerWakeWiring:
 
 
 class TestSacChannelStillWorks:
-    """``server:sac`` keeps both the dev flag and the sidecar registration."""
+    """``server:sac`` keeps both the dev flag and the sidecar registration.
 
-    def test_sac_channel_sets_dev_flag(self):
+    All tests here depend on ``fake_sac_bin`` so the binary resolver returns
+    a deterministic absolute path instead of raising SacBinaryNotFoundError.
+    """
+
+    def test_sac_channel_sets_dev_flag(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
@@ -182,15 +210,16 @@ class TestSacChannelStillWorks:
         # Assert
         assert _devflag(kwargs) == "server:sac"
 
-    def test_sac_channel_registers_sac_mcp(self):
-        # Arrange
+    def test_sac_channel_registers_sac_mcp(self, fake_sac_bin):
+        # Arrange — SAC_BIN points at a real executable so the resolver
+        # returns a deterministic absolute path (see fake_sac_bin fixture).
         kwargs: dict = {}
         # Act
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
-        assert kwargs["mcp_servers"]["sac"]["command"] == "sac"
+        assert kwargs["mcp_servers"]["sac"]["command"] == fake_sac_bin
 
-    def test_sac_sidecar_carries_turn_url_for_wake(self):
+    def test_sac_sidecar_carries_turn_url_for_wake(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
@@ -199,7 +228,7 @@ class TestSacChannelStillWorks:
         args = kwargs["mcp_servers"]["sac"]["args"]
         assert args[args.index("--turn-url") + 1] == "http://127.0.0.1:9999/v1/turn"
 
-    def test_sac_sidecar_omits_turn_url_when_no_a2a_port(self):
+    def test_sac_sidecar_omits_turn_url_when_no_a2a_port(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
@@ -208,10 +237,106 @@ class TestSacChannelStillWorks:
         assert "--turn-url" not in kwargs["mcp_servers"]["sac"]["args"]
 
 
-class TestBothChannelsCoexist:
-    """An agent can request both its own channel AND the sac bus channel."""
+class TestSacBinaryResolution:
+    """``server:sac`` must spawn ``sac`` via an absolute, executable path —
+    a bare ``"sac"`` command in the MCP config fails exec silently when the
+    SDK subprocess's PATH does not contain the agent venv's bin dir, and
+    the a2a inbox then has no consumer (smoke-tested 2026-06-15 on
+    proj-scitex-agent-container; lead messages queued undelivered for
+    hours). This contract is the loud-fail guard."""
 
-    def test_dev_flag_lists_both_channels_comma_joined(self):
+    def test_sac_bin_env_override_is_honoured(self, fake_sac_bin):
+        # Arrange — fake_sac_bin already sets $SAC_BIN to the fake script
+        kwargs: dict = {}
+        # Act
+        apply_channels(kwargs, ["server:sac"], 9999, "lead")
+        # Assert
+        assert kwargs["mcp_servers"]["sac"]["command"] == fake_sac_bin
+
+    def test_command_is_absolute_path(self, fake_sac_bin):
+        # Arrange
+        kwargs: dict = {}
+        # Act
+        apply_channels(kwargs, ["server:sac"], 9999, "lead")
+        # Assert
+        cmd = kwargs["mcp_servers"]["sac"]["command"]
+        assert os.path.isabs(cmd), f"command must be absolute path: {cmd!r}"
+
+    def test_resolves_via_path_when_no_env_override(self, tmp_path):
+        # Arrange — drop $SAC_BIN, install fake `sac` on PATH only
+        fake = tmp_path / "sac"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        saved_sac_bin = os.environ.pop(SAC_BIN_ENV, None)
+        saved_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(tmp_path)
+        try:
+            kwargs: dict = {}
+            # Act
+            apply_channels(kwargs, ["server:sac"], 9999, "lead")
+            # Assert
+            assert kwargs["mcp_servers"]["sac"]["command"] == str(fake)
+        finally:
+            os.environ["PATH"] = saved_path
+            if saved_sac_bin is not None:
+                os.environ[SAC_BIN_ENV] = saved_sac_bin
+
+    @pytest.mark.skipif(
+        os.path.isfile("/opt/venv-agent/bin/sac"),
+        reason=(
+            "/opt/venv-agent/bin/sac exists on this host; resolver will "
+            "find it via the candidate fallback. Test cannot drive the "
+            "unresolvable branch without further isolation."
+        ),
+    )
+    def test_unresolvable_sac_raises_loudly(self, tmp_path):
+        # Arrange — wipe PATH and $SAC_BIN so no candidate resolves; the
+        # resolver still checks /opt/venv-agent/bin/sac as a last resort,
+        # so we exercise the raise only when that path is absent on the
+        # test host (the case for CI/dev boxes). ``match=`` pins the
+        # message-content contract (one assertion = STX-TQ007 clean).
+        saved_sac_bin = os.environ.pop(SAC_BIN_ENV, None)
+        saved_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(tmp_path)  # empty dir → no `sac`
+        kwargs: dict = {}
+        try:
+            # Act
+            # Assert
+            with pytest.raises(SacBinaryNotFoundError, match=r"(?i)sac"):
+                apply_channels(kwargs, ["server:sac"], 9999, "lead")
+        finally:
+            os.environ["PATH"] = saved_path
+            if saved_sac_bin is not None:
+                os.environ[SAC_BIN_ENV] = saved_sac_bin
+
+    def test_sac_bin_pointing_at_nonexistent_path_raises(self, tmp_path):
+        # Arrange — typo'd override must fail loudly and the message
+        # MUST name the SAC_BIN_ENV env var so the operator sees which
+        # variable to fix. ``match=SAC_BIN_ENV`` pins both contracts in
+        # one assertion (STX-TQ007).
+        saved_sac_bin = os.environ.get(SAC_BIN_ENV)
+        os.environ[SAC_BIN_ENV] = str(tmp_path / "does-not-exist")
+        kwargs: dict = {}
+        try:
+            # Act
+            # Assert
+            with pytest.raises(SacBinaryNotFoundError, match=SAC_BIN_ENV):
+                apply_channels(kwargs, ["server:sac"], 9999, "lead")
+        finally:
+            if saved_sac_bin is None:
+                os.environ.pop(SAC_BIN_ENV, None)
+            else:
+                os.environ[SAC_BIN_ENV] = saved_sac_bin
+
+
+class TestBothChannelsCoexist:
+    """An agent can request both its own channel AND the sac bus channel.
+
+    Depends on ``fake_sac_bin`` because the sac sidecar registration goes
+    through the absolute-path resolver.
+    """
+
+    def test_dev_flag_lists_both_channels_comma_joined(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
@@ -221,7 +346,7 @@ class TestBothChannelsCoexist:
         # Assert: claude needs the full set to render both channels' tags.
         assert _devflag(kwargs) == "server:sac,server:claude-code-telegrammer"
 
-    def test_sac_mcp_registered_when_sac_present_among_many(self):
+    def test_sac_mcp_registered_when_sac_present_among_many(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
@@ -235,10 +360,10 @@ class TestBothChannelsCoexist:
 class TestDedupeAndNormalization:
     """Whitespace + duplicate channel entries are normalized."""
 
-    def test_duplicate_channels_collapse_in_dev_flag(self):
+    def test_duplicate_channels_collapse_in_dev_flag(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
-        # Act
+        # Act — ``fake_sac_bin`` so the sac sidecar resolver does not raise.
         apply_channels(kwargs, ["server:sac", " server:sac "], None, "lead")
         # Assert
         assert _devflag(kwargs) == "server:sac"
