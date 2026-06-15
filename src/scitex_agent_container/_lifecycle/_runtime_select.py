@@ -33,8 +33,10 @@ def _get_runtime(config: AgentConfig):
     """Return the runtime adapter for the config's launch mode.
 
     Branches on ``config.runtime`` (the launch-mode selector).
-    Back-compat: an empty string or the legacy ``"apptainer"`` value
-    (the old container-engine selector) maps to ``"claude-agent-sdk"``
+    Default: an empty / unset ``runtime`` selects the interactive
+    in-apptainer ``tui`` runtime (operator directive 2026-06-15).
+    Back-compat: the legacy ``"apptainer"`` value (the old
+    container-engine selector) maps to ``"claude-agent-sdk"``
     SILENTLY. The deprecation log for ``runtime='apptainer'`` fires
     at the actual start path
     (:func:`_lifecycle._start.start_agent`) — not here, because
@@ -48,19 +50,23 @@ def _get_runtime(config: AgentConfig):
     something, not on every read.
     """
     runtime = config.runtime or ""
-    if runtime in ("", "apptainer", "claude-agent-sdk"):
-        from ..runtimes.claude_session import ClaudeSessionRuntime
-
-        return ClaudeSessionRuntime()
-    if runtime == "tui":
+    # TUI is the default launch mode (operator directive 2026-06-15,
+    # post the SDK-pool cutoff): empty / unset → interactive in-apptainer
+    # TUI. Explicit legacy values still map to the headless SDK runner so
+    # existing SDK specs are untouched.
+    if runtime in ("", "tui"):
         from ..runtimes.tui_session import TuiSessionRuntime
 
         return TuiSessionRuntime()
+    if runtime in ("apptainer", "claude-agent-sdk"):
+        from ..runtimes.claude_session import ClaudeSessionRuntime
+
+        return ClaudeSessionRuntime()
     raise ValueError(
         f"Unsupported runtime: {runtime!r}. "
-        "spec.runtime must be 'claude-agent-sdk' (default), 'tui' "
-        "(June-15 SDK-pool-cutoff pivot), or the back-compat "
-        "'apptainer' / '' (mapped to 'claude-agent-sdk' at dispatch)."
+        "spec.runtime must be 'tui' (default, interactive in-apptainer "
+        "TUI), 'claude-agent-sdk' (headless SDK runner), or the "
+        "back-compat 'apptainer' (mapped to 'claude-agent-sdk')."
     )
 
 

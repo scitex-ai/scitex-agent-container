@@ -8,7 +8,7 @@ to real content at the destination — is exercised here along with the
 2026-06-04 F-CS8 fix: ``worktrees/`` subtrees inside the resolved
 target are EXCLUDED from the copy via :func:`_walk_exclusions.copytree_ignore`.
 Without this, a baseline symlink like
-``_base/to_home/.claude/skills -> ~/.claude/skills`` would
+``_shared/to_home/.claude/skills -> ~/.claude/skills`` would
 transitively pull every git worktree nested under the host
 ``~/.claude/`` into the container overlay at start time.
 """

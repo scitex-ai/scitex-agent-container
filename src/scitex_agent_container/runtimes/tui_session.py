@@ -55,6 +55,7 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
+import shlex
 import time
 from pathlib import Path
 from typing import Any
@@ -65,8 +66,10 @@ from .._runners._tmux.tmux import (
 )
 from ..config import AgentConfig
 from . import prompts as _prompts
+from ._apptainer_build_argv import build_run_argv
 from ._to_home import deploy_to_home
-from ._tui_auth_stage import TuiAuthStageError, stage_tui_auth
+from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
+from ._tui_auth_stage import TuiAuthStageError
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
 from .onboarding import ensure_project_onboarding
@@ -76,7 +79,6 @@ __all__ = [
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
     "session_name_for",
-    "stage_tui_auth",
     "state_dir_for_config",
 ]
 
@@ -93,6 +95,14 @@ _REQUIRED_CONFIG_ATTRS = ("expanded_workdir", "skills", "claude", "env", "labels
 # so a custom health policy in spec.health can tune it without a
 # code change.
 _DEFAULT_MAX_IDLE_S = 300.0
+
+# Boot-drain window when ``spec.startup_commands`` delay ``exec claude``
+# (e.g. an in-container ``uv pip install`` that runs for minutes before
+# the TUI launches). The drain polls through the bootstrap and dismisses
+# claude's first-run modals (bypass-permissions / trust / theme) the
+# moment they appear; it returns as soon as claude is up, so this is a
+# CAP, not a fixed block. 240s comfortably covers a cold uv resolve.
+_STARTUP_BOOT_DRAIN_S = 240.0
 
 
 def session_name_for(config: AgentConfig) -> str:
@@ -136,92 +146,6 @@ def state_dir_for_config(config: AgentConfig) -> Path:
     return _runner.state_dir_for(config.name, root=root)
 
 
-def _verify_tui_process_env(
-    *,
-    session_name: str,
-    expected_home: str,
-    expected_claude_config_dir: str,
-    settle_s: float = 1.5,
-) -> None:
-    """Assert the staged HOME + CLAUDE_CONFIG_DIR reached the inner
-    shell that ``exec``'d ``claude`` by reading a SESSION-SCOPED env
-    snapshot file written by the launch script.
-
-    Lead a2a ``4303f855a2184614954077e0ff466ad8`` (2026-06-14): the
-    previous ``/proc/<pid>/environ`` + ``ps`` walk version was not
-    session-scoped — it returned the FIRST claude-under-any-tmux on
-    the host, which on the operator's machine matched HIS own
-    interactive claude (HOME=/home/ywatanabe). The verify raised
-    spuriously while the actual TUI agent's env was fine.
-
-    New design (decoupled from PID hunting): TmuxManager.start writes
-    ``env > /tmp/sac-tui-env-<session_name>.txt`` IMMEDIATELY before
-    ``exec claude`` so the file captures the exact env passed to the
-    final ``exec``. We read that file and assert HOME +
-    CLAUDE_CONFIG_DIR. Cannot mis-attribute — the file name embeds
-    the session.
-
-    Best-effort: when the file is absent (very slow tmux startup,
-    container with no /tmp write, or the operator pulled this PR but
-    didn't restart sac with the new code), log a one-line warning
-    and return. Structural-alerts boot-drain timeout catches the
-    downstream symptom.
-    """
-    import logging
-    import time as _time
-
-    snapshot_path = Path(f"/tmp/sac-tui-env-{session_name}.txt")
-    deadline = _time.monotonic() + max(settle_s, 0.5)
-    while _time.monotonic() < deadline:
-        if snapshot_path.is_file() and snapshot_path.stat().st_size > 0:
-            break
-        _time.sleep(0.1)
-
-    if not snapshot_path.is_file() or snapshot_path.stat().st_size == 0:
-        logging.getLogger(__name__).warning(
-            "TuiSessionRuntime: env-snapshot %s missing/empty; "
-            "skipping env verification (boot-drain timeout will "
-            "catch downstream symptoms).",
-            snapshot_path,
-        )
-        return
-
-    env: dict[str, str] = {}
-    for line in snapshot_path.read_text(
-        encoding="utf-8", errors="replace"
-    ).splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        env[key] = value
-
-    observed_home = env.get("HOME", "")
-    observed_config_dir = env.get("CLAUDE_CONFIG_DIR", "")
-    if (
-        observed_home != expected_home
-        or observed_config_dir != expected_claude_config_dir
-    ):
-        from ._tui_auth_stage import TuiAuthStageError
-
-        raise TuiAuthStageError(
-            "TUI auth: env snapshot at exec-claude time does NOT "
-            "match the staged values. Operator-symptom: TUI parks "
-            "at the OAuth login URL screen because claude reads the "
-            "host ~/.claude/ instead of the staged <state>/home/.claude/. "
-            "Diagnostic: "
-            f"observed HOME={observed_home!r} / "
-            f"CLAUDE_CONFIG_DIR={observed_config_dir!r}; expected "
-            f"HOME={expected_home!r} / "
-            f"CLAUDE_CONFIG_DIR={expected_claude_config_dir!r}. "
-            f"Snapshot file: {snapshot_path}, session={session_name!r}. "
-            "Common roots: stale sac install (operator did `git pull` "
-            "but the installed sac is from PyPI — run `pip install "
-            "-e ~/proj/scitex-agent-container` to use develop) OR a "
-            "shell init file resetting HOME after the exports OR the "
-            "tmux version doesn't support `-e KEY=VAL` (needs >=3.2)."
-        )
-
-
 class TuiSessionRuntime(RuntimeBase):
     """Interactive tmux-backed Claude TUI runtime.
 
@@ -239,6 +163,7 @@ class TuiSessionRuntime(RuntimeBase):
         self,
         multiplexer: Any | None = None,
         claude_bin: str = _CLAUDE_BIN_DEFAULT,
+        command_builder: Any | None = None,
     ) -> None:
         # Default to the real TmuxManager; tests pass an in-memory
         # MultiplexerProtocol fake. No mocks — the fake is a real
@@ -246,36 +171,63 @@ class TuiSessionRuntime(RuntimeBase):
         # satisfies, just backed by a dict instead of subprocess.
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
+        # Injection seam (mirrors ``multiplexer`` + ClaudeSessionRuntime's
+        # ``container_runtime_for``): ``(config) -> list[str] | None`` —
+        # the ``apptainer exec ... claude`` argv to launch in tmux, or
+        # ``None`` when no SIF could be resolved. Tests inject a fake that
+        # returns a deterministic argv so the tmux-dispatch glue runs
+        # without a real apptainer/SIF. Default = :meth:`_default_argv`.
+        self._command_builder = command_builder or self._default_argv
+
+    def _default_argv(self, config: AgentConfig) -> list[str] | None:
+        """Resolve the SIF and render the ``apptainer exec ... claude``
+        argv (``tui=True``) — the production launch command.
+
+        Returns ``None`` when no SIF resolves (e.g. apptainer absent);
+        :meth:`start` turns that into a fail-loud error on a real run.
+        Reuses ``ApptainerContainerRuntime`` so SIF resolution / build /
+        the missing-apptainer diagnostic stay identical to the SDK path.
+        """
+        from ._apptainer_runtime import ApptainerContainerRuntime
+
+        container_rt = ApptainerContainerRuntime()
+        sif_path = container_rt.resolve_sif(config)
+        if sif_path is None:
+            return None
+        state_dir = state_dir_for_config(config)
+        return build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
-        """Materialise per-agent ``to_home/`` + CLAUDE.md + TUI-auth
-        files into ``<state>/home/`` and return that path.
+        """Materialise per-agent ``to_home/`` + CLAUDE.md into the
+        container ``$HOME`` and return the host-side ``<state>/home/`` path.
 
-        Mirrors ``ClaudeSessionRuntime._materialize_workspace``: writes
-        the sac-managed CLAUDE.md skill chain into ``<state>/home/CLAUDE.md``
-        and overlays the per-agent ``to_home/`` (.mcp.json, .env,
-        .claude/{hooks,skills,settings.json}) on top of the shared
-        baseline. The result is a self-contained $HOME tree the TUI
-        ``claude`` binary will read on launch — same SkillsSpec / MCP
-        / hook surface the SDK runtime provides.
+        Mirrors ``ClaudeSessionRuntime._setup_workspace`` EXACTLY so the
+        in-apptainer TUI gets the same $HOME surface as the SDK path:
 
-        ADDITIONAL TUI-auth staging (lead a2a
-        ``910ff436642948eb85f8b3100204ed9b``, 2026-06-14): the
-        interactive ``claude`` TUI checks TWO files the SDK runner
-        does not — ``$HOME/.claude/.credentials.json`` (live OAuth
-        token) and ``$HOME/.claude.json`` (onboarding state). Before
-        this hook, every ``sac agents start --runtime tui`` agent sat
-        on the login picker because neither file was present in the
-        materialised HOME. :func:`stage_tui_auth` lands both, sourced
-        by default from the apptainer auth bind + ``${HOME}/.claude.json``
-        and overridable via ``SAC_TUI_AUTH_CREDENTIALS_SRC`` /
-        ``SAC_TUI_AUTH_CLAUDE_JSON_SRC``. Fail-loud: a missing source
-        raises :class:`TuiAuthStageError` with a remedy rather than
-        letting the TUI silently stall on the picker.
+          * ``setup_claude_md`` writes the sac-managed CLAUDE.md skill
+            chain into ``<state>/home/CLAUDE.md``.
+          * ``deploy_to_home`` overlays the shared ``_shared/to_home``
+            baseline + per-agent ``to_home/`` (.mcp.json, .env,
+            .claude/{hooks,skills,settings.json}) into ``<state>/home/``
+            (the host dir bound at ``/home/agent``).
+          * ``deploy_to_home_overlay`` mirrors the SAME tree into the
+            overlay upper-home for relaxed ``--home``/``--overlay`` specs
+            (where the workspace-home bind is shadowed). No-op otherwise.
+
+        Credentials are NOT staged here: the in-apptainer TUI receives
+        them via the writable file-bind ``spec.claude.credentials_file``
+        (or the account/host dir-bind) emitted in ``build_run_argv`` —
+        single source of truth, no copy to desync.
+
+        ``ensure_project_onboarding`` pre-seeds the per-workspace entry
+        in ``$HOME/.claude.json`` so the TUI skips the workspace-trust
+        wizard; it is written into BOTH the workspace-home and (when
+        present) the overlay upper-home so it lands regardless of which
+        home-delivery mode the spec uses.
 
         Returns ``None`` for stub configs lacking the full AgentConfig
         surface (unit-test ``SimpleNamespace`` fixtures); the caller
-        treats that as "skip materialise, run with bare $HOME".
+        treats that as "skip materialise".
         """
         if not all(hasattr(config, a) for a in _REQUIRED_CONFIG_ATTRS):
             return None
@@ -283,32 +235,20 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir.mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, str(home_dir))
         deploy_to_home(config, str(home_dir))
-        # Pass config so the resolver can consult spec.claude.account
-        # for the per-account snapshot path on host starts (lead a2a
-        # 1781e82a, 2026-06-14).
-        stage_tui_auth(home_dir, config=config)
-        # Pre-seed the projects entry so the TUI skips the per-workspace
-        # onboarding wizard (theme picker / dev-channels approval) on
-        # first launch. Without this, the dogfood (2026-06-14) caught
-        # the bundled ``claude`` showing "Choose the text style" before
-        # mounting its input field — which would wedge ``send_turn``
-        # against a modal overlay. ``ensure_project_onboarding`` is the
-        # same primitive the SDK runtime uses (see
-        # ``_runners/_tmux/claude_code.py``); calling it here gives the
-        # TUI runtime parity with the SDK path on workspace onboarding.
-        # The seed must use the SAME workdir the tmux session is
-        # launched in (see ``start()`` below). Both call sites use
-        # ``expanded_workdir`` so a tilde-prefixed default resolves
-        # to an absolute path before mkdir/cd/seed; a mismatch
-        # (e.g. seeding ``expanded_workdir`` while claude runs in
-        # raw ``workdir``) would leave the picker live against the
-        # actual cwd. Single source of truth.
+        # Relaxed ``--home``/directory-overlay specs shadow the
+        # workspace-home bind; mirror the same to_home tree into the
+        # overlay upper-home so it reaches the container $HOME. No-op for
+        # non-overlay specs (the workspace-home bind suffices).
+        deploy_to_home_overlay(config)
         workdir = (
             getattr(config, "expanded_workdir", "")
             or getattr(config, "workdir", "")
             or "/tmp"
         )
         ensure_project_onboarding(workdir, home=home_dir)
+        upper_home = resolve_overlay_upper_home(config)
+        if upper_home is not None and upper_home.is_dir():
+            ensure_project_onboarding(workdir, home=upper_home)
         return home_dir
 
     def start(
@@ -322,80 +262,78 @@ class TuiSessionRuntime(RuntimeBase):
         inject_startup_prompts: bool = True,
         boot_drain_timeout_s: float = 30.0,
     ) -> bool:
-        """Launch ``claude`` inside a detached tmux session sac owns.
+        """Launch the interactive ``claude`` TUI **inside apptainer**,
+        held open by a detached tmux session sac owns.
 
-        Materialises the per-agent ``to_home/`` + CLAUDE.md into
-        ``<state>/home/`` before launching tmux, then exports
-        ``HOME=<state>/home`` + ``CLAUDE_CONFIG_DIR=<state>/home/.claude``
-        into the tmux session so the in-tmux ``claude`` TUI sees the
-        agent's skills, MCP servers, hooks, and settings.json — same
-        surface the SDK runtime provides via apptainer bind-mount.
+        Parity with ``ClaudeSessionRuntime`` (the SDK runtime): the
+        agent runs in the SIF with the SAME isolation, binds, overlay,
+        auth, and to_home delivery — assembled by
+        :func:`_apptainer_build_argv.build_run_argv` with ``tui=True``.
+        The only differences from the SDK path are (1) the inner process
+        is the interactive ``claude`` TUI instead of the ``python -m``
+        session runner, and (2) tmux wraps the ``apptainer exec`` so the
+        TUI gets a PTY and survives operator detach. tmux is a PTY
+        holder only — it never runs ``claude`` on the host.
 
-        ``force=True`` stops any existing session for this agent
-        before starting (the same idempotent-restart contract the
-        supervisor relies on). ``dry_run=True`` materialises the
-        workspace but skips the actual ``tmux new-session`` — lets
-        the operator verify the rendered tree without spawning a
-        process. ``foreground`` is ignored (a tmux session whose
-        whole point is detachment has no meaningful foreground mode
-        — same convention as the screen runner).
+        ``force=True`` stops any existing session before starting
+        (idempotent-restart contract). ``dry_run=True`` materialises the
+        workspace + writes the rendered argv to
+        ``<state>/apptainer_run.argv.txt`` but skips ``tmux new-session``.
+        ``foreground`` / ``no_preflight`` are accepted for RuntimeBase
+        parity; a detached-by-design tmux session has no foreground mode.
         """
+        del no_preflight, foreground
         name = session_name_for(config)
         if force and self._mux.exists(name):
             self._mux.stop(name)
-        home_dir = self.materialize_workspace(config)
+        self.materialize_workspace(config)
+
+        from .._lifecycle._runtime_select import warn_if_legacy_apptainer_runtime
+
+        warn_if_legacy_apptainer_runtime(config)
+
+        # Render the ``apptainer exec ... claude`` argv via the injection
+        # seam (default :meth:`_default_argv` resolves the SIF + calls
+        # build_run_argv(tui=True); tests inject a deterministic fake).
+        argv = self._command_builder(config)
+        if argv is None:
+            import shutil as _shutil
+
+            if _shutil.which("apptainer") is None and not dry_run:
+                raise TuiAuthStageError(
+                    "apptainer binary not found on $PATH — the TUI runtime "
+                    "runs claude INSIDE apptainer (parity with the SDK "
+                    "runtime). Install apptainer, or run on a host that has "
+                    "it. (Legacy host-tmux TUI is retired.)"
+                )
+            return False
+
         if dry_run:
+            state_dir = state_dir_for_config(config)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
             return True
-        # Use expanded_workdir so a tilde-prefixed default (the
-        # AgentConfig default ``~/.scitex/agent-container/runtime/agents/<name>``)
-        # resolves to an absolute path. The raw ``config.workdir``
-        # may still carry the literal ``~`` — passed straight to
-        # ``Path(...).mkdir`` it materialises a directory NAMED ``~``
-        # under the launching cwd, and the shell ``cd '~/.scitex/...'``
-        # (single-quoted, so no tilde expansion) lands in a bogus
-        # path. Both observed in the 2026-06-14 dogfood, which then
-        # broke the per-workspace onboarding seed below because the
-        # picker fired against a different workdir than the seed.
+
+        # tmux runs ``exec <command>`` in a bash -c; pass the apptainer
+        # argv shell-quoted so the PTY wraps ``apptainer exec ... claude``.
+        # No HOME/CLAUDE_CONFIG_DIR session env: the container sets its
+        # own $HOME (=/home/agent) and the host-side tmux shell's env is
+        # irrelevant to the in-SIF process. The host workdir is only the
+        # tmux launch cwd — the agent's real cwd is ``--pwd`` inside the SIF.
         workdir = (
             getattr(config, "expanded_workdir", "")
             or getattr(config, "workdir", "")
             or "/tmp"
         )
-        env_exports = ""
-        session_env: dict[str, str] = {}
-        if home_dir is not None:
-            env_exports = (
-                f"export HOME={home_dir}\nexport CLAUDE_CONFIG_DIR={home_dir}/.claude\n"
-            )
-            # Structural fix (lead a2a 8f910ea7, 2026-06-14): live
-            # host agents launched with `bash -l` which re-sourced
-            # login init files that reset HOME to the operator's
-            # real home; the inner `claude` then read the operator's
-            # `~/.claude/` instead of the staged `<state>/home/.claude/`
-            # and fell to interactive OAuth. Pass HOME +
-            # CLAUDE_CONFIG_DIR via tmux `new-session -e KEY=VAL`
-            # (and TmuxManager drops the bash `-l` flag) so the
-            # staged values can no longer be overwritten.
-            session_env = {
-                "HOME": str(home_dir),
-                "CLAUDE_CONFIG_DIR": f"{home_dir}/.claude",
-                "CLAUDE_DISABLE_AUTO_UPDATE": "1",
-            }
+        command = " ".join(shlex.quote(a) for a in argv)
         started = bool(
             self._mux.start(
                 session_name=name,
-                command=self._claude_bin,
+                command=command,
                 workdir=str(workdir),
-                env_exports=env_exports,
-                session_env=session_env or None,
+                session_env={"CLAUDE_DISABLE_AUTO_UPDATE": "1"},
             )
         )
-        if started and home_dir is not None:
-            _verify_tui_process_env(
-                session_name=name,
-                expected_home=str(home_dir),
-                expected_claude_config_dir=f"{home_dir}/.claude",
-            )
         if started and drain_pickers_at_boot:
             # URGENT (lead a2a 278159b5, 2026-06-14): drain the
             # picker registry AT BOOT so the supervisor + downstream
@@ -406,17 +344,19 @@ class TuiSessionRuntime(RuntimeBase):
             # out. Failure here MUST NOT fail the start (supervisor
             # restart loop would oscillate); log + let the send_turn
             # retry on its own hook.
-            try:
-                self.wait_until_input_ready(config, timeout_s=boot_drain_timeout_s)
-            except TuiInputNotReadyError as exc:  # stx-allow: fallback (reason: boot-drain best-effort; send_turn retries — operator escalation 2026-06-14)
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "TuiSessionRuntime.start: boot-drain timed out "
-                    "for %s; send_turn will retry. Last error: %s",
-                    name,
-                    exc,
-                )
+            #
+            # Adaptive window (2026-06-15): when ``startup_commands``
+            # delay ``exec claude`` (e.g. an in-container uv install of
+            # minutes), a fixed 30s drain expires BEFORE claude renders
+            # its first modal — the bypass-permissions / trust picker
+            # then sits forever because nothing re-drains it at boot.
+            # Stretch the window to cover the bootstrap; the drain
+            # returns as soon as claude is up (it does NOT block the
+            # full window — see ``_drain_at_boot``).
+            effective_timeout = boot_drain_timeout_s
+            if list(getattr(config, "startup_commands", []) or []):
+                effective_timeout = max(boot_drain_timeout_s, _STARTUP_BOOT_DRAIN_S)
+            self._drain_at_boot(config, timeout_s=effective_timeout)
         if started and inject_startup_prompts:
             # Boot-mission injection (lead a2a 4973264a, 2026-06-14):
             # parity with SDK runtime — feed spec.startup_prompts to
@@ -586,6 +526,68 @@ class TuiSessionRuntime(RuntimeBase):
         # startup_prompts).
         self._mux.send_text_and_submit(name, text)
         return True
+
+    def _drain_at_boot(
+        self,
+        config: AgentConfig,
+        *,
+        timeout_s: float,
+        poll_s: float = 0.5,
+    ) -> bool:
+        """Dismiss claude's first-run modals at boot; return as soon as
+        the TUI is up — NOT when it goes idle.
+
+        Differs from :meth:`wait_until_input_ready` (the send_turn drain,
+        which waits for the ``? for shortcuts`` idle marker) on two
+        boot-specific realities:
+
+          * ``startup_commands`` can delay ``exec claude`` by minutes —
+            the loop just keeps polling (nothing in the install log
+            matches a modal) until claude finally renders its first
+            screen. The caller passes a window wide enough to cover the
+            bootstrap (:data:`_STARTUP_BOOT_DRAIN_S`).
+          * an autonomous agent with ``startup_prompts`` goes STRAIGHT to
+            work once the modals clear, so the idle marker may never
+            show. Exit on the marker OR :func:`prompts.is_ready` (claude
+            launched with no blocking ``Enter to confirm`` modal),
+            whichever first — so start() never blocks the full window
+            after the bypass/trust picker is dismissed.
+
+        Best-effort: never raises. A timeout just means the modal will be
+        re-drained by the next :meth:`send_turn`. Returns True iff a
+        ready signal was observed within the window.
+        """
+        name = session_name_for(config)
+        if not self._mux.exists(name):
+            return False
+        accepted: set[str] = set()
+        marker = "? for shortcuts"
+        deadline = time.monotonic() + timeout_s
+        send_keys_fn = self._mux.send_keys
+        while time.monotonic() < deadline:
+            pane = self._mux.capture_content(name)
+            if marker in pane or _prompts.is_ready(pane):
+                return True
+            handled = _prompts.detect_and_respond(
+                pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)
+            )
+            if handled is not None:
+                accepted.add(handled)
+                continue
+            if poll_s > 0:
+                time.sleep(poll_s)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s "
+            "without a ready signal (drained %d modal(s): %s); send_turn "
+            "will re-drain.",
+            timeout_s,
+            name,
+            len(accepted),
+            sorted(accepted),
+        )
+        return False
 
     def wait_until_input_ready(
         self,

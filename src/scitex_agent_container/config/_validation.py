@@ -237,9 +237,9 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         if runtime and runtime not in _VALID_RUNTIMES:
             errors.append(
                 f"spec.runtime must be one of {sorted(_VALID_RUNTIMES)} "
-                f"(got '{runtime}'). 'claude-agent-sdk' (default) =  "
-                "headless SDK runner; 'tui' = tmux-backed interactive "
-                "Claude TUI; 'apptainer' / '' = back-compat for the "
+                f"(got '{runtime}'). 'tui' (default, '' maps here) = "
+                "interactive in-apptainer Claude TUI; 'claude-agent-sdk' "
+                "= headless SDK runner; 'apptainer' = back-compat for the "
                 "pre-2026-06-13 container-engine field, mapped to "
                 "'claude-agent-sdk' at dispatch."
             )

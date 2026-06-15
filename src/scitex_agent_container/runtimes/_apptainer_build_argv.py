@@ -54,6 +54,7 @@ def build_run_argv(
     sif_path: Path,
     runner_argv: list[str] | None = None,
     one_shot: bool = False,
+    tui: bool = False,
 ) -> list[str]:
     """Render the ``apptainer exec`` argv.
 
@@ -62,6 +63,12 @@ def build_run_argv(
     :func:`_apptainer_inner_argv.build_inner_argv` when the caller
     doesn't pre-build a ``runner_argv``; it mirrors the legacy
     ``self._one_shot`` flag the class method threaded through.
+
+    ``tui=True`` swaps the inner command from the ``python -m`` SDK
+    session runner to the interactive ``claude`` TUI (same isolation /
+    binds / overlay / auth / to_home as the SDK path — only the inner
+    process differs). The caller (``TuiSessionRuntime``) launches the
+    returned argv inside a tmux PTY rather than backgrounding it.
     """
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
@@ -286,6 +293,14 @@ def build_run_argv(
         container_home = resolve_container_home(config)
         argv += ["--bind", f"{upper_home}:{container_home}"]
 
+    # Designated credentials file (spec.claude.credentials_file) — bound
+    # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
+    # binds (after the overlay-upper-home bind) so the relaxed ``--home``
+    # tmpfs / upper-home bind cannot shadow it; last bind to a path wins.
+    from ._apptainer_auth import credentials_file_bind
+
+    argv += credentials_file_bind(config)
+
     argv.append(str(sif_path))
 
     # Inner command (tini-supervised runner). Dispatched on
@@ -298,8 +313,36 @@ def build_run_argv(
     # auto-removes module-level unused imports during refactors.
     from ._apptainer_inner_argv import RUNNER_MODULE_PROXY, build_inner_argv
 
+    # TUI MCP wiring: the interactive ``claude`` auto-discovers
+    # ``.mcp.json`` from its cwd (the project root), NOT from ``$HOME``
+    # like the SDK runner. When to_home materialised a ``$HOME/.mcp.json``
+    # (workspace-home bind or overlay-upper), pass its in-container path
+    # via ``--mcp-config`` so the TUI actually loads those servers.
+    tui_mcp_config: str | None = None
+    tui_channel_mcp: str | None = None
+    tui_dev_channels: str | None = None
+    if tui:
+        ch = resolve_container_home(config).rstrip("/")
+        has_mcp = (home_host / ".mcp.json").is_file() or (
+            upper_home is not None and (upper_home / ".mcp.json").is_file()
+        )
+        if has_mcp:
+            tui_mcp_config = f"{ch}/.mcp.json"
+        # SDK-parity channels: spec.claude.channels → dev-channels flag +
+        # an inline ``sac mcp channel`` subscriber MCP (server:sac only).
+        from ._apptainer_inner_argv import tui_channel_config
+
+        tui_dev_channels, tui_channel_mcp = tui_channel_config(config)
+
     if runner_argv is None:
-        inner_argv = build_inner_argv(config, one_shot=one_shot)
+        inner_argv = build_inner_argv(
+            config,
+            one_shot=one_shot,
+            tui=tui,
+            tui_mcp_config=tui_mcp_config,
+            tui_channel_mcp=tui_channel_mcp,
+            tui_dev_channels=tui_dev_channels,
+        )
     else:
         kind = getattr(config, "kind", "Agent")
         module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE

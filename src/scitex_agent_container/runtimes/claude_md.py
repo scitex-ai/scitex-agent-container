@@ -348,7 +348,7 @@ def setup_claude_md(config: AgentConfig, workdir: str) -> None:
     lines.append(
         f'- Default scope for scitex-todo writes: `scope="agent:{agent_env_id}"`.'
     )
-    lines.append("- See `_base/to_home/CLAUDE.md` for the full convention.")
+    lines.append("- See `_shared/to_home/CLAUDE.md` for the full convention.")
     lines.append(f'<!-- agent-container:end id="{agent_id}" -->')
 
     section = "\n".join(lines)

@@ -12,7 +12,7 @@ filesystem layout.
 
 A symlink under ``to_home/`` is the operator's *explicit* opt-in to
 pull host content into the definition (e.g.
-``_base/to_home/.claude/skills -> ~/.claude/skills``). That is
+``_shared/to_home/.claude/skills -> ~/.claude/skills``). That is
 explicit-pass, which is fine; the link is resolved to real content at
 deploy time. A symlink whose target cannot be resolved (dangling) is a
 real defect in the definition and hard-aborts the deploy via
@@ -58,7 +58,7 @@ def deref_copy_symlink(src: Path, dst: Path) -> None:
     the ``ignore`` callable handed to ``shutil.copytree`` — most
     importantly ``worktrees/`` directories anywhere in the resolved
     tree. Without this, a baseline symlink like
-    ``_base/to_home/.claude/skills -> ~/.claude/skills`` would
+    ``_shared/to_home/.claude/skills -> ~/.claude/skills`` would
     transitively pull every git worktree nested under the host's
     ``~/.claude/`` into the container overlay at start time — one of
     the two SAC-side walkers behind the original F-CS8 outage class

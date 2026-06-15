@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Push progress reports to the lead's a2a inbox at every milestone, so fleet coordination stops requiring polls.
-  [DETAILS] sac agents send `mcp__sac__a2a_send(target='lead', ...)` push updates on PR open/merge/close, BLOCKED, DONE, or any significant context change. The lead reads its inbox to coordinate the fleet without reading every agent's `agent_logs` / `gh` state by hand. Speak/Telegram are for the OPERATOR; a2a push is for the LEAD. Both happen at milestones — not exclusive channels. Includes the KIND vocabulary, when-to / when-not-to thresholds, the one-time per-agent ACL grant the lead has to issue (`sac a2a grant --sender <name> --target lead`), and pointers to the companion Stop-hook reminder shipped via the dotfiles `_base/to_home/` overlay.
+  [DETAILS] sac agents send `mcp__sac__a2a_send(target='lead', ...)` push updates on PR open/merge/close, BLOCKED, DONE, or any significant context change. The lead reads its inbox to coordinate the fleet without reading every agent's `agent_logs` / `gh` state by hand. Speak/Telegram are for the OPERATOR; a2a push is for the LEAD. Both happen at milestones — not exclusive channels. Includes the KIND vocabulary, when-to / when-not-to thresholds, the one-time per-agent ACL grant the lead has to issue (`sac a2a grant --sender <name> --target lead`), and pointers to the companion Stop-hook reminder shipped via the dotfiles `_shared/to_home/` overlay.
 tags: [scitex-agent-container-progress-reporting-to-lead]
 ---
 
@@ -87,7 +87,7 @@ ACL-based send restrictions are not currently enforced in sac (verified 2026-05-
 
 ## Companion Stop-hook reminder
 
-A turn-end reminder hook ships via the dotfiles `_base/to_home/` overlay at `~/.claude/hooks/stop/report_to_lead_on_stop.{sh,md}`. The shell shim emits a stderr nudge at every Stop; the `.md` is the agent-facing protocol crib pointing right back to this skill. The hook is gated on `SCITEX_AGENT_CONTAINER_NAME` so non-sac sessions (including the lead session itself) do not inherit the reminder.
+A turn-end reminder hook ships via the dotfiles `_shared/to_home/` overlay at `~/.claude/hooks/stop/report_to_lead_on_stop.{sh,md}`. The shell shim emits a stderr nudge at every Stop; the `.md` is the agent-facing protocol crib pointing right back to this skill. The hook is gated on `SCITEX_AGENT_CONTAINER_NAME` so non-sac sessions (including the lead session itself) do not inherit the reminder.
 
 ## Cross-references
 

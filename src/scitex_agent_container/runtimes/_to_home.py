@@ -55,9 +55,10 @@ dereference-copy).
 Baseline location (see :func:`resolve_baseline_to_home_dir`):
 
   - ``$SAC_TO_HOME_BASELINE`` — explicit override (absolute dir), or
-  - ``<agents_dir>/_base/to_home/`` — a sibling ``_base`` dir under the
-    agents root (agents live at ``<agents_dir>/<name>/``, so the agents
-    root is the spec dir's parent).
+  - ``<agents_dir>/_shared/to_home/`` — a sibling ``_shared`` dir under
+    the agents root (agents live at ``<agents_dir>/<name>/``, so the
+    agents root is the spec dir's parent). ``_base`` is accepted as a
+    backward-compat fallback.
 
 Absent baseline dir → behaves exactly as before (no baseline = current
 behavior; fully backward compatible).
@@ -153,13 +154,17 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
 
 # Env var: explicit override for the shared/common baseline to_home dir.
-# Absolute path. When unset we fall back to ``<agents_dir>/_base/to_home``.
+# Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
+# (or the legacy ``_base`` sibling).
 _BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
 
-# Name of the sibling dir (under the agents root) that holds the common
+# Names of the sibling dir (under the agents root) that holds the common
 # baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
-# is the spec dir's parent and the baseline is ``<parent>/_base/to_home``.
-_BASELINE_DIR_NAME = "_base"
+# is the spec dir's parent and the baseline is ``<parent>/_shared/to_home``.
+# ``_shared`` is the current name; ``_base`` is retained as a
+# backward-compat fallback for hosts/fleets not yet renamed (first match
+# under the agents root wins, in declared order).
+_BASELINE_DIR_NAMES = ("_shared", "_base")
 
 
 # --- public API ------------------------------------------------------------
@@ -196,8 +201,9 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
 
     Resolution order:
       1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
-      2. ``<agents_dir>/_base/to_home`` — a sibling ``_base`` dir under
-         the agents root. Agents live at ``<agents_dir>/<name>/``, so the
+      2. ``<agents_dir>/_shared/to_home`` — a sibling ``_shared`` dir
+         under the agents root (``_base`` accepted as a backward-compat
+         fallback). Agents live at ``<agents_dir>/<name>/``, so the
          agents root is ``spec_dir.parent``.
 
     Returns ``None`` when no baseline dir can be resolved (no baseline =
@@ -209,8 +215,11 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
         return p if p.is_dir() else None
     if spec_dir is None:
         return None
-    p = spec_dir.parent / _BASELINE_DIR_NAME / "to_home"
-    return p if p.is_dir() else None
+    for name in _BASELINE_DIR_NAMES:
+        p = spec_dir.parent / name / "to_home"
+        if p.is_dir():
+            return p
+    return None
 
 
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:

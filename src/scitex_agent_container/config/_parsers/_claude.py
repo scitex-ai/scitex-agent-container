@@ -91,6 +91,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         resume_id=str(raw.get("resume_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
         account=str(raw.get("account", "") or ""),
+        credentials_file=str(raw.get("credentials_file", "") or ""),
         provider=_parse_provider(raw),
         raw_options=dict(raw_options),
     )

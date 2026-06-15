@@ -9,7 +9,7 @@ Two on-start walkers in SAC enumerate large trees synchronously:
   ``to_home`` symlink-dereference step. ``shutil.copytree(...,
   symlinks=False)`` copies the whole resolved target tree into the
   container overlay; a baseline symlink like
-  ``_base/to_home/.claude/skills -> ~/.claude/skills`` transitively
+  ``_shared/to_home/.claude/skills -> ~/.claude/skills`` transitively
   pulls in anything reachable under that target.
 
 Both walkers used to descend into ``worktrees/`` subtrees, which are

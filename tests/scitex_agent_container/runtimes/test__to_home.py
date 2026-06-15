@@ -576,7 +576,7 @@ class TestDeployToHomeFromConfig:
 # Layout under tmp_path:
 #   agents/<name>/spec.yaml   ← spec dir
 #   agents/<name>/to_home/    ← per-agent layer (overlay, wins on conflict)
-#   agents/_base/to_home/     ← shared baseline (applied first)
+#   agents/_shared/to_home/   ← shared baseline (applied first)
 # ---------------------------------------------------------------------------
 
 
@@ -589,7 +589,7 @@ def _build_layered(tmp_path: Path) -> tuple[Path, Path, Path]:
     agents_root = tmp_path / "agents"
     spec_dir = agents_root / "test-agent"
     per_agent = spec_dir / "to_home"
-    baseline = agents_root / "_base" / "to_home"
+    baseline = agents_root / "_shared" / "to_home"
     per_agent.mkdir(parents=True, exist_ok=True)
     baseline.mkdir(parents=True, exist_ok=True)
     return spec_dir, per_agent, baseline
@@ -605,13 +605,38 @@ class TestResolveBaselineToHomeDir:
         assert resolved == baseline
 
     def test_returns_none_when_no_base_dir_present(self, tmp_path):
-        # Arrange — spec dir without a sibling _base/to_home.
+        # Arrange — spec dir without a sibling _shared/to_home.
         spec_dir = tmp_path / "agents" / "lonely-agent"
         spec_dir.mkdir(parents=True)
         # Act
         resolved = resolve_baseline_to_home_dir(spec_dir)
         # Assert
         assert resolved is None
+
+    def test_resolves_legacy_base_dir_as_fallback(self, tmp_path):
+        # Arrange — only the legacy ``_base`` sibling exists.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        legacy = agents_root / "_base" / "to_home"
+        legacy.mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == legacy
+
+    def test_shared_dir_wins_over_legacy_base_dir(self, tmp_path):
+        # Arrange — both ``_shared`` and legacy ``_base`` siblings exist.
+        agents_root = tmp_path / "agents"
+        spec_dir = agents_root / "test-agent"
+        spec_dir.mkdir(parents=True)
+        shared = agents_root / "_shared" / "to_home"
+        shared.mkdir(parents=True)
+        (agents_root / "_base" / "to_home").mkdir(parents=True)
+        # Act
+        resolved = resolve_baseline_to_home_dir(spec_dir)
+        # Assert
+        assert resolved == shared
 
     def test_returns_none_when_spec_dir_is_none(self):
         # Arrange — no spec dir, no env override.
@@ -688,7 +713,7 @@ class TestMaterializeBaselineOverlay:
         assert (home / "agent_only.txt").read_text() == "agent\n"
 
     def test_absent_baseline_is_unchanged_current_behavior(self, tmp_path):
-        # Arrange — no _base/ sibling at all; only a per-agent to_home.
+        # Arrange — no _shared/ sibling at all; only a per-agent to_home.
         # (Matches the historical single-layer layout.)
         spec_dir = tmp_path / "spec"
         (spec_dir / "to_home").mkdir(parents=True)
@@ -704,7 +729,7 @@ class TestMaterializeBaselineOverlay:
         agents_root = tmp_path / "agents"
         spec_dir = agents_root / "test-agent"
         spec_dir.mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / "common.txt").write_text("shared\n")
         home = tmp_path / "home"
@@ -720,7 +745,7 @@ class TestDeployBaselineFromConfig:
         agents_root = tmp_path / "agents"
         spec_dir = agents_root / "test-agent"
         (spec_dir / "to_home").mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / ".bashrc").write_text("export BASE=1\n")
         cfg = AgentConfig(name="test-agent")
@@ -738,7 +763,7 @@ class TestDeployBaselineFromConfig:
         spec_dir = agents_root / "test-agent"
         per_agent = spec_dir / "to_home"
         per_agent.mkdir(parents=True)
-        baseline = agents_root / "_base" / "to_home"
+        baseline = agents_root / "_shared" / "to_home"
         baseline.mkdir(parents=True)
         (baseline / "shared.txt").write_text("from baseline\n")
         (per_agent / "shared.txt").write_text("from agent\n")
@@ -871,7 +896,7 @@ class TestReadOnlyDestinationOverwrite:
 # ---------------------------------------------------------------------------
 # Isolation: the delivery path NEVER auto-reads host state. Host content
 # enters ONLY via an EXPLICIT symlink the operator places under to_home/
-# (e.g. ``_base/to_home/.claude/skills -> ~/.claude/skills``), which the
+# (e.g. ``_shared/to_home/.claude/skills -> ~/.claude/skills``), which the
 # materialize walk resolves to real content. The old unconditional host
 # ``~/.claude/skills`` auto-read is gone — these tests lock that.
 # ---------------------------------------------------------------------------
@@ -951,7 +976,7 @@ class TestNoHostAutoRead:
         agents_root = tmp_path / "agents"
         base_skill = (
             agents_root
-            / "_base"
+            / "_shared"
             / "to_home"
             / ".claude"
             / "skills"

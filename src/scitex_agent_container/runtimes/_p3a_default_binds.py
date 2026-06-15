@@ -9,7 +9,7 @@ Two classes of fleet-wide bind live here today:
   ``feedback_scitex_todo_single_shared_store``
   (lead-learnings/22, P3a unlock). Lead a2a
   ``214dd26d3fd24e088c75a34329895fa4``. This module is the SOLE
-  source of the bind — no fleet ``_base/spec.yaml`` carries an
+  source of the bind — no fleet ``_shared/spec.yaml`` carries an
   explicit ``~/.scitex/todo:`` line (lead audit 2026-06-13 a2a
   ``f33cbc78c2074594b513439d93748810``), so the helper here is what
   every sac-launched agent picks up at boot.

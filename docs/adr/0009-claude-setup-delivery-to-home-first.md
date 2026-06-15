@@ -60,7 +60,7 @@ host bind or a host auto-read.
 
 ### Symlink resolution — definition is the sole source of truth
 
-Materialize walks **both** the global `_base/to_home/` and the per-agent
+Materialize walks **both** the global `_shared/to_home/` and the per-agent
 `to_home/` and copies their content into the container `$HOME`
 (`/home/agent`). The rule for symlinks:
 
@@ -77,7 +77,7 @@ Materialize walks **both** the global `_base/to_home/` and the per-agent
   `~/.claude/skills` (and no `~/.claude/skills` fallback). The only way
   host content enters the container is via an **explicit** symlink the
   operator places under `to_home/` — e.g.
-  `_base/to_home/.claude/skills -> ~/.claude/skills` — which the walk
+  `_shared/to_home/.claude/skills -> ~/.claude/skills` — which the walk
   resolves to real content at deploy time. That is explicit-pass, and it
   is intended.
 - **No "keep literal symlink" / warn-and-keep / naming-convention

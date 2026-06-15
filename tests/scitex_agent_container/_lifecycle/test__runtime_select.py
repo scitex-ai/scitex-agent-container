@@ -2,9 +2,9 @@
 
 Operator directive 12870 (lead a2a ``b58dd5d3b4d640d2a7f31f16c710e839``):
 ``spec.runtime`` is repurposed from container-engine selector to
-LAUNCH-MODE selector. ``claude-agent-sdk`` (default) → the SDK runner;
-``tui`` → the new tmux-backed TUI runner. Legacy ``apptainer`` / ``""``
-values are accepted for back-compat and map to ``claude-agent-sdk``
+LAUNCH-MODE selector. ``tui`` (the DEFAULT since 2026-06-15; ``""`` /
+unset maps here) → the in-apptainer TUI runner; ``claude-agent-sdk`` →
+the headless SDK runner. Legacy ``apptainer`` maps to ``claude-agent-sdk``
 with a one-line deprecation log.
 
 STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — uses a tiny stub
@@ -40,13 +40,13 @@ def test_get_runtime_returns_claude_session_for_claude_agent_sdk():
     assert isinstance(rt, ClaudeSessionRuntime)
 
 
-def test_get_runtime_returns_claude_session_for_empty_runtime():
-    # Arrange — historical default; existing specs may omit the field.
+def test_get_runtime_returns_tui_session_for_empty_runtime():
+    # Arrange — empty / unset is the DEFAULT and now maps to TUI.
     config = SimpleNamespace(name="alpha", runtime="")
     # Act
     rt = _get_runtime(config)
     # Assert
-    assert isinstance(rt, ClaudeSessionRuntime)
+    assert isinstance(rt, TuiSessionRuntime)
 
 
 # ---------------------------------------------------------------------------

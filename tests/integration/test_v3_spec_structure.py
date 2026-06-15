@@ -72,6 +72,14 @@ class TestCrossCuttingTopLevel:
         # Assert
         assert cfg.runtime == "apptainer"
 
+    def test_runtime_defaults_to_tui_when_omitted(self, tmp_path):
+        # Arrange — a spec that does NOT declare runtime.
+        spec = _write_spec(tmp_path, {"workdir": "/tmp/agent-x"})
+        # Act
+        cfg = load_config(str(spec))
+        # Assert — TUI is the default launch mode (operator directive 2026-06-15).
+        assert cfg.runtime == "tui"
+
     def test_workdir_value_round_trips(self, tmp_path):
         # Arrange
         spec = _write_spec(

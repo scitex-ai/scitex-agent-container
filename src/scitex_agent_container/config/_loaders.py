@@ -292,7 +292,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     return AgentConfig(
         name=name,
-        runtime=str(spec.get("runtime") or "apptainer"),
+        runtime=str(spec.get("runtime") or "tui"),
         image=apptainer_spec.image,
         model=model,
         workdir=workdir,
