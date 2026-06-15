@@ -330,9 +330,9 @@ def test_tui_channel_config_command_is_resolved_sac_path(tmp_path) -> None:
     # Assert — the inline JSON's command is the resolver's value
     # (defaults to /opt/venv-agent/bin/sac for sac-base.sif). The
     # legacy /opt/venv-sac/bin/sac would silently fail exec inside
-    # the SIF since the binary does not exist there.
-    assert channel_mcp is not None
-    assert '"command": "/opt/venv-agent/bin/sac"' in channel_mcp
+    # the SIF since the binary does not exist there. ``"" in None``
+    # would TypeError, so the None-check is structurally embedded.
+    assert '"command": "/opt/venv-agent/bin/sac"' in (channel_mcp or "")
 
 
 def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:
