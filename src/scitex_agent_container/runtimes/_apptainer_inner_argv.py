@@ -250,8 +250,13 @@ def _tui_runner_argv(
     actually receives a2a-bus pushes — the interactive ``claude`` has no
     ``--channels`` flag, so the subscriber must be injected as an MCP
     server (the bus-auth env from ``listen_env_flags`` lets it connect).
-    Both mcp configs ride on ONE ``--mcp-config`` (it takes
-    space-separated file/JSON values).
+    Each mcp config rides on its OWN ``--mcp-config`` flag (P0 fix
+    2026-06-15): claude's ``<configs...>`` syntax claims it accepts
+    multiple space-separated values after one flag, but the binary
+    silently drops everything past the first — the operator-facing
+    symptom was the TUI complaining "no MCP server configured with that
+    name" even though the values were passed. Repeated flags match the
+    SDK runtime's pattern and are observably loaded.
 
     No tini wrapper: the TUI is the foreground interactive process in the
     tmux pane; apptainer + tmux own signal delivery. ``startup_commands``
@@ -264,9 +269,20 @@ def _tui_runner_argv(
         model = str(getattr(config, "model", "") or "").strip()
     if model:
         argv += ["--model", model]
-    mcp_values = [v for v in (mcp_config, channel_mcp) if v]
-    if mcp_values:
-        argv += ["--mcp-config", *mcp_values]
+    # One ``--mcp-config`` per value (P0 fix 2026-06-15, operator-reported):
+    # ``claude --help`` documents ``--mcp-config <configs...>`` as accepting
+    # multiple space-separated values after a single flag, but the real
+    # binary silently drops every value past the first. Symptom on the
+    # failing fleet (figrecipe / todo / neurovista): the TUI pane showed
+    # ``server:claude-code-telegrammer,server:sac · no MCP server
+    # configured with that name`` even though the workspace ``.mcp.json``
+    # path AND the inline ``sac mcp channel`` JSON were both passed.
+    # Emitting one flag per value matches the SDK runtime's repeated-
+    # flag pattern and is observably loaded by the TUI.
+    if mcp_config:
+        argv += ["--mcp-config", mcp_config]
+    if channel_mcp:
+        argv += ["--mcp-config", channel_mcp]
     if dev_channels:
         argv += ["--dangerously-load-development-channels", dev_channels]
     for flag in list(getattr(claude_spec, "flags", []) or []):

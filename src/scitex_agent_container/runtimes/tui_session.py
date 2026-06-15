@@ -369,11 +369,26 @@ class TuiSessionRuntime(RuntimeBase):
     def _inject_startup_prompts(self, config: AgentConfig) -> None:
         """Feed spec.startup_prompts as the first user turn(s).
 
-        Mirrors the SDK runtime's startup-prompt parity. Each prompt
-        = separate turn via the bare ``send_text_and_submit`` (proven
-        reliable on the host canary). Empty list → no-op. Per-prompt
-        failure logged and skipped; total failure does NOT raise so
-        the supervisor restart cycle never oscillates.
+        Each prompt = separate turn via ``send_text_and_submit``, gated
+        on ``wait_until_input_ready`` BEFORE the send and followed by a
+        defensive trailing ``Enter`` keystroke. Empty list → no-op.
+        Per-prompt failure logged and skipped; total failure does NOT
+        raise so the supervisor restart cycle never oscillates.
+
+        P0 fix (2026-06-15, operator-reported): figrecipe + todo +
+        neurovista all booted but stalled because the prompt was pasted
+        into the input field without an Enter actually submitting it.
+        ``send_text_and_submit`` does issue Enter, but during the
+        post-boot Ink-mount window claude can eat that Enter while
+        still binding the input. The fix:
+
+          1. Gate on ``wait_until_input_ready`` (the same gate
+             ``send_turn`` uses) so the keystrokes never land on a
+             not-yet-bound input.
+          2. Append an explicit defensive ``Enter`` via
+             ``send_keys(name, "Enter")`` — operator-recovered each
+             stuck agent by attaching tmux and pressing this. Baking
+             it in removes the manual rescue.
         """
         import logging
 
@@ -386,10 +401,12 @@ class TuiSessionRuntime(RuntimeBase):
             if not prompt:
                 continue
             try:
+                self.wait_until_input_ready(config)
                 self._mux.send_text_and_submit(name, prompt)
+                self._mux.send_keys(name, "Enter")
                 log.info(
                     "TuiSessionRuntime: injected startup_prompt %d/%d "
-                    "(%d chars) into %s",
+                    "(%d chars) into %s (with defensive Enter)",
                     index,
                     len(prompts),
                     len(prompt),
