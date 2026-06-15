@@ -32,7 +32,8 @@ from scitex_agent_container.config._validation import validate_raw
 
 
 def test_claude_spec_default_effort_is_empty_string():
-    # Arrange / Act
+    # Arrange
+    # Act
     spec = ClaudeSpec()
     # Assert
     assert spec.effort == ""

@@ -108,7 +108,8 @@ def test_settings_json_writes_effort_level_when_set(tmp_path, level):
 
 
 def test_managed_keys_includes_effort_level():
-    # Arrange / Act
+    # Arrange
+    # Act
     has_key = "effortLevel" in _MANAGED_KEYS
     # Assert
     assert has_key
