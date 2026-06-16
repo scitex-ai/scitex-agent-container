@@ -171,10 +171,11 @@ class TestLoadFullConfig:
     def test_full_loads_claude_channels(self, full_loaded_config):
         # Arrange
         config = full_loaded_config
-        # Act
+        # Act — server:sac is the builtin control-plane channel auto-injected
+        # by load_config for every agent (operator directive 2026-06-16).
         value = config.claude.channels
         # Assert
-        assert value == ["plugin:telegram@claude-plugins-official"]
+        assert value == ["plugin:telegram@claude-plugins-official", "server:sac"]
 
     def test_full_loads_claude_session(self, full_loaded_config):
         # Arrange

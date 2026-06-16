@@ -108,6 +108,7 @@ kind: Agent
 metadata:
   labels:
     project: t
+    sac-builtin: "off"
 spec:
   runtime: tui
   workdir: /tmp/agt-work
