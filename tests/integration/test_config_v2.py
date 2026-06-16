@@ -307,13 +307,21 @@ class TestMinimalV3RuntimeWorkspace:
         # Assert
         assert value == "~/.scitex/agent-container/runtime/agents/test-agent"
 
-    def test_v1_minimal_mcp_servers_empty(self, v1_minimal_loaded_config):
+    def test_v1_minimal_mcp_servers_has_builtin_sac(self, v1_minimal_loaded_config):
+        """Builtin control plane (#415): a minimal spec with no MCP servers of
+        its own still gets exactly the sac tools server injected by default."""
         # Arrange
         config = v1_minimal_loaded_config
         # Act
         value = config.mcp_servers
         # Assert
-        assert value == {}
+        assert value == {
+            "scitex-agent-container": {
+                "type": "stdio",
+                "command": "/opt/venv-sac/bin/sac",
+                "args": ["mcp", "start"],
+            }
+        }
 
 
 @pytest.fixture
