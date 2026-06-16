@@ -518,6 +518,10 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # requests; teardown is a no-op (persistence is one-shot at boot).
     from contextlib import asynccontextmanager
 
+    from .._lifecycle._github_ci_poll_loop import (
+        DEFAULT_CI_POLL_INTERVAL_S,
+        github_ci_poll_loop,
+    )
     from .._lifecycle._periodic_drive_loop import periodic_drive_loop
     from ._self_peer_persistence import persist_self_peers_on_listen_startup
 
@@ -527,21 +531,40 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
         import os as _os
 
         await persist_self_peers_on_listen_startup()
+        tasks: list = []
         # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
         # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
-        task = None
         if _os.environ.get("SAC_PERIODIC_DRIVE_DISABLED", "") != "1":
             task = _asyncio.create_task(periodic_drive_loop(app.state))
             app.state.periodic_drive_task = task
+            tasks.append(task)
+        # GitHub-CI verdict-delivery poll loop (sac #404, feedback.pdf §3).
+        # The loop self-disables (fail-loud) when `gh` is unauthenticated
+        # or SAC_GITHUB_CI_POLLER_DISABLED=1, so launch unconditionally.
+        # Cadence override: SAC_GITHUB_CI_POLL_INTERVAL_S.
+        try:
+            _ci_interval = float(
+                _os.environ.get(
+                    "SAC_GITHUB_CI_POLL_INTERVAL_S", DEFAULT_CI_POLL_INTERVAL_S
+                )
+            )
+        except (TypeError, ValueError):
+            _ci_interval = DEFAULT_CI_POLL_INTERVAL_S
+        ci_task = _asyncio.create_task(
+            github_ci_poll_loop(poll_interval_s=_ci_interval)
+        )
+        app.state.github_ci_poller_task = ci_task
+        tasks.append(ci_task)
         try:
             yield
         finally:
-            if task is not None and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (_asyncio.CancelledError, Exception):
-                    pass
+            for _t in tasks:
+                if _t is not None and not _t.done():
+                    _t.cancel()
+                    try:
+                        await _t
+                    except (_asyncio.CancelledError, Exception):
+                        pass
 
     app = Starlette(routes=routes, lifespan=_lifespan)
     # Per-app shared state for the WI-3 inbox surface.

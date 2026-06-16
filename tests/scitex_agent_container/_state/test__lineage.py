@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._state._lineage import descendants_of
+from scitex_agent_container._state._lineage import (
+    ancestors_to_root,
+    descendants_of,
+)
 from scitex_agent_container._state.state_db_nodes import record_lineage
 
 # ---------------------------------------------------------------------------
@@ -168,3 +171,64 @@ def test_descendants_respects_max_depth_bound(db_path: Path) -> None:
     result = descendants_of(name="a", db_path=db_path, max_depth=3)
     # Assert
     assert result == {"b", "c", "d"}
+
+
+# ---------------------------------------------------------------------------
+# Upward walk — ancestors_to_root (sac #404 verdict climb)
+# ---------------------------------------------------------------------------
+
+
+def test_ancestors_empty_when_node_has_no_parent(db_path: Path) -> None:
+    # Arrange — no lineage rows for "lonely".
+    # Act
+    chain = ancestors_to_root(name="lonely", db_path=db_path)
+    # Assert
+    assert chain == []
+
+
+def test_ancestors_single_parent_returns_one_element_chain(db_path: Path) -> None:
+    # Arrange
+    record_lineage(child="kid", parent="mom", db_path=db_path)
+    # Act
+    chain = ancestors_to_root(name="kid", db_path=db_path)
+    # Assert
+    assert chain == ["mom"]
+
+
+def test_ancestors_chain_is_ordered_parent_first_root_last(db_path: Path) -> None:
+    # Arrange — pusher → parent → grandparent → lead.
+    record_lineage(child="pusher", parent="parent", db_path=db_path)
+    record_lineage(child="parent", parent="grandparent", db_path=db_path)
+    record_lineage(child="grandparent", parent="lead", db_path=db_path)
+    # Act
+    chain = ancestors_to_root(name="pusher", db_path=db_path)
+    # Assert
+    assert chain == ["parent", "grandparent", "lead"]
+
+
+def test_ancestors_chain_excludes_the_queried_agent(db_path: Path) -> None:
+    # Arrange
+    record_lineage(child="a", parent="b", db_path=db_path)
+    # Act
+    chain = ancestors_to_root(name="a", db_path=db_path)
+    # Assert
+    assert "a" not in chain
+
+
+def test_ancestors_cycle_in_hand_edited_db_is_bounded(db_path: Path) -> None:
+    # Arrange — record_lineage prevents cycles, so inject one directly to
+    # prove the depth guard (same "cannot trust the DB blindly" rationale
+    # as descendants_of). record_lineage first creates the table.
+    import sqlite3
+
+    record_lineage(child="x", parent="y", db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO lineage (child_name, parent_name, created_at) "
+            "VALUES ('y', 'x', 0.0)"
+        )
+        conn.commit()
+    # Act
+    chain = ancestors_to_root(name="x", db_path=db_path, max_depth=5)
+    # Assert
+    assert len(chain) <= 5

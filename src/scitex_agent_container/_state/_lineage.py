@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["descendants_of"]
+__all__ = ["ancestors_to_root", "descendants_of"]
 
 
 def descendants_of(
@@ -99,3 +99,60 @@ def descendants_of(
             frontier = next_frontier
             depth += 1
     return out
+
+
+def ancestors_to_root(
+    *,
+    name: str,
+    db_path: Path | None = None,
+    max_depth: int = 64,
+) -> list[str]:
+    """Return the lineage chain from ``name``'s parent up to the root.
+
+    The UP walk complementing :func:`descendants_of`. Used by the
+    CI-feedback ring (feedback.pdf §3) to climb pusher → parent → … →
+    lead when delivering a verdict up the recorded lineage.
+
+    Ordered immediate-parent first, root (the topmost ancestor with no
+    parent) last. Does NOT include ``name`` itself. A node with no
+    parent — or an unknown ``name`` — returns ``[]``.
+
+    Cycle guard: a ``seen`` set plus the ``max_depth`` ceiling bound the
+    walk so a hand-edited DB with a parent cycle (which
+    :func:`record_lineage` never produces) cannot loop the listen
+    server — same rationale as :func:`descendants_of`.
+
+    Args:
+        name: the agent whose ancestor chain we want (the pusher).
+        db_path: optional override for the state.db path; tests pass a
+            tmp file so the global DB stays clean.
+        max_depth: walk depth ceiling. Default 64 (safety bound).
+
+    Returns:
+        Ordered list of ancestor agent names (parent first, root last),
+        not including ``name``.
+    """
+    if not name:
+        return []
+    from .state_db import open_db
+
+    chain: list[str] = []
+    seen: set[str] = {name}
+    with open_db(db_path) as conn:
+        current = name
+        depth = 0
+        while depth < max_depth:
+            row = conn.execute(
+                "SELECT parent_name FROM lineage WHERE child_name = ?",
+                (current,),
+            ).fetchone()
+            if row is None:
+                break
+            parent = str(row["parent_name"])
+            if parent in seen:
+                break  # cycle guard (hand-edited DB; record_lineage never loops)
+            chain.append(parent)
+            seen.add(parent)
+            current = parent
+            depth += 1
+    return chain
