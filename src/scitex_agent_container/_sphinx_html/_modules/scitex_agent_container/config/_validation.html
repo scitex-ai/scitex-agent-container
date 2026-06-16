@@ -251,6 +251,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -668,9 +669,9 @@
         <span class="k">if</span> <span class="n">runtime</span> <span class="ow">and</span> <span class="n">runtime</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_VALID_RUNTIMES</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;spec.runtime must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_VALID_RUNTIMES</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &#39;claude-agent-sdk&#39; (default) =  &quot;</span>
-                <span class="s2">&quot;headless SDK runner; &#39;tui&#39; = tmux-backed interactive &quot;</span>
-                <span class="s2">&quot;Claude TUI; &#39;apptainer&#39; / &#39;&#39; = back-compat for the &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">runtime</span><span class="si">}</span><span class="s2">&#39;). &#39;tui&#39; (default, &#39;&#39; maps here) = &quot;</span>
+                <span class="s2">&quot;interactive in-apptainer Claude TUI; &#39;claude-agent-sdk&#39; &quot;</span>
+                <span class="s2">&quot;= headless SDK runner; &#39;apptainer&#39; = back-compat for the &quot;</span>
                 <span class="s2">&quot;pre-2026-06-13 container-engine field, mapped to &quot;</span>
                 <span class="s2">&quot;&#39;claude-agent-sdk&#39; at dispatch.&quot;</span>
             <span class="p">)</span>

@@ -251,6 +251,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.resume_id"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.resume_id</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -724,9 +725,28 @@
     <span class="k">if</span> <span class="ow">not</span> <span class="n">comms_spec</span><span class="o">.</span><span class="n">a2a</span><span class="o">.</span><span class="n">listen</span><span class="p">:</span>
         <span class="n">a2a_spec</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">a2a_spec</span><span class="p">)(</span><span class="n">host</span><span class="o">=</span><span class="n">a2a_spec</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 
+    <span class="c1"># Builtin sac control plane (operator directive 2026-06-16): EVERY agent</span>
+    <span class="c1"># gets the sac MCP tools server + the ``server:sac`` push channel so it can</span>
+    <span class="c1"># communicate (a2a / lineage). Without both, agents can&#39;t talk to each other</span>
+    <span class="c1"># or the lead. Injected by default; opt out per agent with the label</span>
+    <span class="c1"># ``sac-builtin: &quot;off&quot;``. Idempotent: skips if already declared (the spec&#39;s</span>
+    <span class="c1"># own entry/channel wins). Real wiring still happens downstream — apply_channels</span>
+    <span class="c1"># (SDK) / tui_channel_config (TUI) for the channel; the .mcp.json / options</span>
+    <span class="c1"># merge for the tools server.</span>
+    <span class="n">_sac_optout</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;sac-builtin&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">_sac_optout</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">,</span> <span class="s2">&quot;false&quot;</span><span class="p">,</span> <span class="s2">&quot;0&quot;</span><span class="p">,</span> <span class="s2">&quot;no&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s2">&quot;server:sac&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="n">c</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">claude_spec</span><span class="o">.</span><span class="n">channels</span><span class="p">}:</span>
+            <span class="n">claude_spec</span><span class="o">.</span><span class="n">channels</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;server:sac&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;scitex-agent-container&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">mcp_servers</span><span class="p">:</span>
+            <span class="n">mcp_servers</span><span class="p">[</span><span class="s2">&quot;scitex-agent-container&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;/opt/venv-sac/bin/sac&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;mcp&quot;</span><span class="p">,</span> <span class="s2">&quot;start&quot;</span><span class="p">],</span>
+            <span class="p">}</span>
+
     <span class="k">return</span> <span class="n">AgentConfig</span><span class="p">(</span>
         <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-        <span class="n">runtime</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">),</span>
+        <span class="n">runtime</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;tui&quot;</span><span class="p">),</span>
         <span class="n">image</span><span class="o">=</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">image</span><span class="p">,</span>
         <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
         <span class="n">workdir</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span>
