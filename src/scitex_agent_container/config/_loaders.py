@@ -290,6 +290,25 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     if not comms_spec.a2a.listen:
         a2a_spec = type(a2a_spec)(host=a2a_spec.host, port=None)
 
+    # Builtin sac control plane (operator directive 2026-06-16): EVERY agent
+    # gets the sac MCP tools server + the ``server:sac`` push channel so it can
+    # communicate (a2a / lineage). Without both, agents can't talk to each other
+    # or the lead. Injected by default; opt out per agent with the label
+    # ``sac-builtin: "off"``. Idempotent: skips if already declared (the spec's
+    # own entry/channel wins). Real wiring still happens downstream — apply_channels
+    # (SDK) / tui_channel_config (TUI) for the channel; the .mcp.json / options
+    # merge for the tools server.
+    _sac_optout = str(labels.get("sac-builtin", "")).strip().lower()
+    if _sac_optout not in ("off", "false", "0", "no"):
+        if "server:sac" not in {c.strip() for c in claude_spec.channels}:
+            claude_spec.channels.append("server:sac")
+        if "scitex-agent-container" not in mcp_servers:
+            mcp_servers["scitex-agent-container"] = {
+                "type": "stdio",
+                "command": "/opt/venv-sac/bin/sac",
+                "args": ["mcp", "start"],
+            }
+
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),

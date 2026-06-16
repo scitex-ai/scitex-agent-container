@@ -576,3 +576,47 @@ def test_load_config_lineage_may_spawn_false_round_trips(tmp_path: Path) -> None
     cfg = load_config(p)
     # Assert
     assert cfg.lineage.may_spawn is False
+
+
+# ---------------------------------------------------------------------------
+# Builtin sac control plane (mcp + channel) — operator directive 2026-06-16
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_injects_sac_channel_by_default(tmp_path: Path) -> None:
+    # Arrange
+    p = _v3_yaml(tmp_path, "sac-chan", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert "server:sac" in cfg.claude.channels
+
+
+def test_load_config_injects_sac_mcp_server_by_default(tmp_path: Path) -> None:
+    # Arrange
+    p = _v3_yaml(tmp_path, "sac-mcp", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert "scitex-agent-container" in cfg.mcp_servers
+
+
+def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> None:
+    # Arrange
+    body = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "metadata": {"labels": {"sac-builtin": "off"}},
+        "spec": {
+            "runtime": "apptainer",
+            "workdir": str(tmp_path / "wd"),
+            "apptainer": {"image": "x.sif"},
+        },
+    }
+    p = tmp_path / "sac-off" / "spec.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(body))
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert "server:sac" not in cfg.claude.channels
