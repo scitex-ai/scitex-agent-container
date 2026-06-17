@@ -12,6 +12,7 @@ Env-driven tests use the project-wide ``env_save_restore`` fixture
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -20,11 +21,13 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config._types import AgentConfig
+from scitex_agent_container.runtimes._mcp_merge import McpMergeConflict
 from scitex_agent_container.runtimes._to_home import (
     END_MARKER,
     DanglingToHomeSymlinkError,
     WorkspaceCLAUDEMarkerError,
     WorkspaceCredentialLeakError,
+    WorkspaceMcpMergeError,
     deploy_to_home,
     materialize_to_home,
     resolve_baseline_to_home_dir,
@@ -696,6 +699,60 @@ def _build_layered(tmp_path: Path) -> tuple[Path, Path, Path]:
     per_agent.mkdir(parents=True, exist_ok=True)
     baseline.mkdir(parents=True, exist_ok=True)
     return spec_dir, per_agent, baseline
+
+
+# ---------------------------------------------------------------------------
+# .mcp.json deep-merge across the two-pass overlay (W1 / operator 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_json_two_pass_unions_baseline_and_agent_servers(tmp_path):
+    # Arrange — baseline ships the defaults; the agent ships its own server.
+    spec_dir, per_agent, baseline = _build_layered(tmp_path)
+    (baseline / ".mcp.json").write_text(
+        json.dumps(
+            {"mcpServers": {"sac": {"command": "sac"}, "todo": {"command": "todo"}}}
+        )
+    )
+    (per_agent / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"figrecipe": {"command": "fr"}}})
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    # Act
+    materialize_to_home(spec_dir, home)
+    merged = json.loads((home / ".mcp.json").read_text())
+    # Assert
+    assert set(merged["mcpServers"]) == {"sac", "todo", "figrecipe"}
+
+
+def test_mcp_json_conflicting_server_across_layers_fails_loud(tmp_path):
+    # Arrange — same server name, different command in baseline vs agent.
+    spec_dir, per_agent, baseline = _build_layered(tmp_path)
+    (baseline / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"sac": {"command": "A"}}})
+    )
+    (per_agent / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"sac": {"command": "B"}}})
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    # Act
+    # Assert
+    with pytest.raises(McpMergeConflict):
+        materialize_to_home(spec_dir, home)
+
+
+def test_mcp_json_invalid_agent_json_fails_loud(tmp_path):
+    # Arrange — the agent's .mcp.json is not valid JSON.
+    spec_dir, per_agent, _baseline = _build_layered(tmp_path)
+    (per_agent / ".mcp.json").write_text("not json{")
+    home = tmp_path / "home"
+    home.mkdir()
+    # Act
+    # Assert
+    with pytest.raises(WorkspaceMcpMergeError):
+        materialize_to_home(spec_dir, home)
 
 
 class TestResolveBaselineToHomeDir:

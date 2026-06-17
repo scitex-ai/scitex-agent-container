@@ -54,6 +54,7 @@ content — see ``_to_home_errors.py`` for context.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -63,10 +64,12 @@ from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._mcp_merge import merge_mcp_json
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_errors import (
     WorkspaceCLAUDEMarkerError,
     WorkspaceCredentialLeakError,
+    WorkspaceMcpMergeError,
 )
 from ._to_home_text import (
     END_MARKER,
@@ -91,6 +94,13 @@ _interpolate_metadata = interpolate_metadata
 # Files that get marker-protected merge semantics (vs. full overwrite).
 # Marker protection guards against silent data loss on a hand-edited file.
 _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
+
+# Files DEEP-MERGED across the two-pass overlay (vs. full overwrite). The
+# shared baseline ``_shared/to_home/.mcp.json`` carries the default MCP servers
+# (sac / scitex-todo / claude-code-telegrammer); a per-agent ``.mcp.json`` must
+# UNION its servers with that baseline, not replace it (which would silently
+# drop the defaults). Same-name conflict → fail loud. See :func:`_deploy_mcp_merge`.
+_MCP_MERGE_BASENAMES = frozenset({".mcp.json"})
 
 # Files that get chmod 0600 after copy. ``.env`` only by default; the
 # rest preserve source perms via ``shutil.copy2``.
@@ -295,6 +305,8 @@ def _walk_and_apply(
         # Regular file.
         if child.name in _MARKER_PROTECTED_BASENAMES:
             _deploy_marker_protected(child, dst, config=config, rel=rel)
+        elif child.name in _MCP_MERGE_BASENAMES:
+            _deploy_mcp_merge(child, dst, config=config, rel=rel)
         elif child.name in _TIGHT_PERM_BASENAMES:
             _deploy_tight_perm_file(child, dst, config=config, rel=rel)
         else:
@@ -370,6 +382,48 @@ def _deploy_plain_file(
         except UnicodeDecodeError:
             shutil.copy2(src, dst)
     logger.info("to_home: deployed %s -> %s", rel, dst)
+
+
+def _deploy_mcp_merge(
+    src: Path,
+    dst: Path,
+    *,
+    config: AgentConfig | None,
+    rel: Path,
+) -> None:
+    """Deep-merge ``.mcp.json`` with any already-deployed (baseline) copy.
+
+    The two-pass overlay deploys the shared baseline ``.mcp.json`` first, then
+    each agent's own lands here. Full-overwrite would silently drop the
+    baseline's default servers (sac / scitex-todo / claude-code-telegrammer);
+    instead we UNION the ``mcpServers`` (baseline ∪ per-agent) via
+    :func:`_mcp_merge.merge_mcp_json`. Fail-loud (no silent fallback): an
+    unparseable source/destination ``.mcp.json`` raises
+    :class:`WorkspaceMcpMergeError`; a same-name server defined two different
+    ways raises :class:`_mcp_merge.McpMergeConflict`. Both abort the deploy.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    overlay_text = _read_and_interpolate(src, config)
+    try:
+        overlay_doc = json.loads(overlay_text) if overlay_text.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise WorkspaceMcpMergeError(
+            f"to_home: source {rel} is not valid JSON ({exc})"
+        ) from exc
+    if dst.is_file():
+        existing = dst.read_text()
+        try:
+            base_doc = json.loads(existing) if existing.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise WorkspaceMcpMergeError(
+                f"to_home: existing {dst} is not valid JSON ({exc})"
+            ) from exc
+        merged = merge_mcp_json(base_doc, overlay_doc)
+    else:
+        merged = overlay_doc
+    dst.write_text(json.dumps(merged, indent=2) + "\n")
+    logger.info("to_home: deep-merged .mcp.json %s -> %s", rel, dst)
 
 
 def _deploy_tight_perm_file(
