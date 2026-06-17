@@ -377,6 +377,31 @@ def test_serve_rejects_missing_yaml_path(tmp_path: Path) -> None:
     assert res.exit_code != 0
 
 
+def test_a2a_list_fails_loud_when_listen_unreachable() -> None:
+    # Arrange -- bearer present (passes the token gate), but listen points at a
+    # dead port. a2a_list must FAIL LOUD (clean exit), not a raw traceback
+    # (scitex-dev 2026-06-17: a timeout/non-JSON on the runner crashed unhandled
+    # and 500'd todo's mesh view). Explicit env save/restore (no monkeypatch).
+    saved_url = os.environ.get("SAC_LISTEN_BASE_URL")
+    saved_tok = os.environ.get("SAC_LISTEN_BEARER")
+    os.environ["SAC_LISTEN_BASE_URL"] = "http://127.0.0.1:1"
+    os.environ["SAC_LISTEN_BEARER"] = "test-token"
+    # Act
+    try:
+        res = CliRunner().invoke(a2a, ["list", "--json"])
+    finally:
+        for _key, _saved in (
+            ("SAC_LISTEN_BASE_URL", saved_url),
+            ("SAC_LISTEN_BEARER", saved_tok),
+        ):
+            if _saved is None:
+                os.environ.pop(_key, None)
+            else:
+                os.environ[_key] = _saved
+    # Assert
+    assert res.exit_code != 0
+
+
 # ---------------------------------------------------------------------------
 # a2a_serve -- live subprocess smoke (mirrors tests/e2e pattern)
 # ---------------------------------------------------------------------------
