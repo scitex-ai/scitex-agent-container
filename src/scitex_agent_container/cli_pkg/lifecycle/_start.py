@@ -223,18 +223,34 @@ def start(
     no_redispatch: bool,
     broker_self: bool,
 ) -> None:
-    """Start one or more agents from YAML definitions.
+    """Start one or more agents.
 
-    Each TARGET is either a YAML path, an agent name (resolved against the
-    standard search paths), or a directory containing ``<name>/<name>.yaml``
-    agent layouts. Multiple targets may be given.
+    Each TARGET may be an EXISTING agent — an agent name, a ``spec.yaml`` path,
+    or a directory of ``<name>/spec.yaml`` agents (bulk) — OR a COLD-START form
+    that materializes a minimal standardized TUI spec for an arbitrary project
+    workdir and starts it (operator TODO 2026-06-17):
+
+    \b
+      <label>@<host>:/path/to/workdir   explicit label, host, and workdir
+      <host>:/path/to/workdir           label = the workdir's basename
+      /path/to/workdir                  host = this (the caller's) host
+      .                                 workdir = the current directory
+
+    Cold-start writes ``~/.scitex/agent-container/agents/<label>/{spec.yaml,
+    to_home/}`` then launches it; ``@<host>`` dispatches to that host. Re-running
+    a cold-start form reuses the spec when workdir+host match, else fails loud
+    (use ``--force`` to overwrite). ``--dry-run`` prints the plan without writing
+    or starting; ``--json`` emits it as structured output. Malformed forms fail
+    loud (no silent fallback).
 
     \b
     Example:
-      $ sac agent start foo
-      $ sac agent start ~/.scitex/agent-container/agents/foo/foo.yaml
-      $ sac agent start foo bar baz
-      $ sac agent start ~/.scitex/agent-container/agents/   # whole dir = bulk
+      $ sac start proj-figrecipe                       # existing agent (by name)
+      $ sac start ~/.scitex/agent-container/agents/     # bulk dir = all agents
+      $ sac start /home/me/proj/figrecipe               # cold-start, local host
+      $ sac start fig@spartan:/home/me/proj/figrecipe   # cold-start on spartan
+      $ sac start .                                     # cold-start the cwd
+      $ sac start . --dry-run --json                    # preview the plan only
     """
     import json as _json
 
@@ -279,6 +295,72 @@ def start(
                 f"[bold]--params-file[/bold]  expanded "
                 f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]"
             )
+
+    # Cold-start forms (operator TODO 2026-06-17): a target shaped like
+    # <label>@<host>:/path, <host>:/path, an absolute /workdir, or "." is NOT an
+    # existing agent — materialize a minimal standardized TUI spec for it, then
+    # start it through the normal flow below. Plain agent names + explicit
+    # spec.yaml paths + agent/agents-root dirs pass through untouched
+    # (fs-precedence in resolve_cold_start_targets). Malformed forms fail loud.
+    from ._cold_start import (
+        ColdStartConflictError,
+        ColdStartParseError,
+        resolve_cold_start_targets,
+    )
+
+    try:
+        from ...config._host import resolve_hostname
+
+        _caller_host = resolve_hostname()
+    except Exception:  # stx-allow: fallback (hostname resolution may fail in odd net envs; basename of socket name is the safe default)
+        import socket
+
+        _caller_host = socket.gethostname().split(".")[0]
+
+    try:
+        _rewritten, _cs_plans = resolve_cold_start_targets(
+            targets,
+            caller_host=_caller_host,
+            dry_run=dry_run,
+            force=force,
+            # Use the SAME bulk-dir detector the classifier below uses, so an
+            # agents-root dir (``<name>/<name>.yaml`` layout) is treated as an
+            # existing bulk target, not cold-started.
+            dir_has_agents=lambda p: bool(_iter_agent_yamls(p)),
+        )
+    except (ColdStartParseError, ColdStartConflictError) as exc:
+        if as_json:
+            _emit_json({"error": str(exc)})
+        else:
+            click.echo(f"Error: {exc}", err=True)
+        sys.exit(2)
+
+    for _plan in _cs_plans:
+        if as_json:
+            _emit_json(
+                {
+                    "cold_start": {
+                        "label": _plan.label,
+                        "host": _plan.host,
+                        "workdir": _plan.workdir,
+                        "spec_path": _plan.spec_path,
+                        "action": _plan.action,
+                    }
+                }
+            )
+        else:
+            console.print(
+                f"[bold]cold-start[/bold] [cyan]{_plan.label}[/cyan] "
+                f"[dim]({_plan.action})[/dim]  host=[cyan]{_plan.host}[/cyan]  "
+                f"workdir=[cyan]{_plan.workdir}[/cyan]\n"
+                f"  spec: [dim]{_plan.spec_path}[/dim]"
+            )
+    targets = tuple(_rewritten)
+    if not targets:
+        # All targets were dry-run cold-starts: plan(s) shown, nothing to launch.
+        if not as_json:
+            console.print("[dim]--dry-run: spec(s) planned above; not started.[/dim]")
+        return
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
     # under them; non-directory targets are paths or agent names.
