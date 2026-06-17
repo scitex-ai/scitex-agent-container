@@ -137,6 +137,23 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     help="Fleet view: filter by machine label.",
 )
 @click.option(
+    "--verbose",
+    "-v",
+    "verbose",
+    is_flag=True,
+    default=False,
+    help="Fleet view: add the full spec.yaml Path column (off by default — "
+    "it folds every row to 10+ lines).",
+)
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    default=False,
+    help="Fleet view: include stale/ghost agents (dead registry entries whose "
+    "spec file is gone). Hidden by default.",
+)
+@click.option(
     "--snapshot",
     "with_snapshot",
     is_flag=True,
@@ -170,6 +187,8 @@ def status(
     terse: bool,
     capability: str | None,
     machine: str | None,
+    verbose: bool,
+    show_all: bool,
     with_snapshot: bool,
     with_priority: bool,
     with_workdir_audit: bool,
@@ -321,7 +340,13 @@ def status(
                 )
             )
         else:
-            print_agent_list(registry, capability=capability, machine=machine)
+            print_agent_list(
+                registry,
+                capability=capability,
+                machine=machine,
+                verbose=verbose,
+                show_all=show_all,
+            )
 
 
 @click.command(name="check-health")
