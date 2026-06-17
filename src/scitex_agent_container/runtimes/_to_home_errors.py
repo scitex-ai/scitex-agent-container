@@ -40,7 +40,21 @@ class WorkspaceCredentialLeakError(RuntimeError):
     """
 
 
+class WorkspaceMcpMergeError(RuntimeError):
+    """A ``.mcp.json`` under ``to_home/`` could not be deep-merged — refused.
+
+    The two-pass overlay deep-merges the shared baseline ``.mcp.json`` with
+    each agent's own so default servers (sac / scitex-todo /
+    claude-code-telegrammer) and the agent's own both survive. The deploy is
+    hard-aborted (no silent fallback) when a source ``.mcp.json`` is not valid
+    JSON — guessing/overwriting could drop server wiring an agent needs. A
+    genuine same-name server conflict surfaces as ``_mcp_merge.McpMergeConflict``
+    (the operator resolves it explicitly).
+    """
+
+
 __all__ = [
     "WorkspaceCLAUDEMarkerError",
     "WorkspaceCredentialLeakError",
+    "WorkspaceMcpMergeError",
 ]
