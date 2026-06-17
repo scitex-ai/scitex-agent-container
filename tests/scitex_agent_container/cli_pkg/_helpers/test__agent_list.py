@@ -697,3 +697,64 @@ def test_remote_row_is_never_a_ghost_even_if_spec_missing_locally():
     result = _al._is_ghost_row(row)
     # Assert
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# print_agent_list — active-only / verbose / --all rendering (operator 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+def test_print_agent_list_hides_ghost_and_shows_hidden_footer(capsys, tmp_path):
+    # Arrange — a real agent + a ghost (registry entry whose spec file is gone).
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [
+            {"name": "good", "config": str(good), "screen": "s", "started_at": "ts"},
+            {"name": "deadrow", "config": str(tmp_path / "gone" / "spec.yaml")},
+        ]
+    )
+    # Act — default view.
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — ghost row hidden + footer shown ("deadrow" avoids collision
+    # with the footer's own "stale/ghost" wording).
+    out = capsys.readouterr().out
+    assert "deadrow" not in out and "hidden" in out
+
+
+def test_print_agent_list_show_all_includes_ghost(capsys, tmp_path):
+    # Arrange
+    registry = _FakeRegistry(
+        [{"name": "ghost", "config": str(tmp_path / "gone" / "spec.yaml")}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, show_all=True)
+    # Assert
+    assert "ghost" in capsys.readouterr().out
+
+
+def test_print_agent_list_verbose_adds_path_column(capsys, tmp_path):
+    # Arrange
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, verbose=True)
+    # Assert — the Path header appears only in verbose mode.
+    assert "Path" in capsys.readouterr().out
+
+
+def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
+    # Arrange
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "Path" not in capsys.readouterr().out
