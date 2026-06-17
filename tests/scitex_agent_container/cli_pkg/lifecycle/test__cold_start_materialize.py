@@ -144,3 +144,88 @@ def test_dry_run_reports_would_create_action(tmp_path):
     plan = materialize_cold_start(t, base_dir=tmp_path / "agents", dry_run=True)
     # Assert
     assert plan.action == "would-create"
+
+
+# ---------------------------------------------------------------------------
+# resolve_cold_start_targets — the sac-start orchestration (fs-precedence)
+# ---------------------------------------------------------------------------
+
+from scitex_agent_container.cli_pkg.lifecycle._cold_start import (  # noqa: E402
+    resolve_cold_start_targets,
+)
+
+
+def test_plain_agent_name_passes_through_unchanged(tmp_path):
+    # Arrange
+    targets = ["proj-figrecipe"]
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        targets, caller_host="h", base_dir=tmp_path / "agents"
+    )
+    # Assert
+    assert rewritten == ["proj-figrecipe"] and plans == []
+
+
+def test_existing_spec_yaml_path_passes_through(tmp_path):
+    # Arrange — an explicit spec.yaml path must NOT be cold-started.
+    spec = tmp_path / "foo" / "spec.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("apiVersion: scitex-agent-container/v3\nkind: Agent\nspec: {}\n")
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        [str(spec)], caller_host="h", base_dir=tmp_path / "agents"
+    )
+    # Assert
+    assert rewritten == [str(spec)] and plans == []
+
+
+def test_agents_root_dir_passes_through_for_bulk(tmp_path):
+    # Arrange — a dir with <name>/spec.yaml children = existing bulk target.
+    root = tmp_path / "agents_root"
+    (root / "a").mkdir(parents=True)
+    (root / "a" / "spec.yaml").write_text("kind: Agent\n")
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        [str(root)], caller_host="h", base_dir=tmp_path / "agents"
+    )
+    # Assert
+    assert rewritten == [str(root)] and plans == []
+
+
+def test_workdir_path_is_cold_started_to_its_label(tmp_path):
+    # Arrange — a plain project workdir (no spec inside) → cold-start.
+    work = tmp_path / "myproj"
+    work.mkdir()
+    (work / "README.md").write_text("x")  # non-empty → a real workdir
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        [str(work)], caller_host="h", base_dir=tmp_path / "agents"
+    )
+    # Assert
+    assert rewritten == ["myproj"]
+
+
+def test_workdir_cold_start_records_a_plan(tmp_path):
+    # Arrange
+    work = tmp_path / "myproj"
+    work.mkdir()
+    (work / "README.md").write_text("x")  # non-empty → a real workdir
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        [str(work)], caller_host="h", base_dir=tmp_path / "agents"
+    )
+    # Assert
+    assert plans[0].label == "myproj" and plans[0].action == "create"
+
+
+def test_dry_run_would_create_is_not_added_to_launch_list(tmp_path):
+    # Arrange
+    work = tmp_path / "myproj"
+    work.mkdir()
+    (work / "README.md").write_text("x")  # non-empty → a real workdir
+    # Act
+    rewritten, plans = resolve_cold_start_targets(
+        [str(work)], caller_host="h", base_dir=tmp_path / "agents", dry_run=True
+    )
+    # Assert
+    assert rewritten == [] and plans[0].action == "would-create"

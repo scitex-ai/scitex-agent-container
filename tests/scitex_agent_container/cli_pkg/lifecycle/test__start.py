@@ -825,3 +825,61 @@ def test_start_command_exposes_strict_drift_flag():
     has_flag = "--strict-drift" in flag_names
     # Assert
     assert has_flag is True
+
+
+# ---------------------------------------------------------------------------
+# Cold-start forms (operator TODO 2026-06-17) — sac (agents) start <path|host>.
+# All use --dry-run so nothing launches or is written to the real agents root.
+# ---------------------------------------------------------------------------
+
+
+class TestColdStart:
+    def test_local_workdir_dry_run_prints_plan_and_exits_zero(self, tmp_path):
+        # Arrange — a non-empty project workdir (not an agents root).
+        work = tmp_path / "figdemo"
+        work.mkdir()
+        (work / "README.md").write_text("x")
+        # Act
+        result = CliRunner().invoke(start, [str(work), "--dry-run"])
+        # Assert
+        assert result.exit_code == 0
+
+    def test_local_workdir_dry_run_names_the_derived_label(self, tmp_path):
+        # Arrange
+        work = tmp_path / "figdemo"
+        work.mkdir()
+        (work / "README.md").write_text("x")
+        # Act
+        result = CliRunner().invoke(start, [str(work), "--dry-run"])
+        # Assert
+        assert "figdemo" in result.output
+
+    def test_local_workdir_dry_run_does_not_write_spec(self, tmp_path):
+        # Arrange
+        work = tmp_path / "figdemo-unique-xyz"
+        work.mkdir()
+        (work / "README.md").write_text("x")
+        # Act
+        CliRunner().invoke(start, [str(work), "--dry-run"])
+        # Assert — dry-run must not materialize into the real agents root.
+        from scitex_agent_container.cli_pkg._new import _default_base_dir
+
+        assert not (_default_base_dir() / "figdemo-unique-xyz").exists()
+
+    def test_json_dry_run_emits_cold_start_payload(self, tmp_path):
+        # Arrange
+        work = tmp_path / "figdemo"
+        work.mkdir()
+        (work / "README.md").write_text("x")
+        # Act
+        result = CliRunner().invoke(start, [str(work), "--dry-run", "--json"])
+        # Assert
+        assert "cold_start" in result.output
+
+    def test_malformed_form_fails_loud_exit_two(self):
+        # Arrange
+        arg = "fig@nohost"
+        # Act
+        result = CliRunner().invoke(start, [arg, "--dry-run"])
+        # Assert
+        assert result.exit_code == 2

@@ -259,6 +259,91 @@ def materialize_cold_start(
     )
 
 
+def _dir_has_agents_default(p: Path) -> bool:
+    """Fallback bulk-dir detector: any ``<child>/spec.yaml`` under ``p``.
+
+    The command injects the production ``_iter_agent_yamls`` (which also
+    accepts the ``<name>/<name>.yaml`` layout); this default keeps the helper
+    usable + unit-testable without importing the command (no import cycle).
+    """
+    try:
+        return any((c / "spec.yaml").is_file() for c in p.iterdir() if c.is_dir())
+    except OSError:
+        return False
+
+
+def _is_existing_spec_target(arg: str, dir_has_agents) -> bool:
+    """True when ``arg`` is an EXISTING spec/agent target — not a cold-start.
+
+    Guards the path-shaped cold-start forms (``/path``, ``.``) from hijacking
+    the existing ``sac start`` targets:
+
+      * a ``*.yaml`` / ``*.yml`` path → an explicit spec file;
+      * a directory containing ``spec.yaml`` → an agent dir;
+      * a directory that ``dir_has_agents`` recognizes as a bulk agents root.
+
+    Such targets flow through the existing resolver untouched. A plain project
+    *workdir* (no agent spec inside) is left for the cold-start parser.
+    """
+    if arg.endswith((".yaml", ".yml")):
+        return True
+    p = Path(arg).expanduser()
+    if not p.is_dir():
+        return False
+    if (p / "spec.yaml").is_file():
+        return True
+    if dir_has_agents(p):
+        return True
+    # An EMPTY directory is treated as an existing (empty) bulk target — the
+    # clean "nothing to start" no-op — not a cold-start workdir. A real project
+    # workdir is non-empty; cold-start needs ``.``/``<host>:``/``<label>@`` or a
+    # non-empty path. (Preserves the existing empty-bulk-dir contract.)
+    try:
+        return not any(p.iterdir())
+    except OSError:
+        return False
+
+
+def resolve_cold_start_targets(
+    targets,
+    *,
+    caller_host: str,
+    dry_run: bool = False,
+    force: bool = False,
+    base_dir: Path | None = None,
+    cwd: str | None = None,
+    dir_has_agents=None,
+):
+    """Rewrite raw ``sac start`` targets, materializing cold-start forms.
+
+    Returns ``(rewritten_targets, plans)``: ``rewritten_targets`` is the list to
+    hand to the existing launch flow (cold-start forms replaced by their agent
+    label; everything else passed through), and ``plans`` is the list of
+    :class:`ColdStartPlan` for the cold-started ones (for the "what's happening"
+    message + ``--json``). A ``dry_run`` ``would-create`` is NOT added to the
+    launch list (no spec exists yet to start). Raises
+    :class:`ColdStartParseError` / :class:`ColdStartConflictError` (fail-loud).
+    """
+    dir_has_agents = dir_has_agents or _dir_has_agents_default
+    rewritten: list[str] = []
+    plans: list[ColdStartPlan] = []
+    for t in targets:
+        if _is_existing_spec_target(t, dir_has_agents):
+            rewritten.append(t)
+            continue
+        cs = parse_start_target(t, caller_host=caller_host, cwd=cwd)
+        if cs is None:
+            rewritten.append(t)
+            continue
+        plan = materialize_cold_start(
+            cs, base_dir=base_dir, dry_run=dry_run, force=force
+        )
+        plans.append(plan)
+        if not (dry_run and plan.action == "would-create"):
+            rewritten.append(plan.label)
+    return rewritten, plans
+
+
 __all__ = [
     "ColdStartConflictError",
     "ColdStartParseError",
@@ -266,4 +351,5 @@ __all__ = [
     "ColdStartTarget",
     "materialize_cold_start",
     "parse_start_target",
+    "resolve_cold_start_targets",
 ]
