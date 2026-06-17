@@ -251,6 +251,86 @@ def test_tui_runtime_start_returns_true_on_success(
     assert ok is True
 
 
+def test_tui_runtime_start_invokes_turn_bridge_seam(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — record the config handed to the injected bridge-start seam
+    # (so start() wires A2A wake-on-push without spawning a real subprocess).
+    started: list = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=started.append,
+        turn_bridge_stop=lambda config: None,
+    )
+    config = _Config(name="bridge-start")
+    # Act
+    runtime.start(config)
+    # Assert
+    assert started == [config]
+
+
+def test_tui_runtime_stop_invokes_turn_bridge_stop_seam(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    stopped: list = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: None,
+        turn_bridge_stop=stopped.append,
+    )
+    config = _Config(name="bridge-stop")
+    runtime.start(config)
+    # Act
+    runtime.stop(config)
+    # Assert
+    assert stopped == [config]
+
+
+def test_tui_runtime_start_swallows_turn_bridge_failure(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a bridge-start seam that raises must NOT fail the start
+    # (wake-on-push is best-effort; the agent still runs).
+    def raise_bridge(config: object) -> None:
+        raise RuntimeError("bridge spawn failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=raise_bridge,
+        turn_bridge_stop=lambda config: None,
+    )
+    config = _Config(name="bridge-boom")
+    # Act
+    ok = runtime.start(config)
+    # Assert
+    assert ok is True
+
+
+def test_tui_runtime_stop_swallows_turn_bridge_failure(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a bridge-stop seam that raises must NOT block stop().
+    def raise_bridge(config: object) -> None:
+        raise RuntimeError("bridge teardown failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: None,
+        turn_bridge_stop=raise_bridge,
+    )
+    config = _Config(name="bridge-boom-stop")
+    runtime.start(config)
+    # Act
+    stopped = runtime.stop(config)
+    # Assert
+    assert stopped is True
+
+
 def test_tui_runtime_start_invokes_claude_binary_in_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:

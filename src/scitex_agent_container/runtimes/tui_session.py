@@ -164,6 +164,8 @@ class TuiSessionRuntime(RuntimeBase):
         multiplexer: Any | None = None,
         claude_bin: str = _CLAUDE_BIN_DEFAULT,
         command_builder: Any | None = None,
+        turn_bridge_start: Any | None = None,
+        turn_bridge_stop: Any | None = None,
     ) -> None:
         # Default to the real TmuxManager; tests pass an in-memory
         # MultiplexerProtocol fake. No mocks — the fake is a real
@@ -178,6 +180,15 @@ class TuiSessionRuntime(RuntimeBase):
         # returns a deterministic argv so the tmux-dispatch glue runs
         # without a real apptainer/SIF. Default = :meth:`_default_argv`.
         self._command_builder = command_builder or self._default_argv
+        # Injection seams for the A2A turn bridge — ``(config) -> Any``.
+        # The bridge gives a TUI agent the same ``/v1/turn`` endpoint the
+        # SDK runner serves, so a bus-pushed message WAKES the idle TUI
+        # (see :mod:`_tui_turn_bridge`). ``None`` → resolve the real
+        # launcher lazily at call time (avoids an import cycle:
+        # ``_tui_turn_bridge`` imports this module). Tests inject recording
+        # fakes so start()/stop() never spawn a real subprocess.
+        self._turn_bridge_start = turn_bridge_start
+        self._turn_bridge_stop = turn_bridge_stop
 
     def _default_argv(self, config: AgentConfig) -> list[str] | None:
         """Resolve the SIF and render the ``apptainer exec ... claude``
@@ -364,7 +375,57 @@ class TuiSessionRuntime(RuntimeBase):
             # flipped TUI agent sits at an empty ❯ — operator-facing
             # regression. Best-effort: failure logs + continues.
             self._inject_startup_prompts(config)
+        if started:
+            # A2A wake-on-push parity: give the interactive TUI the same
+            # ``/v1/turn`` endpoint the SDK runner serves so a bus-pushed
+            # message (the ``sac mcp channel`` subscriber's wake POST)
+            # DRIVES a turn in the idle TUI instead of timing out on a dead
+            # port. Best-effort — a failed bridge must not fail the start.
+            self._maybe_start_turn_bridge(config)
         return started
+
+    def _maybe_start_turn_bridge(self, config: AgentConfig) -> None:
+        """Start the A2A turn bridge (best-effort; lazy default seam).
+
+        Resolves the real launcher lazily to avoid the import cycle
+        (:mod:`_tui_turn_bridge` imports this module). Tests inject a
+        recording ``turn_bridge_start`` so no subprocess is spawned. A
+        no-op for agents without a resolved ``a2a.port`` (the launcher
+        itself returns None — see :func:`_tui_turn_bridge.start_turn_bridge`).
+        """
+        import logging
+
+        fn = self._turn_bridge_start
+        if fn is None:
+            from ._tui_turn_bridge import start_turn_bridge
+
+            fn = start_turn_bridge
+        try:
+            fn(config)
+        except Exception as exc:  # stx-allow: fallback (reason: a bridge spawn failure must never wedge agent start — the agent still runs, only wake-on-push is degraded; logged for the operator)
+            logging.getLogger(__name__).warning(
+                "TuiSessionRuntime: A2A turn bridge failed to start for %s: %s",
+                getattr(config, "name", "?"),
+                exc,
+            )
+
+    def _maybe_stop_turn_bridge(self, config: AgentConfig) -> None:
+        """Stop the A2A turn bridge (best-effort; lazy default seam)."""
+        import logging
+
+        fn = self._turn_bridge_stop
+        if fn is None:
+            from ._tui_turn_bridge import stop_turn_bridge
+
+            fn = stop_turn_bridge
+        try:
+            fn(config)
+        except Exception as exc:  # stx-allow: fallback (reason: bridge teardown is best-effort; a failure must not block stop())
+            logging.getLogger(__name__).warning(
+                "TuiSessionRuntime: A2A turn bridge failed to stop for %s: %s",
+                getattr(config, "name", "?"),
+                exc,
+            )
 
     def _inject_startup_prompts(self, config: AgentConfig) -> None:
         """Feed spec.startup_prompts as the first user turn(s).
@@ -429,6 +490,9 @@ class TuiSessionRuntime(RuntimeBase):
         ``TmuxManager.stop`` semantics so the supervisor's
         ``stop()->start()`` cycle remains idempotent).
         """
+        # Tear down the A2A turn bridge first so it stops accepting wake
+        # POSTs before the tmux session it injects into goes away.
+        self._maybe_stop_turn_bridge(config)
         name = session_name_for(config)
         return bool(self._mux.stop(name))
 
