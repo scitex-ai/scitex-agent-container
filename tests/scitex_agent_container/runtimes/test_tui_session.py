@@ -289,6 +289,48 @@ def test_tui_runtime_stop_invokes_turn_bridge_stop_seam(
     assert stopped == [config]
 
 
+def test_tui_runtime_start_swallows_turn_bridge_failure(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a bridge-start seam that raises must NOT fail the start
+    # (wake-on-push is best-effort; the agent still runs).
+    def raise_bridge(config: object) -> None:
+        raise RuntimeError("bridge spawn failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=raise_bridge,
+        turn_bridge_stop=lambda config: None,
+    )
+    config = _Config(name="bridge-boom")
+    # Act
+    ok = runtime.start(config)
+    # Assert
+    assert ok is True
+
+
+def test_tui_runtime_stop_swallows_turn_bridge_failure(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a bridge-stop seam that raises must NOT block stop().
+    def raise_bridge(config: object) -> None:
+        raise RuntimeError("bridge teardown failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: None,
+        turn_bridge_stop=raise_bridge,
+    )
+    config = _Config(name="bridge-boom-stop")
+    runtime.start(config)
+    # Act
+    stopped = runtime.stop(config)
+    # Assert
+    assert stopped is True
+
+
 def test_tui_runtime_start_invokes_claude_binary_in_session(
     mux: type[_MemoryMultiplexer],
 ) -> None:

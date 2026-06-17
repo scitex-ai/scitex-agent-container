@@ -208,7 +208,7 @@ def build_server(
     return _TurnBridgeServer((host, port), on_turn, agent_name)
 
 
-def serve(
+def serve(  # pragma: no cover - integration entry: installs main-thread-only signal handlers + blocks in serve_forever; the server logic is unit-tested via build_server, the full serve path is exercised end-to-end
     *, host: str, port: int, on_turn: Callable[[str], None], agent_name: str
 ) -> None:
     """Run the bridge server until the process is signalled. Blocking."""
@@ -233,18 +233,24 @@ def serve(
 # ---------------------------------------------------------------------------
 # Subprocess entry point
 # ---------------------------------------------------------------------------
-def _build_on_turn(config: AgentConfig) -> Callable[[str], None]:
+def _build_on_turn(
+    config: AgentConfig, *, runtime: Any | None = None
+) -> Callable[[str], None]:
     """Inject callback that drives one TUI turn via the tmux PTY.
 
-    Reuses :meth:`TuiSessionRuntime.send_turn` so the bridge inherits the
-    same modal-drain + input-ready gating an operator ``sac agents send``
-    gets. Raises when the session is gone so the handler answers 502 (the
-    channel subscriber's ``raise_for_status`` then surfaces it loud rather
-    than pretending the wake landed).
+    Calls :meth:`TuiSessionRuntime.send_turn` with ``wait_ready=False``
+    (see the inline note). Raises when the session is gone so the handler
+    answers 502 (the channel subscriber's ``raise_for_status`` then
+    surfaces it loud rather than pretending the wake landed). ``runtime``
+    is a test seam — production constructs the real
+    :class:`TuiSessionRuntime`.
     """
-    from .tui_session import TuiSessionRuntime
+    if (
+        runtime is None
+    ):  # pragma: no cover - trivial default-construct of the real runtime
+        from .tui_session import TuiSessionRuntime
 
-    runtime = TuiSessionRuntime()
+        runtime = TuiSessionRuntime()
 
     def on_turn(text: str) -> None:
         # ``wait_ready=False`` → the bare send_text_and_submit primitive
@@ -267,7 +273,9 @@ def _build_on_turn(config: AgentConfig) -> Callable[[str], None]:
     return on_turn
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+) -> int:  # pragma: no cover - subprocess entry: parses args, loads the spec, and blocks in serve(); exercised end-to-end (the launcher spawns it), not unit
     parser = argparse.ArgumentParser(prog="tui-turn-bridge")
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--port", type=int, required=True)

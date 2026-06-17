@@ -18,6 +18,7 @@ assert + STX-TQ003 descriptive names.
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -28,6 +29,11 @@ from typing import Callable, Iterator
 import pytest
 
 from scitex_agent_container.runtimes import _tui_turn_bridge as bridge
+
+# A realistic resolved a2a port + a fake PID for the bridge tests
+# (PEP 515 separators satisfy STX-NL001).
+_PORT = 19_007
+_PID = 4_242
 
 
 # ---------------------------------------------------------------------------
@@ -65,11 +71,11 @@ def test_is_turn_route_rejects_named_route_for_other_agent() -> None:
 # ---------------------------------------------------------------------------
 def test_resolved_a2a_port_returns_int_when_resolved() -> None:
     # Arrange
-    config = SimpleNamespace(a2a=SimpleNamespace(port=19007))
+    config = SimpleNamespace(a2a=SimpleNamespace(port=_PORT))
     # Act
     port = bridge.resolved_a2a_port(config)
     # Assert
-    assert port == 19007
+    assert port == _PORT
 
 
 def test_resolved_a2a_port_none_when_port_is_auto_string() -> None:
@@ -238,10 +244,10 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
 
     def fake_spawn(argv, **kwargs):
         recorded["argv"] = list(argv)
-        return SimpleNamespace(pid=4242)
+        return SimpleNamespace(pid=_PID)
 
     config = SimpleNamespace(
-        a2a=SimpleNamespace(port=19007), name="figrecipe", config_path=str(spec)
+        a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
     # Act
     bridge.start_turn_bridge(config, spawn=fake_spawn)
@@ -256,14 +262,14 @@ def test_start_turn_bridge_returns_spawned_pid(
     spec = tmp_path / "spec.yaml"
     spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
     config = SimpleNamespace(
-        a2a=SimpleNamespace(port=19007), name="figrecipe", config_path=str(spec)
+        a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
     # Act
     pid = bridge.start_turn_bridge(
-        config, spawn=lambda argv, **kw: SimpleNamespace(pid=4242)
+        config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID)
     )
     # Assert
-    assert pid == 4242
+    assert pid == _PID
 
 
 def test_stop_turn_bridge_noop_when_no_pid_file(
@@ -271,9 +277,76 @@ def test_stop_turn_bridge_noop_when_no_pid_file(
 ) -> None:
     # Arrange — no bridge was ever started for this agent.
     config = SimpleNamespace(
-        a2a=SimpleNamespace(port=19007), name="never-started", config_path=""
+        a2a=SimpleNamespace(port=_PORT), name="never-started", config_path=""
     )
     # Act
     stopped = bridge.stop_turn_bridge(config)
     # Assert
     assert stopped is False
+
+
+# ---------------------------------------------------------------------------
+# _build_on_turn — the inject callback (runtime DI seam, no tmux)
+# ---------------------------------------------------------------------------
+def test_build_on_turn_passes_text_and_wait_ready_false() -> None:
+    # Arrange — a recording runtime whose send_turn reports delivered.
+    seen: list = []
+
+    def fake_send_turn(config, text, wait_ready):
+        seen.append((text, wait_ready))
+        return True
+
+    runtime = SimpleNamespace(send_turn=fake_send_turn)
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="a"), runtime=runtime)
+    # Act
+    on_turn("wake up")
+    # Assert
+    assert seen == [("wake up", False)]
+
+
+def test_build_on_turn_raises_when_session_absent() -> None:
+    # Arrange — send_turn reports the session does not exist (returns False).
+    runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: False)
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="ghost"), runtime=runtime)
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError):
+        on_turn("wake up")
+
+
+# ---------------------------------------------------------------------------
+# Launcher — spawn-failure + real SIGTERM teardown
+# ---------------------------------------------------------------------------
+def test_start_turn_bridge_returns_none_on_spawn_failure(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — spawn raises; the launcher must swallow it and return None.
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+
+    def raising_spawn(argv, **kwargs):
+        raise OSError("exec failed")
+
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT), name="boom", config_path=str(spec)
+    )
+    # Act
+    pid = bridge.start_turn_bridge(config, spawn=raising_spawn)
+    # Assert
+    assert pid is None
+
+
+def test_stop_turn_bridge_sigterms_recorded_pid(isolated_home: Path) -> None:
+    # Arrange — a REAL short-lived process whose PID is recorded as the bridge.
+    proc = subprocess.Popen(["sleep", "30"])
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT), name="kill-me", config_path=""
+    )
+    pid_path = bridge._pid_path(config)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+    # Act
+    stopped = bridge.stop_turn_bridge(config)
+    # Assert
+    assert stopped is True
+    proc.wait(timeout=5)
