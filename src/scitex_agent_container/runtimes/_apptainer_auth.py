@@ -179,7 +179,73 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     return argv
 
 
-def credentials_file_bind(config: AgentConfig) -> list[str]:
+class CredentialExpiredError(RuntimeError):
+    """Raised when ``spec.claude.credentials_file`` resolves to an expired
+    or unverifiable OAuth credential.
+
+    Mirrors :class:`_apptainer_creds.PinnedAccountError`'s fail-loud
+    contract for the EXPLICIT-file path. ``resolve_cred_file`` only
+    expiry-checks the ``spec.claude.account`` branch; the explicit-file
+    branch was not checked, so a pinned ``credentials_file`` whose token
+    had expired was still bound ``:rw`` into the SIF. The in-container
+    ``claude`` then 401'd and exited before rendering, and
+    ``sac agents start`` collapsed to the opaque "runtime.start()
+    returned False / <empty — inner process exited before any output>"
+    failure with no cause (2026-06-17 ``ywatanabe-scitex-ai``). The
+    message names the resolved path and the remedy (``claude /login``
+    then re-snapshot) so the operator's next step is unambiguous.
+    """
+
+
+def _assert_credential_unexpired(
+    src: Path, *, origin: str, now: float | None = None
+) -> None:
+    """Fail loud if ``src`` has no verifiable, in-the-future OAuth expiry.
+
+    Reuses :func:`_account.creds_sync._read_oauth_expiry_seconds` (the
+    same ms→s normaliser the account-pinned resolver and the host
+    snapshot refreshers use) so every credential-freshness check in the
+    codebase agrees. ``now`` is a real-time injection seam for tests;
+    production passes ``None`` → ``time.time()``.
+
+    Raises :class:`CredentialExpiredError` when the file carries no
+    numeric ``claudeAiOauth.expiresAt`` (unverifiable) or that expiry is
+    already in the past (stale). Matches the account-pinned contract: a
+    launch-time-expired PINNED credential is an operator/refresher
+    problem to fix BEFORE launch, not something to bind-and-hope the
+    in-container ~1h refresh rescues — a dead refresh token cannot, which
+    is exactly how the opaque empty-pane failure arises.
+    """
+    import time
+
+    from .._account.creds_sync import _read_oauth_expiry_seconds
+
+    expiry = _read_oauth_expiry_seconds(src)
+    now_ts = now if now is not None else time.time()
+    if expiry is None:
+        raise CredentialExpiredError(
+            f"credentials file {src} ({origin}) has no numeric "
+            "`claudeAiOauth.expiresAt` — refusing to launch with an "
+            "unverifiable token. Fix: `claude /login` to that account on "
+            "this host, then `sac accounts save <account>` (snapshot it) "
+            "or `sac accounts sync-live`, and restart this agent."
+        )
+    if expiry <= now_ts:
+        ago = int(now_ts - expiry)
+        raise CredentialExpiredError(
+            f"credentials file {src} ({origin}) expired {ago}s ago — "
+            "refusing to launch a pinned agent with a stale token. The "
+            "in-container claude would 401 and exit before rendering, "
+            "surfacing only as an empty pane. Fix: `claude /login` to "
+            "that account on this host, then `sac accounts save "
+            "<account>` (or `sac accounts sync-live`), and restart this "
+            "agent."
+        )
+
+
+def credentials_file_bind(
+    config: AgentConfig, *, now: float | None = None
+) -> list[str]:
     """Render the writable file-bind for the agent's credentials file.
 
     Emitted LAST in :func:`_apptainer_build_argv.build_run_argv` (after
@@ -234,6 +300,14 @@ def credentials_file_bind(config: AgentConfig) -> list[str]:
                 "(the agent mounts it writable at $HOME/.claude/"
                 ".credentials.json as its single source of truth)."
             )
+        # Fail loud on an EXPIRED/unverifiable pinned credential BEFORE
+        # binding it into the SIF. The account branch below is already
+        # expiry-checked by ``resolve_cred_file`` (→ PinnedAccountError);
+        # the explicit-file branch was not, so a dead pinned token bound
+        # :rw made the in-container claude 401 and exit, collapsing
+        # ``sac agents start`` into the opaque "runtime.start() returned
+        # False / empty pane" failure (2026-06-17 ywatanabe-scitex-ai).
+        _assert_credential_unexpired(src, origin=src_origin, now=now)
     elif str(getattr(claude_spec, "account", "") or "").strip():
         # Account-pinned auto-resolution (operator+lead 2026-06-15):
         # delegate to the SDK-path resolver so SDK and TUI agree on
@@ -268,4 +342,4 @@ def credentials_file_bind(config: AgentConfig) -> list[str]:
     return ["--bind", f"{src}:{dest}:rw"]
 
 
-__all__ = ["auth_argv", "credentials_file_bind"]
+__all__ = ["CredentialExpiredError", "auth_argv", "credentials_file_bind"]

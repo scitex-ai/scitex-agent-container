@@ -37,7 +37,10 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.config import load_config
-from scitex_agent_container.runtimes._apptainer_auth import credentials_file_bind
+from scitex_agent_container.runtimes._apptainer_auth import (
+    CredentialExpiredError,
+    credentials_file_bind,
+)
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     build_inner_argv,
@@ -209,10 +212,15 @@ def test_credentials_file_bind_empty_when_unset(tui_config) -> None:
 
 
 def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
-    # Arrange — a designated credentials file on disk.
+    # Arrange — a designated credentials file on disk carrying a valid,
+    # unexpired OAuth token (the bind now fails loud on a stale or
+    # unverifiable pinned credential — see the expiry tests below).
     creds = tmp_path / "acct" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
-    creds.write_text("{}", encoding="utf-8")
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
     spec = _write_spec(
         tmp_path,
         _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
@@ -290,7 +298,8 @@ def test_credentials_file_bind_explicit_file_wins_over_account(
     explicit = tmp_path / "explicit" / ".credentials.json"
     explicit.parent.mkdir(parents=True, exist_ok=True)
     explicit.write_text(
-        '{"claudeAiOauth": {"accessToken": "explicit"}}', encoding="utf-8"
+        '{"claudeAiOauth": {"accessToken": "explicit", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
     )
     spec = _write_spec(
         tmp_path,
@@ -327,6 +336,52 @@ def test_credentials_file_bind_account_pinned_raises_on_missing_snapshot(
     # Act
     # Assert
     with pytest.raises(PinnedAccountError, match=r"nonexistent-account"):
+        credentials_file_bind(config)
+
+
+def test_credentials_file_bind_designated_expired_token_fails_loud(
+    tmp_path: Path,
+) -> None:
+    # Arrange — designate a credentials file whose OAuth token expired in
+    # the past relative to the injected ``now``. Before this guard the
+    # expired file was bound :rw and the in-container claude 401'd and
+    # exited, surfacing only as the opaque empty-pane start failure.
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "stale", "expiresAt": 1700000000000}}',
+        encoding="utf-8",
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
+    )
+    config = load_config(str(spec))
+    # Act — ``now`` (2027) is well after the token's 2023 expiry.
+    # Assert
+    with pytest.raises(CredentialExpiredError, match=r"expired"):
+        credentials_file_bind(config, now=1_800_000_000.0)
+
+
+def test_credentials_file_bind_designated_missing_expiry_fails_loud(
+    tmp_path: Path,
+) -> None:
+    # Arrange — designate a credentials file with no numeric expiresAt;
+    # the token cannot be verified fresh, so the launch must abort loud
+    # rather than bind an unverifiable credential.
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "no-expiry"}}', encoding="utf-8"
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
+    )
+    config = load_config(str(spec))
+    # Act
+    # Assert
+    with pytest.raises(CredentialExpiredError, match=r"unverifiable"):
         credentials_file_bind(config)
 
 
@@ -505,10 +560,13 @@ def test_tui_channel_config_command_is_resolved_sac_path(tmp_path) -> None:
 
 
 def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:
-    # Arrange — designated creds + a real spec.
+    # Arrange — designated creds (valid, unexpired) + a real spec.
     creds = tmp_path / "acct" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
-    creds.write_text("{}", encoding="utf-8")
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
     spec = _write_spec(
         tmp_path,
         _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
