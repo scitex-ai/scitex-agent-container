@@ -128,7 +128,7 @@ class _TurnBridgeServer(ThreadingHTTPServer):
     def __init__(
         self,
         server_address: tuple[str, int],
-        on_turn: Callable[[str], None],
+        on_turn: Callable[..., None],
         agent_name: str,
     ) -> None:
         super().__init__(server_address, _TurnBridgeHandler)
@@ -185,8 +185,16 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         if not isinstance(text, str) or not text.strip():
             self._respond(400, {"error": "missing or empty 'text' field"})
             return
+        # Requester identity (optional) — the peer that dispatched this
+        # wake. Threaded to on_turn so the inbound is recorded in the
+        # ledger for the Stop-hook completion report (SDK parity). Absent
+        # for an operator send / boot turn → no report is owed.
+        raw_from = body.get("from_agent") if isinstance(body, dict) else None
+        raw_did = body.get("dispatch_id") if isinstance(body, dict) else None
+        from_agent = raw_from if isinstance(raw_from, str) and raw_from else None
+        dispatch_id = raw_did if isinstance(raw_did, str) and raw_did else None
         try:
-            srv.on_turn(text)
+            srv.on_turn(text, from_agent=from_agent, dispatch_id=dispatch_id)
         except Exception as exc:  # stx-allow: fallback (reason: surface inject failure as 502 instead of crashing the bridge; the wake POST's raise_for_status then propagates it loud to the channel subscriber)
             self._respond(502, {"error": f"tui inject failed: {exc}"})
             return
@@ -202,14 +210,14 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
 
 
 def build_server(
-    *, host: str, port: int, on_turn: Callable[[str], None], agent_name: str
+    *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
 ) -> _TurnBridgeServer:
     """Construct (but do not run) the bridge server. Test seam."""
     return _TurnBridgeServer((host, port), on_turn, agent_name)
 
 
 def serve(  # pragma: no cover - integration entry: installs main-thread-only signal handlers + blocks in serve_forever; the server logic is unit-tested via build_server, the full serve path is exercised end-to-end
-    *, host: str, port: int, on_turn: Callable[[str], None], agent_name: str
+    *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
 ) -> None:
     """Run the bridge server until the process is signalled. Blocking."""
     server = build_server(host=host, port=port, on_turn=on_turn, agent_name=agent_name)
@@ -235,7 +243,7 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
 # ---------------------------------------------------------------------------
 def _build_on_turn(
     config: AgentConfig, *, runtime: Any | None = None
-) -> Callable[[str], None]:
+) -> Callable[..., None]:
     """Inject callback that drives one TUI turn via the tmux PTY.
 
     Calls :meth:`TuiSessionRuntime.send_turn` with ``wait_ready=False``
@@ -244,6 +252,14 @@ def _build_on_turn(
     surfaces it loud rather than pretending the wake landed). ``runtime``
     is a test seam — production constructs the real
     :class:`TuiSessionRuntime`.
+
+    When the wake carries a ``from_agent`` (the dispatching peer), the
+    inbound is RECORDED into the DB-backed inbound ledger BEFORE the
+    inject, so the agent's ``Stop`` hook can push a dispatch-correlated
+    completion report back to that requester (SDK-parity outbound — see
+    :mod:`_tui_outbound`). Recording is best-effort: a ledger-write
+    failure logs but never blocks delivering the turn (the agent still
+    wakes; only the auto-report is lost).
     """
     if (
         runtime is None
@@ -252,7 +268,29 @@ def _build_on_turn(
 
         runtime = TuiSessionRuntime()
 
-    def on_turn(text: str) -> None:
+    def on_turn(
+        text: str,
+        *,
+        from_agent: str | None = None,
+        dispatch_id: str | None = None,
+    ) -> None:
+        if from_agent:
+            try:
+                from ._tui_outbound import record_dispatch
+                from .tui_session import state_dir_for_config
+
+                record_dispatch(
+                    db_path=state_dir_for_config(config) / "state.db",
+                    agent=config.name,
+                    from_agent=from_agent,
+                    dispatch_id=dispatch_id,
+                )
+            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged for the operator)
+                logging.getLogger(__name__).warning(
+                    "tui-outbound: failed to record inbound dispatch for %s: %s",
+                    config.name,
+                    exc,
+                )
         # ``wait_ready=False`` → the bare send_text_and_submit primitive
         # (text + Enter), the operator-confirmed delivery path
         # (``send_turn`` itself defaults to it for that reason). The full
