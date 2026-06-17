@@ -484,10 +484,7 @@ def a2a_grants(as_json: bool) -> None:
     "--url",
     "base_url",
     default=None,
-    help=(
-        "Listen base URL. Default: $SAC_LISTEN_BASE_URL or "
-        "http://127.0.0.1:7878."
-    ),
+    help=("Listen base URL. Default: $SAC_LISTEN_BASE_URL or http://127.0.0.1:7878."),
 )
 def a2a_list(as_json: bool, base_url: str | None) -> None:
     """List every peer registered on the local ``sac listen`` (the a2a registry).
@@ -509,9 +506,7 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
 
     from .._listen.tokens import default_token_path, read_token
 
-    url = base_url or os.environ.get(
-        "SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878"
-    )
+    url = base_url or os.environ.get("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
     token = os.environ.get("SAC_LISTEN_BEARER")
     if not token:
         token = read_token(default_token_path())
@@ -522,17 +517,18 @@ def a2a_list(as_json: bool, base_url: str | None) -> None:
             "Is `sac listen` running on this host?"
         )
 
-    req = urllib.request.Request(url.rstrip("/") + "/agents")
-    req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=6.0) as resp:
-            payload = json.loads(resp.read().decode())
-    except urllib.error.URLError as exc:
-        raise SystemExit(
-            f"sac a2a list: cannot reach listen at {url}: {exc}"
-        ) from exc
+    # Fail-loud, no raw traceback: fetch_agents maps every reach/read/parse
+    # failure (URLError, socket timeout, OSError, non-JSON / odd body) to one
+    # clean A2aListError. The inline version only caught URLError, so a socket
+    # timeout on a loaded runner or a non-JSON body crashed UNHANDLED and broke
+    # callers shelling out to `sac a2a list --json` (scitex-dev 2026-06-17:
+    # Spartan runner bm159 → todo /fleet/mesh 500'd → CI blocked).
+    from ._a2a_list_fetch import A2aListError, fetch_agents
 
-    agents = payload.get("agents", [])
+    try:
+        agents = fetch_agents(url, token)
+    except A2aListError as exc:
+        raise SystemExit(f"sac a2a list: {exc}") from exc
     if as_json:
         click.echo(json.dumps(agents, ensure_ascii=False))
         return
