@@ -96,7 +96,7 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
     servers = []
     threads = []
 
-    def start(on_turn: Callable[[str], None], agent_name: str = "figrecipe") -> int:
+    def start(on_turn: Callable[..., None], agent_name: str = "figrecipe") -> int:
         server = bridge.build_server(
             host="127.0.0.1", port=0, on_turn=on_turn, agent_name=agent_name
         )
@@ -133,7 +133,7 @@ def _post(port: int, path: str, body: dict | None) -> tuple[int, dict]:
 def test_post_v1_turn_delivers_text_to_on_turn(bridge_factory) -> None:
     # Arrange
     received: list[str] = []
-    port = bridge_factory(received.append)
+    port = bridge_factory(lambda text, **_kw: received.append(text))
     # Act
     _post(port, "/v1/turn", {"text": "hello fleet"})
     # Assert
@@ -142,7 +142,7 @@ def test_post_v1_turn_delivers_text_to_on_turn(bridge_factory) -> None:
 
 def test_post_v1_turn_returns_200_delivered_true(bridge_factory) -> None:
     # Arrange
-    port = bridge_factory(lambda text: None)
+    port = bridge_factory(lambda text, **_kw: None)
     # Act
     status, body = _post(port, "/v1/turn", {"text": "hi there"})
     # Assert
@@ -152,16 +152,37 @@ def test_post_v1_turn_returns_200_delivered_true(bridge_factory) -> None:
 def test_post_named_turn_route_delivers_for_this_agent(bridge_factory) -> None:
     # Arrange
     received: list[str] = []
-    port = bridge_factory(received.append, agent_name="figrecipe")
+    port = bridge_factory(
+        lambda text, **_kw: received.append(text), agent_name="figrecipe"
+    )
     # Act
     _post(port, "/agents/figrecipe/turn", {"text": "named route"})
     # Assert
     assert received == ["named route"]
 
 
+def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
+    # Arrange — capture the requester kwargs the handler forwards.
+    seen: dict = {}
+
+    def rec(text: str, *, from_agent=None, dispatch_id=None) -> None:
+        seen["from_agent"] = from_agent
+        seen["dispatch_id"] = dispatch_id
+
+    port = bridge_factory(rec)
+    # Act
+    _post(
+        port,
+        "/v1/turn",
+        {"text": "hi", "from_agent": "lead", "dispatch_id": "d1"},
+    )
+    # Assert
+    assert seen == {"from_agent": "lead", "dispatch_id": "d1"}
+
+
 def test_post_missing_text_field_returns_400(bridge_factory) -> None:
     # Arrange
-    port = bridge_factory(lambda text: None)
+    port = bridge_factory(lambda text, **_kw: None)
     # Act
     status, _body = _post(port, "/v1/turn", {"no_text_here": "x"})
     # Assert
@@ -170,7 +191,7 @@ def test_post_missing_text_field_returns_400(bridge_factory) -> None:
 
 def test_post_inject_failure_returns_502(bridge_factory) -> None:
     # Arrange
-    def raise_session_gone(text: str) -> None:
+    def raise_session_gone(text: str, **_kw: object) -> None:
         raise RuntimeError("session gone")
 
     port = bridge_factory(raise_session_gone)
@@ -182,7 +203,7 @@ def test_post_inject_failure_returns_502(bridge_factory) -> None:
 
 def test_post_unknown_route_returns_404(bridge_factory) -> None:
     # Arrange
-    port = bridge_factory(lambda text: None)
+    port = bridge_factory(lambda text, **_kw: None)
     # Act
     status, _body = _post(port, "/not/a/turn", {"text": "hi"})
     # Assert
@@ -191,7 +212,7 @@ def test_post_unknown_route_returns_404(bridge_factory) -> None:
 
 def test_health_get_returns_200(bridge_factory) -> None:
     # Arrange
-    port = bridge_factory(lambda text: None)
+    port = bridge_factory(lambda text, **_kw: None)
     # Act
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as resp:
         status = resp.status
