@@ -641,3 +641,120 @@ def test_safe_account_for_returns_string_on_none_config():
     result = _al._safe_account_for(cfg)
     # Assert
     assert isinstance(result, str) and result
+
+
+# ---------------------------------------------------------------------------
+# _is_ghost_row — dead-registry-entry filter (operator 2026-06-17:
+# `sac agents list` should show only active agents by default).
+# ---------------------------------------------------------------------------
+
+
+def test_local_row_with_file_not_found_is_a_ghost():
+    # Arrange — a stale local registry entry whose spec was deleted (e.g. a
+    # pytest-temp dir cleaned up after the run).
+    row = {
+        "host": "local",
+        "validation_errors": [
+            "File not found: /tmp/pytest-.../agents/archive-target/spec.yaml"
+        ],
+    }
+    # Act
+    result = _al._is_ghost_row(row)
+    # Assert
+    assert result is True
+
+
+def test_local_row_with_valid_spec_is_not_a_ghost():
+    # Arrange — a real defined agent (no validation errors).
+    row = {"host": "local", "validation_errors": []}
+    # Act
+    result = _al._is_ghost_row(row)
+    # Assert
+    assert result is False
+
+
+def test_invalid_schema_row_is_not_a_ghost():
+    # Arrange — a real on-disk spec that fails schema validation must STAY
+    # visible (operator needs to see + fix it); only a MISSING file is a ghost.
+    row = {
+        "host": "local",
+        "validation_errors": ["kind must be one of ['Agent', 'AgentProxy'], got None"],
+    }
+    # Act
+    result = _al._is_ghost_row(row)
+    # Assert
+    assert result is False
+
+
+def test_remote_row_is_never_a_ghost_even_if_spec_missing_locally():
+    # Arrange — a remote agent's spec lives on its own host; a local
+    # "File not found" must NOT hide it (it would erase the fleet view).
+    row = {
+        "host": "spartan-bm159",
+        "validation_errors": ["File not found: /home/.../spec.yaml"],
+    }
+    # Act
+    result = _al._is_ghost_row(row)
+    # Assert
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# print_agent_list — active-only / verbose / --all rendering (operator 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+def test_print_agent_list_hides_ghost_and_shows_hidden_footer(capsys, tmp_path):
+    # Arrange — a real agent + a ghost (registry entry whose spec file is gone).
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [
+            {"name": "good", "config": str(good), "screen": "s", "started_at": "ts"},
+            {"name": "deadrow", "config": str(tmp_path / "gone" / "spec.yaml")},
+        ]
+    )
+    # Act — default view.
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — ghost row hidden + footer shown ("deadrow" avoids collision
+    # with the footer's own "stale/ghost" wording).
+    out = capsys.readouterr().out
+    assert "deadrow" not in out and "hidden" in out
+
+
+def test_print_agent_list_show_all_includes_ghost(capsys, tmp_path):
+    # Arrange
+    registry = _FakeRegistry(
+        [{"name": "ghost", "config": str(tmp_path / "gone" / "spec.yaml")}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, show_all=True)
+    # Assert
+    assert "ghost" in capsys.readouterr().out
+
+
+def test_print_agent_list_verbose_adds_path_column(capsys, tmp_path):
+    # Arrange
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, verbose=True)
+    # Assert — the Path header appears only in verbose mode.
+    assert "Path" in capsys.readouterr().out
+
+
+def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
+    # Arrange
+    good = _write_valid_spec(tmp_path / "good")
+    registry = _FakeRegistry(
+        [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "Path" not in capsys.readouterr().out
