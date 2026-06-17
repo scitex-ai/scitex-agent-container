@@ -37,7 +37,10 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.config import load_config
-from scitex_agent_container.runtimes._apptainer_auth import credentials_file_bind
+from scitex_agent_container.runtimes._apptainer_auth import (
+    CredentialExpiredError,
+    credentials_file_bind,
+)
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     build_inner_argv,
@@ -209,10 +212,15 @@ def test_credentials_file_bind_empty_when_unset(tui_config) -> None:
 
 
 def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
-    # Arrange — a designated credentials file on disk.
+    # Arrange — a designated credentials file on disk carrying a valid,
+    # unexpired OAuth token (the bind now fails loud on a stale or
+    # unverifiable pinned credential — see the expiry tests below).
     creds = tmp_path / "acct" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
-    creds.write_text("{}", encoding="utf-8")
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
     spec = _write_spec(
         tmp_path,
         _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
@@ -290,7 +298,8 @@ def test_credentials_file_bind_explicit_file_wins_over_account(
     explicit = tmp_path / "explicit" / ".credentials.json"
     explicit.parent.mkdir(parents=True, exist_ok=True)
     explicit.write_text(
-        '{"claudeAiOauth": {"accessToken": "explicit"}}', encoding="utf-8"
+        '{"claudeAiOauth": {"accessToken": "explicit", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
     )
     spec = _write_spec(
         tmp_path,
@@ -327,6 +336,52 @@ def test_credentials_file_bind_account_pinned_raises_on_missing_snapshot(
     # Act
     # Assert
     with pytest.raises(PinnedAccountError, match=r"nonexistent-account"):
+        credentials_file_bind(config)
+
+
+def test_credentials_file_bind_designated_expired_token_fails_loud(
+    tmp_path: Path,
+) -> None:
+    # Arrange — designate a credentials file whose OAuth token expired in
+    # the past relative to the injected ``now``. Before this guard the
+    # expired file was bound :rw and the in-container claude 401'd and
+    # exited, surfacing only as the opaque empty-pane start failure.
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "stale", "expiresAt": 1700000000000}}',
+        encoding="utf-8",
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
+    )
+    config = load_config(str(spec))
+    # Act — ``now`` (2027) is well after the token's 2023 expiry.
+    # Assert
+    with pytest.raises(CredentialExpiredError, match=r"expired"):
+        credentials_file_bind(config, now=1_800_000_000.0)
+
+
+def test_credentials_file_bind_designated_missing_expiry_fails_loud(
+    tmp_path: Path,
+) -> None:
+    # Arrange — designate a credentials file with no numeric expiresAt;
+    # the token cannot be verified fresh, so the launch must abort loud
+    # rather than bind an unverifiable credential.
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "no-expiry"}}', encoding="utf-8"
+    )
+    spec = _write_spec(
+        tmp_path,
+        _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),
+    )
+    config = load_config(str(spec))
+    # Act
+    # Assert
+    with pytest.raises(CredentialExpiredError, match=r"unverifiable"):
         credentials_file_bind(config)
 
 
@@ -403,6 +458,24 @@ def test_tui_channel_config_registers_sac_channel_subscriber(tmp_path) -> None:
     assert channel_mcp is not None and "mcp" in channel_mcp and "channel" in channel_mcp
 
 
+def test_tui_channel_config_sac_subscriber_resolves_across_venvs(tmp_path) -> None:
+    # Arrange — a server:sac channel spec.
+    spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
+    config = load_config(str(spec))
+    # Act
+    _, channel_mcp = tui_channel_config(config)
+    # Assert — the subscriber command is a spawn-time /bin/sh resolver
+    # that tries BOTH known venv locations (robust to the SIF layout flip
+    # that silently broke server:sac on 2026-06-17), not a single
+    # hardcoded path that goes stale on the next image rebuild.
+    assert (
+        channel_mcp is not None
+        and '"command": "/bin/sh"' in channel_mcp
+        and "/opt/venv-sac/bin/sac" in channel_mcp
+        and "/opt/venv-agent/bin/sac" in channel_mcp
+    )
+
+
 def test_build_run_argv_tui_adds_dev_channels_flag(
     tmp_path, listen_bearer_token
 ) -> None:
@@ -438,17 +511,18 @@ def test_build_run_argv_tui_injects_channel_subscriber_mcp(
     )
     # Assert — the inline sac-channel subscriber rides on --mcp-config
     # (preflight-wrapped on non-relaxed specs, so check the joined argv).
-    # The command must be the in-SIF absolute path of the `sac` console
-    # script. The default is /opt/venv-agent/bin/sac (verified in
-    # sac-base.sif 2026-06-15; the old /opt/venv-sac/bin/sac hardcode
-    # was wrong — the binary lives under the agent venv, not the SDK
-    # venv). The bare command must NOT be just `sac` (PR #407 silent-
-    # exec-fail class).
+    # The command resolves sac's in-SIF path at SPAWN time via /bin/sh
+    # across the known venv candidates (robust to SIF layout — a single
+    # hardcode silently broke server:sac when sac-base.sif moved it from
+    # /opt/venv-agent to /opt/venv-sac, 2026-06-17). The resolver must
+    # reference the current sac-base.sif location and still drive
+    # `sac ... channel`. A bare `"command": "sac"` would silent-exec-fail
+    # under --containall (PR #407 class); the absolute candidates avoid it.
     joined = " ".join(argv)
-    assert '"command": "/opt/venv-agent/bin/sac"' in joined and '"channel"' in joined
+    assert "/opt/venv-sac/bin/sac" in joined and '"channel"' in joined
 
 
-def test_resolve_sac_bin_in_sif_returns_agent_venv_path() -> None:
+def test_resolve_sac_bin_in_sif_returns_sac_venv_path() -> None:
     # Arrange — no override
     saved = os.environ.pop("SAC_BIN_IN_SIF", None)
     try:
@@ -458,10 +532,11 @@ def test_resolve_sac_bin_in_sif_returns_agent_venv_path() -> None:
         )
 
         path = resolve_sac_bin_in_sif()
-        # Assert — the verified in-SIF default. If someone changes this
-        # they must verify with `ls /opt/venv-agent/bin/sac` inside the
-        # running SIF and update both the constant and this test.
-        assert path == "/opt/venv-agent/bin/sac"
+        # Assert — the verified current sac-base.sif location (2026-06-17:
+        # `ls /opt/venv-{agent,sac}/bin/sac` → only venv-sac exists). The
+        # channel MCP itself resolves across candidates at spawn time;
+        # this single-path helper just must not point at a phantom path.
+        assert path == "/opt/venv-sac/bin/sac"
     finally:
         if saved is not None:
             os.environ["SAC_BIN_IN_SIF"] = saved
@@ -496,19 +571,23 @@ def test_tui_channel_config_command_is_resolved_sac_path(tmp_path) -> None:
     config = load_config(str(spec))
     # Act
     _, channel_mcp = tui_channel_config(config)
-    # Assert — the inline JSON's command is the resolver's value
-    # (defaults to /opt/venv-agent/bin/sac for sac-base.sif). The
-    # legacy /opt/venv-sac/bin/sac would silently fail exec inside
-    # the SIF since the binary does not exist there. ``"" in None``
-    # would TypeError, so the None-check is structurally embedded.
-    assert '"command": "/opt/venv-agent/bin/sac"' in (channel_mcp or "")
+    # Assert — the inline JSON's command is the /bin/sh spawn-time
+    # resolver, NOT a single hardcoded venv path (the
+    # /opt/venv-agent/bin/sac hardcode silently broke server:sac on
+    # 2026-06-17 when sac-base.sif shipped sac under /opt/venv-sac).
+    # The resolver exec's the first executable candidate inside the SIF.
+    # ``"" in None`` would TypeError, so the None-check is embedded.
+    assert '"command": "/bin/sh"' in (channel_mcp or "")
 
 
 def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:
-    # Arrange — designated creds + a real spec.
+    # Arrange — designated creds (valid, unexpired) + a real spec.
     creds = tmp_path / "acct" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
-    creds.write_text("{}", encoding="utf-8")
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
     spec = _write_spec(
         tmp_path,
         _BASE_SPEC.format(extra=f"    credentials_file: {creds}"),

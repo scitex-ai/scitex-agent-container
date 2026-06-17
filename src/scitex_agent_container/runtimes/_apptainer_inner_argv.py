@@ -292,49 +292,50 @@ def _tui_runner_argv(
     return argv
 
 
-# Absolute path to the bundled ``sac`` console-script inside the base
-# SIF (sac-base.sif as of 2026-06-15). The script is installed under the
-# agent venv (``/opt/venv-agent/bin/sac``), NOT the SDK venv
-# (``/opt/venv-sac/bin/sac`` does not exist — verified by
-# ``ls /opt/venv-{agent,sac}/bin/sac`` in the running SIF).
+# In-SIF resolution of the bundled ``sac`` console-script for the
+# channel-MCP subscriber. The bundled ``claude`` TUI spawns it as an
+# stdio MCP subprocess INSIDE the SIF, so the command must point at
+# sac's REAL in-SIF location — which varies by image build:
 #
-# Why hardcode rather than ``shutil.which("sac")``: this constant is
-# read on the HOST when the SAC runtime builds the apptainer-exec
-# argv. The host's PATH (the SAC runtime inherits
-# ``/opt/venv-sac/bin:...``) does NOT include ``/opt/venv-agent/bin``,
-# so ``shutil.which("sac")`` would fail to find sac on the host even
-# though it exists inside the SIF. The path written here is the
-# IN-SIF absolute path the bundled claude will exec when it spawns
-# the channel-MCP subprocess; that filesystem is the SIF's, not the
-# host's, so the hardcoded SIF path is correct.
+#   * sac-base.sif (current, verified 2026-06-17): /opt/venv-sac/bin/sac
+#   * a prior build:                               /opt/venv-agent/bin/sac
 #
-# Under ``--containall --cleanenv`` the venv bin dir is NOT on PATH,
-# so a bare ``sac`` (as the host SDK path uses) is also unresolvable
-# from an MCP subprocess inside the SIF — the channel sidecar must
-# be invoked by absolute path.
-#
-# Operator override: set ``SAC_BIN_IN_SIF`` in the agent's env (e.g.
-# ``spec.env``) to point at a different in-SIF location if the image
-# is rebuilt with sac installed elsewhere. The constant below is the
-# default for the current sac-base.sif.
-_SAC_BIN_IN_SIF_DEFAULT = "/opt/venv-agent/bin/sac"
+# A single hardcoded path silently broke the channel the moment the SIF
+# layout flipped: claude reported ``server:sac · no MCP server configured
+# with that name`` because the subprocess ``command`` did not exist
+# (2026-06-17 figrecipe/neurovista/todo — the constant had been flipped
+# to ``/opt/venv-agent/bin/sac``, absent from sac-base.sif). The HOST
+# cannot probe the in-SIF filesystem while building the apptainer-exec
+# argv, so resolution is DEFERRED to spawn time: the MCP ``command`` is
+# ``/bin/sh -c <resolver>`` that tries the known venvs + PATH inside the
+# SIF and fails loud if none is executable (see :func:`_sac_channel_mcp_server`).
+# Absolute candidates make it PATH-independent under ``--containall`` /
+# ``--cleanenv`` where the venv bin dir may not be exported.
+
+# Ordered absolute in-SIF candidates (current build first), mirroring the
+# SDK runner's ``_sdk_channels._resolve_sac_binary`` candidate philosophy.
+_SAC_BIN_IN_SIF_CANDIDATES: tuple[str, ...] = (
+    "/opt/venv-sac/bin/sac",
+    "/opt/venv-agent/bin/sac",
+    "/usr/local/bin/sac",
+)
+
+# Back-compat single-path constant + helper. The channel MCP no longer
+# consumes these (it uses the spawn-time resolver below); kept for
+# external imports / single-path callers. Default corrected to the
+# verified current sac-base.sif location.
+_SAC_BIN_IN_SIF_DEFAULT = "/opt/venv-sac/bin/sac"
 
 
 def resolve_sac_bin_in_sif() -> str:
-    """Return the absolute in-SIF path to the ``sac`` console script.
+    """Return a best-effort single in-SIF path to the ``sac`` script.
 
-    Resolves at MCP-config build time on the HOST. Reads the
-    ``SAC_BIN_IN_SIF`` env var override first (operator escape hatch
-    when the SIF is rebuilt with sac in a non-default location); falls
-    back to :data:`_SAC_BIN_IN_SIF_DEFAULT`. NEVER attempts a host-side
-    ``shutil.which`` — the path is INSIDE the SIF; host PATH lookups
-    are noise here (the SAC runtime's PATH typically does not include
-    ``/opt/venv-agent/bin`` so ``which`` would mis-report).
-
-    The default is the verified location for ``sac-base.sif`` as of
-    2026-06-15; see the module-level comment for the verification
-    record. Override via ``SAC_BIN_IN_SIF`` env when the SIF layout
-    changes (this avoids hardcoding-shaped breakage on SIF rebuilds).
+    Honours the ``SAC_BIN_IN_SIF`` env override, else returns
+    :data:`_SAC_BIN_IN_SIF_DEFAULT`. NOTE: the channel-MCP subscriber no
+    longer uses this — it resolves sac at SPAWN time across
+    :data:`_SAC_BIN_IN_SIF_CANDIDATES` (robust to SIF venv layout); see
+    :func:`_sac_channel_mcp_server`. This helper remains for
+    backward-compatible imports and single-path callers.
     """
     override = _os.environ.get("SAC_BIN_IN_SIF", "").strip()
     if override:
@@ -344,9 +345,46 @@ def resolve_sac_bin_in_sif() -> str:
 
 # Backward-compat alias — keep imports of ``_SAC_BIN_IN_SIF`` working
 # (e.g. external skill-doc examples that referenced the legacy constant
-# name). New call sites should call :func:`resolve_sac_bin_in_sif` so
-# the env override takes effect.
+# name). New call sites should call :func:`resolve_sac_bin_in_sif`.
 _SAC_BIN_IN_SIF = _SAC_BIN_IN_SIF_DEFAULT
+
+
+def _sac_channel_mcp_server(channel_args: list[str]) -> dict:
+    """Build the stdio MCP-server spec for the ``sac mcp channel`` sub.
+
+    The ``command`` resolves sac's absolute path INSIDE the SIF at spawn
+    time — trying ``$SAC_BIN`` / ``$SAC_BIN_IN_SIF`` (operator override
+    via ``spec.env``), the known venv locations
+    (:data:`_SAC_BIN_IN_SIF_CANDIDATES`), then ``command -v sac`` — and
+    ``exec``s the first executable, passing ``channel_args`` through
+    unchanged via ``"$@"``. Fails loud (a stderr diagnostic + ``exit
+    127``) when sac is absent, so a missing binary surfaces as a named
+    error rather than the silent ``server:sac · no MCP server configured
+    with that name`` (2026-06-17). Absolute candidates make resolution
+    PATH-independent under ``--containall`` / ``--cleanenv``.
+
+    ``/bin/sh -c <resolver> sac <channel_args...>``: ``"sac"`` becomes
+    ``$0`` and ``channel_args`` become ``"$@"``, so the resolved binary
+    runs ``sac mcp channel --name <agent> [...]`` exactly.
+    """
+    candidates = (
+        '"$SAC_BIN" "$SAC_BIN_IN_SIF" '
+        + " ".join(_SAC_BIN_IN_SIF_CANDIDATES)
+        + ' "$(command -v sac 2>/dev/null)"'
+    )
+    resolver = (
+        f"for c in {candidates}; do "
+        'if [ -n "$c" ] && [ -x "$c" ]; then exec "$c" "$@"; fi; '
+        "done; "
+        ">&2 echo 'sac: binary not found in SIF; channel MCP cannot "
+        "start (set SAC_BIN_IN_SIF in spec.env or rebuild the image "
+        "with sac installed)'; exit 127"
+    )
+    return {
+        "type": "stdio",
+        "command": "/bin/sh",
+        "args": ["-c", resolver, "sac", *channel_args],
+    }
 
 
 def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
@@ -381,17 +419,7 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
         port = getattr(a2a_spec, "port", None) if a2a_spec else None
         if isinstance(port, int) and port > 0:
             args += ["--turn-url", f"http://127.0.0.1:{port}/v1/turn"]
-        channel_mcp = json.dumps(
-            {
-                "mcpServers": {
-                    "sac": {
-                        "type": "stdio",
-                        "command": resolve_sac_bin_in_sif(),
-                        "args": args,
-                    }
-                }
-            }
-        )
+        channel_mcp = json.dumps({"mcpServers": {"sac": _sac_channel_mcp_server(args)}})
     return dev_channels, channel_mcp
 
 
