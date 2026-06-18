@@ -29,7 +29,7 @@ from scitex_agent_container.runtimes._sdk_channels import (
     SacBinaryNotFoundError,
     TelegrammerWakeWiringError,
     apply_channels,
-    channel_mcp_name,
+    compute_channel_plan,
     merge_home_mcp_servers,
     validate_telegrammer_wake_wiring,
 )
@@ -107,38 +107,48 @@ def _devflag(kwargs: dict) -> str | None:
     return kwargs.get("extra_args", {}).get("dangerously-load-development-channels")
 
 
-class TestChannelMcpName:
-    """``channel_mcp_name`` maps a spec ``channels`` entry → MCP server name.
+class TestComputeChannelPlan:
+    """The shared plan both runtimes apply (SDK -> kwargs, TUI -> argv): one
+    source of truth for the channel set, sac sidecar, and telegrammer wake."""
 
-    claude resolves each ``--dangerously-load-development-channels`` entry to
-    a registered MCP server BY NAME, so the ``server:`` notation prefix must
-    be stripped (else "no MCP server configured with that name" + the channel
-    is silently dropped — telegram inbound + a2a wake never arrive).
-    """
-
-    def test_strips_the_server_prefix_to_the_bare_mcp_name(self):
+    def test_telegrammer_channel_with_port_yields_wake_url(self):
         # Arrange
-        channel = "server:sac"
+        channels = ["server:claude-code-telegrammer"]
         # Act
-        name = channel_mcp_name(channel)
+        plan = compute_channel_plan(channels, 700, "clew")
         # Assert
-        assert name == "sac"
+        assert plan.telegrammer_turn_url == "http://127.0.0.1:700/v1/turn"
 
-    def test_passes_through_a_name_that_has_no_prefix(self):
+    def test_telegrammer_channel_without_port_yields_no_wake(self):
         # Arrange
-        channel = "claude-code-telegrammer"
+        channels = ["server:claude-code-telegrammer"]
         # Act
-        name = channel_mcp_name(channel)
+        plan = compute_channel_plan(channels, None, "clew")
         # Assert
-        assert name == "claude-code-telegrammer"
+        assert plan.telegrammer_turn_url is None
 
-    def test_trims_whitespace_before_stripping_the_prefix(self):
+    def test_sac_channel_yields_sidecar_args_with_turn_url(self):
         # Arrange
-        channel = "  server:scitex-todo  "
+        channels = ["server:sac"]
         # Act
-        name = channel_mcp_name(channel)
+        plan = compute_channel_plan(channels, 701, "lead")
         # Assert
-        assert name == "scitex-todo"
+        assert plan.sac_sidecar_args == (
+            "mcp",
+            "channel",
+            "--name",
+            "lead",
+            "--turn-url",
+            "http://127.0.0.1:701/v1/turn",
+        )
+
+    def test_channels_are_the_shared_deduped_set(self):
+        # Arrange
+        channels = ["server:sac", "server:scitex-todo", "server:sac"]
+        # Act
+        plan = compute_channel_plan(channels, None, "lead")
+        # Assert
+        assert plan.channels == ("server:sac", "server:scitex-todo")
 
 
 class TestForeignChannelTurnsOnDevChannels:
@@ -149,9 +159,8 @@ class TestForeignChannelTurnsOnDevChannels:
         kwargs: dict = {}
         # Act
         apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
-        # Assert: the MCP server NAME (``server:`` prefix stripped) — claude
-        # resolves a channel to an MCP by that exact name.
-        assert _devflag(kwargs) == "claude-code-telegrammer"
+        # Assert
+        assert _devflag(kwargs) == "server:claude-code-telegrammer"
 
     def test_telegrammer_channel_does_not_register_sac_mcp(self):
         # Arrange
@@ -244,7 +253,7 @@ class TestSacChannelStillWorks:
         # Act
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
-        assert _devflag(kwargs) == "sac"
+        assert _devflag(kwargs) == "server:sac"
 
     def test_sac_channel_registers_sac_mcp(self, fake_sac_bin):
         # Arrange — SAC_BIN points at a real executable so the resolver
@@ -379,9 +388,8 @@ class TestBothChannelsCoexist:
         apply_channels(
             kwargs, ["server:sac", "server:claude-code-telegrammer"], None, "clew"
         )
-        # Assert: the full set, each as the MCP server NAME (``server:``
-        # prefix stripped — claude resolves a channel to an MCP by that name).
-        assert _devflag(kwargs) == "sac,claude-code-telegrammer"
+        # Assert: claude needs the full set to render both channels' tags.
+        assert _devflag(kwargs) == "server:sac,server:claude-code-telegrammer"
 
     def test_sac_mcp_registered_when_sac_present_among_many(self, fake_sac_bin):
         # Arrange
@@ -403,7 +411,7 @@ class TestDedupeAndNormalization:
         # Act — ``fake_sac_bin`` so the sac sidecar resolver does not raise.
         apply_channels(kwargs, ["server:sac", " server:sac "], None, "lead")
         # Assert
-        assert _devflag(kwargs) == "sac"
+        assert _devflag(kwargs) == "server:sac"
 
 
 class TestNoChannels:

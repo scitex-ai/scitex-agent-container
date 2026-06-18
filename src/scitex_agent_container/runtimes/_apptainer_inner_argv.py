@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config import AgentConfig
+    from ._sdk_channels import ChannelPlan
 
 # Runner-module dispatch by ``config.kind``. Kept here so the parent
 # orchestrator doesn't need to know either runner's module path.
@@ -284,7 +285,13 @@ def _tui_runner_argv(
     if channel_mcp:
         argv += ["--mcp-config", channel_mcp]
     if dev_channels:
-        argv += ["--dangerously-load-development-channels", dev_channels]
+        # --dangerously-load-development-channels is REPEATABLE — claude wants
+        # one occurrence per channel (the ``server:<mcp>`` entry, prefix kept).
+        # A comma-joined value is read as ONE channel entry → "no MCP server
+        # configured with that name", losing every channel. dev_channels
+        # arrives comma-joined; split it and emit one flag per channel.
+        for _channel in dev_channels.split(","):
+            argv += ["--dangerously-load-development-channels", _channel]
     for flag in list(getattr(claude_spec, "flags", []) or []):
         flag = str(flag).strip()
         if flag:
@@ -387,6 +394,31 @@ def _sac_channel_mcp_server(channel_args: list[str]) -> dict:
     }
 
 
+def tui_channel_plan(config: "AgentConfig") -> "ChannelPlan":
+    """Compute the shared :class:`ChannelPlan` for a TUI agent from its config.
+
+    The bridge from the TUI's config-shaped inputs (``spec.claude.channels``,
+    the resolved ``spec.a2a.port``, the agent name) to the runtime-agnostic
+    ``_sdk_channels.compute_channel_plan``. Both :func:`tui_channel_config`
+    (the inner ``--mcp-config`` / ``--dangerously-load-development-channels``)
+    and ``build_run_argv`` (the telegrammer wake ``--env``) call this, so the
+    TUI wires the SAME channel decisions as the SDK ``apply_channels`` path —
+    no drift.
+    """
+    from ._sdk_channels import compute_channel_plan
+
+    claude_spec = getattr(config, "claude", None)
+    channels = [
+        str(c).strip()
+        for c in (getattr(claude_spec, "channels", []) or [])
+        if str(c).strip()
+    ]
+    a2a_spec = getattr(config, "a2a", None)
+    raw_port = getattr(a2a_spec, "port", None) if a2a_spec else None
+    a2a_port = raw_port if isinstance(raw_port, int) and raw_port > 0 else None
+    return compute_channel_plan(channels, a2a_port, config.name)
+
+
 def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
     """Resolve ``spec.claude.channels`` into TUI channel flags.
 
@@ -403,29 +435,22 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
         (already forwarded by ``listen_env_flags``); when the a2a port is
         resolved it also gets ``--turn-url`` for the WAKE path.
     """
-    claude_spec = getattr(config, "claude", None)
-    channels = [
-        str(c).strip()
-        for c in (getattr(claude_spec, "channels", []) or [])
-        if str(c).strip()
-    ]
-    if not channels:
+    plan = tui_channel_plan(config)
+    if not plan.channels:
         return None, None
-    from ._sdk_channels import channel_mcp_name
-
-    # claude resolves each --dangerously-load-development-channels entry to an
-    # MCP server BY NAME; strip the spec's ``server:`` notation prefix so the
-    # flag carries the real name (else "no MCP server configured with that
-    # name" + the channel is silently dropped). SDK parity: _sdk_channels.
-    dev_channels = ",".join(sorted({channel_mcp_name(c) for c in channels}))
+    # One --dangerously-load flag per channel (the emission loop in
+    # _tui_runner_argv splits this comma-joined value) — the SAME set the SDK
+    # comma-joins into extra_args, so the two runtimes never disagree.
+    dev_channels = ",".join(plan.channels)
     channel_mcp: str | None = None
-    if any(c == "server:sac" for c in channels):
-        args = ["mcp", "channel", "--name", config.name]
-        a2a_spec = getattr(config, "a2a", None)
-        port = getattr(a2a_spec, "port", None) if a2a_spec else None
-        if isinstance(port, int) and port > 0:
-            args += ["--turn-url", f"http://127.0.0.1:{port}/v1/turn"]
-        channel_mcp = json.dumps({"mcpServers": {"sac": _sac_channel_mcp_server(args)}})
+    if plan.sac_sidecar_args is not None:
+        channel_mcp = json.dumps(
+            {
+                "mcpServers": {
+                    "sac": _sac_channel_mcp_server(list(plan.sac_sidecar_args))
+                }
+            }
+        )
     return dev_channels, channel_mcp
 
 

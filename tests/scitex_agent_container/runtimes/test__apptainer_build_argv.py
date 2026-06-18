@@ -479,6 +479,24 @@ spec:
 """
 
 
+_SPEC_WITH_TELEGRAMMER_AND_PORT = """\
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: t
+spec:
+  runtime: tui
+  workdir: /tmp/agt-work
+  claude:
+    model: sonnet
+    channels:
+      - server:claude-code-telegrammer
+  a2a:
+    port: 19007
+"""
+
+
 def test_tui_channel_config_none_when_no_channels(tui_config) -> None:
     # Arrange — tui_config has no channels.
     # Act
@@ -493,9 +511,8 @@ def test_tui_channel_config_sets_dev_channels(tmp_path) -> None:
     config = load_config(str(spec))
     # Act
     dev_channels, _ = tui_channel_config(config)
-    # Assert: the MCP server NAME (``server:`` prefix stripped) — claude
-    # resolves a channel to an MCP by that exact name.
-    assert dev_channels == "sac"
+    # Assert
+    assert dev_channels == "server:sac"
 
 
 def test_tui_channel_config_registers_sac_channel_subscriber(tmp_path) -> None:
@@ -542,7 +559,31 @@ def test_build_run_argv_tui_adds_dev_channels_flag(
         config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
     # Assert — flag rides in the inner cmd (preflight-wrapped on non-relaxed).
-    assert "--dangerously-load-development-channels sac" in " ".join(argv)
+    assert "--dangerously-load-development-channels server:sac" in " ".join(argv)
+
+
+def test_build_run_argv_tui_wires_telegrammer_wake_env(
+    tmp_path, listen_bearer_token
+) -> None:
+    # Arrange — a TUI agent requesting its own telegrammer channel with a
+    # resolved a2a port (as resolve_a2a_port sets at agent_start). SDK parity:
+    # the SDK injects the wake via mcp_servers; the TUI forwards it as a
+    # container --env the telegrammer inherits (same path as its bot token via
+    # --env-file), so an inbound message POSTs to /v1/turn and wakes an idle
+    # session — the SDK<->TUI drift this closes.
+    spec = _write_spec(tmp_path, _SPEC_WITH_TELEGRAMMER_AND_PORT)
+    config = load_config(str(spec))
+    state_dir = tmp_path / "state"
+    (state_dir / "home").mkdir(parents=True)
+    # Act
+    argv = build_run_argv(
+        config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert (
+        "--env CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
+        in " ".join(argv)
+    )
 
 
 def test_build_run_argv_tui_injects_channel_subscriber_mcp(

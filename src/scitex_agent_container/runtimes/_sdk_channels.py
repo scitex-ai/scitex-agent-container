@@ -46,6 +46,7 @@ import json as _json
 import logging as _logging
 import os as _os
 import shutil as _shutil
+from dataclasses import dataclass
 from pathlib import Path as _Path
 
 _log = _logging.getLogger(__name__)
@@ -195,21 +196,60 @@ def _dedupe_channels(channels: list[str]) -> list[str]:
     return out
 
 
-def channel_mcp_name(channel: str) -> str:
-    """Map a ``spec.claude.channels`` entry to the MCP server name claude
-    resolves the channel against.
+@dataclass(frozen=True)
+class ChannelPlan:
+    """Runtime-agnostic channel-wiring decisions for one agent.
 
-    claude's ``--dangerously-load-development-channels`` matches each listed
-    channel to a registered MCP server BY NAME. The spec notation carries a
-    ``server:`` prefix (``server:sac`` / ``server:scitex-todo`` /
-    ``server:claude-code-telegrammer``) that is NOT part of the backing MCP
-    server name (those register as ``sac`` / ``scitex-todo`` /
-    ``claude-code-telegrammer``). Passing the prefixed form verbatim makes
-    claude report ``<channel> · no MCP server configured with that name`` and
-    silently drop the channel — telegram inbound + a2a wake never arrive.
-    Strip the prefix so the flag value is the real MCP name.
+    Computed once by :func:`compute_channel_plan`, then applied by each
+    runtime through its own thin adapter — the SDK to ``ClaudeAgentOptions``
+    kwargs (``mcp_servers`` / ``extra_args``), the TUI to the ``apptainer
+    exec`` argv (``--mcp-config`` / ``--dangerously-load-development-channels``
+    / ``--env``). Centralising the DECISIONS here keeps the two channel-wiring
+    paths from drifting; the apply mechanism is the only per-runtime diff.
     """
-    return channel.strip().removeprefix("server:")
+
+    channels: tuple[str, ...]
+    sac_sidecar_args: tuple[str, ...] | None
+    telegrammer_turn_url: str | None
+
+
+def compute_channel_plan(
+    channels: list[str] | None,
+    a2a_port: int | None,
+    agent_name: str,
+) -> ChannelPlan:
+    """Resolve ``spec.claude.channels`` into the shared channel-wiring plan.
+
+    Pure — no I/O, no kwargs/argv mutation. Both runtimes wire the SAME
+    ``channels`` set (the SDK comma-joins them into the single
+    ``--dangerously-load-development-channels`` ``extra_args`` value; the TUI
+    emits one flag per entry), so they never disagree on WHICH channels load.
+
+      * ``sac_sidecar_args`` — the ``sac mcp channel`` argv (+ ``--turn-url``
+        once an a2a port is resolved), present only when ``server:sac`` is
+        requested. The SDK wraps it with sac's resolved abs path; the TUI with
+        an in-SIF ``/bin/sh`` resolver — that wrapping is the only diff.
+      * ``telegrammer_turn_url`` — the loopback ``/v1/turn`` the standalone
+        telegrammer POSTs inbound to (wake-on-push), present only when the
+        telegrammer channel is requested AND an a2a port is resolved.
+    """
+    chset = _dedupe_channels(channels or [])
+    sac_sidecar_args: tuple[str, ...] | None = None
+    if any(c.strip() == "server:sac" for c in (channels or [])):
+        args = ["mcp", "channel", "--name", agent_name]
+        if a2a_port is not None:
+            args += ["--turn-url", f"http://127.0.0.1:{int(a2a_port)}/v1/turn"]
+        sac_sidecar_args = tuple(args)
+    telegrammer_turn_url: str | None = None
+    if a2a_port is not None and any(
+        c.strip() == _TELEGRAMMER_CHANNEL for c in (channels or [])
+    ):
+        telegrammer_turn_url = f"http://127.0.0.1:{int(a2a_port)}/v1/turn"
+    return ChannelPlan(
+        channels=tuple(chset),
+        sac_sidecar_args=sac_sidecar_args,
+        telegrammer_turn_url=telegrammer_turn_url,
+    )
 
 
 def apply_channels(
@@ -232,39 +272,29 @@ def apply_channels(
     if not channels:
         return
 
-    chset = _dedupe_channels(channels)
-    if chset:
+    plan = compute_channel_plan(channels, a2a_port, agent_name)
+    if plan.channels:
         extra_args = kwargs.setdefault("extra_args", {})
         if isinstance(extra_args, dict):
             extra_args.setdefault(
                 "dangerously-load-development-channels",
-                ",".join(channel_mcp_name(c) for c in chset),
+                ",".join(plan.channels),
             )
 
-    if any(c.strip() == "server:sac" for c in channels):
+    if plan.sac_sidecar_args is not None:
         mcps = kwargs.setdefault("mcp_servers", {})
         if isinstance(mcps, dict) and "sac" not in mcps:
-            # Sidecar subscribes to the BUS inbox (`sac listen`), resolved
-            # from SAC_LISTEN_BASE_URL — NOT the a2a port. a2a_port is the
-            # WAKE path (WI-1): passed as --turn-url so a received bus event
-            # POSTs to the agent's own loopback /v1/turn to wake an idle
-            # session (push ≡ Telegram).
-            sidecar_args = ["mcp", "channel", "--name", agent_name]
-            if a2a_port is not None:
-                sidecar_args += [
-                    "--turn-url",
-                    f"http://127.0.0.1:{int(a2a_port)}/v1/turn",
-                ]
             # Resolve `sac` to an absolute path so the SDK subprocess can
             # spawn the channel adapter regardless of its PATH. A bare
-            # ``"sac"`` command silently fails exec when the SDK's PATH
-            # does not contain the agent venv's bin dir — exactly the bug
-            # that left this agent's a2a inbox unsubscribed for hours on
-            # 2026-06-15 (see ``_resolve_sac_binary`` docstring).
+            # ``"sac"`` command silently fails exec when the SDK's PATH does
+            # not contain the agent venv's bin dir — exactly the bug that
+            # left this agent's a2a inbox unsubscribed for hours on
+            # 2026-06-15 (see ``_resolve_sac_binary``). The sidecar argv
+            # (+ --turn-url) is the shared decision from compute_channel_plan.
             mcps["sac"] = {
                 "type": "stdio",
                 "command": _resolve_sac_binary(),
-                "args": sidecar_args,
+                "args": list(plan.sac_sidecar_args),
             }
 
     _wire_telegrammer_wake(kwargs, channels, a2a_port)

@@ -276,6 +276,19 @@ def build_run_argv(
 
     argv += listen_env_flags(config)
 
+    # TUI parity with the SDK's telegrammer wake (apply_channels →
+    # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an
+    # inbound Telegram message POSTs to the agent's /v1/turn and wakes an idle
+    # session. The TUI telegrammer inherits the container env (same path as its
+    # bot token via --env-file), so forward the SAME shared-plan wake URL here.
+    # Without it an idle TUI agent never wakes on Telegram (the SDK↔TUI drift).
+    if tui:
+        from ._apptainer_inner_argv import tui_channel_plan
+
+        _wake_url = tui_channel_plan(config).telegrammer_turn_url
+        if _wake_url:
+            argv += ["--env", f"CLAUDE_CODE_TELEGRAMMER_TURN_URL={_wake_url}"]
+
     # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
     # appended verbatim after all curated args, before the SIF +
     # inner command. Lets operators bolt on flags sac doesn't model
