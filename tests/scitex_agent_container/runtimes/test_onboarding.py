@@ -23,6 +23,7 @@ import pytest
 
 from scitex_agent_container.runtimes.onboarding import (
     _ONBOARDING_SEED,
+    _TOP_LEVEL_SEED,
     ensure_project_onboarding,
 )
 
@@ -144,6 +145,105 @@ class TestEnsureProjectOnboardingFreshInstall:
         ensure_project_onboarding(str(missing), home=tmp_path)
         # Assert
         assert str(missing) in _load(tmp_path)["projects"]
+
+
+# ---------------------------------------------------------------------------
+# Global first-run gate (top-level hasCompletedOnboarding) — fix #1
+# ---------------------------------------------------------------------------
+
+
+class TestTopLevelOnboardingGate:
+    """The headline fresh-agent boot fix: a fresh ``~/.claude.json`` must come
+    out with the global first-run gate seeded so Claude honours a bound
+    credential instead of running its OAuth-login first-run wizard.
+    """
+
+    @pytest.mark.parametrize("seed_key", list(_TOP_LEVEL_SEED.keys()))
+    def test_fresh_install_populates_every_top_level_seed_field(
+        self, tmp_path, workdir, seed_key
+    ):
+        # Arrange
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Act
+        present = seed_key in _load(tmp_path)
+        # Assert
+        assert present
+
+    def test_fresh_install_sets_has_completed_onboarding_true(self, tmp_path, workdir):
+        # Arrange
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Act
+        value = _load(tmp_path)["hasCompletedOnboarding"]
+        # Assert
+        assert value is True
+
+    def test_top_level_gate_seeded_even_when_workspace_already_complete(
+        self, tmp_path, workdir
+    ):
+        # Arrange — a file whose per-workspace entry is already onboarded but
+        # which lacks the GLOBAL gate (the exact fresh-agent shape: a trusted
+        # workspace pre-seed without hasCompletedOnboarding).
+        key = str(workdir.resolve())
+        (tmp_path / ".claude.json").write_text(
+            json.dumps({"projects": {key: {"hasCompletedProjectOnboarding": True}}})
+        )
+        # Act
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert — the global gate is added despite the project no-op.
+        assert _load(tmp_path)["hasCompletedOnboarding"] is True
+
+    def test_missing_global_gate_returns_true_even_when_workspace_complete(
+        self, tmp_path, workdir
+    ):
+        # Arrange — same shape as above; the return value must report that a
+        # write happened (the global gate was seeded).
+        key = str(workdir.resolve())
+        (tmp_path / ".claude.json").write_text(
+            json.dumps({"projects": {key: {"hasCompletedProjectOnboarding": True}}})
+        )
+        # Act
+        result = ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert
+        assert result is True
+
+    def test_falsy_has_completed_onboarding_is_forced_true(self, tmp_path, workdir):
+        # Arrange — a stale ``false`` left by a half-finished first run would
+        # still re-trigger the login wizard; it must be forced true.
+        (tmp_path / ".claude.json").write_text(
+            json.dumps({"hasCompletedOnboarding": False})
+        )
+        # Act
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert
+        assert _load(tmp_path)["hasCompletedOnboarding"] is True
+
+    @pytest.mark.parametrize(
+        "field,operator_value",
+        [
+            ("theme", "light"),
+            ("numStartups", 42),
+        ],
+    )
+    def test_existing_top_level_value_is_never_clobbered(
+        self, tmp_path, workdir, field, operator_value
+    ):
+        # Arrange — operator already chose a theme / has a real startup count.
+        (tmp_path / ".claude.json").write_text(json.dumps({field: operator_value}))
+        # Act
+        ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert — the seed must not overwrite the existing value.
+        assert _load(tmp_path)[field] == operator_value
+
+    def test_fully_complete_file_is_a_noop_returning_false(self, tmp_path, workdir):
+        # Arrange — both layers already complete: nothing left to seed.
+        key = str(workdir.resolve())
+        doc = {"hasCompletedOnboarding": True, "theme": "dark", "numStartups": 5}
+        doc["projects"] = {key: {"hasCompletedProjectOnboarding": True}}
+        (tmp_path / ".claude.json").write_text(json.dumps(doc))
+        # Act
+        result = ensure_project_onboarding(str(workdir), home=tmp_path)
+        # Assert
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
