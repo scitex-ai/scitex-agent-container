@@ -87,6 +87,24 @@ def build_run_argv(
     home_host.mkdir(parents=True, exist_ok=True)
     argv += ["--bind", f"{home_host}:/home/agent"]
 
+    # Agent-supplied environment file. ``deploy_to_home`` materialises each
+    # agent's ``to_home/.env`` to ``$HOME/.env`` (== ``home_host/.env`` on
+    # the host) BEFORE this argv is built (see TuiSessionRuntime /
+    # ClaudeSessionRuntime: deploy_to_home → build_run_argv). The
+    # materialised file is never auto-loaded into the agent's process, so we
+    # inject it here via apptainer ``--env-file`` — the apptainer-native
+    # mechanism that works for BOTH the relaxed and hardened (preflight-
+    # wrapped) inner commands. Emitted FIRST among env wiring so every
+    # curated ``--env`` below (quota path, state-db, auth, listen, spec.env)
+    # OVERRIDES it: the .env supplies per-agent additions (e.g.
+    # ``CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN``), never sac's critical
+    # wiring. Format is plain ``KEY=VALUE`` — apptainer ``--env-file`` is not
+    # a shell, so no ``export`` prefix and no quoting of values. No-op when
+    # the agent ships no ``.env``.
+    env_file = home_host / ".env"
+    if env_file.is_file():
+        argv += ["--env-file", str(env_file)]
+
     # Quota-cache bind (#16) — see module-level docstring in
     # _apptainer_runtime. Bind read-only + advertise the in-container
     # path to the telegrammer bridge so its default-path lookup hits
