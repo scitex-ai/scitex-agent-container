@@ -315,9 +315,25 @@ def build_run_argv(
     # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
     # binds (after the overlay-upper-home bind) so the relaxed ``--home``
     # tmpfs / upper-home bind cannot shadow it; last bind to a path wins.
-    from ._apptainer_auth import credentials_file_bind
+    #
+    # apptainer FILE binds need the in-container destination to pre-exist,
+    # so first ensure an empty placeholder at the host path backing the
+    # container $HOME (overlay upper-home when relaxed-directory-overlay,
+    # else the workspace-home bind). Without it a fresh overlay agent FATALs
+    # at boot: "destination doesn't exist in container". The placeholder
+    # goes in the bind DESTINATION backing, never to_home (whose
+    # credential-leak guard refuses .credentials.json). No-op when no creds
+    # bind will be emitted.
+    from ._apptainer_auth import credentials_file_bind, ensure_credentials_bind_target
 
-    argv += credentials_file_bind(config)
+    creds_bind = credentials_file_bind(config)
+    ensure_credentials_bind_target(
+        config,
+        home_host=home_host,
+        overlay_upper_home=upper_home,
+        bind_flags=creds_bind,
+    )
+    argv += creds_bind
 
     argv.append(str(sif_path))
 

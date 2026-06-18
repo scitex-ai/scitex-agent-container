@@ -40,6 +40,7 @@ from scitex_agent_container.config import load_config
 from scitex_agent_container.runtimes._apptainer_auth import (
     CredentialExpiredError,
     credentials_file_bind,
+    ensure_credentials_bind_target,
 )
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
@@ -653,3 +654,139 @@ def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:
     # later home bind can shadow it.
     sif_idx = argv.index("/img/sac.sif")
     assert argv[sif_idx - 1] == f"{creds}:/home/agent/.claude/.credentials.json:rw"
+
+
+# ---------------------------------------------------------------------------
+# ensure_credentials_bind_target — apptainer file-bind needs a pre-existing
+# destination (fresh-agent boot FATAL fix)
+# ---------------------------------------------------------------------------
+
+
+def _valid_creds_file(tmp_path: Path) -> Path:
+    creds = tmp_path / "acct" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text(
+        '{"claudeAiOauth": {"accessToken": "tok", "expiresAt": 9999999999000}}',
+        encoding="utf-8",
+    )
+    return creds
+
+
+def test_ensure_bind_target_noop_when_no_credentials(tui_config, tmp_path) -> None:
+    # Arrange — config has no credentials_file / account (the tui_config
+    # fixture); no bind will be emitted, so nothing to pre-create.
+    home_host = tmp_path / "home"
+    home_host.mkdir()
+    # Act
+    result = ensure_credentials_bind_target(tui_config, home_host=home_host)
+    # Assert
+    assert result is None
+
+
+def test_ensure_bind_target_creates_placeholder_in_workspace_home(tmp_path) -> None:
+    # Arrange — designated creds, default (non-overlay) spec → the container
+    # $HOME is backed by the workspace-home bind.
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    home_host = tmp_path / "state" / "home"
+    home_host.mkdir(parents=True)
+    # Act
+    placeholder = ensure_credentials_bind_target(config, home_host=home_host)
+    # Assert — an empty placeholder now exists at the workspace-home path.
+    assert placeholder == home_host / ".claude" / ".credentials.json"
+
+
+def test_ensure_bind_target_placeholder_is_a_real_file_on_disk(tmp_path) -> None:
+    # Arrange
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    home_host = tmp_path / "state" / "home"
+    home_host.mkdir(parents=True)
+    # Act
+    ensure_credentials_bind_target(config, home_host=home_host)
+    # Assert — apptainer's file-bind destination now pre-exists.
+    assert (home_host / ".claude" / ".credentials.json").is_file()
+
+
+def test_ensure_bind_target_prefers_overlay_upper_home(tmp_path) -> None:
+    # Arrange — a relaxed directory-overlay spec: the container $HOME is the
+    # overlay upper-home (bound OVER --home), NOT the workspace-home. The
+    # placeholder MUST land in the upper-home so the bind destination exists.
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    home_host = tmp_path / "state" / "home"
+    home_host.mkdir(parents=True)
+    upper_home = tmp_path / "overlay" / "upper" / "home" / "agent"
+    upper_home.mkdir(parents=True)
+    # Act
+    placeholder = ensure_credentials_bind_target(
+        config, home_host=home_host, overlay_upper_home=upper_home
+    )
+    # Assert — placeholder is under the overlay upper-home, not workspace-home.
+    assert placeholder == upper_home / ".claude" / ".credentials.json"
+
+
+def test_ensure_bind_target_falls_back_to_workspace_home_when_upper_absent(
+    tmp_path,
+) -> None:
+    # Arrange — an overlay_upper_home that does NOT exist on disk (e.g. an
+    # .img overlay we cannot write into): the helper must fall back to the
+    # workspace-home bind rather than create an upper-home that won't be used.
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    home_host = tmp_path / "state" / "home"
+    home_host.mkdir(parents=True)
+    missing_upper = tmp_path / "no-such-upper"  # never created
+    # Act
+    placeholder = ensure_credentials_bind_target(
+        config, home_host=home_host, overlay_upper_home=missing_upper
+    )
+    # Assert
+    assert placeholder == home_host / ".claude" / ".credentials.json"
+
+
+def test_ensure_bind_target_does_not_overwrite_existing_placeholder(tmp_path) -> None:
+    # Arrange — a placeholder that already carries content (e.g. a prior
+    # boot's real credential); the helper must leave it untouched (the bind
+    # shadows it anyway, and we never want to truncate a real file).
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    home_host = tmp_path / "state" / "home"
+    (home_host / ".claude").mkdir(parents=True)
+    existing = home_host / ".claude" / ".credentials.json"
+    existing.write_text("PRIOR", encoding="utf-8")
+    # Act
+    ensure_credentials_bind_target(config, home_host=home_host)
+    # Assert
+    assert existing.read_text(encoding="utf-8") == "PRIOR"
+
+
+def test_build_run_argv_precreates_credentials_bind_target(tmp_path) -> None:
+    # Arrange — full build with designated creds; the host placeholder must
+    # exist AFTER build so the emitted file-bind destination pre-exists (the
+    # fresh-overlay-agent boot FATAL this fix closes).
+    creds = _valid_creds_file(tmp_path)
+    spec = _write_spec(
+        tmp_path, _BASE_SPEC.format(extra=f"    credentials_file: {creds}")
+    )
+    config = load_config(str(spec))
+    state_dir = tmp_path / "state"
+    # Act
+    build_run_argv(config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True)
+    # Assert — placeholder at the workspace-home backing the /home/agent bind.
+    assert (state_dir / "home" / ".claude" / ".credentials.json").is_file()

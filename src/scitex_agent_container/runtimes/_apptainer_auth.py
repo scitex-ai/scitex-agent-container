@@ -342,4 +342,123 @@ def credentials_file_bind(
     return ["--bind", f"{src}:{dest}:rw"]
 
 
-__all__ = ["CredentialExpiredError", "auth_argv", "credentials_file_bind"]
+def ensure_credentials_bind_target(
+    config: AgentConfig,
+    *,
+    home_host: Path,
+    overlay_upper_home: Path | None = None,
+    bind_flags: list[str] | None = None,
+) -> Path | None:
+    """Pre-create the host-side placeholder for the credentials file-bind.
+
+    apptainer FILE binds require the in-container destination to ALREADY
+    EXIST on the underlying filesystem — a fresh directory-overlay agent
+    otherwise FATALs at boot with::
+
+        mount … /home/agent/.claude/.credentials.json … destination doesn't
+        exist in container
+
+    The destination of :func:`credentials_file_bind` is
+    ``<container_home>/.claude/.credentials.json``. The host filesystem
+    backing that container ``$HOME`` is the overlay upper-home for relaxed
+    directory-overlay specs (bound OVER ``--home`` in
+    :func:`_apptainer_build_argv.build_run_argv`), else the workspace-home
+    dir (``<state>/home``, bound at ``/home/agent``). This ensures an empty
+    0-byte ``.claude/.credentials.json`` exists at that host path so the
+    ``:rw`` bind lands; the bind then SHADOWS this placeholder with the real
+    operator credential — the placeholder's contents never matter.
+
+    CRITICAL — placement: the placeholder is written into the overlay
+    upper-home / workspace-home (the bind DESTINATION backing), NEVER into
+    ``to_home/``. The to_home credential-leak guard
+    (:func:`_to_home._scan_for_credential_leak`) REFUSES any
+    ``.credentials.json`` under ``to_home/`` — and rightly so: credentials
+    are runtime bind state, not static workspace content. These two homes
+    are deploy destinations, outside that guard's scan roots.
+
+    ``bind_flags`` is the ALREADY-RESOLVED output of
+    :func:`credentials_file_bind` — the caller passes it so the source
+    resolution (and its fail-loud expiry check) runs only once per launch.
+    When ``None`` we resolve it ourselves (the convenience path used by
+    runtimes that don't pre-compute it). The in-container destination is
+    parsed from the bind so the host placeholder mirrors the EXACT path
+    apptainer will mount onto (``.claude/.credentials.json`` under $HOME).
+
+    No-op (returns ``None``) when no credentials bind will be emitted
+    (no ``spec.claude.credentials_file`` / ``account``, or a provider
+    backend is active) — there is no file-bind target to satisfy. Returns
+    the placeholder path it ensured, otherwise.
+
+    Best-effort on the placeholder write itself: a failure here must not
+    block launch (the bind may still succeed if the target exists for
+    another reason), so an OSError is swallowed after logging.
+    """
+    flags = bind_flags if bind_flags is not None else credentials_file_bind(config)
+    if not flags:
+        return None
+    # flags == ["--bind", "<src>:<container_home>/.claude/.credentials.json:rw"]
+    from ._to_home_overlay import resolve_container_home
+
+    container_home = resolve_container_home(config).rstrip("/")
+    # Relative path of the bind target under the container $HOME, derived
+    # from the emitted destination so the placeholder mirrors it exactly.
+    dest_in_container = _bind_destination(flags)
+    rel = ".claude/.credentials.json"
+    if dest_in_container and dest_in_container.startswith(container_home + "/"):
+        rel = dest_in_container[len(container_home) + 1 :]
+    # Host dir backing the container $HOME: overlay upper-home (relaxed
+    # directory-overlay) wins; else the workspace-home bind.
+    backing = (
+        overlay_upper_home
+        if overlay_upper_home is not None and overlay_upper_home.is_dir()
+        else home_host
+    )
+    placeholder = backing / rel
+    try:
+        placeholder.parent.mkdir(parents=True, exist_ok=True)
+        if not placeholder.exists():
+            placeholder.touch()
+    except OSError as exc:  # stx-allow: fallback (reason: a placeholder-create failure must not block launch — the bind may still land if the target exists for another reason; logged for the operator)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "credentials bind-target placeholder %s could not be created "
+            "(container_home=%s): %s",
+            placeholder,
+            container_home,
+            exc,
+        )
+        return None
+    return placeholder
+
+
+def _bind_destination(bind_flags: list[str]) -> str:
+    """Extract the in-container destination path from a ``--bind`` flag pair.
+
+    ``["--bind", "<src>:<dst>:rw"]`` → ``"<dst>"``. The source path may
+    itself contain ``:`` only on exotic filesystems; apptainer bind specs
+    are ``src:dst[:opts]`` and our emitted dst + opts are fixed, so we take
+    the destination as the second colon-field from the spec's tail. Returns
+    ``""`` when the shape is unrecognised (the caller falls back to the
+    canonical ``.claude/.credentials.json`` relative path).
+    """
+    if len(bind_flags) < 2:
+        return ""
+    spec = bind_flags[1]
+    # Strip a trailing ``:rw`` / ``:ro`` mount-option, then the dst is the
+    # last colon-field of what remains (src may be absolute with no colon).
+    body = spec
+    for opt in (":rw", ":ro"):
+        if body.endswith(opt):
+            body = body[: -len(opt)]
+            break
+    parts = body.rsplit(":", 1)
+    return parts[1] if len(parts) == 2 else ""
+
+
+__all__ = [
+    "CredentialExpiredError",
+    "auth_argv",
+    "credentials_file_bind",
+    "ensure_credentials_bind_target",
+]
