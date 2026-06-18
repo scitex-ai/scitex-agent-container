@@ -493,8 +493,9 @@ def test_tui_channel_config_sets_dev_channels(tmp_path) -> None:
     config = load_config(str(spec))
     # Act
     dev_channels, _ = tui_channel_config(config)
-    # Assert
-    assert dev_channels == "server:sac"
+    # Assert: the MCP server NAME (``server:`` prefix stripped) — claude
+    # resolves a channel to an MCP by that exact name.
+    assert dev_channels == "sac"
 
 
 def test_tui_channel_config_registers_sac_channel_subscriber(tmp_path) -> None:
@@ -541,7 +542,7 @@ def test_build_run_argv_tui_adds_dev_channels_flag(
         config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
     # Assert — flag rides in the inner cmd (preflight-wrapped on non-relaxed).
-    assert "--dangerously-load-development-channels server:sac" in " ".join(argv)
+    assert "--dangerously-load-development-channels sac" in " ".join(argv)
 
 
 def test_build_run_argv_tui_injects_channel_subscriber_mcp(
