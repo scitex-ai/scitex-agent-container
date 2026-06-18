@@ -64,6 +64,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._envrc import fold_envrc_into_env
 from ._mcp_merge import merge_mcp_json
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_errors import (
@@ -105,6 +106,12 @@ _MCP_MERGE_BASENAMES = frozenset({".mcp.json"})
 # Files that get chmod 0600 after copy. ``.env`` only by default; the
 # rest preserve source perms via ``shutil.copy2``.
 _TIGHT_PERM_BASENAMES = frozenset({".env"})
+
+# Files copied VERBATIM (no ${...} interpolation) + chmod 0600. ``.envrc`` is a
+# shell script whose own ${VAR} / $(...) syntax must reach bash intact (sac
+# interpolation would expand it at deploy time and corrupt the script); it is
+# evaluated host-side post-deploy by :func:`_envrc.fold_envrc_into_env`.
+_VERBATIM_SECRET_BASENAMES = frozenset({".envrc"})
 
 # Env var: explicit override for the shared/common baseline to_home dir.
 # Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
@@ -206,6 +213,7 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
         _walk_and_apply(root, root, workspace_home, config=None)
+    fold_envrc_into_env(workspace_home)
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
@@ -240,6 +248,10 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
         _walk_and_apply(root, root, dest, config=config)
+    # .envrc (if present) is a shell script: evaluate it host-side and fold
+    # the result into dest/.env so build_run_argv's --env-file injects it.
+    # No-op when the agent ships no .envrc.
+    fold_envrc_into_env(dest)
 
 
 # --- traversal -------------------------------------------------------------
@@ -309,6 +321,8 @@ def _walk_and_apply(
             _deploy_mcp_merge(child, dst, config=config, rel=rel)
         elif child.name in _TIGHT_PERM_BASENAMES:
             _deploy_tight_perm_file(child, dst, config=config, rel=rel)
+        elif child.name in _VERBATIM_SECRET_BASENAMES:
+            _deploy_verbatim_secret(child, dst, rel=rel)
         else:
             _deploy_plain_file(child, dst, config=config, rel=rel)
 
@@ -445,6 +459,25 @@ def _deploy_tight_perm_file(
     except OSError as exc:  # stx-allow: fallback (reason: filesystem op failure)
         logger.warning("Failed to chmod 0600 on %s: %s", dst, exc)
     logger.info("to_home: deployed (0600) %s -> %s", rel, dst)
+
+
+def _deploy_verbatim_secret(src: Path, dst: Path, *, rel: Path) -> None:
+    """Byte-for-byte copy (NO interpolation) + chmod 0600. For ``.envrc``.
+
+    Unlike :func:`_deploy_tight_perm_file`, this NEVER runs ``${...}``
+    interpolation: a ``.envrc`` is a shell script and its own ``${VAR}`` /
+    ``$(...)`` syntax must reach bash intact (sac interpolation would expand
+    it at deploy time and corrupt the script). The file is evaluated later by
+    :func:`_envrc.fold_envrc_into_env`.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    shutil.copy2(src, dst)
+    try:
+        os.chmod(dst, 0o600)
+    except OSError as exc:  # stx-allow: fallback (reason: filesystem op failure)
+        logger.warning("Failed to chmod 0600 on %s: %s", dst, exc)
+    logger.info("to_home: deployed verbatim (0600) %s -> %s", rel, dst)
 
 
 def _deploy_marker_protected(
