@@ -340,7 +340,10 @@ def test_tui_runtime_start_invokes_claude_binary_in_session(
     # Act
     runtime.start(config)
     # Assert
-    assert mux._sessions["tui-delta"].command == "apptainer exec img.sif claude"
+    assert (
+        mux._sessions["tui-delta"].command.split(" 2> ", 1)[0]
+        == "apptainer exec img.sif claude"
+    )
 
 
 def test_tui_runtime_start_force_stops_existing_session_first(
@@ -524,7 +527,9 @@ def test_tui_runtime_logs_returns_captured_pane_text(
     # Act
     text = runtime.logs(config, lines=10)
     # Assert
-    assert text == "<pane lines=10>apptainer exec img.sif claude@/data/nu"
+    assert text.startswith(
+        "<pane lines=10>apptainer exec img.sif claude 2> "
+    ) and text.endswith("/boot.stderr.log@/data/nu")
 
 
 def test_tui_runtime_logs_returns_empty_when_session_absent(

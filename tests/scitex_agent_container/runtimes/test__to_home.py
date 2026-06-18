@@ -1195,3 +1195,27 @@ def test_deploy_to_home_envrc_deployed_verbatim(tmp_path: Path) -> None:
     deploy_to_home(cfg, str(home))
     # Assert — the deployed .envrc retains its literal shell ${...} syntax.
     assert "${NOT_INTERPOLATED}" in (home / ".envrc").read_text()
+
+
+# ---------------------------------------------------------------------------
+# .mcp.json deep-merge idempotency — a CHANGED per-agent definition must
+# re-deploy cleanly (no false McpMergeConflict vs last deploy's stale result).
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_to_home_remerges_changed_mcp_json_without_conflict(
+    tmp_path: Path,
+) -> None:
+    # Arrange — deploy a per-agent .mcp.json once, then CHANGE it (the
+    # figrecipe scenario: an updated telegrammer command).
+    cfg, to_home = _build_cfg(tmp_path)
+    mcp = to_home / ".mcp.json"
+    mcp.write_text('{"mcpServers": {"x": {"command": "old"}}}', encoding="utf-8")
+    home = tmp_path / "home"
+    deploy_to_home(cfg, str(home))
+    mcp.write_text('{"mcpServers": {"x": {"command": "new"}}}', encoding="utf-8")
+    # Act — redeploy with the changed definition (must NOT McpMergeConflict).
+    deploy_to_home(cfg, str(home))
+    # Assert — the deployed .mcp.json reflects the NEW definition (re-derived).
+    deployed = json.loads((home / ".mcp.json").read_text())
+    assert deployed["mcpServers"]["x"]["command"] == "new"

@@ -209,6 +209,12 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     if root.is_dir():
         _scan_for_credential_leak(root)
     workspace_home.mkdir(parents=True, exist_ok=True)
+    # Idempotency (see deploy_to_home): re-derive deep-merged files fresh so a
+    # changed per-agent definition never false-conflicts with a stale copy.
+    for _merge_name in _MCP_MERGE_BASENAMES:
+        _stale = workspace_home / _merge_name
+        if _stale.is_file():
+            _stale.unlink()
     if baseline is not None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
@@ -244,6 +250,16 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _scan_for_credential_leak(root)
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
+    # Idempotency: re-derive the deep-merged .mcp.json FRESH each deploy. Drop
+    # any prior-deploy copy first so a CHANGED per-agent definition (e.g. an
+    # updated telegrammer command/path) re-deploys cleanly, instead of
+    # false-conflicting (McpMergeConflict) against last deploy's stale result
+    # in _deploy_mcp_merge. No data loss — the file is regenerated below from
+    # baseline ∪ per-agent.
+    for _merge_name in _MCP_MERGE_BASENAMES:
+        _stale = dest / _merge_name
+        if _stale.is_file():
+            _stale.unlink()
     if baseline is not None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:

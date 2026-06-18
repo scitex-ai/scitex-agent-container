@@ -34,6 +34,23 @@ from ._start_preflight import (  # noqa: F401
 from .health import health_monitor
 
 
+def _format_boot_stderr_section(log: Path) -> str:
+    """Formatted 'inner stderr' diagnostic section for a failed TUI start.
+
+    B->A feedback / no silent fallback: ``TuiSessionRuntime`` redirects the
+    inner ``apptainer exec … claude`` STDERR — where apptainer's FATAL mount
+    errors and an immediate claude exit land — to ``<state>/boot.stderr.log``
+    (``log``), which SURVIVES the tmux pane's death. Return its tail so a boot
+    failure is the LOUD cause in the raised error, never a cause-less
+    ``<empty>`` pane fallback. Empty/absent-log safe; never raises.
+    """
+    tail = ""
+    if log.is_file():
+        tail = log.read_text(errors="replace")[-4_000:].rstrip()
+    body = tail or "<no stderr captured — runtime never launched the process>"
+    return f"  inner stderr ({log}):\n{body}\n"
+
+
 def agent_start(
     config_path: str,
     registry: Registry | None = None,
@@ -364,13 +381,18 @@ def agent_start(
         diag = ""
         try:
             from .._runners._tmux.tmux import TmuxManager
-            from ..runtimes.tui_session import session_name_for
+            from ..runtimes.tui_session import (
+                session_name_for,
+                state_dir_for_config,
+            )
 
             _sess = session_name_for(config)
             _pane = TmuxManager.capture_logs(_sess, lines=60).rstrip()
+            _boot_log = state_dir_for_config(config) / "boot.stderr.log"
             diag = (
                 f" (tmux session_exists={TmuxManager.exists(_sess)})\n"
-                f"  pane tail:\n{_pane or '<empty — inner process exited before any output>'}"
+                f"{_format_boot_stderr_section(_boot_log)}"
+                f"  pane tail:\n{_pane or '<empty>'}"
             )
         except Exception:  # stx-allow: fallback (reason: diagnostics must never mask the real start failure — degrade to no pane)
             diag = " (no pane diagnostics available)"
