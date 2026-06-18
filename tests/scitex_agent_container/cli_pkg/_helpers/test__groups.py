@@ -162,7 +162,7 @@ TOP_LEVEL_REDIRECTS = [
     # (argv, new_path_substring_in_stderr, test_id)
     pytest.param(["clean-registry"], "sac db clean", id="clean-registry"),
     pytest.param(["probe-network"], "sac host probe-hub", id="probe-network"),
-    pytest.param(["start", "any-name"], "sac agent start", id="start-alias"),
+    pytest.param(["start", "any-name"], "sac agents start", id="start-alias"),
     pytest.param(["registry", "clean"], "sac db clean", id="registry-clean-subcommand"),
 ]
 

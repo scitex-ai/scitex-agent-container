@@ -270,16 +270,16 @@ class _MainGroup(LazyGroup):
     # stale scripts persist indefinitely; hard errors force the fix.
     LAZY_RENAMED = {
         # Lifecycle
-        "start": (f"{_PKG}.lifecycle:start", "sac agent start"),
-        "stop": (f"{_PKG}.lifecycle:stop", "sac agent stop"),
-        "restart": (f"{_PKG}.lifecycle:restart", "sac agent restart"),
-        "validate": (f"{_PKG}.build_cmds:validate", "sac agent validate"),
-        "check": (f"{_PKG}.build_cmds:check", "sac agent check"),
+        "start": (f"{_PKG}.lifecycle:start", "sac agents start"),
+        "stop": (f"{_PKG}.lifecycle:stop", "sac agents stop"),
+        "restart": (f"{_PKG}.lifecycle:restart", "sac agents restart"),
+        "validate": (f"{_PKG}.build_cmds:validate", "sac agents validate"),
+        "check": (f"{_PKG}.build_cmds:check", "sac agents check"),
         # Status / introspection
-        "show-status": (f"{_PKG}.status_cmds:status", "sac agent status"),
-        "check-health": (f"{_PKG}.status_cmds:health", "sac agent health"),
-        "find": (f"{_PKG}.info_cmds:find", "sac agent find"),
-        "recall": (f"{_PKG}.recall_cmds:recall", "sac agent recall"),
+        "show-status": (f"{_PKG}.status_cmds:status", "sac agents status"),
+        "check-health": (f"{_PKG}.status_cmds:health", "sac agents health"),
+        "find": (f"{_PKG}.info_cmds:find", "sac agents find"),
+        "recall": (f"{_PKG}.recall_cmds:recall", "sac agents recall"),
         # Quota — accounts is a top-level noun (the credential store is
         # fleet-wide, not agent-scoped).
         "watch-quota": (
@@ -370,8 +370,8 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac agent start orchestrator                                      # by name
-      $ sac agent start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path
+      $ sac agents start orchestrator                                      # by name
+      $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path
     """
     ctx.ensure_object(dict)
     if as_json:
@@ -389,7 +389,7 @@ def cli_entry_point() -> None:
     Click's group parser normally consumes ``--on`` during ``main``'s
     own arg parsing, but the flag has to be honoured BEFORE the
     subcommand is dispatched: ``sac --on spartan agent list`` must
-    run ``sac agent list`` on spartan, not locally. Pre-process
+    run ``sac agents list`` on spartan, not locally. Pre-process
     ``sys.argv`` here, dispatch via host_group.dispatch_remote when
     the flag is present, and fall through to plain ``main()``
     otherwise.

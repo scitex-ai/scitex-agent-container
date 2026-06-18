@@ -336,7 +336,21 @@ class TuiSessionRuntime(RuntimeBase):
             or getattr(config, "workdir", "")
             or "/tmp"
         )
-        command = " ".join(shlex.quote(a) for a in argv)
+        # B->A feedback (fail-fast / fail-loud / no silent fallback): the inner
+        # ``apptainer exec … claude`` renders its TUI to the tmux PANE (stdout),
+        # but its STDERR — where apptainer's FATAL mount errors and an immediate
+        # claude exit land — would otherwise die with the pane, leaving the
+        # launcher only a cause-less "<empty>" pane tail. Redirect that stderr
+        # to a DURABLE per-agent log from t=0 (no pipe-pane race) so
+        # ``agent_start`` (``_read_boot_stderr_section``) surfaces the real boot
+        # failure. ``2>`` truncates per start. No mkdir here: deploy_to_home
+        # already created ``<state>/home`` (so ``<state>/`` exists), and keeping
+        # this seam free of real-FS writes lets the unit suite record the
+        # command via a fake mux without polluting ``~/.scitex``.
+        boot_stderr_log = state_dir_for_config(config) / "boot.stderr.log"
+        command = " ".join(shlex.quote(a) for a in argv) + (
+            f" 2> {shlex.quote(str(boot_stderr_log))}"
+        )
         started = bool(
             self._mux.start(
                 session_name=name,
