@@ -195,6 +195,23 @@ def _dedupe_channels(channels: list[str]) -> list[str]:
     return out
 
 
+def channel_mcp_name(channel: str) -> str:
+    """Map a ``spec.claude.channels`` entry to the MCP server name claude
+    resolves the channel against.
+
+    claude's ``--dangerously-load-development-channels`` matches each listed
+    channel to a registered MCP server BY NAME. The spec notation carries a
+    ``server:`` prefix (``server:sac`` / ``server:scitex-todo`` /
+    ``server:claude-code-telegrammer``) that is NOT part of the backing MCP
+    server name (those register as ``sac`` / ``scitex-todo`` /
+    ``claude-code-telegrammer``). Passing the prefixed form verbatim makes
+    claude report ``<channel> · no MCP server configured with that name`` and
+    silently drop the channel — telegram inbound + a2a wake never arrive.
+    Strip the prefix so the flag value is the real MCP name.
+    """
+    return channel.strip().removeprefix("server:")
+
+
 def apply_channels(
     kwargs: dict,
     channels: list[str] | None,
@@ -220,7 +237,8 @@ def apply_channels(
         extra_args = kwargs.setdefault("extra_args", {})
         if isinstance(extra_args, dict):
             extra_args.setdefault(
-                "dangerously-load-development-channels", ",".join(chset)
+                "dangerously-load-development-channels",
+                ",".join(channel_mcp_name(c) for c in chset),
             )
 
     if any(c.strip() == "server:sac" for c in channels):

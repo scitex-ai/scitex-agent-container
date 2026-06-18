@@ -411,7 +411,13 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
     ]
     if not channels:
         return None, None
-    dev_channels = ",".join(sorted(set(channels)))
+    from ._sdk_channels import channel_mcp_name
+
+    # claude resolves each --dangerously-load-development-channels entry to an
+    # MCP server BY NAME; strip the spec's ``server:`` notation prefix so the
+    # flag carries the real name (else "no MCP server configured with that
+    # name" + the channel is silently dropped). SDK parity: _sdk_channels.
+    dev_channels = ",".join(sorted({channel_mcp_name(c) for c in channels}))
     channel_mcp: str | None = None
     if any(c == "server:sac" for c in channels):
         args = ["mcp", "channel", "--name", config.name]
