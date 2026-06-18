@@ -1166,3 +1166,32 @@ class TestNoHostAutoRead:
         assert (
             home / ".claude" / "skills" / "general" / "SKILL.md"
         ).read_text() == "from per-agent\n"
+
+
+# ---------------------------------------------------------------------------
+# .envrc — verbatim deploy + host-side fold into .env (sac respects .envrc)
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_to_home_folds_envrc_into_env(tmp_path: Path) -> None:
+    # Arrange — a to_home carrying a .envrc (direnv shell script).
+    cfg, to_home = _build_cfg(tmp_path)
+    (to_home / ".envrc").write_text("export FOLDED_FROM_ENVRC=yes\n", encoding="utf-8")
+    home = tmp_path / "home"
+    # Act
+    deploy_to_home(cfg, str(home))
+    # Assert — the .envrc was evaluated and folded into $HOME/.env.
+    assert "FOLDED_FROM_ENVRC=yes" in (home / ".env").read_text()
+
+
+def test_deploy_to_home_envrc_deployed_verbatim(tmp_path: Path) -> None:
+    # Arrange — a .envrc whose own ${...} syntax must NOT be sac-interpolated.
+    cfg, to_home = _build_cfg(tmp_path)
+    (to_home / ".envrc").write_text(
+        "export KEEP='${NOT_INTERPOLATED}'\n", encoding="utf-8"
+    )
+    home = tmp_path / "home"
+    # Act
+    deploy_to_home(cfg, str(home))
+    # Assert — the deployed .envrc retains its literal shell ${...} syntax.
+    assert "${NOT_INTERPOLATED}" in (home / ".envrc").read_text()

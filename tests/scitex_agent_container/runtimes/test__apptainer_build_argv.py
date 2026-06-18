@@ -199,6 +199,55 @@ def test_build_run_argv_tui_inner_is_claude(tui_config, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# build_run_argv — to_home/.env injected via --env-file (sac respects .env)
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_injects_env_file_when_present(tui_config, tmp_path) -> None:
+    # Arrange — the $HOME/.env that deploy_to_home materialises, at the host
+    # side of the /home/agent bind (state_dir/home/.env).
+    state_dir = tmp_path / "state"
+    (state_dir / "home").mkdir(parents=True, exist_ok=True)
+    (state_dir / "home" / ".env").write_text(
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN=123:not-a-real-secret\n",
+        encoding="utf-8",
+    )
+    # Act
+    argv = build_run_argv(
+        tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert "--env-file" in argv and str(state_dir / "home" / ".env") in argv
+
+
+def test_build_run_argv_omits_env_file_when_absent(tui_config, tmp_path) -> None:
+    # Arrange — no .env materialised under state_dir/home.
+    state_dir = tmp_path / "state"
+    # Act
+    argv = build_run_argv(
+        tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert "--env-file" not in argv
+
+
+def test_build_run_argv_env_file_precedes_curated_env(tui_config, tmp_path) -> None:
+    # Arrange — .env present; a curated --env (state-db) must be emitted
+    # AFTER the --env-file so it wins on conflict (precedence by position).
+    state_dir = tmp_path / "state"
+    (state_dir / "home").mkdir(parents=True, exist_ok=True)
+    (state_dir / "home" / ".env").write_text("FOO=bar\n", encoding="utf-8")
+    # Act
+    argv = build_run_argv(
+        tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert argv.index("--env-file") < argv.index(
+        "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db"
+    )
+
+
+# ---------------------------------------------------------------------------
 # credentials_file_bind — writable single-source-of-truth mount
 # ---------------------------------------------------------------------------
 
