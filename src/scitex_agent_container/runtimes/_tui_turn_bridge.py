@@ -358,10 +358,25 @@ def start_turn_bridge(
     POST to, so there is nothing to serve. Best-effort: a spawn failure is
     logged and swallowed (a dead bridge must not block agent start). The
     ``spawn`` seam lets tests assert the argv without a real subprocess.
+
+    Pre-existing-bridge teardown (2026-06-19 a2a mis-route fix): a restart
+    that does NOT route through :meth:`TuiSessionRuntime.stop` (e.g. the
+    supervisor's stale-lease path, or a flip that changes ``a2a.port``)
+    can leave the agent's PREVIOUS bridge process alive on the old port.
+    Writing the new PID over the pidfile would orphan it permanently — the
+    stale bridge keeps its old port bound, and a later fresh agent that
+    inherits that port collides and mis-routes traffic into the stale
+    bridge's tmux. So we ALWAYS :func:`stop_turn_bridge` first, making the
+    one-bridge-per-agent invariant hold regardless of how we got here.
     """
     port = resolved_a2a_port(config)
     if port is None:
         return None
+    # Deterministically tear down any prior bridge for THIS agent before we
+    # spawn (and overwrite the pidfile). The pidfile is keyed by the agent's
+    # per-host state dir, so this reliably kills the agent's own previous
+    # bridge — even one left on a now-stale port by a port-changing restart.
+    stop_turn_bridge(config)
     config_path = str(getattr(config, "config_path", "") or "")
     if not config_path:
         log.warning(
