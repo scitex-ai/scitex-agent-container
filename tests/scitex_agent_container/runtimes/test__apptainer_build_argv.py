@@ -832,3 +832,140 @@ def test_build_run_argv_precreates_credentials_bind_target(tmp_path) -> None:
     build_run_argv(config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True)
     # Assert — placeholder at the workspace-home backing the /home/agent bind.
     assert (state_dir / "home" / ".claude" / ".credentials.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# spec.access — host-access posture (operator directive 2026-06-19)
+#
+# DEFAULT ``full``: bind the operator's whole home + open --pwd at the
+# canonical workdir path. ``capsule``: only explicit binds + the /work
+# alias + --pwd /work (legacy leak-prevention behaviour). The ``_BASE_SPEC``
+# carries no ``access`` field, so the default-access tests prove the
+# back-compat default is ``full``.
+# ---------------------------------------------------------------------------
+
+
+_CAPSULE_SPEC = """\
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: t
+    sac-builtin: "off"
+spec:
+  runtime: tui
+  access: capsule
+  workdir: /home/ywatanabe/proj/figrecipe
+  claude:
+    model: claude-opus-4-8[1m]
+"""
+
+
+_FULL_SPEC = """\
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: t
+    sac-builtin: "off"
+spec:
+  runtime: tui
+  access: full
+  workdir: /home/ywatanabe/proj/figrecipe
+  claude:
+    model: claude-opus-4-8[1m]
+"""
+
+
+def test_build_run_argv_default_access_binds_whole_home(
+    tui_config, tmp_path, _isolate_home
+) -> None:
+    # Arrange — _BASE_SPEC has no access field → defaults to full (back-compat).
+    # _isolate_home slides HOME so the whole-home bind target is deterministic.
+    # Act
+    argv = build_run_argv(
+        tui_config,
+        state_dir=tmp_path / "state",
+        sif_path=Path("/img/sac.sif"),
+        tui=True,
+    )
+    # Assert — the operator's whole home is bound rw at its canonical path.
+    assert f"{_isolate_home}:{_isolate_home}:rw" in argv
+
+
+def test_build_run_argv_default_access_pwd_is_canonical_workdir(
+    tui_config, tmp_path
+) -> None:
+    # Arrange — _BASE_SPEC workdir is /tmp/agt-work; default access=full opens
+    # --pwd at the canonical path, NOT the /work alias.
+    # Act
+    argv = build_run_argv(
+        tui_config,
+        state_dir=tmp_path / "state",
+        sif_path=Path("/img/sac.sif"),
+        tui=True,
+    )
+    # Assert
+    assert argv[argv.index("--pwd") + 1] == "/tmp/agt-work"
+
+
+def test_build_run_argv_full_keeps_work_alias_for_backcompat(tmp_path) -> None:
+    # Arrange — a full agent (workdir under the operator home). The /work
+    # alias MUST stay bound so specs/prompts that hardcode /work still work.
+    spec = _write_spec(tmp_path, _FULL_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — the workdir is still reachable at the legacy /work alias.
+    assert "/home/ywatanabe/proj/figrecipe:/work" in argv
+
+
+def test_build_run_argv_full_binds_canonical_workdir_path(tmp_path) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path, _FULL_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — workdir also mounts at the operator's canonical path.
+    assert "/home/ywatanabe/proj/figrecipe:/home/ywatanabe/proj/figrecipe" in argv
+
+
+def test_build_run_argv_capsule_omits_whole_home_bind(tmp_path, _isolate_home) -> None:
+    # Arrange — a capsule agent: ONLY its explicit binds, NO whole-home bind.
+    spec = _write_spec(tmp_path, _CAPSULE_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — the operator's whole home is NOT bound.
+    assert f"{_isolate_home}:{_isolate_home}:rw" not in argv
+
+
+def test_build_run_argv_capsule_pwd_is_work_alias(tmp_path) -> None:
+    # Arrange — capsule preserves the legacy /work --pwd.
+    spec = _write_spec(tmp_path, _CAPSULE_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert argv[argv.index("--pwd") + 1] == "/work"
+
+
+def test_build_run_argv_capsule_workdir_mounts_only_at_work(tmp_path) -> None:
+    # Arrange — capsule mounts the workdir ONLY at /work (no canonical bind),
+    # byte-identical to the pre-2026-06-19 behaviour.
+    spec = _write_spec(tmp_path, _CAPSULE_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — no canonical-path workdir bind for a capsule agent.
+    assert "/home/ywatanabe/proj/figrecipe:/home/ywatanabe/proj/figrecipe" not in argv

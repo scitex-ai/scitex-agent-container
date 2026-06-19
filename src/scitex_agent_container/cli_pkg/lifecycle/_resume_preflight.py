@@ -120,7 +120,16 @@ def preflight_resume_id(
         )
         return
 
-    workdir = config.apptainer.container_workdir
+    # The conversation store is keyed on the cwd the inner ``claude``
+    # actually ran in — i.e. the ``--pwd`` build_run_argv emits. For
+    # ``access: full`` agents that is the CANONICAL workdir path, NOT the
+    # ``/work`` alias, so resolve it the same way the runtime does (else
+    # the resume-id lookup would scan the wrong projects subdir and falsely
+    # report "no resumable conversations"). ``capsule`` agents keep the
+    # ``/work`` alias.
+    from ...runtimes._apptainer_access import resolve_pwd
+
+    workdir = resolve_pwd(config)
     candidates = list_session_candidates(workdir, home=home)
     if any(c.session_id == resume_id for c in candidates):
         return  # valid choice — proceed to launch.
