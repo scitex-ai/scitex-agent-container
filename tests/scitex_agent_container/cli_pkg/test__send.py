@@ -831,3 +831,93 @@ def test_agent_send_nonblocking_not_running_still_errors(state_db_env):
     result = send_to_agent("ghost", "hi")
     # Assert
     assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Registry split-brain regression (2026-06-19, figrecipe→beta).
+#
+# A locally-running agent whose ``instances`` row went STALE (the
+# health-monitor restart calls ``runtime.start`` directly, never
+# re-running ``agent_start``/``record_local_instance``; the
+# stale-lease sweep also ends rows) used to make ``agent_send`` report
+# ``status=error`` / ``a2a_port=null`` — even though the agent was live
+# and ``a2a_send`` reached it on the bus. The fix resolves the endpoint
+# from the DURABLE ``port_allocator`` claim (released only at stop /
+# --force) when no active instances row carries a port, matching how
+# the listen forwarder + peer resolver already resolve.
+#
+# These tests seed ONLY a real ``a2a_ports`` claim (no instances row)
+# to reproduce the split-brain, and a REAL bound listener so the
+# reachability gate sees a live sidecar — no mocks.
+# ---------------------------------------------------------------------------
+
+
+def _seed_port_claim(name: str, port: int) -> None:
+    """Insert a real durable allocator claim (no instances row)."""
+    from scitex_agent_container._state.port_allocator import claim_port
+
+    claim_port(name, explicit=port)
+
+
+def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — NO instances row; only a durable allocator claim on a
+    # REAL bound port (the post-restart split-brain state).
+    with _real_listener() as port:
+        _seed_port_claim("beta", port)
+        # Act
+        with _exploding_post_turn():
+            result = send_to_agent("beta", "hi", lead_creds_path=fresh_lead_creds_path)
+    # Assert — dispatched, not the old misleading "agent not running".
+    assert result["status"] == "dispatched"
+
+
+def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — NO instances row; only an allocator claim. The blocking
+    # POST must target the CLAIMED port's loopback /v1/turn.
+    _seed_port_claim("beta", 19007)
+    captured: dict = {}
+
+    def fake_post(url, text, *, timeout_s):
+        captured["url"] = url
+        return ("ok", {})
+
+    # Act
+    with _swap_post_turn(fake_post):
+        send_to_agent("beta", "hi", wait=True, lead_creds_path=fresh_lead_creds_path)
+    # Assert
+    assert captured["url"] == "http://127.0.0.1:19007/v1/turn"
+
+
+def test_agent_send_allocator_claim_diagnosis_reports_running(
+    state_db_env, fresh_lead_creds_path
+):
+    # Arrange — only an allocator claim (no row) on a port nothing is
+    # listening on, so the dispatch fails its reachability gate and we
+    # can inspect the attached diagnosis. The agent is RUNNING (the claim
+    # proves it), so the diagnosis must NOT repeat the split-brain lie of
+    # "stopped".
+    import socket as _socket
+
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    dead_port = s.getsockname()[1]
+    s.close()
+    _seed_port_claim("beta", dead_port)
+    # Act
+    with _exploding_post_turn():
+        result = send_to_agent("beta", "hi", lead_creds_path=fresh_lead_creds_path)
+    # Assert
+    assert result["diagnosis"]["registry_status"] == "running"
+
+
+def test_agent_send_genuinely_absent_still_reports_not_running(state_db_env):
+    # Arrange — neither a row NOR a claim: the agent is genuinely gone.
+    # The split-brain fix must not paper over a real "not running".
+    # Act
+    result = send_to_agent("ghost", "hi")
+    # Assert
+    assert "not running" in result["error"]
