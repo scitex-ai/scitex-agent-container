@@ -76,6 +76,25 @@ def _pid_alive(pid: Any) -> bool | None:
         return False
 
 
+def _has_durable_port_claim(name: str) -> bool:
+    """True iff ``name`` holds a live ``port_allocator`` claim.
+
+    The ``a2a_ports`` claim is written at ``agent_start`` and released
+    only at ``agent_stop`` / ``--force``, so it survives a health-monitor
+    ``runtime.start`` restart that does NOT refresh the ``instances`` row.
+    A live claim therefore means "this agent is running" even when its
+    instances row went stale — the registry split-brain case. Best-effort:
+    any read failure returns ``False`` (the caller then reports the
+    instances-row verdict unchanged, never a fabricated "running").
+    """
+    try:
+        from .._state.port_allocator import get_port
+
+        return get_port(name) is not None
+    except Exception:  # stx-allow: fallback (reason: an unreadable allocator table must not crash the diagnosis nor fabricate liveness — fall back to the instances-row verdict)
+        return False
+
+
 def _port_reachable(
     port: int, *, host: str = "127.0.0.1", timeout: float = 1.0
 ) -> bool:
@@ -147,6 +166,14 @@ def diagnose_send_failure(
     }
 
     # ---- registry / instances row + pid ---------------------------------
+    # ``registry_status`` reflects the SAME live-endpoint sources
+    # ``send_to_agent`` now resolves through (registry split-brain fix):
+    # an active ``instances`` row OR a durable ``port_allocator`` claim.
+    # Without the allocator arm a locally-running agent whose instances
+    # row went stale (health-monitor restart via ``runtime.start``,
+    # stale-lease clear) would still be reported "stopped" here even
+    # though ``send_to_agent`` correctly reaches it — the exact
+    # split-brain symptom this diagnosis is meant to explain, not repeat.
     row: dict[str, Any] | None = None
     try:
         from .._state.state_db import list_active_instances
@@ -154,7 +181,16 @@ def diagnose_send_failure(
         rows = list_active_instances()
         matching = [r for r in rows if r.get("name") == name]
         row = matching[0] if matching else None
-        diagnosis["registry_status"] = "running" if row is not None else "stopped"
+        if row is not None:
+            diagnosis["registry_status"] = "running"
+        elif _has_durable_port_claim(name):
+            # No active row, but a live allocator claim — the agent is
+            # running (a stopped agent releases its claim). Mark it
+            # running and note the source so the operator isn't misled.
+            diagnosis["registry_status"] = "running"
+            diagnosis["registry_source"] = "port_allocator"
+        else:
+            diagnosis["registry_status"] = "stopped"
     except Exception as exc:  # noqa: BLE001 — report loudly, never fake "stopped"
         diagnosis["registry_status"] = f"unreadable: {type(exc).__name__}: {exc}"
 
