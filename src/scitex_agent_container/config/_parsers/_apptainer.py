@@ -125,4 +125,5 @@ def parse_apptainer(spec: dict):
         if "tmpfs_size" in raw
         else "2G",
         relaxed=bool(raw.get("relaxed", False)),
+        nested_build=bool(raw.get("nested_build", False)),
     )

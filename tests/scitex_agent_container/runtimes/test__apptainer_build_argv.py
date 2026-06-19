@@ -969,3 +969,61 @@ def test_build_run_argv_capsule_workdir_mounts_only_at_work(tmp_path) -> None:
     )
     # Assert — no canonical-path workdir bind for a capsule agent.
     assert "/home/ywatanabe/proj/figrecipe:/home/ywatanabe/proj/figrecipe" not in argv
+
+
+# ---------------------------------------------------------------------------
+# spec.apptainer.nested_build — solver builds/pulls its capsule env nested
+# (verified 2026-06-20 inside sac-scitex.sif). The flag set needs host
+# /dev/fuse (fail-loud otherwise), so the ON assertions skipif it's absent.
+# ---------------------------------------------------------------------------
+
+
+_NESTED_SPEC = _BASE_SPEC.format(extra="  apptainer:\n    nested_build: true")
+
+_NO_FUSE_SKIP = pytest.mark.skipif(
+    not Path("/dev/fuse").exists(), reason="nested_build needs host /dev/fuse"
+)
+
+
+def test_build_run_argv_no_nested_build_omits_dev_fuse(tui_config, tmp_path) -> None:
+    # Arrange — _BASE_SPEC carries no apptainer.nested_build.
+    # Act
+    argv = build_run_argv(
+        tui_config,
+        state_dir=tmp_path / "state",
+        sif_path=Path("/img/sac.sif"),
+        tui=True,
+    )
+    # Assert — no /dev/fuse bind when the knob is off.
+    assert "/dev/fuse" not in argv
+
+
+@_NO_FUSE_SKIP
+def test_build_run_argv_nested_build_binds_dev_fuse(tmp_path) -> None:
+    # Arrange — a nested_build agent.
+    spec = _write_spec(tmp_path, _NESTED_SPEC)
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert "/dev/fuse" in argv
+
+
+@_NO_FUSE_SKIP
+def test_build_run_argv_nested_build_masks_subuid(tmp_path) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path, _NESTED_SPEC)
+    config = load_config(str(spec))
+    # Act
+    joined = " ".join(
+        build_run_argv(
+            config,
+            state_dir=tmp_path / "state",
+            sif_path=Path("/img/sac.sif"),
+            tui=True,
+        )
+    )
+    # Assert — the /etc/subuid mask rides through to the full argv.
+    assert ":/etc/subuid" in joined

@@ -248,6 +248,19 @@ class ApptainerSpec:
     remapping; operator uid on host. Pairs with the D5 preflight's
     ``/proc/self/uid_map`` detection (see ``docs/isolation.md``)."""
 
+    nested_build: bool = False
+    """Enable NESTED apptainer build/pull from inside the agent container
+    (``runtimes/_apptainer_nested.py``): binds ``/dev/fuse``, masks
+    ``/etc/subuid``+``/etc/subgid`` (→ root-mapped + ``fakeroot``-command
+    build path, no setuid ``newuidmap`` needed), and points
+    ``APPTAINER_TMPDIR``/``CACHEDIR`` at the real-disk ``/tmp``. Lets a
+    solver reproduce a capsule's pinned env — pull a published
+    ``docker://`` image, or build a Dockerfile-derived def whose ``%post``
+    runs as root — then exec it. Composes with ``access: capsule`` (adds
+    no host-FS bind). Size the build scratch via ``tmpfs_size`` (2G default
+    is too small for a multi-GB image). Verified 2026-06-20 in
+    sac-scitex.sif."""
+
 
 @dataclass
 class AutonomousSpec:

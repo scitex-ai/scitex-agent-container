@@ -42,6 +42,7 @@ from scitex_agent_container.config._parsers._apptainer import parse_apptainer
         ("overlay", ""),
         ("overlay_size", ""),
         ("overlay_create_if_missing", True),
+        ("nested_build", False),
     ],
 )
 def test_missing_block_yields_default_field(attr, expected):
@@ -335,3 +336,26 @@ def test_tmpfs_size_empty_string_opts_out():
     result = parse_apptainer(spec)
     # Assert
     assert result.tmpfs_size == ""
+
+
+# ---------------------------------------------------------------------------
+# nested_build — solver builds/pulls its capsule env nested inside the SIF
+# ---------------------------------------------------------------------------
+
+
+def test_nested_build_round_trips_true():
+    # Arrange
+    spec = {"apptainer": {"nested_build": True}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.nested_build is True
+
+
+def test_nested_build_defaults_false_when_key_absent():
+    # Arrange
+    spec = {"apptainer": {"image": "img.sif"}}
+    # Act
+    result = parse_apptainer(spec)
+    # Assert
+    assert result.nested_build is False

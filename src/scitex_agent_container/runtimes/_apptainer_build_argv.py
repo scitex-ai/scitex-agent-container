@@ -276,6 +276,17 @@ def build_run_argv(
 
     argv += tmpfs_workdir_flags(config, state_dir)
 
+    # Nested apptainer build/pull (spec.apptainer.nested_build) — lets the
+    # SOLVER reproduce a capsule's pinned env from inside its own SAC
+    # container (pull a published docker:// image, or build a
+    # Dockerfile-derived def whose %post runs as root), then exec it.
+    # Emits /dev/fuse + the /etc/subuid+subgid masks + APPTAINER_TMPDIR/
+    # CACHEDIR. No-op when off; adds NO host-FS bind so it composes with
+    # access: capsule. See _apptainer_nested (verified in sac-scitex.sif).
+    from ._apptainer_nested import nested_build_flags
+
+    argv += nested_build_flags(config, state_dir)
+
     # Anthropic-auth argv — emits the backend wiring (env + creds
     # bind). Branches internally on whether spec.claude.provider is
     # active: provider → API-key backend (ANTHROPIC_BASE_URL +
