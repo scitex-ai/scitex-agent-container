@@ -149,12 +149,24 @@ def send_to_agent(
         raise ValueError("either prompt or key is required")
 
     from .._network.peer import PeerError
-    from .._state.state_db import _resolve_host, list_active_instances
+    from .._state.state_db import _resolve_host
+    from ._send_resolve import resolve_send_endpoint
 
     current_host = _resolve_host(None)
-    rows = list_active_instances()
-    matching = [r for r in rows if r.get("name") == name]
-    if not matching:
+    # Resolve the LIVE endpoint the same way ``a2a_send`` / the listen
+    # forwarder do: active ``instances`` row port first, then the durable
+    # ``port_allocator`` claim that survives a health-monitor restart.
+    # Gating ONLY on the instances row (the old behaviour) caused the
+    # "registry split-brain": a locally-running agent whose row went stale
+    # (supervisor restart via ``runtime.start``, stale-lease clear) showed
+    # ``a2a_port=null`` here even while ``a2a_send`` reached it on the bus.
+    # See :mod:`._send_resolve` for the full root-cause writeup.
+    endpoint = resolve_send_endpoint(name, current_host=current_host)
+    a2a_port = endpoint.a2a_port
+    peer_host = endpoint.host if endpoint.host != current_host else ""
+    if endpoint.row is None and endpoint.source == "none":
+        # No active instances row AND no durable allocator claim → the
+        # agent is genuinely not running anywhere this host can see.
         return {
             "status": "error",
             "error": f"agent {name!r} not running",
@@ -165,19 +177,20 @@ def send_to_agent(
                 current_host=current_host,
             ),
         }
-    row = matching[0]
-    a2a_port = row.get("a2a_port")
-    peer_host = str(row.get("host") or "")
-    if not isinstance(a2a_port, int) or a2a_port <= 0:
+    if a2a_port is None:
+        # A row exists but neither it nor the allocator carries a usable
+        # port (sidecar-disabled spec, or a row written before the port
+        # was resolved). Loud — there is no /v1/turn to reach.
         return {
             "status": "error",
             "error": (
                 f"agent {name!r} has no a2a_port recorded "
-                f"(a2a_port={a2a_port!r}); cannot reach /v1/turn"
+                f"(no active instances-row port and no port_allocator "
+                f"claim); cannot reach /v1/turn"
             ),
             "diagnosis": diagnose_send_failure(
                 name,
-                a2a_port=a2a_port if isinstance(a2a_port, int) else None,
+                a2a_port=None,
                 peer_host=peer_host or current_host,
                 current_host=current_host,
             ),
@@ -262,7 +275,9 @@ def send_to_agent(
             }
         return {"status": "error", "error": msg, "diagnosis": diagnosis}
 
-    metadata: dict[str, Any] = {
+    metadata: dict[
+        str, Any
+    ] = {  # stx-allow: STX-SAC001 (reason: this is the send-reply ``response_metadata`` contract — name+host+url+a2a_port of the turn target — NOT an A2A AgentCard; the v0-field heuristic false-positives on the name+url pair)
         "name": name,
         "host": peer_host or current_host,
         "url": url,
