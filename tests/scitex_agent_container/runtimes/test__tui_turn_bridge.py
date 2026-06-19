@@ -371,3 +371,50 @@ def test_stop_turn_bridge_sigterms_recorded_pid(isolated_home: Path) -> None:
     # Assert
     assert stopped is True
     proc.wait(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# start_turn_bridge — pre-existing-bridge teardown (a2a mis-route fix)
+# ---------------------------------------------------------------------------
+def test_start_turn_bridge_kills_preexisting_bridge_before_spawn(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — a REAL prior bridge process recorded in the agent's pidfile
+    # (the orphan a port-changing restart would otherwise leave alive), plus
+    # a recording spawn for the NEW bridge so no second subprocess is created.
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT), name="restart-me", config_path=str(spec)
+    )
+    prior = subprocess.Popen(["sleep", "30"])
+    pid_path = bridge._pid_path(config)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(prior.pid), encoding="utf-8")
+    # Act — start must SIGTERM the prior bridge before spawning the new one.
+    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    # Assert — the prior process received SIGTERM and exited.
+    assert prior.wait(timeout=5) is not None
+    # (defensive: make sure we never leak the helper if the assert above changes)
+    if prior.poll() is None:  # pragma: no cover
+        prior.kill()
+
+
+def test_start_turn_bridge_records_new_pid_over_prior(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — a stale pidfile pointing at an already-dead PID; the new
+    # start must overwrite it with the freshly-spawned bridge's PID (never
+    # leave the orphaned/stale value behind).
+    spec = tmp_path / "spec.yaml"
+    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT), name="repid-me", config_path=str(spec)
+    )
+    pid_path = bridge._pid_path(config)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("999999", encoding="utf-8")  # dead/stale PID
+    # Act
+    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    # Assert — pidfile now holds the new bridge's PID.
+    assert pid_path.read_text(encoding="utf-8").strip() == str(_PID)
