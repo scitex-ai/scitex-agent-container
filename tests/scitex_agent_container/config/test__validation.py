@@ -773,3 +773,66 @@ def test_validate_raw_rejects_spec_skills():
     assert any("spec.skills" in e and "to_home" in e for e in errors), (
         f"spec.skills must be rejected pointing at to_home/.claude/skills/; got {errors!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# spec.access — host-access posture (operator directive 2026-06-19).
+# ``full`` (default) | ``capsule``. Absent is allowed (defaults to full at
+# load). Anything else is rejected with an actionable message.
+# ---------------------------------------------------------------------------
+
+
+def _access_spec(access):
+    return {**_BASE, "spec": {**_BASE["spec"], "access": access}}
+
+
+@pytest.mark.parametrize("access", ["full", "capsule"])
+def test_access_valid_values_pass(access):
+    """``full`` and ``capsule`` validate cleanly."""
+    # Arrange
+    raw = _access_spec(access)
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.access" in e]
+
+
+def test_access_absent_is_allowed():
+    """A spec with no ``access`` field validates (defaults to full at load)."""
+    # Arrange
+    raw = _BASE
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.access" in e]
+
+
+def test_access_invalid_value_is_rejected():
+    """An unknown ``access`` value must fail validation."""
+    # Arrange
+    raw = _access_spec("sandbox")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.access" in e]
+
+
+def test_access_invalid_error_echoes_offending_value():
+    """The rejection message must echo the bad value + the valid options."""
+    # Arrange
+    raw = _access_spec("sandbox")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    bad = [e for e in errors if "spec.access" in e]
+    # Assert
+    assert "sandbox" in bad[0] and "capsule" in bad[0]
+
+
+def test_access_is_a_known_spec_key():
+    """``access`` must not be flagged as an unknown spec field."""
+    # Arrange
+    raw = _access_spec("full")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "Unknown spec field 'access'" in e]

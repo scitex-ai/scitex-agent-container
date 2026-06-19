@@ -83,6 +83,7 @@ _SDK_IMAGE = "scitex-agent-container:scitex"
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
+        "access",  # host-access posture: full (default) | capsule
         "workdir",
         "python-venv",
         "container",
@@ -242,6 +243,21 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "= headless SDK runner; 'apptainer' = back-compat for the "
                 "pre-2026-06-13 container-engine field, mapped to "
                 "'claude-agent-sdk' at dispatch."
+            )
+
+        # spec.access — host-access posture (operator directive
+        # 2026-06-19). ``full`` (default) binds the operator's whole home
+        # so the agent reaches every project at its canonical path;
+        # ``capsule`` keeps only the explicitly-listed binds (legacy
+        # leak-prevention behaviour). Absent → ``full`` at load time.
+        access = spec.get("access")
+        if access is not None and access not in ("full", "capsule"):
+            errors.append(
+                f"spec.access must be 'full' or 'capsule', got '{access}'. "
+                "'full' (default) binds the operator's whole home rw so "
+                "the agent sees every project/config at its canonical "
+                "path; 'capsule' restricts to only the binds explicitly "
+                "listed in the spec (leak-prevention agents)."
             )
 
         # spec.image — moved to spec.apptainer.image in v3 (handled by the

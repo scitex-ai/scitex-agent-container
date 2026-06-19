@@ -118,17 +118,44 @@ def build_run_argv(
             f"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
         ]
 
+    # spec.access — host-access posture (operator directive 2026-06-19,
+    # feedback_sac_dev_agent_bind_policy). DEFAULT ``full``: bind the
+    # operator's WHOLE home (``/home/<user>:/home/<user>:rw``) so the
+    # agent reaches every project + config at its canonical path, and
+    # mount the workdir + ``--pwd`` at that canonical path (not the
+    # ``/work`` alias). ``capsule`` keeps only the explicit spec binds
+    # and the ``/work`` alias (legacy leak-prevention behaviour). The
+    # whole-home bind targets ``/home/<user>`` — a DIFFERENT path from
+    # the agent's ``$HOME=/home/agent`` (its credentials / to_home /
+    # overlay wiring below), so it never shadows them. See
+    # ``_apptainer_access`` for the full watch-out analysis.
+    from ._apptainer_access import (
+        full_home_bind_flags,
+        resolve_pwd,
+        workdir_bind_targets,
+    )
+
+    # Emitted FIRST among the broad binds so a more-specific later bind
+    # (e.g. the canonical workdir, or an explicit spec.binds entry to a
+    # nested path) still wins. No-op for ``capsule`` agents.
+    argv += full_home_bind_flags(config)
+
+    # Workdir bind(s): one ``--bind`` per target. ``capsule`` → just the
+    # ``/work`` alias; ``full`` → the canonical host path AND ``/work``
+    # (back-compat for specs/prompts that hardcode ``/work``). Source is
+    # always the canonical host workdir. apptainer takes the docker
+    # ``src:dst[:opts]`` syntax.
+    workdir_src = Path(config.workdir).expanduser()
+    for target in workdir_bind_targets(config):
+        argv += ["--bind", f"{workdir_src}:{target}"]
+
     argv += [
-        # Bind-mounts: workdir → <container_workdir>, state_dir → /state/<name>.
-        # apptainer accepts the docker syntax for src:dst:[options].
-        # The state-dir is mounted at /state/<name> (not /state) so
-        # the runner's `state_dir_for(name, root=/state)` resolves
-        # to /state/<name> — matching the bind target exactly. If
-        # we mounted at /state, state_dir_for would re-append <name>
-        # and produce /state/<name>/<name>/, which would land on
-        # disk as runtime/<name>/<name>/ — the bug this comment fixes.
-        "--bind",
-        f"{Path(config.workdir).expanduser()}:{config.apptainer.container_workdir}",
+        # state_dir → /state/<name> (not /state) so the runner's
+        # `state_dir_for(name, root=/state)` resolves to /state/<name> —
+        # matching the bind target exactly. If we mounted at /state,
+        # state_dir_for would re-append <name> and produce
+        # /state/<name>/<name>/, which would land on disk as
+        # runtime/<name>/<name>/ — the bug this comment fixes.
         "--bind",
         f"{state_dir.expanduser()}:/state/{config.name}",
         # Note — no `--env HOME=...`. Apptainer protects HOME from
@@ -140,7 +167,7 @@ def build_run_argv(
         "--env",
         "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         "--pwd",
-        config.apptainer.container_workdir,
+        resolve_pwd(config),
     ]
 
     # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`

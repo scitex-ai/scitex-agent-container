@@ -443,6 +443,21 @@ class AgentConfig:
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
     runtime: str = "tui"
+    # Host-access posture (operator directive 2026-06-19). One of:
+    #   "full"    (DEFAULT) — bind the operator's whole home
+    #             (``/home/<user>:/home/<user>:rw``) so the agent sees
+    #             every project + config at its canonical host path, and
+    #             open the TUI at the workdir's CANONICAL path (not the
+    #             ``/work`` alias). The agent's own ``$HOME=/home/agent``
+    #             (credentials / to_home / overlay) is untouched — only an
+    #             ADDITIONAL whole-home bind is emitted. This is what dev
+    #             agents want: a contained identity, full host reach.
+    #   "capsule" — ONLY the binds explicitly listed in the spec (today's
+    #             pre-2026-06-19 behaviour). For leak-prevention agents
+    #             that must not see the rest of the host.
+    # Absent ``access`` defaults to ``full`` — existing specs without the
+    # field become full-access unless they opt into ``capsule``.
+    access: str = "full"
     # Top-level container image. Empty = use the default sac-scitex SIF.
     # (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)
     image: str = ""

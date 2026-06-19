@@ -59,9 +59,24 @@ spec:
   # REQUIRED. Only "apptainer" is accepted since 2026-05-13.
   runtime: apptainer
 
-  # Workspace mounted rw at /work inside the container.
+  # access — host-access posture (operator directive 2026-06-19).
+  #   full     (DEFAULT; absent → full) — bind the operator's WHOLE home rw
+  #            at its canonical path (/home/<user>:/home/<user>:rw) so the
+  #            agent reaches every project + config, and open --pwd at the
+  #            workdir's CANONICAL path. The agent's own $HOME=/home/agent
+  #            (credentials / to_home / overlay) is untouched; the /work
+  #            alias stays bound for back-compat. This is the dev-agent
+  #            default: a contained identity with full host reach.
+  #   capsule  — restrict the agent to ONLY the binds listed below (+ the
+  #            /work alias). For leak-prevention agents that must NOT see
+  #            the rest of the host (e.g. a cohort capsule that may only
+  #            see the question, never the answer).
+  # access: full
+
+  # Workspace mounted rw at the canonical host path AND the /work alias
+  # under access: full (at /work only under access: capsule).
   # Default: ~/.scitex/agent-container/runtime/agents/<name>/  (auto-derived)
-  # Set explicitly when you want the agent's /work to map to a specific
+  # Set explicitly when you want the agent's workdir to map to a specific
   # host path (e.g. an existing project tree). Example:
   # workdir: ~/proj/your-project
 

@@ -312,6 +312,11 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
+        # Host-access posture (operator directive 2026-06-19). Absent /
+        # empty → "full" (dev-agent default: whole-home bind, canonical
+        # workdir --pwd). "capsule" keeps the explicit-binds-only legacy
+        # behaviour. Validated in _validation.validate_raw.
+        access=str(spec.get("access") or "full"),
         image=apptainer_spec.image,
         model=model,
         workdir=workdir,

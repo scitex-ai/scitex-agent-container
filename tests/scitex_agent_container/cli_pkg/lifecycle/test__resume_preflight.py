@@ -48,15 +48,32 @@ class _FakeHostsSpec:
 class _FakeConfig:
     """Minimal AgentConfig stand-in carrying only what the preflight reads.
 
-    Not a mock — a real production-shaped value object with the two
-    attributes ``preflight_resume_id`` touches (``name`` and
-    ``apptainer.container_workdir``).
+    Not a mock — a real production-shaped value object with the attributes
+    ``preflight_resume_id`` touches (``name``, ``apptainer.container_workdir``,
+    and — since the access-posture refactor — ``access`` + ``workdir``, which
+    ``resolve_pwd`` consults to key the conversation store on the cwd the
+    inner ``claude`` actually runs at).
+
+    ``access`` defaults to ``"capsule"`` here so the resolved ``--pwd`` is the
+    ``container_workdir`` these tests seed their transcripts under. The
+    full-access ``--pwd`` (canonical ``workdir``) path is covered separately
+    below.
     """
 
-    def __init__(self, name: str, container_workdir: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        container_workdir: str,
+        *,
+        access: str = "capsule",
+        workdir: str | None = None,
+    ) -> None:
         self.name = name
         self.apptainer = _FakeApptainer(container_workdir)
         self.hosts_spec = _FakeHostsSpec()
+        self.access = access
+        # Canonical host workdir (used only by the full-access --pwd path).
+        self.workdir = workdir if workdir is not None else container_workdir
 
 
 def _seed_conversation(
@@ -146,5 +163,27 @@ class TestPreflightResumeId:
         cfg = _FakeConfig("clew", "/home/agent/work")
         # Act — degrades to a loud warning rather than a hard block.
         result = preflight_resume_id(cfg, "uuid-gone")
+        # Assert
+        assert result is None
+
+    def test_full_access_keys_store_on_canonical_workdir_not_alias(
+        self, runtime_root: Path
+    ) -> None:
+        # Arrange — a full-access agent: the inner claude runs at the
+        # CANONICAL workdir (--pwd), so its transcripts live under the
+        # canonical-path encoding, NOT the /work alias. Seed there and prove
+        # the preflight resolves the valid id (would falsely fail if it still
+        # keyed on container_workdir == /work).
+        cfg = _FakeConfig(
+            "fa",
+            "/work",
+            access="full",
+            workdir="/home/ywatanabe/proj/figrecipe",
+        )
+        _seed_conversation(
+            runtime_root, "fa", "/home/ywatanabe/proj/figrecipe", "uuid-canon"
+        )
+        # Act
+        result = preflight_resume_id(cfg, "uuid-canon")
         # Assert
         assert result is None

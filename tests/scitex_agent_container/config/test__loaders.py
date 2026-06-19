@@ -620,3 +620,38 @@ def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> N
     cfg = load_config(p)
     # Assert
     assert "server:sac" not in cfg.claude.channels
+
+
+# ---------------------------------------------------------------------------
+# spec.access — host-access posture (operator directive 2026-06-19).
+# Absent → "full" (dev-agent default). "capsule" round-trips. The
+# AgentConfig.access field drives the whole-home bind + canonical --pwd
+# downstream in runtimes._apptainer_access.
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_access_defaults_to_full_when_absent(tmp_path: Path) -> None:
+    # Arrange — no spec.access field.
+    p = _v3_yaml(tmp_path, "acc-default", {})
+    # Act
+    cfg = load_config(p)
+    # Assert — back-compat: existing specs become full-access.
+    assert cfg.access == "full"
+
+
+def test_load_config_access_capsule_round_trips(tmp_path: Path) -> None:
+    # Arrange
+    p = _v3_yaml(tmp_path, "acc-capsule", {"access": "capsule"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.access == "capsule"
+
+
+def test_load_config_access_full_round_trips(tmp_path: Path) -> None:
+    # Arrange
+    p = _v3_yaml(tmp_path, "acc-full", {"access": "full"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.access == "full"
