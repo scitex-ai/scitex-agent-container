@@ -177,3 +177,84 @@ Agents that need persistent per-workspace notes should write them strictly
 **below** the End marker. The guide comment immediately after the End
 marker spells this out — if you see an agent editing above it, flag the
 error and move the content down.
+
+## Credentials bind-target FATAL (`CredentialPlaceholderUndeliverableError`)
+
+### Symptom
+
+The agent FATALs at boot with a cryptic apptainer mount error:
+
+```
+FATAL: ... mount /home/agent/.claude/.credentials.json ...
+destination doesn't exist in container
+```
+
+or — since the fail-loud guard landed — the precise SAC diagnostic that
+PRE-EMPTS that FATAL:
+
+```
+CredentialPlaceholderUndeliverableError: agent '<name>':
+spec.apptainer.raw_args declares --home, which mounts a fresh tmpfs at the
+container $HOME and SHADOWS the workspace-home bind. The credentials
+file-bind target /home/agent/.claude/.credentials.json would then have no
+backing host path ... Fix: migrate to a DIRECTORY overlay ...
+```
+
+### Root cause
+
+apptainer FILE binds require the in-container destination to ALREADY EXIST
+on the underlying filesystem. SAC pre-creates an empty placeholder at the
+host path backing the container `$HOME` (see
+`runtimes/_apptainer_auth.ensure_credentials_bind_target`). But a relaxed
+`raw_args` `--home /home/agent` mounts a **fresh tmpfs** at the container
+HOME that shadows the workspace-home bind (`<state>/home` → `/home/agent`).
+The only host path that survives that shadow is the overlay **upper-home**
+(bound OVER `--home` last in `build_run_argv`). When the overlay is an
+`.img` loopback (cannot host an `upper/`) or is absent, there is no
+upper-home bind → the placeholder is lost → FATAL.
+
+This is the **old ADR-0007 spec pattern** (`relaxed: true` + raw_args
+`--overlay <dir>` / `--home /home/agent` / `--userns`) hitting current SAC.
+
+### Fix — migrate the spec to the managed overlay
+
+Prefer `spec.apptainer.overlay` (the modeled field) over raw_args. The
+managed path already does the right thing end-to-end:
+
+- `compute_iso_prepend` emits `--home /home/agent` automatically (hardened
+  mode), so you do **not** declare `--home` in raw_args;
+- the managed overlay must be a **directory** (or an `.img` with
+  `overlay_size` for auto-create — but directory overlays are required for
+  the credential placeholder to be mirrored into `<overlay>/upper/<home>/`);
+- SAC mirrors the credential placeholder into
+  `<overlay>/upper/home/agent/.claude/.credentials.json` and binds the
+  upper-home over the container HOME.
+
+```yaml
+# OLD (ADR-0007 raw_args — breaks under current SAC):
+spec:
+  apptainer:
+    relaxed: true
+    raw_args: ["--containall", "--home", "/home/agent", "--overlay", "/path/ov", "--userns"]
+
+# NEW (managed overlay — placeholder delivered, hardened-by-default):
+spec:
+  apptainer:
+    overlay: /path/ov            # a DIRECTORY overlay
+    # raw_args: ["--userns"]     # keep ONLY if rootless gh/git is needed
+```
+
+Keep `--userns` in raw_args **only** when the agent runs rootless gh/git;
+it does not affect the credential placeholder. Do not re-add `--home` to
+raw_args — the managed path emits it for you, and a raw-arg `--home` with a
+non-directory (or absent) overlay re-triggers the FATAL above.
+
+### Never do
+
+- Do not pair a raw_args `--home` with an `.img` overlay (or no overlay)
+  when `spec.claude.credentials_file` / `account` is set — the placeholder
+  cannot reach the shadowed container HOME.
+- Do not move the credentials placeholder into `to_home/`: the to_home
+  credential-leak guard (`_to_home._scan_for_credential_leak`) refuses any
+  `.credentials.json` there. The placeholder is runtime bind state, written
+  into the overlay upper-home / workspace-home only.

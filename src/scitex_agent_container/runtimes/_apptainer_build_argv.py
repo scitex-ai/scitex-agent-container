@@ -378,11 +378,26 @@ def build_run_argv(
     from ._apptainer_auth import credentials_file_bind, ensure_credentials_bind_target
 
     creds_bind = credentials_file_bind(config)
-    ensure_credentials_bind_target(
+    placeholder = ensure_credentials_bind_target(
         config,
         home_host=home_host,
         overlay_upper_home=upper_home,
         bind_flags=creds_bind,
+    )
+    # Fail loud (handoff item 2): if a creds file-bind will be emitted but
+    # its placeholder won't reach the container $HOME — a relaxed ``--home``
+    # tmpfs shadowing the workspace-home with no usable overlay upper-home,
+    # or a placeholder-create failure — raise a precise diagnostic naming
+    # the missing path + the fix, instead of apptainer's cryptic boot FATAL
+    # ("destination ... doesn't exist in container"). No-op when no bind is
+    # emitted, and a no-op for every layout that already delivers.
+    from ._apptainer_creds_guard import assert_credentials_placeholder_delivers
+
+    assert_credentials_placeholder_delivers(
+        config,
+        bind_flags=creds_bind,
+        placeholder=placeholder,
+        overlay_upper_home=upper_home,
     )
     argv += creds_bind
 
