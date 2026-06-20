@@ -72,6 +72,7 @@ from ._to_home_errors import (
     WorkspaceCredentialLeakError,
     WorkspaceMcpMergeError,
 )
+from ._to_home_skills import aggregate_skills_into_claudemd
 from ._to_home_text import (
     END_MARKER,
     extract_user_tail,
@@ -220,6 +221,10 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     if root.is_dir():
         _walk_and_apply(root, root, workspace_home, config=None)
     fold_envrc_into_env(workspace_home)
+    # Inline the agent's now-materialized skills into CLAUDE.md (forceful,
+    # idempotent) so they are always in context regardless of @-import /
+    # skill-chaining reliability. See _to_home_skills for the rationale.
+    aggregate_skills_into_claudemd(workspace_home)
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
@@ -268,6 +273,10 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # the result into dest/.env so build_run_argv's --env-file injects it.
     # No-op when the agent ships no .envrc.
     fold_envrc_into_env(dest)
+    # Inline the agent's now-materialized skills into CLAUDE.md (forceful,
+    # idempotent) so they are always in context regardless of @-import /
+    # skill-chaining reliability. See _to_home_skills for the rationale.
+    aggregate_skills_into_claudemd(dest)
 
 
 # --- traversal -------------------------------------------------------------
@@ -574,6 +583,7 @@ def _spec_dir(config: AgentConfig) -> Path | None:
 __all__ = [
     "DanglingToHomeSymlinkError",
     "WorkspaceCLAUDEMarkerError",
+    "aggregate_skills_into_claudemd",
     "deploy_to_home",
     "materialize_to_home",
     "resolve_baseline_to_home_dir",
