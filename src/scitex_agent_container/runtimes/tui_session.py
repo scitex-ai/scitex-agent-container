@@ -737,7 +737,13 @@ class TuiSessionRuntime(RuntimeBase):
         send_keys_fn = self._mux.send_keys
         while time.monotonic() < deadline:
             last_pane = self._mux.capture_content(name)
-            if marker in last_pane:
+            # Claude Code v2.1.150 dropped the "? for shortcuts" idle marker; its
+            # ready state shows the "bypass permissions" status bar instead (input
+            # live behind the first-launch welcome box). Accept is_ready() too —
+            # mirroring _drain_at_boot — so prompt injection is not blocked by an
+            # outdated marker (paper-scitex-clew handoff 2026-06-20: agent idled
+            # at a live input, "drained 0 modals").
+            if marker in last_pane or _prompts.is_ready(last_pane):
                 return True
             handled = _prompts.detect_and_respond(
                 last_pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)
