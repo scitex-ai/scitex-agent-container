@@ -70,6 +70,7 @@ from ._apptainer_build_argv import build_run_argv
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from ._tui_auth_stage import TuiAuthStageError
+from ._tui_channel_mcp import ensure_tui_channel_mcp
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
 from .onboarding import ensure_project_onboarding
@@ -236,6 +237,15 @@ class TuiSessionRuntime(RuntimeBase):
         present) the overlay upper-home so it lands regardless of which
         home-delivery mode the spec uses.
 
+        ``ensure_tui_channel_mcp`` registers each ``spec.claude.channels``
+        entry's backing MCP server into the top-level ``mcpServers`` of that
+        same ``$HOME/.claude.json`` (claude's ``user`` scope) so the in-TUI
+        ``claude`` can RESOLVE the ``server:<name>`` channel. The inline
+        ``--mcp-config`` the argv passes is loaded for USE but is NOT in a
+        scope claude's channel resolver scans, so without this registration
+        the TUI warns ``server:<name> · no MCP server configured with that
+        name`` and silently drops the channel (the SDK↔TUI drift this closes).
+
         Returns ``None`` for stub configs lacking the full AgentConfig
         surface (unit-test ``SimpleNamespace`` fixtures); the caller
         treats that as "skip materialise".
@@ -260,6 +270,15 @@ class TuiSessionRuntime(RuntimeBase):
         upper_home = resolve_overlay_upper_home(config)
         if upper_home is not None and upper_home.is_dir():
             ensure_project_onboarding(workdir, home=upper_home)
+        # Register spec.claude.channels' backing MCP servers into the agent's
+        # $HOME/.claude.json (user scope) so the in-TUI ``claude`` resolves
+        # each ``server:<name>`` channel. The inline ``--mcp-config`` the argv
+        # carries is NOT in a scope claude's channel resolver checks, so
+        # without this it warns ``server:<name> · no MCP server configured
+        # with that name`` and silently drops the channel (the SDK↔TUI drift).
+        # Same home pair ensure_project_onboarding writes; fails loud for a
+        # declared channel with no backing MCP.
+        ensure_tui_channel_mcp(config, home_dir, upper_home)
         return home_dir
 
     def start(
