@@ -7,7 +7,7 @@ description: |
   root), then exec it — so the agent reproduces real outputs to ground its
   claims instead of fabricating. The recipe, the knob, the hard limit
   (docker is impossible), and how it pairs with the clew verify gate.
-tags: [scitex-agent-container, nested-apptainer, nested-build]
+tags: [scitex-agent-container-nested-apptainer-builds, nested-apptainer, nested-build]
 ---
 
 # Nested apptainer builds (`spec.apptainer.nested_build`)

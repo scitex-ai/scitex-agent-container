@@ -72,6 +72,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
 - [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded so Telegram answers fast
 - [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`; harness reaps that namespace
+- [32_nested-apptainer-builds.md](32_nested-apptainer-builds.md) — nested apptainer build/pull of a capsule's pinned env (CodeOcean image / Dockerfile def) inside SAC; pairs with the clew verify gate
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
