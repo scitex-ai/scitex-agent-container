@@ -73,6 +73,7 @@ from ._tui_auth_stage import TuiAuthStageError
 from .base import RuntimeBase
 from .claude_md import setup_claude_md
 from .onboarding import ensure_project_onboarding
+from .settings_json import ensure_global_settings_json, setup_settings_json
 
 __all__ = [
     "TuiAuthStageError",
@@ -220,10 +221,40 @@ class TuiSessionRuntime(RuntimeBase):
           * ``deploy_to_home`` overlays the shared ``_shared/to_home``
             baseline + per-agent ``to_home/`` (.mcp.json, .env,
             .claude/{hooks,skills,settings.json}) into ``<state>/home/``
-            (the host dir bound at ``/home/agent``).
+            (the host dir bound at ``/home/agent``). The baseline ships its
+            hook suite as ``.claude/settings.json`` so the TUI reads it at
+            USER scope (a legacy ``settings.local.json`` is folded forward by
+            ``setup_settings_json`` below).
+          * ``setup_settings_json`` then deep-merges sac's managed keys
+            into ``$HOME/.claude/settings.json`` (``filename="settings.json"``):
+            ``skipDangerousModePermissionPrompt`` (so the TUI never blocks on
+            "Do you want to proceed?") + the SAC channel/event-ring hooks +
+            statusLine — PRESERVING the ``_shared`` baseline's honest-grounding
+            Stop gate / lint PostToolUse the deploy just landed. The interactive
+            TUI reads hooks from ``$HOME/.claude/settings.json`` at USER scope;
+            it does NOT read a ``$HOME/.claude/settings.local.json`` (no such
+            scope exists — ``.local.json`` is PROJECT-scope only), so the file
+            MUST be ``settings.json`` or the whole hook suite is INERT
+            (paper-scitex-clew 2026-06-20: a TUI agent polluted ``/work`` root
+            despite ``inhibit_project_root_pollution`` and a Stop hook never
+            fired — the baseline shipped under ``settings.local.json`` at
+            ``$HOME``, which the TUI never read). This MUST run after
+            ``deploy_to_home`` so the baseline gate is present for the
+            deep-merge; ``setup_settings_json`` also folds a legacy
+            ``settings.local.json`` sibling into ``settings.json`` so a baseline
+            deployed under the old name is not lost. Parity with the SDK runner,
+            which resolves the same ``$HOME`` file via
+            ``_sdk_common._container_settings_path`` (``settings.json``-first).
+            ``build_run_argv(tui=True)`` additionally passes ``--settings``
+            pointing at the same file (belt-and-suspenders; the flag is a no-op
+            for the interactive TUI but harmless — see
+            ``_apptainer_inner_argv._tui_runner_argv``).
           * ``deploy_to_home_overlay`` mirrors the SAME tree into the
             overlay upper-home for relaxed ``--home``/``--overlay`` specs
             (where the workspace-home bind is shadowed). No-op otherwise.
+            ``setup_settings_json`` runs against the overlay upper-home too so
+            the merged settings reach the container ``$HOME`` under either
+            home-delivery mode.
 
         Credentials are NOT staged here: the in-apptainer TUI receives
         them via the writable file-bind ``spec.claude.credentials_file``
@@ -246,6 +277,22 @@ class TuiSessionRuntime(RuntimeBase):
         home_dir.mkdir(parents=True, exist_ok=True)
         setup_claude_md(config, str(home_dir))
         deploy_to_home(config, str(home_dir))
+        # Deep-merge sac's managed settings into the just-deployed
+        # ``$HOME/.claude/settings.json`` (skip-permissions + SAC channel hooks
+        # + statusLine), PRESERVING the ``_shared`` baseline's honest-grounding
+        # Stop gate / lint PostToolUse. ``filename="settings.json"`` is REQUIRED:
+        # the interactive TUI reads hooks from ``$HOME/.claude/settings.json`` at
+        # USER scope and never from a ``$HOME/.claude/settings.local.json`` (no
+        # such scope), so writing the old name leaves the hook suite INERT.
+        # MUST follow deploy_to_home (so the baseline gate exists to merge
+        # against); setup_settings_json also folds a legacy settings.local.json
+        # sibling forward so a baseline deployed under the old name survives.
+        # Without this the TUI hit live permission prompts AND reached DONE with
+        # an empty clew DAG (the gate never fired). ``ensure_global_settings_json``
+        # seeds ~/.claude/settings.json so the host has a valid user-scope file
+        # too.
+        ensure_global_settings_json()
+        setup_settings_json(config, str(home_dir), filename="settings.json")
         # Relaxed ``--home``/directory-overlay specs shadow the
         # workspace-home bind; mirror the same to_home tree into the
         # overlay upper-home so it reaches the container $HOME. No-op for
@@ -260,6 +307,13 @@ class TuiSessionRuntime(RuntimeBase):
         upper_home = resolve_overlay_upper_home(config)
         if upper_home is not None and upper_home.is_dir():
             ensure_project_onboarding(workdir, home=upper_home)
+            # The overlay upper-home is a SEPARATE copy of the to_home tree
+            # (deploy_to_home_overlay re-ran deploy_to_home into it), so its
+            # baseline settings carry only the baseline gate — merge the managed
+            # keys there too (again into USER-scope ``settings.json``), else
+            # relaxed-overlay TUI agents lose skip-permissions + the SAC hooks at
+            # the path the TUI reads.
+            setup_settings_json(config, str(upper_home), filename="settings.json")
         return home_dir
 
     def start(
@@ -737,7 +791,13 @@ class TuiSessionRuntime(RuntimeBase):
         send_keys_fn = self._mux.send_keys
         while time.monotonic() < deadline:
             last_pane = self._mux.capture_content(name)
-            if marker in last_pane:
+            # Claude Code v2.1.150 dropped the "? for shortcuts" idle marker; its
+            # ready state shows the "bypass permissions" status bar instead (input
+            # live behind the first-launch welcome box). Accept is_ready() too —
+            # mirroring _drain_at_boot — so prompt injection is not blocked by an
+            # outdated marker (paper-scitex-clew handoff 2026-06-20: agent idled
+            # at a live input, "drained 0 modals").
+            if marker in last_pane or _prompts.is_ready(last_pane):
                 return True
             handled = _prompts.detect_and_respond(
                 last_pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)

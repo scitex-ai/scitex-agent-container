@@ -334,3 +334,61 @@ def test_resolve_restart_backoff_on_failure_uses_spec_backoff():
     resolved = _resolve_restart_backoff_s(cfg)
     # Assert
     assert resolved == 7.0
+
+
+# ---------------------------------------------------------------------------
+# TUI session continuity: ``-c`` (--continue) appended ONLY for
+# ``claude.session: continue`` ("fresh by default, opt-in continue").
+# Built via build_inner_argv(tui=True) so the whole inner-argv path is
+# exercised (not just _tui_runner_argv in isolation).
+# ---------------------------------------------------------------------------
+
+
+def _tui_argv(session: str) -> list[str]:
+    cfg = _mk_cfg(claude=ClaudeSpec(model="haiku", session=session))
+    return build_inner_argv(cfg, tui=True)
+
+
+def test_tui_session_fresh_omits_continue_flag():
+    # Arrange — fresh is the default mode; an experiment trial must start
+    # an independent session.
+    # Act
+    argv = _tui_argv("fresh")
+    # Assert
+    assert "-c" not in argv
+
+
+def test_tui_session_continue_appends_continue_flag():
+    # Arrange — a coordinator opts into continuity.
+    # Act
+    argv = _tui_argv("continue")
+    # Assert
+    assert "-c" in argv
+
+
+def test_tui_session_resume_omits_continue_flag():
+    # Arrange — resume is delivered as --resume <id>, never bare -c.
+    # Act
+    argv = _tui_argv("resume")
+    # Assert
+    assert "-c" not in argv
+
+
+def test_tui_session_new_session_alias_omits_continue_flag():
+    # Arrange — ``new-session`` is the back-compat alias for fresh; a CLI
+    # override may set it verbatim on claude.session (bypassing the parser
+    # alias map), so the argv builder must still treat it as fresh.
+    # Act
+    argv = _tui_argv("new-session")
+    # Assert
+    assert "-c" not in argv
+
+
+def test_tui_inner_argv_default_claudespec_is_fresh_no_continue_flag():
+    # Arrange — a ClaudeSpec with NO session set carries the dataclass
+    # default (fresh); the TUI must not resume.
+    cfg = _mk_cfg(claude=ClaudeSpec(model="haiku"))
+    # Act
+    argv = build_inner_argv(cfg, tui=True)
+    # Assert
+    assert "-c" not in argv

@@ -406,6 +406,7 @@ def build_run_argv(
     tui_mcp_config: str | None = None
     tui_channel_mcp: str | None = None
     tui_dev_channels: str | None = None
+    tui_settings: str | None = None
     if tui:
         ch = resolve_container_home(config).rstrip("/")
         has_mcp = (home_host / ".mcp.json").is_file() or (
@@ -413,6 +414,31 @@ def build_run_argv(
         )
         if has_mcp:
             tui_mcp_config = f"{ch}/.mcp.json"
+        # TUI settings/hooks: the interactive ``claude`` reads hooks/settings
+        # from ``$HOME/.claude/settings.json`` at USER scope (and from
+        # ``<cwd>/.claude/settings{,.local}.json`` at PROJECT scope). It does
+        # NOT read a ``$HOME/.claude/settings.local.json`` — there is no
+        # ``.local.json`` at user scope. So the skip-permissions key + SAC
+        # channel hooks + the ``_shared`` baseline honest-grounding Stop gate /
+        # lint PostToolUse are materialised into ``$HOME/.claude/settings.json``
+        # (``setup_settings_json(..., filename="settings.json")`` in the
+        # runtime's materialize_workspace) and picked up by user-scope
+        # discovery — no flag required. We ALSO point ``--settings`` at the same
+        # file as belt-and-suspenders / SDK parity; note the flag is a no-op for
+        # the interactive TUI (it replaces discovery and only applies to
+        # print/SDK mode — see ``_sdk_common._container_settings_path`` and
+        # skill ``25_claude-setup-delivery``), so user-scope ``settings.json``
+        # is what actually carries the suite. Gated on the host-backing file so
+        # a spec without one doesn't aim ``--settings`` at a missing path; the
+        # legacy ``settings.local.json`` is accepted as a fallback for baselines
+        # not yet renamed (setup_settings_json folds it forward into
+        # settings.json at materialize time).
+        for _rel in (".claude/settings.json", ".claude/settings.local.json"):
+            if (home_host / _rel).is_file() or (
+                upper_home is not None and (upper_home / _rel).is_file()
+            ):
+                tui_settings = f"{ch}/{_rel}"
+                break
         # SDK-parity channels: spec.claude.channels → dev-channels flag +
         # an inline ``sac mcp channel`` subscriber MCP (server:sac only).
         from ._apptainer_inner_argv import tui_channel_config
@@ -427,6 +453,7 @@ def build_run_argv(
             tui_mcp_config=tui_mcp_config,
             tui_channel_mcp=tui_channel_mcp,
             tui_dev_channels=tui_dev_channels,
+            tui_settings=tui_settings,
         )
     else:
         kind = getattr(config, "kind", "Agent")

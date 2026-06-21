@@ -174,11 +174,19 @@ spec:
     flags:
       - --dangerously-skip-permissions
 
-    # Session strategy (2026-05-13 rename):
-    #   continue     — try --continue, fall back to fresh if no prior session
-    #   new-session  — always start fresh
-    #   resume       — pass --resume <resume_id> (use with resume_id below)
-    # Legacy aliases `continue-or-new` and `new` are still accepted.
+    # Session continuity ("fresh by default, opt-in continue", 2026-06-22):
+    #   fresh        — DEFAULT. Every launch is an independent session
+    #                  (no -c). Right for experiment trials.
+    #   continue     — resume the latest session for this cwd (TUI: claude
+    #                  -c). Right for long-lived coordinator agents.
+    #   resume       — pass --resume <resume_id> (use with resume_id below).
+    # Aliases: new-session / new -> fresh; continue-or-new -> continue.
+    # NOTE: a spec that OMITS this field defaults to `fresh`, EXCEPT
+    # coordinator roles (metadata.labels.role or env
+    # SCITEX_AGENT_CONTAINER_ROLE = lead/head/worker/telegrammer/
+    # project-maintainer/...), which the loader maps to `continue`. Set it
+    # explicitly to override the role default. Per-start: `sac start
+    # --continue` / `--fresh`.
     session: continue
 
     # Only resume if the prior session.jsonl is newer than this (minutes).

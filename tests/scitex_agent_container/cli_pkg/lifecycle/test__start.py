@@ -115,6 +115,47 @@ class TestArgumentValidation:
         # Assert
         assert "cannot be combined with directory" in result.output
 
+    def test_continue_and_fresh_together_is_rejected(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["alpha", "--continue", "--fresh"])
+        # Assert
+        assert result.exit_code == 2
+
+    def test_continue_and_fresh_together_explains_why(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["alpha", "--continue", "--fresh"])
+        # Assert
+        assert "mutually exclusive" in result.output
+
+    def test_fresh_shorthand_contradicting_session_continue_is_rejected(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["alpha", "--fresh", "--session", "continue"])
+        # Assert
+        assert result.exit_code == 2
+
+    def test_continue_shorthand_contradicting_session_fresh_explains_why(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["alpha", "--continue", "--session", "fresh"])
+        # Assert
+        assert "contradicts --session" in result.output
+
+    def test_continue_shorthand_agreeing_with_session_continue_is_accepted(self):
+        # Arrange — agreement is not a conflict; the command proceeds past
+        # arg validation (it later fails on the missing agent, not exit 2).
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["alpha", "--continue", "--session", "continue"])
+        # Assert — the contradiction guard did NOT fire (no exit-2 conflict).
+        assert "contradicts --session" not in result.output
+
     def test_bulk_directory_without_yes_exits_two(self, tmp_path):
         # Arrange
         agents_dir = tmp_path / "agents"

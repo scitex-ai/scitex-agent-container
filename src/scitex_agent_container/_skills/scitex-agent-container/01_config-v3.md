@@ -50,7 +50,7 @@ spec:
     model: opus[1m]            # v3-realign: moved from top-level spec.model
     flags:
       - --dangerously-skip-permissions
-    session: continue-or-new   # continue-or-new (default) | continue | new | resume
+    session: fresh             # fresh (default) | continue | resume  (aliases: new-session/new->fresh, continue-or-new->continue)
 
   # Skills are file-based in v3: drop SKILL.md trees under
   # to_home/.claude/skills/<id>/ and list ids in metadata.labels.skills.
@@ -71,7 +71,7 @@ spec:
 | Field | Type | Purpose |
 |---|---|---|
 | `model` | alias or full ID | `opus` / `sonnet` (default) / `haiku` (+ `[1m]` for 1M context), or a full ID like `claude-opus-4-7`. May also sit at `spec.model` (top level). Abbreviated IDs missing version digits (`claude-opus[1m]`) are rejected at validate-time. |
-| `session` | enum | `continue-or-new` (default) \| `continue` \| `new` \| `resume` |
+| `session` | enum | `fresh` (default — independent session, no `-c`) \| `continue` (resume latest for this cwd; TUI `claude -c`) \| `resume` (with `resume_id`). Aliases: `new-session`/`new`→`fresh`, `continue-or-new`→`continue`. An OMITTED field defaults to `fresh` EXCEPT coordinator roles (lead/head/worker/telegrammer/project-maintainer/…), which the loader maps to `continue`. Per-start override: `sac start --continue` / `--fresh`. |
 | `resume_id` | string | Explicit session UUID for `session: resume` |
 | `continue_max_age_minutes` | int | Only resume if `session.jsonl` is newer than N minutes |
 | `flags[]` | list | Extra flags appended to the `claude` invocation |

@@ -38,14 +38,33 @@ class ClaudeSpec:
     # ``ClaudeAgentOptions`` so power users can reach any SDK option
     # sac doesn't model. Merged on top of curated keys; raw_options wins.
     raw_options: dict = field(default_factory=dict)
-    # Session restart strategy. One of:
-    #   continue     try --continue; fall back to a fresh launch if no
-    #                prior session jsonl exists (default; safe).
-    #   new-session  never pass --continue — always start fresh.
+    # Session continuity strategy. One of:
+    #   fresh        never pass ``-c``/``--continue`` — every launch is an
+    #                independent session (DEFAULT). This is the right
+    #                behaviour for experiment trials, where each capsule
+    #                run must be hermetic and must not inherit the prior
+    #                conversation.
+    #   continue     resume the latest session for this cwd (TUI: ``claude
+    #                -c``; SDK: auto-resume the persisted session_id). The
+    #                right behaviour for LONG-LIVED coordinator agents
+    #                (lead/head/worker/telegrammer/project-maintainer/...)
+    #                that must keep their working memory across restarts.
     #   resume       pass --resume <resume_id> (explicit session ID).
-    # Legacy aliases accepted at load time: `continue-or-new` -> `continue`,
-    # `new` -> `new-session`.
-    session: str = "continue"
+    # Aliases accepted at load time (parse_claude):
+    #   new-session, new  -> fresh   (back-compat: the pre-2026-06 names)
+    #   continue-or-new   -> continue
+    # NOTE the default flipped from ``continue`` to ``fresh`` (2026-06-22,
+    # "fresh by default, opt-in continue"): a spec that omits ``session``
+    # now starts fresh. Coordinator/long-lived roles are mapped back to
+    # ``continue`` BY ROLE so omitting the field keeps those agents
+    # continuous WITHOUT editing every deployed spec, while experiment
+    # capsules (non-coordinator roles) get fresh. See
+    # ``config/_session_continuity.py`` (``role_wants_continuity`` /
+    # ``default_session_for_role`` / ``_CONTINUITY_ROLES``) for the
+    # role-default, applied in ``config/_loaders.py`` after ``parse_claude``;
+    # and ``runtimes/_apptainer_inner_argv._tui_runner_argv`` for where the
+    # resolved mode becomes ``claude -c`` (continue) or no flag (fresh).
+    session: str = "fresh"
     # Only resume if the most recent session jsonl is newer than this many minutes.
     # None = no age check (always resume if session exists).
     continue_max_age_minutes: int | None = None

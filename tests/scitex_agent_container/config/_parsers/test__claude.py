@@ -36,7 +36,11 @@ from scitex_agent_container.config._parsers._claude import parse_claude
         ("model", ""),
         ("channels", []),
         ("flags", []),
-        ("session", "continue"),
+        # Default flipped to ``fresh`` (2026-06-22, "fresh by default,
+        # opt-in continue"): an omitted ``session`` starts an independent
+        # session. The role-based continue-default is applied downstream in
+        # ``_loaders.py`` (it needs the role), not in this parser.
+        ("session", "fresh"),
         ("continue_max_age_minutes", None),
         ("resume_id", ""),
         ("auto_accept", True),
@@ -63,8 +67,8 @@ def test_explicit_none_claude_block_yields_default_session():
     spec = {"claude": None}
     # Act
     result = parse_claude(spec)
-    # Assert
-    assert result.session == "continue"
+    # Assert — default flipped to ``fresh`` (2026-06-22).
+    assert result.session == "fresh"
 
 
 # ---------------------------------------------------------------------------
@@ -73,13 +77,15 @@ def test_explicit_none_claude_block_yields_default_session():
 
 
 def test_top_level_session_overrides_nested_session_with_alias_applied():
-    # Arrange: legacy `new` is normalised to `new-session` per
-    # REQUIREMENT_SUMMARY §3 #6, and top-level wins over nested.
+    # Arrange: top-level wins over nested, and the legacy ``new`` alias now
+    # normalises to ``fresh`` (2026-06-22: ``fresh`` is the canonical
+    # "always start a new session" value; ``new`` / ``new-session`` are
+    # accepted aliases for it).
     spec = {"session": "new", "claude": {"session": "continue"}}
     # Act
     result = parse_claude(spec)
     # Assert
-    assert result.session == "new-session"
+    assert result.session == "fresh"
 
 
 def test_nested_continue_or_new_alias_normalises_to_continue():

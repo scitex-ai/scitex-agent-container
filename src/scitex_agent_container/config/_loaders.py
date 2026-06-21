@@ -241,6 +241,30 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # back-compat consumers and populated from the new homes.
     claude_spec = parse_claude(spec)
     apptainer_spec = parse_apptainer(spec)
+    # Role-based session-continuity default ("fresh by default, opt-in
+    # continue", 2026-06-22). ``claude.session`` now defaults to ``fresh``
+    # (parse_claude) so experiment capsules — which carry no coordinator
+    # role — start hermetic. But LONG-LIVED coordinator agents
+    # (lead/head/worker/telegrammer/project-maintainer/…) must keep their
+    # conversation across restarts. Those specs are hand-deployed OUTSIDE
+    # this repo and none of them set ``claude.session``, so we map an
+    # OMITTED field back to ``continue`` BY ROLE here — the one place that
+    # sees both the ``metadata.labels.role`` and the env-injected fleet
+    # role. An EXPLICIT ``session:`` (top-level or nested) is authored
+    # intent and is left untouched (so ``session: fresh`` on a coordinator
+    # stays fresh); a later CLI ``--continue`` / ``--fresh`` still wins by
+    # mutating ``config.claude.session`` after load.
+    _session_authored = (
+        spec.get("session") is not None
+        or (spec.get("claude") or {}).get("session") is not None
+    )
+    if not _session_authored:
+        from ._session_continuity import default_session_for_role
+
+        _role = (apptainer_spec.env or {}).get(
+            "SCITEX_AGENT_CONTAINER_ROLE"
+        ) or labels.get("role")
+        claude_spec.session = default_session_for_role(_role)
     model = claude_spec.model or "sonnet"
     display_model = MODEL_DISPLAY_NAMES.get(model, model)
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model

@@ -69,6 +69,7 @@ def build_inner_argv(
     tui_mcp_config: str | None = None,
     tui_channel_mcp: str | None = None,
     tui_dev_channels: str | None = None,
+    tui_settings: str | None = None,
 ) -> list[str]:
     """Return the apptainer-inner argv. Dispatches on ``config.kind``.
 
@@ -83,6 +84,16 @@ def build_inner_argv(
     :func:`_tui_runner_argv`). The startup_commands wrapper still
     applies, so container-internal bootstrap (uv venv, symlinks, ...)
     runs before ``exec claude`` identically to the SDK path.
+
+    ``tui_settings`` is the in-container path of the materialised
+    ``$HOME/.claude/settings.json`` (skip-permissions + SAC channel hooks +
+    the ``_shared`` baseline honest-grounding Stop gate / lint PostToolUse,
+    deep-merged by ``settings_json.setup_settings_json(..., filename=
+    "settings.json")``). The interactive TUI reads it at USER scope by
+    discovery — no flag needed; we thread it to ``--settings`` only as
+    belt-and-suspenders (the flag is a no-op for the interactive TUI, which
+    is why the file MUST be ``settings.json``, not ``settings.local.json``:
+    there is no ``.local.json`` at user scope).
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
@@ -91,6 +102,7 @@ def build_inner_argv(
             mcp_config=tui_mcp_config,
             channel_mcp=tui_channel_mcp,
             dev_channels=tui_dev_channels,
+            settings=tui_settings,
         )
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
@@ -224,6 +236,7 @@ def _tui_runner_argv(
     mcp_config: str | None = None,
     channel_mcp: str | None = None,
     dev_channels: str | None = None,
+    settings: str | None = None,
 ) -> list[str]:
     """Argv for the interactive ``claude`` TUI (``spec.runtime: tui``).
 
@@ -234,6 +247,24 @@ def _tui_runner_argv(
       * ``spec.claude.model``  → ``--model <name>`` (when set).
       * ``spec.claude.flags``  → appended verbatim (e.g.
         ``--dangerously-skip-permissions``).
+
+    Settings/hooks: the interactive ``claude`` reads hooks/settings from
+    ``$HOME/.claude/settings.json`` at USER scope (and project-scope
+    ``<cwd>/.claude/settings{,.local}.json``). It does NOT read a
+    ``$HOME/.claude/settings.local.json`` — there is no ``.local.json`` at
+    user scope. So the skip-permissions key + SAC channel hooks + the
+    ``_shared`` baseline honest-grounding Stop gate / lint PostToolUse are
+    materialised into ``$HOME/.claude/settings.json``
+    (``setup_settings_json(..., filename="settings.json")``) and discovered
+    automatically — no flag needed. The caller still passes the in-container
+    path as ``settings`` and we add ``--settings <path>`` as belt-and-
+    suspenders / SDK parity, but for the interactive TUI that flag is a no-op
+    (it replaces discovery and only applies to print/SDK mode — see
+    ``_sdk_common.build_sdk_options`` and skill ``25_claude-setup-delivery``).
+    The earlier bug — the suite materialised under ``settings.local.json`` at
+    ``$HOME`` — left it INERT: the TUI hit live "Do you want to proceed?"
+    prompts AND reached DONE with an empty clew DAG because the Stop gate
+    never fired (paper-scitex-clew solver run 2026-06-20).
 
     MCP servers: the interactive ``claude`` auto-discovers ``.mcp.json``
     from the PROJECT ROOT (its cwd, ``--pwd``), NOT from ``$HOME`` like
@@ -270,6 +301,16 @@ def _tui_runner_argv(
         model = str(getattr(config, "model", "") or "").strip()
     if model:
         argv += ["--model", model]
+    # Session continuity: append ``-c`` (continue) ONLY when the resolved
+    # session mode is ``continue``. ``config.claude.session`` is already fully
+    # resolved (CLI override > explicit spec > role-default > global ``fresh``)
+    # by the loader/CLI before this builder runs — we only translate it to the
+    # flag here. Experiment capsules (no coordinator role → ``fresh``) run
+    # hermetic; coordinator roles keep continuity.
+    from ..config._session_continuity import wants_continue
+
+    if wants_continue(getattr(claude_spec, "session", None)):
+        argv.append("-c")
     # One ``--mcp-config`` per value (P0 fix 2026-06-15, operator-reported):
     # ``claude --help`` documents ``--mcp-config <configs...>`` as accepting
     # multiple space-separated values after a single flag, but the real
@@ -284,6 +325,15 @@ def _tui_runner_argv(
         argv += ["--mcp-config", mcp_config]
     if channel_mcp:
         argv += ["--mcp-config", channel_mcp]
+    # Explicit settings/hooks load (belt-and-suspenders / SDK parity). The
+    # interactive TUI actually loads these via USER-scope discovery of
+    # ``$HOME/.claude/settings.json`` — this ``--settings`` is a no-op for it
+    # (it only takes effect in print/SDK mode), but harmless and kept for
+    # parity. Emitted before the verbatim ``spec.claude.flags`` so an operator
+    # who hand-passes their own ``--settings`` still wins (claude takes the
+    # last occurrence).
+    if settings:
+        argv += ["--settings", settings]
     if dev_channels:
         # --dangerously-load-development-channels is REPEATABLE — claude wants
         # one occurrence per channel (the ``server:<mcp>`` entry, prefix kept).

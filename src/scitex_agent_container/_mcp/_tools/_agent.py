@@ -85,13 +85,28 @@ def agent_recall(name: str) -> dict[str, Any]:
 # ─── Mutation verbs (the MCP host's permission flow gates these) ───
 
 
-def agent_start(name: str, foreground: bool = False) -> dict[str, Any]:
+def agent_start(
+    name: str, foreground: bool = False, session: str | None = None
+) -> dict[str, Any]:
     """Start an agent by name. Mirrors ``sac agents start <name>``.
 
     JSON-friendly wrapper around the CLI. For programmatic callers
     that need to share a Registry instance, use
     :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
     directly.
+
+    Args:
+        name: The agent to start.
+        foreground: Attach to the caller's terminal (claude-session only).
+        session: Optional session-continuity override for THIS start,
+            mirroring the CLI ``--session`` / ``--continue`` / ``--fresh``.
+            One of ``"fresh"`` (independent session — the default for
+            experiment trials), ``"continue"`` (resume the latest session —
+            for long-lived coordinators), or ``"resume"``. ``None`` leaves
+            the spec's resolved ``claude.session`` (which role-defaults to
+            ``continue`` for coordinators, ``fresh`` otherwise) untouched.
+            ``"new-session"`` is accepted as a back-compat alias for
+            ``"fresh"``.
 
     .. note::
        In-SIF dispatch: as of the SAC-from-SAC broker (operator-
@@ -110,6 +125,25 @@ def agent_start(name: str, foreground: bool = False) -> dict[str, Any]:
     argv = ["agents", "start", name]
     if foreground:
         argv.append("--foreground")
+    if session is not None:
+        mode = str(session).strip().lower()
+        # Map to the friendly shorthand flags where they exist so the MCP
+        # surface mirrors the CLI exactly; fall through to --session for
+        # ``resume`` and the ``new-session`` back-compat alias.
+        if mode == "continue":
+            argv.append("--continue")
+        elif mode == "fresh":
+            argv.append("--fresh")
+        elif mode in ("resume", "new-session"):
+            argv += ["--session", mode]
+        else:
+            return {
+                "status": "error",
+                "reason": (
+                    f"invalid session {session!r}; expected one of "
+                    "fresh|continue|resume (or the alias new-session)."
+                ),
+            }
     return invoke_cli_text(argv)
 
 

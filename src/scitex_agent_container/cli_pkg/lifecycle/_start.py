@@ -85,14 +85,36 @@ def _any_target_needs_anthropic_oauth(
     "--session",
     "session_mode",
     type=click.Choice(
-        # New names (REQUIREMENT_SUMMARY §3 #6); legacy aliases
-        # `continue-or-new` and `new` are still accepted at YAML load
-        # time via parse_claude but hidden from the CLI surface.
-        ["continue", "new-session", "resume"],
+        # ``fresh`` is the canonical "always start a new session" value
+        # (the default since 2026-06-22). ``new-session`` is kept as a
+        # back-compat alias. Legacy ``continue-or-new`` / ``new`` are still
+        # accepted at YAML load time via parse_claude but hidden from the
+        # CLI surface.
+        ["fresh", "continue", "new-session", "resume"],
         case_sensitive=False,
     ),
     default=None,
-    help="Override the YAML's claude.session for this start invocation.",
+    help="Override the YAML's claude.session for this start invocation "
+    "(fresh|continue|resume). Shorthand: --continue / --fresh.",
+)
+@click.option(
+    "-c",
+    "--continue",
+    "continue_session",
+    is_flag=True,
+    default=False,
+    help="Resume the agent's latest session (shorthand for --session "
+    "continue). Overrides a spec that says fresh. For long-lived "
+    "coordinators; experiment trials should stay fresh (the default).",
+)
+@click.option(
+    "--fresh",
+    "fresh_session",
+    is_flag=True,
+    default=False,
+    help="Force a brand-new, independent session (shorthand for --session "
+    "fresh). Overrides a spec that says continue. This is the default when "
+    "no session flag is given.",
 )
 @click.option(
     "--dry-run",
@@ -211,6 +233,8 @@ def start(
     force: bool,
     resume_id: str | None,
     session_mode: str | None,
+    continue_session: bool,
+    fresh_session: bool,
     dry_run: bool,
     as_json: bool,
     yes: bool,
@@ -256,6 +280,29 @@ def start(
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
+
+    # Session-continuity shorthand flags (--continue/-c, --fresh) fold into
+    # session_mode. They are mutually exclusive with each other and may not
+    # contradict an explicit --session. ``--continue`` overrides a spec that
+    # says fresh; ``--fresh`` overrides a spec that says continue — both via
+    # the normal session_override path (claude.session is mutated post-load),
+    # which is what the runtime/argv builder reads (precedence: CLI > spec >
+    # role-default > global default fresh).
+    if continue_session and fresh_session:
+        click.echo("Error: --continue and --fresh are mutually exclusive.", err=True)
+        sys.exit(2)
+    _shorthand = (
+        "continue" if continue_session else ("fresh" if fresh_session else None)
+    )
+    if _shorthand is not None:
+        if session_mode is not None and session_mode.lower() != _shorthand:
+            click.echo(
+                f"Error: --{_shorthand} contradicts --session {session_mode}; "
+                "pass only one.",
+                err=True,
+            )
+            sys.exit(2)
+        session_mode = _shorthand
 
     # F-CS2: --params-file expands a template + CSV into N materialised
     # yamls; the resulting paths replace ``targets`` so downstream code

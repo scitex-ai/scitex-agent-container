@@ -8,7 +8,10 @@ The single canonical layout for materializing files into an agent's
     └── to_home/           contents mirror $HOME 1:1
         ├── .claude/
         │   ├── CLAUDE.md          → $HOME/.claude/CLAUDE.md     (marker-protected)
-        │   ├── settings.local.json
+        │   ├── settings.json      → $HOME/.claude/settings.json (USER scope —
+        │   │                        the interactive TUI reads hooks here; a
+        │   │                        legacy settings.local.json is folded into
+        │   │                        it by settings_json.setup_settings_json)
         │   ├── hooks/
         │   └── skills/
         ├── .mcp.json              → $HOME/.mcp.json             (full overwrite)

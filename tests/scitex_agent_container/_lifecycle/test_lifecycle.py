@@ -710,6 +710,56 @@ def test_agent_start_session_override_mutates_claude_session(
     assert captured["cfg"].claude.session == "resume"
 
 
+def test_agent_start_continue_override_beats_spec_fresh(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — spec explicitly says fresh; the CLI --continue maps to a
+    # session_override="continue" that must win (precedence CLI > spec).
+    spec = _write_spec(tmp_path, extra_spec="  session: fresh\n")
+    captured: dict[str, AgentConfig] = {}
+
+    def factory(c: AgentConfig) -> FakeRuntime:
+        captured["cfg"] = c
+        return FakeRuntime(start_result=True)
+
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=factory,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        session_override="continue",
+    )
+    # Assert
+    assert captured["cfg"].claude.session == "continue"
+
+
+def test_agent_start_fresh_override_beats_spec_continue(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — spec explicitly says continue; the CLI --fresh maps to a
+    # session_override="fresh" that must win (precedence CLI > spec).
+    spec = _write_spec(tmp_path, extra_spec="  session: continue\n")
+    captured: dict[str, AgentConfig] = {}
+
+    def factory(c: AgentConfig) -> FakeRuntime:
+        captured["cfg"] = c
+        return FakeRuntime(start_result=True)
+
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=factory,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        session_override="fresh",
+    )
+    # Assert
+    assert captured["cfg"].claude.session == "fresh"
+
+
 def test_agent_start_resume_id_override_mutates_resume_id(
     tmp_path: Path, registry: Registry
 ) -> None:

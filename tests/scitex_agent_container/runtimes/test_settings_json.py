@@ -586,3 +586,147 @@ def test_cleanup_noop_when_existing_is_not_dict(tmp_path):
     cleanup_settings_json(AgentConfig(name="m"), str(tmp_path))
     # Assert
     assert json.loads(settings_path.read_text()) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# filename= parameter — USER-scope settings.json vs PROJECT-scope .local.json
+# ---------------------------------------------------------------------------
+
+
+def test_setup_filename_settings_json_writes_settings_json(tmp_path):
+    """filename='settings.json' writes the USER-scope file the TUI reads."""
+    # Arrange
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert
+    assert (tmp_path / ".claude" / "settings.json").is_file()
+
+
+def test_setup_filename_settings_json_skips_local_json(tmp_path):
+    """filename='settings.json' does NOT create a settings.local.json."""
+    # Arrange
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert
+    assert not (tmp_path / ".claude" / "settings.local.json").exists()
+
+
+def test_setup_default_filename_still_writes_local_json(tmp_path):
+    """The default (no filename=) keeps writing settings.local.json (project scope)."""
+    # Arrange
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path))
+    # Assert
+    assert (tmp_path / ".claude" / "settings.local.json").is_file()
+
+
+def test_setup_settings_json_folds_legacy_local_sibling(tmp_path):
+    """A legacy settings.local.json baseline gate is folded into settings.json."""
+    # Arrange — deploy_to_home landed the baseline gate under the old name.
+    claude = tmp_path / ".claude"
+    claude.mkdir(parents=True)
+    (claude / "settings.local.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "command", "command": "gate.sh verify"}],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert — the baseline gate now lives in settings.json.
+    data = json.loads((claude / "settings.json").read_text())
+    commands = [h["command"] for grp in data["hooks"]["Stop"] for h in grp["hooks"]]
+    assert "gate.sh verify" in commands
+
+
+def test_setup_settings_json_keeps_sac_hook_after_fold(tmp_path):
+    """After folding the legacy sibling, SAC's own Stop hook still coexists."""
+    # Arrange
+    claude = tmp_path / ".claude"
+    claude.mkdir(parents=True)
+    (claude / "settings.local.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "command", "command": "gate.sh verify"}],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert — SAC's ingest-hook-event stop hook is present under Stop too.
+    data = json.loads((claude / "settings.json").read_text())
+    commands = [h["command"] for grp in data["hooks"]["Stop"] for h in grp["hooks"]]
+    assert any("ingest-hook-event" in c for c in commands)
+
+
+def test_setup_settings_json_removes_legacy_sibling_after_fold(tmp_path):
+    """The legacy settings.local.json is removed once folded into settings.json."""
+    # Arrange
+    claude = tmp_path / ".claude"
+    claude.mkdir(parents=True)
+    (claude / "settings.local.json").write_text(json.dumps({"hooks": {}}))
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    # Act
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert — no critical hook can hide in the path the TUI never reads.
+    assert not (claude / "settings.local.json").exists()
+
+
+def test_cleanup_filename_settings_json_targets_settings_json(tmp_path):
+    """cleanup_settings_json(filename='settings.json') drops managed keys there."""
+    # Arrange
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    setup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Act
+    cleanup_settings_json(cfg, str(tmp_path), filename="settings.json")
+    # Assert
+    remaining_path = tmp_path / ".claude" / "settings.json"
+    remaining = (
+        json.loads(remaining_path.read_text()) if remaining_path.exists() else {}
+    )
+    assert "hooks" not in remaining
+
+
+def test_merge_hooks_blocks_dedupes_identical_groups():
+    """_merge_hooks_blocks concatenates per event and de-dupes identical groups."""
+    # Arrange
+    from scitex_agent_container.runtimes.settings_json import _merge_hooks_blocks
+
+    grp = {"matcher": "", "hooks": [{"type": "command", "command": "x"}]}
+    # Act
+    merged = _merge_hooks_blocks({"Stop": [grp]}, {"Stop": [grp]})
+    # Assert
+    assert merged["Stop"] == [grp]
+
+
+def test_merge_hooks_blocks_preserves_base_when_overlay_adds_event():
+    """A base event survives when the overlay only adds a different event."""
+    # Arrange
+    from scitex_agent_container.runtimes.settings_json import _merge_hooks_blocks
+
+    base = {"Stop": [{"matcher": "", "hooks": [{"command": "gate"}]}]}
+    overlay = {"PreToolUse": [{"matcher": "", "hooks": [{"command": "pre"}]}]}
+    # Act
+    merged = _merge_hooks_blocks(base, overlay)
+    # Assert
+    assert merged["Stop"] == base["Stop"]

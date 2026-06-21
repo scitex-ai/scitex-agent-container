@@ -62,13 +62,29 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     # Top-level `session:` takes precedence over `claude.session` for
     # ergonomics (it's the primary knob agents care about). Falls back to
     # the nested field for backward compat, then the default.
+    #
+    # Default flipped to ``fresh`` (2026-06-22, "fresh by default, opt-in
+    # continue"): a spec that OMITS ``session`` starts an independent
+    # session — the right behaviour for experiment trials. Coordinator /
+    # long-lived roles that omit the field are mapped back to ``continue``
+    # in ``_loaders.py`` (it has the ``metadata.labels.role`` + ``spec.env``
+    # role that this parser cannot see), so the flip does not silently
+    # break long-lived agents. An EXPLICIT ``session: fresh`` on a
+    # coordinator stays fresh (the loader only applies the role-default
+    # when the field was omitted entirely).
     session = spec.get("session")
     if session is None:
-        session = raw.get("session", "continue")
-    # Legacy alias normalization (REQUIREMENT_SUMMARY §3 #6):
-    #   continue-or-new -> continue   (same semantics: safe-fallback)
-    #   new             -> new-session (renamed for clarity)
-    _SESSION_ALIASES = {"continue-or-new": "continue", "new": "new-session"}
+        session = raw.get("session", "fresh")
+    # Alias normalization. ``fresh`` is the canonical "always start a new
+    # session" value; the pre-2026-06 names ``new-session`` / ``new`` are
+    # accepted aliases for it (back-compat for existing specs / the SDK
+    # path). ``continue-or-new`` is the safe-fallback alias for
+    # ``continue``.
+    _SESSION_ALIASES = {
+        "continue-or-new": "continue",
+        "new": "fresh",
+        "new-session": "fresh",
+    }
     session = _SESSION_ALIASES.get(str(session), session)
     continue_max_age = raw.get("continue_max_age_minutes")
     if continue_max_age is not None:

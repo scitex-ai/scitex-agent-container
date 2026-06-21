@@ -186,6 +186,42 @@ def test_agent_start_with_foreground_true_appends_foreground_flag():
     assert captured[-1] == ("text", ["agents", "start", "x", "--foreground"])
 
 
+def test_agent_start_with_session_continue_appends_continue_flag():
+    # Arrange
+    with _recording() as captured:
+        # Act
+        _agent.agent_start("x", session="continue")
+    # Assert
+    assert captured[-1] == ("text", ["agents", "start", "x", "--continue"])
+
+
+def test_agent_start_with_session_fresh_appends_fresh_flag():
+    # Arrange
+    with _recording() as captured:
+        # Act
+        _agent.agent_start("x", session="fresh")
+    # Assert
+    assert captured[-1] == ("text", ["agents", "start", "x", "--fresh"])
+
+
+def test_agent_start_with_session_resume_appends_session_flag():
+    # Arrange
+    with _recording() as captured:
+        # Act
+        _agent.agent_start("x", session="resume")
+    # Assert
+    assert captured[-1] == ("text", ["agents", "start", "x", "--session", "resume"])
+
+
+def test_agent_start_with_invalid_session_returns_error_without_dispatch():
+    # Arrange
+    with _recording() as captured:
+        # Act
+        result = _agent.agent_start("x", session="bogus")
+    # Assert
+    assert result["status"] == "error" and captured == []
+
+
 def test_agent_stop_with_name_dispatches_text_argv():
     # Arrange
     with _recording() as captured:

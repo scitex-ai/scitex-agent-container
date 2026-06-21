@@ -133,17 +133,24 @@ def _cred_file_path() -> Path:
 
 
 def _container_settings_path() -> str | None:
-    """Resolve the in-container ``settings.local.json`` path, or ``None``.
+    """Resolve the in-container ``$HOME/.claude`` settings path, or ``None``.
 
-    sac mirrors the agent's ``to_home`` tree (including
-    ``.claude/settings.local.json``) into the container ``$HOME`` — both via
-    the workspace-home bind (hardened mode) and via the overlay upper home
+    sac mirrors the agent's ``to_home`` tree (including the ``.claude``
+    settings file) into the container ``$HOME`` — both via the
+    workspace-home bind (hardened mode) and via the overlay upper home
     (relaxed ``--home``/``--overlay`` specs). The runner executes INSIDE the
     container, so ``$HOME`` already points at ``/home/agent`` (or whatever
     ``--home`` the spec set). We resolve the settings file against that
-    ``$HOME`` and return its path only when the file is present — so a spec
-    without a ``settings.local.json`` doesn't aim ``--settings`` at a missing
-    file.
+    ``$HOME`` and return its path only when a file is present — so a spec
+    without one doesn't aim ``--settings`` at a missing file.
+
+    Filename: prefer ``settings.json`` (the container ``$HOME`` settings
+    file is delivered at USER scope so the interactive TUI also reads it —
+    see :mod:`settings_json`), falling back to the legacy
+    ``settings.local.json`` for older baselines that still ship that name.
+    The SDK loads whichever we return via an explicit ``--settings`` flag
+    (which, unlike the interactive TUI, IS honoured in print/SDK mode),
+    independently of ``setting_sources=[]``.
 
     The hook ``command``s inside that settings file use ``$HOME/.claude/...``,
     so they resolve in-container regardless of what ``$HOME`` resolves to.
@@ -151,8 +158,12 @@ def _container_settings_path() -> str | None:
     home = os.environ.get("HOME")
     if not home:
         return None
-    candidate = Path(home) / ".claude" / "settings.local.json"
-    return str(candidate) if candidate.is_file() else None
+    claude_dir = Path(home) / ".claude"
+    for name in ("settings.json", "settings.local.json"):
+        candidate = claude_dir / name
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -500,14 +511,14 @@ def build_sdk_options(
     # the highest-priority user-controlled layer — and loads INDEPENDENTLY
     # of ``setting_sources``, which stays ``[]`` for machine-independence
     # (no host ``~/.claude`` auto-discovery). sac delivers the agent's
-    # ``settings.local.json`` into the container ``$HOME/.claude/`` via the
-    # ``to_home`` mirror; without ``--settings`` the SDK would never load it
-    # (empty ``setting_sources`` skips the $HOME settings layer entirely).
+    # ``$HOME/.claude/settings.json`` (USER scope, so the interactive TUI
+    # reads it too; legacy ``settings.local.json`` accepted as fallback) via
+    # the ``to_home`` mirror; without ``--settings`` the SDK would never load
+    # it (empty ``setting_sources`` skips the $HOME settings layer entirely).
     #
     # We resolve the path from the in-container ``$HOME`` (where the runner
-    # actually executes) and only set it when the file is present, so a
-    # spec without a settings.local.json doesn't point ``--settings`` at a
-    # missing file.
+    # actually executes) and only set it when a file is present, so a spec
+    # without one doesn't point ``--settings`` at a missing file.
     settings_path = _container_settings_path()
     if settings_path is not None and "settings" not in kwargs:
         kwargs["settings"] = settings_path
