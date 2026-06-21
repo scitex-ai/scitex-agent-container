@@ -1,7 +1,7 @@
 ---
 name: scitex-agent-container
 description: |
-  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml` (apptainer image, model, MCP, mounts/env, health, restart, A2A port, remote host); `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
+  [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
   [WHEN] Launching/managing a Claude Code agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
   [HOW] `pip install scitex-agent-container`, then `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
@@ -72,7 +72,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
 - [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded so Telegram answers fast
 - [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`; harness reaps that namespace
-- [32_nested-apptainer-builds.md](32_nested-apptainer-builds.md) — nested apptainer build/pull of a capsule's pinned env (CodeOcean image / Dockerfile def) inside SAC; pairs with the clew verify gate
+- [32](32_nested-apptainer-builds.md)
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
