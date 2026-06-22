@@ -18,6 +18,7 @@ from scitex_agent_container._notify.email import (
     DEFAULT_EMAIL_SMTP_PORT,
     EmailConfig,
     EmailRelayError,
+    _ecosystem_email_sender,
     resolve_email_config,
     send_email,
 )
@@ -285,3 +286,20 @@ class TestSendEmail:
         # Assert
         with ctx:
             action("subj", "body", send_fn=_raise_smtp)
+
+
+class TestDefaultTransport:
+    """The un-injected default transport is the real scitex-notification
+    sender. scitex-notification is an optional `[notify]` extra, so this is
+    skipped (not failed) where it is not installed — the literal
+    importorskip also satisfies the PS-210 dev-extras guard."""
+
+    def test_default_transport_is_scitex_notification_send_email(self):
+        # Arrange
+        pytest.importorskip("scitex_notification")
+        import scitex_notification
+
+        # Act
+        sender = _ecosystem_email_sender()
+        # Assert
+        assert sender is scitex_notification.send_email
