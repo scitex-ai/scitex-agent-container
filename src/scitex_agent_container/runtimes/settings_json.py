@@ -82,7 +82,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event pretool",
+                    "command": "scitex-agent-container event ingest pretool",
                 }
             ],
         }
@@ -93,7 +93,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event posttool",
+                    "command": "scitex-agent-container event ingest posttool",
                 }
             ],
         }
@@ -104,7 +104,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event prompt",
+                    "command": "scitex-agent-container event ingest prompt",
                 }
             ],
         }
@@ -115,7 +115,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event stop",
+                    "command": "scitex-agent-container event ingest stop",
                 }
             ],
         }
@@ -167,6 +167,58 @@ def _merge_hooks_blocks(base: object, overlay: object) -> dict:
                 if grp not in dest:
                     dest.append(grp)
     return merged
+
+
+def _strip_stale_sac_ingest_hooks(hooks: object) -> dict:
+    """Drop SAC's OWN event-ring ingest hooks from an existing hooks block.
+
+    SAC owns these hooks and re-injects the CURRENT form from ``_HOOKS_CONFIG``
+    on every materialise. ``_merge_hooks_blocks`` preserves baseline hooks by
+    concatenating + de-duping IDENTICAL groups — but a renamed command is not
+    identical to its predecessor, so a stale ``scitex-agent-container
+    ingest-hook-event <kind>`` survived ALONGSIDE the new ``… event ingest
+    <kind>``. Both then ran, and the deprecated form's loud ``'sac
+    ingest-hook-event' was renamed`` shim error BLOCKED every UserPromptSubmit
+    (proj-scitex-dev 2026-06-23 — the agent received Telegram but could not act
+    on it). Stripping every prior-form SAC ingest hook (old ``ingest-hook-event``
+    OR any ``event ingest``) from the merge BASE makes the block idempotent
+    across the rename. Non-SAC baseline hooks (the ``_shared`` honest-grounding
+    Stop gate, the lint PostToolUse) never match the pattern and are preserved;
+    a group that mixes SAC + non-SAC hooks keeps only its non-SAC entries.
+    """
+    import re
+
+    sac_ingest = re.compile(
+        r"(?:scitex-agent-container|sac)\s+(?:ingest-hook-event|event\s+ingest)\b"
+    )
+    if not isinstance(hooks, dict):
+        return {}
+    cleaned: dict = {}
+    for ev, groups in hooks.items():
+        if not isinstance(groups, list):
+            cleaned[ev] = groups
+            continue
+        kept_groups: list = []
+        for grp in groups:
+            hk_list = grp.get("hooks") if isinstance(grp, dict) else None
+            if not isinstance(hk_list, list):
+                kept_groups.append(grp)
+                continue
+            kept_hooks = [
+                hk
+                for hk in hk_list
+                if not (
+                    isinstance(hk, dict)
+                    and isinstance(hk.get("command"), str)
+                    and sac_ingest.search(hk["command"])
+                )
+            ]
+            if kept_hooks:
+                kept_groups.append({**grp, "hooks": kept_hooks})
+            # else: a purely SAC-ingest group → drop it entirely
+        if kept_groups:
+            cleaned[ev] = kept_groups
+    return cleaned
 
 
 def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
@@ -382,7 +434,11 @@ def setup_settings_json(
     if isinstance(existing.get("hooks"), dict) and isinstance(
         settings.get("hooks"), dict
     ):
-        settings["hooks"] = _merge_hooks_blocks(existing["hooks"], settings["hooks"])
+        # SAC owns its ingest hook: prune any prior-form copy (the renamed-away
+        # ``ingest-hook-event``) from the base so it cannot survive in duplicate
+        # and block every prompt via its deprecation-shim error (2026-06-23).
+        base_hooks = _strip_stale_sac_ingest_hooks(existing["hooks"])
+        settings["hooks"] = _merge_hooks_blocks(base_hooks, settings["hooks"])
 
     existing.update(settings)
 

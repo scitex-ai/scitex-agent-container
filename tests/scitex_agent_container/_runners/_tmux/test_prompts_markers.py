@@ -191,3 +191,14 @@ def test_handler_present_in_registry(expected_name: str):
     names = {h.name for h in handlers}
     # Assert
     assert expected_name in names
+
+
+def test_compose_pending_detector_matches_nbsp_paste_gap():
+    # Arrange — claude 2.1.150 renders the compose prompt gap as U+00A0 NBSP
+    # (``❯\xa0[Pasted text …]``); the bare ``❯[ \t]+`` pattern missed it and a
+    # pasted-but-unsent buffer went undetected (proj-scitex-dev 2026-06-23).
+    pane = "❯\xa0[Pasted text #1 +26 lines]\n"
+    # Act
+    matched = P._detect_compose_pending_unsent(pane)
+    # Assert
+    assert matched is True

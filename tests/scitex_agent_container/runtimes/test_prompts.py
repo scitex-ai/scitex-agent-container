@@ -482,6 +482,18 @@ def test_detect_returns_none_for_quiet_pane():
     assert name is None
 
 
+def test_detect_returns_compose_pending_for_nbsp_paste_buffer():
+    # Arrange — Claude's Ink TUI renders the prompt gap as U+00A0 NBSP, so a
+    # multi-line startup_prompt paste shows as ``❯\xa0[Pasted text …]``. The
+    # detector MUST classify it (the bug that left proj-scitex-dev's prompt
+    # pasted-but-unsent: ``❯[ \t]+`` missed the NBSP → no Enter resend).
+    pane = "❯\xa0[Pasted text #1 +26 lines]\n"
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name == "compose-pending-unsent"
+
+
 def test_respond_modal_sends_the_registered_keys():
     # Arrange
     sent: list[str] = []

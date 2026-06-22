@@ -138,7 +138,10 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
     # decorative dashed separator that lives a line below the empty
     # prompt — earlier `❯\s+\S` greedily crossed the newline and lit
     # compose_pending for every freshly-booted agent.
-    if re.search(r"❯[ \t]+\S", tail):
+    # The gap class includes U+00A0 NBSP: Claude's Ink TUI renders the prompt
+    # as ``❯\xa0[Pasted text …]`` (NBSP, not ASCII space), so a bare ``[ \t]``
+    # missed every pasted-but-unsent buffer (proj-scitex-dev 2026-06-23).
+    if re.search(r"❯[ \t\xa0]+\S", tail):
         return "compose_pending_unsent", ""
     if "❯" in tail or ">" in tail:
         return "running", ""

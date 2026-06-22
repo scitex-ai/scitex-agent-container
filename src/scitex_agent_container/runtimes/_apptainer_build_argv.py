@@ -85,7 +85,40 @@ def build_run_argv(
     # discovery works without manual operator config.
     home_host = state_dir.expanduser() / "home"
     home_host.mkdir(parents=True, exist_ok=True)
-    argv += ["--bind", f"{home_host}:/home/agent"]
+
+    # Relaxed-overlay double-bind fix: when a directory overlay
+    # materialises the to_home tree into the overlay upper-home, THAT
+    # upper-home — not the workspace-home — must back the container
+    # $HOME (/home/agent). Both binds target the same path; apptainer
+    # keeps only the FIRST and skips the later duplicate ("already in
+    # mount point list"). Historically the workspace-home bind emitted
+    # here won and silently shadowed the overlay upper, so the freshly
+    # materialised to_home (.mcp.json / settings.json / credentials
+    # placeholder) vanished — the agent booted on a stale/empty home
+    # (cred FATAL; per-agent telegrammer MCP absent). Resolve the
+    # upper-home up-front and, when it will back /home/agent, SKIP this
+    # workspace-home bind so the overlay upper (bound below, after
+    # raw_args) is the SINGLE authoritative home. Everything that
+    # pre-creates bind-target parents or reads the agent .env then
+    # targets ``home_backing`` (the resolved winner), never the
+    # unmounted workspace-home. Non-overlay specs are unaffected
+    # (resolver returns None → home_backing == home_host, bind emitted).
+    from ._to_home_overlay import (
+        resolve_container_home,
+        resolve_overlay_upper_home,
+    )
+
+    _upper_home = resolve_overlay_upper_home(config)
+    _overlay_backs_home = (
+        _upper_home is not None
+        and _upper_home.is_dir()
+        and str(resolve_container_home(config)) == "/home/agent"
+    )
+    home_backing = (
+        _upper_home if (_upper_home is not None and _overlay_backs_home) else home_host
+    )
+    if not _overlay_backs_home:
+        argv += ["--bind", f"{home_host}:/home/agent"]
 
     # Agent-supplied environment file. ``deploy_to_home`` materialises each
     # agent's ``to_home/.env`` to ``$HOME/.env`` (== ``home_host/.env`` on
@@ -101,7 +134,7 @@ def build_run_argv(
     # wiring. Format is plain ``KEY=VALUE`` — apptainer ``--env-file`` is not
     # a shell, so no ``export`` prefix and no quoting of values. No-op when
     # the agent ships no ``.env``.
-    env_file = home_host / ".env"
+    env_file = home_backing / ".env"
     if env_file.is_file():
         argv += ["--env-file", str(env_file)]
 
@@ -210,7 +243,7 @@ def build_run_argv(
             dst = rest.split(":", 1)[0]
             if dst.startswith("/home/agent/"):
                 rel = dst[len("/home/agent/") :]
-                (home_host / rel).mkdir(parents=True, exist_ok=True)
+                (home_backing / rel).mkdir(parents=True, exist_ok=True)
         argv += ["--bind", bs]
 
     # GPU passthrough — apptainer's --nv binds the host CUDA libs
@@ -357,7 +390,9 @@ def build_run_argv(
         resolve_overlay_upper_home,
     )
 
-    upper_home = resolve_overlay_upper_home(config)
+    # Reuse the up-front resolution (see the home_backing block above) so
+    # the skip-the-workspace-home decision and this bind agree exactly.
+    upper_home = _upper_home
     if upper_home is not None and upper_home.is_dir():
         container_home = resolve_container_home(config)
         argv += ["--bind", f"{upper_home}:{container_home}"]

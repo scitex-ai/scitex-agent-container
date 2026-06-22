@@ -99,6 +99,16 @@ def test_classify_detects_compose_pending():
     assert state == "compose_pending_unsent"
 
 
+def test_classify_detects_compose_pending_with_nbsp_gap():
+    # Arrange — Claude's Ink TUI renders the prompt gap as U+00A0 NBSP, not an
+    # ASCII space (the real proj-scitex-dev pasted-but-unsent startup buffer).
+    pane = "❯\xa0[Pasted text #1 +26 lines]\n"
+    # Act
+    state, _ = _classify_pane_state(pane)
+    # Assert
+    assert state == "compose_pending_unsent"
+
+
 def test_classify_detects_running_for_bare_prompt():
     # Arrange
     pane = "history line\n❯\n"

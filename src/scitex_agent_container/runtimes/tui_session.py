@@ -563,41 +563,69 @@ class TuiSessionRuntime(RuntimeBase):
                 )
 
     def _verify_submitted(
-        self, name: str, *, max_resends: int = 5, settle_s: float = 0.8
+        self,
+        name: str,
+        *,
+        max_resends: int = 8,
+        poll_s: float = 0.6,
+        appear_timeout_s: float = 5.0,
     ) -> bool:
         """Verify a just-pasted turn was SUBMITTED; resend Enter until it is.
 
-        Same render-race / fail-loud fix as the boot drain:
-        ``send_text_and_submit`` + a defensive Enter can BOTH be eaten by
-        Claude's Ink TUI while it (re)binds the input, leaving the prompt
-        pasted-but-unsent (``❯ [Pasted text …]``) so the agent sits idle
-        having never read its instructions. Re-send Enter, verifying via
-        :func:`prompts.detect` that the ``compose-pending-unsent`` state
-        clears; fail LOUD with the pane tail if it won't.
+        Two-phase, advancement-driven (the fix the emacs-claude-code TUI
+        driver validated — see ``ecc-send-verification.el``):
+
+          1. **Wait for the paste to RENDER** as an unsent compose buffer
+             (``❯ [Pasted text …]`` → ``prompts.detect == compose-pending-
+             unsent``). A multi-line paste takes a beat to appear; the OLD
+             single early check could run BEFORE it rendered, see the empty
+             prompt, and false-pass ``submitted`` — so no Enter ever reached
+             the composed buffer and the startup_prompt sat unsent forever
+             (proj-scitex-dev 2026-06-23, figrecipe/todo/neurovista earlier).
+          2. **Resend Enter until it CLEARS.** Once we have positively SEEN
+             the pending buffer, a plain Enter submits it; the Ink TUI can
+             still eat one during a re-render, so retry up to ``max_resends``.
+
+        If the buffer never renders as pending within ``appear_timeout_s``
+        (submitted instantly, or nothing to submit) we return True — there is
+        nothing to force. Fail LOUD with the pane tail if it stays pending.
         """
         import logging
 
         log = logging.getLogger(__name__)
+
+        # Phase 1 — wait for the pasted text to appear as an unsent buffer.
+        appear_deadline = time.monotonic() + appear_timeout_s
+        saw_pending = False
+        while time.monotonic() < appear_deadline:
+            if _prompts.detect(self._mux.capture_content(name)) == (
+                "compose-pending-unsent"
+            ):
+                saw_pending = True
+                break
+            time.sleep(poll_s)
+        if not saw_pending:
+            return True
+
+        # Phase 2 — the buffer IS pending; resend Enter until it clears.
         for _ in range(max_resends):
-            if settle_s > 0:
-                time.sleep(settle_s)
-            pane = self._mux.capture_content(name)
-            if _prompts.detect(pane) != "compose-pending-unsent":
-                return True
             self._mux.send_keys(name, "Enter")
+            time.sleep(poll_s)
+            if _prompts.detect(self._mux.capture_content(name)) != (
+                "compose-pending-unsent"
+            ):
+                return True
         pane = self._mux.capture_content(name)
-        if _prompts.detect(pane) == "compose-pending-unsent":
-            log.error(
-                "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-"
-                "UNSENT after %d Enter resends — the Ink TUI is dropping Enter. "
-                "Attach: `tmux attach -t %s`. Pane tail:\n%s",
-                name,
-                max_resends,
-                name,
-                _pane_tail(pane),
-            )
-            return False
-        return True
+        log.error(
+            "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
+            "after %d Enter resends — the Ink TUI is dropping Enter. Attach: "
+            "`tmux attach -t %s`. Pane tail:\n%s",
+            name,
+            max_resends,
+            name,
+            _pane_tail(pane),
+        )
+        return False
 
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session sac owns for this agent.

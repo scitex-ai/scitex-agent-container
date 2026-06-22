@@ -694,10 +694,10 @@ def test_setup_settings_json_keeps_sac_hook_after_fold(tmp_path):
     cfg = _make_cfg("--dangerously-skip-permissions")
     # Act
     setup_settings_json(cfg, str(tmp_path), filename="settings.json")
-    # Assert — SAC's ingest-hook-event stop hook is present under Stop too.
+    # Assert — SAC's event-ingest stop hook is present under Stop too.
     data = json.loads((claude / "settings.json").read_text())
     commands = [h["command"] for grp in data["hooks"]["Stop"] for h in grp["hooks"]]
-    assert any("ingest-hook-event" in c for c in commands)
+    assert any("event ingest" in c for c in commands)
 
 
 def test_setup_settings_json_removes_legacy_sibling_after_fold(tmp_path):
@@ -751,3 +751,53 @@ def test_merge_hooks_blocks_preserves_base_when_overlay_adds_event():
     merged = _merge_hooks_blocks(base, overlay)
     # Assert
     assert merged["Stop"] == base["Stop"]
+
+
+def test_strip_stale_sac_ingest_prunes_renamed_hook_keeps_baseline():
+    # Arrange — the renamed-away ``ingest-hook-event`` hook alongside a non-SAC
+    # baseline gate that MUST survive.
+    existing = {
+        "PreToolUse": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "scitex-agent-container ingest-hook-event pretool",
+                    }
+                ],
+            },
+            {"matcher": "", "hooks": [{"command": "clew verify --strict"}]},
+        ],
+    }
+    # Act
+    cleaned = sj_mod._strip_stale_sac_ingest_hooks(existing)
+    # Assert
+    assert [h["command"] for g in cleaned["PreToolUse"] for h in g["hooks"]] == [
+        "clew verify --strict"
+    ]
+
+
+def test_setup_merge_leaves_single_ingest_command_after_rename():
+    # Arrange — a stale settings file still carrying the OLD ingest form (the
+    # proj-scitex-dev 2026-06-23 duplication that blocked every prompt).
+    existing_hooks = {
+        "UserPromptSubmit": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "scitex-agent-container ingest-hook-event prompt",
+                    }
+                ],
+            },
+        ],
+    }
+    # Act
+    base = sj_mod._strip_stale_sac_ingest_hooks(existing_hooks)
+    merged = sj_mod._merge_hooks_blocks(base, sj_mod._HOOKS_CONFIG)
+    # Assert
+    assert [h["command"] for g in merged["UserPromptSubmit"] for h in g["hooks"]] == [
+        "scitex-agent-container event ingest prompt"
+    ]

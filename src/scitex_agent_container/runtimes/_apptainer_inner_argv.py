@@ -230,6 +230,37 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
 _CLAUDE_TUI_BIN = "claude"
 
 
+def _home_has_resumable_conversation(config: "AgentConfig"):
+    """Return ``(has_conversation, home_path)`` for the agent's container $HOME.
+
+    Interactive ``claude -c`` (continue) with NO prior conversation prints
+    ``No conversation found to continue`` and **exits** — which kills the tmux
+    PTY at boot, so the boot-drain only ever sees a vanished session (the exact
+    failure that cost a 240 s misdiagnosis as "login wall"). Continue-mode must
+    therefore be gated on a transcript actually existing.
+
+    Resolves the SAME host dir that backs the container ``$HOME`` in
+    :func:`_apptainer_build_argv.build_run_argv` — the overlay upper-home for a
+    relaxed-directory-overlay agent, else the workspace-home bind — and checks
+    for any ``.claude/projects/*/*.jsonl`` transcript. Lazy imports keep this
+    free of an import cycle with ``tui_session`` / ``_to_home_overlay``.
+    """
+    from pathlib import Path
+
+    from ._to_home_overlay import resolve_overlay_upper_home
+
+    upper = resolve_overlay_upper_home(config)
+    if upper is not None and upper.is_dir():
+        home = upper
+    else:
+        from .tui_session import state_dir_for_config
+
+        home = state_dir_for_config(config) / "home"
+    projects = Path(home) / ".claude" / "projects"
+    has = projects.is_dir() and any(projects.glob("*/*.jsonl"))
+    return has, home
+
+
 def _tui_runner_argv(
     config: "AgentConfig",
     *,
@@ -310,7 +341,25 @@ def _tui_runner_argv(
     from ..config._session_continuity import wants_continue
 
     if wants_continue(getattr(claude_spec, "session", None)):
-        argv.append("-c")
+        has_history, home = _home_has_resumable_conversation(config)
+        if has_history:
+            argv.append("-c")
+        else:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "TuiSessionRuntime: agent %r is continue-mode but its "
+                "container-home %s holds NO prior conversation transcript — "
+                "OMITTING `-c` and starting a FRESH session this boot. Reason: "
+                "interactive `claude -c` with no history prints 'No conversation "
+                "found to continue' and EXITS, silently killing the tmux session "
+                "during boot-drain (misdiagnosed as a login wall). The session "
+                "becomes resumable once this first boot writes a transcript. If "
+                "this recurs EVERY boot the home is not persisting across "
+                "restarts — check the overlay-upper bind / to_home materialisation.",
+                getattr(config, "name", "?"),
+                home,
+            )
     # One ``--mcp-config`` per value (P0 fix 2026-06-15, operator-reported):
     # ``claude --help`` documents ``--mcp-config <configs...>`` as accepting
     # multiple space-separated values after a single flag, but the real

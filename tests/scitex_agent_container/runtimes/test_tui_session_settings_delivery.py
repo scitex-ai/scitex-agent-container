@@ -216,7 +216,7 @@ def test_tui_settings_preserves_posttooluse_run_lint(
 
 
 def test_tui_settings_has_sac_channel_hooks(materialized_settings: dict) -> None:
-    # Arrange — SAC's event-ring hooks (ingest-hook-event) must coexist with
+    # Arrange — SAC's event-ring hooks (event ingest) must coexist with
     # the baseline gate, across every event SAC wires.
     hooks = materialized_settings["hooks"]
     # Act — flatten every command in the merged hooks block.
@@ -226,8 +226,8 @@ def test_tui_settings_has_sac_channel_hooks(materialized_settings: dict) -> None
         for grp in groups
         for h in grp.get("hooks", [])
     ]
-    # Assert — at least one SAC ingest-hook-event command is present.
-    assert any("ingest-hook-event" in c for c in all_commands)
+    # Assert — at least one SAC event-ingest command is present.
+    assert any("event ingest" in c for c in all_commands)
 
 
 def test_tui_settings_stop_event_has_both_gate_and_sac_hook(
@@ -243,7 +243,7 @@ def test_tui_settings_stop_event_has_both_gate_and_sac_hook(
     ]
     # Act
     has_gate = any("clew_verify_gate" in c for c in stop_commands)
-    has_sac = any("ingest-hook-event" in c for c in stop_commands)
+    has_sac = any("event ingest" in c for c in stop_commands)
     # Assert
     assert has_gate and has_sac
 
@@ -290,7 +290,7 @@ def test_tui_user_scope_settings_json_keeps_sac_hook(tmp_path: Path) -> None:
     # Act
     all_cmds = _flatten_commands(data)
     # Assert — a SAC channel hook landed in the USER-scope file too.
-    assert any("ingest-hook-event" in c for c in all_cmds)
+    assert any("event ingest" in c for c in all_cmds)
 
 
 def test_tui_no_critical_hook_left_in_settings_local_json(tmp_path: Path) -> None:
@@ -318,7 +318,7 @@ def test_tui_renamed_baseline_keeps_gate(tmp_path: Path) -> None:
     ]
     # Assert — gate + SAC hook coexist under Stop (single boolean contract).
     assert any("clew_verify_gate" in c for c in stop_cmds) and any(
-        "ingest-hook-event" in c for c in stop_cmds
+        "event ingest" in c for c in stop_cmds
     )
 
 

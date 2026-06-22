@@ -7,6 +7,9 @@ the legacy --mission fallback. See commit message
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import (
     A2ASpec,
@@ -18,6 +21,7 @@ from scitex_agent_container.runtimes._apptainer_inner_argv import (
     _SUPERVISOR_RESTART_FLOOR,
     _agent_runner_argv,
     _format_shell_steps,
+    _home_has_resumable_conversation,
     _resolve_max_restarts,
     _resolve_restart_backoff_s,
     build_inner_argv,
@@ -358,12 +362,42 @@ def test_tui_session_fresh_omits_continue_flag():
     assert "-c" not in argv
 
 
-def test_tui_session_continue_appends_continue_flag():
-    # Arrange — a coordinator opts into continuity.
+def test_tui_session_continue_with_history_appends_continue_flag():
+    # Arrange — continue-mode AND a prior transcript exists in the home, so
+    # ``claude -c`` has a conversation to resume.
+    cfg = AgentConfig(
+        name="t-cont-hist",
+        runtime="apptainer",
+        claude=ClaudeSpec(model="haiku", session="continue"),
+    )
+    _, home = _home_has_resumable_conversation(cfg)
+    conv = Path(home) / ".claude" / "projects" / "proj" / "c.jsonl"
+    conv.parent.mkdir(parents=True, exist_ok=True)
+    conv.write_text("{}\n")
     # Act
-    argv = _tui_argv("continue")
+    try:
+        argv = build_inner_argv(cfg, tui=True)
+    finally:
+        shutil.rmtree(Path(home) / ".claude", ignore_errors=True)
     # Assert
     assert "-c" in argv
+
+
+def test_tui_session_continue_without_history_omits_continue_flag():
+    # Arrange — continue-mode but a FRESH home (no transcript): interactive
+    # ``claude -c`` would print "No conversation found to continue" and EXIT,
+    # silently killing the boot, so the flag MUST be omitted (fail-loud gate).
+    cfg = AgentConfig(
+        name="t-cont-fresh",
+        runtime="apptainer",
+        claude=ClaudeSpec(model="haiku", session="continue"),
+    )
+    _, home = _home_has_resumable_conversation(cfg)
+    shutil.rmtree(Path(home) / ".claude", ignore_errors=True)
+    # Act
+    argv = build_inner_argv(cfg, tui=True)
+    # Assert
+    assert "-c" not in argv
 
 
 def test_tui_session_resume_omits_continue_flag():

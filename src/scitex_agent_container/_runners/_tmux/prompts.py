@@ -217,8 +217,10 @@ def _detect_compose_pending_unsent(content: str) -> bool:
     """
     import re
 
-    return bool(re.search(r"❯[ \t]+\S", content))
-
+    # NBSP (U+00A0) included: Claude's Ink TUI renders the prompt gap as
+    # ``❯\xa0[Pasted text …]`` (NBSP, not ASCII space); ``❯[ \t]+`` missed it
+    # so a pasted-but-unsent buffer went undetected (proj-scitex-dev 2026-06-23).
+    return bool(re.search(r"❯[ \t\xa0]+\S", content))
 
 
 def _detect_done(content: str) -> bool:
