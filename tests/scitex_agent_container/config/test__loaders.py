@@ -480,6 +480,36 @@ def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
     assert cfg.claude.account == "ghost"
 
 
+def test_load_config_warns_when_startup_prompt_is_long(tmp_path: Path):
+    # Arrange — a long role/rules PROSE startup_prompt (belongs in CLAUDE.md +
+    # skills, not a per-boot turn).
+    p = _v3_yaml(
+        tmp_path, "verbose", {"startup_prompts": ["You are X. " + "rule. " * 120]}
+    )
+    # Act
+    ctx = pytest.warns(UserWarning, match="startup_prompts")
+    # Assert
+    with ctx:
+        load_config(p)
+
+
+def test_load_config_no_warn_for_short_startup_kick(tmp_path: Path):
+    # Arrange — a short boot-KICK must NOT trip the long-prompt warning.
+    import warnings
+
+    p = _v3_yaml(
+        tmp_path,
+        "kick",
+        {"startup_prompts": ["You restarted — check inbox + todo; report readiness."]},
+    )
+    # Act
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        load_config(p)
+    # Assert
+    assert not any("startup_prompts" in str(w.message) for w in rec)
+
+
 # ---------------------------------------------------------------------------
 # #16 — CLAUDE_AGENT_ACCOUNT auto-env from spec.claude.account
 #
