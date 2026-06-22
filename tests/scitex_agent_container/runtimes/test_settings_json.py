@@ -68,6 +68,27 @@ def test_hook_kind_maps_to_ingest_command(tmp_path, kind, subcommand):
 @pytest.mark.parametrize(
     "kind", ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"]
 )
+def test_hook_command_has_no_control_chars(tmp_path, kind):
+    """Regression: a stray backspace (\\x08) once sat INSIDE every hook command
+    (``ingest-hook-event\\x08 pretool``), so each tool/turn ran an unknown
+    command ``ingest-hook-event\\x08`` → ``No such command``. The suffix-only
+    assert above missed it (the command still ended with `` pretool``); assert
+    the command carries no ASCII control char."""
+    # Arrange
+    cfg = _make_cfg("--dangerously-skip-permissions")
+    setup_settings_json(cfg, str(tmp_path))
+    command = json.loads(_settings_path(tmp_path).read_text())["hooks"][kind][0][
+        "hooks"
+    ][0]["command"]
+    # Act
+    control_chars = [ch for ch in command if ord(ch) < 32 and ch != "\t"]
+    # Assert
+    assert control_chars == []
+
+
+@pytest.mark.parametrize(
+    "kind", ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"]
+)
 def test_hook_kind_has_empty_matcher(tmp_path, kind):
     """Every hook kind uses the wildcard (empty) matcher."""
     # Arrange

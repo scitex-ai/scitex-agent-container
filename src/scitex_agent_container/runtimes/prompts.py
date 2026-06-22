@@ -339,6 +339,39 @@ def detect_and_respond(
     return None
 
 
+def detect(content: str) -> str | None:
+    """Return the NAME of the first matching prompt handler (by priority), or
+    None when no known modal is on screen. Detect-only — sends nothing.
+
+    Pairs with :func:`respond_modal` so a drain loop can RESPOND, settle, then
+    re-detect to VERIFY the modal actually cleared — instead of firing
+    keystrokes once and assuming success. Claude's Ink TUI drops keys sent
+    mid-render, so a fire-and-forget send silently leaves the modal up; the
+    detect/respond/verify cycle is the no-silent-fallback fix.
+    """
+    for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
+        if handler.detect(content):
+            return handler.name
+    return None
+
+
+def respond_modal(name: str, send_keys_fn: Callable[..., None]) -> bool:
+    """Send the registered keystrokes for the handler named ``name``.
+
+    Returns True iff a handler with that name exists (its keys were sent),
+    False otherwise. The caller MUST verify the modal cleared (re-capture +
+    :func:`detect`) and resend on the render race — a single send is not
+    guaranteed to land.
+    """
+    for handler in PROMPT_HANDLERS:
+        if handler.name == name:
+            for key in handler.keys:
+                send_keys_fn(key)
+            logger.info("Responded to prompt %s (keys=%s)", name, handler.keys)
+            return True
+    return False
+
+
 def is_ready(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done)."""
     return _detect_done(content)

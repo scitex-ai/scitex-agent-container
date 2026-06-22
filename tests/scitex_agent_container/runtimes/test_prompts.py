@@ -15,9 +15,11 @@ from scitex_agent_container.runtimes.prompts import (
     _detect_skip_permissions_yn,
     _detect_theme_selection,
     _detect_thinking_effort,
+    detect,
     detect_and_respond,
     is_ready,
     register_prompt,
+    respond_modal,
 )
 
 # ── Startup handlers ──────────────────────────────────────────────────────────
@@ -457,6 +459,45 @@ def test_priority_wins_when_multiple_prompts_match():
     result = detect_and_respond(combined, set(), lambda k: None)
     # Assert
     assert result == "bypass-permissions"
+
+
+# ── detect() + respond_modal() — the verify-retry primitives ──────────────────
+
+
+def test_detect_returns_handler_name_for_known_modal():
+    # Arrange
+    pane = "1. I am using this for local development\n2. Exit\nEnter to confirm"
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name == "dev-channels"
+
+
+def test_detect_returns_none_for_quiet_pane():
+    # Arrange
+    pane = "history line\n❯\n"
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name is None
+
+
+def test_respond_modal_sends_the_registered_keys():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    respond_modal("dev-channels", lambda k: sent.append(k))
+    # Assert
+    assert sent == ["1", "Enter"]
+
+
+def test_respond_modal_returns_false_for_unknown_name():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    handled = respond_modal("no-such-modal", lambda k: sent.append(k))
+    # Assert
+    assert handled is False
 
 
 @pytest.mark.parametrize(

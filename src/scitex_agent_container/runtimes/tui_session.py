@@ -106,6 +106,17 @@ _DEFAULT_MAX_IDLE_S = 300.0
 _STARTUP_BOOT_DRAIN_S = 240.0
 
 
+def _pane_tail(pane: str, lines: int = 14) -> str:
+    """Last ``lines`` non-empty rows of a captured pane, for loud diagnostics.
+
+    A boot-drain failure logs this so the operator sees the EXACT modal /
+    login-wall / render state that blocked readiness — never a bare
+    "timed out" with no evidence.
+    """
+    rows = [r for r in (pane or "").splitlines() if r.strip()]
+    return "\n".join(rows[-lines:])
+
+
 def session_name_for(config: AgentConfig) -> str:
     """Return the tmux session name owned by sac for this agent.
 
@@ -533,6 +544,7 @@ class TuiSessionRuntime(RuntimeBase):
                 self.wait_until_input_ready(config)
                 self._mux.send_text_and_submit(name, prompt)
                 self._mux.send_keys(name, "Enter")
+                self._verify_submitted(name)
                 log.info(
                     "TuiSessionRuntime: injected startup_prompt %d/%d "
                     "(%d chars) into %s (with defensive Enter)",
@@ -549,6 +561,43 @@ class TuiSessionRuntime(RuntimeBase):
                     name,
                     exc,
                 )
+
+    def _verify_submitted(
+        self, name: str, *, max_resends: int = 5, settle_s: float = 0.8
+    ) -> bool:
+        """Verify a just-pasted turn was SUBMITTED; resend Enter until it is.
+
+        Same render-race / fail-loud fix as the boot drain:
+        ``send_text_and_submit`` + a defensive Enter can BOTH be eaten by
+        Claude's Ink TUI while it (re)binds the input, leaving the prompt
+        pasted-but-unsent (``❯ [Pasted text …]``) so the agent sits idle
+        having never read its instructions. Re-send Enter, verifying via
+        :func:`prompts.detect` that the ``compose-pending-unsent`` state
+        clears; fail LOUD with the pane tail if it won't.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
+        for _ in range(max_resends):
+            if settle_s > 0:
+                time.sleep(settle_s)
+            pane = self._mux.capture_content(name)
+            if _prompts.detect(pane) != "compose-pending-unsent":
+                return True
+            self._mux.send_keys(name, "Enter")
+        pane = self._mux.capture_content(name)
+        if _prompts.detect(pane) == "compose-pending-unsent":
+            log.error(
+                "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-"
+                "UNSENT after %d Enter resends — the Ink TUI is dropping Enter. "
+                "Attach: `tmux attach -t %s`. Pane tail:\n%s",
+                name,
+                max_resends,
+                name,
+                _pane_tail(pane),
+            )
+            return False
+        return True
 
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session sac owns for this agent.
@@ -709,32 +758,91 @@ class TuiSessionRuntime(RuntimeBase):
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
-        accepted: set[str] = set()
+        return self._drain_modals_until_ready(name, timeout_s=timeout_s, poll_s=poll_s)
+
+    def _drain_modals_until_ready(
+        self,
+        name: str,
+        *,
+        timeout_s: float,
+        poll_s: float = 0.5,
+        settle_s: float = 1.0,
+        max_resends: int = 6,
+    ) -> bool:
+        """Verified, retrying, fail-loud modal drain. True iff ready in window.
+
+        The fix for the silent boot-swallow (operator rule: fail-fast /
+        fail-loud / no-silent-fallback / feedback A→B→A): the old loop fired a
+        modal's keystrokes ONCE and marked it ``accepted`` — so a key dropped
+        by Claude's Ink render race left the modal up forever while the drainer
+        skipped it, then returned a quiet ``False`` after a 240 s WARNING. Here
+        each loop instead:
+
+          1. captures the pane; exits on the ready marker / ``is_ready``;
+          2. :func:`prompts.detect`\\ s the on-screen modal (detect-only);
+          3. :func:`prompts.respond_modal`\\ s (sends its keys), then SETTLES;
+          4. re-detects next loop — if the SAME modal is still up the keys were
+             dropped, so it RESENDS (up to ``max_resends``).
+
+        A modal that survives ``max_resends`` verified resends, or a window
+        timeout with a modal still up / no ready marker, is logged LOUD (error)
+        with the modal name + pane tail + an actionable ``tmux attach`` hint —
+        never a silent best-effort return.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
         marker = "? for shortcuts"
         deadline = time.monotonic() + timeout_s
-        send_keys_fn = self._mux.send_keys
+        resends: dict[str, int] = {}
         while time.monotonic() < deadline:
             pane = self._mux.capture_content(name)
             if marker in pane or _prompts.is_ready(pane):
                 return True
-            handled = _prompts.detect_and_respond(
-                pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)
-            )
-            if handled is not None:
-                accepted.add(handled)
+            modal = _prompts.detect(pane)
+            if modal is None:
+                # No known modal + not ready: claude is still rendering or
+                # running startup_commands. Keep polling (no fallback action).
+                if poll_s > 0:
+                    time.sleep(poll_s)
                 continue
-            if poll_s > 0:
-                time.sleep(poll_s)
-        import logging
-
-        logging.getLogger(__name__).warning(
+            n = resends.get(modal, 0)
+            if n >= max_resends:
+                log.error(
+                    "TuiSessionRuntime: boot-drain STUCK on modal %r for %s — "
+                    "its keystrokes did NOT dismiss it after %d verified "
+                    "resends. The detector/keys in runtimes/prompts.py are "
+                    "likely stale for this claude build, or the Ink TUI is "
+                    "dropping input. Inspect with `tmux -L sac attach -t %s`. "
+                    "Pane tail:\n%s",
+                    modal,
+                    name,
+                    n,
+                    name,
+                    _pane_tail(pane),
+                )
+                return False
+            _prompts.respond_modal(modal, lambda key: self._mux.send_keys(name, key))
+            resends[modal] = n + 1
+            if settle_s > 0:
+                time.sleep(settle_s)
+        pane = self._mux.capture_content(name)
+        stuck = _prompts.detect(pane)
+        log.error(
             "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s "
-            "without a ready signal (drained %d modal(s): %s); send_turn "
-            "will re-drain.",
+            "without a ready signal. %s Pane tail:\n%s",
             timeout_s,
             name,
-            len(accepted),
-            sorted(accepted),
+            (
+                f"Still showing modal {stuck!r} after resends (see errors above)."
+                if stuck
+                else (
+                    "No known modal detected and no ready marker — claude may be "
+                    "at the login wall (expired/invalid credential) or still "
+                    f"mid-render. Attach: `tmux -L sac attach -t {name}`."
+                )
+            ),
+            _pane_tail(pane),
         )
         return False
 

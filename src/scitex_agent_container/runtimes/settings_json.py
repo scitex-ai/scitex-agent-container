@@ -82,7 +82,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event pretool",
+                    "command": "scitex-agent-container ingest-hook-event pretool",
                 }
             ],
         }
@@ -93,7 +93,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event posttool",
+                    "command": "scitex-agent-container ingest-hook-event posttool",
                 }
             ],
         }
@@ -104,7 +104,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event prompt",
+                    "command": "scitex-agent-container ingest-hook-event prompt",
                 }
             ],
         }
@@ -115,7 +115,7 @@ _HOOKS_CONFIG = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "scitex-agent-container ingest-hook-event stop",
+                    "command": "scitex-agent-container ingest-hook-event stop",
                 }
             ],
         }
