@@ -785,3 +785,22 @@ def test_drain_at_boot_returns_false_on_timeout(
     ready = runtime._drain_at_boot(config, timeout_s=0.01, poll_s=0.0)
     # Assert — best-effort: never raises, just reports not-ready.
     assert ready is False
+
+
+def test_drain_fails_fast_when_inner_process_exited() -> None:
+    # Arrange — the inner claude EXITED at boot (e.g. `claude -c` with no
+    # conversation), so tmux tore down the session and the mux reports
+    # exists() -> False. A dead session can NEVER reach ready.
+    class _Exited(_MemoryMultiplexer):
+        pass
+
+    _Exited.reset()  # no session started -> exists() False, capture ""
+    runtime = TuiSessionRuntime(multiplexer=_Exited, command_builder=_fake_builder)
+    # Act — a HUGE window: only fail-fast-on-death can return promptly, so a
+    # quick False proves the session-death detection fired instead of silently
+    # spinning out the full boot-drain window (the 240s login-wall misdiagnosis).
+    result = runtime._drain_modals_until_ready(
+        "tui-exited", timeout_s=1000.0, poll_s=0.0
+    )
+    # Assert
+    assert result is False

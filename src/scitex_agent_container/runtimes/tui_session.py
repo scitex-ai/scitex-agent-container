@@ -823,8 +823,33 @@ class TuiSessionRuntime(RuntimeBase):
         marker = "? for shortcuts"
         deadline = time.monotonic() + timeout_s
         resends: dict[str, int] = {}
+        # Keep the most recent NON-empty pane: when the inner process EXITS the
+        # session is torn down and ``capture_content`` returns empty, which
+        # would otherwise erase the actual exit error from every log below.
+        last_pane = ""
         while time.monotonic() < deadline:
+            # Fail FAST on session death. If the inner claude EXITED (e.g.
+            # ``claude -c`` with no conversation -> "No conversation found to
+            # continue"), the tmux session is gone and ready can NEVER arrive —
+            # polling out the whole window here is the silent 240 s stall that
+            # misdiagnosed a dead session as a "login wall". Surface the last
+            # pane we saw (the real exit error) and abort now.
+            if not self._mux.exists(name):
+                log.error(
+                    "TuiSessionRuntime: boot-drain ABORTED for %s — the inner "
+                    "claude process EXITED during boot (tmux session gone), so "
+                    "it can never reach ready. This is NOT a login wall or a "
+                    "timeout; read the last pane for the real cause. Reproduce "
+                    "live: `tmux attach -t %s` (default socket). Last pane "
+                    "before exit:\n%s",
+                    name,
+                    name,
+                    _pane_tail(last_pane) if last_pane else "(nothing captured)",
+                )
+                return False
             pane = self._mux.capture_content(name)
+            if pane.strip():
+                last_pane = pane
             if marker in pane or _prompts.is_ready(pane):
                 return True
             modal = _prompts.detect(pane)
@@ -841,36 +866,50 @@ class TuiSessionRuntime(RuntimeBase):
                     "its keystrokes did NOT dismiss it after %d verified "
                     "resends. The detector/keys in runtimes/prompts.py are "
                     "likely stale for this claude build, or the Ink TUI is "
-                    "dropping input. Inspect with `tmux -L sac attach -t %s`. "
-                    "Pane tail:\n%s",
+                    "dropping input. Inspect with `tmux attach -t %s` (default "
+                    "socket). Pane tail:\n%s",
                     modal,
                     name,
                     n,
                     name,
-                    _pane_tail(pane),
+                    _pane_tail(last_pane or pane),
                 )
                 return False
             _prompts.respond_modal(modal, lambda key: self._mux.send_keys(name, key))
             resends[modal] = n + 1
             if settle_s > 0:
                 time.sleep(settle_s)
+        # Window elapsed. Report what is ACTUALLY observable — alive-but-not-ready
+        # vs exited — never a guessed "login wall".
         pane = self._mux.capture_content(name)
-        stuck = _prompts.detect(pane)
+        if pane.strip():
+            last_pane = pane
+        alive = self._mux.exists(name)
+        stuck = _prompts.detect(last_pane)
+        if stuck:
+            diagnosis = (
+                f"Still showing modal {stuck!r} after resends (see errors above)."
+            )
+        elif alive:
+            diagnosis = (
+                "Session is ALIVE but never signalled ready — claude is still "
+                "mid-render, or is sitting at an UNHANDLED prompt (add a handler "
+                "in runtimes/prompts.py for whatever the pane shows)."
+            )
+        else:
+            diagnosis = (
+                "Session has EXITED — the inner command died (read the last pane "
+                "for the cause; this is NOT a credential/login problem)."
+            )
         log.error(
-            "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s "
-            "without a ready signal. %s Pane tail:\n%s",
+            "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s without "
+            "a ready signal. %s Reproduce live: `tmux attach -t %s` (default "
+            "socket). Pane tail:\n%s",
             timeout_s,
             name,
-            (
-                f"Still showing modal {stuck!r} after resends (see errors above)."
-                if stuck
-                else (
-                    "No known modal detected and no ready marker — claude may be "
-                    "at the login wall (expired/invalid credential) or still "
-                    f"mid-render. Attach: `tmux -L sac attach -t {name}`."
-                )
-            ),
-            _pane_tail(pane),
+            diagnosis,
+            name,
+            _pane_tail(last_pane),
         )
         return False
 
