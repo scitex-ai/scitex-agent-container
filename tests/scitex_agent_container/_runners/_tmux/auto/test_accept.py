@@ -38,3 +38,61 @@ def test_yn_has_yes_option_returns_false_for_plain_text() -> None:
     matched = A._yn_has_yes_option(pane)
     # Assert
     assert matched is False
+
+
+def test_respond_auth_error_sends_slash_login() -> None:
+    # Arrange
+    keys: list = []
+    # Act
+    A.respond(
+        "cap-002",
+        "auth_error",
+        pane_text="please run /login",
+        send_fn=lambda *k: keys.append(k[0]),
+        dm_fn=lambda _channel, _msg: None,
+    )
+    # Assert
+    assert keys == ["/login", "Enter"]
+
+
+def test_respond_login_url_emails_the_extracted_url() -> None:
+    # Arrange
+    captured: dict = {}
+
+    def _capture_email(url):
+        captured["url"] = url
+        return True
+
+    pane = "sign in:\nhttps://claude.ai/oauth/authorize?code=true\npaste code"
+    # Act
+    A.respond(
+        "cap-002",
+        "login_url",
+        pane_text=pane,
+        send_fn=lambda *k: None,
+        dm_fn=lambda _channel, _msg: None,
+        email_fn=_capture_email,
+    )
+    # Assert
+    assert captured["url"] == "https://claude.ai/oauth/authorize?code=true"
+
+
+def test_respond_login_url_without_url_skips_email() -> None:
+    # Arrange
+    calls: list = []
+
+    def _record_email(url):
+        calls.append(url)
+        return True
+
+    # Act
+    A.respond(
+        "cap-002",
+        "login_url",
+        pane_text="no authorize link in this pane",
+        send_fn=lambda *k: None,
+        dm_fn=lambda _channel, _msg: None,
+        email_fn=_record_email,
+    )
+    # Assert
+    assert calls == []

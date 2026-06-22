@@ -62,6 +62,12 @@ dependencies = [
     "scitex-config>=0.3.0",
     "scitex-container>=0.1.0",
     "scitex-logging>=0.1.5",
+    # Operator notification surface — the OAuth login-relay emails the
+    # auth URL to the operator via `scitex_notification.send_email`. Core
+    # footprint is light (click + scitex-dev; email backend is stdlib
+    # smtplib). Heavy channels (twilio/playwright/audio) stay optional in
+    # scitex-notification's own extras, so we pull none of them.
+    "scitex-notification>=0.2.9",
     "scitex-ssh>=1.0.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the

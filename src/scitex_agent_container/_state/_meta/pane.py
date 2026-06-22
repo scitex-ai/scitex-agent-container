@@ -15,6 +15,12 @@ _SUBAGENT_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A Claude OAuth authorize URL on the post-``/login`` screen. Mirrors the
+# extraction regex in ``_notify.login_relay`` (kept local so this low-level
+# classifier carries no _notify import). tmux ``-J`` capture joins wrapped
+# lines, so the long URL appears on one logical line.
+_OAUTH_URL_RE = re.compile(r"https?://[^\s'\"<>`]*oauth[^\s'\"<>`]*", re.IGNORECASE)
+
 
 def parse_subagent_count_from_pane_text(pane: str) -> int:
     """Return the subagent count advertised by Claude Code's status marker.
@@ -78,6 +84,7 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
       - "idle_prompt": prompt visible, no recent activity
       - "y_n_prompt": y/n prompt blocking
       - "auth_error": credential error shown
+      - "login_url": OAuth authorize screen shown after /login (URL in snippet)
       - "compose_pending_unsent": user text typed but not yet submitted
       - "limit_reached": Anthropic rate limit warning visible
       - "unknown": nothing matched
@@ -86,6 +93,20 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
         return "unknown", ""
     tail = pane_text[-2_000:]
     lower = tail.lower()
+    # login_url: the OAuth authorize screen Claude shows after `/login`.
+    # Checked before auth_error because that screen can also carry auth
+    # wording. Require a paste/authorize/login cue alongside the URL so a
+    # working agent that merely prints an oauth link is not misread as
+    # needing login.
+    _oauth = _OAUTH_URL_RE.search(tail)
+    if _oauth and (
+        "paste" in lower
+        or "authoriz" in lower
+        or "sign in" in lower
+        or "log in" in lower
+        or "/login" in lower
+    ):
+        return "login_url", _oauth.group(0)[:300]
     # auth_error patterns — Claude Code surfaces a few wordings depending on
     # which auth path failed. Keep the list literal-string so adding new
     # variants is obvious; lower-case match because the source casing varies.

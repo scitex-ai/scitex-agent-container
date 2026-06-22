@@ -3,7 +3,8 @@
 Maps a classified pane state to a concrete action:
   - compose_pending_unsent  → send Enter
   - y_n_prompt              → verify [1] Yes present, then send 1 + Enter
-  - auth_error              → DM mgr-auth (escalate, no keys sent)
+  - auth_error              → send /login (initiate re-auth) + DM mgr-auth
+  - login_url               → email the OAuth URL to the operator (relay)
   - limit_reached           → DM healer  (escalate, no keys sent)
   - anything else           → no-op
 
@@ -17,6 +18,11 @@ import os
 import subprocess
 import time
 from typing import Callable
+
+from scitex_agent_container._notify.login_relay import (
+    extract_oauth_url,
+    send_login_url_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +67,9 @@ def _orochi_dm(channel: str, message: str) -> None:
     agent = os.environ.get("SCITEX_OROCHI_AGENT", "c-sac-auto-accept")
 
     if not token:
-        logger.warning("SCITEX_OROCHI_TOKEN not set — DM to %s dropped: %s", channel, message)
+        logger.warning(
+            "SCITEX_OROCHI_TOKEN not set — DM to %s dropped: %s", channel, message
+        )
         return
 
     payload = f'{{"channel":"{channel}","text":"{message}","from":"{agent}"}}'
@@ -70,10 +78,14 @@ def _orochi_dm(channel: str, message: str) -> None:
             [
                 "curl",
                 "-s",
-                "-X", "POST",
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json",
-                "-d", payload,
+                "-X",
+                "POST",
+                "-H",
+                f"Authorization: Bearer {token}",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                payload,
                 f"{hub}/api/v1/messages",
             ],
             check=False,
@@ -112,6 +124,7 @@ def respond(
     *,
     send_fn: Callable[..., None] | None = None,
     dm_fn: Callable[[str, str], None] | None = None,
+    email_fn: Callable[[str], bool] | None = None,
 ) -> bool:
     """Dispatch the action for *state* on agent *name*.
 
@@ -127,6 +140,10 @@ def respond(
         Override for tmux send (injected in tests).
     dm_fn:
         Override for DM escalation (injected in tests).
+    email_fn:
+        Override for the login-URL email send (injected in tests); takes
+        the OAuth URL and returns True on send. Defaults to
+        ``send_login_url_email(name, url)``.
 
     Returns
     -------
@@ -134,6 +151,11 @@ def respond(
     """
     _send = send_fn if send_fn is not None else lambda *keys: _tmux_send(name, *keys)
     _dm = dm_fn if dm_fn is not None else _orochi_dm
+    _email = (
+        email_fn
+        if email_fn is not None
+        else (lambda url: send_login_url_email(name, url))
+    )
 
     if state == "compose_pending_unsent":
         _send("Enter")
@@ -153,8 +175,27 @@ def respond(
         return True
 
     if state == "auth_error":
-        _dm("mgr-auth", f"[{name}] auth_error detected — please rotate credentials")
-        logger.warning("[%s] auth_error → escalated to mgr-auth", name)
+        # The login wall. Initiate re-auth by sending `/login`; the OAuth
+        # authorize URL appears on the next pane (state "login_url") and is
+        # emailed to the operator from there.
+        _send("/login")
+        _send("Enter")
+        _dm("mgr-auth", f"[{name}] auth_error — sent /login; OAuth URL will be emailed")
+        logger.warning("[%s] auth_error → sent /login (re-auth initiated)", name)
+        return True
+
+    if state == "login_url":
+        url = extract_oauth_url(pane_text)
+        if not url:
+            logger.warning("[%s] login_url state but no OAuth URL in pane", name)
+            return False
+        try:
+            _email(url)
+        except Exception as exc:  # stx-allow: fallback (reason: an email failure must not crash the auto-accept daemon loop — escalated via DM instead)
+            logger.error("[%s] login_url → email failed: %s", name, exc)
+            _dm("mgr-auth", f"[{name}] OAuth URL ready but email failed: {exc}")
+            return False
+        logger.info("[%s] login_url → emailed OAuth URL to operator", name)
         return False
 
     if state == "limit_reached":

@@ -30,6 +30,7 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_dev.linter._rules._lookup",
     "scitex_dev.linter.checker",
     "scitex_logging",
+    "scitex_notification",
 ]
 # ===== END AUTO-GENERATED =====
 

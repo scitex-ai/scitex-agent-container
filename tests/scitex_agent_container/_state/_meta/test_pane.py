@@ -108,6 +108,37 @@ def test_classify_detects_running_for_bare_prompt():
     assert state == "running"
 
 
+def test_classify_detects_login_url_oauth_screen():
+    # Arrange
+    pane = (
+        "Paste this URL to sign in:\n"
+        "https://claude.ai/oauth/authorize?code=true\n"
+        "Paste code here:"
+    )
+    # Act
+    state, _ = _classify_pane_state(pane)
+    # Assert
+    assert state == "login_url"
+
+
+def test_classify_login_url_snippet_carries_the_url():
+    # Arrange
+    pane = "sign in:\nhttps://claude.ai/oauth/authorize?code=true\npaste code"
+    # Act
+    _state, snippet = _classify_pane_state(pane)
+    # Assert
+    assert snippet == "https://claude.ai/oauth/authorize?code=true"
+
+
+def test_classify_oauth_url_without_login_cue_is_not_login_url():
+    # Arrange: an agent that merely prints an oauth link, with no login cue.
+    pane = "history\nthe callback is https://x/oauth/cb for reference\ndone\n"
+    # Act
+    state, _ = _classify_pane_state(pane)
+    # Assert
+    assert state != "login_url"
+
+
 # --- _subagent_count_from_pane + _capture_pane (real subprocess) ---------
 
 
