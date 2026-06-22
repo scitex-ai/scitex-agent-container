@@ -192,8 +192,8 @@ def _ecosystem_email_sender() -> Callable[..., Any]:
         from scitex_notification import send_email as _send
     except ImportError as exc:
         raise EmailRelayError(
-            "scitex-notification is required to send email; install with "
-            "`pip install scitex-notification`."
+            "scitex-notification is required to send email; install the extra "
+            "with `pip install scitex-agent-container[notify]`."
         ) from exc
     return _send
 
