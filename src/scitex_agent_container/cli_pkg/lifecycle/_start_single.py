@@ -14,6 +14,7 @@ import json as _json
 import sys
 import traceback
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Callable
 
 import click
@@ -26,6 +27,29 @@ from .._helpers import console, system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
+
+
+def should_show_plan_and_confirm(
+    *,
+    yes: bool,
+    dry_run: bool,
+    as_json: bool,
+    foreground: bool,
+    one_shot: bool,
+    broker_self: bool,
+    is_tty: bool,
+) -> bool:
+    """True ONLY for an interactive operator launch that should preview+confirm.
+
+    Pure (no I/O) so the "never block automation" contract is unit-tested
+    directly. Returns False for every programmatic path: ``--yes`` (operator
+    pre-approved), ``--dry-run`` (already prints the plan), ``--json`` (machine
+    output), ``foreground`` / ``one_shot`` / ``broker_self`` (the spawn broker +
+    supervisor), and any non-tty caller (cron, scripts, the in-SIF runner).
+    """
+    if yes or dry_run or as_json or foreground or one_shot or broker_self:
+        return False
+    return is_tty
 
 
 def run_single_targets(
@@ -44,6 +68,7 @@ def run_single_targets(
     multi_foreground: bool,
     preflight_runner: Callable[[], None],
     broker_self: bool = False,
+    yes: bool = False,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -164,6 +189,29 @@ def run_single_targets(
                         if resume_id:
                             msg += f", resume_id = {resume_id}"
                         system_msg(msg, style="dim")
+                # No-Surprise (P2b): an INTERACTIVE operator launch renders the
+                # FULL effective plan (mounts, --pwd, env, skills, prompts) and
+                # CONFIRMS before anything mounts. Gate is a pure function so the
+                # skip-every-programmatic-path contract is unit-tested directly.
+                if should_show_plan_and_confirm(
+                    yes=yes,
+                    dry_run=dry_run,
+                    as_json=as_json,
+                    foreground=foreground,
+                    one_shot=one_shot,
+                    broker_self=broker_self,
+                    is_tty=sys.stdin.isatty(),
+                ):
+                    from .._explain import render_plan
+
+                    click.echo(render_plan(config, spec_path=Path(config_path)))
+                    if not click.confirm(f"Start {config.name}?", default=True):
+                        system_msg(
+                            f"skipped {config.name} (operator declined)",
+                            style="yellow",
+                        )
+                        continue
+
                 # Operator-facing --resume preflight (#192, Part B #3): when the
                 # operator explicitly names a resume id, validate it against the
                 # agent's projects store BEFORE launch. On a miss it fails loud
