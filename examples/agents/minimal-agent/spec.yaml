@@ -1,9 +1,8 @@
 # minimal — bare-minimum sac v3 agent spec.
 #
-# Omitted fields use defaults:
-#   workdir  → ~/.scitex/agent-container/runtime/agents/<name>/
-#   health   → sdk-alive, interval 60s
-#   restart  → never
+# "Bare-minimum" now means: every REQUIRED author-facing field spelled
+# out, nothing more (no hidden defaults; operator directive 2026-06-23).
+# This is the shortest spec the validator accepts.
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -11,12 +10,28 @@ kind: Agent
 spec:
   runtime: apptainer
 
+  # host: local means "the invoking host" — the explicit spelling of the
+  # old empty default.
+  host: local
+
+  # workdir — the in-container --pwd.
+  workdir: /home/agent/work
+
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
+    binds: []                   # explicit mounts; [] = nothing beyond state
 
   claude:
     model: haiku
     flags:
       - --dangerously-skip-permissions
+
+  health:
+    enabled: true
+    interval: 60
+
+  restart:
+    policy: never               # never | on-failure | always
+    max_retries: 0
 
 # EOF

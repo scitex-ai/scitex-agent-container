@@ -36,10 +36,20 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
+  host: local
   workdir: /tmp/agt-work
+  apptainer:
+    image: /x.sif
+    binds: []
+{extra}
   claude:
     model: claude-opus-4-8[1m]
-{extra}
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
 
 
@@ -51,7 +61,7 @@ def _cfg(tmp_path: Path, extra: str):
     return load_config(str(spec))
 
 
-_ON = "  apptainer:\n    nested_build: true"
+_ON = "    nested_build: true"
 
 
 class TestNestedBuildFlags:

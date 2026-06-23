@@ -73,12 +73,11 @@ spec:
   #            see the question, never the answer).
   # access: full
 
-  # Workspace mounted rw at the canonical host path AND the /work alias
-  # under access: full (at /work only under access: capsule).
-  # Default: ~/.scitex/agent-container/runtime/agents/<name>/  (auto-derived)
-  # Set explicitly when you want the agent's workdir to map to a specific
-  # host path (e.g. an existing project tree). Example:
-  # workdir: ~/proj/your-project
+  # REQUIRED. workdir — the in-container --pwd (no hidden default;
+  # operator directive 2026-06-23). Set it to a path the agent should
+  # start in; bind that path explicitly under apptainer.binds when it
+  # must map to a real host tree (e.g. ~/proj/your-project).
+  workdir: /home/agent/work
 
   # to_home/ sibling — its contents mirror the agent's container $HOME
   # (= runtime/<name>/home/) 1:1 at start. Canonical layout:
@@ -345,9 +344,10 @@ spec:
   #     - "echo stopping ${SCITEX_AGENT_CONTAINER_NAME}"
 
   # ----------------------------------------------------------------------
-  # host vs hosts (mutually exclusive — pick at most one).
-  # Unset = local singleton (this host, no name suffix).
+  # host vs hosts — REQUIRED, mutually exclusive (no hidden 'local'
+  # default; operator directive 2026-06-23). Declare exactly one.
   # ----------------------------------------------------------------------
+  host: local                     # the invoking host (explicit local singleton)
   # host: gpu-box                 # pin to a single named peer
   # hosts: [laptop, gpu-box, nas] # multi-instance, one per peer
   #                               # — agent name becomes <name>@<host>

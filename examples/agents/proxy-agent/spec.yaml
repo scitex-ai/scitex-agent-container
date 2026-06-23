@@ -20,8 +20,20 @@ kind: AgentProxy
 spec:
   runtime: apptainer
 
+  # host: local means "the invoking host" — the explicit spelling of the
+  # old empty default (no hidden 'local'; operator directive 2026-06-23).
+  host: local
+
+  # workdir — the in-container --pwd. The proxy holds no project tree;
+  # point it at the agent's canonical container HOME.
+  workdir: /home/agent/work
+
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-proxy.sif
+
+    # binds — explicit mounts. The proxy needs nothing from the host
+    # beyond its own state bind, so the list is empty.
+    binds: []
 
   # Proxy block — required when kind: AgentProxy.
   proxy:
@@ -53,5 +65,16 @@ spec:
   # forwards to spec.proxy.upstream.
   a2a:
     port: 7905
+
+  # health — periodic liveness probe (the proxy backs the same
+  # heartbeat/state layout as kind: Agent so `sac agents status` works).
+  health:
+    enabled: true
+    interval: 60
+
+  # restart — restart the forwarder if its process dies or health fails.
+  restart:
+    policy: on-failure          # never | on-failure | always
+    max_retries: 3
 
 # EOF

@@ -10,8 +10,16 @@ kind: Agent
 spec:
   runtime: apptainer
 
+  # host: local means "the invoking host" — the explicit spelling of the
+  # old empty default (no hidden 'local').
+  host: local
+
+  # workdir — the in-container --pwd.
+  workdir: /home/agent/work
+
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
+    binds: []                   # explicit mounts; [] = nothing beyond state
 
   claude:
     model: haiku
@@ -28,5 +36,6 @@ spec:
 
   restart:
     policy: never
+    max_retries: 0
 
 # EOF

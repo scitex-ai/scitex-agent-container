@@ -15,7 +15,15 @@ from scitex_agent_container.cli import main
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "apptainer", "claude": {"model": "sonnet"}},
+    "spec": {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": "/home/agent/work",
+        "apptainer": {"image": "/x.sif", "binds": []},
+        "claude": {"model": "sonnet"},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
 }
 
 
@@ -276,7 +284,15 @@ class TestCLI:
                     "capabilities": "gpu,slurm,ml-training",
                 },
             },
-            "spec": {"runtime": "apptainer", "claude": {"model": "sonnet"}},
+            "spec": {
+                "runtime": "apptainer",
+                "host": "local",
+                "workdir": "/home/agent/work",
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            },
         }
         agent_dir = Path(tmpdir) / "test-gpu-agent"
         agent_dir.mkdir()
@@ -552,6 +568,19 @@ spec:
 kind: Agent
 spec:
   runtime: apptainer
+  host: local
+  workdir: /home/agent/work
+  apptainer:
+    image: /x.sif
+    binds: []
+  claude:
+    model: sonnet
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
         )
 

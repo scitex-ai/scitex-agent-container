@@ -24,7 +24,19 @@ kind: Agent
 metadata: { labels: { project: ${PROJECT}, capsule: ${CAPSULE_ID} } }
 spec:
   runtime: apptainer
+  host: local
   workdir: /tmp/${name}-workdir
+  apptainer:
+    image: /x.sif
+    binds: []
+  claude:
+    model: sonnet
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   startup_commands:
     - command: "Run capsule ${CAPSULE_ID} on ${PROJECT}."
 """
@@ -291,7 +303,12 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore):
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n  runtime: apptainer\n"
-        "  workdir: /tmp/${name}\n",
+        "  host: local\n"
+        "  workdir: /tmp/${name}\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  claude:\n    model: sonnet\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
     )
     _write(csv_file, "name\nalpha\nbeta\n")
     out_dir = tmp_path / "expanded"

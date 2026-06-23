@@ -26,8 +26,20 @@ kind: Agent
 spec:
   runtime: apptainer
 
+  # host: local means "the invoking host" — the explicit spelling of the
+  # old empty default (no hidden 'local'; operator directive 2026-06-23).
+  host: local
+
+  # workdir — the in-container --pwd. Bulk fleet work needs no project
+  # tree; start in the agent's canonical container HOME.
+  workdir: /home/agent/work
+
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-scitex.sif
+
+    # binds — explicit mounts. This example mounts nothing beyond the
+    # agent's own state bind.
+    binds: []
 
   claude:
     # The provider's own model id — accepted because provider is set
@@ -39,5 +51,15 @@ spec:
       base_url: https://api.deepseek.com/anthropic
       # NAME of the host env var holding the key — NOT the key value.
       auth_token_env: DEEPSEEK_API_KEY
+
+  # health — periodic liveness probe (drives the restart policy below).
+  health:
+    enabled: true
+    interval: 60
+
+  # restart — bulk fleet agents are long-lived; restart on failure.
+  restart:
+    policy: on-failure          # never | on-failure | always
+    max_retries: 3
 
 # EOF
