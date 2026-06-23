@@ -221,6 +221,44 @@ def _strip_stale_sac_ingest_hooks(hooks: object) -> dict:
     return cleaned
 
 
+def _exclude_hooks(hooks: object, patterns: list[str]) -> dict:
+    """Drop any hook whose command CONTAINS one of ``patterns`` (substring).
+
+    The operator opt-out: after seeing the full materialized hook set via
+    `sac agents explain`, a spec's ``exclude_hooks`` switches specific ones off
+    (e.g. ``report_to_lead_on_stop`` once the lead is retired). A group emptied
+    of all hooks is removed; non-matching hooks and non-hook groups survive.
+    Shares the shape of :func:`_strip_stale_sac_ingest_hooks`.
+    """
+    if not isinstance(hooks, dict):
+        return {}
+    cleaned: dict = {}
+    for ev, groups in hooks.items():
+        if not isinstance(groups, list):
+            cleaned[ev] = groups
+            continue
+        kept_groups: list = []
+        for grp in groups:
+            hk_list = grp.get("hooks") if isinstance(grp, dict) else None
+            if not isinstance(hk_list, list):
+                kept_groups.append(grp)
+                continue
+            kept = [
+                hk
+                for hk in hk_list
+                if not (
+                    isinstance(hk, dict)
+                    and isinstance(hk.get("command"), str)
+                    and any(p in hk["command"] for p in patterns)
+                )
+            ]
+            if kept:
+                kept_groups.append({**grp, "hooks": kept})
+        if kept_groups:
+            cleaned[ev] = kept_groups
+    return cleaned
+
+
 def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:
     """Collect MCP server names from config and on-disk .mcp.json."""
     names: set[str] = set()
@@ -441,6 +479,13 @@ def setup_settings_json(
         settings["hooks"] = _merge_hooks_blocks(base_hooks, settings["hooks"])
 
     existing.update(settings)
+
+    # Opt-out: drop hooks the spec listed in ``exclude_hooks`` (No-Surprise —
+    # the operator SAW the full set via `sac agents explain`, then switched
+    # specific ones off). Applied LAST, to the fully-merged hooks.
+    excludes = list(getattr(config, "exclude_hooks", []) or [])
+    if excludes and isinstance(existing.get("hooks"), dict):
+        existing["hooks"] = _exclude_hooks(existing["hooks"], excludes)
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(existing, indent=2) + "\n")

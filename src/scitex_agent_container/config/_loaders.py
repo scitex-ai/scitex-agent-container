@@ -299,6 +299,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     startup_prompts_raw = spec.get("startup_prompts", []) or []
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
+    exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
+    exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 
     kind = str(raw.get("kind", "Agent"))
     proxy_spec = parse_proxy(spec, kind=kind)
@@ -358,6 +360,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         skills=parse_skills(spec),
         startup_commands=parse_startup_commands(spec),
         startup_prompts=startup_prompts,
+        exclude_hooks=exclude_hooks,
+        exclude_skills=exclude_skills,
         context_management=parse_context_management(spec),
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
