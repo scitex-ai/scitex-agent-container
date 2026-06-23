@@ -801,3 +801,34 @@ def test_setup_merge_leaves_single_ingest_command_after_rename():
     assert [h["command"] for g in merged["UserPromptSubmit"] for h in g["hooks"]] == [
         "scitex-agent-container event ingest prompt"
     ]
+
+
+def _hooks_block(*commands: str) -> dict:
+    return {"Stop": [{"matcher": "", "hooks": [{"command": c} for c in commands]}]}
+
+
+def test_exclude_hooks_drops_a_matching_command() -> None:
+    # Arrange — a Stop block with two hooks; exclude one by substring.
+    hooks = _hooks_block("a/report_to_lead_on_stop.sh", "b/keep_me.sh")
+    # Act
+    out = sj_mod._exclude_hooks(hooks, ["report_to_lead"])
+    # Assert
+    assert [h["command"] for g in out["Stop"] for h in g["hooks"]] == ["b/keep_me.sh"]
+
+
+def test_exclude_hooks_keeps_non_matching() -> None:
+    # Arrange
+    hooks = _hooks_block("x/keep_one.sh", "y/keep_two.sh")
+    # Act
+    out = sj_mod._exclude_hooks(hooks, ["telegram"])
+    # Assert
+    assert len(out["Stop"][0]["hooks"]) == 2
+
+
+def test_exclude_hooks_removes_emptied_event() -> None:
+    # Arrange — every hook in the event matches the exclude pattern.
+    hooks = _hooks_block("z/report_to_lead_on_stop.sh")
+    # Act
+    out = sj_mod._exclude_hooks(hooks, ["report_to_lead"])
+    # Assert
+    assert "Stop" not in out

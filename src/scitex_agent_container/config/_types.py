@@ -523,6 +523,12 @@ class AgentConfig:
     # (§3). startup_commands are SHELL commands run BEFORE claude starts;
     # startup_prompts are TEXT fed to claude as the first user message(s).
     startup_prompts: list[str] = field(default_factory=list)
+    # Opt-OUT switches (No-Surprise: see what an agent gets via `sac agents
+    # explain`, then turn specific items off). Each entry is a substring matched
+    # against a materialized hook COMMAND (e.g. "report_to_lead_on_stop" drops
+    # that Stop hook) or a skill @-import path. Empty = nothing excluded.
+    exclude_hooks: list[str] = field(default_factory=list)
+    exclude_skills: list[str] = field(default_factory=list)
     mcp_servers: dict[str, dict] = field(default_factory=dict)
     multiplexer: str = "tmux"  # "tmux" (default) or "screen"
     hosts_spec: HostsSpec = field(default_factory=HostsSpec)

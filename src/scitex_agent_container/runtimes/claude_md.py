@@ -309,8 +309,18 @@ def build_skills_lines(config: AgentConfig) -> list[str]:
                 lines.append(f"- {name}: {p}")
         lines.append("")
 
-    _emit_required(config.skills.required)
-    _emit_available(config.skills.available)
+    # Opt-out: drop skills the spec listed in ``exclude_skills`` (substring
+    # match against the skill name) — the operator saw them via
+    # `sac agents explain`, then switched specific ones off.
+    excluded = list(getattr(config, "exclude_skills", []) or [])
+
+    def _keep(names: list[str]) -> list[str]:
+        if not excluded:
+            return names
+        return [n for n in names if not any(p in n for p in excluded)]
+
+    _emit_required(_keep(config.skills.required))
+    _emit_available(_keep(config.skills.available))
     return lines
 
 
