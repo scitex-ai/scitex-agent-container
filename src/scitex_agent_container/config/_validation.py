@@ -245,19 +245,37 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "'claude-agent-sdk' at dispatch."
             )
 
-        # spec.access — host-access posture (operator directive
-        # 2026-06-19). ``full`` (default) binds the operator's whole home
-        # so the agent reaches every project at its canonical path;
-        # ``capsule`` keeps only the explicitly-listed binds (legacy
-        # leak-prevention behaviour). Absent → ``full`` at load time.
-        access = spec.get("access")
-        if access is not None and access not in ("full", "capsule"):
+        # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
+        # The knob silently injected a whole-home bind, a ``/work`` alias and
+        # a ``--pwd`` rewrite, so a reader of the spec could not tell what
+        # actually mounted. Fail LOUD with the exact replacement rather than
+        # silently honour or ignore it.
+        if spec.get("access") is not None:
+            workdir = spec.get("workdir") or "<your workdir>"
+            home = str(Path.home())
             errors.append(
-                f"spec.access must be 'full' or 'capsule', got '{access}'. "
-                "'full' (default) binds the operator's whole home rw so "
-                "the agent sees every project/config at its canonical "
-                "path; 'capsule' restricts to only the binds explicitly "
-                "listed in the spec (leak-prevention agents)."
+                "spec.access has been REMOVED — host access + cwd are now "
+                "declared explicitly (single source of truth). Delete the "
+                "`access:` line and instead:\n"
+                f"  * FULL host reach → add to apptainer.binds:  - {home}:{home}:rw\n"
+                f"    and set `workdir: {workdir}` (a path under it; it is the --pwd).\n"
+                "  * CAPSULE (restricted) → add ONLY the binds you want "
+                "(e.g. `- <writable>:/work:rw` plus data mounts) and set "
+                "`workdir: /work`.\n"
+                "Whatever apptainer.binds lists is exactly what mounts; "
+                "workdir is only the --pwd."
+            )
+
+        # apptainer.container_workdir — REMOVED with `access`. The workdir is
+        # now mounted by an EXPLICIT bind and `spec.workdir` is the --pwd, so
+        # an in-container alias field no longer does anything. Loud, not inert.
+        ap_block = spec.get("apptainer")
+        if isinstance(ap_block, dict) and ap_block.get("container_workdir") is not None:
+            errors.append(
+                "apptainer.container_workdir has been REMOVED — declare the "
+                "mount explicitly in apptainer.binds (e.g. "
+                "`- <host-src>:/work:rw`) and set `workdir: /work` as the "
+                "--pwd. The spec's binds are the single source of truth."
             )
 
         # spec.image — moved to spec.apptainer.image in v3 (handled by the

@@ -208,8 +208,9 @@ def test_argv_first_two_tokens_are_apptainer_exec(tmp_path: Path) -> None:
     assert argv[0:2] == ["apptainer", "exec"]
 
 
-def test_argv_emits_workdir_bind_mount(tmp_path: Path) -> None:
-    # Arrange
+def test_argv_pwd_opens_at_workdir(tmp_path: Path) -> None:
+    # Arrange — SSoT (2026-06-23): workdir is ONLY the --pwd; sac no longer
+    # auto-binds it to a /work alias. Mounts come solely from apptainer.binds.
     rt = ApptainerContainerRuntime()
     workdir = tmp_path / "wd"
     cfg = _config(workdir)
@@ -218,9 +219,19 @@ def test_argv_emits_workdir_bind_mount(tmp_path: Path) -> None:
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    bind_idxs = [i for i, a in enumerate(argv) if a == "--bind"]
-    binds = [argv[i + 1] for i in bind_idxs]
-    assert any(b.endswith(":/work") and str(workdir) in b for b in binds)
+    assert argv[argv.index("--pwd") + 1] == str(workdir)
+
+
+def test_argv_emits_no_implicit_work_alias_bind(tmp_path: Path) -> None:
+    # Arrange — no explicit binds → nothing is auto-mounted at /work.
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert not [a for a in argv if isinstance(a, str) and a.endswith(":/work")]
 
 
 def test_argv_emits_state_dir_bind_mount(tmp_path: Path) -> None:
