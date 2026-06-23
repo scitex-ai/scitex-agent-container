@@ -1,4 +1,4 @@
-"""Tests for ``should_show_plan_and_confirm`` — the P2b launch-confirm gate.
+"""Tests for ``should_preview_and_require_yes`` — the P2b launch-confirm gate.
 
 The contract that matters: the interactive plan+confirm fires ONLY for a real
 operator at a tty with no override, and is skipped for EVERY programmatic path
@@ -8,7 +8,7 @@ operator at a tty with no override, and is skipped for EVERY programmatic path
 from __future__ import annotations
 
 from scitex_agent_container.cli_pkg.lifecycle._start_single import (
-    should_show_plan_and_confirm,
+    should_preview_and_require_yes,
 )
 
 
@@ -23,7 +23,7 @@ def _gate(**over: bool) -> bool:
         is_tty=True,
     )
     base.update(over)
-    return should_show_plan_and_confirm(**base)
+    return should_preview_and_require_yes(**base)
 
 
 def test_confirms_for_interactive_operator_at_tty() -> None:

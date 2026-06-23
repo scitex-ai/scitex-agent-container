@@ -29,7 +29,7 @@ from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
 
 
-def should_show_plan_and_confirm(
+def should_preview_and_require_yes(
     *,
     yes: bool,
     dry_run: bool,
@@ -39,13 +39,15 @@ def should_show_plan_and_confirm(
     broker_self: bool,
     is_tty: bool,
 ) -> bool:
-    """True ONLY for an interactive operator launch that should preview+confirm.
+    """True ONLY for an interactive operator launch that should preview + refuse.
 
-    Pure (no I/O) so the "never block automation" contract is unit-tested
-    directly. Returns False for every programmatic path: ``--yes`` (operator
-    pre-approved), ``--dry-run`` (already prints the plan), ``--json`` (machine
-    output), ``foreground`` / ``one_shot`` / ``broker_self`` (the spawn broker +
-    supervisor), and any non-tty caller (cron, scripts, the in-SIF runner).
+    When True the caller renders the effective plan and REFUSES without --yes
+    (the codebase convention — no interactive prompt; --yes is the
+    confirmation). Pure (no I/O) so the "never block automation" contract is
+    unit-tested directly. Returns False for every programmatic path: ``--yes``
+    (operator pre-approved), ``--dry-run`` (already prints the plan), ``--json``
+    (machine output), ``foreground`` / ``one_shot`` / ``broker_self`` (the spawn
+    broker + supervisor), and any non-tty caller (cron, scripts, in-SIF runner).
     """
     if yes or dry_run or as_json or foreground or one_shot or broker_self:
         return False
@@ -104,6 +106,7 @@ def run_single_targets(
         broker_ctx = nullcontext()
 
     any_error = False
+    refused = False
     with broker_ctx:
         for target_idx, raw_target in enumerate(single_targets):
             if target_idx > 0 and not as_json:
@@ -189,11 +192,15 @@ def run_single_targets(
                         if resume_id:
                             msg += f", resume_id = {resume_id}"
                         system_msg(msg, style="dim")
-                # No-Surprise (P2b): an INTERACTIVE operator launch renders the
-                # FULL effective plan (mounts, --pwd, env, skills, prompts) and
-                # CONFIRMS before anything mounts. Gate is a pure function so the
-                # skip-every-programmatic-path contract is unit-tested directly.
-                if should_show_plan_and_confirm(
+                # No-Surprise: an INTERACTIVE operator launch first renders the
+                # FULL effective plan (mounts, --pwd, env, skills, hooks,
+                # prompts), then REFUSES without --yes — the codebase convention
+                # for a significant action (no interactive click.confirm; the
+                # plan is the preview, --yes is the confirmation). The gate is a
+                # pure function that excludes every programmatic path, so the
+                # supervisor / spawn-broker / scripts (non-tty, or --yes/
+                # foreground/one-shot/broker-self) launch without refusal.
+                if should_preview_and_require_yes(
                     yes=yes,
                     dry_run=dry_run,
                     as_json=as_json,
@@ -205,12 +212,14 @@ def run_single_targets(
                     from .._explain import render_plan
 
                     click.echo(render_plan(config, spec_path=Path(config_path)))
-                    if not click.confirm(f"Start {config.name}?", default=True):
-                        system_msg(
-                            f"skipped {config.name} (operator declined)",
-                            style="yellow",
-                        )
-                        continue
+                    system_msg(
+                        f"refusing to start {config.name} without --yes/-y — the "
+                        "plan above shows exactly what will mount and run; re-run "
+                        "with --yes to launch.",
+                        style="yellow",
+                    )
+                    refused = True
+                    continue
 
                 # Operator-facing --resume preflight (#192, Part B #3): when the
                 # operator explicitly names a resume id, validate it against the
@@ -323,7 +332,9 @@ def run_single_targets(
                 else:
                     console.print(f"[red]Error ({raw_target}): {exc}[/red]")
                     traceback.print_exc()
-    if any_error:
+    # Non-zero on a real failure OR on a shown-and-refused interactive launch
+    # (nothing started without --yes) — so scripts/operators see it clearly.
+    if any_error or refused:
         sys.exit(1)
 
     if multi_foreground and not dry_run:
