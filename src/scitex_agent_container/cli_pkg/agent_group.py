@@ -13,6 +13,7 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
+from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
 from ._new import new as _new_impl
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
@@ -96,6 +97,10 @@ agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
+# `explain` — render the FULL effective launch plan (mounts, --pwd, env,
+# skills, prompts) WITHOUT launching, so the caller sees exactly what
+# `start` will do (No-Surprise). Already named; no _rebind needed.
+agent_group.add_command(_explain_impl)
 # F-CS8 prune — dry-run-by-default purge of the two known workdir
 # bloat sources (.pending/ records + merged-only worktrees/agent-*).
 agent_group.add_command(_rebind(_prune_claude_impl, "prune-claude"))
