@@ -334,6 +334,7 @@ class TuiSessionRuntime(RuntimeBase):
         force: bool = False,
         dry_run: bool = False,
         foreground: bool = False,
+        one_shot: bool = False,
         drain_pickers_at_boot: bool = True,
         inject_startup_prompts: bool = True,
         boot_drain_timeout_s: float = 30.0,
@@ -355,10 +356,13 @@ class TuiSessionRuntime(RuntimeBase):
         (idempotent-restart contract). ``dry_run=True`` materialises the
         workspace + writes the rendered argv to
         ``<state>/apptainer_run.argv.txt`` but skips ``tmux new-session``.
-        ``foreground`` / ``no_preflight`` are accepted for RuntimeBase
-        parity; a detached-by-design tmux session has no foreground mode.
+        ``foreground`` / ``no_preflight`` / ``one_shot`` are accepted for
+        RuntimeBase parity; a detached-by-design tmux session has no
+        foreground mode, and one-shot termination is governed by
+        ``spec.autonomous.drive_until`` + the harness submission gate, not
+        a runtime flag (mirrors ``ClaudeSessionRuntime.start``).
         """
-        del no_preflight, foreground
+        del no_preflight, foreground, one_shot
         name = session_name_for(config)
         if force and self._mux.exists(name):
             self._mux.stop(name)
