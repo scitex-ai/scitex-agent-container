@@ -537,6 +537,7 @@ def start(
         multi_foreground=multi_foreground,
         preflight_runner=_run_preflight_once,
         broker_self=broker_self,
+        yes=yes,
     )
 
 

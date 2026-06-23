@@ -14,6 +14,7 @@ import json as _json
 import sys
 import traceback
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Callable
 
 import click
@@ -26,6 +27,31 @@ from .._helpers import console, system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
+
+
+def should_preview_and_require_yes(
+    *,
+    yes: bool,
+    dry_run: bool,
+    as_json: bool,
+    foreground: bool,
+    one_shot: bool,
+    broker_self: bool,
+    is_tty: bool,
+) -> bool:
+    """True ONLY for an interactive operator launch that should preview + refuse.
+
+    When True the caller renders the effective plan and REFUSES without --yes
+    (the codebase convention — no interactive prompt; --yes is the
+    confirmation). Pure (no I/O) so the "never block automation" contract is
+    unit-tested directly. Returns False for every programmatic path: ``--yes``
+    (operator pre-approved), ``--dry-run`` (already prints the plan), ``--json``
+    (machine output), ``foreground`` / ``one_shot`` / ``broker_self`` (the spawn
+    broker + supervisor), and any non-tty caller (cron, scripts, in-SIF runner).
+    """
+    if yes or dry_run or as_json or foreground or one_shot or broker_self:
+        return False
+    return is_tty
 
 
 def run_single_targets(
@@ -44,6 +70,7 @@ def run_single_targets(
     multi_foreground: bool,
     preflight_runner: Callable[[], None],
     broker_self: bool = False,
+    yes: bool = False,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -79,6 +106,7 @@ def run_single_targets(
         broker_ctx = nullcontext()
 
     any_error = False
+    refused = False
     with broker_ctx:
         for target_idx, raw_target in enumerate(single_targets):
             if target_idx > 0 and not as_json:
@@ -164,6 +192,35 @@ def run_single_targets(
                         if resume_id:
                             msg += f", resume_id = {resume_id}"
                         system_msg(msg, style="dim")
+                # No-Surprise: an INTERACTIVE operator launch first renders the
+                # FULL effective plan (mounts, --pwd, env, skills, hooks,
+                # prompts), then REFUSES without --yes — the codebase convention
+                # for a significant action (no interactive click.confirm; the
+                # plan is the preview, --yes is the confirmation). The gate is a
+                # pure function that excludes every programmatic path, so the
+                # supervisor / spawn-broker / scripts (non-tty, or --yes/
+                # foreground/one-shot/broker-self) launch without refusal.
+                if should_preview_and_require_yes(
+                    yes=yes,
+                    dry_run=dry_run,
+                    as_json=as_json,
+                    foreground=foreground,
+                    one_shot=one_shot,
+                    broker_self=broker_self,
+                    is_tty=sys.stdin.isatty(),
+                ):
+                    from .._explain import render_plan
+
+                    click.echo(render_plan(config, spec_path=Path(config_path)))
+                    system_msg(
+                        f"refusing to start {config.name} without --yes/-y — the "
+                        "plan above shows exactly what will mount and run; re-run "
+                        "with --yes to launch.",
+                        style="yellow",
+                    )
+                    refused = True
+                    continue
+
                 # Operator-facing --resume preflight (#192, Part B #3): when the
                 # operator explicitly names a resume id, validate it against the
                 # agent's projects store BEFORE launch. On a miss it fails loud
@@ -275,7 +332,9 @@ def run_single_targets(
                 else:
                     console.print(f"[red]Error ({raw_target}): {exc}[/red]")
                     traceback.print_exc()
-    if any_error:
+    # Non-zero on a real failure OR on a shown-and-refused interactive launch
+    # (nothing started without --yes) — so scripts/operators see it clearly.
+    if any_error or refused:
         sys.exit(1)
 
     if multi_foreground and not dry_run:
