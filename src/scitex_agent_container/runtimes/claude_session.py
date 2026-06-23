@@ -208,7 +208,16 @@ def _container_runtime_for(config: AgentConfig):
     unrecognised ``spec.runtime``.
     """
     runtime = getattr(config, "runtime", "") or "apptainer"
-    if runtime == "apptainer":
+    # Both the legacy ``apptainer`` value and the current
+    # ``claude-agent-sdk`` selector dispatch the headless SDK runner via
+    # ``apptainer exec`` — the registry (_runtime_select) maps BOTH to
+    # ClaudeSessionRuntime, so both must resolve to a container runtime
+    # here. Previously only ``apptainer`` did, so ``runtime:
+    # claude-agent-sdk`` fell through to None and start() failed loud with
+    # "requires docker|podman" — despite docker having been ripped out
+    # (apptainer is the only engine). This made the recommended value
+    # unusable while the deprecated alias worked; both now resolve.
+    if runtime in ("apptainer", "claude-agent-sdk"):
         from ._apptainer_runtime import ApptainerContainerRuntime
 
         return ApptainerContainerRuntime()
