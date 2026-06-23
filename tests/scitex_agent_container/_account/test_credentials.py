@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -355,6 +356,13 @@ def accounts_list_json_payload(tmp_path: Path) -> tuple[dict, str]:
         "HOME": str(fake_home),
         "PATH": "/usr/bin:/bin:/usr/local/bin",
     }
+    # Preserve PYTHONPATH so the subprocess can import the package when it is
+    # provided via PYTHONPATH (the CI SIF layers a ``uv pip install --target``
+    # onto a read-only venv) rather than installed into the interpreter's own
+    # site-packages (the bare-runner case). Without this the in-SIF release test
+    # fails with ``No module named scitex_agent_container``.
+    if os.environ.get("PYTHONPATH"):
+        env["PYTHONPATH"] = os.environ["PYTHONPATH"]
     # Act
     result = subprocess.run(
         [
