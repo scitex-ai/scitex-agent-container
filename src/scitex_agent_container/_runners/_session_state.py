@@ -378,13 +378,16 @@ async def heartbeat_loop(
     walking heartbeat.json files. Legacy callers that omit the pair
     stay JSON-only.
     """
-    write_heartbeat(
-        state_dir, pid=pid, state=STATE_IDLE, name=name, host=host, db_writer=db_writer
-    )
-    while not stop.is_set():
+
+    def _beat() -> None:
+        # Heartbeat is BEST-EFFORT: a transient state.db / FS I/O hiccup
+        # (e.g. sqlite "disk I/O error" on GPFS) must NOT crash a live
+        # agent. cohort-A Qwen de-risk 2026-06-23: such an error in the
+        # heartbeat write propagated through ``await hb_task`` and failed
+        # an ALREADY-COMPLETED solve (submission written, 8 claims
+        # grounded). Log and keep beating; liveness degrades gracefully,
+        # the run does not die on bookkeeping I/O.
         try:
-            await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
-        except asyncio.TimeoutError:
             write_heartbeat(
                 state_dir,
                 pid=pid,
@@ -393,6 +396,19 @@ async def heartbeat_loop(
                 host=host,
                 db_writer=db_writer,
             )
+        except Exception as exc:  # noqa: BLE001 - best-effort beat
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "heartbeat write failed (continuing, best-effort): %s", exc
+            )
+
+    _beat()
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
+        except asyncio.TimeoutError:
+            _beat()
 
 
 # ---------------------------------------------------------------------------
