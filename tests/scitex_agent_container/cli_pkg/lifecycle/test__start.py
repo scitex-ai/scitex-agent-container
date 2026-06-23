@@ -285,8 +285,12 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
         "spec:\n"
         "  runtime: apptainer\n"
         f"  host: {host}\n"
+        "  workdir: /home/agent/work\n"
         "  apptainer:\n"
         "    image: ~/.scitex/agent-container/containers/sac-base.sif\n"
+        "    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         "  claude:\n"
         "    model: haiku\n"
     )
@@ -752,6 +756,12 @@ def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
         "metadata: {}\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  claude:\n    model: sonnet\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         f"  a2a:\n    port: {port_line}\n"
     )
     return yaml_path

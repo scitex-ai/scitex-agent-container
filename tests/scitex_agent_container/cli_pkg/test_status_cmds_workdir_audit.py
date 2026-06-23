@@ -49,7 +49,15 @@ def _register_agent_with_workdir(name: str, workdir: Path) -> Path:
     spec = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"runtime": "apptainer", "workdir": str(workdir)},
+        "spec": {
+            "runtime": "apptainer",
+            "host": "local",
+            "workdir": str(workdir),
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "claude": {"model": "sonnet"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        },
     }
     spec_path = agents_dir / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec))

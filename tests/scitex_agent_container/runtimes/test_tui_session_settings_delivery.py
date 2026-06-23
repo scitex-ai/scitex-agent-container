@@ -92,7 +92,17 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
+  host: local
   workdir: /tmp/agt-work
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: claude-opus-4-8[1m]
     flags:

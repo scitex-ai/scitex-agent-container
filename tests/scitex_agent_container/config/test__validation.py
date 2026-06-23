@@ -114,14 +114,14 @@ def test_invalid_model_error_points_at_canonical_form(model):
     )
 
 
-def test_missing_model_is_allowed():
-    """Empty / missing model is fine — runtime falls back to its default."""
+def test_missing_model_is_rejected():
+    """Missing model is REQUIRED now — no hidden default (operator 2026-06-23)."""
     # Arrange
     raw = _BASE
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.claude.model" in e]
+    assert [e for e in errors if "spec.claude.model" in e]
 
 
 def test_non_string_model_is_rejected():
@@ -550,29 +550,19 @@ def test_validate_raw_rejects_non_string_dockerfile():
     assert any("spec.dockerfile" in e and "string" in e for e in errors)
 
 
-def test_image_defaults_to_empty_in_agentconfig(tmp_path):
-    """A yaml without ``image`` must still parse; AgentConfig.image
-    stays empty so the apptainer dispatcher applies its default
-    (the sac-scitex SIF) at dispatch."""
-    import yaml as _yaml
+def test_image_defaults_to_empty_in_agentconfig():
+    """AgentConfig.image keeps its empty dataclass default for INTERNAL
+    construction, so the apptainer dispatcher applies its default SIF.
 
-    from scitex_agent_container.config import load_config
+    Author YAML must now declare ``apptainer.image`` (the validator's
+    required-field check covers that); the RETAINED dataclass default still
+    backs programmatic construction, which is what this asserts directly."""
+    from scitex_agent_container.config._types import AgentConfig
 
     # Arrange
-    yaml_dir = tmp_path / "image-default"
-    yaml_dir.mkdir()
-    yaml_path = yaml_dir / "image-default.yaml"
-    yaml_path.write_text(
-        _yaml.safe_dump(
-            {
-                "apiVersion": "scitex-agent-container/v3",
-                "kind": "Agent",
-                "spec": {"runtime": "apptainer"},
-            }
-        )
-    )
+    name = "image-default"
     # Act
-    cfg = load_config(str(yaml_path))
+    cfg = AgentConfig(name=name)
     # Assert
     assert cfg.image == ""
 
@@ -594,9 +584,15 @@ def _loaded_config_with_image(tmp_path):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
+                    "host": "local",
+                    "workdir": "/home/agent/work",
                     "apptainer": {
                         "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
+                        "binds": [],
                     },
+                    "claude": {"model": "claude-opus-4-8[1m]"},
+                    "health": {"enabled": True, "interval": 60},
+                    "restart": {"policy": "on-failure", "max_retries": 3},
                 },
             }
         )
@@ -621,6 +617,147 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
     value = cfg.image
     # Assert — v3: AgentConfig.image mirrors spec.apptainer.image.
     assert value == "~/.scitex/agent-container/containers/sac-scitex.sif"
+
+
+# ---------------------------------------------------------------------------
+# Required author fields — NO HIDDEN DEFAULTS (operator directive 2026-06-23).
+# Every APPLICABLE field must be declared; the validator errors roundly when
+# one is absent. ``host: local`` is the explicit local-singleton spelling.
+# ---------------------------------------------------------------------------
+
+_COMPLETE_SPEC = {
+    "apiVersion": "scitex-agent-container/v3",
+    "kind": "Agent",
+    "spec": {
+        "runtime": "tui",
+        "host": "local",
+        "workdir": "/home/agent/work",
+        "apptainer": {"image": "/x.sif", "binds": []},
+        "claude": {"model": "opus"},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
+}
+
+
+def _spec_without(dotted_path: str) -> dict:
+    """Deep-copy ``_COMPLETE_SPEC`` with one ``spec.<dotted_path>`` removed."""
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    parts = dotted_path.split(".")
+    cur = raw["spec"]
+    for part in parts[:-1]:
+        cur = cur[part]
+    cur.pop(parts[-1], None)
+    return raw
+
+
+def test_complete_spec_has_no_errors():
+    # Arrange
+    raw = _COMPLETE_SPEC
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert errors == []
+
+
+def test_host_local_passes_validation():
+    # Arrange
+    raw = _COMPLETE_SPEC
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "host" in e.lower()]
+
+
+def test_missing_host_and_hosts_is_rejected():
+    # Arrange
+    raw = _spec_without("host")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.host or spec.hosts is REQUIRED" in e]
+
+
+def test_missing_workdir_is_rejected():
+    # Arrange
+    raw = _spec_without("workdir")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.workdir is REQUIRED" in e]
+
+
+def test_missing_apptainer_image_is_rejected():
+    # Arrange
+    raw = _spec_without("apptainer.image")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.apptainer.image is REQUIRED" in e]
+
+
+def test_missing_apptainer_binds_is_rejected():
+    # Arrange
+    raw = _spec_without("apptainer.binds")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.apptainer.binds is REQUIRED" in e]
+
+
+def test_missing_health_interval_is_rejected():
+    # Arrange
+    raw = _spec_without("health.interval")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.health.interval is REQUIRED" in e]
+
+
+def test_missing_restart_policy_is_rejected():
+    # Arrange
+    raw = _spec_without("restart.policy")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.restart.policy is REQUIRED" in e]
+
+
+def test_agentproxy_missing_upstream_is_rejected():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "AgentProxy",
+        "spec": {
+            "runtime": "tui",
+            "host": "local",
+            "workdir": "/work",
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "always", "max_retries": 5},
+            "proxy": {"trust": "untrusted"},
+        },
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.proxy.upstream is REQUIRED" in e]
+
+
+def test_multi_host_does_not_require_workdir():
+    # Arrange — a multi-instance agent derives a per-instance workdir.
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"].pop("workdir")
+    raw["spec"].pop("host")
+    raw["spec"]["hosts"] = "all"
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.workdir" in e]
 
 
 # ---------------------------------------------------------------------------

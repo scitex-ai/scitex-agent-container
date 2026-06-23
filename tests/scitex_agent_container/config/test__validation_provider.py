@@ -24,7 +24,14 @@ from scitex_agent_container.config._validation import validate_raw
 _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "apptainer"},
+    "spec": {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": "/home/agent/work",
+        "apptainer": {"image": "/x.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
 }
 
 _PROVIDER = {

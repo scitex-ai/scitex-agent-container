@@ -123,7 +123,25 @@ def _write_valid_spec(
         lines.extend(label_lines)
     else:
         lines.append("metadata: {}")
-    lines.extend(["spec:", "  runtime: apptainer"])
+    lines.extend(
+        [
+            "spec:",
+            "  runtime: apptainer",
+            "  host: local",
+            "  workdir: /home/agent/work",
+            "  apptainer:",
+            "    image: /x.sif",
+            "    binds: []",
+            "  claude:",
+            "    model: sonnet",
+            "  health:",
+            "    enabled: true",
+            "    interval: 60",
+            "  restart:",
+            "    policy: on-failure",
+            "    max_retries: 3",
+        ]
+    )
     spec.write_text("\n".join(lines) + "\n")
     return spec
 

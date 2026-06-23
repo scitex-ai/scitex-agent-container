@@ -69,13 +69,22 @@ def _write_minimal_spec(home: Path, name: str) -> Path:
                 description: ephemeral lifecycle smoke target
             spec:
               runtime: apptainer
+              host: local
+              workdir: {home}/work
               apptainer:
                 image: {home}/.scitex/agent-container/containers/sac-base.sif
+                binds: []
               claude:
                 model: haiku
                 flags:
                   - --dangerously-skip-permissions
                 session: new-session
+              health:
+                enabled: true
+                interval: 60
+              restart:
+                policy: on-failure
+                max_retries: 3
             """
         )
     )

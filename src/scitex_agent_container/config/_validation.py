@@ -150,6 +150,88 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Required author-facing fields (operator directive 2026-06-23 — NO HIDDEN
+# DEFAULTS). Extends the spec.access removal: just as host-access is now an
+# explicit binds list, every field with a BEHAVIOURAL default-when-absent must
+# be written in the spec, and the validator errors ROUNDLY (naming the field +
+# the fix) when an applicable one is missing. A reader of the spec then sees
+# every setting that actually applies — nothing is silently defaulted.
+#
+# Intentionally NOT required (so the rule stays coherent, not noise):
+#   * opt-in subsystems whose ABSENCE means "feature off" — and is therefore
+#     self-evident, not a hidden default: autonomous, watchdog,
+#     context_management, listen, hooks, comms, lineage, to_home, startup_*,
+#     a2a, env, user, container.*.
+#   * computed / loader-filled fields the author cannot meaningfully supply:
+#     python_venv, screen, expanded_workdir.
+#
+# Dataclass defaults are RETAINED on purpose — internal/test construction is
+# unaffected; enforcement lives HERE, at spec-validate time, where the round
+# errors live. Each entry is ``(dotted-path, multi-line fix hint)``.
+_REQUIRED_FIELDS_BOTH_KINDS: tuple[tuple[str, str], ...] = (
+    ("runtime", "runtime: tui            # tui | claude-agent-sdk"),
+    ("workdir", "workdir: /home/<you>/proj/<repo>   # the in-container --pwd"),
+    ("apptainer.image", "apptainer:\n    image: <path-to>.sif"),
+    (
+        "apptainer.binds",
+        "apptainer:\n    binds: []   # explicit mounts; [] = nothing beyond state",
+    ),
+    ("health.enabled", "health:\n    enabled: true"),
+    ("health.interval", "health:\n    interval: 60"),
+    (
+        "restart.policy",
+        "restart:\n    policy: on-failure   # never | on-failure | always",
+    ),
+    ("restart.max_retries", "restart:\n    max_retries: 3"),
+)
+# kind: Agent only (the SDK/TUI runner reads spec.claude; a proxy has no SDK).
+_REQUIRED_FIELDS_AGENT: tuple[tuple[str, str], ...] = (
+    ("claude.model", "claude:\n    model: claude-opus-4-8[1m]"),
+)
+
+_MISSING = object()
+
+
+def _dotted_get(spec: dict, path: str):
+    """Walk a dotted key path; return ``_MISSING`` if any level is absent.
+
+    A key present with a ``None`` value (e.g. ``binds:`` written with no value)
+    counts as PRESENT — the author declared it explicitly; value-type checks
+    elsewhere handle the shape. Only a genuinely absent key (or a non-mapping
+    parent) is ``_MISSING``.
+    """
+    cur: object = spec
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return _MISSING
+        cur = cur[part]
+    return cur
+
+
+def _missing_required_fields(spec: dict, kind: object) -> list[str]:
+    """Round errors for every REQUIRED author field absent from ``spec``."""
+    required = list(_REQUIRED_FIELDS_BOTH_KINDS)
+    if kind == "Agent":
+        required += list(_REQUIRED_FIELDS_AGENT)
+    # Multi-instance agents (``spec.hosts``) auto-derive a PER-INSTANCE workdir
+    # — the runtime path keyed by the host-suffixed effective id. That is the
+    # intended multi-host behaviour (each instance gets its own scratch), NOT a
+    # hidden default, so workdir is not required there. A singleton
+    # (``spec.host``) opens at a canonical path the operator must state, so it
+    # stays required. (Multi-host MAY still set workdir to share one path.)
+    if "hosts" in spec:
+        required = [(p, h) for (p, h) in required if p != "workdir"]
+    out: list[str] = []
+    for path, hint in required:
+        if _dotted_get(spec, path) is _MISSING:
+            out.append(
+                f"spec.{path} is REQUIRED — declare it explicitly (no hidden "
+                f"defaults; operator directive 2026-06-23). Add:\n  {hint}"
+            )
+    return out
+
+
 # ``_validate_provider`` moved to ``_provider_validation.validate_provider``
 # (ADR-0011 extension — provider as registered string identifier; see
 # the sibling module for the dict + string forms).
@@ -403,9 +485,21 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"got '{user_val}'"
                 )
 
-        # host / hosts (mutually exclusive)
+        # host / hosts — placement. Exactly one is REQUIRED (no hidden
+        # 'local' default; operator directive 2026-06-23) AND they are
+        # mutually exclusive. ``host: local`` is the explicit local-singleton
+        # spelling (parser normalizes it to "").
         has_host = "host" in spec
         has_hosts = "hosts" in spec
+        if not has_host and not has_hosts:
+            errors.append(
+                "spec.host or spec.hosts is REQUIRED — declare placement "
+                "explicitly (no hidden 'local' default; operator directive "
+                "2026-06-23). Use ONE of:\n"
+                "  host: local              # this (the invoking) host\n"
+                "  host: <peer>             # pinned to a single peer\n"
+                "  hosts: [<peer>, ...]     # one instance per host (or 'all')"
+            )
         if has_host and has_hosts:
             errors.append(
                 "spec.host and spec.hosts are mutually exclusive — set "
@@ -487,6 +581,12 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "spec.proxy is required when kind: AgentProxy "
                     "(no upstream to forward to)."
                 )
+            elif not (isinstance(proxy_block, dict) and proxy_block.get("upstream")):
+                errors.append(
+                    "spec.proxy.upstream is REQUIRED when kind: AgentProxy — "
+                    "declare the forwarding target explicitly:\n"
+                    "  proxy:\n    upstream: http://127.0.0.1:9000"
+                )
             for forbidden in ("claude", "startup_prompts", "startup_commands"):
                 val = spec.get(forbidden)
                 if val:
@@ -514,6 +614,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "(singleton, optionally with fallback list) or spec.hosts "
                 "(multi-instance, 'all' or list)."
             )
+
+        # No hidden defaults: every APPLICABLE author field must be declared
+        # explicitly (operator directive 2026-06-23). host/hosts presence is
+        # already enforced above; this covers the rest of the required set.
+        errors.extend(_missing_required_fields(spec, kind))
 
     return errors
 

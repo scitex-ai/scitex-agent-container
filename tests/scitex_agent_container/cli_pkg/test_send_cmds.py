@@ -66,7 +66,19 @@ def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
 kind: Agent
 spec:
   runtime: apptainer
+  host: local
   workdir: {tmp_path / "workdir"}
+  apptainer:
+    image: /x.sif
+    binds: []
+  claude:
+    model: sonnet
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
     )
     (tmp_path / "workdir").mkdir()

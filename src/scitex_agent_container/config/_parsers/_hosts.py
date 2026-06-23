@@ -11,11 +11,18 @@ def parse_hosts_spec(spec: dict) -> "HostsSpec":
     Returns a ``HostsSpec``. Validation of mutual exclusion + value types
     happens in ``_validation.py``; this parser just normalizes shapes:
 
+    * ``host: local``    → ``host="", hosts=""``  (EXPLICIT local singleton)
     * ``host: <str>``    → ``host=str, hosts=""``
     * ``host: [list]``   → ``host=list, hosts=""``
     * ``host:`` (None)   → ``host="", hosts=""``  (local singleton)
     * ``hosts: "all"``   → ``host="", hosts="all"``
     * ``hosts: [list]``  → ``host="", hosts=list``
+
+    ``host: local`` is the EXPLICIT spelling of the historical empty-string
+    local default (operator directive 2026-06-23: no hidden defaults — a spec
+    must declare WHERE it runs). It normalizes to ``""`` so every downstream
+    placement/dispatch path treats it identically to the old default — it is
+    NEVER SSH-dispatched to a peer literally named ``local``.
     """
     host_raw = spec.get("host", None) if "host" in spec else None
     hosts_raw = spec.get("hosts", None) if "hosts" in spec else None
@@ -29,6 +36,10 @@ def parse_hosts_spec(spec: dict) -> "HostsSpec":
         elif isinstance(host_raw, str):
             host = host_raw
         # any other type is caught by the validator; treat as empty here
+
+    # ``host: local`` → "" (the local-singleton default, stated explicitly).
+    if isinstance(host, str) and host.strip().lower() == "local":
+        host = ""
     if hosts_raw is not None:
         if isinstance(hosts_raw, list):
             hosts = [str(h) for h in hosts_raw]

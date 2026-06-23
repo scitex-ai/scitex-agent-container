@@ -371,7 +371,12 @@ def _v3_minimal_cfg(tmp_path: Path):
         "kind": "Agent",
         "spec": {
             "runtime": "apptainer",
-            "apptainer": {"image": "x.sif"},
+            "host": "local",
+            "workdir": "/home/agent/work",
+            "apptainer": {"image": "x.sif", "binds": []},
+            "claude": {"model": "sonnet"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
         },
     }
     p.write_text(yaml.safe_dump(body))
@@ -418,7 +423,10 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
         "kind": "Agent",
         "spec": {
             "runtime": "apptainer",
-            "apptainer": {"image": "x.sif"},
+            "apptainer": {"image": "x.sif", "binds": []},
+            "claude": {"model": "sonnet"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
             "hosts": ["mba", "spartan"],
         },
     }
@@ -438,8 +446,17 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
 
 
 def _v3_yaml(tmp_path: Path, name: str, spec_extra: dict) -> Path:
-    spec = {"runtime": "apptainer", "workdir": str(tmp_path / "wd")}
+    spec = {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": str(tmp_path / "wd"),
+        "apptainer": {"image": "x.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    }
     spec.update(spec_extra)
+    # Ensure required claude.model survives an extra that overrides claude.
+    spec.setdefault("claude", {}).setdefault("model", "sonnet")
     body = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
@@ -639,8 +656,12 @@ def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> N
         "metadata": {"labels": {"sac-builtin": "off"}},
         "spec": {
             "runtime": "apptainer",
+            "host": "local",
             "workdir": str(tmp_path / "wd"),
-            "apptainer": {"image": "x.sif"},
+            "apptainer": {"image": "x.sif", "binds": []},
+            "claude": {"model": "sonnet"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
         },
     }
     p = tmp_path / "sac-off" / "spec.yaml"

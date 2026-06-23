@@ -230,6 +230,15 @@ def _base_proxy_raw(**overrides) -> dict:
         "apiVersion": "scitex-agent-container/v3",
         "kind": "AgentProxy",
         "spec": {
+            # Required author fields (no hidden defaults). A proxy has NO
+            # claude block (forbidden for kind: AgentProxy); proxy.upstream is
+            # its kind-specific required field.
+            "runtime": "tui",
+            "host": "local",
+            "workdir": "/home/agent/work",
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "always", "max_retries": 3},
             "proxy": {"upstream": "https://peer.example.com"},
         },
     }

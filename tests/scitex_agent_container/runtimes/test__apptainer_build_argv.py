@@ -115,7 +115,17 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
+  host: local
   workdir: /tmp/agt-work
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: claude-opus-4-8[1m]
     flags:
@@ -473,6 +483,16 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
+  host: local
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: sonnet
     channels:
@@ -489,6 +509,16 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
+  host: local
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: sonnet
     channels:
@@ -870,10 +900,18 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
+  host: local
   workdir: /home/tester/proj/figrecipe
   apptainer:
+    image: /x.sif
     binds:
       - /home/tester:/home/tester:rw
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: claude-opus-4-8[1m]
 """
@@ -962,7 +1000,12 @@ def test_build_run_argv_explicit_full_pwd_opens_at_workdir(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-_NESTED_SPEC = _BASE_SPEC.format(extra="  apptainer:\n    nested_build: true")
+# _BASE_SPEC already carries an ``apptainer:`` block, so add nested_build INTO
+# it rather than appending a second ``apptainer:`` key (YAML would drop one).
+_NESTED_SPEC = _BASE_SPEC.format(extra="").replace(
+    "    binds: []\n",
+    "    binds: []\n    nested_build: true\n",
+)
 
 _NO_FUSE_SKIP = pytest.mark.skipif(
     not Path("/dev/fuse").exists(), reason="nested_build needs host /dev/fuse"

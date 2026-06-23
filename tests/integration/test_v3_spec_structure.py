@@ -31,11 +31,41 @@ from pathlib import Path
 import pytest
 import yaml as _yaml
 
-from scitex_agent_container.config import load_config, validate_config
+from scitex_agent_container.config import AgentConfig, load_config, validate_config
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+# No-hidden-defaults (operator directive 2026-06-23): every applicable
+# author field is REQUIRED at the YAML/load layer. ``_write_spec`` fills the
+# required scaffolding so each test body only has to declare the field it
+# exercises; the body still wins on any key (deep-merged for the nested
+# engine blocks), so round-trip and removed-field assertions are preserved.
+# NOTE: ``runtime`` is intentionally NOT scaffolded — the body must supply it
+# (every test does), keeping the validator's runtime-required rule honest.
+_REQUIRED_SCAFFOLD: dict = {
+    "host": "local",
+    "workdir": "~/.scitex/agent-container/runtime/agents/v3spec",
+    "claude": {"model": "claude-opus-4-8[1m]"},
+    "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+    "health": {"enabled": True, "interval": 60},
+    "restart": {"policy": "on-failure", "max_retries": 3},
+}
+
+
+def _merge_required(spec_body: dict) -> dict:
+    """Deep-merge the required scaffold UNDER ``spec_body`` (body wins)."""
+    import copy
+
+    merged = copy.deepcopy(_REQUIRED_SCAFFOLD)
+    for key, value in spec_body.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 def _write_spec(tmp_path: Path, spec_body: dict, name: str = "v3spec") -> Path:
@@ -48,7 +78,7 @@ def _write_spec(tmp_path: Path, spec_body: dict, name: str = "v3spec") -> Path:
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": spec_body,
+                "spec": _merge_required(spec_body),
             }
         )
     )
@@ -72,13 +102,16 @@ class TestCrossCuttingTopLevel:
         # Assert
         assert cfg.runtime == "apptainer"
 
-    def test_runtime_defaults_to_tui_when_omitted(self, tmp_path):
-        # Arrange — a spec that does NOT declare runtime.
-        spec = _write_spec(tmp_path, {"workdir": "/tmp/agent-x"})
+    def test_runtime_defaults_to_tui_when_omitted(self):
+        # Arrange — runtime is now REQUIRED in YAML (no hidden default), so the
+        # omitted-runtime default is only reachable by constructing the config
+        # object directly (bypassing YAML validation). TUI is the default
+        # launch mode (operator directive 2026-06-15).
+        config = AgentConfig(name="agent-x")
         # Act
-        cfg = load_config(str(spec))
-        # Assert — TUI is the default launch mode (operator directive 2026-06-15).
-        assert cfg.runtime == "tui"
+        runtime = config.runtime
+        # Assert
+        assert runtime == "tui"
 
     def test_workdir_value_round_trips(self, tmp_path):
         # Arrange
@@ -168,7 +201,7 @@ class TestCrossCuttingTopLevel:
                     "apiVersion": "scitex-agent-container/v3",
                     "kind": "Agent",
                     "metadata": {"labels": {"role": "researcher", "team": "lab-a"}},
-                    "spec": {"runtime": "apptainer"},
+                    "spec": _merge_required({"runtime": "apptainer"}),
                 }
             )
         )

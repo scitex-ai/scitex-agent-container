@@ -342,6 +342,11 @@ def _write_v3_config(tmp_path: Path, extra: str = "") -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         "  claude:\n"
         "    model: sonnet\n" + extra
     )

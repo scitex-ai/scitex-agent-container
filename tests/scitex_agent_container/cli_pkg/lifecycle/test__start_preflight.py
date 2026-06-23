@@ -208,12 +208,19 @@ def _install_provider_spec(
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
+        "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
         "  claude:\n"
+        "    model: deepseek-chat\n"
         "    provider:\n"
         f"      base_url: {base_url}\n"
         "      auth_token_env: FAKE_TOKEN_ENV\n"
         "  apptainer:\n"
-        "    image: /nonexistent/dummy.sif\n",
+        "    image: /nonexistent/dummy.sif\n"
+        "    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
         encoding="utf-8",
     )
     return spec
@@ -228,9 +235,15 @@ def _install_anthropic_spec(yaml_dir: Path, name: str) -> Path:
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
-        "  claude: {}\n"
+        "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  claude:\n    model: sonnet\n"
         "  apptainer:\n"
-        "    image: /nonexistent/dummy.sif\n",
+        "    image: /nonexistent/dummy.sif\n"
+        "    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
         encoding="utf-8",
     )
     return spec

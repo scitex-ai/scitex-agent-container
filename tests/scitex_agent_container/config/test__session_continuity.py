@@ -167,6 +167,17 @@ metadata:
     role: project-maintainer
 spec:
   runtime: tui
+  host: local
+  workdir: /home/agent/work
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: sonnet
 """
@@ -179,6 +190,17 @@ metadata:
     project: cohort
 spec:
   runtime: tui
+  host: local
+  workdir: /home/agent/work
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     model: haiku
 """
@@ -191,8 +213,20 @@ metadata:
     role: lead
 spec:
   runtime: tui
+  host: local
+  workdir: /home/agent/work
+  apptainer:
+    image: /x.sif
+    binds: []
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   claude:
     session: fresh
+    model: sonnet
 """
 
 _FLEET_ROLE_VIA_ENV = """\
@@ -203,9 +237,21 @@ metadata:
     project: x
 spec:
   runtime: tui
+  host: local
+  workdir: /home/agent/work
   apptainer:
+    image: /x.sif
+    binds: []
     env:
       SCITEX_AGENT_CONTAINER_ROLE: worker
+  claude:
+    model: sonnet
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
 
 

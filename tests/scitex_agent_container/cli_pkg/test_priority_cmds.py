@@ -62,11 +62,25 @@ def _write_spec(
         "metadata: {}",
         "spec:",
         "  runtime: apptainer",
+        "  apptainer:",
+        "    image: /x.sif",
+        "    binds: []",
+        "  claude:",
+        "    model: sonnet",
+        "  health:",
+        "    enabled: true",
+        "    interval: 60",
+        "  restart:",
+        "    policy: on-failure",
+        "    max_retries: 3",
     ]
     if hosts is not None:
+        # multi-instance → workdir auto-derives per host (not required).
         lines.append(f"  hosts: {json.dumps(hosts)}")
-    elif host is not None:
-        lines.append(f"  host: {json.dumps(host)}")
+    else:
+        # singleton (explicit host, or the local default) → workdir required.
+        lines.append(f"  host: {json.dumps(host) if host is not None else 'local'}")
+        lines.append("  workdir: /home/agent/work")
     spec.write_text("\n".join(lines) + "\n")
     return spec
 

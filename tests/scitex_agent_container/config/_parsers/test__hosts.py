@@ -37,6 +37,14 @@ from scitex_agent_container.config._parsers._hosts import (
         ({"hosts": "all"}, "hosts", "all"),
         # Unsupported scalar type for ``host`` → normalized to empty.
         ({"host": 42}, "host", ""),
+        # ``host: local`` → the EXPLICIT local-singleton spelling, normalized
+        # to "" so downstream placement treats it as the historical default
+        # (never SSH-dispatched to a peer literally named "local").
+        ({"host": "local"}, "host", ""),
+        ({"host": "local"}, "hosts", ""),
+        # Case-insensitive + whitespace-tolerant.
+        ({"host": "LOCAL"}, "host", ""),
+        ({"host": "  local  "}, "host", ""),
     ],
 )
 def test_parse_hosts_spec_returns_expected_field_for_spec(spec, field, expected):

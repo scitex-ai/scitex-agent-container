@@ -511,7 +511,15 @@ def _registered(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {"runtime": "apptainer", "workdir": str(workdir)},
+                "spec": {
+                    "runtime": "apptainer",
+                    "host": "local",
+                    "workdir": str(workdir),
+                    "apptainer": {"image": "/x.sif", "binds": []},
+                    "claude": {"model": "sonnet"},
+                    "health": {"enabled": True, "interval": 60},
+                    "restart": {"policy": "on-failure", "max_retries": 3},
+                },
             }
         )
     )

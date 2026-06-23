@@ -123,8 +123,13 @@ def _write_spec(home: Path, name: str, workdir: str = "/tmp") -> Path:
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "spec": {
-            "claude": {"model": "claude-sonnet-4-5"},
+            "runtime": "tui",
+            "host": "local",
             "workdir": workdir,
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "claude": {"model": "claude-sonnet-4-5"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
         },
     }
     p = spec_dir / "spec.yaml"

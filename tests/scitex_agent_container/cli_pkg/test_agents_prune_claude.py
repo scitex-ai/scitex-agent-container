@@ -157,7 +157,15 @@ def _registered(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {"runtime": "apptainer", "workdir": str(workdir)},
+                "spec": {
+                    "runtime": "apptainer",
+                    "host": "local",
+                    "workdir": str(workdir),
+                    "apptainer": {"image": "/x.sif", "binds": []},
+                    "claude": {"model": "sonnet"},
+                    "health": {"enabled": True, "interval": 60},
+                    "restart": {"policy": "on-failure", "max_retries": 3},
+                },
             }
         )
     )
@@ -229,7 +237,15 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {"runtime": "apptainer", "workdir": str(workdir)},
+                "spec": {
+                    "runtime": "apptainer",
+                    "host": "local",
+                    "workdir": str(workdir),
+                    "apptainer": {"image": "/x.sif", "binds": []},
+                    "claude": {"model": "sonnet"},
+                    "health": {"enabled": True, "interval": 60},
+                    "restart": {"policy": "on-failure", "max_retries": 3},
+                },
             }
         )
     )

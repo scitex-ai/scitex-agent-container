@@ -81,8 +81,14 @@ def _write_pinned_spec(parent: Path, *, name: str, account: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         f"  claude:\n"
         f"    account: {account}\n"
+        "    model: sonnet\n"
     )
     return spec
 
@@ -96,6 +102,12 @@ def _write_unpinned_spec(parent: Path, *, name: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  claude:\n    model: sonnet\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
     )
     return spec
 

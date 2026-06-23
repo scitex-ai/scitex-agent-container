@@ -72,13 +72,22 @@ def _write_fleet(home: Path, names: list[str]) -> Path:
                     role: e2e-fleet-bulk
                 spec:
                   runtime: apptainer
+                  host: local
+                  workdir: /home/agent/work
                   apptainer:
                     image: {image}
+                    binds: []
                   claude:
                     model: haiku
                     flags:
                       - --dangerously-skip-permissions
                     session: new-session
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                 """
             )
         )

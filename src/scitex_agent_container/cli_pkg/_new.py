@@ -53,8 +53,9 @@ def _is_valid_agent_name(name: str) -> bool:
 _MINIMAL_TEMPLATE = """\
 # {name} — fresh v3 spec scaffolded by ``sac agents new``.
 #
-# This is the minimal shape: image, model, permissions flag. Add health,
-# restart, startup_prompts, etc. as you need them — see
+# This is the minimal shape — every field the validator REQUIRES (no hidden
+# defaults): placement, workdir, image + binds, model, health, restart. Add
+# startup_prompts, channels, etc. as you need them — see
 # ``examples/agents/full-agent/spec.yaml`` for the full annotated tour.
 
 apiVersion: scitex-agent-container/v3
@@ -62,14 +63,27 @@ kind: Agent
 
 spec:
   runtime: apptainer
+  # Placement: `local` = the invoking host (edit to a peer name to pin it
+  # elsewhere, or use `hosts:` for one instance per host).
+  host: local
+  workdir: ~/proj/{name}
 
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
+    binds: []
 
   claude:
     model: haiku
     flags:
       - --dangerously-skip-permissions
+
+  health:
+    enabled: true
+    interval: 60
+
+  restart:
+    policy: on-failure
+    max_retries: 3
 
 # EOF
 """
@@ -99,6 +113,8 @@ metadata:
 
 spec:
   runtime: apptainer
+  host: local
+  workdir: ~/proj/{name}
 
   to_home: ./to_home
 
@@ -106,6 +122,7 @@ spec:
 
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    binds: []
     relaxed: false
 
   claude:

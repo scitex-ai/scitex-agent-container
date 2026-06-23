@@ -15,11 +15,24 @@ from scitex_agent_container.config import (
     validate_config,
 )
 
+# No-hidden-defaults (operator directive 2026-06-23): every applicable
+# author field is REQUIRED at the YAML/load layer, so each inline fixture
+# spec must declare runtime, workdir, host, apptainer.{image,binds},
+# health.{enabled,interval}, restart.{policy,max_retries} (+ claude.model
+# for kind: Agent) or load_config raises ValueError.
 MINIMAL_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
-    "spec": {"runtime": "apptainer"},
+    "spec": {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": "/tmp/test-agent-workdir",
+        "claude": {"model": "claude-opus-4-8[1m]"},
+        "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
 }
 
 FULL_CONFIG = {
@@ -31,6 +44,7 @@ FULL_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
+        "host": "local",
         "workdir": "/tmp/test-workdir",
         "claude": {
             "model": "opus",
@@ -38,7 +52,11 @@ FULL_CONFIG = {
             "flags": ["--dangerously-skip-permissions"],
             "session": "continue",
         },
-        "apptainer": {"env": {"MY_VAR": "my_value"}},
+        "apptainer": {
+            "image": "/opt/sac/scitex.sif",
+            "binds": [],
+            "env": {"MY_VAR": "my_value"},
+        },
         "screen": {"name": "full-agent"},
         "container": {
             "runtime": "apptainer",
@@ -126,9 +144,11 @@ class TestLoadMinimalConfig:
         # test_v3_spec_structure.test_runtime_defaults_to_tui_when_omitted.)
         assert runtime == "apptainer"
 
-    def test_minimal_defaults_model_to_sonnet(self, minimal_loaded_config):
-        # Arrange
-        config = minimal_loaded_config
+    def test_minimal_defaults_model_to_sonnet(self):
+        # Arrange — claude.model is now REQUIRED in YAML (no hidden default),
+        # so the model-defaults-to-sonnet behaviour is only reachable by
+        # constructing the config object directly (bypassing YAML validation).
+        config = AgentConfig(name="test-agent")
         # Act
         model = config.model
         # Assert

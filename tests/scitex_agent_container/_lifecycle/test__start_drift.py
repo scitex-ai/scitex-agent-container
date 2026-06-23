@@ -109,11 +109,15 @@ def _make_spec_repo(tmp_path: Path, *, drifted: bool) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
         f"  workdir: {tmp_path / 'work'}\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         "  claude:\n"
         "    model: sonnet\n"
         "  health:\n"
         "    enabled: false\n"
+        "    interval: 60\n"
     )
     _git(work, "add", "-A")
     _git(work, "commit", "-m", "init")

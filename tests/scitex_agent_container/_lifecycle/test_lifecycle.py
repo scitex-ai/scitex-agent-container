@@ -70,14 +70,30 @@ def _write_spec(
     """
     agent_dir = tmp_path / name
     agent_dir.mkdir(parents=True, exist_ok=True)
+    # Omit the default apptainer block when a test supplies its own via
+    # extra_spec — YAML can't carry two `apptainer:` keys (the second would
+    # silently win and drop the required image/binds).
+    apptainer_default = (
+        ""
+        if "apptainer:" in extra_spec
+        else "  apptainer:\n    image: /x.sif\n    binds: []\n"
+    )
     body = (
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         f"  runtime: {runtime}\n"
+        "  host: local\n"
         f"  workdir: {tmp_path / 'work'}\n"
+        f"{apptainer_default}"
         "  claude:\n"
         "    model: sonnet\n"
+        "  health:\n"
+        "    enabled: true\n"
+        "    interval: 60\n"
+        "  restart:\n"
+        "    policy: on-failure\n"
+        "    max_retries: 3\n"
         "  hooks:\n"
         "    pre_start: ['echo pre']\n"
         "    post_start: ['echo post']\n"
@@ -1832,6 +1848,8 @@ def test_agent_status_account_reports_apikey_fingerprint_on_env_override(
         tmp_path,
         extra_spec=(
             "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
             "    env:\n"
             "      SAC_ANTHROPIC_API_KEY: sk-ant-api03-AAAABBBB7777\n"
         ),

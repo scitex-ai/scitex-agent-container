@@ -28,14 +28,15 @@ from pathlib import Path
 # digits, hyphen, underscore; must start with a letter.
 _VALID_LABEL = re.compile(r"^[a-z][a-z0-9_-]*$")
 
-# Minimal standardized TUI spec for a cold-started agent. Deliberately small
-# (operator: keep agent defs pure) — the sac MCP server + ``server:sac``
-# channel are auto-injected by the loader, so only what's UNIQUE to this agent
-# is written here. ``host`` is always set (dispatch runs locally when it
-# matches the caller's host, remote otherwise).
+# Standardized TUI spec for a cold-started agent. Every APPLICABLE field is
+# written explicitly — NO HIDDEN DEFAULTS (operator directive 2026-06-23): a
+# reader sees placement, image, mounts, model, and lifecycle without consulting
+# code, and the validator REQUIRES them. The sac MCP server + ``server:sac``
+# channel are still auto-injected by the loader. ``host`` is always set
+# (``local`` = the caller's host; dispatch runs remote when it names a peer).
 _COLD_START_SPEC = """\
 # {label} — cold-started by `sac start` ({stamp_note}).
-# Minimal standardized TUI spec; edit freely or `sac agents new` for the full tour.
+# Standardized TUI spec; edit freely or `sac agents new` for the full tour.
 apiVersion: scitex-agent-container/v3
 kind: Agent
 metadata:
@@ -45,9 +46,21 @@ spec:
   runtime: tui
   host: {host}
   workdir: {workdir}
+  apptainer:
+    # Default SIF, named explicitly. ``binds: []`` = no extra mounts; apptainer's
+    # default $HOME mount makes the workdir reachable. Add binds for more reach.
+    image: ~/.scitex/agent-container/containers/scitex-agent-container.sif
+    binds: []
   claude:
+    model: sonnet
     flags:
       - --dangerously-skip-permissions
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
   a2a:
     port: auto
 """

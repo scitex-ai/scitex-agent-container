@@ -141,12 +141,21 @@ _MINIMAL_V3_SPEC = """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
+  host: local
+  workdir: /home/agent/work
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
+    binds: []
   claude:
     model: haiku
     flags:
       - --dangerously-skip-permissions
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
 
 

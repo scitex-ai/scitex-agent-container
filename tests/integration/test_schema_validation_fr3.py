@@ -45,10 +45,22 @@ def _write_yaml(data: dict, name: str = "test-agent") -> Path:
     return path
 
 
+# No-hidden-defaults (operator directive 2026-06-23): a loadable spec must
+# declare every applicable author field, so ``_BASE`` carries the full
+# required set. Rejection tests add their bad field on top (still rejected);
+# ``test_known_spec_fields_accepted_*`` loads this clean.
 _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {"runtime": "apptainer"},
+    "spec": {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": "~/.scitex/agent-container/runtime/agents/test-agent",
+        "claude": {"model": "claude-opus-4-8[1m]"},
+        "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
 }
 
 
@@ -101,6 +113,9 @@ class TestUnknownFieldRejection:
         data = {
             **_BASE,
             "spec": {
+                # Keep the required scaffold from _BASE, override with the
+                # known fields under test (claude.model wins over the base).
+                **_BASE["spec"],
                 "runtime": "apptainer",
                 "claude": {"model": "sonnet"},
                 "a2a": {"port": 9999},

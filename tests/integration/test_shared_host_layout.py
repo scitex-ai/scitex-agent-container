@@ -89,11 +89,24 @@ def _write_agent_yaml(
     extra_labels: dict | None = None,
 ) -> Path:
     """Write a v3 YAML at <base>/<name>/<name>.yaml. Dir-as-SSoT."""
-    spec: dict = {"runtime": "apptainer", "model": "sonnet"}
+    # Every APPLICABLE field is required by the validator now (no hidden
+    # defaults). host/hosts is set per-test below; default to local singleton
+    # when a test pins neither, so the placement-composition under test stays
+    # the only variable.
+    spec: dict = {
+        "runtime": "apptainer",
+        "workdir": "/home/agent/work",
+        "claude": {"model": "sonnet"},
+        "apptainer": {"image": "/x.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    }
     if host is not None:
         spec["host"] = host
     if hosts is not None:
         spec["hosts"] = hosts
+    if host is None and hosts is None:
+        spec["host"] = "local"
     data: dict = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
@@ -447,6 +460,18 @@ class TestEffectiveId:
                     machine: ${HOSTNAME}
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   hosts: all
                 """
             )
@@ -474,6 +499,18 @@ class TestEffectiveId:
                     machine: ${HOSTNAME}
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   hosts: all
                 """
             )
@@ -501,6 +538,18 @@ class TestEffectiveId:
                     role: head
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   hosts: all
                 """
             )
@@ -530,13 +579,24 @@ class TestEffectiveId:
                     role: head
                 spec:
                   runtime: apptainer
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   hosts: all
                 """
             )
         )
         # Act
         cfg = load_config(str(head_dir / "head.yaml"))
-        # Assert
+        # Assert — multi-host omits workdir → derives the per-instance runtime path.
         assert cfg.workdir == (
             "~/.scitex/agent-container/runtime/agents/head-ywata-note-win"
         )
@@ -558,6 +618,18 @@ class TestEffectiveId:
                     role: lead
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   host:
                     - ywata-note-win
                     - mba
@@ -588,6 +660,18 @@ class TestEffectiveId:
                     role: lead
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   host:
                     - ywata-note-win
                     - mba
@@ -623,6 +707,18 @@ class TestEffectiveId:
                     role: lead
                 spec:
                   runtime: apptainer
+                  workdir: /home/agent/work
+                  apptainer:
+                    image: /x.sif
+                    binds: []
+                  claude:
+                    model: sonnet
+                  health:
+                    enabled: true
+                    interval: 60
+                  restart:
+                    policy: on-failure
+                    max_retries: 3
                   host:
                     - ywata-note-win
                     - mba

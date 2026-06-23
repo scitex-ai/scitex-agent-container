@@ -36,11 +36,23 @@ def _write_config(data: dict) -> str:
     return str(path)
 
 
+# No-hidden-defaults (operator directive 2026-06-23): each inline fixture
+# spec declares every now-required author field (runtime, host, workdir,
+# claude.model, apptainer.{image,binds}, health.{enabled,interval},
+# restart.{policy,max_retries}) so load_config validates clean.
 MINIMAL_V1_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
     "metadata": {"name": "test-agent"},
-    "spec": {"runtime": "apptainer"},
+    "spec": {
+        "runtime": "apptainer",
+        "host": "local",
+        "workdir": "~/.scitex/agent-container/runtime/agents/test-agent",
+        "claude": {"model": "claude-opus-4-8[1m]"},
+        "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
+    },
 }
 
 MINIMAL_V2_CONFIG = {
@@ -52,8 +64,13 @@ MINIMAL_V2_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
+        "host": "local",
+        "workdir": "~/.scitex/agent-container/runtime/agents/head-test",
         # v3-realign: model moved to spec.claude.model.
         "claude": {"model": "opus[1m]"},
+        "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
     },
 }
 
@@ -66,8 +83,13 @@ V2_WITH_MCP = {
     },
     "spec": {
         "runtime": "apptainer",
+        "host": "local",
+        "workdir": "~/.scitex/agent-container/runtime/agents/head-test",
         # v3-realign: model moved to spec.claude.model.
         "claude": {"model": "sonnet"},
+        "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+        "health": {"enabled": True, "interval": 60},
+        "restart": {"policy": "on-failure", "max_retries": 3},
         "mcp_servers": {
             "scitex-orochi": {
                 "type": "stdio",
@@ -119,8 +141,12 @@ def v2_overrides_loaded_config():
             **MINIMAL_V2_CONFIG["spec"],
             "workdir": "/custom/path",
             "screen": {"name": "custom-screen"},
-            # v3-realign: env moved to spec.apptainer.env.
-            "apptainer": {"env": {"CLAUDE_AGENT_ID": "custom-id"}},
+            # v3-realign: env moved to spec.apptainer.env. Merge onto the
+            # required image/binds rather than replacing the whole block.
+            "apptainer": {
+                **MINIMAL_V2_CONFIG["spec"]["apptainer"],
+                "env": {"CLAUDE_AGENT_ID": "custom-id"},
+            },
         },
     }
     path = _write_config(data)
@@ -138,13 +164,16 @@ def v1_minimal_loaded_config():
 
 
 class TestV2AutoDerivedWorkdir:
-    def test_v2_auto_derives_runtime_workdir(self, v2_loaded_config):
-        # Arrange
-        config = v2_loaded_config
+    def test_v2_auto_derives_runtime_workdir(self):
+        # Arrange — workdir is now REQUIRED in YAML (no hidden default), so the
+        # runtime-root derivation is only reachable by constructing the config
+        # object directly with an empty workdir (bypassing YAML validation).
+        config = AgentConfig(name="head-test", workdir="")
+        expected = str(Path.home() / ".scitex/agent-container/runtime/agents/head-test")
         # Act
-        workdir = config.workdir
+        expanded = config.expanded_workdir
         # Assert
-        assert workdir == "~/.scitex/agent-container/runtime/agents/head-test"
+        assert expanded == expected
 
 
 class TestV2ScreenName:
@@ -299,13 +328,18 @@ class TestMinimalV3RuntimeWorkspace:
         # Assert
         assert value == "test-agent"
 
-    def test_v1_minimal_workdir_uses_runtime_root(self, v1_minimal_loaded_config):
-        # Arrange
-        config = v1_minimal_loaded_config
+    def test_v1_minimal_workdir_uses_runtime_root(self):
+        # Arrange — workdir is now REQUIRED in YAML (no hidden default), so the
+        # runtime-root derivation is only reachable by constructing the config
+        # object directly with an empty workdir (bypassing YAML validation).
+        config = AgentConfig(name="test-agent", workdir="")
+        expected = str(
+            Path.home() / ".scitex/agent-container/runtime/agents/test-agent"
+        )
         # Act
-        value = config.workdir
+        expanded = config.expanded_workdir
         # Assert
-        assert value == "~/.scitex/agent-container/runtime/agents/test-agent"
+        assert expanded == expected
 
     def test_v1_minimal_mcp_servers_has_builtin_sac(self, v1_minimal_loaded_config):
         """Builtin control plane (#415): a minimal spec with no MCP servers of
@@ -538,6 +572,12 @@ class TestPythonVenvViaConfigLoad:
             "metadata": {"name": "regression"},
             "spec": {
                 "runtime": "apptainer",
+                "host": "local",
+                "workdir": "~/.scitex/agent-container/runtime/agents/regression",
+                "claude": {"model": "claude-opus-4-8[1m]"},
+                "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
                 "python-venv": [str(tmp_path / "missing"), str(v)],
             },
         }

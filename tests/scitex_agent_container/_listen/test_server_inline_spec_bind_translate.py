@@ -94,12 +94,16 @@ def _write_parent_spec(home: Path, name: str, host_root: Path) -> Path:
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "spec": {
-            "claude": {"model": "claude-sonnet-4-5"},
+            "runtime": "tui",
+            "host": "local",
             "workdir": "/tmp",
             "apptainer": {
                 "image": "/path/to/sac-base.sif",
                 "binds": [f"{host_root}:/work"],
             },
+            "claude": {"model": "claude-sonnet-4-5"},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
         },
     }
     spec_path = spec_dir / "spec.yaml"

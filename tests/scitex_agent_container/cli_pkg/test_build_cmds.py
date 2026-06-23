@@ -45,6 +45,19 @@ kind: Agent
 metadata: {}
 spec:
   runtime: apptainer
+  host: local
+  workdir: /home/agent/work
+  apptainer:
+    image: /x.sif
+    binds: []
+  claude:
+    model: sonnet
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
 """
 
 
@@ -62,7 +75,18 @@ def _write_spec_with_binds(tmp_path: Path, binds: list[str]) -> Path:
         "metadata: {}\n"
         "spec:\n"
         "  runtime: apptainer\n"
+        "  host: local\n"
+        "  workdir: /home/agent/work\n"
+        "  claude:\n"
+        "    model: sonnet\n"
+        "  health:\n"
+        "    enabled: true\n"
+        "    interval: 60\n"
+        "  restart:\n"
+        "    policy: on-failure\n"
+        "    max_retries: 3\n"
         "  apptainer:\n"
+        "    image: /x.sif\n"
         "    binds:\n"
         f"{bind_lines}\n"
     )
