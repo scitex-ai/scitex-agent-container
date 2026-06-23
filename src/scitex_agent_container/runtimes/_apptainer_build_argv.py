@@ -151,56 +151,34 @@ def build_run_argv(
             f"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
         ]
 
-    # spec.access — host-access posture (operator directive 2026-06-19,
-    # feedback_sac_dev_agent_bind_policy). DEFAULT ``full``: bind the
-    # operator's WHOLE home (``/home/<user>:/home/<user>:rw``) so the
-    # agent reaches every project + config at its canonical path, and
-    # mount the workdir + ``--pwd`` at that canonical path (not the
-    # ``/work`` alias). ``capsule`` keeps only the explicit spec binds
-    # and the ``/work`` alias (legacy leak-prevention behaviour). The
-    # whole-home bind targets ``/home/<user>`` — a DIFFERENT path from
-    # the agent's ``$HOME=/home/agent`` (its credentials / to_home /
-    # overlay wiring below), so it never shadows them. See
-    # ``_apptainer_access`` for the full watch-out analysis.
-    from ._apptainer_access import (
-        full_home_bind_flags,
-        resolve_pwd,
-        workdir_bind_targets,
-    )
-
-    # Emitted FIRST among the broad binds so a more-specific later bind
-    # (e.g. the canonical workdir, or an explicit spec.binds entry to a
-    # nested path) still wins. No-op for ``capsule`` agents.
-    argv += full_home_bind_flags(config)
-
-    # Workdir bind(s): one ``--bind`` per target. ``capsule`` → just the
-    # ``/work`` alias; ``full`` → the canonical host path AND ``/work``
-    # (back-compat for specs/prompts that hardcode ``/work``). Source is
-    # always the canonical host workdir. apptainer takes the docker
-    # ``src:dst[:opts]`` syntax.
-    workdir_src = Path(config.workdir).expanduser()
-    for target in workdir_bind_targets(config):
-        argv += ["--bind", f"{workdir_src}:{target}"]
-
+    # Host access + working directory are the SOLE responsibility of the
+    # explicit ``apptainer.binds`` + ``spec.workdir`` — there is NO
+    # ``access`` knob (removed 2026-06-23: it silently injected a whole-home
+    # bind, a ``/work`` alias, and a ``--pwd`` rewrite, so the spec's
+    # ``binds:`` list was NOT the source of truth). SSoT rule now:
+    #   * ``spec.workdir`` → ONLY the ``--pwd`` the inner process opens at.
+    #   * every mount      → an explicit ``apptainer.binds`` entry.
+    # A "full" agent declares ``- /home/<user>:/home/<user>:rw`` (whole-home
+    # reach) and sets ``workdir`` to a path under it; a capsule declares
+    # ``- <writable>:/work:rw`` (+ its data binds) and ``workdir: /work``.
+    # sac no longer emits ANY whole-home / ``/work`` / workdir bind itself —
+    # what the spec says is exactly what mounts. (Replaces the deleted
+    # ``_apptainer_access`` helpers.)
     argv += [
         # state_dir → /state/<name> (not /state) so the runner's
         # `state_dir_for(name, root=/state)` resolves to /state/<name> —
         # matching the bind target exactly. If we mounted at /state,
         # state_dir_for would re-append <name> and produce
-        # /state/<name>/<name>/, which would land on disk as
-        # runtime/<name>/<name>/ — the bug this comment fixes.
+        # /state/<name>/<name>/ on disk — the bug this comment fixes.
         "--bind",
         f"{state_dir.expanduser()}:/state/{config.name}",
-        # Note — no `--env HOME=...`. Apptainer protects HOME from
-        # being overridden via --env ("Overriding HOME environment
-        # variable with APPTAINERENV_HOME is not permitted") and
-        # doesn't have the docker no-passwd-entry trap — it
-        # inherits the host's /etc/passwd entry, so HOME points at
-        # a real writable home automatically.
+        # No `--env HOME=...`: apptainer protects HOME from --env override
+        # and inherits the host /etc/passwd entry, so HOME points at a real
+        # writable home automatically.
         "--env",
         "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
         "--pwd",
-        resolve_pwd(config),
+        str(Path(config.workdir).expanduser()),
     ]
 
     # Extra bind-mounts from spec.container.volumes — `src:dst[:opts]`

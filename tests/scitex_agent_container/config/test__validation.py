@@ -776,9 +776,9 @@ def test_validate_raw_rejects_spec_skills():
 
 
 # ---------------------------------------------------------------------------
-# spec.access — host-access posture (operator directive 2026-06-19).
-# ``full`` (default) | ``capsule``. Absent is allowed (defaults to full at
-# load). Anything else is rejected with an actionable message.
+# spec.access + apptainer.container_workdir — REMOVED 2026-06-23 (SSoT:
+# host access + cwd are declared explicitly via apptainer.binds + workdir).
+# A spec carrying either is rejected LOUD with the exact replacement.
 # ---------------------------------------------------------------------------
 
 
@@ -786,20 +786,17 @@ def _access_spec(access):
     return {**_BASE, "spec": {**_BASE["spec"], "access": access}}
 
 
-@pytest.mark.parametrize("access", ["full", "capsule"])
-def test_access_valid_values_pass(access):
-    """``full`` and ``capsule`` validate cleanly."""
-    # Arrange
-    raw = _access_spec(access)
+def test_access_field_is_rejected():
+    # Arrange — a spec still carrying the removed `access:` knob.
+    raw = _access_spec("full")
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.access" in e]
+    assert [e for e in errors if "spec.access has been REMOVED" in e]
 
 
-def test_access_absent_is_allowed():
-    """A spec with no ``access`` field validates (defaults to full at load)."""
-    # Arrange
+def test_access_absent_passes():
+    # Arrange — no `access` field (the only valid state now).
     raw = _BASE
     # Act
     errors = validate_raw(raw, path="<test>")
@@ -807,32 +804,29 @@ def test_access_absent_is_allowed():
     assert not [e for e in errors if "spec.access" in e]
 
 
-def test_access_invalid_value_is_rejected():
-    """An unknown ``access`` value must fail validation."""
-    # Arrange
-    raw = _access_spec("sandbox")
+def test_access_rejection_points_at_explicit_binds():
+    # Arrange — the rejection must hand the operator the replacement.
+    raw = _access_spec("capsule")
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    bad = [e for e in errors if "spec.access has been REMOVED" in e]
+    # Assert
+    assert "apptainer.binds" in bad[0]
+
+
+def test_container_workdir_is_rejected():
+    # Arrange — the removed in-container workdir alias.
+    raw = {
+        **_BASE,
+        "spec": {
+            **_BASE["spec"],
+            "apptainer": {
+                **(_BASE["spec"].get("apptainer") or {}),
+                "container_workdir": "/work",
+            },
+        },
+    }
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.access" in e]
-
-
-def test_access_invalid_error_echoes_offending_value():
-    """The rejection message must echo the bad value + the valid options."""
-    # Arrange
-    raw = _access_spec("sandbox")
-    # Act
-    errors = validate_raw(raw, path="<test>")
-    bad = [e for e in errors if "spec.access" in e]
-    # Assert
-    assert "sandbox" in bad[0] and "capsule" in bad[0]
-
-
-def test_access_is_a_known_spec_key():
-    """``access`` must not be flagged as an unknown spec field."""
-    # Arrange
-    raw = _access_spec("full")
-    # Act
-    errors = validate_raw(raw, path="<test>")
-    # Assert
-    assert not [e for e in errors if "Unknown spec field 'access'" in e]
+    assert [e for e in errors if "container_workdir has been REMOVED" in e]

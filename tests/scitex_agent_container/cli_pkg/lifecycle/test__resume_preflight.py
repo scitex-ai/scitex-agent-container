@@ -48,16 +48,12 @@ class _FakeHostsSpec:
 class _FakeConfig:
     """Minimal AgentConfig stand-in carrying only what the preflight reads.
 
-    Not a mock — a real production-shaped value object with the attributes
-    ``preflight_resume_id`` touches (``name``, ``apptainer.container_workdir``,
-    and — since the access-posture refactor — ``access`` + ``workdir``, which
-    ``resolve_pwd`` consults to key the conversation store on the cwd the
-    inner ``claude`` actually runs at).
-
-    ``access`` defaults to ``"capsule"`` here so the resolved ``--pwd`` is the
-    ``container_workdir`` these tests seed their transcripts under. The
-    full-access ``--pwd`` (canonical ``workdir``) path is covered separately
-    below.
+    Not a mock — a real production-shaped value object. Since the SSoT refactor
+    (2026-06-23, `access` removed) the preflight keys the conversation store on
+    ``spec.workdir`` alone — that IS the ``--pwd`` the inner ``claude`` runs at,
+    with no posture/alias rewrite. ``container_workdir`` and ``access`` are kept
+    as constructor params only so the existing call-sites read clearly; they no
+    longer influence resolution.
     """
 
     def __init__(
@@ -65,14 +61,14 @@ class _FakeConfig:
         name: str,
         container_workdir: str,
         *,
-        access: str = "capsule",
+        access: str | None = None,
         workdir: str | None = None,
     ) -> None:
+        del access  # removed knob — accepted for call-site clarity, unused
         self.name = name
         self.apptainer = _FakeApptainer(container_workdir)
         self.hosts_spec = _FakeHostsSpec()
-        self.access = access
-        # Canonical host workdir (used only by the full-access --pwd path).
+        # ``spec.workdir`` is the sole cwd the resume lookup keys on.
         self.workdir = workdir if workdir is not None else container_workdir
 
 
