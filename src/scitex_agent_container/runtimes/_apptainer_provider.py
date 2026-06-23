@@ -160,6 +160,17 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
         f"ANTHROPIC_BASE_URL={base_url}",
         "--env",
         f"SAC_ANTHROPIC_API_KEY={api_key}",
+        # Also set ANTHROPIC_API_KEY directly. The SDK runtime bridges
+        # SAC_ANTHROPIC_API_KEY -> ANTHROPIC_API_KEY inside its python
+        # runner, but the TUI runtime's inner process is `claude` (no such
+        # bridge), so without this the TUI gets ANTHROPIC_BASE_URL but no
+        # API key and falls back to Claude.com OAuth instead of the
+        # provider backend (cohort-A Qwen/LiteLLM de-risk 2026-06-23: the
+        # TUI sat at the OAuth sign-in screen until poll_guard timed out).
+        # In provider mode the OAuth creds bind is skipped, so a direct
+        # ANTHROPIC_API_KEY cannot collide with it.
+        "--env",
+        f"ANTHROPIC_API_KEY={api_key}",
         "--env",
         f"CLAUDE_CONFIG_DIR={config_dir}",
     ]
