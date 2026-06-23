@@ -224,37 +224,29 @@ def test_apply_default_binds_lets_explicit_spec_override_sac_overlay(
 
 
 # ---------------------------------------------------------------------------
-# 2026-06-15 venv-agent overlay — host scitex_agent_container -> agent venv
-# (operator+lead fleet-tui standardisation; companion to the venv-sac
-# overlay above; removable once the SIF def is re-baked without the
-# worktree-pointing editable install).
+# venv-agent overlay REMOVED (2026-06-23) — regression guard.
+#
+# A second dev-source bind to ``/opt/venv-agent/lib/.../scitex_agent_container``
+# once rode alongside the ``/opt/venv-sac`` one. The canonical sac-base.sif
+# installs sac under ``/opt/venv-sac`` ONLY — ``/opt/venv-agent`` does not exist
+# in the SIF — so that bind targeted a nonexistent destination. apptainer
+# auto-creates a missing destination only if the directory overlay mounts in
+# time; under ``--containall`` + host contention the auto-create loses the race
+# and apptainer FATALs the WHOLE boot ("destination ... doesn't exist in
+# container") with an empty pane (proj-paper-scitex-clew died instantly 3×
+# while neurovista, winning the same race, booted). The bind is gone from the
+# defaults; these tests guard against its silent return.
 # ---------------------------------------------------------------------------
 
 
-def test_default_binds_returns_venv_agent_overlay_when_host_repo_exists(
+def test_default_binds_omit_venv_agent_overlay_even_when_host_repo_exists(
     fake_home: Path,
 ) -> None:
-    # Arrange — synthesise the canonical host repo path under the
-    # sandboxed $HOME so the helper picks it up.
+    # Arrange
     sac_src = (
         fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
     )
     sac_src.mkdir(parents=True)
-    # Act
-    binds = default_binds_for_host()
-    # Assert — destination is the AGENT venv's install path (the second
-    # in-SIF site-packages location that the bundled `sac` console-
-    # script's interpreter actually loads from).
-    assert any(
-        ":/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container:ro" in b
-        for b in binds
-    )
-
-
-def test_default_binds_skips_venv_agent_overlay_when_host_repo_missing(
-    fake_home: Path,
-) -> None:
-    # Arrange — fake_home has no canonical repo subtree.
     # Act
     binds = default_binds_for_host()
     # Assert
@@ -264,52 +256,39 @@ def test_default_binds_skips_venv_agent_overlay_when_host_repo_missing(
     )
 
 
-def test_apply_default_binds_lets_explicit_spec_override_venv_agent_overlay(
+def test_apply_default_binds_still_lets_explicit_spec_pin_venv_agent_overlay(
     fake_home: Path,
 ) -> None:
-    # Arrange — operator pins a custom host source for the venv-agent
-    # destination; the spec entry MUST win.
-    sac_src = (
-        fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
-    )
-    sac_src.mkdir(parents=True)
+    # Arrange
     custom_override = (
         "/opt/local-sac-src"
         ":/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container:rw"
     )
-    spec_binds = [custom_override]
     # Act
-    result = apply_default_binds(spec_binds)
+    result = apply_default_binds([custom_override])
     # Assert
-    agent_entries = [
-        b
-        for b in result
-        if "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
-    ]
-    assert agent_entries == [custom_override]
+    assert custom_override in result
 
 
-def test_both_venv_overlays_present_when_host_repo_exists(fake_home: Path) -> None:
-    # Arrange — sanity check: both SDK-venv and agent-venv overlays
-    # are emitted together so the SAME host source feeds BOTH
-    # in-SIF install locations (parity for both ``claude`` paths and
-    # the ``sac`` console-script path).
+def test_only_venv_sac_overlay_is_a_default_not_venv_agent(
+    fake_home: Path,
+) -> None:
+    # Arrange
     sac_src = (
         fake_home / "proj" / "scitex-agent-container" / "src" / "scitex_agent_container"
     )
     sac_src.mkdir(parents=True)
     # Act
     binds = default_binds_for_host()
-    venv_sac_present = any(
+    only_sac = any(
         "/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container" in b
         for b in binds
-    )
-    venv_agent_present = any(
+    ) and not any(
         "/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container" in b
         for b in binds
     )
     # Assert
-    assert venv_sac_present and venv_agent_present
+    assert only_sac
 
 
 # ---------------------------------------------------------------------------

@@ -83,33 +83,27 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # either updates the entry or drops it after the SIF refresh.
     "~/proj/scitex-agent-container/src/scitex_agent_container"
     ":/opt/venv-sac/lib/python3.12/site-packages/scitex_agent_container:ro",
-    # 2026-06-15 (operator+lead a2a fleet-tui-standardisation) — bind
-    # the SAME host source over the AGENT venv's package install path
-    # too. The bundled SIFs ship an editable install whose ``.pth``
-    # points at ``/work/.worktrees/wt-tui-auth-stage/src`` (a path
-    # that only exists inside the agent-container repo's own /work);
-    # for OTHER agents (research agents whose /work is a different
-    # repo) the editable target is absent and python falls through to
-    # the stub at ``/opt/venv-agent/lib/.../scitex_agent_container/``
-    # which carries only ``_bundled/`` and ``cron/`` (no
-    # ``__init__.py``) — so ``import scitex_agent_container`` from the
-    # ``sac`` console-script fails outright on those agents and
-    # ``server:sac`` shows ✘ failed in ``/mcp``, breaking inbound wake.
+    # HAZARD — a dev-source bind MUST target a destination that EXISTS
+    # in the SIF. ``default_binds_for_host`` filters ONLY by host-source
+    # existence; it cannot see inside the SIF. apptainer normally
+    # auto-creates a missing bind destination, BUT under ``--containall``
+    # + a directory overlay that is slow to mount (host contention) the
+    # auto-create loses the race and apptainer FATALs the WHOLE boot
+    # ("destination ... doesn't exist in container") — a silent-looking,
+    # NON-DETERMINISTIC death (empty pane, session vanishes at t=0).
     #
-    # The fix: overlay the host source at the venv-agent install path
-    # so every agent (fleet-wide) gets a working ``sac`` regardless of
-    # what ``/work`` happens to be on that host. The SIF stub's tiny
-    # ``_bundled/`` and ``cron/`` contents (a stray pyproject.toml,
-    # README.md, post-merge-pull.sh) are intentionally shadowed —
-    # they are install-time artefacts that runtime code does not read.
-    #
-    # Removable: drop once the SIF def is re-baked with a proper
-    # non-worktree-pointing install (operator task 3 of the fleet-tui
-    # standardisation directive). The skip-if-missing filter in
-    # ``default_binds_for_host`` makes this a no-op on hosts that lack
-    # the canonical repo path.
-    "~/proj/scitex-agent-container/src/scitex_agent_container"
-    ":/opt/venv-agent/lib/python3.12/site-packages/scitex_agent_container:ro",
+    # A second bind to ``/opt/venv-agent/lib/.../scitex_agent_container``
+    # used to live here (2026-06-15) to shadow a broken stub that an
+    # OLDER SIF build shipped at that path. The canonical sac-base.sif
+    # now installs sac under ``/opt/venv-sac`` ONLY — there is NO
+    # ``/opt/venv-agent`` in the SIF at all (verified by probe) — so that
+    # bind targeted a nonexistent destination and FATAL-killed every boot
+    # whose overlay was contended (proj-paper-scitex-clew died instantly
+    # 3× while neurovista, winning the same race, came up). Removed
+    # 2026-06-23. The ``/opt/venv-sac`` bind above already covers the
+    # canonical install. If a future SIF reintroduces a second venv
+    # prefix, add its bind ONLY after confirming the destination dir
+    # exists in that SIF.
 )
 
 
