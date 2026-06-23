@@ -105,6 +105,69 @@ def _pwd_is_backed(pwd: str, binds: list[tuple[str, str, str]]) -> bool:
     return False
 
 
+def _hook_label(command: str) -> str:
+    """Readable name for a hook command: the script basename, else the command."""
+    if not command:
+        return command
+    first = command.split()[0]
+    if "/" in first:
+        return first.rsplit("/", 1)[-1]
+    return command[:48]
+
+
+def _materialized_hooks_and_sections(
+    config: AgentConfig,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Effective hooks + CLAUDE.md section titles the agent will actually get.
+
+    Runs the EXACT production materializers (setup_claude_md → deploy_to_home →
+    setup_settings_json) into a THROWAWAY directory and reads the result back —
+    so the shown set is ground truth (the same merge ``start`` does), with no
+    drift and no writes to the agent's real home. The temp dir is always
+    removed.
+    """
+    import json as _json
+    import shutil
+    import tempfile
+
+    from ..runtimes._to_home import deploy_to_home
+    from ..runtimes.claude_md import setup_claude_md
+    from ..runtimes.settings_json import setup_settings_json
+
+    tmp = tempfile.mkdtemp(prefix="sac-explain-")
+    try:
+        setup_claude_md(config, tmp)
+        deploy_to_home(config, tmp)
+        setup_settings_json(config, tmp, filename="settings.json")
+        claude_dir = Path(tmp) / ".claude"
+
+        hooks: dict[str, list[str]] = {}
+        settings_path = claude_dir / "settings.json"
+        if settings_path.is_file():
+            data = _json.loads(settings_path.read_text())
+            for event, blocks in (data.get("hooks") or {}).items():
+                names = [
+                    _hook_label(h.get("command", ""))
+                    for blk in blocks
+                    for h in blk.get("hooks", [])
+                ]
+                if names:
+                    hooks[event] = names
+
+        sections: list[str] = []
+        claude_md = claude_dir / "CLAUDE.md"
+        if claude_md.is_file():
+            for raw in claude_md.read_text().splitlines():
+                line = raw.strip()
+                if line.startswith("## "):
+                    sections.append(line[3:].strip())
+                elif line.startswith("# ") and not line.startswith("## "):
+                    sections.append(f"{line[2:].strip()} (title)")
+        return hooks, sections
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Return the human-readable effective launch plan for ``config``."""
     argv = _argv_for(config)
@@ -179,6 +242,26 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
             lines.append(
                 f"  [{idx}] {len(n)} chars / {n.count(chr(10)) + 1} lines{tag}"
             )
+
+    # Hooks + instruction sections that materialize into the agent's $HOME —
+    # the part that used to be invisible. Read back from a throwaway
+    # materialization using the EXACT production materializers (ground truth,
+    # no drift, no writes to the real home). Best-effort: never crash explain.
+    try:
+        hooks, sections = _materialized_hooks_and_sections(config)
+        if hooks:
+            total = sum(len(v) for v in hooks.values())
+            lines.append("")
+            lines.append(f"Hooks (materialized, {total} total):")
+            for event, names in hooks.items():
+                lines.append(f"  {event} ({len(names)}): {', '.join(names)}")
+        if sections:
+            lines.append("")
+            lines.append("Instruction sections ($HOME/.claude/CLAUDE.md):")
+            for title in sections:
+                lines.append(f"  • {title}")
+    except Exception:  # stx-allow: fallback (explain is best-effort; never crash)
+        pass
 
     return "\n".join(lines)
 
