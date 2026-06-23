@@ -39,6 +39,34 @@ def validate_marker_invariants(text: str, source_name: str) -> None:
         )
 
 
+def split_around_generated_section(text: str, source_name: str) -> tuple[str, str]:
+    """Split ``text`` into ``(head, tail)`` around the sac generated section.
+
+    * ``head`` — everything BEFORE the Start marker, preserved verbatim. When
+      the file has NO generated section yet (0 markers) the ENTIRE content is
+      the head: a file that already holds OTHER content — e.g. the
+      ``setup_claude_md`` auto agent-section (which uses its own
+      ``<!-- agent-container:start/end -->`` marker style), or operator-authored
+      text — composes cleanly instead of fatal-ing. This is what lets the
+      baseline live at ``.claude/CLAUDE.md`` next to the auto section.
+    * ``tail`` — everything AFTER the End marker (preserved operator content).
+
+    Malformed markers (duplicate or swapped Start/End) still fail loud via
+    :func:`validate_marker_invariants`.
+    """
+    if not text.strip():
+        return "", ""
+    start_count = text.count(START_MARKER_PREFIX)
+    end_count = text.count(END_MARKER)
+    if start_count == 0 and end_count == 0:
+        head = text if text.endswith("\n") else text + "\n"
+        return head, ""
+    validate_marker_invariants(text, source_name)  # fatals on malformed
+    start = text.find(START_MARKER_PREFIX)
+    end = text.find(END_MARKER) + len(END_MARKER)
+    return text[:start], text[end:]
+
+
 def extract_user_tail(workspace_path: Path) -> str:
     """Return content past the End marker in an existing workspace file.
 

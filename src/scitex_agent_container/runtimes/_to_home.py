@@ -80,6 +80,7 @@ from ._to_home_text import (
     extract_user_tail,
     interpolate_env,
     interpolate_metadata,
+    split_around_generated_section,
     validate_marker_invariants,
 )
 
@@ -538,21 +539,22 @@ def _deploy_marker_protected(
     new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n"
 
     existing_text = dst.read_text() if dst.exists() else ""
-    if existing_text.strip():
-        _validate_marker_invariants(existing_text, str(dst))
+    # Preserve content AROUND a prior generated section: the ``head`` BEFORE it
+    # (e.g. the setup_claude_md auto agent-section, which uses its OWN marker
+    # style — so the two now compose instead of fatal-ing when the baseline
+    # lives at .claude/CLAUDE.md) and the ``tail`` AFTER it (operator-appended
+    # content). Malformed markers still fail loud inside the split.
+    head, user_tail = split_around_generated_section(existing_text, str(dst))
 
-    user_tail = _extract_user_tail(dst)
-
-    if END_MARKER not in new_content:
-        # Shouldn't happen — we just wrote END_MARKER — but keep the
-        # safety net so the contract is explicit.
-        updated = new_content
-    elif user_tail:
-        updated = new_content.rstrip("\n") + user_tail
-        if not updated.endswith("\n"):
-            updated += "\n"
+    body = new_content
+    if user_tail.strip():
+        body = body.rstrip("\n") + user_tail
+        if not body.endswith("\n"):
+            body += "\n"
+    if head.strip():
+        updated = head.rstrip("\n") + "\n\n" + body
     else:
-        updated = new_content
+        updated = body
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     _clear_readonly_dst(dst)
