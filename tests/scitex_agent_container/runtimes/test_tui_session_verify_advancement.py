@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from scitex_agent_container.runtimes.tui_session import (
+    _compose_pending_live,
     verify_submit_by_advancement,
 )
 
@@ -60,6 +61,18 @@ _CLEARED = (
 )
 # Never anything pending (e.g. instant submit / nothing to force).
 _EMPTY_PROMPT = "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+
+# Submitted, but a prior "❯ …" line lingers in SCROLLBACK (e.g. a "❯ 1"
+# echo or the previous turn's rendered prompt). The LIVE box (bottom-most
+# ❯) is empty, so this is NOT pending. The OLD whole-pane detector matched
+# the scrollback ❯ and false-reported "still pending" forever — the
+# sac-tui-enter-drop-on-boot live regression (scitex-dev, 2026-06-24).
+_CLEARED_WITH_SCROLLBACK_PROMPT = (
+    "❯\xa0go work\n"
+    "● Working on it.\n"
+    "❯ \n"
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+)
 
 
 # ── Fakes (real callables, not mocks) ───────────────────────────────────────
@@ -353,3 +366,49 @@ def test_returns_true_when_buffer_advances_before_any_enter() -> None:
     )
     # Assert — detected advancement, returned True, sent no stray Enter.
     assert (ok, sender.keys) == (True, [])
+
+
+# ── (h) regression: a scrollback "❯ …" must not mask a cleared live box ──────
+
+
+def test_compose_pending_live_ignores_scrollback_prompt() -> None:
+    # Arrange — live box empty, but a "❯ …" line remains in scrollback.
+    pane = _CLEARED_WITH_SCROLLBACK_PROMPT
+    # Act
+    pending = _compose_pending_live(pane)
+    # Assert — the live (bottom-most) box is empty, so NOT pending.
+    assert pending is False
+
+
+def test_compose_pending_live_flags_live_unsent_text() -> None:
+    # Arrange — the live (bottom-most) ❯ holds unsent text.
+    pane = _IDLE_WITH_PENDING
+    # Act
+    pending = _compose_pending_live(pane)
+    # Assert
+    assert pending is True
+
+
+def test_advancement_detected_despite_scrollback_prompt() -> None:
+    # Arrange — after the Enter lands the live box clears, but a prior
+    # "❯ …" line lingers in SCROLLBACK. The old whole-pane detector kept
+    # reading "pending" forever and false-failed; the live-box check sees
+    # the submission (the sac-tui-enter-drop-on-boot live fix, 2026-06-24).
+    sender = _RecordingSend()
+    capture = _PendingUntilEnter(
+        sender, cleared=_CLEARED_WITH_SCROLLBACK_PROMPT, release_after=1
+    )
+    # Act
+    ok = verify_submit_by_advancement(
+        "tui-x",
+        capture_fn=capture,
+        send_keys_fn=sender,
+        max_resends=4,
+        poll_s=0.0,
+        appear_timeout_s=5.0,
+        idle_wait_s=5.0,
+        sleep_fn=_no_sleep,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert — submission recognized despite the scrollback ❯.
+    assert ok is True
