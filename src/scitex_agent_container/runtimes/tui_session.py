@@ -364,6 +364,25 @@ class TuiSessionRuntime(RuntimeBase):
         """
         del no_preflight, foreground, one_shot
         name = session_name_for(config)
+        # Duplicate-session guard: starting an agent whose tmux session already
+        # exists used to fall through to ``tmux new-session`` (which errors
+        # "duplicate session: <name>" in plain text) and then paste the boot
+        # prompt into the ALREADY-running pane (the Ink-drops-Enter mess). Detect
+        # it up front, say so LOUDLY (red), and — outside --force/--dry-run —
+        # no-op idempotently instead of relaunching over a live session. Shown in
+        # --dry-run too (emitted before the dry-run branch below).
+        if self._mux.exists(name) and not force:
+            from ..cli_pkg._helpers._console import system_msg
+
+            system_msg(
+                f"duplicate session '{name}' — agent already running. "
+                f"Attach: `sac agents attach {config.name}` "
+                f"(or `tmux attach -t {name}`). "
+                f"Relaunch: `sac agents restart {config.name}`.",
+                style="red",
+            )
+            if not dry_run:
+                return True
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)

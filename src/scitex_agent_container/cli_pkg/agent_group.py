@@ -20,6 +20,7 @@ from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_i
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
 from .info_cmds import tail_session as _tail_impl
+from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
 from .lifecycle import forget as _forget_impl
 from .lifecycle import restart as _restart_impl
@@ -51,7 +52,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             "Lifecycle",
             ["new", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
-        ("Interact", ["send"]),
+        ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
@@ -97,6 +98,8 @@ agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))
+# `attach` — hand the terminal to a running agent's TUI (tmux) session.
+agent_group.add_command(_rebind(_attach_impl, "attach"))
 # `explain` — render the FULL effective launch plan (mounts, --pwd, env,
 # skills, prompts) WITHOUT launching, so the caller sees exactly what
 # `start` will do (No-Surprise). Already named; no _rebind needed.
