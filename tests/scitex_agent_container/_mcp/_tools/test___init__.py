@@ -237,7 +237,7 @@ def test_agent_restart_with_name_dispatches_text_argv():
         # Act
         _agent.agent_restart("x")
     # Assert
-    assert captured[-1] == ("text", ["agents", "restart", "x"])
+    assert captured[-1] == ("text", ["agents", "restart", "x", "--yes"])
 
 
 # ---------------------------------------------------------------------------

@@ -185,20 +185,21 @@ class TestDeployToHomeOverlay:
         assert (dest / ".bashrc").read_text() == "export FROM_TO_HOME=1\n"
 
     def test_settings_file_lands_under_claude(self, deployed_overlay):
-        # Arrange
+        # Arrange — the cascade normalizes to the USER-scope name
+        # settings.json (ADR-0018); the overlay home IS the container $HOME.
         _, dest = deployed_overlay
         # Act
         # Assert
-        assert (dest / ".claude" / "settings.local.json").is_file()
+        assert (dest / ".claude" / "settings.json").is_file()
 
     def test_settings_relpath_matches_in_container_path(self, deployed_overlay):
         # Arrange — relative path under upper must match the in-container
-        # /home/agent/.claude/settings.local.json the SDK loads via --settings.
+        # /home/agent/.claude/settings.json the TUI loads at USER scope.
         overlay, dest = deployed_overlay
         # Act
-        rel = (dest / ".claude" / "settings.local.json").relative_to(overlay / "upper")
+        rel = (dest / ".claude" / "settings.json").relative_to(overlay / "upper")
         # Assert
-        assert str(rel) == "home/agent/.claude/settings.local.json"
+        assert str(rel) == "home/agent/.claude/settings.json"
 
     def test_creates_upper_home_dir_when_overlay_absent(self, tmp_path):
         # Arrange — overlay dir doesn't exist yet (apptainer creates upper/
