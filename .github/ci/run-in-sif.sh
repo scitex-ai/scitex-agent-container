@@ -86,6 +86,15 @@ uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e ".[all,dev
     uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" -e "." ||
     pip install --target="$TMPDIR/site" -e ".[dev]"
 
+# The CI SIF ships no SYSTEM tzdata, so zoneinfo.ZoneInfo("Asia/Tokyo") (the
+# account-list renderer's TZ resolver; ~290 clock assertions assume +09:00)
+# raises ZoneInfoNotFoundError and silently falls back to UTC on the release
+# node — TZ above is then inert. Provide the data via the pip ``tzdata`` package
+# (zoneinfo discovers it through importlib, no /usr/share/zoneinfo needed).
+# No-op where system tzdata already exists (the dedicated matrix nodes).
+uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" tzdata ||
+    pip install --target="$TMPDIR/site" tzdata || true
+
 export PYTHONPATH="$TMPDIR/site:$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Parallelise with pytest-xdist (baked in [dev]/[all,dev] as pytest-xdist>=3).
