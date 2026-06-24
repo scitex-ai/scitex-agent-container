@@ -387,6 +387,26 @@ def _connect(
                 if "locked" not in str(exc).lower() or attempt == 49:
                     raise
                 time.sleep(0.02 * (attempt + 1))
+    # GPFS / network-FS reliability. WAL (above) alone still floods
+    # "disk I/O error" on Spartan GPFS under the heartbeat write loop
+    # (cohort-A 2026-06-24, a SINGLE run -- not the %16-concurrency
+    # case). scitex-db runs SQLite on GPFS reliably (neurovista) with
+    # the tunings below; mirror its recipe. The IOERR is on WRITES, so
+    # the load-bearing ones are synchronous=NORMAL (WAL-safe, far fewer
+    # GPFS fsyncs) and temp_store=MEMORY (no transient temp files on
+    # GPFS); mmap_size + wal_autocheckpoint complete scitex-db's set.
+    # Best-effort per-PRAGMA: a tuning that errors on an exotic FS must
+    # not kill an otherwise-usable connection.
+    for _pragma in (
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA temp_store = MEMORY",
+        "PRAGMA mmap_size = 30000000000",
+        "PRAGMA wal_autocheckpoint = 1000",
+    ):
+        try:
+            conn.execute(_pragma)
+        except sqlite3.Error:  # stx-allow: fallback (reason: tuning PRAGMAs are advisory; a failed one must not block open_db)
+            pass
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
