@@ -45,6 +45,18 @@ export PATH="$HOME/.env-3.11/bin:$PATH"
 export APPTAINER_TMPDIR="/data/gpfs/projects/punim0264/ywatanabe/ci/apptainer-tmp"
 mkdir -p "$APPTAINER_TMPDIR"
 
+# Reap leaked CI processes from PRIOR runs on this persistent self-hosted node.
+# Several tests spawn DETACHED `sac agents`/`sac listen` background processes
+# (`python -m scitex_agent_container ...`); a failed/killed run leaves them
+# running and holding a2a ports [19000-19999], so claims accumulate until the
+# allocator can't find a free port (test__start_force_clears_session went red on
+# the release node after repeated retries). Runs here are serialised (one job at
+# a time) and the operator's LIVE agents run on a DIFFERENT host, so killing
+# leftover CI sac/ci-cpu processes before this run starts is safe + makes the
+# node self-healing instead of needing a manual clean.
+pkill -f 'python.* -m scitex_agent_container' 2>/dev/null || true
+pkill -f 'apptainer.*ci-cpu' 2>/dev/null || true
+
 # --bind punim0264: $HOME/.scitex is a symlink into punim0264; bind it so the
 # symlink resolves inside the container. --pwd "$PWD" keeps the checkout as cwd.
 exec "$APPTAINER" exec --pwd "$PWD" --bind /data/gpfs/projects/punim0264 \
