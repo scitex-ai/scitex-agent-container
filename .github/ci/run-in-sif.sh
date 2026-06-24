@@ -62,6 +62,15 @@ mkdir -p "$MPLCONFIGDIR"
 # in here; unset it so no tool (uv, pip) tries to follow it.
 unset VIRTUAL_ENV || true
 
+# Pin the timezone to the operator's TZ (Asia/Tokyo, +09:00). The suite carries
+# ~290 clock-format assertions (account quota-reset times, ISO offsets) that
+# assume +09:00. The dedicated matrix nodes happen to carry that
+# /etc/localtime, but the release node's apptainer-exec run inherits a
+# different host TZ (+10:00) -> spurious "→22:05 != →21:05" / "+10:00 vs +09:00"
+# mismatches that blocked the v0.21.12 publish. Forcing TZ here is a no-op on
+# the Tokyo nodes and makes the in-SIF run deterministic everywhere.
+export TZ="Asia/Tokyo"
+
 # venv bin on PATH (this matrix leg's python3 + pip); PYTHONPATH points at the
 # writable target so imports + coverage use the freshly-installed checkout.
 export PATH="$VENV/bin:$PATH"
@@ -107,9 +116,9 @@ echo "xdist workers=$WORKERS (nproc=$NPROC)"
 # font cache when it's importable (no-op otherwise — never fail the run
 # on an optional warm-up).
 if python -c "import matplotlib" 2>/dev/null; then
-  python -c "import matplotlib; matplotlib.use('Agg'); from matplotlib import font_manager; font_manager.fontManager; import matplotlib.pyplot as plt; f=plt.figure(); f.canvas.draw(); print('mpl font cache warmed at', matplotlib.get_cachedir())"
+    python -c "import matplotlib; matplotlib.use('Agg'); from matplotlib import font_manager; font_manager.fontManager; import matplotlib.pyplot as plt; f=plt.figure(); f.canvas.draw(); print('mpl font cache warmed at', matplotlib.get_cachedir())"
 else
-  echo "matplotlib not importable — skipping font-cache warm-up (not a dep)"
+    echo "matplotlib not importable — skipping font-cache warm-up (not a dep)"
 fi
 
 # Distribution: `--dist load` (per-TEST round-robin), NOT `--dist loadscope`.
