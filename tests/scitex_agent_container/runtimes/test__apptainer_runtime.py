@@ -2800,10 +2800,7 @@ def test_argv_exposes_quota_cache_path_env_when_bound(
     )
     env = _env_pairs(argv)
     # Assert
-    assert (
-        env.get("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH")
-        == mod.QUOTA_CACHE_CONTAINER_PATH
-    )
+    assert env.get("CCT_QUOTA_CACHE_PATH") == mod.QUOTA_CACHE_CONTAINER_PATH
 
 
 def test_argv_omits_quota_cache_path_env_when_unbound(
@@ -2819,7 +2816,7 @@ def test_argv_omits_quota_cache_path_env_when_unbound(
     )
     env = _env_pairs(argv)
     # Assert
-    assert "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH" not in env
+    assert "CCT_QUOTA_CACHE_PATH" not in env
 
 
 def test_quota_cache_container_path_default_is_var_sac(tmp_path: Path) -> None:

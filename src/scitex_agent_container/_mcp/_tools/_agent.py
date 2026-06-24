@@ -213,8 +213,16 @@ def agent_stop(name: str) -> dict[str, Any]:
 
 
 def agent_restart(name: str) -> dict[str, Any]:
-    """Restart an agent (stop + start). Mirrors ``sac agents restart <name>``."""
-    return invoke_cli_text(["agents", "restart", name])
+    """Restart an agent (stop + start). Mirrors ``sac agents restart <name>``.
+
+    Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
+    restart (``exit 2``), but an MCP tool call has no TTY to prompt on,
+    so the call itself IS the confirmation. Without this the tool always
+    failed with "Refusing to restart ... without --yes/-y." (no-surprise:
+    the documented MCP surface must actually work, not dead-end on an
+    interactive guard that can never be satisfied over MCP).
+    """
+    return invoke_cli_text(["agents", "restart", name, "--yes"])
 
 
 def agent_send(

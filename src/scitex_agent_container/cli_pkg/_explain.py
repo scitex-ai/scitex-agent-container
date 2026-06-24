@@ -263,6 +263,25 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     except Exception:  # stx-allow: fallback (explain is best-effort; never crash)
         pass
 
+    # Settings provenance (ADR-0018): which to_home layer owns each top-level
+    # settings.json key, so cross-layer drift / overrides are visible before
+    # launch. Best-effort: never crash explain.
+    try:
+        from ..runtimes._to_home import settings_layer_dirs
+        from ..runtimes._to_home_settings import settings_cascade_provenance
+
+        prov = settings_cascade_provenance(settings_layer_dirs(config))
+        if prov:
+            owners: dict[str, set[str]] = {}
+            for path, layer in prov.items():
+                owners.setdefault(path.split(".", 1)[0], set()).add(layer)
+            lines.append("")
+            lines.append("Settings sources (settings.json key → to_home layer):")
+            for key in sorted(owners):
+                lines.append(f"  {key}: {', '.join(sorted(owners[key]))}")
+    except Exception:  # stx-allow: fallback (explain is best-effort; never crash)
+        pass
+
     return "\n".join(lines)
 
 

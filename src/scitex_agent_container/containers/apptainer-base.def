@@ -84,6 +84,7 @@ From: ubuntu:24.04
         nano jq \
         fd-find ripgrep bat eza \
         git-delta \
+        direnv \
         tmux ncurses-term \
         tini
     locale-gen en_US.UTF-8
@@ -111,6 +112,20 @@ From: ubuntu:24.04
     # ``rg`` / ``eza`` — no symlink needed.
     ln -sf "$(command -v fdfind)" /usr/local/bin/fd
     ln -sf "$(command -v batcat)" /usr/local/bin/bat
+
+    # ---- 1c. direnv hook + whitelist -----------------------------------
+    # direnv (apt-installed above) activates a directory's ``.envrc`` on ``cd``
+    # — sac uses ``.envrc`` to pin a per-project identity (e.g. each agent's own
+    # Telegram bot via ``CCT_BOT_TOKEN``). Two pieces make it work headlessly:
+    #   * hook it into every bash shell (system-wide /etc/bash.bashrc), and
+    #   * whitelist all paths so ``.envrc`` loads WITHOUT a manual
+    #     ``direnv allow`` (no-surprise: the per-dir env just applies).
+    # Whitelisting "/" is safe HERE precisely because the container is
+    # single-tenant and every ``.envrc`` is operator-authored — the same files
+    # sac folds host-side at deploy, never arbitrary third-party scripts.
+    echo 'eval "$(direnv hook bash)"' >> /etc/bash.bashrc
+    mkdir -p /etc/direnv
+    printf '[whitelist]\nprefix = [ "/" ]\n' > /etc/direnv/direnv.toml
 
     # ---- 2. GitHub CLI -------------------------------------------------
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

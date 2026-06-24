@@ -67,7 +67,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._envrc import fold_envrc_into_env
+from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._mcp_merge import merge_mcp_json
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_errors import (
@@ -75,6 +75,7 @@ from ._to_home_errors import (
     WorkspaceCredentialLeakError,
     WorkspaceMcpMergeError,
 )
+from ._to_home_settings import deploy_settings_cascade
 from ._to_home_text import (
     END_MARKER,
     extract_user_tail,
@@ -116,6 +117,15 @@ _TIGHT_PERM_BASENAMES = frozenset({".env"})
 # interpolation would expand it at deploy time and corrupt the script); it is
 # evaluated host-side post-deploy by :func:`_envrc.fold_envrc_into_env`.
 _VERBATIM_SECRET_BASENAMES = frozenset({".envrc"})
+
+# Files deployed by a POST-walk CASCADE deep-merge (ADR-0018) instead of the
+# per-layer plain copy — so the two-pass walk must SKIP them (a plain overwrite
+# would clobber a lower layer). ``settings.json`` is assembled from the user
+# ``_shared`` → project ``_shared`` → per-agent layers via
+# :func:`_to_home_settings.deploy_settings_cascade` (deep-merge; raise on a
+# scalar conflict). ``settings.local.json`` is the legacy baseline name, still
+# accepted as a layer source but never plain-copied.
+_CASCADE_DEPLOYED_BASENAMES = frozenset({"settings.json", "settings.local.json"})
 
 # Env var: explicit override for the shared/common baseline to_home dir.
 # Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
@@ -186,6 +196,24 @@ def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
     return None
 
 
+def _user_baseline_to_home_dir() -> Path | None:
+    """The USER-level shared baseline ``to_home`` — applies to every agent
+    regardless of where its spec lives: ``~/.scitex/agent-container/agents/
+    {_shared,_base}/to_home`` (first match wins). Returns ``None`` when absent.
+
+    Distinct from :func:`resolve_baseline_to_home_dir`, which resolves the
+    baseline *relative to the spec's* agents root (project-local for a
+    project-local spec). The ``.envrc`` cascade sources BOTH so a user-global
+    default and a project ``_shared`` both apply, lowest precedence first.
+    """
+    base = Path("~/.scitex/agent-container/agents").expanduser()
+    for name in _BASELINE_DIR_NAMES:
+        p = base / name / "to_home"
+        if p.is_dir():
+            return p
+    return None
+
+
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     """Mirror ``<spec_dir>/to_home/`` into ``<workspace_home>/``.
 
@@ -224,6 +252,17 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     if root.is_dir():
         _walk_and_apply(root, root, workspace_home, config=None)
     fold_envrc_into_env(workspace_home)
+    # settings.json CASCADE (ADR-0018) — same deep-merge as deploy_to_home, so
+    # the lower-level (spec_dir, workspace_home) entrypoint composes layers too
+    # instead of clobbering. Includes the user-level _shared baseline.
+    deploy_settings_cascade(
+        workspace_home,
+        [
+            ("user-shared", _user_baseline_to_home_dir()),
+            ("project-shared", baseline),
+            ("per-agent", root if root.is_dir() else None),
+        ],
+    )
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
@@ -268,10 +307,44 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
         _walk_and_apply(root, root, dest, config=config)
-    # .envrc (if present) is a shell script: evaluate it host-side and fold
-    # the result into dest/.env so build_run_argv's --env-file injects it.
-    # No-op when the agent ships no .envrc.
-    fold_envrc_into_env(dest)
+    # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
+    # → the spec's _shared baseline → the agent's workdir (the project's OWN
+    # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
+    # layer's .envrc overrides the previous; the net is folded host-side into
+    # dest/.env so build_run_argv's --env-file injects the resolved per-project
+    # identity (e.g. this project's Telegram bot via CCT_BOT_TOKEN). No-op when
+    # no layer ships a .envrc.
+    workdir = (getattr(config, "workdir", "") or "").strip()
+    workdir_dir = Path(workdir).expanduser() if workdir else None
+    user_shared = _user_baseline_to_home_dir()
+    envrc_cascade = [
+        (user_shared / ".envrc") if user_shared is not None else None,
+        (baseline / ".envrc") if baseline is not None else None,
+        (workdir_dir / ".envrc") if workdir_dir is not None else None,
+        dest / ".envrc",
+    ]
+    fold_envrc_cascade_into_env(dest, envrc_cascade)
+    # settings.json CASCADE (same precedence order as .envrc): deep-merge each
+    # layer's .claude/settings.json into dest, raising on a cross-layer scalar
+    # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
+    # writer. setup_settings_json later folds SAC's managed keys on top.
+    deploy_settings_cascade(dest, settings_layer_dirs(config))
+
+
+def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
+    """The ordered settings.json cascade layers (lowest precedence first).
+
+    ``(name, dir)`` pairs for the user-level ``_shared`` baseline, the spec's
+    ``_shared`` baseline, and the per-agent ``to_home`` — the inputs to
+    :func:`_to_home_settings.deploy_settings_cascade` /
+    :func:`_to_home_settings.settings_cascade_provenance`. Shared by
+    ``deploy_to_home`` and ``sac agents explain`` so both resolve identically.
+    """
+    return [
+        ("user-shared", _user_baseline_to_home_dir()),
+        ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
+        ("per-agent", resolve_to_home_dir(config)),
+    ]
 
 
 # --- traversal -------------------------------------------------------------
@@ -335,6 +408,11 @@ def _walk_and_apply(
             continue
 
         # Regular file.
+        # Cascade-deployed files are assembled post-walk by a deep-merge over
+        # ALL layers (ADR-0018); skip the per-layer plain copy that would
+        # clobber a lower layer.
+        if child.name in _CASCADE_DEPLOYED_BASENAMES:
+            continue
         if child.name in _MARKER_PROTECTED_BASENAMES:
             _deploy_marker_protected(child, dst, config=config, rel=rel)
         elif child.name in _MCP_MERGE_BASENAMES:

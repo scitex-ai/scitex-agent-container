@@ -53,7 +53,37 @@ class WorkspaceMcpMergeError(RuntimeError):
     """
 
 
+class LayerMergeConflict(RuntimeError):
+    """Two to_home cascade layers set the same scalar key to DIFFERENT values.
+
+    The layered-config cascade (ADR-0018: user ``_shared`` → project
+    ``_shared`` → per-agent) deep-merges each agent's effective
+    ``.claude/settings.json`` / ``.mcp.json``. Nested dicts recurse,
+    ``hooks`` blocks and lists are additive, and an identical scalar from
+    two layers is idempotent — but two layers assigning the SAME key two
+    DIFFERENT scalar values is a genuine conflict with no safe winner.
+
+    Per the operator's SSOT rule (2026-06-24) the deploy hard-aborts here
+    rather than silently picking a layer: each key must be owned by
+    exactly ONE layer. The message names the conflicting key path, both
+    layers, and both values, and the fix (set the key in only one layer).
+    """
+
+
+class WorkspaceSettingsMergeError(RuntimeError):
+    """A ``settings.json`` to_home layer is not valid JSON — refused.
+
+    The settings cascade (ADR-0018) deep-merges each layer's
+    ``.claude/settings.json``. A layer whose file is unparseable hard-aborts
+    the deploy (no silent skip) so the operator sees which layer's file is
+    broken — guessing or skipping could drop hook wiring an agent needs. A
+    genuine cross-layer scalar conflict surfaces as :class:`LayerMergeConflict`.
+    """
+
+
 __all__ = [
+    "LayerMergeConflict",
+    "WorkspaceSettingsMergeError",
     "WorkspaceCLAUDEMarkerError",
     "WorkspaceCredentialLeakError",
     "WorkspaceMcpMergeError",

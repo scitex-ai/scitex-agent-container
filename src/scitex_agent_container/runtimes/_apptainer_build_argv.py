@@ -130,7 +130,7 @@ def build_run_argv(
     # wrapped) inner commands. Emitted FIRST among env wiring so every
     # curated ``--env`` below (quota path, state-db, auth, listen, spec.env)
     # OVERRIDES it: the .env supplies per-agent additions (e.g.
-    # ``CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN``), never sac's critical
+    # ``CCT_BOT_TOKEN``), never sac's critical
     # wiring. Format is plain ``KEY=VALUE`` — apptainer ``--env-file`` is not
     # a shell, so no ``export`` prefix and no quoting of values. No-op when
     # the agent ships no ``.env``.
@@ -148,7 +148,7 @@ def build_run_argv(
             "--bind",
             f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
             "--env",
-            f"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
+            f"CCT_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
         ]
 
     # Host access + working directory are the SOLE responsibility of the

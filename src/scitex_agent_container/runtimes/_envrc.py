@@ -114,4 +114,85 @@ def fold_envrc_into_env(dest: Path) -> None:
     logger.info("envrc: folded %s into %s (%d vars)", envrc, env_file, len(merged))
 
 
-__all__ = ["EnvrcEvalError", "eval_envrc", "fold_envrc_into_env"]
+def eval_envrc_cascade(
+    envrcs: "list[Path | None]", *, base_env: Path | None = None
+) -> dict[str, str]:
+    """Net env from sourcing ``base_env`` then a CASCADE of ``.envrc`` files.
+
+    ``envrcs`` is ordered LOWEST-precedence-first; ``None`` and non-existent
+    entries are skipped, and duplicate files (same resolved path) collapse to
+    their first occurrence. Each surviving file is sourced (``set -a``) after a
+    ``cd`` into its own directory — so relative paths / ``$PWD`` inside it
+    resolve, and a later layer overrides an earlier one. Returns only the keys
+    ADDED or CHANGED vs a baseline shell (shell-internal noise filtered).
+
+    Fail-loud: a ``.envrc`` whose bash evaluation exits non-zero raises
+    :class:`EnvrcEvalError` carrying bash's stderr.
+    """
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for p in envrcs:
+        if p is None or not p.is_file():
+            continue
+        rp = p.resolve()
+        if rp in seen:
+            continue
+        seen.add(rp)
+        files.append(p)
+    if base_env is None and not files:
+        return {}
+    cwd = files[-1].parent if files else base_env.parent  # type: ignore[union-attr]
+    baseline = _capture_env("env -0", cwd)
+    lines = ["set -a"]
+    if base_env is not None and base_env.is_file():
+        lines.append(f". {shlex.quote(str(base_env))}")
+    for f in files:
+        lines.append(f"cd {shlex.quote(str(f.parent))}")
+        lines.append(f". {shlex.quote(f.name)}")
+    lines.append("set +a")
+    lines.append("env -0")
+    loaded = _capture_env("\n".join(lines), cwd)
+    return {
+        key: val
+        for key, val in loaded.items()
+        if key not in _SHELL_NOISE and baseline.get(key) != val
+    }
+
+
+def fold_envrc_cascade_into_env(dest: Path, envrcs: "list[Path | None]") -> None:
+    """Fold an ordered ``.envrc`` CASCADE into ``dest/.env``.
+
+    Generalises :func:`fold_envrc_into_env` from a single per-agent ``.envrc``
+    to a precedence-ordered cascade (e.g. user → shared → workdir → per-agent),
+    each layer overriding the previous. ``dest/.env`` (the already-materialised
+    agent env) is the base, so nothing it carries is lost; the file is then
+    rewritten (``chmod 0600``) with the combined net environment. No-op when
+    the cascade contributes nothing, so an existing ``.env`` is never blanked.
+    """
+    env_file = dest / ".env"
+    base = env_file if env_file.is_file() else None
+    merged = eval_envrc_cascade(envrcs, base_env=base)
+    if not merged:
+        return
+    body = "".join(f"{k}={v}\n" for k, v in sorted(merged.items()))
+    env_file.write_text(body)
+    try:
+        os.chmod(env_file, 0o600)
+    except OSError as exc:  # stx-allow: fallback (reason: filesystem op failure)
+        logger.warning("envrc: failed to chmod 0600 on %s: %s", env_file, exc)
+    n_layers = sum(1 for p in envrcs if p is not None and p.is_file())
+    logger.info(
+        "envrc: folded cascade (%d layers) into %s (%d vars)",
+        n_layers,
+        env_file,
+        len(merged),
+    )
+
+
+__all__ = [
+    "EnvrcEvalError",
+    "eval_envrc",
+    "eval_envrc_cascade",
+    "fold_envrc_into_env",
+    "fold_envrc_cascade_into_env",
+]
