@@ -32,12 +32,22 @@ def _should_wake_turn(event: dict[str, Any]) -> bool:
       content for the agent to act on; driving a turn on every ack would
       burn a turn (and tokens) per receipt and could ping-pong with the
       auto-ack side-effect.
+    - **infra kinds** (``kind`` in ``completion`` / ``reaction``): a
+      completion report is the END of a request the requester already made
+      — it informs, it is not a new request. Waking a turn on it restarts
+      the cycle: two peers each finish a turn, each Stop hook pushes a
+      completion report that wakes the other, and they ping-pong forever
+      emitting "Holding" (observed 2026-06-24, neurovista ⇆ scitex-writer).
+      Reactions are structural receipts too. Both still DELIVER as a
+      ``<channel>`` notification — they just do not DRIVE a fresh turn.
     - **empty content**: nothing to feed the SDK as turn input.
 
     The notification push (the ``<channel>`` tag) still fires for these in
     the no-wake path — only the turn-driving wake is gated here.
     """
     if event.get("ack"):
+        return False
+    if event.get("kind") in ("completion", "reaction"):
         return False
     content = event.get("content")
     return isinstance(content, str) and content.strip() != ""
