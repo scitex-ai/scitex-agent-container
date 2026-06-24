@@ -11,6 +11,7 @@ that file outgrew the 512-line project limit. The public surface
     )
 """
 
+from ._attach import attach
 from ._cleanup import cleanup
 from ._delete import delete
 from ._forget import forget
@@ -18,4 +19,4 @@ from ._restart import restart
 from ._start import start
 from ._stop import stop
 
-__all__ = ["start", "stop", "restart", "delete", "forget", "cleanup"]
+__all__ = ["start", "stop", "restart", "delete", "forget", "cleanup", "attach"]
