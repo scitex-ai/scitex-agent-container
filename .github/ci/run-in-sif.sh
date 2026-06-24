@@ -97,6 +97,23 @@ uv pip install --python "$VENV/bin/python" --target="$TMPDIR/site" tzdata ||
 
 export PYTHONPATH="$TMPDIR/site:$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
+# Several tests invoke the `sac` / `scitex-agent-container` CONSOLE SCRIPTS as a
+# subprocess (e.g. the shell-completion + install tests). `pip install --target`
+# does NOT reliably expose entry-point scripts on PATH, so the release node hit
+# `FileNotFoundError: 'sac'`. Provide self-contained shims: each sets its own
+# PYTHONPATH (so it works even from a test's cleaned subprocess env) and execs
+# `python -m scitex_agent_container`, which is the package's CLI entry point.
+mkdir -p "$TMPDIR/bin"
+for _prog in sac scitex-agent-container; do
+    {
+        echo "#!/bin/sh"
+        echo "export PYTHONPATH=\"$TMPDIR/site:$PWD/src\${PYTHONPATH:+:\$PYTHONPATH}\""
+        echo "exec \"$VENV/bin/python\" -m scitex_agent_container \"\$@\""
+    } >"$TMPDIR/bin/$_prog"
+    chmod +x "$TMPDIR/bin/$_prog"
+done
+export PATH="$TMPDIR/bin:$PATH"
+
 # Parallelise with pytest-xdist (baked in [dev]/[all,dev] as pytest-xdist>=3).
 # scitex-agent-container's suite is ~2460 tests; single-process it overran the job's old
 # 30-min cap (2300 passed in ~28 min, cancelled at 96%). Each xdist worker is
