@@ -1308,6 +1308,42 @@ def test_should_wake_turn_false_for_empty_content():
     assert decision is False
 
 
+def test_should_wake_turn_false_for_completion_report():
+    """A completion report informs the requester that work it already asked
+    for is done — it is not a new request. Waking a turn on it restarts the
+    cycle and two peers ping-pong forever (neurovista ⇆ scitex-writer,
+    2026-06-24). It must DELIVER but not DRIVE a turn."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {
+        "from_agent": "bob",
+        "content": '{"agent": "bob", "status": "success"}',
+        "msg_id": "m1",
+        "kind": "completion",
+    }
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
+def test_should_wake_turn_false_for_reaction_receipt():
+    # Arrange
+    from scitex_agent_container._mcp.channel import _should_wake_turn
+
+    event = {
+        "from_agent": "bob",
+        "content": "👀",
+        "msg_id": "m1",
+        "kind": "reaction",
+    }
+    # Act
+    decision = _should_wake_turn(event)
+    # Assert
+    assert decision is False
+
+
 def test_wake_text_frames_content_with_source_and_msg_id():
     # Arrange
     from scitex_agent_container._mcp.channel import _wake_text
