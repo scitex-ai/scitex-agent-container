@@ -55,6 +55,7 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
+import re
 import shlex
 import time
 from pathlib import Path
@@ -119,11 +120,29 @@ def _pane_tail(pane: str, lines: int = 14) -> str:
     return "\n".join(rows[-lines:])
 
 
-# The ``prompts.detect`` name for a pasted-but-unsent compose buffer
-# (``❯ <text>`` still on the input line). Re-use the existing detector —
-# do not fork the regex. Buffer "advancement" = this name NO LONGER
-# matching (the text was submitted and the input line cleared).
-_COMPOSE_PENDING = "compose-pending-unsent"
+#: Live compose box = the BOTTOM-MOST ``❯`` row (claude renders it just
+#: above the status bar). Same unsent-text regex as the shared
+#: ``prompts`` detector, but scoped to that one row.
+_COMPOSE_PROMPT_RE = re.compile(r"❯[ \t\xa0]+\S")
+
+
+def _compose_pending_live(pane: str) -> bool:
+    """True iff the LIVE compose box holds pasted-but-unsent text.
+
+    Scopes the ``compose-pending-unsent`` test to the CURRENT input line
+    (the bottom-most ``❯`` row) instead of the whole pane. A ``❯`` sitting
+    in SCROLLBACK — e.g. a submitted ``❯ 1`` echo or the prior turn's
+    rendered prompt — otherwise makes the shared :func:`prompts.detect`
+    report "still pending" forever, so :func:`verify_submit_by_advancement`
+    never sees the buffer clear and false-alarms (the
+    ``sac-tui-enter-drop-on-boot`` live test, 2026-06-24: scitex-dev booted
+    fine yet the drive logged "stayed UNSENT after 8 attempts"). Text after
+    the live ``❯`` = unsent; an empty live box = submitted / ready.
+    """
+    for row in reversed((pane or "").splitlines()):
+        if "❯" in row:
+            return bool(_COMPOSE_PROMPT_RE.search(row))
+    return False
 
 
 def _pane_is_input_idle(pane: str) -> bool:
@@ -143,7 +162,7 @@ def _pane_is_input_idle(pane: str) -> bool:
     """
     if pane_is_busy(pane):
         return False
-    return _prompts.is_ready(pane) or _prompts.detect(pane) == _COMPOSE_PENDING
+    return _prompts.is_ready(pane) or _compose_pending_live(pane)
 
 
 def verify_submit_by_advancement(
@@ -215,7 +234,7 @@ def verify_submit_by_advancement(
     last_pane = ""
     while time_fn() < appear_deadline:
         last_pane = _advanced()
-        if _prompts.detect(last_pane) == _COMPOSE_PENDING:
+        if _compose_pending_live(last_pane):
             saw_pending = True
             break
         if poll_s > 0:
@@ -233,7 +252,7 @@ def verify_submit_by_advancement(
         idle = False
         while time_fn() < idle_deadline:
             last_pane = _advanced()
-            if _prompts.detect(last_pane) != _COMPOSE_PENDING:
+            if not _compose_pending_live(last_pane):
                 return True
             if _pane_is_input_idle(last_pane):
                 idle = True
@@ -258,7 +277,7 @@ def verify_submit_by_advancement(
             if poll_s > 0:
                 sleep_fn(poll_s)
             last_pane = _advanced()
-            if _prompts.detect(last_pane) != _COMPOSE_PENDING:
+            if not _compose_pending_live(last_pane):
                 return True
             if time_fn() >= verify_deadline:
                 break
