@@ -15,7 +15,8 @@ metadata:
     project: {{ NAME }}
     purpose: {{ NAME }}-research
     role: project-maintainer
-    group: {{ GROUP }}
+    groups:
+      - {{ GROUP }}
     cardinality: singleton
 
 spec:

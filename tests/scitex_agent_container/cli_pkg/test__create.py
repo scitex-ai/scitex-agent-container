@@ -66,7 +66,7 @@ def test_create_developer_group_label(tmp_path: Path) -> None:
     # Act
     parsed = yaml.safe_load(_spec(base, "dev-grp").read_text())
     # Assert — developer template defaults to the developer group.
-    assert parsed["metadata"]["labels"]["group"] == "developer"
+    assert parsed["metadata"]["labels"]["groups"] == ["developer"]
 
 
 def test_create_developer_purpose_suffix(tmp_path: Path) -> None:
@@ -88,7 +88,7 @@ def test_create_scientist_group_label(tmp_path: Path) -> None:
     # Act
     parsed = yaml.safe_load(_spec(base, "sci-grp").read_text())
     # Assert — scientist template defaults to the scientist group.
-    assert parsed["metadata"]["labels"]["group"] == "scientist"
+    assert parsed["metadata"]["labels"]["groups"] == ["scientist"]
 
 
 def test_create_scientist_purpose_suffix(tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ def test_create_group_override(tmp_path: Path) -> None:
     # Act
     parsed = yaml.safe_load(_spec(base, "grp-ovr").read_text())
     # Assert — explicit --group wins over the template default.
-    assert parsed["metadata"]["labels"]["group"] == "platform"
+    assert parsed["metadata"]["labels"]["groups"] == ["platform"]
 
 
 def test_create_install_block_present_when_package(tmp_path: Path) -> None:
