@@ -523,6 +523,10 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
         github_ci_poll_loop,
     )
     from .._lifecycle._periodic_drive_loop import periodic_drive_loop
+    from .._lifecycle._tui_heartbeat_loop import (
+        DEFAULT_TUI_HEARTBEAT_INTERVAL_S,
+        tui_heartbeat_loop,
+    )
     from ._self_peer_persistence import persist_self_peers_on_listen_startup
 
     @asynccontextmanager
@@ -555,6 +559,25 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
         )
         app.state.github_ci_poller_task = ci_task
         tasks.append(ci_task)
+        # TUI heartbeat writer (operator: "heartbeat must be available in
+        # tui as well"). Centralized writer so TUI agents get heartbeat.json
+        # parity with the SDK runner and stop showing empty heartbeat_at /
+        # "stopped" while alive. Self-disables (fail-loud) when `tmux` is
+        # missing or SAC_TUI_HEARTBEAT_DISABLED=1, so launch unconditionally.
+        # Cadence override: SAC_TUI_HEARTBEAT_INTERVAL_S.
+        try:
+            _tui_hb_interval = float(
+                _os.environ.get(
+                    "SAC_TUI_HEARTBEAT_INTERVAL_S", DEFAULT_TUI_HEARTBEAT_INTERVAL_S
+                )
+            )
+        except (TypeError, ValueError):
+            _tui_hb_interval = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
+        tui_hb_task = _asyncio.create_task(
+            tui_heartbeat_loop(interval_s=_tui_hb_interval)
+        )
+        app.state.tui_heartbeat_task = tui_hb_task
+        tasks.append(tui_hb_task)
         try:
             yield
         finally:
