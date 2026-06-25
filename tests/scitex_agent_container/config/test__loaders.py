@@ -20,6 +20,7 @@ import yaml
 
 from scitex_agent_container.config import load_config
 from scitex_agent_container.config._loaders import (
+    DEFAULT_STARTUP_PROMPT,
     _parse_env_files,
     _resolve_python_venv,
     _resolve_venv,
@@ -525,6 +526,24 @@ def test_load_config_no_warn_for_short_startup_kick(tmp_path: Path):
         load_config(p)
     # Assert
     assert not any("startup_prompts" in str(w.message) for w in rec)
+
+
+def test_load_config_defaults_startup_prompt_when_omitted(tmp_path: Path):
+    # Arrange — a spec with NO startup_prompts inherits the generic sac default.
+    p = _v3_yaml(tmp_path, "nodefault", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.startup_prompts == [DEFAULT_STARTUP_PROMPT]
+
+
+def test_load_config_keeps_explicit_startup_prompt_over_default(tmp_path: Path):
+    # Arrange — an explicit startup_prompts must NOT be replaced by the default.
+    p = _v3_yaml(tmp_path, "explicit", {"startup_prompts": ["my own kick"]})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.startup_prompts == ["my own kick"]
 
 
 # ---------------------------------------------------------------------------

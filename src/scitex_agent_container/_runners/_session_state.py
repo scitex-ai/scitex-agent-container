@@ -234,6 +234,7 @@ def write_heartbeat(
     state: str,
     name: str | None = None,
     host: str | None = None,
+    ts: float | None = None,
     db_writer=None,
 ) -> None:
     """Atomically write the heartbeat record to ``heartbeat.json``
@@ -246,6 +247,13 @@ def write_heartbeat(
     accumulated from each ``ResultMessage.usage`` into ``quota.json``.
     This lets the operator see, per agent, how long it has been running
     and how many tokens it has used — straight off the fast-path JSON.
+
+    ``ts`` overrides the recorded heartbeat timestamp (unix seconds);
+    when ``None`` (the SDK-runner default) the current wall-clock is
+    used. The TUI heartbeat writer passes the agent's tmux pane-activity
+    epoch here so ``heartbeat_at`` reflects the SAME liveness signal
+    ``TuiSessionRuntime.is_running`` keys off (rather than the moment
+    the centralized loop happened to observe it).
 
     When the container tmpfs is probeable it also carries
     ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
@@ -264,7 +272,12 @@ def write_heartbeat(
     """
     state_dir.mkdir(parents=True, exist_ok=True)
     now = time.time()
-    payload = {"ts": now, "pid": pid, "state": state}
+    # ``now`` drives the duration-based enrichment (elapsed_s, jsonl
+    # delta-bytes) so those stay honest wall-clock measurements; only
+    # the recorded ``ts`` is overridable so the TUI writer can stamp the
+    # actual pane-activity epoch (the liveness signal it observed).
+    beat_ts = float(ts) if ts is not None else now
+    payload = {"ts": beat_ts, "pid": pid, "state": state}
     payload.update(_heartbeat_usage_fields(state_dir, now))
     payload.update(_tmp_pressure_fields())
     # Operator-requested (feedback_sac_heartbeat_observability):
