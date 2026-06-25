@@ -29,6 +29,17 @@ from ._parsers import (
 )
 from ._types import AgentConfig, HostsSpec
 
+# Generic boot-kick used when a spec omits ``startup_prompts``. Role/ID live in
+# the auto-generated $HOME/.claude/CLAUDE.md and the task lives on the agent's
+# scitex-todo card slice, so the boot prompt only needs a generic kick — per-spec
+# restatement of scope/task is the anti-pattern (operator, 2026-06-25). Bare +
+# period (no colon) so it also parses plain in YAML without >-/quotes.
+DEFAULT_STARTUP_PROMPT = (
+    "Start or continue. Scan your scitex-todo card slice, resume any in-flight "
+    "or assigned work (hold idle if none), then report readiness. Follow "
+    "CLAUDE.md + your skills; don't restate, don't invent scope."
+)
+
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
 # ``~/.scitex/agent-container/runtime/workspaces/<effective-id>/``. External
@@ -299,6 +310,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     startup_prompts_raw = spec.get("startup_prompts", []) or []
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
+    if not startup_prompts:
+        # DRY default: specs omit startup_prompts and inherit the generic kick.
+        startup_prompts = [DEFAULT_STARTUP_PROMPT]
     exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
     exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 
