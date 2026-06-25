@@ -54,7 +54,7 @@ def _resolve_agent(flag: str) -> str:
 @click.argument(
     "kind",
     type=click.Choice(
-        ["pretool", "posttool", "prompt", "stop", "other"],
+        ["pretool", "posttool", "prompt", "stop", "notification", "other"],
         case_sensitive=False,
     ),
 )
@@ -81,7 +81,15 @@ def hook_event(kind: str, agent_flag: str) -> None:
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             payload = {"raw": raw[:500]}
         agent = _resolve_agent(agent_flag)
-        append_event(agent, kind.lower(), payload)
+        kind_lc = kind.lower()
+        if kind_lc == "notification":
+            # The notification handler owns its own event-ring write (with a
+            # card_id for dedup), so we do NOT also append a bare event here.
+            from .._state.notification_blocker import handle_notification
+
+            handle_notification(agent, payload)
+        else:
+            append_event(agent, kind_lc, payload)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         # Hooks must never break the host; swallow all failures.
         pass

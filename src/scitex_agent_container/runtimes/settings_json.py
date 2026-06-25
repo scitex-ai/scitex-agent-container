@@ -56,6 +56,12 @@ from pathlib import Path
 
 from ..config import AgentConfig
 
+# Hook config pushed into every spawned agent's settings file so
+# PreToolUse / PostToolUse / UserPromptSubmit / Stop / Notification events
+# flow into the per-agent event ring-buffer. Extracted into ``_hooks_config``
+# to keep this orchestrator under the 512-line cap (scitex-orochi todo#59).
+from ._hooks_config import _HOOKS_CONFIG
+
 logger = logging.getLogger(__name__)
 
 # Keys managed by this module — cleanup removes exactly these.
@@ -68,59 +74,6 @@ _MANAGED_KEYS = frozenset(
         "statusLine",
     }
 )
-
-# Hook config pushed into every spawned agent's settings file so
-# PreToolUse / PostToolUse / UserPromptSubmit / Stop events flow into
-# the per-agent event ring-buffer (~/.scitex/agent-container/runtime/events/
-# <agent>.jsonl). Consumed by event_log.summarize() which feeds the
-# Orochi dashboard's Last tool / Last MCP / Last action rows. Without
-# this wiring those rows render as dashes (scitex-orochi todo#59).
-_HOOKS_CONFIG = {
-    "PreToolUse": [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": "scitex-agent-container event ingest pretool",
-                }
-            ],
-        }
-    ],
-    "PostToolUse": [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": "scitex-agent-container event ingest posttool",
-                }
-            ],
-        }
-    ],
-    "UserPromptSubmit": [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": "scitex-agent-container event ingest prompt",
-                }
-            ],
-        }
-    ],
-    "Stop": [
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": "scitex-agent-container event ingest stop",
-                }
-            ],
-        }
-    ],
-}
 
 
 def _load_settings_dict(path: Path) -> dict:

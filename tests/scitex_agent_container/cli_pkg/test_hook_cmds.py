@@ -256,6 +256,45 @@ def test_hook_event_via_subprocess_stdin_pipe(tmp_path: Path, env_save_restore):
     assert completed.returncode == 0
 
 
+def test_hook_event_notification_routes_to_blocker(
+    tmp_path: Path, env_save_restore
+):
+    """The ``notification`` kind routes through the blocker handler, which
+    stamps the agent's in_progress card blocked=operator-decision."""
+    # Arrange
+    store = tmp_path / "tasks.yaml"
+    env_save_restore.set("SCITEX_TODO_TASKS", str(store))
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "scitex_home"))
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_AGENT")
+    env_save_restore.delete("CLAUDE_AGENT_ID")
+    env = {**os.environ}
+    subprocess.run(
+        ["scitex-todo", "add", "c1", "Card", "--status", "in_progress",
+         "--agent", "nbagent", "-y"],
+        env=env, capture_output=True, text=True, check=False, timeout=60,
+    )
+    saved_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        # Act
+        CliRunner().invoke(
+            hook_event,
+            ["notification", "--agent", "nbagent"],
+            input=json.dumps({"message": "Submit answers"}),
+        )
+        rows = json.loads(
+            subprocess.run(
+                ["scitex-todo", "list-tasks", "--json"],
+                env=env, capture_output=True, text=True, check=False, timeout=60,
+            ).stdout
+            or "[]"
+        )
+    finally:
+        os.chdir(saved_cwd)
+    # Assert
+    assert rows[0]["blocker"] == "operator-decision"
+
+
 def test_hook_event_subprocess_writes_real_log(
     tmp_path: Path,
 ):

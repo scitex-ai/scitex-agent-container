@@ -45,6 +45,20 @@ def test_hooks_always_injected_when_settings_written(tmp_path):
     assert data["hooks"] == _HOOKS_CONFIG
 
 
+def test_hooks_config_has_notification_entry_wired_to_ingest():
+    """The Notification hook deploys an ``event ingest notification`` command.
+
+    Records a card blocker when an agent waits for input
+    (sac-card-anchored-stop-reconciler).
+    """
+    # Arrange
+    notification_groups = _HOOKS_CONFIG["Notification"]
+    # Act
+    command = notification_groups[0]["hooks"][0]["command"]
+    # Assert
+    assert command == "scitex-agent-container event ingest notification"
+
+
 @pytest.mark.parametrize(
     "kind,subcommand",
     [
@@ -52,6 +66,7 @@ def test_hooks_always_injected_when_settings_written(tmp_path):
         ("PostToolUse", "posttool"),
         ("UserPromptSubmit", "prompt"),
         ("Stop", "stop"),
+        ("Notification", "notification"),
     ],
 )
 def test_hook_kind_maps_to_ingest_command(tmp_path, kind, subcommand):
@@ -66,7 +81,8 @@ def test_hook_kind_maps_to_ingest_command(tmp_path, kind, subcommand):
 
 
 @pytest.mark.parametrize(
-    "kind", ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"]
+    "kind",
+    ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification"],
 )
 def test_hook_command_has_no_control_chars(tmp_path, kind):
     """Regression: a stray backspace (\\x08) once sat INSIDE every hook command
