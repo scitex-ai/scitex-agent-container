@@ -8,9 +8,16 @@ The in-container ``sac mcp channel`` adapter (registered when
 ``spec.claude.channels`` contains ``server:sac``) resolves the bus from
 two env vars at start:
 
-* ``SAC_LISTEN_BASE_URL`` — the host-stable ``sac listen`` URL the
-  adapter subscribes its inbox SSE against, and the per-agent sidecar
-  advertises in its agent card so peers survive per-restart port churn.
+* ``SAC_LISTEN_BASE_URL`` — the host-REACHABLE ``sac listen`` URL the
+  adapter subscribes its inbox SSE against, and the spawn / start / ACL
+  clients dial. Resolved via
+  :func:`_listen._config.container_listen_base_url` so it is the
+  canonical ``hostname:port`` (the a2a turn_url path), NOT the loopback
+  ``127.0.0.1:7878`` the server binds — a container dialing its own
+  loopback reaches nothing and the spawn POST times out.
+* ``SCITEX_AGENT_CONTAINER_YAML_DIRS`` — the host's agent spec-dir
+  search path, forwarded verbatim when set so an in-container
+  ``agent_start`` resolves the same specs the host does.
 * ``SAC_LISTEN_BEARER`` — the bearer the adapter must present or
   ``sac listen`` returns 401, the subscription never lands, and every
   lead ``a2a_send`` push reports ``delivered_subscriber_count=0``.
@@ -45,10 +52,30 @@ def listen_env_flags(config) -> list[str]:
     # Local imports keep these resolvable even if a formatter strips
     # module-level unused imports during a refactor, and avoid a circular
     # import with the runtime module that calls this helper.
-    from .._listen._config import listen_base_url
+    import os
+
+    from .._listen._config import container_listen_base_url
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
 
-    flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
+    # ROOT CAUSE FIX (card sac-agent-cannot-spawn-agents): inject the
+    # host-REACHABLE listen URL (canonical hostname:port, the same path
+    # a2a turn_urls use), NOT the loopback ``http://127.0.0.1:7878`` the
+    # server binds. A container that dials its own 127.0.0.1 reaches its
+    # own loopback (nothing listens there) and the spawn POST times out,
+    # whereas a2a already reaches the host via hostname:port.
+    flags: list[str] = [
+        "--env",
+        f"SAC_LISTEN_BASE_URL={container_listen_base_url()}",
+    ]
+
+    # Second half of the same bug: ``agent_start`` inside the container
+    # resolves specs from ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (the
+    # plugin spec-dir port). It is unset in the container, so no specs
+    # are found. Forward the host value verbatim when present so an
+    # in-container ``agent_start`` sees the same spec dirs the host does.
+    spec_dirs = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "").strip()
+    if spec_dirs:
+        flags += ["--env", f"SCITEX_AGENT_CONTAINER_YAML_DIRS={spec_dirs}"]
 
     claude_spec = getattr(config, "claude", None)
     channels = list(getattr(claude_spec, "channels", None) or [])

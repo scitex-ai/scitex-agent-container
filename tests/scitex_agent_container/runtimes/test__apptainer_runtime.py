@@ -2126,8 +2126,13 @@ def test_proxy_argv_excludes_sdk_only_flag(tmp_path: Path, forbidden: str) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_default_listen_url_injected_when_no_config(tmp_path: Path) -> None:
-    # Arrange
+def test_default_listen_url_injected_when_no_config(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — pin the canonical host so the injected URL is the
+    # host-REACHABLE form (the a2a turn_url path), NOT the loopback the
+    # server binds. A container dialing 127.0.0.1 reaches nothing.
+    env_save_restore.set("SAC_HOST", "reach-host")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
     # Act
@@ -2135,7 +2140,7 @@ def test_default_listen_url_injected_when_no_config(tmp_path: Path) -> None:
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://reach-host:7878"
 
 
 def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
@@ -2143,6 +2148,7 @@ def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) 
     cfg_yaml = tmp_path / "config.yaml"
     cfg_yaml.write_text("listen:\n  port: 9090\n")
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
+    env_save_restore.set("SAC_HOST", "reach-host")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
     # Act
@@ -2150,7 +2156,7 @@ def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) 
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:9090"
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://reach-host:9090"
 
 
 def test_config_listen_host_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
@@ -2206,9 +2212,10 @@ def test_argv_injects_listen_bearer_from_token_file(
 
 
 def test_argv_still_injects_base_url_alongside_bearer(
-    tmp_path: Path, home_redirect: Path
+    tmp_path: Path, home_redirect: Path, env_save_restore
 ) -> None:
     # Arrange
+    env_save_restore.set("SAC_HOST", "reach-host")
     _write_listen_token(home_redirect, "tok-abc123")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
@@ -2217,7 +2224,7 @@ def test_argv_still_injects_base_url_alongside_bearer(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://reach-host:7878"
 
 
 def test_relaxed_spec_omits_preflight_wrapper(
@@ -2273,9 +2280,10 @@ def test_missing_token_omits_bearer(tmp_path: Path, home_redirect: Path) -> None
 
 
 def test_missing_token_still_injects_base_url(
-    tmp_path: Path, home_redirect: Path
+    tmp_path: Path, home_redirect: Path, env_save_restore
 ) -> None:
     # Arrange — no token file under HOME.
+    env_save_restore.set("SAC_HOST", "reach-host")
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path / "wd")
     # Act
@@ -2283,7 +2291,7 @@ def test_missing_token_still_injects_base_url(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://reach-host:7878"
 
 
 def test_missing_token_logs_loud_warning(
@@ -2342,9 +2350,10 @@ def test_relaxed_with_server_sac_channel_injects_bearer(
 
 
 def test_relaxed_with_server_sac_channel_injects_base_url(
-    tmp_path: Path, home_redirect: Path
+    tmp_path: Path, home_redirect: Path, env_save_restore
 ) -> None:
     # Arrange
+    env_save_restore.set("SAC_HOST", "reach-host")
     _write_listen_token(home_redirect, "tok-relaxed-bus")
     rt = ApptainerContainerRuntime()
     cfg = _relaxed_bus_cfg(tmp_path / "wd")
@@ -2353,7 +2362,7 @@ def test_relaxed_with_server_sac_channel_injects_base_url(
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://127.0.0.1:7878"
+    assert _env_pairs(argv).get("SAC_LISTEN_BASE_URL") == "http://reach-host:7878"
 
 
 def test_server_sac_channel_missing_token_fails_loud(

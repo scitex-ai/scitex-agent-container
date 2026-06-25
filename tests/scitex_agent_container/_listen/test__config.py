@@ -137,3 +137,66 @@ class TestListenBaseURL:
         port = listen_cfg.listen_port()
         # Assert
         assert port == 7878
+
+
+@pytest.fixture
+def sac_host_override():
+    """Pin ``host_config.canonical_host()`` via ``$SAC_HOST``.
+
+    Explicit save/restore (PA-306 no-mock). The canonical hostname is
+    the host-reachable address the container-facing URL must use.
+    """
+    key = "SAC_HOST"
+    saved = os.environ.get(key)
+    os.environ[key] = "ywata-note-win"
+    try:
+        yield "ywata-note-win"
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
+class TestContainerReachableHost:
+    # ------------------------------------------------------------------
+    # The loopback default must NOT leak into the container URL — a
+    # container dialing its own 127.0.0.1 reaches nothing. The canonical
+    # hostname (the a2a turn_url path) is used instead.
+    # ------------------------------------------------------------------
+    def test_loopback_default_resolves_to_canonical_host(
+        self, cfg_path: Path, sac_host_override
+    ) -> None:
+        # Arrange: no listen.host on disk → listen_host() is loopback.
+        # Act
+        host = listen_cfg.container_reachable_host()
+        # Assert
+        assert host == "ywata-note-win"
+
+    def test_container_base_url_is_not_loopback(
+        self, cfg_path: Path, sac_host_override
+    ) -> None:
+        # Arrange: no listen.host on disk → listen_host() is loopback.
+        # Act
+        url = listen_cfg.container_listen_base_url()
+        # Assert
+        assert "127.0.0.1" not in url
+
+    def test_container_base_url_uses_canonical_host_and_port(
+        self, cfg_path: Path, sac_host_override
+    ) -> None:
+        # Arrange: no listen.host on disk → listen_host() is loopback.
+        # Act
+        url = listen_cfg.container_listen_base_url()
+        # Assert
+        assert url == "http://ywata-note-win:7878"
+
+    def test_explicit_non_loopback_host_is_honoured(
+        self, cfg_path: Path, sac_host_override
+    ) -> None:
+        # Arrange: operator set an explicit tailscale host in config.
+        cfg_path.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
+        # Act
+        host = listen_cfg.container_reachable_host()
+        # Assert
+        assert host == "100.64.1.2"
