@@ -80,9 +80,13 @@ def _read_expires_at_ms() -> int | None:
 def _refresh_imminent(expires_at_ms: int | None, now_ms: float, window_ms: float) -> bool:
     """True iff a boot-time refresh is plausible (token at/near expiry).
 
-    Unknown expiry returns True (serialize defensively)."""
+    Unknown expiry returns False: if we cannot read ``expiresAt`` there is
+    either no OAuth token to rotate (api-key / no-creds setups) or no way to
+    observe a refresh landing, so settling would only delay without
+    coordinating. The flock still serializes the brief launch window in that
+    case; the settle wait engages only when we can actually watch the rotation."""
     if expires_at_ms is None:
-        return True
+        return False
     return (expires_at_ms - now_ms) <= window_ms
 
 
