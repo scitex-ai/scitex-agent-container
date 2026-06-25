@@ -71,10 +71,25 @@ _run_subprocess: Callable[..., subprocess.CompletedProcess] = subprocess.run
 
 
 def _default_http_get(url: str, timeout: float) -> int:
-    """Return the HTTP status for a GET, or -1 on any error.
+    """Return the HTTP status for a GET, or -1 if the server is *down*.
 
     Uses stdlib ``urllib`` rather than ``httpx`` to keep the restart
     path dep-light — if uvicorn binds the port, urllib reaches it.
+
+    Critically, an HTTP error *response* (401/403/404/5xx) is NOT a
+    failure for liveness purposes — it PROVES a daemon is bound and
+    answering. ``urllib`` raises :class:`~urllib.error.HTTPError`
+    (a subclass of ``URLError``) for any 4xx/5xx and carries the real
+    status code on ``.code`` — so we surface that code rather than
+    collapsing it to ``-1``. Only a genuine transport failure
+    (connection refused / DNS / timeout — a bare ``URLError`` with no
+    status, or ``OSError``) means "down" and returns ``-1``.
+
+    This is the fix for the bearer-auth false-negative
+    (card ``sac-listen-restart-healthcheck-bearer``): when
+    ``BearerAuthMiddleware`` gates the endpoint, the probe's
+    unauthenticated GET gets a 401 — which used to be swallowed as
+    ``-1`` and read as "daemon down", SIGKILLing a healthy daemon.
     """
     import urllib.error
     import urllib.request
@@ -83,7 +98,12 @@ def _default_http_get(url: str, timeout: float) -> int:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(resp.status)
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+    except urllib.error.HTTPError as exc:
+        # 4xx/5xx — the daemon answered. Surface the real status so the
+        # liveness predicate can see "alive but auth-gated" (401/403).
+        return int(exc.code)
+    except (urllib.error.URLError, OSError):
+        # Transport-level failure (refused / timeout / DNS) — down.
         return -1
 
 
@@ -256,17 +276,36 @@ def wait_for_health(
     port: int,
     deadline_secs: float,
 ) -> bool:
-    """Poll ``http://<host>:<port>/v1/sac/health`` until 200 or deadline.
+    """Poll ``http://<host>:<port>/v1/sac/health`` until the daemon is
+    *alive* or the deadline elapses.
 
-    Endpoint shape fixed by ``_listen.server.health`` (route
-    ``/v1/sac/health``, returns ``{"ok": true, "service":
-    "sac-listen", "v": 1}``).
+    "Alive" means the daemon answered with *any* HTTP status — a 200
+    from the unauthenticated health route, but ALSO a 401/403 from
+    :class:`~_listen.auth.BearerAuthMiddleware` (the daemon is up and
+    auth-gating) or even a 404. The only "down" signal is a transport
+    failure (connection refused / timeout), which ``_http_get``
+    reports as ``-1``.
+
+    Rationale (card ``sac-listen-restart-healthcheck-bearer``): a
+    restart must NEVER SIGKILL + abort against a daemon that is
+    demonstrably answering. Gating liveness on ``status == 200`` made
+    a later bearer-auth change re-classify a live, 401-answering
+    daemon as "down" — a fail-quiet that destroyed a healthy process.
+    Treating "got an HTTP response" as alive is auth-change-proof
+    (fail-loud / no-surprise).
+
+    Endpoint shape fixed by ``_listen.server.health`` (returns
+    ``{"ok": true, "service": "sac-listen", "v": 1}`` on the
+    unauthenticated ``/v1/health`` route).
     """
     url = f"http://{host}:{port}/v1/sac/health"
     elapsed = 0.0
     while elapsed < deadline_secs:
         status = _http_get(url, timeout=2.0)
-        if status == 200:
+        # Any HTTP response (positive status) proves the daemon is
+        # bound and answering — incl. 401/403 under bearer auth.
+        # Only ``-1`` (transport failure) means "not up yet".
+        if status > 0:
             return True
         _sleep(_HEALTH_POLL_INTERVAL_SECS)
         elapsed += _HEALTH_POLL_INTERVAL_SECS
