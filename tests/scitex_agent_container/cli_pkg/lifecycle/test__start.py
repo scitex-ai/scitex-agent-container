@@ -411,13 +411,15 @@ class TestSingletonHostSkip:
     def test_bulk_directory_singleton_skip_renders_skip_line(
         self, tmp_path, env_save_restore
     ):
-        # Arrange
+        # Arrange — single-agent bulk dir stays on the in-process bulk
+        # path (the SKIP-rendering loop). A MULTI-agent bulk dir now
+        # routes to the serialized parallel launcher instead, covered by
+        # test__start_parallel.py.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
-        _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
         runner = CliRunner()
         # Act
         result = runner.invoke(start, [str(agents_dir), "-y"])
@@ -425,13 +427,13 @@ class TestSingletonHostSkip:
         assert "SKIP aa" in result.output
 
     def test_bulk_directory_singleton_skip_exits_zero(self, tmp_path, env_save_restore):
-        # Arrange
+        # Arrange — single-agent bulk dir stays on the in-process bulk
+        # path; multi-agent bulk now routes to the parallel launcher.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
         agents_dir = tmp_path / "agents"
         _write_singleton_yaml(agents_dir, "aa", "nowhere-host")
-        _write_singleton_yaml(agents_dir, "bb", "nowhere-host")
         runner = CliRunner()
         # Act
         result = runner.invoke(start, [str(agents_dir), "-y"])
