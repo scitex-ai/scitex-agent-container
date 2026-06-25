@@ -104,6 +104,20 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # canonical install. If a future SIF reintroduces a second venv
     # prefix, add its bind ONLY after confirming the destination dir
     # exists in that SIF.
+    #
+    # Operator handoff path (card sac-bind-host-tmp-emacs-handoff) — under
+    # ``--containall`` the host ``/tmp`` is isolated, so agents cannot read
+    # the UI debug + screenshot context the operator hands over at
+    # ``/tmp/emacs-claude-code/`` (``Element_Debug_Info_*.txt`` etc.), and
+    # ``ssh ywata-note-win`` from inside the container is refused. Bind the
+    # handoff dir READ-ONLY so an agent reads the file at the SAME path the
+    # operator names, with no manual copy-into-home step. Destination is a
+    # ``/tmp`` tmpfs path (writable under --containall), so apptainer's
+    # bind-dest auto-create cannot lose the overlay race the HAZARD above
+    # describes. ``default_binds_for_host`` skips it silently on hosts/times
+    # where the source dir does not exist (remote hosts, fresh boot before
+    # emacs writes) — no FATAL, no surprise mount.
+    "/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro",
 )
 
 
