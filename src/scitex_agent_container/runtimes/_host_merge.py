@@ -130,6 +130,15 @@ _DEVELOPER_ROLES: frozenset[str] = frozenset(
     {"project-maintainer", "maintainer", "dev-agent", "contributor"}
 )
 
+# Named groups that get the FULL-developer host ``~/.claude`` deep-merge
+# (operator 2026-06-25). ``developer`` is the original privileged group;
+# ``scientist`` agents (paper-scitex-clew / paper-neurovista /
+# paper-ripple-wm) author papers against the full SciTeX tooling and need
+# the SAME host commands/skills/hooks, so they get FULL treatment too. Any
+# OTHER explicit group (e.g. ``solitary``) still gets the ``_shared`` /
+# per-agent layers ONLY.
+_FULL_MERGE_GROUPS: frozenset[str] = frozenset({"developer", "scientist"})
+
 # Env override for the host ``~/.claude`` root (test seam — NO monkeypatch).
 # When set, host files are read from ``$SAC_HOST_CLAUDE_DIR`` instead of the
 # real ``~/.claude``. The materialized symlink TARGETS still point at this dir,
@@ -163,8 +172,10 @@ def is_full_developer(config: AgentConfig) -> bool:
 
     Gate (decoupled from the ACL PR):
 
-      * ``metadata.labels.group == "developer"``                         → True
-      * ``metadata.labels.group == "solitary"``                          → False
+      * ``metadata.labels.group`` in :data:`_FULL_MERGE_GROUPS`
+        (``developer`` / ``scientist``)                                  → True
+      * ``metadata.labels.group == "solitary"`` (or any other explicit,
+        non-full-merge group)                                            → False
         (a capsule/solitary agent gets the ``_shared``/per-agent layers ONLY)
       * group UNSET and ``metadata.labels.role`` in :data:`_DEVELOPER_ROLES`
                                                                           → True
@@ -174,9 +185,9 @@ def is_full_developer(config: AgentConfig) -> bool:
     """
     labels = getattr(config, "labels", None) or {}
     group = str(labels.get("group", "") or "").strip().lower()
-    if group == "developer":
+    if group in _FULL_MERGE_GROUPS:
         return True
-    if group:  # any explicit non-developer group (e.g. "solitary") → no merge
+    if group:  # any other explicit group (e.g. "solitary") → no merge
         return False
     role = str(labels.get("role", "") or "").strip().lower()
     return role in _DEVELOPER_ROLES

@@ -18,6 +18,7 @@ from __future__ import annotations
 from scitex_agent_container.config._group_resolver import (
     DEVELOPER_GROUP,
     group_from_labels,
+    groups_peered,
     is_developer_group,
     resolve_group,
 )
@@ -171,5 +172,41 @@ def test_is_developer_group_false_for_empty() -> None:
     group = ""
     # Act
     result = is_developer_group(group)
+    # Assert
+    assert result is False
+
+
+def test_scientist_and_developer_are_peered() -> None:
+    # Arrange
+    a, b = "scientist", "developer"
+    # Act
+    result = groups_peered(a, b)
+    # Assert
+    assert result is True
+
+
+def test_peering_is_symmetric() -> None:
+    # Arrange
+    a, b = "developer", "scientist"
+    # Act
+    result = groups_peered(a, b)
+    # Assert
+    assert result is True
+
+
+def test_unrelated_group_not_peered_with_developer() -> None:
+    # Arrange
+    a, b = "analysts", "developer"
+    # Act
+    result = groups_peered(a, b)
+    # Assert
+    assert result is False
+
+
+def test_group_not_peered_with_itself() -> None:
+    # Arrange
+    a, b = "scientist", "scientist"
+    # Act
+    result = groups_peered(a, b)
     # Assert
     assert result is False

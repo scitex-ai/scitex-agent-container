@@ -43,6 +43,7 @@ from .._state.state_db_nodes import (
     derive_group,
     has_grant,
     is_developer,
+    named_groups_peered,
     read_comms_policy,
     resolve_node_token,
     same_named_group,
@@ -302,6 +303,17 @@ def check_send_acl(
     # grant. Additive: an ungrouped fleet shares no named group and
     # falls through to the explicit-grant check below, unchanged.
     if same_named_group(sender=sender, target=target, db_path=db_path):
+        return ("allow", None)
+
+    # Cross-group PEERING allowlist (operator 2026-06-25): two DIFFERENT
+    # named groups that are explicitly peered may address each other in
+    # BOTH directions by default — currently scientist↔developer. This
+    # lifts the cross-group default-DENY ONLY for the paired groups; an
+    # unrelated third group still falls through to the explicit-grant
+    # check below and is denied without one (the allowlist is scoped,
+    # not blanket-open). See
+    # :func:`config._group_resolver.groups_peered`.
+    if named_groups_peered(sender=sender, target=target, db_path=db_path):
         return ("allow", None)
 
     if has_grant(sender=sender, target=target, db_path=db_path):

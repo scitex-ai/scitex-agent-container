@@ -64,6 +64,7 @@ __all__ = [
     "list_node_tokens",
     "lookup_comms_node",
     "mint_node_token",
+    "named_groups_peered",
     "read_comms_policy",
     "record_comms_policy",
     "record_lineage",
@@ -266,69 +267,22 @@ def derive_group(
 
 # ---------------------------------------------------------------------------
 # named groups (operator 2026-06-25) — a SECOND grouping axis layered on
-# top of the lineage-derived group mesh above. The group NAME is resolved
-# at agent_start from ``metadata.labels.group`` (else role-derived) and
-# persisted in ``node_comms_policy.group_name``; these readers apply it at
-# ACL-check time. Pure DB reads — the resolver itself is in
+# top of the lineage-derived group mesh above. The readers live in a
+# sibling module (state_db_named_groups) under the per-file line cap; they
+# are re-exported below so the natural import path
+# ``from ..._state.state_db_nodes import same_named_group`` keeps working.
+# The group NAME is resolved at agent_start from ``metadata.labels.group``
+# (else role-derived) and persisted in ``node_comms_policy.group_name``;
+# the resolver / peering allowlist live in
 # :mod:`scitex_agent_container.config._group_resolver`.
 # ---------------------------------------------------------------------------
 
-
-def resolve_group_name(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> str:
-    """Return ``name``'s persisted NAMED group, or ``""`` if ungrouped.
-
-    Reads ``node_comms_policy.group_name`` (written at ``agent_start``
-    from the resolved ``metadata.labels.group`` / role default). An
-    agent with no policy row, or a row with an empty ``group_name``,
-    is "ungrouped" and shares a named group with no one.
-    """
-    if not name:
-        return ""
-    policy = read_comms_policy(name=name, db_path=db_path)
-    return str(policy.get("group_name", "") or "")
-
-
-def same_named_group(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
-
-    Both groups must be NON-EMPTY and equal. Two ungrouped agents
-    (empty group) do NOT match — that keeps absence byte-equivalent to
-    the pre-group-name behaviour (an ungrouped fleet falls through to
-    the lineage-mesh + explicit-grant ACL exactly as before).
-    """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
-    if not sender_group:
-        return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
-    return target_group == sender_group
-
-
-def is_developer(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``developer``.
-
-    The developer group has FULL AUTHORITY (operator 2026-06-25):
-    members may CRUD agents (spawn / start / stop / restart / delete)
-    and CRUD the ACL (grant / revoke). The spawn + lineage ACL gates
-    consult this to short-circuit their default (root-only / lineage-
-    descendant) checks.
-    """
-    from ..config._group_resolver import is_developer_group
-
-    return is_developer_group(resolve_group_name(name=name, db_path=db_path))
-
+from .state_db_named_groups import (  # noqa: E402
+    is_developer,
+    named_groups_peered,
+    resolve_group_name,
+    same_named_group,
+)
 
 # ---------------------------------------------------------------------------
 # spawn permission — current policy: root-only spawn
@@ -485,85 +439,18 @@ def list_comms_grants(
 
 
 # ---------------------------------------------------------------------------
-# WI-4 — name → host resolver primitives. Kept here (rather than
-# splitting into a sibling module) because the cross-host forwarder
-# consults both the resolver and the ACL primitives from this module.
+# WI-4 / ADR-0014 — name → host resolver primitives. Extracted into a
+# sibling module (state_db_host_resolver) under the per-file line cap and
+# re-exported below so the natural import path
+# ``from ..._state.state_db_nodes import resolve_node_host`` keeps working;
+# the cross-host forwarder consults both the resolver and the ACL
+# primitives from this module.
 # ---------------------------------------------------------------------------
 
-
-def resolve_node_host(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> dict[str, Any] | None:
-    """Map a node ``name`` to ``{host, a2a_port}``.
-
-    Resolution order (ADR-0014):
-
-    1. ``instances`` table — the canonical "live agent" registry. Picks
-       the most recently started live (``ended_at IS NULL``) row.
-    2. ``comms_nodes`` table (ADR-0014 federated comms graph) — used
-       for nodes that are NOT sac-managed agents (operator identities
-       like ``lead``, peer hosts' listen-targets, cross-host
-       registrations sync'd via ``sac registry sync``).
-
-    Returns ``None`` only when neither table knows the name. Callers
-    treat ``None`` as "this is a local-only/unknown node; do not
-    cross-host forward" — the ``NodeRegistry`` implicit-registration
-    path in ``_listen/_node_channel.py`` handles that case.
-    """
-    if not name:
-        return None
-    from .state_db import open_db
-    from .state_db_comms_nodes import resolve_comms_node_host
-
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
-    if row is not None:
-        return {
-            "host": str(row["host"]),
-            "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
-        }
-    # Fall through to comms_nodes (ADR-0014).
-    return resolve_comms_node_host(name=name, db_path=db_path)
-
-
-def is_local_node(
-    *,
-    name: str,
-    local_host: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` if ``name`` should be served locally.
-
-    Local cases:
-
-    * The name resolves to ``local_host`` via :func:`resolve_node_host`
-      (either ``instances`` or ``comms_nodes`` per ADR-0014).
-    * The name does NOT resolve to any host (unknown / external node) —
-      defer to the local ``NodeRegistry`` implicit-registration path.
-      Forwarding a never-seen name would synthesise an SSRF target
-      from a self-claimed string; the host-local path is correct.
-
-    Critically: when the name IS in ``comms_nodes`` with a host that
-    is NOT ``local_host``, this returns ``False`` — that is the bug
-    fix the federated graph closes (cross-host targets like ``lead``
-    on a Spartan host are now correctly forwarded instead of being
-    treated as local).
-    """
-    info = resolve_node_host(name=name, db_path=db_path)
-    if info is None:
-        return True
-    return info["host"] == local_host
+from .state_db_host_resolver import (  # noqa: E402
+    is_local_node,
+    resolve_node_host,
+)
 
 
 # ---------------------------------------------------------------------------

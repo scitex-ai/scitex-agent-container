@@ -39,7 +39,9 @@ from __future__ import annotations
 
 __all__ = [
     "DEVELOPER_GROUP",
+    "SCIENTIST_GROUP",
     "group_from_labels",
+    "groups_peered",
     "is_developer_group",
     "resolve_group",
 ]
@@ -49,6 +51,50 @@ __all__ = [
 # ACL-CRUD authority (see :func:`._listen._acl.check_spawn` /
 # ``check_lineage_acl``).
 DEVELOPER_GROUP = "developer"
+
+# The scientist group (operator 2026-06-25). Scientist agents author
+# papers (paper-scitex-clew / paper-neurovista / paper-ripple-wm carry
+# ``metadata.labels.group: scientist``) and need to collaborate with the
+# developer fleet without a per-pair grant. Same-group sends are already
+# covered by the named-group mesh; the cross-group reach is the peering
+# allowlist below.
+SCIENTIST_GROUP = "scientist"
+
+
+# Cross-group PEERING allowlist (operator 2026-06-25). Each entry is a
+# *frozenset of two group names* that may address each other in BOTH
+# directions by default — the cross-group default-DENY is lifted only
+# for these explicitly-paired groups, NOT blanket-opened. Two groups
+# that do not co-occur in any entry stay default-denied (an explicit
+# ``grant_send`` is still required between them).
+_PEERED_GROUPS: frozenset[frozenset[str]] = frozenset(
+    {
+        frozenset({SCIENTIST_GROUP, DEVELOPER_GROUP}),
+    }
+)
+
+
+def groups_peered(group_a: str | None, group_b: str | None) -> bool:
+    """Return True iff ``group_a`` and ``group_b`` are a PEERED pair.
+
+    Peering is symmetric (a↔b is the same entry as b↔a) and scoped to
+    the explicit :data:`_PEERED_GROUPS` allowlist — currently only
+    ``scientist``↔``developer``. Both group names must be non-empty;
+    an ungrouped agent (empty group) is never peered. A group is NOT
+    peered with itself here — same-group sends are the named-group
+    mesh's job, kept separate so the two policies can diverge.
+
+    Case-insensitive, whitespace-trimmed on both names.
+    """
+    if not group_a or not group_b:
+        return False
+    norm_a = str(group_a).strip().lower()
+    norm_b = str(group_b).strip().lower()
+    if not norm_a or not norm_b:
+        return False
+    if norm_a == norm_b:
+        return False
+    return frozenset({norm_a, norm_b}) in _PEERED_GROUPS
 
 
 # Exact role strings (case-insensitive) that default to the developer
