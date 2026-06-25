@@ -478,14 +478,26 @@ def test_wait_for_health_returns_true_on_first_200() -> None:
     assert result is True
 
 
-def test_wait_for_health_returns_false_when_never_200() -> None:
-    # Arrange
-    http = _HttpRecorder(statuses=[503, -1, 502])
+def test_wait_for_health_returns_false_when_transport_fails() -> None:
+    # Arrange — every probe is a transport failure (refused/timeout),
+    # i.e. ``-1``: the only signal that means the daemon is truly down.
+    http = _HttpRecorder(statuses=[-1, -1, -1])
     # Act
     with _swap("_http_get", http), _swap("_sleep", _no_sleep):
         result = wait_for_health(host="127.0.0.1", port=7878, deadline_secs=1.0)
     # Assert
     assert result is False
+
+
+def test_wait_for_health_returns_true_on_401_under_bearer_auth() -> None:
+    # Arrange — bearer-auth gate answers the unauthenticated probe with
+    # 401: the daemon is ALIVE (it answered), so liveness must pass.
+    http = _HttpRecorder(statuses=[401])
+    # Act
+    with _swap("_http_get", http), _swap("_sleep", _no_sleep):
+        result = wait_for_health(host="127.0.0.1", port=7878, deadline_secs=5.0)
+    # Assert
+    assert result is True
 
 
 def test_wait_for_health_polls_correct_url() -> None:
