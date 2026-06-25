@@ -188,6 +188,15 @@ From: ./sac-base.sif
     pdflatex --version
     latexmk --version
 
+    # ---- 4. System-python invariant (paper-agent .venv base) -----------
+    # Paper agents migrating onto this image keep a per-agent uv .venv whose
+    # base interpreter resolves to the system python3 (3.12 on noble),
+    # inherited unchanged from :base. Assert it survived this layer's
+    # %post so a future edit here cannot silently break the interpreter the
+    # paper venvs depend on (regression neurovista hit when a venv pointed
+    # at a removed path). No new python is installed — this is a guard.
+    /usr/bin/python3 --version
+
 %environment
     export PATH=/opt/venv-sac/bin:$PATH
     export VIRTUAL_ENV=/opt/venv-sac
