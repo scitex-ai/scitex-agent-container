@@ -52,6 +52,7 @@ from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
     migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
+    migrate_node_comms_policy_add_group_name,
 )
 
 DEFAULT_DB_PATH = Path(
@@ -313,6 +314,12 @@ CREATE INDEX IF NOT EXISTS idx_comms_nodes_host ON comms_nodes(host);
 -- Defaults match the dataclass defaults (everything "allow", may_spawn=1,
 -- lineage_group=""), so absence of a row is byte-equivalent to the
 -- pre-Phase-3 group-default ACL.
+-- ``group_name`` (operator 2026-06-25): the agent's NAMED group, resolved
+-- at agent_start from metadata.labels.group (else role-derived; the
+-- developer-ish roles default to 'developer'). Read at ACL-check time so
+-- a same-named-group send is allowed (full mesh within a group) and the
+-- 'developer' group gets full agent-CRUD authority. Default '' (ungrouped)
+-- keeps absence byte-equivalent to the pre-group-name behaviour.
 CREATE TABLE IF NOT EXISTS node_comms_policy (
     name              TEXT PRIMARY KEY,
     outbound_siblings TEXT NOT NULL DEFAULT 'allow',
@@ -321,6 +328,7 @@ CREATE TABLE IF NOT EXISTS node_comms_policy (
     inbound_parent    TEXT NOT NULL DEFAULT 'allow',
     lineage_group     TEXT NOT NULL DEFAULT '',
     may_spawn         INTEGER NOT NULL DEFAULT 1,
+    group_name        TEXT NOT NULL DEFAULT '',
     updated_at        REAL NOT NULL
 );
 """
@@ -425,6 +433,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         # DB (with the family-tree columns) but is a no-op on an
         # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
         migrate_instances_add_family_tree_cols(conn)
+        # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
+        # column on a pre-existing ``node_comms_policy`` (operator
+        # 2026-06-25). No-op on a fresh DB (DDL already has the column).
+        migrate_node_comms_policy_add_group_name(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
         # Task #27 — ACL block/unblock flow tables. Both CREATE TABLE
