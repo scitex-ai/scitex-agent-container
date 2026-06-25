@@ -322,3 +322,23 @@ def test_default_binds_for_host_returns_absolute_host_paths_only(
     assert all(
         not src.startswith("~") and Path(src).is_absolute() for src in host_sources
     )
+
+
+# ---------------------------------------------------------------------------
+# Operator handoff bind (card sac-bind-host-tmp-emacs-handoff) — under
+# --containall the host /tmp is isolated, so agents need the emacs-claude-code
+# handoff dir bound read-only to read the operator's UI debug / screenshot
+# context. Skip-if-missing is covered by the host-existence-gate tests above.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_include_emacs_handoff_bind_read_only() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act
+    handoff = [b for b in _FLEET_DEFAULT_BINDS if "emacs-claude-code" in b]
+    # Assert — bound at the same host path, read-only.
+    assert handoff == ["/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro"]
