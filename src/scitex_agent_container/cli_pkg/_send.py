@@ -78,6 +78,7 @@ def send_to_agent(
     prompt: str | None = None,
     *,
     key: str | None = None,
+    keys: str | None = None,
     timeout_seconds: int = 120,
     model: str | None = None,
     max_turns: int | None = None,
@@ -139,20 +140,29 @@ def send_to_agent(
             never read.
 
     Raises:
-        ValueError: When ``prompt`` and ``key`` are both passed (or
-            both omitted). The MCP layer surfaces this as a tool
-            validation error.
+        ValueError: When more than one of ``prompt`` / ``key`` / ``keys``
+            is passed (or all are omitted). The MCP layer surfaces this
+            as a tool validation error.
     """
-    if prompt and key:
-        raise ValueError("prompt and key are mutually exclusive")
-    if not prompt and not key:
-        raise ValueError("either prompt or key is required")
+    _key_modes = [v for v in (prompt, key, keys) if v]
+    if len(_key_modes) > 1:
+        raise ValueError("prompt, key and keys are mutually exclusive")
+    if not _key_modes:
+        raise ValueError("one of prompt, key or keys is required")
 
     from .._network.peer import PeerError
     from .._state.state_db import _resolve_host
     from ._send_resolve import resolve_send_endpoint
 
     current_host = _resolve_host(None)
+
+    # Key passthrough is tmux-based (NOT /v1/turn), so it does not need a
+    # bound a2a_port. Handle it before the A2A endpoint resolution. Cancel
+    # keys (ESC / C-c / SIGINT) keep the local SIGINT semantics; every
+    # other named key / sequence is delivered to the agent's tmux session.
+    if key is not None or keys is not None:
+        return _dispatch_keys(name, key=key, keys=keys, current_host=current_host)
+
     # Resolve the LIVE endpoint the same way ``a2a_send`` / the listen
     # forwarder do: active ``instances`` row port first, then the durable
     # ``port_allocator`` claim that survives a health-monitor restart.
@@ -199,18 +209,6 @@ def send_to_agent(
         url = f"ssh://{peer_host}:{a2a_port}/v1/turn"
     else:
         url = f"http://127.0.0.1:{a2a_port}/v1/turn"
-
-    if key:
-        # Key-passthrough isn't wired into /v1/turn yet; the CLI handles
-        # ESC via os.kill(SIGINT) on a local pid file. Surfacing this
-        # as a loud error is the no-silent-fallback choice.
-        return {
-            "status": "error",
-            "error": (
-                f"key={key!r} dispatch not supported via send_to_agent; "
-                "use the CLI's local SIGINT path (`sac agents send --key`)"
-            ),
-        }
 
     text = prompt or ""
     metadata_extras: dict[str, Any] = {}
@@ -290,6 +288,112 @@ def send_to_agent(
         "status": "ok",
         "response_text": reply,
         "response_metadata": metadata,
+    }
+
+
+def _dispatch_keys(
+    name: str,
+    *,
+    key: str | None,
+    keys: str | None,
+    current_host: str,
+) -> dict[str, Any]:
+    """Deliver ``key`` / ``keys`` to ``name`` and return a structured dict.
+
+    Mirrors the CLI ``sac agents send --key/--keys`` passthrough for the
+    MCP ``agent_send`` tool. Routing:
+
+      * a single cancel key (ESC / C-c / SIGINT) → SIGINT the local
+        runner pid (interrupt the turn), same as the CLI;
+      * every other named key / sequence → validate against the tmux
+        vocabulary and ``send-keys`` it into the agent's LOCAL tmux
+        session.
+
+    Key delivery is tmux-based, so it only works for an agent running on
+    THIS host. A cross-host agent returns a loud error directing the
+    caller to run the send on the peer (no silent mis-target).
+
+    Returns:
+        ``{"status": "ok", "route": "send-keys"|"interrupt", ...}`` on
+        success; ``{"status": "error", "error": ...}`` on an unknown key,
+        a missing tmux session, a dead/absent pid, or a cross-host agent.
+    """
+    import os
+    import signal as _signal
+
+    from .._runners._session_state import state_dir_for
+    from .._runners._tmux._keys import (
+        UnknownKeyError,
+        parse_key_sequence,
+        validate_keys,
+    )
+    from .._state.state_db import list_active_instances
+
+    _cancel = {"ESC", "C-c", "SIGINT"}
+
+    # Refuse to mis-target a cross-host agent — keys go to the local
+    # tmux session only.
+    rows = list_active_instances()
+    matching = [
+        r
+        for r in rows
+        if r.get("name") == name and str(r.get("host") or "") == current_host
+    ]
+    if not matching:
+        return {
+            "status": "error",
+            "error": (
+                f"agent {name!r} is not running locally on {current_host!r}; "
+                "key passthrough is tmux-based and only reaches a local "
+                "session. Run `sac agents send` on the host where the agent "
+                "runs."
+            ),
+        }
+
+    if key is not None and key in _cancel and keys is None:
+        state_dir = state_dir_for(name)
+        pid_file = state_dir / "pid"
+        if not pid_file.is_file():
+            return {
+                "status": "error",
+                "error": f"agent {name!r} has no pid file at {pid_file}",
+            }
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, _signal.SIGINT)
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "error": str(exc)}
+        return {"status": "ok", "route": "interrupt", "pid": pid, "signal": "SIGINT"}
+
+    tokens = parse_key_sequence(keys) if keys is not None else [key or ""]
+    try:
+        tmux_keys = validate_keys(tokens)
+    except (UnknownKeyError, ValueError) as exc:
+        return {"status": "error", "error": str(exc)}
+
+    from .._runners._tmux.multiplexer import get_multiplexer
+    from ..config import load_config
+    from ..config._resolve import resolve_config
+
+    try:
+        cfg = load_config(resolve_config(name))
+    except Exception as exc:  # stx-allow: fallback (reason: unknown agent → structured error, not a traceback through MCP transport)
+        return {"status": "error", "error": str(exc)}
+    mux = get_multiplexer(cfg)
+    if not mux.exists(cfg.screen_name):
+        return {
+            "status": "error",
+            "error": (
+                f"agent {name!r} has no live tmux session {cfg.screen_name!r}"
+            ),
+        }
+    mux.send_keys(cfg.screen_name, *tmux_keys)
+    return {
+        "status": "ok",
+        "route": "send-keys",
+        "agent": name,
+        "session": cfg.screen_name,
+        "keys": tmux_keys,
     }
 
 

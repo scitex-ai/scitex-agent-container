@@ -28,6 +28,7 @@ import sys
 import click
 
 from .._runners._session_state import read_session_id, state_dir_for
+from .._runners._tmux.multiplexer import get_multiplexer
 from ..config import load_config
 from ..config._resolve import resolve_config
 from ._helpers import agent_name_complete
@@ -213,6 +214,86 @@ def _find_claude_binary() -> str:
     )
 
 
+# Cancel keys keep their historical interrupt semantics: instead of
+# being typed into the TUI they SIGINT the runner pid, cancelling the
+# current turn. Every OTHER key goes through tmux send-keys.
+_CANCEL_KEYS = frozenset({"ESC", "C-c", "SIGINT"})
+
+
+def _interrupt_via_sigint(name: str) -> None:
+    """SIGINT the agent's recorded runner pid (cancel the current turn).
+
+    The historical ESC / C-c / SIGINT semantics: cancel the turn rather
+    than typing the literal key into the TUI. Fails loud when no pid
+    file exists (agent not running) or the kill fails.
+    """
+    import signal as _signal
+
+    state_dir = state_dir_for(name)
+    pid_file = state_dir / "pid"
+    if not pid_file.is_file():
+        raise click.ClickException(
+            f"No pid file at {pid_file} — agent {name!r} not running."
+        )
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, _signal.SIGINT)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"# interrupt {name}: SIGINT → pid={pid}", err=True)
+
+
+def _send_keys_to_session(name: str, tmux_keys: list[str]) -> None:
+    """Deliver validated tmux key names into the agent's tmux session.
+
+    Resolves the agent's ``screen_name`` (its tmux session) from its
+    config and routes the keys through the configured multiplexer's
+    ``send_keys`` — the SAME send-keys primitive the TUI runner uses,
+    so Enter / arrows / Tab / digits land in the live TUI.
+    """
+    spec_path = resolve_config(name)
+    cfg = load_config(spec_path)
+    mux = get_multiplexer(cfg)
+    if not mux.exists(cfg.screen_name):
+        raise click.ClickException(
+            f"No tmux session {cfg.screen_name!r} for agent {name!r} "
+            "— is it running under the tmux/TUI runtime?"
+        )
+    mux.send_keys(cfg.screen_name, *tmux_keys)
+    click.echo(
+        f"# keys {name}: {' '.join(tmux_keys)} → tmux {cfg.screen_name}",
+        err=True,
+    )
+
+
+def _deliver_keys(name: str, *, key: str | None, keys: str | None) -> None:
+    """Route ``--key`` / ``--keys`` to SIGINT (cancel) or tmux send-keys.
+
+    A single ``--key`` that is one of :data:`_CANCEL_KEYS` keeps the
+    historical interrupt path (SIGINT the runner pid). Everything else
+    — a non-cancel ``--key`` or any ``--keys`` sequence — is validated
+    against the tmux key vocabulary and delivered to the agent's tmux
+    session. Validation fails loud (lists the valid set) BEFORE any
+    partial send.
+    """
+    from .._runners._tmux._keys import (
+        UnknownKeyError,
+        parse_key_sequence,
+        validate_keys,
+    )
+
+    if key is not None and key in _CANCEL_KEYS:
+        _interrupt_via_sigint(name)
+        return
+
+    tokens = [key] if key is not None else parse_key_sequence(keys or "")
+    try:
+        tmux_keys = validate_keys(tokens)
+    except (UnknownKeyError, ValueError) as exc:
+        raise click.UsageError(str(exc)) from exc
+    _send_keys_to_session(name, tmux_keys)
+
+
 @click.command(name="send")
 @click.argument("name", shell_complete=agent_name_complete)
 @click.argument("prompt", required=False)
@@ -231,8 +312,21 @@ def _find_claude_binary() -> str:
     "--key",
     default=None,
     help=(
-        "Send a control key instead of a prompt (tmux-style, e.g. ``ESC``, "
-        "``C-c``). Mutually exclusive with PROMPT."
+        "Send one key instead of a prompt (tmux-style, e.g. ``Enter``, "
+        "``Up``, ``Tab``, ``1``, ``ESC``, ``C-c``). Cancel keys "
+        "(ESC / C-c / SIGINT) interrupt the turn; every other key is "
+        "delivered to the agent's tmux session. Mutually exclusive with "
+        "PROMPT and --keys."
+    ),
+)
+@click.option(
+    "--keys",
+    "keys",
+    default=None,
+    help=(
+        "Send a whitespace-separated SEQUENCE of keys to the agent's "
+        'tmux session (e.g. ``--keys "Up Up Enter"`` or ``--keys "2 '
+        'Enter"``). Mutually exclusive with PROMPT and --key.'
     ),
 )
 @click.option(
@@ -248,25 +342,37 @@ def send(
     model: str | None,
     max_turns: int | None,
     key: str | None,
+    keys: str | None,
     no_stream: bool,
     forward: tuple[str, ...],
 ) -> None:
-    """Send a follow-up PROMPT (or control key) to an agent's existing
+    """Send a follow-up PROMPT (or key/keys) to an agent's existing
     Claude session.
 
     \b
     Examples:
       sac agent send coverage-runner "now bump the threshold to 95%"
       sac agent send coverage-runner --key ESC
+      sac agent send coverage-runner --key Enter
+      sac agent send coverage-runner --keys "Up Up Enter"
       sac agent send coverage-runner -- --model opus --max-turns 3 "..."
+
+    ``--key`` / ``--keys`` deliver tmux key names (Enter, Up, Down,
+    Left, Right, Tab, BTab, Space, Home, End, PageUp, PageDown,
+    Escape, C-c, …) plus literal chars/digits straight into the
+    agent's tmux session. The cancel keys (ESC / C-c / SIGINT) instead
+    interrupt the current turn via SIGINT.
 
     Anything after a literal ``--`` is forwarded verbatim to ``claude``
     (the raw escape hatch documented in SAC_OROCHI_SCOPES.md §1).
     """
-    if key and prompt:
-        raise click.UsageError("--key is mutually exclusive with PROMPT.")
-    if not key and not prompt:
-        raise click.UsageError("Either PROMPT or --key is required.")
+    _passed = [v for v in (prompt, key, keys) if v]
+    if len(_passed) > 1:
+        raise click.UsageError(
+            "PROMPT, --key and --keys are mutually exclusive."
+        )
+    if not _passed:
+        raise click.UsageError("Either PROMPT, --key or --keys is required.")
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
     # sending a PROMPT (the ``--key`` SIGINT path needs local pid
@@ -277,7 +383,7 @@ def send(
     # follow the same Checkpoint 2 contract as the other in-SIF verbs.
     from .._lifecycle._in_sif_broker import is_in_sif
 
-    if is_in_sif() and prompt and not key:
+    if is_in_sif() and prompt and not key and not keys:
         _send_via_host_listen(
             name=name,
             prompt=prompt,
@@ -285,28 +391,8 @@ def send(
             max_turns=max_turns,
         )
         return  # noreturn — _send_via_host_listen sys.exits
-    if key:
-        # ESC / C-c → SIGINT to the runner pid. Other keys are reserved
-        # for a future tty-bridge implementation.
-        if key not in ("ESC", "C-c", "SIGINT"):
-            raise click.UsageError(
-                f"--key {key!r} not supported. Only ESC / C-c / SIGINT are "
-                "wired (cancel current turn). Use a prompt otherwise."
-            )
-        import signal as _signal
-
-        state_dir = state_dir_for(name)
-        pid_file = state_dir / "pid"
-        if not pid_file.is_file():
-            raise click.ClickException(
-                f"No pid file at {pid_file} — agent {name!r} not running."
-            )
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, _signal.SIGINT)
-        except (OSError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        click.echo(f"# interrupt {name}: SIGINT → pid={pid}", err=True)
+    if key or keys:
+        _deliver_keys(name, key=key, keys=keys)
         return
 
     # Cross-host: when the agent's active state.db.instances row lives

@@ -230,6 +230,7 @@ def agent_send(
     prompt: str | None = None,
     timeout_seconds: int = 120,
     key: str | None = None,
+    keys: str | None = None,
     model: str | None = None,
     max_turns: int | None = None,
     wait: bool = False,
@@ -264,8 +265,19 @@ def agent_send(
       * ``"creds-expired"`` — lead/peer OAuth token expired
       * ``"timeout"`` — (``wait=True``) no response in ``timeout_seconds``
 
-    ``prompt`` and ``key`` are mutually exclusive; passing both raises
-    ``ValueError`` (surfaced to the MCP host as a tool-input error).
+    ``prompt`` / ``key`` / ``keys`` are mutually exclusive; passing more
+    than one raises ``ValueError`` (surfaced to the MCP host as a
+    tool-input error).
+
+    Key passthrough (``key`` / ``keys``) mirrors the CLI ``sac agents
+    send --key/--keys``: cancel keys (ESC / C-c / SIGINT) interrupt the
+    turn via SIGINT; every other tmux key name (Enter, Up, Down, Left,
+    Right, Tab, BTab, digits, …) or whitespace-separated ``keys``
+    sequence is delivered to the agent's LOCAL tmux session via
+    send-keys. Returns ``status="ok"`` with ``route="send-keys"`` /
+    ``"interrupt"`` on success, or ``status="error"`` for an unknown key
+    name, a missing tmux session, or a cross-host agent (key passthrough
+    only reaches a local session).
     """
     from ...cli_pkg._send import send_to_agent
 
@@ -273,6 +285,7 @@ def agent_send(
         name,
         prompt=prompt,
         key=key,
+        keys=keys,
         timeout_seconds=timeout_seconds,
         model=model,
         max_turns=max_turns,

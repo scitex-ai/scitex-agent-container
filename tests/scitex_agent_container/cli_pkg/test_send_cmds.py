@@ -176,7 +176,7 @@ def test_invocation_without_prompt_or_key_reports_requirement_in_output(
     # Act
     result = runner.invoke(send, ["alpha"])
     # Assert
-    assert "Either PROMPT or --key is required" in result.output
+    assert "Either PROMPT, --key or --keys is required" in result.output
 
 
 def test_invocation_with_both_prompt_and_key_exits_nonzero(isolated_env):
@@ -248,8 +248,8 @@ def test_key_esc_delivers_sigint_to_recorded_pid(alpha_with_pid, field, expected
 def test_key_unsupported_exits_nonzero(isolated_env):
     # Arrange
     runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
+    # Act — ``Bogus`` is neither a tmux keyword nor a single literal char.
+    result = runner.invoke(send, ["alpha", "--key", "Bogus"])
     # Assert
     assert result.exit_code != 0
 
@@ -258,9 +258,9 @@ def test_key_unsupported_reports_not_supported(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
+    result = runner.invoke(send, ["alpha", "--key", "Bogus"])
     # Assert
-    assert "not supported" in result.output
+    assert "unsupported key" in result.output
 
 
 def test_key_esc_without_pid_file_exits_nonzero(isolated_env):
@@ -339,6 +339,89 @@ def test_missing_session_id_reports_no_session_recorded(
     result = invoke()
     # Assert
     assert "No session_id recorded" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --key / --keys: tmux send-keys passthrough (non-cancel keys)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingMux:
+    """Fake multiplexer recording ``send_keys`` calls; session present."""
+
+    sent: list[tuple[str, tuple[str, ...]]] = []
+
+    @staticmethod
+    def exists(session: str) -> bool:
+        return True
+
+    @classmethod
+    def send_keys(cls, session: str, *keys: str) -> None:
+        cls.sent.append((session, keys))
+
+
+@contextmanager
+def _swap_recording_mux() -> Iterator[type]:
+    """Swap ``get_multiplexer`` to yield a fresh recording fake."""
+
+    class _Mux(_RecordingMux):
+        sent: list[tuple[str, tuple[str, ...]]] = []
+
+    saved = send_mod.get_multiplexer
+    send_mod.get_multiplexer = lambda cfg: _Mux  # type: ignore[assignment]
+    try:
+        yield _Mux
+    finally:
+        send_mod.get_multiplexer = saved  # type: ignore[assignment]
+
+
+def test_key_enter_delivered_to_tmux_session(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_recording_mux() as mux:
+        result = runner.invoke(send, ["alpha", "--key", "Enter"])
+    # Assert
+    assert mux.sent == [("alpha", ("Enter",))]
+
+
+def test_key_enter_exits_zero(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_recording_mux():
+        result = runner.invoke(send, ["alpha", "--key", "Enter"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_keys_sequence_delivered_in_order(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_recording_mux() as mux:
+        runner.invoke(send, ["alpha", "--keys", "Up Up Enter"])
+    # Assert
+    assert mux.sent == [("alpha", ("Up", "Up", "Enter"))]
+
+
+def test_key_digit_delivered_to_tmux_session(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap_recording_mux() as mux:
+        runner.invoke(send, ["alpha", "--key", "2"])
+    # Assert
+    assert mux.sent == [("alpha", ("2",))]
+
+
+def test_prompt_and_keys_mutually_exclusive(isolated_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(send, ["alpha", "hi", "--keys", "Enter"])
+    # Assert
+    assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------
