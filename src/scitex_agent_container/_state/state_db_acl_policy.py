@@ -83,6 +83,10 @@ DEFAULT_COMMS_POLICY: dict[str, Any] = {
     "inbound_parent": "allow",
     "lineage_group": "",
     "may_spawn": True,
+    # Group-based ACL (operator 2026-06-25): the agent's NAMED group.
+    # "" (ungrouped) is the default; absence is byte-equivalent to the
+    # pre-group-name behaviour (same-group allow needs a non-empty match).
+    "group_name": "",
 }
 
 
@@ -95,6 +99,7 @@ def record_comms_policy(
     inbound_parent: str = "allow",
     lineage_group: str = "",
     may_spawn: bool = True,
+    group_name: str = "",
     db_path: Path | None = None,
 ) -> None:
     """Upsert the Phase-3 per-spec ACL policy for ``name``.
@@ -111,32 +116,28 @@ def record_comms_policy(
         raise ValueError("record_comms_policy: name must be non-empty")
     if outbound_siblings not in ("allow", "deny"):
         raise ValueError(
-            f"outbound_siblings must be 'allow' or 'deny', got "
-            f"{outbound_siblings!r}"
+            f"outbound_siblings must be 'allow' or 'deny', got {outbound_siblings!r}"
         )
     if outbound_parent not in ("allow", "deny"):
         raise ValueError(
-            f"outbound_parent must be 'allow' or 'deny', got "
-            f"{outbound_parent!r}"
+            f"outbound_parent must be 'allow' or 'deny', got {outbound_parent!r}"
         )
     if inbound_siblings not in ("allow", "deny"):
         raise ValueError(
-            f"inbound_siblings must be 'allow' or 'deny', got "
-            f"{inbound_siblings!r}"
+            f"inbound_siblings must be 'allow' or 'deny', got {inbound_siblings!r}"
         )
     if inbound_parent not in ("allow", "deny"):
         raise ValueError(
-            f"inbound_parent must be 'allow' or 'deny', got "
-            f"{inbound_parent!r}"
+            f"inbound_parent must be 'allow' or 'deny', got {inbound_parent!r}"
         )
     if lineage_group not in ("", "solitary"):
         raise ValueError(
             f"lineage_group must be '' or 'solitary', got {lineage_group!r}"
         )
     if not isinstance(may_spawn, bool):
-        raise ValueError(
-            f"may_spawn must be a bool, got {type(may_spawn).__name__}"
-        )
+        raise ValueError(f"may_spawn must be a bool, got {type(may_spawn).__name__}")
+    if not isinstance(group_name, str):
+        raise ValueError(f"group_name must be a str, got {type(group_name).__name__}")
     from .state_db import open_db
 
     now = time.time()
@@ -145,8 +146,8 @@ def record_comms_policy(
             "INSERT INTO node_comms_policy ("
             "name, outbound_siblings, outbound_parent, "
             "inbound_siblings, inbound_parent, lineage_group, "
-            "may_spawn, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "may_spawn, group_name, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET "
             "outbound_siblings=excluded.outbound_siblings, "
             "outbound_parent=excluded.outbound_parent, "
@@ -154,6 +155,7 @@ def record_comms_policy(
             "inbound_parent=excluded.inbound_parent, "
             "lineage_group=excluded.lineage_group, "
             "may_spawn=excluded.may_spawn, "
+            "group_name=excluded.group_name, "
             "updated_at=excluded.updated_at",
             (
                 name,
@@ -163,6 +165,7 @@ def record_comms_policy(
                 inbound_parent,
                 lineage_group,
                 1 if may_spawn else 0,
+                group_name.strip(),
                 now,
             ),
         )
@@ -186,7 +189,8 @@ def read_comms_policy(
     with open_db(db_path) as conn:
         row = conn.execute(
             "SELECT outbound_siblings, outbound_parent, "
-            "inbound_siblings, inbound_parent, lineage_group, may_spawn "
+            "inbound_siblings, inbound_parent, lineage_group, may_spawn, "
+            "group_name "
             "FROM node_comms_policy WHERE name = ?",
             (name,),
         ).fetchone()
@@ -199,6 +203,7 @@ def read_comms_policy(
         "inbound_parent": str(row["inbound_parent"]),
         "lineage_group": str(row["lineage_group"]),
         "may_spawn": bool(row["may_spawn"]),
+        "group_name": str(row["group_name"]),
     }
 
 
@@ -235,12 +240,8 @@ def sender_target_relationship(
         target_parent_row = conn.execute(
             "SELECT parent_name FROM lineage WHERE child_name = ?", (target,)
         ).fetchone()
-    sender_parent = (
-        str(sender_parent_row["parent_name"]) if sender_parent_row else None
-    )
-    target_parent = (
-        str(target_parent_row["parent_name"]) if target_parent_row else None
-    )
+    sender_parent = str(sender_parent_row["parent_name"]) if sender_parent_row else None
+    target_parent = str(target_parent_row["parent_name"]) if target_parent_row else None
     if sender_parent == target:
         return "parent"
     if target_parent == sender:

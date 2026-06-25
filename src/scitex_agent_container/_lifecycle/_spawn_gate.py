@@ -60,9 +60,14 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
     so ``read_comms_policy`` always finds a row for any started agent.
     """
     from .._state.state_db_nodes import record_comms_policy
+    from ..config._group_resolver import group_from_labels
 
     comms = config.comms
     lineage = config.lineage
+    # Named group (operator 2026-06-25): metadata.labels.group, else
+    # role-derived (developer-ish roles → "developer"). Persisted here so
+    # the ACL check can read it by node name at send/spawn/manage time.
+    group_name = group_from_labels(getattr(config, "labels", None))
     record_comms_policy(
         name=config.name,
         outbound_siblings=comms.outbound.siblings,
@@ -71,6 +76,7 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
         inbound_parent=comms.inbound.parent,
         lineage_group=lineage.group,
         may_spawn=lineage.may_spawn,
+        group_name=group_name,
         db_path=db_path,
     )
 
