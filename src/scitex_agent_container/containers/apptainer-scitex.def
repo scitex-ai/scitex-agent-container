@@ -9,6 +9,7 @@
 #   - black, flake8, ipython, ipdb, pytest, pytest-cov
 #   - claude-agent-sdk (the runner's API; bundles its own claude binary)
 #   - scitex[all] (scientific stack)
+#   - a curated manuscript LaTeX toolchain (latex / latexmk / biber)
 #   - scitex-agent-container (sac CLI + runner module)
 #
 # Build:
@@ -145,6 +146,48 @@ From: ./sac-base.sif
             /opt/scitex-agent-container-src
     fi
 
+    # ---- 3. Manuscript LaTeX toolchain ---------------------------------
+    # Paper agents (paper-scitex-clew / paper-neurovista / paper-ripple-wm
+    # / neurovista) compile manuscripts in-container, but the SAC image
+    # shipped NO LaTeX engine — pdflatex/latexmk/lualatex/xelatex were all
+    # missing, and the nested texlive container can't mount because the
+    # unprivileged user-namespace has no /dev/fuse. Decision (operator,
+    # card sac-image-latex-manuscript): bake a CURATED native TeX Live set
+    # here in the :scitex layer (NOT full texlive — too big; NOT enabling
+    # fuse — fragile). LaTeX is a manuscript/scientific concern, so it
+    # belongs on the scientific layer, not the lean :base.
+    #
+    # Curated package set (Ubuntu 24.04 noble apt, --no-install-recommends
+    # to avoid pulling the multi-GB full-texlive recommends chain):
+    #   texlive-latex-base/-recommended/-extra — the LaTeX core + the
+    #     common class/package set most manuscripts use.
+    #   texlive-bibtex-extra + biber           — bibliography backends
+    #     (biber is biblatex's engine; bibtex-extra carries the styles).
+    #   texlive-fonts-recommended/-extra        — font packages many
+    #     journal classes hard-require at \documentclass load.
+    #   texlive-science                         — amsmath/siunitx/physics
+    #     /algorithms etc. (math + science macros).
+    #   texlive-publishers                      — ships elsarticle and a
+    #     large set of journal document classes (Elsevier, IEEE, etc.).
+    #   texlive-luatex + texlive-xetex          — lualatex/xelatex engines
+    #     (unicode + system-font manuscripts).
+    #   latexmk                                 — the build driver that
+    #     resolves the latex/bibtex/biber re-run loop automatically.
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+        texlive-bibtex-extra biber \
+        texlive-fonts-recommended texlive-fonts-extra \
+        texlive-science texlive-publishers \
+        texlive-luatex texlive-xetex \
+        latexmk
+    rm -rf /var/lib/apt/lists/*
+    # Fail loud if the engine or build driver did not land — a SIF that
+    # silently ships without pdflatex/latexmk would re-park every paper
+    # agent's compile lane exactly as before.
+    pdflatex --version
+    latexmk --version
+
 %environment
     export PATH=/opt/venv-sac/bin:$PATH
     export VIRTUAL_ENV=/opt/venv-sac
@@ -156,9 +199,11 @@ From: ./sac-base.sif
     org.scitex.layer scitex
     org.scitex.runtime apptainer
     org.scitex.from scitex-agent-container:base
-    org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest"
+    org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest latex latexmk biber"
 
 %help
     scitex-agent-container :scitex layer (sac default image).
-    Layered on :base; adds scitex scientific stack, claude SDK, sac itself.
+    Layered on :base; adds scitex scientific stack, claude SDK, sac
+    itself, and a curated manuscript LaTeX toolchain (pdflatex /
+    lualatex / xelatex / latexmk / biber).
     Default entry point: python -m scitex_agent_container._runners.claude_session
