@@ -16,7 +16,7 @@ overlay, opus, generic boot kick) and differ on only:
 
   axis              developer            scientist
   ----------------- -------------------- ----------------------------------
-  group             developer            scientist
+  groups (list)     [developer]          [scientist]
   purpose suffix    -maintainer          -research
 
 Two blocks are AUTO-detected at create time, regardless of template:
