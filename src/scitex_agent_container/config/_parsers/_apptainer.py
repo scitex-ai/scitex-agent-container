@@ -114,6 +114,11 @@ def parse_apptainer(spec: dict):
         def_file=str(raw.get("def_file", "") or ""),
         nv=bool(raw.get("nv", False)),
         rocm=bool(raw.get("rocm", False)),
+        # ``--fakeroot`` (uid 0 inside via userns). Previously dropped by
+        # the parser → the YAML key silently no-op'd. Parse it so the
+        # curated iso-prepend can emit ``--fakeroot`` (always in a valid
+        # position — see _apptainer_iso_flags + _apptainer_argv_guard).
+        fakeroot=bool(raw.get("fakeroot", False)),
         overlay=str(raw.get("overlay", "") or ""),
         overlay_size=str(raw.get("overlay_size", "") or ""),
         overlay_create_if_missing=bool(raw.get("overlay_create_if_missing", True)),
