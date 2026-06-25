@@ -312,7 +312,24 @@ From: ubuntu:24.04
             /usr/local/bin/claude
     fi
 
-    # ---- 7. RTK (deferred — repo not yet public) -----------------------
+    # ---- 7. rtk — Rust Token Killer (the operator's token-saving proxy) -
+    # rtk rewrites dev commands through a token-optimizing CLI proxy. The
+    # operator's ~/.claude/settings.json already wires the rtk
+    # command-rewrite hook, but it silently no-ops in agents unless `rtk`
+    # is on PATH — the host build lands in the operator's ~/.cargo/bin,
+    # which is NOT on the container PATH. Bake rtk into the image so EVERY
+    # agent has it (base + the scitex layer that bootstraps from base).
+    #
+    # Built from source with the toolchain from section 4; the binary
+    # lands in $CARGO_HOME/bin (/opt/cargo/bin, already on PATH). PINNED to
+    # a release tag for reproducible rebuilds — the same drift-avoidance as
+    # the bundled sac source (never a moving @main). `--git` targets the
+    # operator's repo, avoiding the unrelated crates.io `rtk`
+    # (name collision: reachingforthejack/rtk).
+    cargo install --git https://github.com/rtk-ai/rtk --tag v0.38.0 rtk
+    rm -rf /opt/cargo/registry /opt/cargo/git
+    # Fail loud if the build did not produce a working binary.
+    /opt/cargo/bin/rtk --version
 
 %environment
     export LANG=en_US.UTF-8
@@ -328,7 +345,7 @@ From: ubuntu:24.04
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx mermaid prettier eslint jsonlint apptainer"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx mermaid prettier eslint jsonlint apptainer rtk"
 
 %help
     scitex-agent-container :base layer.
