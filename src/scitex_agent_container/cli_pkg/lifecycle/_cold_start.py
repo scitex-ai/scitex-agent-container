@@ -357,6 +357,36 @@ def resolve_cold_start_targets(
     return rewritten, plans
 
 
+def render_cold_start_plans(plans, *, as_json: bool, emit_json, console) -> None:
+    """Print the resolved cold-start plan(s).
+
+    Extracted from ``_start.py``'s click entry to keep it under the
+    per-file line cap. ``--json`` emits one ``{"cold_start": {...}}``
+    object per plan via ``emit_json``; otherwise renders a human row to
+    ``console``. Behaviour is byte-identical to the inline loop.
+    """
+    for plan in plans:
+        if as_json:
+            emit_json(
+                {
+                    "cold_start": {
+                        "label": plan.label,
+                        "host": plan.host,
+                        "workdir": plan.workdir,
+                        "spec_path": plan.spec_path,
+                        "action": plan.action,
+                    }
+                }
+            )
+        else:
+            console.print(
+                f"[bold]cold-start[/bold] [cyan]{plan.label}[/cyan] "
+                f"[dim]({plan.action})[/dim]  host=[cyan]{plan.host}[/cyan]  "
+                f"workdir=[cyan]{plan.workdir}[/cyan]\n"
+                f"  spec: [dim]{plan.spec_path}[/dim]"
+            )
+
+
 __all__ = [
     "ColdStartConflictError",
     "ColdStartParseError",
@@ -364,5 +394,6 @@ __all__ = [
     "ColdStartTarget",
     "materialize_cold_start",
     "parse_start_target",
+    "render_cold_start_plans",
     "resolve_cold_start_targets",
 ]
