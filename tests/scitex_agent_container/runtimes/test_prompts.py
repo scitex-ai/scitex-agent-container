@@ -6,12 +6,14 @@ from scitex_agent_container.runtimes.prompts import (
     PROMPT_HANDLERS,
     PromptHandler,
     _detect_bypass_permissions,
+    _detect_compose_pending_unsent,
     _detect_dev_channels,
     _detect_file_trust,
     _detect_file_trust_radio,
     _detect_login_method,
     _detect_mcp_json_edit,
     _detect_press_enter_continue,
+    _detect_resume_session,
     _detect_skip_permissions_yn,
     _detect_theme_selection,
     _detect_thinking_effort,
@@ -622,3 +624,66 @@ def test_no_handler_sends_no_keys_on_quiet_pane():
     detect_and_respond("\n> \n", set(), lambda k: sent.append(k))
     # Assert
     assert sent == []
+
+
+# ── Resume-session picker (claude --continue on a long session) ───────────────
+# Verbatim modal Claude Code shows when --continue/--resume resumes a large
+# session. The sac boot uses --continue to get the FULL prior context, so the
+# boot-drive must auto-pick "2. Resume full session as-is" — left unhandled it
+# blocks boot (lead-retirement boot-hang, 2026-06-25).
+_RESUME_MODAL = """\
+  This session is 6h 31m old and 266.5k tokens.
+  Resuming the full session will consume a substantial portion of your usage
+  limits. We recommend resuming from a summary.
+  ❯ 1. Resume from summary (recommended)
+    2. Resume full session as-is
+    3. Don't ask me again
+  Enter to confirm · Esc to cancel
+"""
+
+
+def test_resume_session_detector_matches_modal():
+    # Arrange
+    pane = _RESUME_MODAL
+    # Act
+    result = _detect_resume_session(pane)
+    # Assert
+    assert result is True
+
+
+def test_resume_session_detector_no_match_on_plain_text():
+    # Arrange
+    content = "We recommend resuming from a summary later."
+    # Act
+    result = _detect_resume_session(content)
+    # Assert
+    assert result is False
+
+
+def test_resume_session_selects_full_as_is_keys():
+    # Arrange — --continue wants the FULL prior context, i.e. option 2.
+    sent: list[str] = []
+    # Act
+    detect_and_respond(_RESUME_MODAL, set(), lambda k: sent.append(k))
+    # Assert
+    assert sent == ["2", "Enter"]
+
+
+def test_compose_pending_also_matches_resume_modal():
+    # Arrange — proves the conflict: the modal's "❯ 1." line satisfies the
+    # compose-pending-unsent pattern too, so priority ordering must decide.
+    pane = _RESUME_MODAL
+    # Act
+    result = _detect_compose_pending_unsent(pane)
+    # Assert
+    assert result is True
+
+
+def test_resume_session_wins_over_compose_pending():
+    # Arrange — both detectors match; resume-session (priority 1) must win so
+    # the boot-drive selects the picker instead of submitting into it.
+    pane = _RESUME_MODAL
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name == "resume-session"

@@ -227,6 +227,32 @@ def _detect_compose_pending_unsent(content: str) -> bool:
     return bool(re.search(r"❯[ \t\xa0]+\S", content))
 
 
+def _detect_resume_session(content: str) -> bool:
+    """Long-session resume picker shown by ``claude --continue`` / ``--resume``.
+
+    When the session being resumed is large, Claude Code interposes a
+    three-way picker before the REPL opens::
+
+        This session is <N>h <M>m old and <K>k tokens.
+        Resuming the full session will consume a substantial portion ...
+        ❯ 1. Resume from summary (recommended)
+          2. Resume full session as-is
+          3. Don't ask me again
+
+    The sac TUI boot uses ``--continue`` precisely to resume the FULL prior
+    context, so we always pick option 2 ("Resume full session as-is"). Left
+    unhandled this modal BLOCKS boot: the startup_prompt paste lands inside
+    the picker and the boot-drain hangs (lead-retirement, 2026-06-25). Must
+    out-rank ``compose-pending-unsent`` — the modal's ``❯ 1.`` line also
+    matches that detector — hence priority 1.
+    """
+    return (
+        "Resume full session as-is" in content
+        and "Resume from summary" in content
+        and "Enter to confirm" in content
+    )
+
+
 def _detect_done(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done).
 
@@ -244,6 +270,15 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_bypass_permissions,
         keys=["2", "Enter"],  # "2. Yes, I accept"
         priority=1,
+    ),
+    PromptHandler(
+        name="resume-session",
+        detect=_detect_resume_session,
+        keys=[
+            "2",
+            "Enter",
+        ],  # "2. Resume full session as-is" (--continue wants full context)
+        priority=1,  # before compose-pending-unsent: the modal's "❯ 1." matches that too
     ),
     PromptHandler(
         name="dev-channels",
