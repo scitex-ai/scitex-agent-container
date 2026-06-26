@@ -111,17 +111,22 @@ def _register_self_comms_node(*, port: int) -> None:
 
 
 def _maybe_sync_on_start() -> None:
-    """ADR-0014 — optionally trigger ``sac registry sync --all`` once at start.
+    """ADR-0014 — optionally trigger ``sac registry sync --all`` once.
 
     Opt-out via the ``comms_nodes.sync_on_start: false`` config flag
     (default True). Best-effort: per-peer failures are logged by the
     sync command itself; we never raise.
 
-    The sync is synchronous so the listen has the latest peer view
-    before it starts answering inbound A2A POSTs — that's the closure
-    on the bidirectionality bug: a Spartan listen that just came up
-    will already know where ``lead`` lives before the first agent on
-    Spartan tries to send to it.
+    NOT on the boot path anymore. This synchronous helper used to run
+    BEFORE ``uvicorn.run`` so the listen had the latest peer view before
+    answering inbound A2A POSTs — but an unreachable static peer made its
+    ssh call hang and blocked the bind, with no error logged (INCIDENT
+    2026-06-26). The startup sync now runs best-effort AFTER the bind, off
+    the event loop, as a lifespan task
+    (:func:`_listen._startup_peer_sync.sync_peers_on_listen_startup`). This
+    helper is retained for explicit/legacy callers only and is bounded by
+    an overall budget so even a direct call can never wedge — but
+    ``_do_start_listen`` no longer invokes it.
     """
     try:
         from .._state.host_config import load
@@ -156,6 +161,9 @@ def _maybe_sync_on_start() -> None:
             all_peers=True,
             dry_run=False,
             as_json=False,
+            # Bound even this legacy/direct path so a re-introduced
+            # pre-bind call can never wedge (defense in depth).
+            overall_budget_s=60.0,
         )
         if rc != 0:
             click.echo(
@@ -317,7 +325,15 @@ def _do_start_listen(
     # (a listen that won't bind because of a registry write is worse
     # than a missing federated row).
     _register_self_comms_node(port=port)
-    _maybe_sync_on_start()
+    # NOTE: the ``comms_nodes`` peer-sync used to run SYNCHRONOUSLY HERE,
+    # before ``uvicorn.run``. That was the live silent-bind-hang vector
+    # (INCIDENT 2026-06-26): a single powered-off static peer made its
+    # un-timed ssh call hang, blocking boot before 7878 ever bound, with no
+    # error logged — the whole fleet lost agent-to-agent comms. The sync now
+    # runs best-effort AFTER the bind, off the event loop, as a lifespan
+    # task (``_listen._startup_peer_sync.sync_peers_on_listen_startup``, wired
+    # in ``_lifecycle._listen_lifespan``). The bind must be impossible to
+    # block; nothing that can hang may run on this pre-bind path.
 
     # Pass the bind port so the lifespan's fail-loud watchdog can probe
     # 127.0.0.1:<port>/v1/health after startup and scream if the daemon
