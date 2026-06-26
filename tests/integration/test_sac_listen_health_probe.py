@@ -33,7 +33,7 @@ import pytest
 
 # --- locate the shipped scripts -------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _SYSTEMD_DIR = _REPO_ROOT / "scripts" / "systemd"
 _PROBE = _SYSTEMD_DIR / "sac-listen-health-probe.sh"
 _INSTALL = _SYSTEMD_DIR / "install-sac-listen.sh"
