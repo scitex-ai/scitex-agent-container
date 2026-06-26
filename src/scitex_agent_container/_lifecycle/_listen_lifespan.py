@@ -60,6 +60,23 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         await persist_self_peers_on_listen_startup()
         tasks: list = []
 
+        # Best-effort ``comms_nodes`` peer-sync — launched HERE (after the
+        # bind, off the event loop) rather than synchronously before
+        # ``uvicorn.run``. The pre-bind synchronous sync was the live
+        # silent-bind-hang vector (INCIDENT 2026-06-26): one powered-off
+        # static peer made its un-timed ssh call hang, blocking boot before
+        # 7878 ever bound, with no error logged. As a backgrounded task that
+        # dispatches the blocking ssh sweep via ``asyncio.to_thread`` and
+        # bounds it, it can never block the bind. Honour
+        # SAC_LISTEN_STARTUP_SYNC_DISABLED=1 to skip launching (test
+        # harnesses / single-host installs that opt out at the env level).
+        if os.environ.get("SAC_LISTEN_STARTUP_SYNC_DISABLED", "") != "1":
+            from .._listen._startup_peer_sync import sync_peers_on_listen_startup
+
+            sync_task = asyncio.create_task(sync_peers_on_listen_startup())
+            app.state.startup_peer_sync_task = sync_task
+            tasks.append(sync_task)
+
         # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
         # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
         if os.environ.get("SAC_PERIODIC_DRIVE_DISABLED", "") != "1":
