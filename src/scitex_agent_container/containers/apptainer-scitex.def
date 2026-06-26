@@ -4,12 +4,15 @@
 # spec.yaml leaves spec.image unset.
 #
 # Adds:
-#   - ffmpeg + portaudio (scitex-audio / scitex-cv / scitex-plt video)
 #   - python venv at /opt/venv-sac/ (avoids Ubuntu's PEP-668 fight)
 #   - black, flake8, ipython, ipdb, pytest, pytest-cov
 #   - claude-agent-sdk (the runner's API; bundles its own claude binary)
 #   - scitex[all] (scientific stack)
-#   - a curated manuscript LaTeX toolchain (latex / latexmk / biber)
+#   - scitex-dev + scitex-writer/-audio/-cv @develop (system-deps providers)
+#   - the federated system (apt) deps declared by those leaves via the
+#     ``scitex_dev.system_deps`` entry-point group (SSoT — NOT a hardcoded
+#     apt list): ffmpeg/portaudio (audio), libxcb1/libgl1/libglib2.0-0
+#     (cv2), and the curated manuscript LaTeX toolchain (latex/latexmk/biber)
 #   - scitex-agent-container (sac CLI + runner module)
 #
 # Build:
@@ -37,23 +40,22 @@ From: ./sac-base.sif
     set -e
     export DEBIAN_FRONTEND=noninteractive
 
-    # ---- 1. Audio / video system deps ----------------------------------
-    # libxcb1 / libgl1 / libglib2.0-0 are REQUIRED by scitex_cv (cv2):
-    # without libxcb.so.1, ``import scitex`` → ``scitex_cv`` → ``cv2`` raises
-    # ``libxcb.so.1: cannot open shared object file``, which parks every
-    # downstream ripple-wm lane (ripple / gpfa / nt / memory_load — they
-    # all `import scitex` at module load). libgl1 pairs with libxcb to
-    # cover cv2's headless OpenGL probe. libglib2.0-0 is already in the
-    # :base layer (lib-gthread silent-fallback fix, 2026-06-06) but kept
-    # here belt-and-suspenders so a future :base trim cannot resurrect
-    # the silent-fallback path inside :scitex. (Lead a2a 2026-06-08:
-    # SIF rebuild was blocking ALL ripple-wm compute lanes.)
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        ffmpeg \
-        portaudio19-dev \
-        libxcb1 libgl1 libglib2.0-0
-    rm -rf /var/lib/apt/lists/*
+    # ---- 1. System (apt) deps now come from the federated SSoT ----------
+    # The audio/video + LaTeX apt packages that USED to be hardcoded here
+    # are now DECLARED by the leaf packages themselves via the
+    # ``scitex_dev.system_deps`` entry-point group, aggregated by the
+    # scitex-dev keystone and installed in section 3 below (after the venv
+    # is built so the providers' entry-points are discoverable). Root-cause
+    # SSoT: each leaf owns its own apt deps; no hardcoded apt list here.
+    #   - ffmpeg / portaudio19-dev          → scitex-audio._system_deps
+    #   - libxcb1 / libgl1 / libglib2.0-0   → scitex-cv._system_deps  (cv2:
+    #       without libxcb.so.1 / libGL.so.1, ``import scitex`` →
+    #       ``scitex_cv`` → ``cv2`` raises ``cannot open shared object file``,
+    #       which parks every downstream ripple-wm lane.)
+    #   - the curated texlive / biber / latexmk set → scitex-writer._system_deps
+    # A FAIL-LOUD SUPERSET GUARD in section 3 verifies the federated set
+    # still covers every package these blocks used to install, so this
+    # cutover cannot silently drop a dependency.
 
     # ---- 2. Python venv + scitex stack ---------------------------------
     # Dedicated venv avoids Ubuntu 24.04 PEP-668 collisions with apt-installed
@@ -131,6 +133,18 @@ From: ./sac-base.sif
         uv pip install --python /opt/venv-sac/bin/python \
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
+        # scitex-dev keystone (>=#252 system-deps aggregator) + the 3 leaf
+        # providers, pinned @develop. scitex[all] pulled the stale PyPI
+        # scitex-dev (0.17.14 — no system_deps module) as a transitive; these
+        # @develop installs OVERRIDE it so ``scitex-dev ecosystem system-deps``
+        # exists and every leaf's ``scitex_dev.system_deps`` entry-point is
+        # discoverable for the federated install in section 3. All 4 repos are
+        # PUBLIC, so no auth is needed.
+        uv pip install --python /opt/venv-sac/bin/python \
+            "scitex-dev @ git+https://github.com/ywatanabe1989/scitex-dev.git@develop" \
+            "scitex-writer @ git+https://github.com/ywatanabe1989/scitex-writer.git@develop" \
+            "scitex-audio @ git+https://github.com/ywatanabe1989/scitex-audio.git@develop" \
+            "scitex-cv @ git+https://github.com/ywatanabe1989/scitex-cv.git@develop"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -144,65 +158,92 @@ From: ./sac-base.sif
         /opt/venv-sac/bin/pip install --no-cache-dir \
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
+        # scitex-dev keystone (>=#252 system-deps aggregator) + the 3 leaf
+        # providers, pinned @develop — OVERRIDE the stale PyPI scitex-dev
+        # (0.17.14, no system_deps module) that scitex[all] pulled, so the
+        # federated install in section 3 can discover every leaf's
+        # ``scitex_dev.system_deps`` entry-point. All 4 repos are PUBLIC (no
+        # auth). Matches this branch's plain ``pip install`` style.
+        /opt/venv-sac/bin/pip install --no-cache-dir \
+            "scitex-dev @ git+https://github.com/ywatanabe1989/scitex-dev.git@develop" \
+            "scitex-writer @ git+https://github.com/ywatanabe1989/scitex-writer.git@develop" \
+            "scitex-audio @ git+https://github.com/ywatanabe1989/scitex-audio.git@develop" \
+            "scitex-cv @ git+https://github.com/ywatanabe1989/scitex-cv.git@develop"
     fi
 
-    # ---- 3. Manuscript LaTeX toolchain ---------------------------------
-    # Paper agents (paper-scitex-clew / paper-neurovista / paper-ripple-wm
-    # / neurovista) compile manuscripts in-container, but the SAC image
-    # shipped NO LaTeX engine — pdflatex/latexmk/lualatex/xelatex were all
-    # missing, and the nested texlive container can't mount because the
-    # unprivileged user-namespace has no /dev/fuse. Decision (operator,
-    # card sac-image-latex-manuscript): bake a CURATED native TeX Live set
-    # here in the :scitex layer (NOT full texlive — too big; NOT enabling
-    # fuse — fragile). LaTeX is a manuscript/scientific concern, so it
-    # belongs on the scientific layer, not the lean :base.
+    # ---- 3. Federated system (apt) deps — SSoT install -----------------
+    # The audio/video libs + the curated manuscript LaTeX toolchain
+    # (texlive-* / biber / latexmk) that USED to be two hardcoded apt-get
+    # blocks here are now DECLARED by the leaf packages and aggregated by
+    # the scitex-dev keystone via the ``scitex_dev.system_deps``
+    # entry-point group. Root-cause SSoT: each leaf owns its own apt deps
+    # (scitex-audio = ffmpeg/portaudio; scitex-cv = libxcb1/libgl1/
+    # libglib2.0-0; scitex-writer = the texlive set), so this .def no
+    # longer duplicates them. Runs AFTER the venv install (section 2) so
+    # every provider's entry-point is discoverable; apt needs root so this
+    # is BUILD-time only (exactly where we are).
     #
-    # Curated package set (Ubuntu 24.04 noble apt, --no-install-recommends
-    # to avoid pulling the multi-GB full-texlive recommends chain):
-    #   texlive-latex-base/-recommended/-extra — the LaTeX core + the
-    #     common class/package set most manuscripts use.
-    #   texlive-bibtex-extra + biber           — bibliography backends
-    #     (biber is biblatex's engine; bibtex-extra carries the styles).
-    #   texlive-fonts-recommended/-extra        — font packages many
-    #     journal classes hard-require at \documentclass load.
-    #   texlive-science                         — amsmath/siunitx/physics
-    #     /algorithms etc. (math + science macros).
-    #   texlive-publishers                      — ships elsarticle and a
-    #     large set of journal document classes (Elsevier, IEEE, etc.).
-    #   texlive-luatex + texlive-xetex          — lualatex/xelatex engines
-    #     (unicode + system-font manuscripts).
-    #   latexmk                                 — the build driver that
-    #     resolves the latex/bibtex/biber re-run loop automatically.
-    #   texlive-pictures                        — pgf/tikz core, REQUIRED
-    #     by tcolorbox / pgfplots / pgfplotstable / tikz. Listed EXPLICITLY:
-    #     under --no-install-recommends it is not reliably pulled via
-    #     latex-extra, and the manuscript footprint uses tikz/pgfplots.
-    #   texlive-plain-generic                   — ships soul.sty + soul-ori.sty,
-    #     REQUIRED by manuscripts using \usepackage{soul}. Without it the live
-    #     image fails `! LaTeX Error: File 'soul-ori.sty' not found` mid-compile
-    #     (neurovista drift). Listed EXPLICITLY: not pulled under
-    #     --no-install-recommends.
-    #   texlive-lang-english                    — English hyphenation patterns
-    #     (correct line breaking for English-language manuscripts).
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        texlive-latex-base texlive-latex-recommended texlive-latex-extra \
-        texlive-pictures \
-        texlive-plain-generic \
-        texlive-lang-english \
-        texlive-bibtex-extra biber \
-        texlive-fonts-recommended texlive-fonts-extra \
-        texlive-science texlive-publishers \
-        texlive-luatex texlive-xetex \
-        latexmk
-    rm -rf /var/lib/apt/lists/*
-    # Fail loud if the engine or build driver did not land — a SIF that
-    # silently ships without pdflatex/latexmk would re-park every paper
-    # agent's compile lane exactly as before.
+    # FAIL-LOUD SUPERSET GUARD — a safety net for the cutover: assert the
+    # federated set still covers EVERY package the old hardcoded blocks
+    # installed, so a leaf accidentally dropping a declaration fails the
+    # BUILD here rather than silently shipping a SIF missing pdflatex /
+    # cv2's libs / ffmpeg (which would re-park paper + ripple-wm lanes).
+    # The 20-name baseline is the exact set the two deleted apt blocks
+    # carried; it is written to a temp file via heredoc (self-contained —
+    # no committed baseline file to drift).
+    cat > /tmp/sac-baseline-apt.txt <<'EOF'
+ffmpeg
+portaudio19-dev
+libxcb1
+libgl1
+libglib2.0-0
+texlive-latex-base
+texlive-latex-recommended
+texlive-latex-extra
+texlive-pictures
+texlive-plain-generic
+texlive-lang-english
+texlive-bibtex-extra
+biber
+texlive-fonts-recommended
+texlive-fonts-extra
+texlive-science
+texlive-publishers
+texlive-luatex
+texlive-xetex
+latexmk
+EOF
+    # ``scitex-dev ecosystem system-deps list`` prints the aggregated apt
+    # names one-per-line (verified against scitex-dev@develop's CLI —
+    # _cmds/_system_deps.py: ``system_deps_list`` echoes ``dep.package``
+    # per line, pipe-friendly, no table). ``comm -23 baseline federated``
+    # yields any baseline package the federated set fails to cover.
+    # TODO: swap to ``scitex-dev ecosystem system-deps check-superset
+    #   --baseline /tmp/sac-baseline-apt.txt --json`` once scitex-dev #256
+    #   releases (same logic, owned by scitex-dev — keeps the guard's SSoT
+    #   on the keystone instead of inline shell here).
+    missing=$(comm -23 <(sort /tmp/sac-baseline-apt.txt) <(scitex-dev ecosystem system-deps list | sort))
+    if [ -n "$missing" ]; then
+        echo "FATAL: federated system-deps missing baseline pkgs:" >&2
+        echo "$missing" >&2
+        exit 1
+    fi
+    # Apply the federated set (apt-installs at build-time / root).
+    scitex-dev ecosystem system-deps install --yes
+
+    # ---- 4. Fail-loud verifies for the federated system deps -----------
+    # A SIF that silently ships without these would re-park every paper
+    # agent's compile lane and every ripple-wm compute lane exactly as the
+    # pre-federation drift did. Verify the manuscript engine + driver, the
+    # audio/video decoder, and that cv2's shared libs (libxcb1 / libgl1)
+    # actually landed by importing cv2 in the venv. These are now provided
+    # by the federated scitex_dev.system_deps leaves, not a hardcoded list.
     pdflatex --version
     latexmk --version
+    ffmpeg -version
+    /opt/venv-sac/bin/python -c 'import cv2; print(cv2.__version__)'
 
-    # ---- 4. System-python invariant (paper-agent .venv base) -----------
+    # ---- 5. System-python invariant (paper-agent .venv base) -----------
     # Paper agents migrating onto this image keep a per-agent uv .venv whose
     # base interpreter resolves to the system python3 (3.12 on noble),
     # inherited unchanged from :base. Assert it survived this layer's
@@ -228,5 +269,8 @@ From: ./sac-base.sif
     scitex-agent-container :scitex layer (sac default image).
     Layered on :base; adds scitex scientific stack, claude SDK, sac
     itself, and a curated manuscript LaTeX toolchain (pdflatex /
-    lualatex / xelatex / latexmk / biber).
+    lualatex / xelatex / latexmk / biber). System (apt) deps are now
+    installed from the federated scitex_dev.system_deps providers
+    (scitex-writer / -audio / -cv, aggregated by scitex-dev) — the SSoT,
+    not a hardcoded apt list in this .def.
     Default entry point: python -m scitex_agent_container._runners.claude_session
