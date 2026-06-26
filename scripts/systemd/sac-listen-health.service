@@ -1,0 +1,30 @@
+[Unit]
+Description=sac listen health watchdog — probe /v1/health, restart + alarm on failure
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+# Companion to sac-listen.service. Oneshot probe fired by
+# sac-listen-health.timer every ~30s. DECOUPLED from any agent/lead
+# lifecycle (it is fleet infrastructure). We do NOT bind it to
+# sac-listen.service with Requires=/After= because the probe must run
+# and ALARM even when sac-listen.service is down/failed — that is the
+# whole point. The probe issues its own `systemctl --user restart
+# sac-listen.service`, so a dependency edge would be circular.
+#
+# Incident 2026-06-26: the listen died with no restart and no alarm.
+# This watchdog catches a WEDGED listen (process alive but HTTP no
+# longer answering) that systemd's Restart=always can't see, and makes
+# every restart LOUD.
+
+[Service]
+Type=oneshot
+# %h expands to the user's home; the unit ships at install time with
+# this path so the probe is found regardless of cwd. install-sac-listen.sh
+# rewrites this line to the operator's actual checkout path so the
+# installed unit does not depend on a fixed clone location.
+ExecStart=%h/.config/systemd/user/sac-listen-health-probe.sh
+# Route both streams to the journal so the LOUD ERROR lines from the
+# probe land in `journalctl --user -u sac-listen-health`.
+StandardOutput=journal
+StandardError=journal
+# A wedged-restart cycle should never itself hang the timer; bound the
+# whole probe (curl --max-time is 5s, restart is fast).
+TimeoutStartSec=60s
