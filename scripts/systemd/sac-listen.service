@@ -6,6 +6,26 @@ Documentation=https://github.com/ywatanabe1989/scitex-agent-container
 # default and serves the local agent fleet; ``network.target`` is
 # enough.
 After=network.target
+# DECOUPLE from any agent/lead lifecycle. sac listen is FLEET
+# INFRASTRUCTURE (the a2a + registry control plane). Retiring,
+# restarting, or crashing any individual agent — or the lead — must
+# NEVER take this unit down. We therefore declare NO After=/Requires=/
+# BindsTo=/PartOf= against any agent/lead/scope unit. The only
+# dependency is the network stack above. Incident 2026-06-26: the
+# listen died mid-session with nothing restarting it and the whole
+# fleet lost a2a comms silently; the hardening below (Restart=always +
+# the companion sac-listen-health.timer) closes that gap.
+#
+# Rate-limit the restart loop so a permanently-broken launch (bad pip
+# upgrade -> ImportError on every start) does NOT spin forever burning
+# CPU. If the unit restarts >5 times in 60s systemd gives up and
+# enters `failed`; the companion sac-listen-health.timer then fires
+# its LOUD alarm AND runs `systemctl reset-failed && restart` so a
+# transient burst self-heals while a genuine hard-down stays visible
+# to the operator. (These two keys belong in [Unit] in modern
+# systemd; only legacy systemd honoured them under [Service].)
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -25,11 +45,18 @@ StandardOutput=journal
 StandardError=journal
 
 # Restart policy — the operator task brief: "auto-start on boot and
-# auto-restart on crash, with a healthcheck". The flock-backed
-# single-instance guard (operator task #26 sub (1)) ensures that
-# Restart=on-failure can't double-bind the port; the kernel releases
-# the flock on every dirty exit, so the next start cleanly takes it.
-Restart=on-failure
+# auto-restart on crash, with a healthcheck". Incident 2026-06-26
+# upgraded this from Restart=on-failure to Restart=always: a listen
+# that exits 0 for ANY reason (a clean uvicorn shutdown triggered by
+# an unexpected SIGTERM, a bug that returns 0 on a fatal path, an
+# operator `kill` that the process turns into a graceful exit) must
+# STILL come back. Restart=on-failure does NOT cover a 0-exit, which
+# is exactly how the fleet lost a2a comms silently. Restart=always
+# covers every non-`systemctl stop` exit. The flock-backed
+# single-instance guard (operator task #26 sub (1)) ensures the
+# restart can't double-bind the port; the kernel releases the flock
+# on every dirty exit, so the next start cleanly takes it.
+Restart=always
 # Brief debounce: avoid hot-looping a launch that always fails (e.g.
 # uvicorn import error after a bad pip upgrade). 5s is the same
 # value scitex-orochi's persistent-services use.
