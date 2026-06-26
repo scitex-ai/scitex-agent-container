@@ -25,6 +25,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import pytest
+
+from scitex_agent_container._listen import _port_holder as ph_mod
 from scitex_agent_container._listen import _restart as restart_mod
 from scitex_agent_container._listen._restart import restart_listen
 
@@ -38,6 +41,24 @@ def _swap(name: str, value) -> Iterator[None]:
         yield
     finally:
         setattr(restart_mod, name, saved)
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_port_seams() -> Iterator[None]:
+    """Default the wedged-port-holder self-heal to a no-op (see the
+    twin fixture in ``test__restart.py``): the real socket probe would
+    otherwise find + force-kill the live central listen on 7878. The
+    discovery seams live on ``_port_holder``.
+    """
+    saved_bound = ph_mod._probe_bound
+    saved_holders = ph_mod._resolve_pids
+    ph_mod._probe_bound = lambda _host, _port: False
+    ph_mod._resolve_pids = lambda _port: []
+    try:
+        yield
+    finally:
+        ph_mod._probe_bound = saved_bound
+        ph_mod._resolve_pids = saved_holders
 
 
 def _no_sleep(_secs: float) -> None:
