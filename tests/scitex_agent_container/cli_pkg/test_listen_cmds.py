@@ -229,7 +229,7 @@ def test_listen_default_loopback_bind_starts_uvicorn_with_zero_exit(tmp_path):
     with (
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
-        _swap_attr(_server, "create_app", lambda token: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         result = CliRunner().invoke(listen, [])
@@ -247,7 +247,7 @@ def test_listen_default_loopback_bind_passes_default_host_port_to_uvicorn(tmp_pa
     with (
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
-        _swap_attr(_server, "create_app", lambda token: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         CliRunner().invoke(listen, [])
@@ -265,7 +265,7 @@ def test_listen_non_loopback_bind_with_allow_flag_passes_host_to_uvicorn(tmp_pat
     with (
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "d.tok"),
-        _swap_attr(_server, "create_app", lambda token: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         CliRunner().invoke(listen, ["--bind", "8.8.8.8:7878", "--allow-non-loopback"])
