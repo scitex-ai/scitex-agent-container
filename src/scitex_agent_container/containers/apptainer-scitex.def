@@ -134,8 +134,8 @@ From: ./sac-base.sif
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
-        # pinned to PUBLISHED PyPI floors (reproducible — NOT a moving
-        # @develop branch; the operator's hard requirement). scitex[all] pulls
+        # pinned to PUBLISHED PyPI floors (reproducible — NOT a moving git
+        # branch ref; the operator's hard requirement). scitex[all] pulls
         # older transitive pins (e.g. a scitex-dev without the system_deps
         # module); these explicit floors OVERRIDE them so ``scitex-dev
         # ecosystem system-deps`` exists and every leaf's
@@ -164,7 +164,7 @@ From: ./sac-base.sif
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone + the 3 leaf providers, pinned to PUBLISHED
-        # PyPI floors (reproducible — NOT a moving @develop branch) — OVERRIDE
+        # PyPI floors (reproducible — NOT a moving git branch ref) — OVERRIDE
         # the older transitive pins scitex[all] pulls, so the federated
         # install in section 3 can discover every leaf's
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
@@ -219,7 +219,7 @@ texlive-xetex
 latexmk
 EOF
     # ``scitex-dev ecosystem system-deps list`` prints the aggregated apt
-    # names one-per-line (verified against scitex-dev@develop's CLI —
+    # names one-per-line (verified against scitex-dev's develop-branch CLI —
     # _cmds/_system_deps.py: ``system_deps_list`` echoes ``dep.package``
     # per line, pipe-friendly, no table). ``comm -23 baseline federated``
     # yields any baseline package the federated set fails to cover.
