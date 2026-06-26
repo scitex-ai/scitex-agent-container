@@ -37,18 +37,40 @@ logger = logging.getLogger(__name__)
 
 
 def listen_env_flags(config) -> list[str]:
-    """Return the ``--env SAC_LISTEN_*`` flags for ``apptainer exec``.
+    """Return the ``--env`` flags ``apptainer exec`` needs for the bus.
 
-    Pure except for reading the host token file and config; raises
-    ``RuntimeError`` when a ``server:sac`` spec has no resolvable bearer.
+    Forwards the bus-listen URL + bearer (``SAC_LISTEN_*``) and, when set
+    on the host, the agent-spec search path
+    (``SCITEX_AGENT_CONTAINER_YAML_DIRS``) so an in-container ``sac agents
+    start <peer>`` resolves specs at the SAME path the operator uses on
+    the host. Without this forward the in-container sac only searches
+    ``~/.scitex/agent-container/agents`` + the repo-local dir (the env var
+    is unset inside the container), so the spec-bearing spawn path fails
+    with ``Agent '<name>' not found ... (env
+    $SCITEX_AGENT_CONTAINER_YAML_DIRS: <unset>)`` even though the specs
+    are visible in-container via the host-home bind.
+
+    Pure except for reading the host token file, config, and host env;
+    raises ``RuntimeError`` when a ``server:sac`` spec has no resolvable
+    bearer.
     """
     # Local imports keep these resolvable even if a formatter strips
     # module-level unused imports during a refactor, and avoid a circular
     # import with the runtime module that calls this helper.
+    import os
+
     from .._listen._config import listen_base_url
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
 
     flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
+
+    # Forward the host's agent-spec search path so the in-container sac
+    # resolves peer specs at the operator's path. Only inject when the
+    # host has it set+non-empty — otherwise leave the in-container default
+    # search order untouched (no empty ``--env`` that would shadow it).
+    spec_dirs = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "").strip()
+    if spec_dirs:
+        flags += ["--env", f"SCITEX_AGENT_CONTAINER_YAML_DIRS={spec_dirs}"]
 
     claude_spec = getattr(config, "claude", None)
     channels = list(getattr(claude_spec, "channels", None) or [])
