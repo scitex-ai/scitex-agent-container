@@ -8,11 +8,12 @@
 #   - black, flake8, ipython, ipdb, pytest, pytest-cov
 #   - claude-agent-sdk (the runner's API; bundles its own claude binary)
 #   - scitex[all] (scientific stack)
-#   - scitex-dev + scitex-writer/-audio/-cv @develop (system-deps providers)
+#   - scitex-dev + scitex-writer/-audio/-cv (pinned PyPI; system-deps providers)
 #   - the federated system (apt) deps declared by those leaves via the
 #     ``scitex_dev.system_deps`` entry-point group (SSoT — NOT a hardcoded
-#     apt list): ffmpeg/portaudio (audio), libxcb1/libgl1/libglib2.0-0
-#     (cv2), and the curated manuscript LaTeX toolchain (latex/latexmk/biber)
+#     apt list): ffmpeg/portaudio (audio) and the curated manuscript LaTeX
+#     toolchain (latex/latexmk/biber). scitex-cv (opencv-python-headless)
+#     declares zero apt deps.
 #   - scitex-agent-container (sac CLI + runner module)
 #
 # Build:
@@ -48,10 +49,9 @@ From: ./sac-base.sif
     # is built so the providers' entry-points are discoverable). Root-cause
     # SSoT: each leaf owns its own apt deps; no hardcoded apt list here.
     #   - ffmpeg / portaudio19-dev          → scitex-audio._system_deps
-    #   - libxcb1 / libgl1 / libglib2.0-0   → scitex-cv._system_deps  (cv2:
-    #       without libxcb.so.1 / libGL.so.1, ``import scitex`` →
-    #       ``scitex_cv`` → ``cv2`` raises ``cannot open shared object file``,
-    #       which parks every downstream ripple-wm lane.)
+    #   - scitex-cv declares ZERO apt deps — opencv-python-headless bundles
+    #       cv2's native libs in the wheel, so its provider returns [] (the
+    #       old libxcb1/libgl1/libglib2.0-0 X-libs are no longer needed).
     #   - the curated texlive / biber / latexmk set → scitex-writer._system_deps
     # A FAIL-LOUD SUPERSET GUARD in section 3 verifies the federated set
     # still covers every package these blocks used to install, so this
@@ -133,18 +133,23 @@ From: ./sac-base.sif
         uv pip install --python /opt/venv-sac/bin/python \
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
-        # scitex-dev keystone (>=#252 system-deps aggregator) + the 3 leaf
-        # providers, pinned @develop. scitex[all] pulled the stale PyPI
-        # scitex-dev (0.17.14 — no system_deps module) as a transitive; these
-        # @develop installs OVERRIDE it so ``scitex-dev ecosystem system-deps``
-        # exists and every leaf's ``scitex_dev.system_deps`` entry-point is
-        # discoverable for the federated install in section 3. All 4 repos are
-        # PUBLIC, so no auth is needed.
+        # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
+        # pinned to PUBLISHED PyPI floors (reproducible — NOT a moving
+        # @develop branch; the operator's hard requirement). scitex[all] pulls
+        # older transitive pins (e.g. a scitex-dev without the system_deps
+        # module); these explicit floors OVERRIDE them so ``scitex-dev
+        # ecosystem system-deps`` exists and every leaf's
+        # ``scitex_dev.system_deps`` entry-point is discoverable for the
+        # federated install in section 3.
+        #   scitex-dev   >=0.20.1 — keystone aggregator (list/install/check-superset)
+        #   scitex-writer>=2.22.0 — texlive provider (ships the soul.sty fix)
+        #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
+        #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
         uv pip install --python /opt/venv-sac/bin/python \
-            "scitex-dev @ git+https://github.com/ywatanabe1989/scitex-dev.git@develop" \
-            "scitex-writer @ git+https://github.com/ywatanabe1989/scitex-writer.git@develop" \
-            "scitex-audio @ git+https://github.com/ywatanabe1989/scitex-audio.git@develop" \
-            "scitex-cv @ git+https://github.com/ywatanabe1989/scitex-cv.git@develop"
+            "scitex-dev>=0.20.1" \
+            "scitex-writer>=2.22.0" \
+            "scitex-audio>=0.3.0" \
+            "scitex-cv>=0.2.0"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -158,17 +163,17 @@ From: ./sac-base.sif
         /opt/venv-sac/bin/pip install --no-cache-dir \
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
-        # scitex-dev keystone (>=#252 system-deps aggregator) + the 3 leaf
-        # providers, pinned @develop — OVERRIDE the stale PyPI scitex-dev
-        # (0.17.14, no system_deps module) that scitex[all] pulled, so the
-        # federated install in section 3 can discover every leaf's
-        # ``scitex_dev.system_deps`` entry-point. All 4 repos are PUBLIC (no
-        # auth). Matches this branch's plain ``pip install`` style.
+        # scitex-dev keystone + the 3 leaf providers, pinned to PUBLISHED
+        # PyPI floors (reproducible — NOT a moving @develop branch) — OVERRIDE
+        # the older transitive pins scitex[all] pulls, so the federated
+        # install in section 3 can discover every leaf's
+        # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
+        # above. Matches this branch's plain ``pip install`` style.
         /opt/venv-sac/bin/pip install --no-cache-dir \
-            "scitex-dev @ git+https://github.com/ywatanabe1989/scitex-dev.git@develop" \
-            "scitex-writer @ git+https://github.com/ywatanabe1989/scitex-writer.git@develop" \
-            "scitex-audio @ git+https://github.com/ywatanabe1989/scitex-audio.git@develop" \
-            "scitex-cv @ git+https://github.com/ywatanabe1989/scitex-cv.git@develop"
+            "scitex-dev>=0.20.1" \
+            "scitex-writer>=2.22.0" \
+            "scitex-audio>=0.3.0" \
+            "scitex-cv>=0.2.0"
     fi
 
     # ---- 3. Federated system (apt) deps — SSoT install -----------------
@@ -177,9 +182,9 @@ From: ./sac-base.sif
     # blocks here are now DECLARED by the leaf packages and aggregated by
     # the scitex-dev keystone via the ``scitex_dev.system_deps``
     # entry-point group. Root-cause SSoT: each leaf owns its own apt deps
-    # (scitex-audio = ffmpeg/portaudio; scitex-cv = libxcb1/libgl1/
-    # libglib2.0-0; scitex-writer = the texlive set), so this .def no
-    # longer duplicates them. Runs AFTER the venv install (section 2) so
+    # (scitex-audio = ffmpeg/portaudio; scitex-writer = the texlive set;
+    # scitex-cv = none, opencv-python-headless bundles cv2's libs), so this
+    # .def no longer duplicates them. Runs AFTER the venv install (section 2) so
     # every provider's entry-point is discoverable; apt needs root so this
     # is BUILD-time only (exactly where we are).
     #
@@ -188,15 +193,15 @@ From: ./sac-base.sif
     # installed, so a leaf accidentally dropping a declaration fails the
     # BUILD here rather than silently shipping a SIF missing pdflatex /
     # cv2's libs / ffmpeg (which would re-park paper + ripple-wm lanes).
-    # The 20-name baseline is the exact set the two deleted apt blocks
-    # carried; it is written to a temp file via heredoc (self-contained —
-    # no committed baseline file to drift).
+    # The 17-name baseline is the audio + LaTeX set the two deleted apt blocks
+    # carried; cv's old X-libs (libxcb1/libgl1/libglib2.0-0) are intentionally
+    # ABSENT — scitex-cv went opencv-python-headless (cv2 libs bundled, zero
+    # apt deps), so the federated set no longer carries them and the guard
+    # must not demand them. Written to a temp file via heredoc (self-contained
+    # — no committed baseline file to drift).
     cat > /tmp/sac-baseline-apt.txt <<'EOF'
 ffmpeg
 portaudio19-dev
-libxcb1
-libgl1
-libglib2.0-0
 texlive-latex-base
 texlive-latex-recommended
 texlive-latex-extra
@@ -235,9 +240,9 @@ EOF
     # A SIF that silently ships without these would re-park every paper
     # agent's compile lane and every ripple-wm compute lane exactly as the
     # pre-federation drift did. Verify the manuscript engine + driver, the
-    # audio/video decoder, and that cv2's shared libs (libxcb1 / libgl1)
-    # actually landed by importing cv2 in the venv. These are now provided
-    # by the federated scitex_dev.system_deps leaves, not a hardcoded list.
+    # audio/video decoder, and that cv2 imports cleanly in the venv —
+    # opencv-python-headless bundles its native libs, so a clean import is
+    # the real proof the headless wheel works with zero apt X-libs.
     pdflatex --version
     latexmk --version
     ffmpeg -version
