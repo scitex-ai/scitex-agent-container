@@ -2169,6 +2169,123 @@ def test_config_listen_host_propagates_to_env(tmp_path: Path, env_save_restore) 
 
 
 # ---------------------------------------------------------------------------
+# Spec-dir forwarding — SCITEX_AGENT_CONTAINER_YAML_DIRS must be forwarded
+# from the host env into the spawned container so an in-container
+# ``sac agents start <peer>`` resolves peer specs at the operator's path
+# (else the spec-bearing spawn path fails with "Agent not found ... (env
+# $SCITEX_AGENT_CONTAINER_YAML_DIRS: <unset>)"). Unset/empty on the host
+# must NOT inject the flag (leave the in-container default search order).
+# ---------------------------------------------------------------------------
+
+
+def test_spec_dirs_forwarded_when_set_on_host(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — host has the agent-spec search path exported.
+    spec_path = "/home/ywatanabe/.dotfiles/src/.scitex/agent-container/agents"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", spec_path)
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert — the value is forwarded verbatim as an --env pair.
+    assert _env_pairs(argv).get("SCITEX_AGENT_CONTAINER_YAML_DIRS") == spec_path
+
+
+def test_spec_dirs_forwarded_preserves_colon_separated_list(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — colon-separated multi-dir path must round-trip intact.
+    spec_path = "/host/a/agents:/host/b/agents"
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", spec_path)
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert _env_pairs(argv).get("SCITEX_AGENT_CONTAINER_YAML_DIRS") == spec_path
+
+
+def test_spec_dirs_not_forwarded_when_unset_on_host(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — host does NOT have the env var (delete any inherited one).
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert — no flag injected → in-container default search order kept.
+    assert "SCITEX_AGENT_CONTAINER_YAML_DIRS" not in _env_pairs(argv)
+
+
+def test_spec_dirs_not_forwarded_when_empty_on_host(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — set to empty/whitespace; must be treated as unset, not
+    # injected as an empty --env that would shadow the default order.
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", "   ")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    # Assert
+    assert "SCITEX_AGENT_CONTAINER_YAML_DIRS" not in _env_pairs(argv)
+
+
+def test_listen_env_flags_forwards_spec_dirs_value(env_save_restore) -> None:
+    # Arrange — exercise the helper directly (unit seam, no container).
+    from scitex_agent_container.runtimes._apptainer_listen_env import (
+        listen_env_flags,
+    )
+
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", "/host/agents")
+    cfg = _config(Path("/tmp/wd"))
+    # Act
+    flags = listen_env_flags(cfg)
+    # Assert — the value rides in the flag list.
+    assert "SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents" in flags
+
+
+def test_listen_env_flags_spec_dirs_pair_is_contiguous(env_save_restore) -> None:
+    # Arrange — the value must be preceded by its --env flag so apptainer
+    # parses it as one env pair, not a bare positional.
+    from scitex_agent_container.runtimes._apptainer_listen_env import (
+        listen_env_flags,
+    )
+
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", "/host/agents")
+    cfg = _config(Path("/tmp/wd"))
+    # Act
+    flags = listen_env_flags(cfg)
+    # Assert
+    idx = flags.index("SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents")
+    assert flags[idx - 1] == "--env"
+
+
+def test_listen_env_flags_omits_spec_dirs_when_unset(env_save_restore) -> None:
+    # Arrange
+    from scitex_agent_container.runtimes._apptainer_listen_env import (
+        listen_env_flags,
+    )
+
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    cfg = _config(Path("/tmp/wd"))
+    # Act
+    flags = listen_env_flags(cfg)
+    # Assert — no spec-dir value anywhere in the flag list.
+    assert not any("SCITEX_AGENT_CONTAINER_YAML_DIRS" in f for f in flags)
+
+
+# ---------------------------------------------------------------------------
 # Bus-auth bearer injection (FIX 1) — SAC_LISTEN_BEARER must be injected
 # into EVERY apptainer spec (including relaxed:true), read from the host
 # token file the listen server writes. Missing token → BASE_URL only +
