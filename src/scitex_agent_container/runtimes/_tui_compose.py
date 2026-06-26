@@ -1,0 +1,313 @@
+"""Pure, fully-injectable compose-buffer primitives for the TUI runtime.
+
+Extracted from :mod:`tui_session` (which re-exports every public name here, so
+existing imports keep working) to keep that module under the line limit and to
+group the unit-testable Ink-TUI compose-buffer logic — no tmux import — in one
+cohesive place. The :class:`TuiSessionRuntime` wires the real tmux callables
+into these functions (``_verify_submitted`` → :func:`verify_submit_by_advancement`,
+``_clear_compose_buffer`` → :func:`clear_compose_buffer`).
+
+Two boot fixes live here:
+
+  * :func:`verify_submit_by_advancement` — the boot Enter-drop fix
+    (sac-tui-enter-drop-on-boot): wait-for-idle + verify-by-advancement so the
+    submit Enter never fires into the busy/initializing window where the Ink
+    TUI silently drops it.
+  * :func:`clear_compose_buffer` — the /compact-burst-on-restart fix
+    (sac-tui-clear-compose-buffer-on-boot): a persistent tmux pane carries
+    stale "compose-pending-unsent" text (external input that accumulated while
+    the pane was busy) ACROSS an agent restart; the boot Enter would otherwise
+    submit that whole stale stack. Clearing the compose buffer at the TOP of
+    startup-prompt injection drops the stale text before the boot submit.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from typing import Callable
+
+__all__ = [
+    "clear_compose_buffer",
+    "verify_submit_by_advancement",
+]
+
+
+def _pane_tail(pane: str, lines: int = 14) -> str:
+    """Last ``lines`` non-empty rows of a captured pane, for loud diagnostics.
+
+    A boot-drain failure logs this so the operator sees the EXACT modal /
+    login-wall / render state that blocked readiness — never a bare
+    "timed out" with no evidence.
+    """
+    rows = [r for r in (pane or "").splitlines() if r.strip()]
+    return "\n".join(rows[-lines:])
+
+
+#: Live compose box = the BOTTOM-MOST ``❯`` row (claude renders it just
+#: above the status bar). Same unsent-text regex as the shared
+#: ``prompts`` detector, but scoped to that one row.
+_COMPOSE_PROMPT_RE = re.compile(r"❯[ \t\xa0]+\S")
+
+#: Keystrokes that EMPTY a (possibly multi-line) pending compose buffer in
+#: Claude Code's Ink TUI WITHOUT submitting it or quitting the process.
+#: EMPIRICALLY verified against a real ``claude`` 2.1.150 TUI
+#: (sac-tui-clear-compose-buffer-on-boot, 2026-06-26): a single ``Escape``
+#: leaves a multi-line buffer intact, but a DOUBLE ``Escape`` clears the whole
+#: buffer in one shot — no per-line counting, no kill-ring side effect, and it
+#: never fires Enter. (``C-u`` also clears, but only ONE line per press — it is
+#: a line-kill, so an N-line stale stack needs N+ presses and leaves a
+#: "Ctrl+Y to paste deleted text" hint; Esc-Esc is the clean single gesture.)
+_COMPOSE_CLEAR_KEYS: tuple[str, ...] = ("Escape", "Escape")
+
+
+def _compose_pending_live(pane: str) -> bool:
+    """True iff the LIVE compose box holds pasted-but-unsent text.
+
+    Scopes the ``compose-pending-unsent`` test to the CURRENT input line
+    (the bottom-most ``❯`` row) instead of the whole pane. A ``❯`` sitting
+    in SCROLLBACK — e.g. a submitted ``❯ 1`` echo or the prior turn's
+    rendered prompt — otherwise makes the shared :func:`prompts.detect`
+    report "still pending" forever, so :func:`verify_submit_by_advancement`
+    never sees the buffer clear and false-alarms (the
+    ``sac-tui-enter-drop-on-boot`` live test, 2026-06-24: scitex-dev booted
+    fine yet the drive logged "stayed UNSENT after 8 attempts"). Text after
+    the live ``❯`` = unsent; an empty live box = submitted / ready.
+    """
+    for row in reversed((pane or "").splitlines()):
+        if "❯" in row:
+            return bool(_COMPOSE_PROMPT_RE.search(row))
+    return False
+
+
+def _pane_is_input_idle(pane: str) -> bool:
+    """True when the pane is safe to submit an Enter into.
+
+    Input-idle = NOT busy (no spinner / "thinking" word / "esc to
+    interrupt" line — reusing :func:`liveness_probe.pane_is_busy`, the
+    fleet's single source of truth for the busy-marker list) AND the
+    compose input is actually present: either claude's idle ready cue
+    (:func:`prompts.is_ready`) OR a pasted-but-unsent buffer
+    (:func:`prompts.detect` == ``compose-pending-unsent``) is on screen.
+
+    The boot Enter-drop (sac-tui-enter-drop-on-boot) is precisely a
+    submit fired while ``pane_is_busy`` is True (Claude initializing /
+    spinner up / MCP mid-reconnect); the Ink TUI eats Enter in that
+    window. Gating every send on this predicate is the structural fix.
+    """
+    # Local imports keep this module free of an import cycle and let the
+    # detectors stay the fleet SSOT (no copy to desync).
+    from .._lifecycle.liveness_probe import pane_is_busy
+    from . import prompts as _prompts
+
+    if pane_is_busy(pane):
+        return False
+    return _prompts.is_ready(pane) or _compose_pending_live(pane)
+
+
+def clear_compose_buffer(
+    name: str,
+    *,
+    capture_fn: Callable[[str], str],
+    send_keys_fn: Callable[[str], None],
+    max_attempts: int = 5,
+    poll_s: float = 0.4,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    time_fn: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Empty any stale pasted-but-unsent text in the live compose box.
+
+    Pure + fully injectable — no tmux import (mirrors
+    :func:`verify_submit_by_advancement`). The fix for
+    /compact-burst-on-restart (card sac-tui-clear-compose-buffer-on-boot):
+    a persistent tmux pane carries EXTERNAL "compose-pending-unsent" input
+    (e.g. a burst of stale ``/compact`` slash-commands the operator typed
+    while the pane was busy) ACROSS an agent restart. If the boot's
+    startup-prompt Enter fires with that stack still in the buffer, the whole
+    stale stack is submitted. Calling this at the TOP of startup-prompt
+    injection (before any paste/submit) drops the stale text first.
+
+    Algorithm:
+
+      1. **Capture once.** If the LIVE compose box is already empty
+         (:func:`_compose_pending_live` False) there is nothing to clear —
+         return ``True`` immediately. This is the COMMON case (a fresh boot
+         with no stale buffer), so the no-op costs one capture and no
+         keystroke.
+      2. Otherwise send the verified CLEAR keystrokes
+         (:data:`_COMPOSE_CLEAR_KEYS` = double ``Escape`` — empties a
+         multi-line buffer without submitting or quitting), then poll
+         ``capture_fn`` until the live box is empty, bounded by
+         ``max_attempts``. Resend the clear keys each attempt (the Ink TUI
+         can drop a keystroke mid-render).
+      3. On success return ``True``; on exhaustion log LOUD (error with the
+         pane tail + ``tmux attach`` hint) and return ``False`` but DO NOT
+         raise — boot must still proceed (same fail-loud-not-fatal posture as
+         the rest of the file). The downstream
+         :func:`verify_submit_by_advancement` is the second safety net.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    pane = capture_fn(name)
+    if not _compose_pending_live(pane):
+        # Common case: nothing stale in the live box — no-op.
+        return True
+
+    last_pane = pane
+    for _ in range(max_attempts):
+        for key in _COMPOSE_CLEAR_KEYS:
+            send_keys_fn(key)
+        # Let the clear render, then re-capture and verify the live box is empty.
+        if poll_s > 0:
+            sleep_fn(poll_s)
+        last_pane = capture_fn(name)
+        if not _compose_pending_live(last_pane):
+            return True
+
+    log.error(
+        "TuiSessionRuntime: stale compose buffer for %s did NOT clear after "
+        "%d attempts of %r — the Ink TUI kept dropping the clear keystroke (or "
+        "new text keeps arriving). Boot will proceed (verify_submit_by_advancement "
+        "is the next net), but the boot Enter may submit stale text. Attach to "
+        "inspect/recover: `tmux attach -t %s`. Pane tail:\n%s",
+        name,
+        max_attempts,
+        list(_COMPOSE_CLEAR_KEYS),
+        name,
+        _pane_tail(last_pane),
+    )
+    return False
+
+
+def verify_submit_by_advancement(
+    name: str,
+    *,
+    capture_fn: Callable[[str], str],
+    send_keys_fn: Callable[[str], None],
+    max_resends: int = 8,
+    poll_s: float = 0.6,
+    appear_timeout_s: float = 5.0,
+    idle_wait_s: float = 30.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    time_fn: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Submit a pasted compose buffer, waiting for idle and verifying by
+    buffer-advancement. Pure + fully injectable — no tmux import.
+
+    This is the fix for the boot Enter-drop (task
+    ``sac-tui-enter-drop-on-boot``). The OLD ``_verify_submitted`` resent
+    Enter ``max_resends`` times back-to-back with only a fixed ``poll_s``
+    sleep — but on (re)start ALL of those resends fire INSIDE the busy /
+    initializing window (spinner ``Photosynthesizing…`` / ``Working…`` /
+    ``Ruminating…`` up, MCP mid-reconnect), where the Ink TUI silently
+    drops every Enter. The agent then sits with its startup_prompt pasted
+    but unsent.
+
+    Algorithm — wait-for-idle + verify-by-advancement, mirroring the
+    proven emacs-claude-code TUI driver cadence (short text→Enter gap,
+    send-verify by buffer advancement, anti-flicker re-capture):
+
+      1. **Wait for the paste to RENDER** as ``compose-pending-unsent``
+         (``capture_fn`` → :func:`prompts.detect`). A multi-line paste
+         takes a beat. If it never renders within ``appear_timeout_s``
+         the turn was either submitted instantly or there was nothing to
+         submit → return ``True`` (nothing to force).
+      2. For up to ``max_resends`` attempts:
+         a. **Wait for input-idle** (:func:`_pane_is_input_idle`): no
+            spinner AND the compose input present. Bounded by
+            ``idle_wait_s``. While waiting, if the buffer ALREADY advanced
+            (no longer ``compose-pending-unsent``) it was submitted →
+            return ``True``. Do NOT send Enter while busy.
+         b. **Send one Enter** (only once idle + still pending).
+         c. **Verify advancement**: poll a short settle; if the buffer is
+            no longer ``compose-pending-unsent`` the Enter landed →
+            return ``True``.
+         d. Otherwise adaptive back-off (settle grows each attempt) and
+            retry — re-checking idle from scratch so the next Enter again
+            only fires into a non-busy pane.
+      3. On exhaustion → fail LOUD (error log with the pane tail +
+         ``tmux attach`` guidance) and return ``False`` (never a silent
+         give-up).
+
+    Returns ``True`` if the buffer was observed to advance (or never
+    rendered as pending), ``False`` if it stayed pending after all
+    bounded attempts.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    def _advanced() -> str:
+        """Capture once; return pane text. Buffer 'advanced' iff the
+        returned text no longer detects as compose-pending-unsent."""
+        return capture_fn(name)
+
+    # Phase 1 — wait for the pasted text to appear as an unsent buffer.
+    appear_deadline = time_fn() + appear_timeout_s
+    saw_pending = False
+    last_pane = ""
+    while time_fn() < appear_deadline:
+        last_pane = _advanced()
+        if _compose_pending_live(last_pane):
+            saw_pending = True
+            break
+        if poll_s > 0:
+            sleep_fn(poll_s)
+    if not saw_pending:
+        return True
+
+    # Phase 2 — bounded resend loop: wait-for-idle, send Enter, verify.
+    for attempt in range(max_resends):
+        # 2a — wait for input-idle (no spinner), bounded by idle_wait_s.
+        # Bail early on advancement (a prior Enter, or the operator,
+        # already submitted) so we never send a stray Enter into the
+        # next, empty prompt.
+        idle_deadline = time_fn() + idle_wait_s
+        idle = False
+        while time_fn() < idle_deadline:
+            last_pane = _advanced()
+            if not _compose_pending_live(last_pane):
+                return True
+            if _pane_is_input_idle(last_pane):
+                idle = True
+                break
+            if poll_s > 0:
+                sleep_fn(poll_s)
+        if not idle:
+            # Still busy after the whole idle window — do NOT blind-fire
+            # Enter (that is the original bug). Loop to the next attempt;
+            # the final failure path below reports loudly if it persists.
+            continue
+
+        # 2b — idle + still pending: send exactly one Enter.
+        send_keys_fn("Enter")
+
+        # 2c — verify advancement with an adaptive settle. Anti-flicker:
+        # re-capture after a short gap; the buffer clears within a frame
+        # or two when the Enter lands.
+        settle = poll_s * (1 + attempt)  # adaptive back-off between attempts
+        verify_deadline = time_fn() + settle
+        while True:
+            if poll_s > 0:
+                sleep_fn(poll_s)
+            last_pane = _advanced()
+            if not _compose_pending_live(last_pane):
+                return True
+            if time_fn() >= verify_deadline:
+                break
+        # 2d — not advanced; loop to next attempt (re-checks idle).
+
+    pane = capture_fn(name)
+    log.error(
+        "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
+        "after %d wait-for-idle Enter attempts — the Ink TUI keeps dropping "
+        "Enter (or the pane never left BUSY). Attach to inspect/recover: "
+        "`tmux attach -t %s` then press Enter. Pane tail:\n%s",
+        name,
+        max_resends,
+        name,
+        _pane_tail(pane or last_pane),
+    )
+    return False

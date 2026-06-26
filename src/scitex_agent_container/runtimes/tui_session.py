@@ -55,13 +55,11 @@ runner picks up whatever ``claude`` version the rebuilt SIF provides.
 
 from __future__ import annotations
 
-import re
 import shlex
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from .._lifecycle.liveness_probe import pane_is_busy
 from .._runners._tmux.tmux import (
     TmuxManager,
     TuiInputNotReadyError,
@@ -69,6 +67,12 @@ from .._runners._tmux.tmux import (
 from ..config import AgentConfig
 from . import prompts as _prompts
 from ._apptainer_build_argv import build_run_argv
+from ._tui_compose import (
+    _compose_pending_live,
+    _pane_tail,
+    clear_compose_buffer,
+    verify_submit_by_advancement,
+)
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from ._tui_auth_stage import TuiAuthStageError
@@ -81,6 +85,7 @@ __all__ = [
     "TuiAuthStageError",
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
+    "clear_compose_buffer",
     "session_name_for",
     "state_dir_for_config",
     "verify_submit_by_advancement",
@@ -107,194 +112,6 @@ _DEFAULT_MAX_IDLE_S = 300.0
 # moment they appear; it returns as soon as claude is up, so this is a
 # CAP, not a fixed block. 240s comfortably covers a cold uv resolve.
 _STARTUP_BOOT_DRAIN_S = 240.0
-
-
-def _pane_tail(pane: str, lines: int = 14) -> str:
-    """Last ``lines`` non-empty rows of a captured pane, for loud diagnostics.
-
-    A boot-drain failure logs this so the operator sees the EXACT modal /
-    login-wall / render state that blocked readiness — never a bare
-    "timed out" with no evidence.
-    """
-    rows = [r for r in (pane or "").splitlines() if r.strip()]
-    return "\n".join(rows[-lines:])
-
-
-#: Live compose box = the BOTTOM-MOST ``❯`` row (claude renders it just
-#: above the status bar). Same unsent-text regex as the shared
-#: ``prompts`` detector, but scoped to that one row.
-_COMPOSE_PROMPT_RE = re.compile(r"❯[ \t\xa0]+\S")
-
-
-def _compose_pending_live(pane: str) -> bool:
-    """True iff the LIVE compose box holds pasted-but-unsent text.
-
-    Scopes the ``compose-pending-unsent`` test to the CURRENT input line
-    (the bottom-most ``❯`` row) instead of the whole pane. A ``❯`` sitting
-    in SCROLLBACK — e.g. a submitted ``❯ 1`` echo or the prior turn's
-    rendered prompt — otherwise makes the shared :func:`prompts.detect`
-    report "still pending" forever, so :func:`verify_submit_by_advancement`
-    never sees the buffer clear and false-alarms (the
-    ``sac-tui-enter-drop-on-boot`` live test, 2026-06-24: scitex-dev booted
-    fine yet the drive logged "stayed UNSENT after 8 attempts"). Text after
-    the live ``❯`` = unsent; an empty live box = submitted / ready.
-    """
-    for row in reversed((pane or "").splitlines()):
-        if "❯" in row:
-            return bool(_COMPOSE_PROMPT_RE.search(row))
-    return False
-
-
-def _pane_is_input_idle(pane: str) -> bool:
-    """True when the pane is safe to submit an Enter into.
-
-    Input-idle = NOT busy (no spinner / "thinking" word / "esc to
-    interrupt" line — reusing :func:`liveness_probe.pane_is_busy`, the
-    fleet's single source of truth for the busy-marker list) AND the
-    compose input is actually present: either claude's idle ready cue
-    (:func:`prompts.is_ready`) OR a pasted-but-unsent buffer
-    (:func:`prompts.detect` == ``compose-pending-unsent``) is on screen.
-
-    The boot Enter-drop (sac-tui-enter-drop-on-boot) is precisely a
-    submit fired while ``pane_is_busy`` is True (Claude initializing /
-    spinner up / MCP mid-reconnect); the Ink TUI eats Enter in that
-    window. Gating every send on this predicate is the structural fix.
-    """
-    if pane_is_busy(pane):
-        return False
-    return _prompts.is_ready(pane) or _compose_pending_live(pane)
-
-
-def verify_submit_by_advancement(
-    name: str,
-    *,
-    capture_fn: Callable[[str], str],
-    send_keys_fn: Callable[[str], None],
-    max_resends: int = 8,
-    poll_s: float = 0.6,
-    appear_timeout_s: float = 5.0,
-    idle_wait_s: float = 30.0,
-    sleep_fn: Callable[[float], None] = time.sleep,
-    time_fn: Callable[[], float] = time.monotonic,
-) -> bool:
-    """Submit a pasted compose buffer, waiting for idle and verifying by
-    buffer-advancement. Pure + fully injectable — no tmux import.
-
-    This is the fix for the boot Enter-drop (task
-    ``sac-tui-enter-drop-on-boot``). The OLD ``_verify_submitted`` resent
-    Enter ``max_resends`` times back-to-back with only a fixed ``poll_s``
-    sleep — but on (re)start ALL of those resends fire INSIDE the busy /
-    initializing window (spinner ``Photosynthesizing…`` / ``Working…`` /
-    ``Ruminating…`` up, MCP mid-reconnect), where the Ink TUI silently
-    drops every Enter. The agent then sits with its startup_prompt pasted
-    but unsent.
-
-    Algorithm — wait-for-idle + verify-by-advancement, mirroring the
-    proven emacs-claude-code TUI driver cadence (short text→Enter gap,
-    send-verify by buffer advancement, anti-flicker re-capture):
-
-      1. **Wait for the paste to RENDER** as ``compose-pending-unsent``
-         (``capture_fn`` → :func:`prompts.detect`). A multi-line paste
-         takes a beat. If it never renders within ``appear_timeout_s``
-         the turn was either submitted instantly or there was nothing to
-         submit → return ``True`` (nothing to force).
-      2. For up to ``max_resends`` attempts:
-         a. **Wait for input-idle** (:func:`_pane_is_input_idle`): no
-            spinner AND the compose input present. Bounded by
-            ``idle_wait_s``. While waiting, if the buffer ALREADY advanced
-            (no longer ``compose-pending-unsent``) it was submitted →
-            return ``True``. Do NOT send Enter while busy.
-         b. **Send one Enter** (only once idle + still pending).
-         c. **Verify advancement**: poll a short settle; if the buffer is
-            no longer ``compose-pending-unsent`` the Enter landed →
-            return ``True``.
-         d. Otherwise adaptive back-off (settle grows each attempt) and
-            retry — re-checking idle from scratch so the next Enter again
-            only fires into a non-busy pane.
-      3. On exhaustion → fail LOUD (error log with the pane tail +
-         ``tmux attach`` guidance) and return ``False`` (never a silent
-         give-up).
-
-    Returns ``True`` if the buffer was observed to advance (or never
-    rendered as pending), ``False`` if it stayed pending after all
-    bounded attempts.
-    """
-    import logging
-
-    log = logging.getLogger(__name__)
-
-    def _advanced() -> str:
-        """Capture once; return pane text. Buffer 'advanced' iff the
-        returned text no longer detects as compose-pending-unsent."""
-        return capture_fn(name)
-
-    # Phase 1 — wait for the pasted text to appear as an unsent buffer.
-    appear_deadline = time_fn() + appear_timeout_s
-    saw_pending = False
-    last_pane = ""
-    while time_fn() < appear_deadline:
-        last_pane = _advanced()
-        if _compose_pending_live(last_pane):
-            saw_pending = True
-            break
-        if poll_s > 0:
-            sleep_fn(poll_s)
-    if not saw_pending:
-        return True
-
-    # Phase 2 — bounded resend loop: wait-for-idle, send Enter, verify.
-    for attempt in range(max_resends):
-        # 2a — wait for input-idle (no spinner), bounded by idle_wait_s.
-        # Bail early on advancement (a prior Enter, or the operator,
-        # already submitted) so we never send a stray Enter into the
-        # next, empty prompt.
-        idle_deadline = time_fn() + idle_wait_s
-        idle = False
-        while time_fn() < idle_deadline:
-            last_pane = _advanced()
-            if not _compose_pending_live(last_pane):
-                return True
-            if _pane_is_input_idle(last_pane):
-                idle = True
-                break
-            if poll_s > 0:
-                sleep_fn(poll_s)
-        if not idle:
-            # Still busy after the whole idle window — do NOT blind-fire
-            # Enter (that is the original bug). Loop to the next attempt;
-            # the final failure path below reports loudly if it persists.
-            continue
-
-        # 2b — idle + still pending: send exactly one Enter.
-        send_keys_fn("Enter")
-
-        # 2c — verify advancement with an adaptive settle. Anti-flicker:
-        # re-capture after a short gap; the buffer clears within a frame
-        # or two when the Enter lands.
-        settle = poll_s * (1 + attempt)  # adaptive back-off between attempts
-        verify_deadline = time_fn() + settle
-        while True:
-            if poll_s > 0:
-                sleep_fn(poll_s)
-            last_pane = _advanced()
-            if not _compose_pending_live(last_pane):
-                return True
-            if time_fn() >= verify_deadline:
-                break
-        # 2d — not advanced; loop to next attempt (re-checks idle).
-
-    pane = capture_fn(name)
-    log.error(
-        "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
-        "after %d wait-for-idle Enter attempts — the Ink TUI keeps dropping "
-        "Enter (or the pane never left BUSY). Attach to inspect/recover: "
-        "`tmux attach -t %s` then press Enter. Pane tail:\n%s",
-        name,
-        max_resends,
-        name,
-        _pane_tail(pane or last_pane),
-    )
-    return False
 
 
 def session_name_for(config: AgentConfig) -> str:
@@ -732,6 +549,17 @@ class TuiSessionRuntime(RuntimeBase):
              ``send_keys(name, "Enter")`` — operator-recovered each
              stuck agent by attaching tmux and pressing this. Baking
              it in removes the manual rescue.
+
+        Stale-compose fix (2026-06-26, card sac-tui-clear-compose-buffer-on-boot):
+        a persistent tmux pane carries EXTERNAL pasted-but-unsent text (e.g. a
+        burst of stale ``/compact`` slash-commands the operator typed while the
+        pane was busy) ACROSS an agent restart. If we paste + submit the
+        startup prompt with that stack still in the compose box, the boot Enter
+        submits the WHOLE stale stack too (observed: 9× ``/compact`` + a stray
+        ``2``). So BEFORE the per-prompt loop we
+        :meth:`_clear_compose_buffer` — a no-op when the box is already empty
+        (the common case), an empirically-verified double-``Escape`` clear when
+        it is not.
         """
         import logging
 
@@ -740,6 +568,12 @@ class TuiSessionRuntime(RuntimeBase):
         if not prompts:
             return
         name = session_name_for(config)
+        # Drop any stale "compose-pending-unsent" text the persistent pane
+        # carried across the restart, BEFORE the first paste/submit, so the
+        # boot Enter never submits an external stale stack. Fail-loud, never
+        # fatal: a failed clear logs LOUD and boot still proceeds (the
+        # downstream _verify_submitted is the second net).
+        self._clear_compose_buffer(name)
         for index, prompt in enumerate(prompts, start=1):
             if not prompt:
                 continue
@@ -764,6 +598,30 @@ class TuiSessionRuntime(RuntimeBase):
                     name,
                     exc,
                 )
+
+    def _clear_compose_buffer(
+        self,
+        name: str,
+        *,
+        max_attempts: int = 5,
+        poll_s: float = 0.4,
+    ) -> bool:
+        """Clear stale compose-pending text before the boot submit.
+
+        Thin wrapper that wires the real tmux callables into the pure,
+        unit-testable :func:`clear_compose_buffer` (mirrors how
+        :meth:`_verify_submitted` wraps :func:`verify_submit_by_advancement`).
+        See that function's docstring for the no-op-when-empty / double-Escape
+        algorithm (the fix for /compact-burst-on-restart,
+        sac-tui-clear-compose-buffer-on-boot).
+        """
+        return clear_compose_buffer(
+            name,
+            capture_fn=self._mux.capture_content,
+            send_keys_fn=lambda key: self._mux.send_keys(name, key),
+            max_attempts=max_attempts,
+            poll_s=poll_s,
+        )
 
     def _verify_submitted(
         self,
