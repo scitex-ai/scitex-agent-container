@@ -218,21 +218,17 @@ texlive-luatex
 texlive-xetex
 latexmk
 EOF
-    # ``scitex-dev ecosystem system-deps list`` prints the aggregated apt
-    # names one-per-line (verified against scitex-dev's develop-branch CLI —
-    # _cmds/_system_deps.py: ``system_deps_list`` echoes ``dep.package``
-    # per line, pipe-friendly, no table). ``comm -23 baseline federated``
-    # yields any baseline package the federated set fails to cover.
-    # TODO: swap to ``scitex-dev ecosystem system-deps check-superset
-    #   --baseline /tmp/sac-baseline-apt.txt --json`` once scitex-dev #256
-    #   releases (same logic, owned by scitex-dev — keeps the guard's SSoT
-    #   on the keystone instead of inline shell here).
-    missing=$(comm -23 <(sort /tmp/sac-baseline-apt.txt) <(scitex-dev ecosystem system-deps list | sort))
-    if [ -n "$missing" ]; then
-        echo "FATAL: federated system-deps missing baseline pkgs:" >&2
-        echo "$missing" >&2
-        exit 1
-    fi
+    # Superset guard via the keystone's OWN verb (scitex-dev #256, shipped in
+    # 0.20.1): ``check-superset`` reads the baseline file, compares it to the
+    # aggregated federated set, and exits 0 GREEN / 1 RED (printing the
+    # missing names) — keeping the guard's logic as SSoT on the keystone.
+    # NB: the earlier ``comm``-based guard used bash PROCESS SUBSTITUTION
+    # (a two-input process-sub diff), which apptainer %post (under /bin/sh =
+    # dash) does NOT support → ``Syntax error: "(" unexpected`` (the build
+    # FATAL this swap fixes). The verb is pure Python — no shell-isms.
+    scitex-dev ecosystem system-deps check-superset \
+        --baseline /tmp/sac-baseline-apt.txt \
+        || { echo "FATAL: federated system-deps missing baseline pkgs (see above)" >&2; exit 1; }
     # Apply the federated set (apt-installs at build-time / root).
     scitex-dev ecosystem system-deps install --yes
 
