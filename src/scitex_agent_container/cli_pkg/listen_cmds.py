@@ -306,7 +306,9 @@ def _do_start_listen(
 
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
-    click.echo(f"# health: curl http://{host}:{port}/v1/sac/health", err=True)
+    # The ONLY registered liveness route is /v1/health (server.py); the
+    # old /v1/sac/health string here was a non-route that 404'd.
+    click.echo(f"# health: curl http://{host}:{port}/v1/health", err=True)
     click.echo(f"# pidfile: {lock_handle.pid_file}", err=True)
 
     # ADR-0014 Stage 1 — register the host's operator identity into
@@ -360,18 +362,31 @@ def _do_start_listen(
 )
 @click.pass_context
 def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
-    """Atomically stop, clean, and relaunch the sac listen daemon.
+    """Atomically stop, self-heal, and relaunch the sac listen daemon.
 
-    Codifies the SIGTERM-hang lockfile recovery sequence documented at
-    ``scripts/systemd/README.md`` (PR #294). Mirrors ``sac listen``'s
-    own bind resolution: ``sac listen restart`` with no args restarts
-    the same daemon ``sac listen`` with no args would start.
+    Deterministic incident recovery (card
+    ``sac-listen-restart-selfheal-cli``) — codifies the manual
+    ``rm`` pidfile / ``pkill`` wedged remnant / ``setsid sac listen`` /
+    ``curl`` dance into one verb. It clears a STALE pidfile (pointing
+    at a dead/recycled PID), FORCE-KILLS a wedged process still holding
+    the port (the "curl hangs forever" case — even one the pidfile
+    never named), then starts and health-probes. No manual shell
+    surgery is ever needed.
+
+    FAIL LOUD: if the daemon can't be brought up within the health
+    deadline, exits NON-ZERO with an ``ERROR:`` line naming the REAL
+    cause (``port still held by PID X`` / ``bind failed``), not a
+    generic "did not respond".
+
+    Mirrors ``sac listen``'s own bind resolution: ``sac listen
+    restart`` with no args restarts the same daemon ``sac listen``
+    with no args would start.
 
     \b
     Example:
         sac listen restart                  # 10s grace, then SIGKILL
         sac listen restart --grace-secs 30  # longer TERM window
-        sac listen restart --force          # skip TERM, kill immediately
+        sac listen restart --force          # SIGKILL daemon + port holder
     """
     from .._listen._restart import (
         format_escalation_warning,
@@ -399,10 +414,83 @@ def listen_restart(ctx: click.Context, grace_secs: float, force: bool) -> None:
     if result.escalated_to_sigkill:
         click.echo(format_escalation_warning(grace_secs), err=True)
 
+    # Surface any wedged port holder we force-killed so the operator has
+    # a paper trail of the self-heal (the codified pkill).
+    if result.port_holders_killed:
+        pids = ", ".join(str(p) for p in result.port_holders_killed)
+        click.echo(
+            f"# self-heal: force-killed wedged port holder(s) PID {pids} "
+            f"off {host}:{port}",
+            err=True,
+        )
+
     if not result.ok:
         raise click.ClickException(
-            result.error or "sac listen restart failed (unknown reason)"
+            result.error or "ERROR: sac listen restart failed (unknown reason)"
         )
 
     msg = f"# sac listen restarted ({'systemd' if result.took_systemd_path else 'direct'}) → {host}:{port}"
     click.echo(msg, err=True)
+
+
+@listen.command(name="status")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit a machine-readable JSON status envelope.",
+)
+@click.pass_context
+def listen_status(ctx: click.Context, as_json: bool) -> None:
+    """Report the sac listen daemon's health in one command.
+
+    One-command diagnosis (card ``sac-listen-restart-selfheal-cli``):
+    running/down, bound address, pidfile + its PID liveness, and a live
+    health-probe result. Exits ``0`` when serving, ``1`` when down or
+    wedged — usable interactively and as a scriptable liveness gate.
+
+    \b
+    Example:
+        sac listen status            # human-readable report
+        sac listen status --json     # JSON envelope for scripts
+    """
+    import json as _json
+
+    from .._listen._restart import (
+        HEALTH_PATH,
+        pid_alive,
+        pidfile_path,
+        port_is_bound,
+        read_pid_from_file,
+    )
+    from .._listen._restart import _http_get as _probe_http
+    from .._listen._single_instance import default_lock_dir
+    from .._listen._status_report import (
+        build_status_payload,
+        render_status_lines,
+    )
+
+    host, port = _split_bind(ctx.obj["bind"])
+    pid_file = pidfile_path(port, default_lock_dir())
+    pidfile_pid = read_pid_from_file(pid_file)
+
+    payload = build_status_payload(
+        host=host,
+        port=port,
+        pid_file=pid_file,
+        pidfile_pid=pidfile_pid,
+        pidfile_pid_alive=pidfile_pid is not None and pid_alive(pidfile_pid),
+        health_path=HEALTH_PATH,
+        http_get=_probe_http,
+        port_is_bound=port_is_bound,
+    )
+
+    if as_json:
+        click.echo(_json.dumps(payload))
+    else:
+        for line in render_status_lines(payload):
+            click.echo(line)
+
+    if not payload["running"]:
+        ctx.exit(1)
