@@ -67,7 +67,7 @@ _DEAD_PEER_SSH = "192.0.2.1"
 _MAX_WALLCLOCK_S = 45.0
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def dead_peer_env(tmp_path_factory: pytest.TempPathFactory):
     """Real config.yaml whose only static peer is the dead TEST-NET-1 host.
 
@@ -142,7 +142,7 @@ class _SyncOutcome:
     output: str
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def sync_all_outcome(dead_peer_env: Path) -> _SyncOutcome:
     """Run the all-peers sync ONCE against the dead peer; capture the outcome.
 
@@ -231,7 +231,7 @@ class _PostBindOutcome:
 
 
 @pytest.fixture
-def post_bind_sync_outcome(dead_peer_env: Path) -> _PostBindOutcome:
+def post_bind_sync_outcome(dead_peer_env: Path):
     """Bind a REAL socket, then drive the actual post-bind sync coroutine once.
 
     Mirrors uvicorn owning the port BEFORE the best-effort sync runs. The
@@ -277,7 +277,7 @@ def post_bind_sync_outcome(dead_peer_env: Path) -> _PostBindOutcome:
             "the ephemeral bind was lost during the sync — the sync disturbed "
             "the bound port, which it must never do."
         )
-    return _PostBindOutcome(elapsed_s=elapsed, bound_port=bound_port)
+    yield _PostBindOutcome(elapsed_s=elapsed, bound_port=bound_port)
 
 
 def test_post_bind_startup_sync_returns_within_budget_on_unreachable_peer(
