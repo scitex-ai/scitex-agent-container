@@ -317,7 +317,11 @@ def _do_start_listen(
     _register_self_comms_node(port=port)
     _maybe_sync_on_start()
 
-    app = create_app(token=token)
+    # Pass the bind port so the lifespan's fail-loud watchdog can probe
+    # 127.0.0.1:<port>/v1/health after startup and scream if the daemon
+    # comes up but never serves (the silent fleet-comms outage this
+    # guards against).
+    app = create_app(token=token, health_watchdog_port=port)
     import uvicorn
 
     # ``ws="none"`` skips uvicorn's websockets backend autodetection —

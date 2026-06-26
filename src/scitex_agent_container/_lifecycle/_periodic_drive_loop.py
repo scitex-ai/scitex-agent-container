@@ -148,8 +148,23 @@ async def periodic_drive_loop(
                 if agents_source is not None:
                     agents = list(agents_source)
                 else:
+                    # DEFENSE IN DEPTH (cards sac-listen-self-peer-persist-
+                    # blocks-bind / sac-listen-watchdog-autorestart-alarm):
+                    # ``_agents_from_registry`` reads the registry + walks
+                    # on-disk specs (``resolve_config``/``load_config`` —
+                    # blocking FS, possibly git). Run it off the event loop
+                    # with a hard timeout so a slow/locked FS read can never
+                    # starve uvicorn's bind or the running listen server.
+                    from ._off_loop import run_blocking_or
+
                     registry = getattr(app_state, "registry", None)
-                    agents = _agents_from_registry(registry)
+                    agents = await run_blocking_or(
+                        _agents_from_registry,
+                        registry,
+                        default=[],
+                        op="periodic_drive_loop agent resolve (registry/spec FS)",
+                        timeout_s=max(tick_interval_s, 15.0),
+                    )
 
                 # Fold the loop-local last_emit_at memory into each
                 # state so the sweep's rate-limit reads the right

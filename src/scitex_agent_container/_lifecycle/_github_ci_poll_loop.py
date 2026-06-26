@@ -68,12 +68,24 @@ async def github_ci_poll_loop(
         logger.info("github_ci_poll_loop: disabled via SAC_GITHUB_CI_POLLER_DISABLED")
         return
 
+    # ROOT-CAUSE GUARD (cards sac-listen-self-peer-persist-blocks-bind /
+    # sac-listen-watchdog-autorestart-alarm): this preflight is the FIRST
+    # thing the loop does, BEFORE its first ``await asyncio.sleep`` — and
+    # the production ``ready`` is ``gh_ready()`` → ``subprocess.run(['gh',
+    # 'auth', 'status'])``, which makes a NETWORK call to GitHub. Run
+    # synchronously on the event loop, a hung ``gh``/network here starves
+    # uvicorn's bind and silently takes the whole fleet's comms down. So
+    # dispatch it off the loop with a hard timeout; a wedged probe degrades
+    # to "not ready" (fail-loud) instead of hanging the listen daemon.
+    from ._off_loop import run_blocking_or
+
     ready = ready_check if ready_check is not None else _default_ready_check
-    if not ready():
+    if not await run_blocking_or(ready, default=False, op="gh auth status (gh_ready)"):
         logger.error(
-            "github_ci_poll_loop: `gh` is not installed/authenticated — "
-            "CI-verdict delivery DISABLED. Run `gh auth login` on this host. "
-            "(fail-loud: refusing to run a poller that can deliver nothing)"
+            "github_ci_poll_loop: `gh` is not installed/authenticated (or its "
+            "auth probe timed out) — CI-verdict delivery DISABLED. Run "
+            "`gh auth login` on this host. (fail-loud: refusing to run a "
+            "poller that can deliver nothing)"
         )
         return
 
@@ -86,19 +98,34 @@ async def github_ci_poll_loop(
     if deliver is None:
         from ._ci_deliver import deliver_verdict as deliver
 
+    def _tick_body() -> None:
+        # Each of repos_source / list_prs / conclusion_for / deliver may
+        # shell out to ``gh`` (blocking subprocess.run); run the whole
+        # tick body off the event loop so a slow GitHub read never starves
+        # the listen server even after bind.
+        for repo in list(repos_source()):
+            for pr in list_prs(repo):
+                deliver(
+                    repo,
+                    pr["number"],
+                    pr.get("head_sha", ""),
+                    conclusion_for(repo, pr["number"]),
+                    pr_body=pr.get("body", ""),
+                )
+
     logger.info("github_ci_poll_loop: starting (poll_interval_s=%.1f)", poll_interval_s)
     try:
         while True:
             try:
-                for repo in list(repos_source()):
-                    for pr in list_prs(repo):
-                        deliver(
-                            repo,
-                            pr["number"],
-                            pr.get("head_sha", ""),
-                            conclusion_for(repo, pr["number"]),
-                            pr_body=pr.get("body", ""),
-                        )
+                # Bound the tick generously: a full poll across repos can
+                # legitimately take a while, but must never run unbounded
+                # on (or off) the loop. Timeout → logged + retried.
+                await run_blocking_or(
+                    _tick_body,
+                    default=None,
+                    op="github_ci_poll_loop tick (gh reads)",
+                    timeout_s=max(poll_interval_s, 30.0),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # stx-allow: fallback (loop must survive a transient GitHub/registry error; logged, retried next tick)
