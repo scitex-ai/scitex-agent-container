@@ -85,6 +85,7 @@ __all__ = [
     "TuiAuthStageError",
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
+    "_compose_pending_live",
     "clear_compose_buffer",
     "session_name_for",
     "state_dir_for_config",
