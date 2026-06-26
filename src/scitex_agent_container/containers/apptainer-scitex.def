@@ -177,10 +177,19 @@ From: ./sac-base.sif
     #     by tcolorbox / pgfplots / pgfplotstable / tikz. Listed EXPLICITLY:
     #     under --no-install-recommends it is not reliably pulled via
     #     latex-extra, and the manuscript footprint uses tikz/pgfplots.
+    #   texlive-plain-generic                   — ships soul.sty + soul-ori.sty,
+    #     REQUIRED by manuscripts using \usepackage{soul}. Without it the live
+    #     image fails `! LaTeX Error: File 'soul-ori.sty' not found` mid-compile
+    #     (neurovista drift). Listed EXPLICITLY: not pulled under
+    #     --no-install-recommends.
+    #   texlive-lang-english                    — English hyphenation patterns
+    #     (correct line breaking for English-language manuscripts).
     apt-get update
     apt-get install -y --no-install-recommends \
         texlive-latex-base texlive-latex-recommended texlive-latex-extra \
         texlive-pictures \
+        texlive-plain-generic \
+        texlive-lang-english \
         texlive-bibtex-extra biber \
         texlive-fonts-recommended texlive-fonts-extra \
         texlive-science texlive-publishers \
