@@ -212,8 +212,17 @@ async def tui_heartbeat_loop(
         logger.info("tui_heartbeat_loop: disabled via SAC_TUI_HEARTBEAT_DISABLED")
         return
 
+    # ROOT-CAUSE GUARD (cards sac-listen-self-peer-persist-blocks-bind /
+    # sac-listen-watchdog-autorestart-alarm): like the CI poller, this
+    # preflight and the per-tick body run BEFORE/around the first
+    # ``await`` and shell out to ``tmux`` (blocking subprocess.run) plus a
+    # registry walk. On the event loop, a hung ``tmux`` here starves
+    # uvicorn's bind. Run every blocking step off the loop with a hard
+    # timeout so a wedged probe degrades that step instead of the daemon.
+    from ._off_loop import run_blocking_or
+
     check = tmux_check if tmux_check is not None else _tmux_available
-    if not check():
+    if not await run_blocking_or(check, default=False, op="tmux preflight (which tmux)"):
         logger.error(
             "tui_heartbeat_loop: `tmux` is not installed — TUI heartbeat "
             "writing DISABLED. TUI agents will show empty heartbeat_at on "
@@ -233,17 +242,29 @@ async def tui_heartbeat_loop(
     if write_fn is None:
         from .._runners._session_state import write_heartbeat as write_fn
 
+    def _tick_body() -> None:
+        # ``lister()`` walks the registry + on-disk specs and each
+        # ``_beat_one`` probes ``tmux`` (blocking subprocess.run); run the
+        # whole tick off the event loop so a slow/hung probe never starves
+        # the listen server even after bind.
+        for agent in list(lister()):
+            _beat_one(
+                agent,
+                session_exists_fn=session_exists_fn,
+                activity_fn=activity_fn,
+                write_fn=write_fn,
+            )
+
     logger.info("tui_heartbeat_loop: starting (interval_s=%.1f)", interval_s)
     try:
         while True:
             try:
-                for agent in list(lister()):
-                    _beat_one(
-                        agent,
-                        session_exists_fn=session_exists_fn,
-                        activity_fn=activity_fn,
-                        write_fn=write_fn,
-                    )
+                await run_blocking_or(
+                    _tick_body,
+                    default=None,
+                    op="tui_heartbeat_loop tick (tmux probes)",
+                    timeout_s=max(interval_s, 15.0),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # stx-allow: fallback (loop must survive a transient registry/tmux/FS error; logged, retried next tick)

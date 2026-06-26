@@ -458,7 +458,12 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
     ]
 
 
-def create_app(*, token: str, local_host: str | None = None) -> Starlette:
+def create_app(
+    *,
+    token: str,
+    local_host: str | None = None,
+    health_watchdog_port: int | None = None,
+) -> Starlette:
     """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only).
 
     WI-3 wires a per-app :class:`Broker` + :class:`NodeRegistry` so
@@ -487,6 +492,13 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     :func:`state_db._resolve_host` (env + config + hostname chain).
     Passing the value explicitly matters for in-process multi-host
     tests where the env is shared.
+
+    ``health_watchdog_port`` — when set (the CLI passes the port it
+    hands to ``uvicorn.run``), the lifespan launches a fail-loud bind
+    watchdog that probes ``127.0.0.1:<port>/v1/health`` shortly after
+    startup and logs a LOUD ERROR if the daemon is up-but-not-serving
+    (the silent state that took the fleet's comms down). Omitted in
+    in-process tests that never actually bind a port.
     """
     # Task #27 PR B — ACL decision routes for the in-container
     # broker. The bare-host lead writes the host's state.db directly
@@ -511,85 +523,19 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # effort (every failure logs and continues — startup MUST proceed).
     #
     # Starlette dropped the legacy ``on_startup=`` kwarg in favour of
-    # the ``lifespan`` async-context-manager API, so the persistence
-    # call goes inside an ``@asynccontextmanager`` adapter. The
-    # adapter awaits the persistence helper before yielding (= app
-    # ready), then yields control back so the server starts handling
-    # requests; teardown is a no-op (persistence is one-shot at boot).
-    from contextlib import asynccontextmanager
+    # the ``lifespan`` async-context-manager API. The lifespan — which
+    # awaits self-peer persistence, launches the three background loops
+    # (now off-loop-hardened so none can block the bind) and the
+    # fail-loud bind watchdog, then cancels them on teardown — lives in
+    # ``_lifecycle._listen_lifespan`` (extracted to keep this module
+    # under its line budget AND because it is the focal point of the
+    # silent-bind-hang fix).
+    from .._lifecycle._listen_lifespan import build_listen_lifespan
 
-    from .._lifecycle._github_ci_poll_loop import (
-        DEFAULT_CI_POLL_INTERVAL_S,
-        github_ci_poll_loop,
+    app = Starlette(
+        routes=routes,
+        lifespan=build_listen_lifespan(health_watchdog_port=health_watchdog_port),
     )
-    from .._lifecycle._periodic_drive_loop import periodic_drive_loop
-    from .._lifecycle._tui_heartbeat_loop import (
-        DEFAULT_TUI_HEARTBEAT_INTERVAL_S,
-        tui_heartbeat_loop,
-    )
-    from ._self_peer_persistence import persist_self_peers_on_listen_startup
-
-    @asynccontextmanager
-    async def _lifespan(app):  # type: ignore[no-untyped-def]
-        import asyncio as _asyncio
-        import os as _os
-
-        await persist_self_peers_on_listen_startup()
-        tasks: list = []
-        # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
-        # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
-        if _os.environ.get("SAC_PERIODIC_DRIVE_DISABLED", "") != "1":
-            task = _asyncio.create_task(periodic_drive_loop(app.state))
-            app.state.periodic_drive_task = task
-            tasks.append(task)
-        # GitHub-CI verdict-delivery poll loop (sac #404, feedback.pdf §3).
-        # The loop self-disables (fail-loud) when `gh` is unauthenticated
-        # or SAC_GITHUB_CI_POLLER_DISABLED=1, so launch unconditionally.
-        # Cadence override: SAC_GITHUB_CI_POLL_INTERVAL_S.
-        try:
-            _ci_interval = float(
-                _os.environ.get(
-                    "SAC_GITHUB_CI_POLL_INTERVAL_S", DEFAULT_CI_POLL_INTERVAL_S
-                )
-            )
-        except (TypeError, ValueError):
-            _ci_interval = DEFAULT_CI_POLL_INTERVAL_S
-        ci_task = _asyncio.create_task(
-            github_ci_poll_loop(poll_interval_s=_ci_interval)
-        )
-        app.state.github_ci_poller_task = ci_task
-        tasks.append(ci_task)
-        # TUI heartbeat writer (operator: "heartbeat must be available in
-        # tui as well"). Centralized writer so TUI agents get heartbeat.json
-        # parity with the SDK runner and stop showing empty heartbeat_at /
-        # "stopped" while alive. Self-disables (fail-loud) when `tmux` is
-        # missing or SAC_TUI_HEARTBEAT_DISABLED=1, so launch unconditionally.
-        # Cadence override: SAC_TUI_HEARTBEAT_INTERVAL_S.
-        try:
-            _tui_hb_interval = float(
-                _os.environ.get(
-                    "SAC_TUI_HEARTBEAT_INTERVAL_S", DEFAULT_TUI_HEARTBEAT_INTERVAL_S
-                )
-            )
-        except (TypeError, ValueError):
-            _tui_hb_interval = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
-        tui_hb_task = _asyncio.create_task(
-            tui_heartbeat_loop(interval_s=_tui_hb_interval)
-        )
-        app.state.tui_heartbeat_task = tui_hb_task
-        tasks.append(tui_hb_task)
-        try:
-            yield
-        finally:
-            for _t in tasks:
-                if _t is not None and not _t.done():
-                    _t.cancel()
-                    try:
-                        await _t
-                    except (_asyncio.CancelledError, Exception):
-                        pass
-
-    app = Starlette(routes=routes, lifespan=_lifespan)
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()
