@@ -118,6 +118,23 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # where the source dir does not exist (remote hosts, fresh boot before
     # emacs writes) — no FATAL, no surprise mount.
     "/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro",
+    # PERSISTENT TESTMON CACHE — survive the fresh-git-worktree churn the
+    # develop-pin hook forces. Every commit lands in a NEW worktree, so a
+    # worktree-local ``.testmondata`` is always cold and pytest re-runs the
+    # full ~2500-test suite (~2h). A peer package (scitex-dev) is building a
+    # pre-commit-hook wrapper that points testmon's data file at
+    # ``$SCITEX_TESTMON_CACHE_ROOT`` (sac injects that env var to the
+    # container-side path ``/home/agent/.cache/scitex-testmon`` — see
+    # ``_apptainer_listen_env.listen_env_flags``). Binding the host's
+    # ``~/.cache/scitex-testmon`` to that container path ``rw`` lets the
+    # cache PERSIST across worktree churn so only impacted tests re-run.
+    # ``rw`` because testmon must WRITE the updated cache after each run.
+    # The ``default_binds_for_host`` skip-if-missing filter means a missing
+    # host dir is a silent no-op (NO bind, NO crash) — so sac must NOT
+    # mkdir it; the operator/infra creates ``~/.cache/scitex-testmon`` on
+    # the host separately (non-container local dev falls back to the same
+    # ``~/.cache/scitex-testmon`` path the wrapper reads directly).
+    "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw",
 )
 
 

@@ -342,3 +342,26 @@ def test_fleet_defaults_include_emacs_handoff_bind_read_only() -> None:
     handoff = [b for b in _FLEET_DEFAULT_BINDS if "emacs-claude-code" in b]
     # Assert — bound at the same host path, read-only.
     assert handoff == ["/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro"]
+
+
+# ---------------------------------------------------------------------------
+# Persistent testmon cache bind — host ~/.cache/scitex-testmon bound rw to the
+# container-side /home/agent/.cache/scitex-testmon so testmon's data file
+# survives the fresh-git-worktree churn the develop-pin hook forces (scitex-dev
+# pre-commit-hook wrapper reads $SCITEX_TESTMON_CACHE_ROOT). Skip-if-missing
+# (no sac-side mkdir) is covered by the host-existence-gate tests above.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_include_testmon_cache_bind_rw() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act
+    testmon = [b for b in _FLEET_DEFAULT_BINDS if "scitex-testmon" in b]
+    # Assert — bound rw to the container-side cache path under /home/agent.
+    assert testmon == [
+        "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw"
+    ]
