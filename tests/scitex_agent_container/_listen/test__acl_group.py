@@ -147,6 +147,92 @@ def test_ungrouped_pair_still_denied_without_grant(db_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# check_send_acl — cross-group mesh among {developer, researcher, generalist}
+# (operator 2026-06-27)
+# ---------------------------------------------------------------------------
+
+
+def test_send_allowed_developer_to_researcher(db_path: Path) -> None:
+    """Cross-group mesh: developer → researcher, no grant → allow."""
+    # Arrange
+    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
+    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    # Act
+    decision, _reason = check_send_acl(
+        authenticated_node="dev-1",
+        claimed_from_agent="dev-1",
+        target="res-1",
+        db_path=db_path,
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_send_allowed_researcher_to_generalist(db_path: Path) -> None:
+    """Cross-group mesh: researcher → generalist, no grant → allow."""
+    # Arrange
+    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="gen-1", group_name="generalist", db_path=db_path)
+    # Act
+    decision, _reason = check_send_acl(
+        authenticated_node="res-1",
+        claimed_from_agent="res-1",
+        target="gen-1",
+        db_path=db_path,
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_send_allowed_generalist_to_developer_all_directions(db_path: Path) -> None:
+    """Mesh is bidirectional: generalist → developer, no grant → allow."""
+    # Arrange
+    record_comms_policy(name="gen-1", group_name="generalist", db_path=db_path)
+    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
+    # Act
+    decision, _reason = check_send_acl(
+        authenticated_node="gen-1",
+        claimed_from_agent="gen-1",
+        target="dev-1",
+        db_path=db_path,
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_send_denied_mesh_group_to_isolated_solver(db_path: Path) -> None:
+    """A non-mesh group (solver) stays isolated: developer → solver → deny."""
+    # Arrange
+    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
+    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
+    # Act
+    decision, _reason = check_send_acl(
+        authenticated_node="dev-1",
+        claimed_from_agent="dev-1",
+        target="solver-1",
+        db_path=db_path,
+    )
+    # Assert
+    assert decision == "deny"
+
+
+def test_send_denied_isolated_solver_to_mesh_group(db_path: Path) -> None:
+    """Isolation holds in both directions: solver → researcher → deny."""
+    # Arrange
+    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
+    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    # Act
+    decision, _reason = check_send_acl(
+        authenticated_node="solver-1",
+        claimed_from_agent="solver-1",
+        target="res-1",
+        db_path=db_path,
+    )
+    # Assert
+    assert decision == "deny"
+
+
+# ---------------------------------------------------------------------------
 # check_spawn — developer-group full authority
 # ---------------------------------------------------------------------------
 

@@ -17,8 +17,12 @@ from __future__ import annotations
 
 from scitex_agent_container.config._group_resolver import (
     DEVELOPER_GROUP,
+    GENERALIST_GROUP,
+    RESEARCHER_GROUP,
     group_from_labels,
+    groups_mesh,
     is_developer_group,
+    is_mesh_group,
     resolve_group,
 )
 
@@ -171,5 +175,61 @@ def test_is_developer_group_false_for_empty() -> None:
     group = ""
     # Act
     result = is_developer_group(group)
+    # Assert
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# cross-group mesh predicates (operator 2026-06-27)
+# ---------------------------------------------------------------------------
+
+
+def test_is_mesh_group_true_for_researcher() -> None:
+    # Arrange
+    group = RESEARCHER_GROUP
+    # Act
+    result = is_mesh_group(group)
+    # Assert
+    assert result is True
+
+
+def test_is_mesh_group_true_for_generalist() -> None:
+    # Arrange
+    group = GENERALIST_GROUP
+    # Act
+    result = is_mesh_group(group)
+    # Assert
+    assert result is True
+
+
+def test_is_mesh_group_false_for_solver() -> None:
+    # Arrange
+    group = "solver"
+    # Act
+    result = is_mesh_group(group)
+    # Assert
+    assert result is False
+
+
+def test_groups_mesh_true_across_standard_groups() -> None:
+    # Arrange
+    # Act
+    result = groups_mesh(DEVELOPER_GROUP, RESEARCHER_GROUP)
+    # Assert
+    assert result is True
+
+
+def test_groups_mesh_false_when_one_side_is_non_mesh() -> None:
+    # Arrange
+    # Act
+    result = groups_mesh(DEVELOPER_GROUP, "solver")
+    # Assert
+    assert result is False
+
+
+def test_groups_mesh_false_when_one_side_is_ungrouped() -> None:
+    # Arrange
+    # Act
+    result = groups_mesh(RESEARCHER_GROUP, "")
     # Assert
     assert result is False

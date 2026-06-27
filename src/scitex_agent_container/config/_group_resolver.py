@@ -39,8 +39,13 @@ from __future__ import annotations
 
 __all__ = [
     "DEVELOPER_GROUP",
+    "GENERALIST_GROUP",
+    "MESH_GROUPS",
+    "RESEARCHER_GROUP",
     "group_from_labels",
+    "groups_mesh",
     "is_developer_group",
+    "is_mesh_group",
     "resolve_group",
 ]
 
@@ -49,6 +54,28 @@ __all__ = [
 # ACL-CRUD authority (see :func:`._listen._acl.check_spawn` /
 # ``check_lineage_acl``).
 DEVELOPER_GROUP = "developer"
+
+# The other two standard fleet groups. They carry NO extra authority
+# (unlike ``developer``); they exist so a researcher / generalist agent
+# resolves to a stable named group for the cross-group mesh below.
+RESEARCHER_GROUP = "researcher"
+GENERALIST_GROUP = "generalist"
+
+
+# Cross-group mesh (operator 2026-06-27): the three STANDARD fleet groups
+# coordinate with each other in all directions — a ``developer`` may
+# address a ``researcher`` may address a ``generalist``, no per-pair grant
+# needed. This is "fleet-mesh by default" for the standard groups, the
+# layer above the same-named-group mesh.
+#
+# A group OUTSIDE this set does NOT mesh: e.g. a paper-scitex-clew solver
+# in an isolated group (and/or ``lineage_group='solitary'`` + per-spec
+# ``inbound.siblings=deny``) falls through to the explicit-grant ACL,
+# preserving the solid isolation scientific rigor requires. To mesh a new
+# group, add its name here (single-line edit, zero schema change).
+MESH_GROUPS: frozenset[str] = frozenset(
+    {DEVELOPER_GROUP, RESEARCHER_GROUP, GENERALIST_GROUP}
+)
 
 
 # Exact role strings (case-insensitive) that default to the developer
@@ -142,3 +169,28 @@ def is_developer_group(group: str | None) -> bool:
     if not group:
         return False
     return str(group).strip().lower() == DEVELOPER_GROUP
+
+
+def is_mesh_group(group: str | None) -> bool:
+    """Return True iff ``group`` is one of the standard mesh groups.
+
+    Case-insensitive on the resolved group name. ``None`` / empty →
+    False. Members of :data:`MESH_GROUPS` coordinate with members of any
+    other mesh group (see :func:`groups_mesh`); a group outside the set
+    does not mesh and stays isolated.
+    """
+    if not group:
+        return False
+    return str(group).strip().lower() in MESH_GROUPS
+
+
+def groups_mesh(group_a: str | None, group_b: str | None) -> bool:
+    """Return True iff ``group_a`` and ``group_b`` both mesh.
+
+    The cross-group allow predicate: a send is meshed when BOTH the
+    sender's and the target's resolved named groups are standard mesh
+    groups (:data:`MESH_GROUPS`). Either side being ungrouped, or in a
+    non-mesh group (e.g. an isolated solver group), returns False — the
+    send then falls through to the explicit-grant ACL.
+    """
+    return is_mesh_group(group_a) and is_mesh_group(group_b)

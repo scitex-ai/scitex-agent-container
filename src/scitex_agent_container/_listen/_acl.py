@@ -39,11 +39,13 @@ from typing import Literal
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ..config._group_resolver import groups_mesh
 from .._state.state_db_nodes import (
     derive_group,
     has_grant,
     is_developer,
     read_comms_policy,
+    resolve_group_name,
     resolve_node_token,
     same_named_group,
     sender_target_relationship,
@@ -302,6 +304,21 @@ def check_send_acl(
     # grant. Additive: an ungrouped fleet shares no named group and
     # falls through to the explicit-grant check below, unchanged.
     if same_named_group(sender=sender, target=target, db_path=db_path):
+        return ("allow", None)
+
+    # Cross-group mesh (operator 2026-06-27): the three STANDARD fleet
+    # groups — developer / researcher / generalist — coordinate in all
+    # directions with NO per-pair grant. Evaluated AFTER the phase-3
+    # per-spec deny (so a solver's ``inbound.siblings=deny`` /
+    # ``lineage_group='solitary'`` isolation still wins) and AFTER the
+    # same-named-group mesh, but BEFORE the explicit-grant fallthrough.
+    # An agent in a non-mesh group (e.g. an isolated solver group) is
+    # NOT meshed and falls through to the grant check below, preserving
+    # the solid isolation scientific rigor requires.
+    if groups_mesh(
+        resolve_group_name(name=sender, db_path=db_path),
+        resolve_group_name(name=target, db_path=db_path),
+    ):
         return ("allow", None)
 
     if has_grant(sender=sender, target=target, db_path=db_path):
