@@ -81,6 +81,23 @@ def listen_env_flags(config) -> list[str]:
         "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon",
     ]
 
+    # HOST-TUNNELED QWEN FALLBACK — point the scitex-genai client at the
+    # host-side ssh tunnel to Spartan-hosted qwen. ``127.0.0.1:4000`` is
+    # reachable from EVERY agent container because apptainer shares the
+    # host network namespace, so no per-container port forward is needed.
+    # ``SCITEX_GENAI_BASE_URL`` is a namespaced FALLBACK that scitex-genai
+    # consults ONLY on its self-hosted / unknown-model path — it is
+    # deliberately NOT ``OPENAI_BASE_URL`` (which the openai SDK auto-reads
+    # and would misroute real ``gpt-*`` traffic to this local qwen tunnel).
+    # Only the base URL is injected here; the qwen API key is gated on a
+    # separate operator security decision and is intentionally NOT set.
+    # UNCONDITIONAL (same as the base URL + testmon cache above): a base
+    # URL with no key is harmless to agents that never hit the fallback.
+    flags += [
+        "--env",
+        "SCITEX_GENAI_BASE_URL=http://127.0.0.1:4000/v1",
+    ]
+
     # Forward the host's agent-spec search path so the in-container sac
     # resolves peer specs at the operator's path. Only inject when the
     # host has it set+non-empty — otherwise leave the in-container default
