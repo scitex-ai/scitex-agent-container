@@ -64,6 +64,23 @@ def listen_env_flags(config) -> list[str]:
 
     flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
 
+    # PERSISTENT TESTMON CACHE — point testmon's data file at the
+    # container-side bind destination (see
+    # ``_p3a_default_binds._FLEET_DEFAULT_BINDS``: the host's
+    # ``~/.cache/scitex-testmon`` is bound ``rw`` to
+    # ``/home/agent/.cache/scitex-testmon``). scitex-dev's pre-commit-hook
+    # wrapper reads ``$SCITEX_TESTMON_CACHE_ROOT`` so the testmon cache
+    # PERSISTS across the fresh-git-worktree churn the develop-pin hook
+    # forces — otherwise every commit re-runs the full ~2500-test suite
+    # against a cold worktree-local ``.testmondata``. UNCONDITIONAL (same
+    # as the base URL above): the cache helps every agent regardless of
+    # bus membership, and a missing host bind dir is already a silent
+    # no-op via ``default_binds_for_host``'s skip-if-missing filter.
+    flags += [
+        "--env",
+        "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon",
+    ]
+
     # Forward the host's agent-spec search path so the in-container sac
     # resolves peer specs at the operator's path. Only inject when the
     # host has it set+non-empty — otherwise leave the in-container default
