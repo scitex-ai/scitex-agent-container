@@ -3,9 +3,16 @@
 A SECOND grouping axis layered on top of the existing lineage-derived
 group mesh (:func:`scitex_agent_container._state.state_db_nodes.derive_group`):
 
-  * Each agent has a NAMED group. Source of truth is the spec label
-    ``metadata.labels.group``.
-  * When the ``group`` label is ABSENT, the group is *derived from the
+  * Each agent has a NAMED group. Source of truth is the spec
+    ``metadata.labels``. The convention is the PLURAL list form
+    ``groups: [<name>]`` — every agent ``spec.yaml`` and the operator's
+    templates author the named group as a one-element list, e.g.
+    ``groups: [researcher]``; the FIRST non-empty element is the named
+    group. The SINGULAR string ``group: <name>`` is also accepted (and
+    WINS over the plural list when both are present), for hand-written
+    specs that prefer a scalar.
+  * When NEITHER ``group`` nor ``groups`` is present, the group is
+    *derived from the
     role* (``metadata.labels.role`` / ``CLAUDE_AGENT_ROLE``): the
     developer-ish roles — ``project-maintainer`` / ``maintainer`` /
     ``dev-agent`` / ``contributor`` (and their project-suffixed forms,
@@ -144,17 +151,58 @@ def resolve_group(*, group_label: str | None, role: str | None) -> str:
     return ""
 
 
-def group_from_labels(labels: dict[str, str] | None) -> str:
+def _first_named_group(labels: dict) -> str | None:
+    """Pull the operative named-group string out of a ``labels`` dict.
+
+    Honours the two authored forms, SINGULAR-string-wins:
+
+      1. ``labels["group"]`` (a string) — wins verbatim when present and
+         non-empty (whitespace-trimmed).
+      2. else the FIRST non-empty element of ``labels["groups"]`` (a
+         list) — the spec convention (``groups: [researcher]``).
+
+    Returns the chosen group string, or ``None`` when neither form
+    yields a non-empty value. Defensive: ``groups`` may be absent, a
+    non-list (e.g. a bare string or other scalar), or empty/all-blank —
+    any of those is treated as "absent" and falls through to ``None``.
+    """
+    singular = labels.get("group")
+    if singular is not None:
+        trimmed = str(singular).strip()
+        if trimmed:
+            return trimmed
+    plural = labels.get("groups")
+    if isinstance(plural, (list, tuple)):
+        for item in plural:
+            if item is None:
+                continue
+            trimmed = str(item).strip()
+            if trimmed:
+                return trimmed
+    return None
+
+
+def group_from_labels(labels: dict | None) -> str:
     """Resolve the named group from a spec's ``metadata.labels`` dict.
 
-    Convenience wrapper over :func:`resolve_group` that pulls the
-    ``group`` and ``role`` keys out of the labels mapping. A missing /
-    ``None`` labels dict yields ``""`` (ungrouped).
+    Convenience wrapper over :func:`resolve_group`. Precedence:
+
+      1. SINGULAR ``labels["group"]`` (string) wins when non-empty.
+      2. else the FIRST non-empty element of the PLURAL
+         ``labels["groups"]`` list — the spec convention
+         (``groups: [researcher]``).
+      3. else role-derivation via :func:`resolve_group` (a
+         developer-ish ``labels["role"]`` → :data:`DEVELOPER_GROUP`).
+      4. else ``""`` (ungrouped).
+
+    A missing / ``None`` labels dict yields ``""`` (ungrouped). The
+    plural ``groups`` key is read defensively (absent / non-list /
+    empty are all treated as "absent" — see :func:`_first_named_group`).
     """
     if not labels:
         return ""
     return resolve_group(
-        group_label=labels.get("group"),
+        group_label=_first_named_group(labels),
         role=labels.get("role"),
     )
 
