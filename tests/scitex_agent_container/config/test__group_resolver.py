@@ -7,7 +7,9 @@ Pure string-in / string-out resolution — no DB, no fixtures. Covers:
   developer-ish roles (project-maintainer / maintainer / dev-agent /
   contributor, and project-suffixed forms) default to ``developer``.
 * Anything else → ``""`` (ungrouped).
-* :func:`group_from_labels` reads the ``group`` / ``role`` keys.
+* :func:`group_from_labels` reads the PLURAL ``groups`` list (spec
+  convention, first non-empty element wins), the SINGULAR ``group``
+  string (wins over the list), or falls back to the ``role`` key.
 * :func:`is_developer_group` recognises the privileged group.
 
 AAA, one assertion per test, no mocks.
@@ -150,6 +152,87 @@ def test_group_from_labels_none_is_ungrouped() -> None:
     group = group_from_labels(labels)
     # Assert
     assert group == ""
+
+
+def test_group_from_labels_reads_plural_groups_researcher() -> None:
+    # Arrange
+    labels = {"groups": ["researcher"]}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "researcher"
+
+
+def test_group_from_labels_reads_plural_groups_generalist() -> None:
+    # Arrange
+    labels = {"groups": ["generalist"]}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "generalist"
+
+
+def test_group_from_labels_singular_group_still_works() -> None:
+    # Arrange
+    labels = {"group": "developer"}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "developer"
+
+
+def test_group_from_labels_singular_wins_over_plural() -> None:
+    # Arrange
+    labels = {"group": "developer", "groups": ["researcher"]}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "developer"
+
+
+def test_group_from_labels_empty_plural_falls_back_to_role() -> None:
+    # Arrange
+    labels = {"groups": [], "role": "dev-agent"}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == DEVELOPER_GROUP
+
+
+def test_group_from_labels_empty_plural_no_role_is_ungrouped() -> None:
+    # Arrange
+    labels = {"groups": []}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == ""
+
+
+def test_group_from_labels_plural_beats_role() -> None:
+    # Arrange
+    labels = {"groups": ["scientist"], "role": "project-maintainer"}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "scientist"
+
+
+def test_group_from_labels_first_nonempty_plural_element_wins() -> None:
+    # Arrange
+    labels = {"groups": ["  ", "researcher", "generalist"]}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == "researcher"
+
+
+def test_group_from_labels_non_list_plural_falls_back_to_role() -> None:
+    # Arrange
+    labels = {"groups": "researcher", "role": "dev-agent"}
+    # Act
+    group = group_from_labels(labels)
+    # Assert
+    assert group == DEVELOPER_GROUP
 
 
 def test_is_developer_group_true_for_developer() -> None:
