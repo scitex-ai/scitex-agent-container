@@ -58,7 +58,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
-        ("Maintenance", ["prune-claude", "archive-claude-bloat"]),
+        ("Maintenance", ["prune-claude", "archive-claude-bloat", "refresh-acl"]),
     ]
 
 
@@ -120,5 +120,13 @@ agent_group.add_command(_rebind(_prune_claude_impl, "prune-claude"))
 # ``prune-claude`` (the narrower, dry-run-first, two-bucket scheme):
 # this command is the wide audit-driven button.
 agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloat"))
+# `refresh-acl` — re-publish every fleet agent's ACL/group policy from
+# its CURRENT on-disk spec into node_comms_policy, with NO agent
+# relaunch. The operator's post-restart activation step after a group-
+# model change: `systemctl --user restart sac-listen && sac agents
+# refresh-acl` brings the new group mesh live without a fleet relaunch.
+from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
+
+agent_group.add_command(_refresh_acl_impl)
 
 __all__ = ["agent_group"]
