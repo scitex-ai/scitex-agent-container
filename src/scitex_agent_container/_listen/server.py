@@ -425,6 +425,16 @@ def create_app(
     (the silent state that took the fleet's comms down). Omitted in
     in-process tests that never actually bind a port.
     """
+    # The listen daemon IS the fleet control plane: it resolves agents from
+    # the user-scope fleet registry, never a cwd project-local one. Declare
+    # that scope so _resolve's project-local-vs-fleet ambiguity guard (which
+    # fails loud for the interactive CLI) does NOT fire inside the daemon when
+    # it runs from a repo carrying .scitex/agent-container/agents (CI, a dev
+    # checkout). An operator-set SAC_AGENT_SCOPE still wins (setdefault).
+    import os
+
+    os.environ.setdefault("SAC_AGENT_SCOPE", "user")
+
     # Task #27 PR B — ACL decision routes for the in-container
     # broker. The bare-host lead writes the host's state.db directly
     # via the CLI; an in-container ``sac a2a {unblock,block,grant}``

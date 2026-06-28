@@ -66,11 +66,37 @@ def env_bag():
         bag.restore()
 
 
+@pytest.fixture(autouse=True)
+def _neutral_cwd(tmp_path):
+    """Run every test in this module from a project-less tmp cwd.
+
+    The test process's real cwd is the sac worktree, which ships a
+    tracked ``.scitex/agent-container/agents/`` project-local registry.
+    With the new ``$SAC_AGENT_SCOPE`` ambiguity rule, that project-local
+    dir + a test's tmp ``$HOME`` fleet dir would otherwise trip
+    ``AmbiguousRegistryScope`` in tests that only mean to exercise the
+    fleet path. Chdir-ing to a fresh tmp dir (no ``.git`` / ``.scitex``)
+    makes project-scope discovery find nothing, preserving each test's
+    single-registry intent. Reverts the real cwd on teardown.
+    """
+    import os
+
+    prev = os.getcwd()
+    neutral = tmp_path / "_neutral_cwd"
+    neutral.mkdir()
+    os.chdir(str(neutral))
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
 @pytest.fixture
 def fake_home(tmp_path, env_bag):
     """Redirect ``$HOME`` at tmp_path. Reverts via the env_bag."""
     env_bag.setenv("HOME", str(tmp_path))
     env_bag.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    env_bag.delenv("SAC_AGENT_SCOPE")
     return tmp_path
 
 
@@ -220,6 +246,7 @@ def agent_root(tmp_path: Path, env_bag):
     env_bag.setenv("HOME", str(home))
     # Don't let an outer test session leak its YAML dirs in.
     env_bag.delenv("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    env_bag.delenv("SAC_AGENT_SCOPE")
     return home / ".scitex" / "agent-container" / "agents"
 
 
