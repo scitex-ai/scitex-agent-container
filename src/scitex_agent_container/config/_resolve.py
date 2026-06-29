@@ -50,11 +50,17 @@ class AmbiguousRegistryScope(LookupError):
     ``$SAC_AGENT_SCOPE``.
     """
 
-    def __init__(self, project_dir: Path, fleet_dir: Path):
+    def __init__(self, project_dir: Path, fleet_dir: Path, name: str | None = None):
         self.project_dir = project_dir
         self.fleet_dir = fleet_dir
+        self.name = name
+        lead = (
+            f"agent {name!r} exists in BOTH registries: "
+            if name
+            else "Registry scope is ambiguous: "
+        )
         super().__init__(
-            f"Registry scope is ambiguous: project-local {project_dir} "
+            f"{lead}project-local {project_dir} "
             f"shadows the fleet registry {fleet_dir}. "
             f"Set {_SCOPE_ENV_VAR}=user to target the fleet, or "
             f"{_SCOPE_ENV_VAR}=project for this repo's local agents."
@@ -146,12 +152,12 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
             ~/.scitex/orochi/$(hostname -s)/agents:\\
             ~/.scitex/orochi/shared/agents
 
-    Scope (``$SAC_AGENT_SCOPE``): when BOTH the project-local registry
-    dir AND the user-scope fleet registry dir exist and the scope is
-    unset, this raises :class:`AmbiguousRegistryScope` rather than
-    silently preferring project-local. See :func:`_apply_scope`. The
-    operator-supplied ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` extension is
-    NOT part of the ambiguous pair — it is always honoured as-is.
+    Scope (``$SAC_AGENT_SCOPE``): ``user`` searches only the fleet,
+    ``project`` only the project-local. When unset, BOTH are returned and
+    :func:`resolve_config` raises :class:`AmbiguousRegistryScope` ONLY for
+    an agent name that resolves in BOTH registries (a real collision) —
+    not merely because both registry dirs exist. The operator-supplied
+    ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` extension is always honoured.
     """
     home = Path(os.path.expanduser("~"))
     primary = home / ".scitex" / "agent-container" / "agents"
@@ -184,15 +190,13 @@ def _apply_scope(
     * ``SAC_AGENT_SCOPE=project`` → search ONLY project-local; signal
       "skip primary" by returning a sentinel non-existent fleet dir so
       the existing call-site loops never hit it.
-    * unset/auto: if BOTH the project-local registry dir AND the fleet
-      registry dir exist → raise :class:`AmbiguousRegistryScope`. If only
-      one exists (the common case — a fresh CI runner has no
-      ``~/.scitex/agent-container/agents`` fleet dir) → no ambiguity,
-      both are returned untouched and the lone present dir wins silently.
-
-    The "both present" test keys purely on directory existence, NOT on
-    which scope a specific agent name lives in — the operator wants the
-    scope made explicit, not guessed per-name.
+    * unset/auto: return BOTH untouched. The ambiguity check is
+      deferred to :func:`resolve_config`, which raises
+      :class:`AmbiguousRegistryScope` ONLY when the SAME agent name
+      resolves in both registries (a real collision) — NOT merely
+      because both registry DIRS exist. So an unrelated project-local
+      registry (e.g. the sac repo's ``sdk-test``/``self`` test fixtures)
+      never blocks a fleet-only agent like ``sac agents start <fleet>``.
     """
     scope = _read_scope()
     if scope == "user":
@@ -205,11 +209,8 @@ def _apply_scope(
         # real fleet dir).
         return _SCOPED_OUT_FLEET, project_local
 
-    # scope unset → fail loud iff BOTH registry dirs are present.
-    project_present = bool(project_local) and project_local[0].is_dir()
-    fleet_present = primary.is_dir()
-    if project_present and fleet_present:
-        raise AmbiguousRegistryScope(project_local[0], primary)
+    # scope unset → return both; per-name ambiguity is decided in
+    # resolve_config (raise only when the requested name is in both).
     return primary, project_local
 
 
@@ -316,12 +317,13 @@ def resolve_config(name_or_path: str) -> str:
     1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` (sac install root).
     2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs, each searched as ``<dir>/<name>/spec.yaml``). Plugin port for downstream orchestrators to inject extra paths without sac knowing about them.
 
-    Scope (``$SAC_AGENT_SCOPE``): if BOTH the project-local registry dir
-    AND the user-scope fleet registry dir exist and the scope is unset,
-    this raises :class:`AmbiguousRegistryScope` instead of silently
-    preferring project-local. ``SAC_AGENT_SCOPE=user`` searches only the
-    fleet; ``=project`` searches only project-local. A single present
-    registry resolves with no error.
+    Scope (``$SAC_AGENT_SCOPE``): if the requested NAME resolves in BOTH a
+    project-local registry AND the fleet and the scope is unset, this
+    raises :class:`AmbiguousRegistryScope` (a real collision) instead of
+    silently preferring project-local. A name present in only one registry
+    resolves with no error, even when both registry dirs exist.
+    ``SAC_AGENT_SCOPE=user`` searches only the fleet; ``=project`` only
+    project-local.
 
     Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.
     """
@@ -341,14 +343,31 @@ def resolve_config(name_or_path: str) -> str:
     split = len(env_dirs) - len(operator_env_dirs)
     project_local_dirs = env_dirs[:split]
 
-    # Order: project-local → primary (~/.scitex…) → env → fleet.
+    # Per-name scope ambiguity (operator 2026-06-29): raise ONLY when the
+    # SAME agent name resolves in BOTH a project-local registry AND the
+    # fleet, with no explicit $SAC_AGENT_SCOPE. A name present in only ONE
+    # registry resolves with no error even when both registry DIRS exist —
+    # so an unrelated project-local registry (e.g. the sac repo's
+    # sdk-test/self test fixtures) never blocks a fleet-only agent like
+    # `sac agents start <fleet-agent>`. When it IS a real collision, the
+    # message lets the operator pick (=project for this repo's local one,
+    # =user for the fleet).
+    proj_hit = None
     for d in project_local_dirs:
-        hit = _try_dir(d, name_or_path)
-        if hit:
-            return hit
-    hit = _try_dir(primary, name_or_path)
-    if hit:
-        return hit
+        proj_hit = _try_dir(d, name_or_path)
+        if proj_hit:
+            break
+    fleet_hit = _try_dir(primary, name_or_path)
+    if proj_hit and fleet_hit and _read_scope() is None:
+        raise AmbiguousRegistryScope(
+            Path(proj_hit).parent.parent, primary, name=name_or_path
+        )
+
+    # Resolution order: project-local → primary (~/.scitex…) → env → fleet.
+    if proj_hit:
+        return proj_hit
+    if fleet_hit:
+        return fleet_hit
     for d in operator_env_dirs:
         hit = _try_dir(d, name_or_path)
         if hit:
