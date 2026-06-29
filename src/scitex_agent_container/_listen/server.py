@@ -346,6 +346,13 @@ from ._node_channel import (  # noqa: E402
 # path keep working unchanged.
 from ._agent_delete import agent_delete  # noqa: E402
 
+# ``agent_restart`` (POST /agents/<name>/restart) is the container-side
+# mirror of the spawn bypass: an in-SIF agent cannot resolve a peer's
+# LOCAL registry row, so it POSTs here and the HOST listen runs the
+# restart on the bare host (manage-gated by check_lineage_acl). Lives in
+# its own module to keep server.py under the per-file line cap.
+from ._agent_restart import agent_restart  # noqa: E402
+
 
 # --- App factory -----------------------------------------------------------
 
@@ -363,6 +370,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        Route(f"{prefix}/{{name}}/restart", agent_restart, methods=["POST"]),
         # WI-3 — node-identity-keyed inbox endpoints.
         Route(
             f"{prefix}/{{name}}/message:send",

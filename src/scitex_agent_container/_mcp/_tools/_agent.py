@@ -221,6 +221,16 @@ def agent_restart(name: str) -> dict[str, Any]:
     failed with "Refusing to restart ... without --yes/-y." (no-surprise:
     the documented MCP surface must actually work, not dead-end on an
     interactive guard that can never be satisfied over MCP).
+
+    Host bypass (operator 2026-06-29 "agents manage agents"): when this
+    tool runs INSIDE a container, the target peer's registry row lives on
+    the bare host and is unresolvable locally — the underlying CLI then
+    falls back to brokering the restart to the HOST listen
+    (``POST {SAC_LISTEN_BASE_URL}/agents/<name>/restart``, manage-gated by
+    ``check_lineage_acl``), exactly like ``agent_spawn`` brokers a spawn.
+    The fallback is transparent here: the CLI runs it internally so this
+    tool needs no extra wiring; on a bare host (row resolvable) the local
+    path runs unchanged.
     """
     return invoke_cli_text(["agents", "restart", name, "--yes"])
 

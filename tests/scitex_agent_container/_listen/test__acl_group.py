@@ -288,3 +288,44 @@ def test_non_developer_cannot_manage_unrelated_agent(db_path: Path) -> None:
     )
     # Assert
     assert decision == "deny"
+
+
+# ---------------------------------------------------------------------------
+# check_lineage_acl — standard-fleet MANAGE mesh (operator 2026-06-29
+# "agents manage agents"). A caller may manage a target when BOTH resolve
+# into the developer / researcher / generalist mesh, with no lineage edge
+# and no per-pair grant. This is what lets a researcher restart a developer
+# peer via the host listen bypass.
+# ---------------------------------------------------------------------------
+
+
+def test_researcher_may_manage_developer_target_via_mesh(db_path: Path) -> None:
+    """Researcher → developer, no lineage, no grant → allow (manage mesh)."""
+    # Arrange — neurovista (researcher) restarts scitex-todo (developer).
+    record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="scitex-todo", group_name="developer", db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller="neurovista", target="scitex-todo", db_path=db_path
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_mesh_caller_cannot_manage_isolated_solver_target(db_path: Path) -> None:
+    """A non-mesh target (isolated solver) stays unmanageable cross-group.
+
+    Uses a RESEARCHER caller (not developer): the developer group has
+    full agent-CRUD authority over ANY target regardless of mesh, so the
+    isolation must be probed by a mesh-but-non-developer caller.
+    """
+    # Arrange — researcher caller, solver target (outside the mesh).
+    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
+    record_lineage(child="solver-1", parent="someone-else", db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller="res-1", target="solver-1", db_path=db_path
+    )
+    # Assert
+    assert decision == "deny"

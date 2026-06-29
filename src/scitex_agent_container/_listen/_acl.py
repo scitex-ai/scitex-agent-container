@@ -91,6 +91,13 @@ def check_lineage_acl(
         :func:`_state.state_db_nodes.is_developer`.
       * ``target ∈ descendants_of(caller)`` — caller is a
         transitive ancestor; lineage-scoped operation permitted.
+      * ``groups_mesh(caller, target)`` (operator 2026-06-29
+        "agents manage agents") — caller and target BOTH resolve
+        into the standard fleet mesh (developer / researcher /
+        generalist). Manage authority is granted across these
+        groups with no lineage edge and no per-pair grant, exactly
+        as :func:`check_send_acl` meshes sends. A non-mesh group
+        (isolated solver) stays unmanageable cross-group.
       * Otherwise — deny with a structured reason naming the
         caller, the target, and the fact that no lineage edge
         connects them.
@@ -120,14 +127,31 @@ def check_lineage_acl(
     descendants = descendants_of(name=caller, db_path=db_path)
     if target in descendants:
         return ("allow", None)
+    # Standard-fleet manage mesh (operator 2026-06-29: "agents manage
+    # agents"). This BROADENS manage authority beyond lineage: a caller
+    # may also manage (stop / restart / delete / status / tail) a target
+    # when BOTH resolve into the standard group mesh (developer /
+    # researcher / generalist) — exactly the cross-group predicate
+    # ``check_send_acl`` uses for sends. So a researcher (e.g. neurovista)
+    # may restart a developer peer (e.g. scitex-todo) with no lineage edge
+    # and no per-pair grant. A non-mesh group (e.g. an isolated solver)
+    # is NOT meshed and stays unmanageable cross-group, preserving the
+    # solid isolation scientific rigor requires.
+    if groups_mesh(
+        resolve_group_name(name=caller, db_path=db_path),
+        resolve_group_name(name=target, db_path=db_path),
+    ):
+        return ("allow", None)
     return (
         "deny",
         (
             f"lineage ACL deny: caller {caller!r} has no lineage edge "
             f"to target {target!r}. Permitted operations are self "
             "(caller == target), any transitive descendant via the "
-            "lineage table, or any target when the caller is in the "
-            "developer group."
+            "lineage table, any target when the caller is in the "
+            "developer group, or any target when caller and target "
+            "both belong to the standard fleet mesh (developer / "
+            "researcher / generalist)."
         ),
     )
 

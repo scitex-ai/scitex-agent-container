@@ -95,6 +95,45 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
     return envelope if isinstance(envelope, dict) else {}
 
 
+def _should_try_host_bypass(exc: Exception) -> bool:
+    """Return True iff a LOCAL restart failure should fall back to the host.
+
+    The fallback fires only when BOTH hold:
+
+      * the failure is the "not found in registry" local-resolution miss
+        (an in-SIF agent cannot see a peer's bare-host registry row), and
+      * ``SAC_LISTEN_BASE_URL`` is set (we are a container with the host
+        listen reachable — the spawn bypass's precondition).
+
+    Any other RuntimeError (a real restart fault on a resolvable agent)
+    propagates unchanged so the bare-host operator path is untouched.
+    """
+    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
+
+    if "not found in registry" not in str(exc):
+        return False
+    try:
+        _resolve_base_url(None)
+    except RestartRequestError:
+        return False
+    return True
+
+
+def _restart_via_host_bypass(name: str) -> dict:
+    """Broker the restart to the HOST listen and return its JSON envelope.
+
+    Mirrors the spawn bypass (``agent_spawn`` → ``request_spawn``): the
+    in-SIF client POSTs to ``{SAC_LISTEN_BASE_URL}/agents/<name>/restart``
+    and the host runs ``sac agents restart <name> --yes`` on the bare
+    host (manage-gated by ``check_lineage_acl``). A
+    :class:`RestartRequestError` (transport / 401 / 403 / 5xx) propagates
+    so the CLI's outer ``except`` surfaces it fail-loud.
+    """
+    from ..._lifecycle._restart_client import request_restart
+
+    return request_restart(name)
+
+
 @click.command()
 @click.argument("name", shell_complete=agent_name_complete)
 @click.option(
@@ -180,7 +219,38 @@ def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
             return
 
         # Local restart (row on this host, or no row — spec fallback).
-        agent_restart(name)
+        # When that LOCAL resolution fails (no registry row AND no
+        # resolvable spec) AND we are inside a container with the host
+        # listen reachable (SAC_LISTEN_BASE_URL injected), broker the
+        # restart to the HOST listen — exactly like the spawn bypass.
+        # This is what lets an in-SIF agent restart a peer whose registry
+        # row lives on the bare host (it is unresolvable from inside the
+        # container). The bare-host operator keeps the local path (the row
+        # IS resolvable there, so the bypass never fires).
+        try:
+            agent_restart(name)
+        except RuntimeError as exc:
+            if not _should_try_host_bypass(exc):
+                raise
+            envelope = _restart_via_host_bypass(name)
+            if as_json:
+                click.echo(
+                    _json.dumps(
+                        {
+                            "name": name,
+                            "restarted": envelope.get("returncode") == 0,
+                            "dispatched": False,
+                            "via": "host-listen",
+                            "host_response": envelope,
+                        }
+                    )
+                )
+            else:
+                console.print(
+                    f"[green]Agent '{name}' restarted via host listen[/green]"
+                )
+                console.print(_json.dumps(envelope))
+            return
         if as_json:
             click.echo(
                 _json.dumps({"name": name, "restarted": True, "dispatched": False})
