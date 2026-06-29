@@ -3,10 +3,12 @@
 The resolver checked the project-local registry FIRST, so a fleet-management
 op run from inside a repo that ships its own ``.scitex/agent-container/agents/``
 would SILENTLY resolve the project-local registry and never see the user-scope
-fleet (the "sac-from-sac" breakage). The fix: when BOTH registry dirs exist and
-``$SAC_AGENT_SCOPE`` is unset → raise ``AmbiguousRegistryScope``. Explicit
-``user`` / ``project`` disambiguate; a single present registry resolves
-silently (CI-safe — a fresh runner has no fleet dir).
+fleet (the "sac-from-sac" breakage). The fix (per-name, operator 2026-06-29):
+``resolve_config`` raises ``AmbiguousRegistryScope`` ONLY when the requested
+NAME resolves in BOTH registries (a real collision). A name in only one
+registry resolves with no error, even when both registry DIRS exist — so an
+unrelated project-local registry (the sac repo's test fixtures) never blocks a
+fleet-only agent. Explicit ``user`` / ``project`` disambiguate.
 
 No mocks: env vars go through a snapshot/restore bag, cwd through a real
 ``os.chdir`` bag, and project-local discovery is driven by chdir-ing into a
@@ -235,13 +237,47 @@ def test_unknown_scope_value_treated_as_unset_and_raises(both_registries, env_ba
         resolve_config("dup")
 
 
-def test_enumerate_agent_names_raises_on_ambiguity(both_registries):
-    # Arrange — same rule applies to enumeration, not just resolution.
-    raises_ctx = pytest.raises(AmbiguousRegistryScope)
+def test_enumerate_agent_names_lists_both_when_unset(both_registries):
+    # Arrange — enumeration does NOT raise on the per-name rule; it unions
+    # both registries (a name present in both is deduped). Only
+    # resolve_config of a genuinely COLLIDING name fails loud.
     # Act
+    names = enumerate_agent_names()
     # Assert
-    with raises_ctx:
-        enumerate_agent_names()
+    assert "dup" in names
+
+
+def test_ambiguous_error_names_the_colliding_agent(ambiguous_scope_message):
+    # Arrange
+    msg, _paths = ambiguous_scope_message
+    # Act
+    contained = "dup" in msg
+    # Assert
+    assert contained
+
+
+def test_fleet_only_name_resolves_despite_project_local_registry(both_registries):
+    # Arrange — both registry DIRS exist, but this name is ONLY in the
+    # fleet (the operator's real case: `sac agents start <fleet-agent>`
+    # from inside the sac repo, whose project-local registry holds
+    # unrelated fixtures). Must resolve, NOT raise.
+    fleet = both_registries["fleet"]
+    hit = _write(fleet / "fleet-solo" / "spec.yaml", "fleet")
+    # Act
+    result = resolve_config("fleet-solo")
+    # Assert
+    assert result == str(hit)
+
+
+def test_project_only_name_resolves_despite_fleet_registry(both_registries):
+    # Arrange — both registry DIRS exist, but this name is ONLY in the
+    # project-local registry → resolve it (project-local default), no raise.
+    project = both_registries["project"]
+    hit = _write(project / "proj-solo" / "spec.yaml", "project")
+    # Act
+    result = resolve_config("proj-solo")
+    # Assert
+    assert result == str(hit)
 
 
 def test_enumerate_agent_names_scope_user_lists_only_fleet(
