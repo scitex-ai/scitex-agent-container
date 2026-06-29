@@ -39,25 +39,32 @@ logger = logging.getLogger(__name__)
 def listen_env_flags(config) -> list[str]:
     """Return the ``--env`` flags ``apptainer exec`` needs for the bus.
 
-    Forwards the bus-listen URL + bearer (``SAC_LISTEN_*``) and, when set
-    on the host, the agent-spec search path
+    Forwards the bus-listen URL + bearer (``SAC_LISTEN_*``) and ALWAYS
+    injects the agent-spec search path
     (``SCITEX_AGENT_CONTAINER_YAML_DIRS``) so an in-container ``sac agents
     start <peer>`` resolves specs at the SAME path the operator uses on
-    the host. Without this forward the in-container sac only searches
-    ``~/.scitex/agent-container/agents`` + the repo-local dir (the env var
-    is unset inside the container), so the spec-bearing spawn path fails
-    with ``Agent '<name>' not found ... (env
+    the host. The injected value is the union of any host-set
+    ``SCITEX_AGENT_CONTAINER_YAML_DIRS`` (pass-through, order preserved)
+    and the host's canonical user-scope agents dir
+    (``~/.scitex/agent-container/agents`` expanded against the HOST home
+    at launch time). That host dir is bind-visible in-container because
+    apptainer binds the invoking host's ``$HOME`` at the same path, yet
+    the in-container ``$HOME`` is a DIFFERENT, empty home — so the
+    in-container sac's default user-scope search finds zero specs unless
+    we point it back at the host home explicitly. Without this the
+    spec-bearing spawn path fails with ``Agent '<name>' not found ... (env
     $SCITEX_AGENT_CONTAINER_YAML_DIRS: <unset>)`` even though the specs
     are visible in-container via the host-home bind.
 
-    Pure except for reading the host token file, config, and host env;
-    raises ``RuntimeError`` when a ``server:sac`` spec has no resolvable
-    bearer.
+    Pure except for reading the host token file, config, host env, and
+    host home; raises ``RuntimeError`` when a ``server:sac`` spec has no
+    resolvable bearer.
     """
     # Local imports keep these resolvable even if a formatter strips
     # module-level unused imports during a refactor, and avoid a circular
     # import with the runtime module that calls this helper.
     import os
+    from pathlib import Path
 
     from .._listen._config import listen_base_url
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
@@ -98,13 +105,29 @@ def listen_env_flags(config) -> list[str]:
         "SCITEX_GENAI_BASE_URL=http://127.0.0.1:4000/v1",
     ]
 
-    # Forward the host's agent-spec search path so the in-container sac
-    # resolves peer specs at the operator's path. Only inject when the
-    # host has it set+non-empty — otherwise leave the in-container default
-    # search order untouched (no empty ``--env`` that would shadow it).
-    spec_dirs = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "").strip()
-    if spec_dirs:
-        flags += ["--env", f"SCITEX_AGENT_CONTAINER_YAML_DIRS={spec_dirs}"]
+    # ALWAYS inject the agent-spec search path so the in-container sac
+    # resolves peer specs even when the launching env has nothing set.
+    # The in-container ``$HOME`` is a different, empty home than the
+    # host's, so its default user-scope search
+    # (``~/.scitex/agent-container/agents`` under the CONTAINER home)
+    # finds zero specs. apptainer binds the host ``$HOME`` at the same
+    # path, so the HOST-side expansion below is bind-visible in-container.
+    # Union: any host-set value (pass-through, order preserved) followed
+    # by the host user-scope agents dir if not already present. The suffix
+    # ``.scitex/agent-container/agents`` matches ``config/_resolve.py``'s
+    # ``_search_dirs`` ``primary`` so the two stay in sync. Do NOT hardcode
+    # a username — ``expanduser`` resolves the invoking host's home.
+    host_default = str(
+        Path("~/.scitex/agent-container/agents").expanduser()
+    )
+    spec_dirs_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
+    spec_dirs: list[str] = [p for p in spec_dirs_raw.split(":") if p.strip()]
+    if host_default not in spec_dirs:
+        spec_dirs.append(host_default)
+    flags += [
+        "--env",
+        f"SCITEX_AGENT_CONTAINER_YAML_DIRS={':'.join(spec_dirs)}",
+    ]
 
     claude_spec = getattr(config, "claude", None)
     channels = list(getattr(claude_spec, "channels", None) or [])
