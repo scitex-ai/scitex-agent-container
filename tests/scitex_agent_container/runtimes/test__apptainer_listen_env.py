@@ -141,3 +141,50 @@ def test_listen_env_flags_injects_no_genai_api_key(
     assert not any(
         "GENAI_API_KEY" in f or "QWEN_API_KEY" in f for f in flags
     )
+
+
+@pytest.fixture
+def cleared_spec_dirs() -> Iterator[None]:
+    """Yield with ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` UNSET, restored after."""
+    prev = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
+    try:
+        yield
+    finally:
+        if prev is not None:
+            os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = prev
+
+
+def test_listen_env_flags_injects_host_default_spec_dir_when_env_unset(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+    cleared_spec_dirs: None,
+) -> None:
+    # Arrange — host env var is unset; sandboxed $HOME roots the default.
+    host_default = str(
+        (sandboxed_home / ".scitex" / "agent-container" / "agents")
+    )
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert — a YAML_DIRS --env is emitted whose value holds the host default.
+    assert any(
+        f == f"SCITEX_AGENT_CONTAINER_YAML_DIRS={host_default}" for f in flags
+    )
+
+
+def test_listen_env_flags_unions_host_set_dir_with_default(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+    cleared_spec_dirs: None,
+) -> None:
+    # Arrange — host sets a custom dir; the default rooted at sandboxed $HOME
+    # must be unioned after it with no duplicate.
+    custom = str(sandboxed_home / "custom-agents")
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = custom
+    host_default = str(sandboxed_home / ".scitex" / "agent-container" / "agents")
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert — the emitted value contains BOTH the host-set dir and default.
+    assert (
+        f"SCITEX_AGENT_CONTAINER_YAML_DIRS={custom}:{host_default}" in flags
+    )
