@@ -118,6 +118,20 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # where the source dir does not exist (remote hosts, fresh boot before
     # emacs writes) — no FATAL, no surprise mount.
     "/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro",
+    # GENERAL HOST-/tmp HANDOFF — generalise the narrow emacs entry above
+    # into an operator->agent file-handoff channel: anything the operator
+    # drops in host ``/tmp`` becomes readable in-container at
+    # ``/tmp/host/...``. READ-ONLY because host ``/tmp`` holds other
+    # processes' tempfiles + live sockets — an agent must NEVER clobber it.
+    # Destination ``/tmp/host`` is a SUBPATH under the container's writable
+    # ``/tmp`` tmpfs (writable under --containall), so apptainer's bind-dest
+    # auto-create cannot lose the overlay race the HAZARD above describes
+    # (same reasoning as the emacs entry). Host ``/tmp`` ALWAYS exists, so
+    # this default always applies. Do NOT bind over ``/tmp`` ITSELF — that
+    # would clobber the container's relocated scratch, the ``/tmp/sac-claude``
+    # credentials bind, and the nested-apptainer cache; mounting at the
+    # ``/tmp/host`` subpath sits harmlessly inside the tmpfs.
+    "/tmp:/tmp/host:ro",
     # PERSISTENT TESTMON CACHE — survive the fresh-git-worktree churn the
     # develop-pin hook forces. Every commit lands in a NEW worktree, so a
     # worktree-local ``.testmondata`` is always cold and pytest re-runs the
