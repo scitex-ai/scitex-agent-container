@@ -50,6 +50,23 @@ def host_claude_commands_dir() -> Path | None:
     return p if p.is_dir() else None
 
 
+def _copy_force_overwrite(src: Path, dst: Path) -> None:
+    """``shutil.copy2`` that can overwrite a read-only destination.
+
+    ``copy2`` opens ``dst`` for writing and raises ``PermissionError`` when it
+    already exists read-only — and it copies the source mode back afterwards,
+    so a 0444 source leaves a 0444 destination that makes the NEXT deploy fail.
+    A stale read-only command file thus aborts the deploy and leaves the agent
+    DOWN on restart (observed 2026-07-01: a 0444 ``update-docs.md``). Grant
+    owner-write before the copy (so it can overwrite) and after (so the next
+    deploy can too).
+    """
+    if dst.exists():
+        dst.chmod(dst.stat().st_mode | 0o200)
+    shutil.copy2(src, dst)
+    dst.chmod(dst.stat().st_mode | 0o200)
+
+
 def deploy_host_claude_commands(workspace_home: Path) -> None:
     """Copy host ``~/.claude/commands/*.md`` into ``<workspace_home>/.claude/commands/``.
 
@@ -70,7 +87,7 @@ def deploy_host_claude_commands(workspace_home: Path) -> None:
             continue
         dst_dir.mkdir(parents=True, exist_ok=True)
         dst = dst_dir / src.name
-        shutil.copy2(src, dst)
+        _copy_force_overwrite(src, dst)
         logger.info("to_home: host command %s -> %s", src.name, dst)
 
 
