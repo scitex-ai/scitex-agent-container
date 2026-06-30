@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# post-merge-pull.sh — pull every scitex-* in-tree clone from gitea:develop.
+# post-merge-pull.sh — fast-forward every scitex-* in-tree clone from its
+# tracked upstream (origin/develop on the fleet checkouts).
 #
-# Designed to run under cron once a minute on each fleet host.
+# Designed to run under cron once a minute on each fleet host so the host
+# checkouts stay current and nobody has to pull by hand.
 # Scope: ~/proj/<repo> only.  ~/forks/ and workspace clones are skipped.
+# Remote-agnostic: uses each branch's configured upstream — no hardcoded
+# remote name or URL.  Only ever touches a checkout that is on `develop`
+# with a clean working tree; feature-branch / dirty checkouts are left alone.
 #
 # Usage:
 #   crontab: * * * * * ~/.scitex/agent-container/runtime/cron/post-merge-pull.sh \
@@ -29,15 +34,17 @@ if ! flock -n 9; then
 fi
 
 # ---------------------------------------------------------------------------
-# Repo list: canonical name → gitea remote URL
+# Repo allowlist: canonical scitex repo names.  Each resolves to ~/proj/<name>
+# and is pulled via its tracked upstream (origin/develop) — no remote URL is
+# hardcoded here.  A name whose dir is absent is skipped.
 # ---------------------------------------------------------------------------
-declare -A GITEA_URLS=(
-    ["scitex-agent-container"]="git@git.scitex.ai:ywatanabe1989/scitex-agent-container.git"
-    ["scitex-orochi"]="git@git.scitex.ai:ywatanabe1989/scitex-orochi.git"
-    ["scitex-resource"]="git@git.scitex.ai:ywatanabe1989/scitex-resource.git"
-    ["scitex-ssh"]="git@git.scitex.ai:ywatanabe1989/scitex-ssh.git"
-    ["scitex-hpc"]="git@git.scitex.ai:ywatanabe1989/scitex-hpc.git"
-    ["scitex"]="git@git.scitex.ai:ywatanabe1989/scitex.git"
+REPOS=(
+    "scitex-agent-container"
+    "scitex-orochi"
+    "scitex-resource"
+    "scitex-ssh"
+    "scitex-hpc"
+    "scitex"
 )
 
 _pull_repo() {
@@ -49,6 +56,21 @@ _pull_repo() {
         return 0
     }
 
+    # Must be an actual git repo.
+    if ! git -C "${repo_path}" rev-parse --git-dir &>/dev/null; then
+        _info "SKIP ${name}: not a git repository at ${repo_path}"
+        return 0
+    fi
+
+    # Only ever touch a checkout that is on develop — never disturb a
+    # feature-branch checkout.
+    local branch
+    branch="$(git -C "${repo_path}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ "${branch}" != "develop" ]]; then
+        _info "SKIP ${name}: on '${branch}', not 'develop'"
+        return 0
+    fi
+
     # Skip repos with uncommitted local changes (contributor workspace guard).
     local dirty
     dirty="$(git -C "${repo_path}" status --porcelain 2>/dev/null || true)"
@@ -57,37 +79,25 @@ _pull_repo() {
         return 0
     fi
 
-    # Ensure gitea remote exists (idempotent).
-    local gitea_url="${GITEA_URLS[${name}]}"
-    if ! git -C "${repo_path}" remote get-url gitea &>/dev/null; then
-        git -C "${repo_path}" remote add gitea "${gitea_url}"
-        _info "Added remote 'gitea' → ${gitea_url} for ${name}"
-    fi
-
-    # Fetch + ff-only pull from gitea develop.
-    if ! git -C "${repo_path}" fetch gitea develop 2>>"${LOG_FILE}"; then
-        _warn "FAIL ${name}: fetch gitea develop failed"
-        return 0
-    fi
-
+    # Fast-forward only, via the branch's configured upstream (origin/develop).
     local before_sha after_sha
     before_sha="$(git -C "${repo_path}" rev-parse HEAD)"
 
-    if ! git -C "${repo_path}" pull --ff-only gitea develop 2>>"${LOG_FILE}"; then
-        _warn "FAIL ${name}: pull --ff-only failed (non-fast-forward?)"
+    if ! git -C "${repo_path}" pull --ff-only 2>>"${LOG_FILE}"; then
+        _warn "FAIL ${name}: pull --ff-only failed (non-fast-forward or no upstream?)"
         return 0
     fi
 
     after_sha="$(git -C "${repo_path}" rev-parse HEAD)"
     if [[ "${before_sha}" == "${after_sha}" ]]; then
-        _info "OK ${name}: already at $(echo "${after_sha}" | head -c 12) (no new commits)"
+        _info "OK ${name}: already at ${after_sha:0:12} (no new commits)"
     else
         _info "OK ${name}: ${before_sha:0:12} → ${after_sha:0:12}"
     fi
 }
 
 _info "--- post-merge-pull start (host=${HOST}) ---"
-for repo_name in "${!GITEA_URLS[@]}"; do
+for repo_name in "${REPOS[@]}"; do
     _pull_repo "${repo_name}"
 done
 _info "--- post-merge-pull done ---"
