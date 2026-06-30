@@ -212,7 +212,7 @@ def agent_stop(name: str) -> dict[str, Any]:
     return invoke_cli_text(["agents", "stop", name])
 
 
-def agent_restart(name: str) -> dict[str, Any]:
+def agent_restart(name: str, fresh: bool = False) -> dict[str, Any]:
     """Restart an agent (stop + start). Mirrors ``sac agents restart <name>``.
 
     Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
@@ -231,8 +231,16 @@ def agent_restart(name: str) -> dict[str, Any]:
     The fallback is transparent here: the CLI runs it internally so this
     tool needs no extra wiring; on a bare host (row resolvable) the local
     path runs unchanged.
+
+    ``fresh=True`` brokers a NEW Claude session (``start --force --fresh``)
+    instead of a resuming restart — the deterministic recovery for an agent
+    wedged on a boot prompt whose queued input keeps returning on a plain
+    restart.
     """
-    return invoke_cli_text(["agents", "restart", name, "--yes"])
+    argv = ["agents", "restart", name, "--yes"]
+    if fresh:
+        argv.append("--fresh")
+    return invoke_cli_text(argv)
 
 
 def agent_send(
