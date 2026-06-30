@@ -68,6 +68,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
+from ._host_commands import deploy_host_claude_commands
 from ._mcp_merge import merge_mcp_json
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_errors import (
@@ -247,6 +248,10 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
         _stale = workspace_home / _merge_name
         if _stale.is_file():
             _stale.unlink()
+    # Host ~/.claude/commands/*.md — the LOWEST baseline layer. Deploy FIRST so
+    # a same-name shared-baseline / per-agent command overwrites it below.
+    # Skip-if-missing (no host commands dir → no-op).
+    deploy_host_claude_commands(workspace_home)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
@@ -303,6 +308,10 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _stale = dest / _merge_name
         if _stale.is_file():
             _stale.unlink()
+    # Host ~/.claude/commands/*.md — the LOWEST baseline layer. Deploy FIRST so
+    # a same-name shared-baseline / per-agent command overwrites it below.
+    # Skip-if-missing (no host commands dir → no-op).
+    deploy_host_claude_commands(dest)
     if baseline is not None:
         _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
