@@ -199,14 +199,27 @@ def test_secrets_preamble_does_not_leak_source_secret(
     assert "SECRET_TOK" not in out
 
 
-def test_no_preamble_when_var_unset_is_unchanged(
+def test_empty_unresolved_reference_is_dropped(
     tmp_path: Path, secrets_envrc: None
 ) -> None:
-    # Arrange — SAC_SECRETS_ENVRC unset; .envrc references an undefined var.
+    # Arrange — SAC_SECRETS_ENVRC unset; .envrc references an undefined var,
+    # so the export resolves to an empty string.
     os.environ.pop(_SECRETS_VAR, None)
     envrc = tmp_path / ".envrc"
     envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
     # Act
     out = eval_envrc(envrc)
-    # Assert — today's behaviour: the unresolved reference folds empty.
-    assert out.get("PUBLIC") == ""
+    # Assert — an empty value is DROPPED (not folded as ""), so it cannot shadow
+    # a real value a later layer supplies under another spelling.
+    assert "PUBLIC" not in out
+
+
+def test_fold_omits_empty_valued_var(tmp_path: Path) -> None:
+    # Arrange — .envrc exports one real var and one that resolves empty.
+    (tmp_path / ".envrc").write_text(
+        'export REAL=ok\nexport EMPTY="$UNSET_SOURCE"\n', encoding="utf-8"
+    )
+    # Act
+    fold_envrc_into_env(tmp_path)
+    # Assert — the empty var is not written into the folded .env.
+    assert "EMPTY=" not in (tmp_path / ".env").read_text()
