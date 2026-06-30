@@ -31,6 +31,61 @@ PROBE_SCRIPT="sac-listen-health-probe.sh"
 
 log() { printf '%s\n' "$*" >&2; }
 
+# Compute the SAC_SECRETS_ENVRC value to bake into the listen unit.
+#   - Operator override: if SAC_SECRETS_ENVRC is already exported when the
+#     installer runs, use it verbatim.
+#   - Default: colon-join the operator's standardized scitex secret files,
+#     globbed from ~/.bash.d/secrets/010_scitex/*.src (sorted).
+# Prints nothing when neither yields a path (caller then OMITS the line).
+secrets_envrc_value() {
+  if [ -n "${SAC_SECRETS_ENVRC:-}" ]; then
+    printf '%s' "$SAC_SECRETS_ENVRC"
+    return 0
+  fi
+  local joined="" f
+  # Sorted glob of the standardized secrets location; nullglob so a
+  # no-match expands to nothing rather than the literal pattern. Glob
+  # expansion preserves each path as one word (no word-splitting), and
+  # bash already returns matches sorted.
+  shopt -s nullglob
+  for f in "$HOME"/.bash.d/secrets/010_scitex/*.src; do
+    if [ -z "$joined" ]; then
+      joined="$f"
+    else
+      joined="${joined}:${f}"
+    fi
+  done
+  shopt -u nullglob
+  printf '%s' "$joined"
+}
+
+# Idempotently refresh the `Environment=SAC_SECRETS_ENVRC=` line in the
+# installed listen unit ($1). WHY: agents are (re)started by the
+# systemd-user `sac-listen` daemon and by agent-managed restarts, which do
+# NOT inherit the operator's interactive shell — so without this the
+# deploy-time `.envrc` fold (src/scitex_agent_container/runtimes/_envrc.py)
+# cannot resolve the real CCT_* tokens. Baking the secret-file list into the
+# unit's environment lets _envrc.py source them and fold the live tokens.
+# Always strips any prior occurrence first so re-running never stacks lines.
+apply_secrets_envrc() {
+  local unit="$1" value
+  value="$(secrets_envrc_value)"
+  # Drop any existing line (idempotency) before re-adding.
+  sed -i '/^Environment=SAC_SECRETS_ENVRC=/d' "$unit"
+  if [ -z "$value" ]; then
+    log "# SAC_SECRETS_ENVRC: no override + no *.src files -> omitting Environment line"
+    return 0
+  fi
+  # Insert after StandardError= (a stable anchor inside [Service]); fall
+  # back to appending if that key is ever removed.
+  if grep -q '^StandardError=' "$unit"; then
+    sed -i '/^StandardError=/a Environment=SAC_SECRETS_ENVRC='"$value" "$unit"
+  else
+    printf 'Environment=SAC_SECRETS_ENVRC=%s\n' "$value" >> "$unit"
+  fi
+  log "# SAC_SECRETS_ENVRC=${value} -> baked into ${unit}"
+}
+
 uninstall() {
   log "# Disabling + removing sac listen units from ${DEST_DIR}"
   systemctl --user disable --now "$HEALTH_TIMER" >/dev/null 2>&1 || true
@@ -66,6 +121,12 @@ install -m 0644 "${SRC_DIR}/${HEALTH_TIMER}" "${DEST_DIR}/${HEALTH_TIMER}"
 log "# Installed ${DEST_DIR}/${LISTEN_UNIT}"
 log "# Installed ${DEST_DIR}/${HEALTH_TIMER}"
 
+# 2b. Bake SAC_SECRETS_ENVRC into the installed listen unit so the daemon
+#     (and agent-managed restarts it spawns) folds the real CCT_* tokens via
+#     runtimes/_envrc.py. Operates on the INSTALLED copy only (repo unit stays
+#     clean) and is idempotent.
+apply_secrets_envrc "${DEST_DIR}/${LISTEN_UNIT}"
+
 # 3. Copy the health .service, rewriting the ExecStart %h-relative path
 #    to the concrete installed probe path. %h works at runtime too, but
 #    pinning the absolute path avoids any ambiguity if XDG_CONFIG_HOME
@@ -79,7 +140,12 @@ log "# Installed ${DEST_DIR}/${HEALTH_SERVICE} (ExecStart -> ${DEST_DIR}/${PROBE
 systemctl --user daemon-reload
 systemctl --user enable --now "$LISTEN_UNIT"
 systemctl --user enable --now "$HEALTH_TIMER"
-log "# Enabled + started ${LISTEN_UNIT} and ${HEALTH_TIMER}"
+# `enable --now` does NOT restart an already-running unit, so a re-run that
+# refreshed the Environment=SAC_SECRETS_ENVRC line above would not take
+# effect until the next crash. try-restart applies the new env immediately
+# (and is a no-op when the unit isn't running).
+systemctl --user try-restart "$LISTEN_UNIT" || true
+log "# Enabled + (re)started ${LISTEN_UNIT} and ${HEALTH_TIMER}"
 
 # 5. Status for the operator.
 log ""
