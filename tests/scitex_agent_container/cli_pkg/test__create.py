@@ -36,6 +36,49 @@ def test_create_writes_spec_yaml_at_target(tmp_path: Path) -> None:
     assert _spec(base, "dev-x").is_file()
 
 
+def test_create_emits_empty_to_home_mcp_json(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    runner.invoke(
+        create_cmd, ["dev-mcp", "--template", "developer", "--base-dir", str(base)]
+    )
+    # Assert — the proven spec shape includes a per-agent to_home/.mcp.json.
+    assert (base / "dev-mcp" / "to_home" / ".mcp.json").is_file()
+
+
+def test_create_to_home_mcp_json_has_empty_servers(tmp_path: Path) -> None:
+    # Arrange
+    import json
+
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    runner.invoke(
+        create_cmd, ["dev-mcp2", "--template", "developer", "--base-dir", str(base)]
+    )
+    doc = json.loads((base / "dev-mcp2" / "to_home" / ".mcp.json").read_text())
+    # Assert — empty mcpServers (proven figrecipe shape), not a dropped file.
+    assert doc == {"mcpServers": {}}
+
+
+def test_create_does_not_clobber_existing_mcp_json(tmp_path: Path) -> None:
+    # Arrange — a pre-existing custom .mcp.json must survive (create-if-absent).
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    mcp = base / "dev-keep" / "to_home" / ".mcp.json"
+    mcp.parent.mkdir(parents=True, exist_ok=True)
+    mcp.write_text('{"mcpServers": {"custom": {}}}')
+    # Act
+    runner.invoke(
+        create_cmd,
+        ["dev-keep", "--template", "developer", "--base-dir", str(base), "--force"],
+    )
+    # Assert — the custom file is untouched.
+    assert "custom" in mcp.read_text()
+
+
 def test_create_developer_passes_v3_validator(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()

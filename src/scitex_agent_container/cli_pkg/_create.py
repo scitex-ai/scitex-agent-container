@@ -240,6 +240,18 @@ def create(
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(body)
 
+    # Emit an empty ``to_home/.mcp.json`` to match the proven spec shape
+    # (figrecipe/scitex-todo). The .mcp.json deep-merge cascade expects a
+    # per-agent file present even when empty; without it a generated agent
+    # diverges from the proven shape and a hand-added file is dropped on the
+    # next regen (the retired gen_ecosystem_dev_specs.sh bug, now folded into
+    # this CLI). Create-if-absent so an existing custom .mcp.json is never
+    # clobbered.
+    mcp_path = agent_dir / "to_home" / ".mcp.json"
+    if not mcp_path.exists():
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text('{\n  "mcpServers": {}\n}\n')
+
     print(
         f"Wrote {spec_path} (template={template}, group={resolved_group}, "
         f"install={'yes' if _has_package(resolved_workdir) else 'no'}, "
