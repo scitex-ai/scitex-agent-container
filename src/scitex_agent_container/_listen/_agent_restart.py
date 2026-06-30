@@ -93,6 +93,12 @@ async def agent_restart(request: Request) -> JSONResponse:
     if decision == "deny":
         return deny_response(reason or "lineage ACL deny")
 
+    # ``fresh`` (optional): start a NEW Claude session instead of a resuming
+    # restart — the deterministic recovery for an agent wedged on a boot prompt
+    # whose queued-input buffer returns on every plain restart. Default (absent
+    # / falsey) keeps the byte-identical plain-restart argv below.
+    fresh = bool(body.get("fresh"))
+
     sac_bin = shutil.which("sac") or "sac"
     # ``agents`` (plural) is the canonical group; ``--yes`` skips the
     # interactive guard (this POST IS the confirmation) and ``--json``
@@ -103,7 +109,12 @@ async def agent_restart(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
-    inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
+    if fresh:
+        # New session, no resume: stop-then-start fresh. ``start`` accepts
+        # --force (stop if running), --fresh (never --continue) and --json.
+        inner_argv = [sac_bin, "agents", "start", name, "--force", "--fresh", "--json"]
+    else:
+        inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
 
     proc = await asyncio.create_subprocess_exec(
         *inner_argv,

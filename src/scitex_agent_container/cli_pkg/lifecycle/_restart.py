@@ -119,19 +119,36 @@ def _should_try_host_bypass(exc: Exception) -> bool:
     return True
 
 
-def _restart_via_host_bypass(name: str) -> dict:
+def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
     """Broker the restart to the HOST listen and return its JSON envelope.
 
     Mirrors the spawn bypass (``agent_spawn`` → ``request_spawn``): the
     in-SIF client POSTs to ``{SAC_LISTEN_BASE_URL}/agents/<name>/restart``
-    and the host runs ``sac agents restart <name> --yes`` on the bare
-    host (manage-gated by ``check_lineage_acl``). A
-    :class:`RestartRequestError` (transport / 401 / 403 / 5xx) propagates
-    so the CLI's outer ``except`` surfaces it fail-loud.
+    and the host runs ``sac agents restart <name> --yes`` (or, when
+    ``fresh``, ``sac agents start <name> --force --fresh``) on the bare host
+    (manage-gated by ``check_lineage_acl``). A :class:`RestartRequestError`
+    (transport / 401 / 403 / 5xx) propagates so the CLI's outer ``except``
+    surfaces it fail-loud.
     """
     from ..._lifecycle._restart_client import request_restart
 
-    return request_restart(name)
+    return request_restart(name, fresh=fresh)
+
+
+def _bypass_base_url_available() -> bool:
+    """True iff a host-listen base URL resolves (we are an in-container agent).
+
+    The fresh-restart path is bypass-only: it has nothing to broker to on a
+    bare host, so the CLI fails loud there rather than silently doing a
+    resuming restart.
+    """
+    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
+
+    try:
+        _resolve_base_url(None)
+    except RestartRequestError:
+        return False
+    return True
 
 
 @click.command()
@@ -161,7 +178,22 @@ def _restart_via_host_bypass(name: str) -> dict:
         "Required for cross-host dispatch — the lead parses peer stdout."
     ),
 )
-def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
+@click.option(
+    "--fresh",
+    "fresh",
+    is_flag=True,
+    default=False,
+    help=(
+        "Start a NEW Claude session instead of resuming (brokers "
+        "'start --force --fresh' to the host). The deterministic recovery for "
+        "an agent wedged on a boot prompt whose queued input keeps returning "
+        "on a plain restart. In-container only; on a bare host run "
+        "'sac agents start <name> --force --fresh' directly."
+    ),
+)
+def restart(
+    name: str, dry_run: bool, yes: bool, as_json: bool, fresh: bool
+) -> None:
     """Restart an agent.
 
     Resolves the agent's recorded host first: a row on a remote peer is
@@ -180,6 +212,38 @@ def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
     if not yes:
         click.echo(f"Refusing to restart agent '{name}' without --yes/-y.", err=True)
         raise SystemExit(2)
+    if fresh:
+        # Fresh restart is the in-container recovery path: broker
+        # ``start --force --fresh`` to the host listen. On a bare host there is
+        # no listen to broker to, so fail loud with the direct command rather
+        # than silently doing a resuming restart (which would re-wedge).
+        if not _bypass_base_url_available():
+            click.echo(
+                f"--fresh restart requires the host bypass (run inside a "
+                f"container). On a bare host run: sac agents start {name} "
+                f"--force --fresh",
+                err=True,
+            )
+            raise SystemExit(1)
+        envelope = _restart_via_host_bypass(name, fresh=True)
+        if as_json:
+            click.echo(
+                _json.dumps(
+                    {
+                        "name": name,
+                        "restarted": envelope.get("returncode") == 0,
+                        "dispatched": False,
+                        "via": "host-listen",
+                        "fresh": True,
+                        "host_response": envelope,
+                    }
+                )
+            )
+        else:
+            console.print(
+                f"[green]Agent '{name}' fresh-restarted via host listen[/green]"
+            )
+        return
     # stx-allow: fallback (reason: config resolution, cross-host ssh dispatch, or
     # agent_restart can raise if the agent is not running or the session cannot be
     # found; an error message + sys.exit(1) is cleaner than an unhandled traceback)

@@ -53,6 +53,15 @@ def test_restart_passes_yes_flag() -> None:
     assert captured[0] == ["agents", "restart", "foo", "--yes"]
 
 
+def test_restart_fresh_appends_fresh_flag() -> None:
+    # Arrange
+    with _record_argv() as captured:
+        # Act
+        agent_restart("foo", fresh=True)
+    # Assert — fresh requests a brand-new session via the CLI's --fresh path.
+    assert captured[0] == ["agents", "restart", "foo", "--yes", "--fresh"]
+
+
 def test_stop_does_not_force_yes() -> None:
     # Arrange
     with _record_argv() as captured:

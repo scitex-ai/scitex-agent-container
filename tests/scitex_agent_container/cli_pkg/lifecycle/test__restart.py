@@ -550,3 +550,68 @@ def test_cross_host_restart_nonjson_stdout_reports_non_json(
     result = runner.invoke(restart, ["zeta", "-y"])
     # Assert
     assert "non-JSON" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --fresh branch: a fresh (no-resume) restart is bypass-only. With the host
+# listen reachable it brokers ``start --force --fresh`` (fresh=True) and never
+# touches the local restart; on a bare host (no listen) it fails LOUD with the
+# direct command rather than silently doing a resuming restart.
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_without_bypass_exits_one():
+    # Arrange — no listen base URL resolvable (bare host).
+    runner = CliRunner()
+    # Act
+    with _swap("_bypass_base_url_available", lambda: False):
+        result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
+    # Assert
+    assert result.exit_code == 1
+
+
+def test_fresh_without_bypass_reports_direct_start_command():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_bypass_base_url_available", lambda: False):
+        result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
+    # Assert — fail loud with the deterministic bare-host command.
+    assert "start alpha --force --fresh" in result.output
+
+
+def test_fresh_with_bypass_brokers_fresh_true():
+    # Arrange — bypass available; record the brokered (name, fresh).
+    calls: list[tuple[str, bool]] = []
+
+    def _rec(name, fresh=False):
+        calls.append((name, fresh))
+        return {"returncode": 0}
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_bypass_base_url_available", lambda: True),
+        _swap("_restart_via_host_bypass", _rec),
+    ):
+        runner.invoke(restart, ["alpha", "-y", "--fresh"])
+    # Assert
+    assert calls == [("alpha", True)]
+
+
+def test_fresh_does_not_call_local_agent_restart():
+    # Arrange — fresh is bypass-only; the local restart must NOT run.
+    called: list[str] = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_bypass_base_url_available", lambda: True),
+        _swap(
+            "_restart_via_host_bypass",
+            lambda name, fresh=False: {"returncode": 0},
+        ),
+        _swap("agent_restart", lambda name: called.append(name)),
+    ):
+        runner.invoke(restart, ["alpha", "-y", "--fresh"])
+    # Assert
+    assert called == []

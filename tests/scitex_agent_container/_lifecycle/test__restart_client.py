@@ -186,6 +186,26 @@ def test_post_body_omits_caller_for_admin_path(listen_env) -> None:
     assert "caller" not in json.loads(captured["body"])
 
 
+def test_post_body_includes_fresh_when_requested(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"peer","returncode":0}')
+    # Act
+    request_restart("peer", fresh=True, opener=opener)
+    # Assert — the host learns to start a fresh session.
+    assert json.loads(captured["body"])["fresh"] is True
+
+
+def test_post_body_omits_fresh_by_default(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"peer","returncode":0}')
+    # Act
+    request_restart("peer", opener=opener)
+    # Assert — default body stays byte-identical to a plain restart.
+    assert "fresh" not in json.loads(captured["body"])
+
+
 def test_explicit_caller_arg_overrides_sac_name_env(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")

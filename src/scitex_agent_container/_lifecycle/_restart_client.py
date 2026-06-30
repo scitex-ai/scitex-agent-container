@@ -176,6 +176,7 @@ def request_restart(
     name: str,
     *,
     caller: str | None = None,
+    fresh: bool = False,
     base_url: str | None = None,
     bearer: str | None = None,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
@@ -192,6 +193,11 @@ def request_restart(
         The requesting agent's identity for the listen-server's
         ``check_lineage_acl`` MANAGE gate. Defaults to ``SAC_NAME`` from
         the container env via :func:`_resolve_caller`.
+    fresh
+        When True, ask the host to start a NEW Claude session
+        (``start --force --fresh``) instead of a plain resuming restart —
+        the deterministic recovery for an agent wedged on a boot prompt
+        whose queued-input buffer returns on every resuming restart.
     base_url
         Override ``SAC_LISTEN_BASE_URL``. Tests pass an in-process
         listen URL; production passes ``None``.
@@ -226,6 +232,10 @@ def request_restart(
     body: dict[str, Any] = {}
     if resolved_caller:
         body["caller"] = resolved_caller
+    # Omitted (default) keeps the byte-identical plain-restart body; set only
+    # when a fresh (no-resume) restart is requested.
+    if fresh:
+        body["fresh"] = True
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents/{name}/restart"
