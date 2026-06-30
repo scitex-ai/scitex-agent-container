@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_THRESHOLD = 80.0  # rotate when usage exceeds this %
 DEFAULT_INTERVAL = 300  # check every 5 minutes
 SURVIVAL_THRESHOLD = 50.0  # warn in survival mode when usage exceeds this %
-_DEFAULT_LOG_PATH = Path.home() / ".scitex" / "logs" / "quota-watch.log"
+_DEFAULT_LOG_PATH = (
+    Path.home() / ".scitex" / "agent-container" / "logs" / "quota-watch.log"
+)
 
 
 def _select_next_account(
@@ -259,7 +261,7 @@ def run_loop(
         store_dir: Override for account store directory.
         home:      Override for home directory.
         daemon:    If True, double-fork into background before looping.
-        log_path:  Log file path used when daemon=True (default: ~/.scitex/logs/quota-watch.log).
+        log_path:  Log file path used when daemon=True (default: ~/.scitex/agent-container/logs/quota-watch.log).
     """
     if daemon:
         _log = log_path or _DEFAULT_LOG_PATH

@@ -22,6 +22,7 @@ import pytest
 
 import scitex_agent_container._account.quota_watch as qw_mod
 from scitex_agent_container._account.quota_watch import (
+    _DEFAULT_LOG_PATH,
     _select_next_account,
     check_and_rotate,
 )
@@ -468,3 +469,12 @@ def test_survival_mode_check_exception_message_quotes_exception_text(tmp_path):
         result = qw_mod.survival_mode_check(home=home)
     # Assert
     assert "boom from fetch_usage" in result["message"]
+
+
+def test_default_log_path_lives_under_agent_container():
+    # Arrange
+    expected_suffix = Path("agent-container") / "logs" / "quota-watch.log"
+    # Act
+    actual_suffix = Path(*_DEFAULT_LOG_PATH.parts[-3:])
+    # Assert
+    assert actual_suffix == expected_suffix
