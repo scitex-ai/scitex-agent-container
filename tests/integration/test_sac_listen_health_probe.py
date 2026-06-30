@@ -326,3 +326,211 @@ def test_probe_script_is_executable():
     is_exec = bool(mode & 0o111)
     # Assert
     assert is_exec, "probe script must be executable"
+
+
+# --- install: SAC_SECRETS_ENVRC unit wiring -------------------------------
+#
+# WHY this matters: the systemd-user `sac-listen` daemon (and the
+# agent-managed restarts it spawns) does NOT inherit the operator's
+# interactive shell, so the deploy-time `.envrc` fold in
+# src/scitex_agent_container/runtimes/_envrc.py cannot resolve the real
+# CCT_* tokens unless the secret-file list is baked into the unit env. The
+# installer computes `Environment=SAC_SECRETS_ENVRC=` at install time. We
+# exercise the REAL installer's unit-generation functions against a REAL
+# temp HOME + a REAL shipped unit file (no mocks, STX-NM002).
+
+import re  # noqa: E402 (grouped with the install-wiring tests it supports)
+
+
+def _extract_install_functions() -> str:
+    """Return the bash text of log()/secrets_envrc_value()/apply_secrets_envrc().
+
+    Sourcing the whole installer would run its install side effects, so we
+    slice out exactly the three pure functions (header line through a line
+    that is just ``}``) from the REAL shipped script.
+    """
+    text = _INSTALL.read_text()
+    wanted = ("log()", "secrets_envrc_value()", "apply_secrets_envrc()")
+    out: list[str] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        if any(stripped.startswith(w) for w in wanted):
+            block = [lines[i]]
+            # Single-line function (e.g. `log() { ...; }`)?
+            if "}" in lines[i] and lines[i].rstrip().endswith("}"):
+                out.append(lines[i])
+                i += 1
+                continue
+            i += 1
+            while i < len(lines):
+                block.append(lines[i])
+                if lines[i].rstrip() == "}":
+                    break
+                i += 1
+            out.append("\n".join(block))
+        i += 1
+    blob = "\n".join(out)
+    assert "apply_secrets_envrc" in blob and "secrets_envrc_value" in blob
+    return blob
+
+
+def _run_apply(tmp_path, home, *, override: str | None):
+    """Copy the real unit, run apply_secrets_envrc against it, return text."""
+    unit = tmp_path / "sac-listen.service"
+    unit.write_text(_SERVICE.read_text())
+    fns = tmp_path / "fns.sh"
+    fns.write_text(_extract_install_functions())
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    if override is None:
+        env.pop("SAC_SECRETS_ENVRC", None)
+    else:
+        env["SAC_SECRETS_ENVRC"] = override
+    script = f". {fns}\napply_secrets_envrc {unit}\n"
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    return unit.read_text()
+
+
+def _envrc_lines(text: str) -> list[str]:
+    return [
+        ln for ln in text.splitlines()
+        if ln.startswith("Environment=SAC_SECRETS_ENVRC=")
+    ]
+
+
+@pytest.fixture()
+def default_unit_text(tmp_path):
+    """Apply the wiring with two standardized *.src files; return unit text."""
+    home = tmp_path / "home"
+    secrets = home / ".bash.d" / "secrets" / "010_scitex"
+    secrets.mkdir(parents=True)
+    (secrets / "01_cct.src").write_text("export FOO=1\n")
+    (secrets / "00_aaa.src").write_text("export BAR=2\n")
+    text = _run_apply(tmp_path, home, override=None)
+    return text, secrets
+
+
+def test_default_emits_single_environment_line(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    lines = _envrc_lines(text)
+    # Assert
+    assert len(lines) == 1
+
+
+def test_default_globs_sorted_colon_joined_paths(default_unit_text):
+    # Arrange
+    text, secrets = default_unit_text
+    # Act
+    prefix = "Environment=SAC_SECRETS_ENVRC="
+    value = _envrc_lines(text)[0][len(prefix):]
+    # Assert — sorted (00 before 01), colon-joined absolute paths.
+    expected = f"{secrets / '00_aaa.src'}:{secrets / '01_cct.src'}"
+    assert value == expected
+
+
+def test_override_used_verbatim(tmp_path):
+    # Arrange — real *.src files present, but an explicit override given.
+    home = tmp_path / "home"
+    secrets = home / ".bash.d" / "secrets" / "010_scitex"
+    secrets.mkdir(parents=True)
+    (secrets / "00_aaa.src").write_text("export BAR=2\n")
+    # Act
+    text = _run_apply(tmp_path, home, override="/custom/a.src:/custom/b.src")
+    # Assert — override wins over the glob.
+    lines = _envrc_lines(text)
+    assert lines == ["Environment=SAC_SECRETS_ENVRC=/custom/a.src:/custom/b.src"]
+
+
+def test_no_secrets_omits_environment_line(tmp_path):
+    # Arrange — empty secrets dir, no override.
+    home = tmp_path / "home"
+    (home / ".bash.d" / "secrets" / "010_scitex").mkdir(parents=True)
+    # Act
+    text = _run_apply(tmp_path, home, override=None)
+    # Assert
+    assert _envrc_lines(text) == []
+
+
+def test_apply_is_idempotent(tmp_path):
+    # Arrange — one *.src; apply once, then re-source + apply again.
+    home = tmp_path / "home"
+    secrets = home / ".bash.d" / "secrets" / "010_scitex"
+    secrets.mkdir(parents=True)
+    (secrets / "00_aaa.src").write_text("export BAR=2\n")
+    unit = tmp_path / "sac-listen.service"
+    unit.write_text(_SERVICE.read_text())
+    fns = tmp_path / "fns.sh"
+    fns.write_text(_extract_install_functions())
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env.pop("SAC_SECRETS_ENVRC", None)
+    script = (
+        f". {fns}\n"
+        f"apply_secrets_envrc {unit}\n"
+        f"apply_secrets_envrc {unit}\n"
+    )
+    # Act
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env=env, capture_output=True, text=True, check=True, timeout=15,
+    )
+    # Assert — exactly one line after two applies.
+    assert len(_envrc_lines(unit.read_text())) == 1
+
+
+def test_environment_line_after_service_header(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    svc_idx = text.index("[Service]")
+    env_idx = text.index("Environment=SAC_SECRETS_ENVRC=")
+    # Assert — the line sits inside [Service], not before it.
+    assert svc_idx < env_idx
+
+
+def test_environment_line_before_install_section(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    env_idx = text.index("Environment=SAC_SECRETS_ENVRC=")
+    install_match = re.search(r"^\[Install\]", text, re.MULTILINE)
+    # Assert — never spills into [Install].
+    assert install_match is None or env_idx < install_match.start()
+
+
+def test_wiring_preserves_restart_always(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    kv = _kv_pairs(text)
+    # Assert
+    assert kv.get("Restart") == "always"
+
+
+def test_wiring_preserves_standard_output_journal(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    kv = _kv_pairs(text)
+    # Assert
+    assert kv.get("StandardOutput") == "journal"
+
+
+def test_wiring_preserves_standard_error_journal(default_unit_text):
+    # Arrange
+    text, _secrets = default_unit_text
+    # Act
+    kv = _kv_pairs(text)
+    # Assert
+    assert kv.get("StandardError") == "journal"
