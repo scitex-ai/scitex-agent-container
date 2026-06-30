@@ -121,10 +121,14 @@ def eval_envrc(envrc: Path, *, base_env: Path | None = None) -> dict[str, str]:
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
+    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
+    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
+    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
+    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
     return {
         key: val
         for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val
+        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
     }
 
 
@@ -194,10 +198,14 @@ def eval_envrc_cascade(
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
+    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
+    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
+    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
+    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
     return {
         key: val
         for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val
+        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
     }
 
 
