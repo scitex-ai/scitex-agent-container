@@ -57,23 +57,20 @@ content — see ``_to_home_errors.py`` for context.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
+import shutil
+import stat
+from datetime import datetime
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._host_commands import deploy_host_claude_commands
+from ._mcp_merge import merge_mcp_json
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
-from ._to_home_deploy import (
-    _clear_readonly_dst,
-    _deploy_marker_protected,
-    _deploy_mcp_merge,
-    _deploy_plain_file,
-    _deploy_tight_perm_file,
-    _deploy_verbatim_secret,
-    _read_and_interpolate,
-)
 from ._to_home_errors import (
     WorkspaceCLAUDEMarkerError,
     WorkspaceCredentialLeakError,
@@ -94,27 +91,11 @@ logger = logging.getLogger(__name__)
 # Marker constants + text helpers re-exported for legacy import paths
 # (e.g. tests doing ``from ...runtimes._to_home import END_MARKER``).
 # Implementations live in :mod:`_to_home_text` per the 2026-06-15
-# extraction (see GITIGNORED/REFACTORING.md when present). The per-entry
-# deploy helpers were extracted to :mod:`_to_home_deploy` (2026-07-01);
-# they are imported above and re-exported here so legacy import paths
-# (e.g. tests doing ``from ...runtimes._to_home import _deploy_mcp_merge``)
-# keep resolving.
+# extraction (see GITIGNORED/REFACTORING.md when present).
 _validate_marker_invariants = validate_marker_invariants
 _extract_user_tail = extract_user_tail
 _interpolate_env = interpolate_env
 _interpolate_metadata = interpolate_metadata
-# Re-export-only symbols referenced here so unused-import linters stay quiet.
-_RE_EXPORTED = (
-    WorkspaceMcpMergeError,
-    END_MARKER,
-    split_around_generated_section,
-    _clear_readonly_dst,
-    _read_and_interpolate,
-    _deploy_plain_file,
-    _deploy_tight_perm_file,
-    _deploy_verbatim_secret,
-    _deploy_marker_protected,
-)
 
 
 # Files that get marker-protected merge semantics (vs. full overwrite).
@@ -271,18 +252,10 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     # a same-name shared-baseline / per-agent command overwrites it below.
     # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(workspace_home)
-    # The agent name is the spec dir name (agents/<name>/). Threaded to the
-    # deep-merge so the per-agent telegrammer CCT_STATE_DIR override derives a
-    # DISTINCT state dir per agent (anti-collision fleet rule).
-    agent_name = spec_dir.name
     if baseline is not None:
-        _walk_and_apply(
-            baseline, baseline, workspace_home, config=None, agent_name=agent_name
-        )
+        _walk_and_apply(baseline, baseline, workspace_home, config=None)
     if root.is_dir():
-        _walk_and_apply(
-            root, root, workspace_home, config=None, agent_name=agent_name
-        )
+        _walk_and_apply(root, root, workspace_home, config=None)
     fold_envrc_into_env(workspace_home)
     # settings.json CASCADE (ADR-0018) — same deep-merge as deploy_to_home, so
     # the lower-level (spec_dir, workspace_home) entrypoint composes layers too
@@ -339,16 +312,10 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # a same-name shared-baseline / per-agent command overwrites it below.
     # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(dest)
-    # The agent name (config.name) is threaded to the deep-merge so the
-    # per-agent telegrammer CCT_STATE_DIR override derives a DISTINCT state
-    # dir per agent (anti-collision fleet rule).
-    agent_name = getattr(config, "name", "") or ""
     if baseline is not None:
-        _walk_and_apply(
-            baseline, baseline, dest, config=config, agent_name=agent_name
-        )
+        _walk_and_apply(baseline, baseline, dest, config=config)
     if root is not None:
-        _walk_and_apply(root, root, dest, config=config, agent_name=agent_name)
+        _walk_and_apply(root, root, dest, config=config)
     # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
     # → the spec's _shared baseline → the agent's workdir (the project's OWN
     # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
@@ -418,7 +385,6 @@ def _walk_and_apply(
     dst_dir: Path,
     *,
     config: AgentConfig | None,
-    agent_name: str = "",
 ) -> None:
     """Recursively replicate ``src_dir`` under ``dst_dir``.
 
@@ -426,9 +392,6 @@ def _walk_and_apply(
     messages can report a path relative to the spec. ``config`` is
     optional: when present, text-file interpolation (``${metadata.*}``
     and ``${ENV_VAR}``) runs over CLAUDE.md / state.md / .env / .mcp.json.
-    ``agent_name`` is the agent identifier (spec dir name / ``config.name``),
-    threaded to :func:`_deploy_mcp_merge` so the per-agent telegrammer
-    ``CCT_STATE_DIR`` override can derive a DISTINCT state dir.
 
     The caller (``materialize_to_home`` / ``deploy_to_home``) runs
     :func:`_scan_for_credential_leak` first so a leaked
@@ -450,9 +413,7 @@ def _walk_and_apply(
 
         if child.is_dir():
             dst.mkdir(parents=True, exist_ok=True)
-            _walk_and_apply(
-                src_root, child, dst, config=config, agent_name=agent_name
-            )
+            _walk_and_apply(src_root, child, dst, config=config)
             continue
 
         # Regular file.
@@ -464,15 +425,233 @@ def _walk_and_apply(
         if child.name in _MARKER_PROTECTED_BASENAMES:
             _deploy_marker_protected(child, dst, config=config, rel=rel)
         elif child.name in _MCP_MERGE_BASENAMES:
-            _deploy_mcp_merge(
-                child, dst, config=config, rel=rel, agent_name=agent_name
-            )
+            _deploy_mcp_merge(child, dst, config=config, rel=rel)
         elif child.name in _TIGHT_PERM_BASENAMES:
             _deploy_tight_perm_file(child, dst, config=config, rel=rel)
         elif child.name in _VERBATIM_SECRET_BASENAMES:
             _deploy_verbatim_secret(child, dst, rel=rel)
         else:
             _deploy_plain_file(child, dst, config=config, rel=rel)
+
+
+# --- per-entry deploy helpers ----------------------------------------------
+
+
+def _clear_readonly_dst(dst: Path) -> None:
+    """Make an existing ``dst`` overwritable before a copy/write.
+
+    Hooks deployed under ``to_home/`` are commonly mode 0755/read-only
+    (e.g. ``hook_switch_helper.sh``). ``shutil.copy2`` / ``Path.write_text``
+    over a read-only existing destination raise
+    ``PermissionError: [Errno 13]`` — the deploy from #142 hit exactly
+    this. We add the owner-write bit so the in-place overwrite succeeds.
+
+    No-op when ``dst`` doesn't exist or is already writable. Symlinks are
+    left untouched (the symlink path unlinks them instead). Genuinely
+    unexpected ``OSError`` (e.g. EROFS, EPERM on a foreign-owned file) is
+    re-raised so the deploy still crashes loud rather than masking a real
+    permissions problem.
+    """
+    if dst.is_symlink() or not dst.exists():
+        return
+    mode = dst.stat().st_mode
+    if not mode & stat.S_IWUSR:
+        os.chmod(dst, mode | stat.S_IWUSR)
+
+
+# Symlinks are dereference-copied to real content — see
+# :func:`_symlink_resolve.deref_copy_symlink`. The traversal calls it
+# directly; this module re-exports the symbol for callers.
+
+
+def _read_and_interpolate(src: Path, config: AgentConfig | None) -> str:
+    """Read ``src`` as text and apply metadata/env interpolation.
+
+    Interpolation runs only when an ``AgentConfig`` is supplied (i.e. the
+    public ``deploy_to_home`` entrypoint). The lower-level
+    ``materialize_to_home(spec_dir, workspace_home)`` signature copies
+    text verbatim — useful for unit tests and any caller that doesn't
+    have a full AgentConfig in hand.
+    """
+    text = src.read_text()
+    if config is not None and text.strip():
+        text = _interpolate_metadata(text, config)
+        text = _interpolate_env(text)
+    return text
+
+
+def _deploy_plain_file(
+    src: Path,
+    dst: Path,
+    *,
+    config: AgentConfig | None,
+    rel: Path,
+) -> None:
+    """Full overwrite. Uses ``shutil.copy2`` for binary-safe perm preserve
+    when no interpolation is needed; otherwise writes interpolated text."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    if config is None:
+        shutil.copy2(src, dst)
+    else:
+        # Best-effort interpolation: binary files raise UnicodeDecodeError
+        # on read_text; fall back to byte copy in that case.
+        try:
+            text = _read_and_interpolate(src, config)
+            dst.write_text(text)
+            shutil.copystat(src, dst)
+        except UnicodeDecodeError:
+            shutil.copy2(src, dst)
+    logger.info("to_home: deployed %s -> %s", rel, dst)
+
+
+def _deploy_mcp_merge(
+    src: Path,
+    dst: Path,
+    *,
+    config: AgentConfig | None,
+    rel: Path,
+) -> None:
+    """Deep-merge ``.mcp.json`` with any already-deployed (baseline) copy.
+
+    The two-pass overlay deploys the shared baseline ``.mcp.json`` first, then
+    each agent's own lands here. Full-overwrite would silently drop the
+    baseline's default servers (sac / scitex-todo / claude-code-telegrammer);
+    instead we UNION the ``mcpServers`` (baseline ∪ per-agent) via
+    :func:`_mcp_merge.merge_mcp_json`. Fail-loud (no silent fallback): an
+    unparseable source/destination ``.mcp.json`` raises
+    :class:`WorkspaceMcpMergeError`; a same-name server defined two different
+    ways raises :class:`_mcp_merge.McpMergeConflict`. Both abort the deploy.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    overlay_text = _read_and_interpolate(src, config)
+    try:
+        overlay_doc = json.loads(overlay_text) if overlay_text.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise WorkspaceMcpMergeError(
+            f"to_home: source {rel} is not valid JSON ({exc})"
+        ) from exc
+    if dst.is_file():
+        existing = dst.read_text()
+        try:
+            base_doc = json.loads(existing) if existing.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise WorkspaceMcpMergeError(
+                f"to_home: existing {dst} is not valid JSON ({exc})"
+            ) from exc
+        merged = merge_mcp_json(base_doc, overlay_doc)
+    else:
+        merged = overlay_doc
+    dst.write_text(json.dumps(merged, indent=2) + "\n")
+    logger.info("to_home: deep-merged .mcp.json %s -> %s", rel, dst)
+
+
+def _deploy_tight_perm_file(
+    src: Path,
+    dst: Path,
+    *,
+    config: AgentConfig | None,
+    rel: Path,
+) -> None:
+    """Full overwrite, then chmod 0600 (e.g. ``.env``)."""
+    text = _read_and_interpolate(src, config)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    if not text.endswith("\n"):
+        text += "\n"
+    dst.write_text(text)
+    try:
+        os.chmod(dst, 0o600)
+    except OSError as exc:  # stx-allow: fallback (reason: filesystem op failure)
+        logger.warning("Failed to chmod 0600 on %s: %s", dst, exc)
+    logger.info("to_home: deployed (0600) %s -> %s", rel, dst)
+
+
+def _deploy_verbatim_secret(src: Path, dst: Path, *, rel: Path) -> None:
+    """Byte-for-byte copy (NO interpolation) + chmod 0600. For ``.envrc``.
+
+    Unlike :func:`_deploy_tight_perm_file`, this NEVER runs ``${...}``
+    interpolation: a ``.envrc`` is a shell script and its own ``${VAR}`` /
+    ``$(...)`` syntax must reach bash intact (sac interpolation would expand
+    it at deploy time and corrupt the script). The file is evaluated later by
+    :func:`_envrc.fold_envrc_into_env`.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    shutil.copy2(src, dst)
+    try:
+        os.chmod(dst, 0o600)
+    except OSError as exc:  # stx-allow: fallback (reason: filesystem op failure)
+        logger.warning("Failed to chmod 0600 on %s: %s", dst, exc)
+    logger.info("to_home: deployed verbatim (0600) %s -> %s", rel, dst)
+
+
+def _deploy_marker_protected(
+    src: Path,
+    dst: Path,
+    *,
+    config: AgentConfig | None,
+    rel: Path,
+) -> None:
+    """Marker-protected merge for CLAUDE.md / state.md.
+
+    Invariants:
+      - Source wrapped in Start/End markers.
+      - Existing user content past the End marker is preserved.
+      - Malformed existing markers (count != 1 or order swapped)
+        hard-abort with :class:`WorkspaceCLAUDEMarkerError`.
+    """
+    section_content = src.read_text().strip()
+    if not section_content:
+        return
+
+    if config is not None:
+        section_content = _interpolate_metadata(section_content, config)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_tag = (
+        f"<!-- Start of scitex-agent-container generated section ({timestamp}) -->"
+    )
+
+    # Strip any embedded sac markers from the source so we don't end up
+    # with nested Start/End pairs after wrapping (defensive scrub for
+    # CLAUDE.md).
+    section_body = re.sub(
+        r"<!--.*?scitex-agent-container.*?-->\n?",
+        "",
+        section_content,
+    ).strip()
+
+    new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n"
+
+    existing_text = dst.read_text() if dst.exists() else ""
+    # Preserve content AROUND a prior generated section: the ``head`` BEFORE it
+    # (e.g. the setup_claude_md auto agent-section, which uses its OWN marker
+    # style — so the two now compose instead of fatal-ing when the baseline
+    # lives at .claude/CLAUDE.md) and the ``tail`` AFTER it (operator-appended
+    # content). Malformed markers still fail loud inside the split.
+    head, user_tail = split_around_generated_section(existing_text, str(dst))
+
+    body = new_content
+    if user_tail.strip():
+        body = body.rstrip("\n") + user_tail
+        if not body.endswith("\n"):
+            body += "\n"
+    if head.strip():
+        updated = head.rstrip("\n") + "\n\n" + body
+    else:
+        updated = body
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _clear_readonly_dst(dst)
+    dst.write_text(updated)
+    logger.info(
+        "to_home: marker-protected %s -> %s (user tail preserved: %s)",
+        rel,
+        dst,
+        "yes" if user_tail else "no",
+    )
 
 
 # --- internal helpers ------------------------------------------------------
