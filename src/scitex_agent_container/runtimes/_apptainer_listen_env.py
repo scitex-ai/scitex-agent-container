@@ -71,6 +71,17 @@ def listen_env_flags(config) -> list[str]:
 
     flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
 
+    # AGENT SELF-NAME — without ``SAC_NAME`` an in-container agent cannot
+    # introspect its own registry row: ``agent_list``/``agent_logs`` return
+    # "not found" and ``agent_spawn`` can't resolve the caller, so parent->child
+    # lineage links go unrecorded (the spawn caller defaults to ``SAC_NAME``,
+    # read via ``_env.getenv("NAME")`` which honours SAC_NAME/SCITEX_AGENT_
+    # CONTAINER_NAME). ``SAC_LISTEN_*`` were injected but this was missed. Skip
+    # an EMPTY name so it can never shadow a value supplied elsewhere.
+    agent_name = getattr(config, "name", "") or ""
+    if agent_name:
+        flags += ["--env", f"SAC_NAME={agent_name}"]
+
     # PERSISTENT TESTMON CACHE — point testmon's data file at the
     # container-side bind destination (see
     # ``_p3a_default_binds._FLEET_DEFAULT_BINDS``: the host's

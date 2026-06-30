@@ -188,3 +188,39 @@ def test_listen_env_flags_unions_host_set_dir_with_default(
     assert (
         f"SCITEX_AGENT_CONTAINER_YAML_DIRS={custom}:{host_default}" in flags
     )
+
+
+def test_listen_env_flags_injects_sac_name(sandboxed_home: Path) -> None:
+    # Arrange — a config carrying the agent's own name.
+    config = SimpleNamespace(
+        name="scitex-todo", claude=SimpleNamespace(channels=[])
+    )
+    # Act
+    flags = listen_env_flags(config)
+    # Assert — the self-name is injected so in-container agent_list/logs +
+    # spawn lineage resolve (they read SAC_NAME via _env.getenv("NAME")).
+    assert "SAC_NAME=scitex-todo" in flags
+
+
+def test_listen_env_flags_sac_name_follows_an_env_token(
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    config = SimpleNamespace(
+        name="scitex-todo", claude=SimpleNamespace(channels=[])
+    )
+    flags = listen_env_flags(config)
+    # Act
+    idx = flags.index("SAC_NAME=scitex-todo")
+    # Assert
+    assert flags[idx - 1] == "--env"
+
+
+def test_listen_env_flags_omits_empty_sac_name(sandboxed_home: Path) -> None:
+    # Arrange — an empty name must NOT be injected: an empty SAC_NAME would
+    # shadow a value supplied elsewhere and is worse than absent.
+    config = SimpleNamespace(name="", claude=SimpleNamespace(channels=[]))
+    # Act
+    flags = listen_env_flags(config)
+    # Assert
+    assert not any(f.startswith("SAC_NAME=") for f in flags)
