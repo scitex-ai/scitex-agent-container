@@ -327,6 +327,68 @@ def agent_create(
     return invoke_cli_text(argv)
 
 
+def host_exec_local(
+    argv: list[str],
+    cwd: str | None = None,
+    timeout_s: float | None = None,
+    env: dict[str, str] | None = None,
+    caller: str | None = None,
+) -> dict[str, Any]:
+    """Run an arbitrary command on the HOST via the ``sac listen`` bypass.
+
+    Operator directive 2026-07-01: developer + researcher agents run any host
+    command through the listen daemon. Unblocks in-container image builds
+    (``sac image build``), cron/systemd apply, and other host-only ops that
+    otherwise require the operator's shell.
+
+    POSTs to ``{SAC_LISTEN_BASE_URL}/v1/host_exec``. The listen daemon
+    enforces the group gate (403 unless caller is in developer/researcher)
+    and appends one JSONL audit line per invocation.
+
+    Args:
+        argv: The command to run — a non-empty list of strings. No shell form;
+            no expansion. E.g. ``["sac", "image", "build", "base", "-y"]``.
+        cwd: Optional working directory for the child process.
+        timeout_s: Optional per-command timeout on the server side. Bounded to
+            ``(0, 3600]``; defaults to 300s server-side when omitted.
+        env: Optional extra environment vars (merged onto the daemon's env on
+            the host).
+        caller: Override the auto-resolved caller identity (defaults to
+            ``SAC_NAME`` from the container). Only consulted on the host-wide
+            bearer path.
+
+    Returns:
+        On success: ``{"status": "ok", "result": {"exit_code": int, "stdout":
+        str, "stderr": str, "duration_s": float, "timed_out": bool}}``. The MCP
+        host can branch on ``result.exit_code`` and ``result.timed_out``.
+
+        On failure (transport / 401 / 403 / 400 / 500 / missing env):
+        ``{"status": "error", "reason": "...", "http_status": <int|null>,
+        "body": <server body or null>}`` — fail loud, never silently swallowed.
+    """
+    from ..._lifecycle._host_exec_client import (
+        HostExecRequestError,
+        request_host_exec,
+    )
+
+    try:
+        result = request_host_exec(
+            argv,
+            cwd=cwd,
+            timeout_s=timeout_s,
+            env=env,
+            caller=caller,
+        )
+    except HostExecRequestError as exc:
+        return {
+            "status": "error",
+            "reason": str(exc),
+            "http_status": exc.status,
+            "body": exc.body,
+        }
+    return {"status": "ok", "result": result}
+
+
 def register_agent_tools(mcp) -> None:
     """Attach ``@mcp.tool()`` to every public function in this module."""
     for fn in (
@@ -343,6 +405,7 @@ def register_agent_tools(mcp) -> None:
         agent_stop,
         agent_restart,
         agent_send,
+        host_exec_local,
     ):
         mcp.tool()(fn)
 
@@ -361,5 +424,6 @@ __all__ = [
     "agent_stop",
     "agent_restart",
     "agent_send",
+    "host_exec_local",
     "register_agent_tools",
 ]
