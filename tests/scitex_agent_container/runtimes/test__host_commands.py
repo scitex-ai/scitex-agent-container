@@ -42,6 +42,23 @@ class TestDeployHostClaudeCommands:
         landed = agent_home / ".claude" / "commands" / "foo.md"
         assert landed.read_text() == "# /foo\nrun foo\n"
 
+    def test_symlink_back_to_host_source_is_skipped_not_corrupted(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — the agent dst is a symlink back to the host source (a prior
+        # "linked host file"); deploying must not copy the file onto itself.
+        host_cmds = _seed_host_commands(tmp_path / "host_home", env_save_restore)
+        src = host_cmds / "autonomous.md"
+        src.write_text("HOST-CONTENT")
+        agent_home = tmp_path / "agent_home"
+        dst = agent_home / ".claude" / "commands" / "autonomous.md"
+        dst.parent.mkdir(parents=True)
+        dst.symlink_to(src)
+        # Act — must NOT raise SameFileError nor write through the link.
+        deploy_host_claude_commands(agent_home)
+        # Assert
+        assert src.read_text() == "HOST-CONTENT"
+
     def test_overwrites_read_only_destination(self, tmp_path, env_save_restore):
         # Arrange — deploy once, then make the landed file read-only (0444) and
         # change the host source (mirrors a 0444 source mode preserved across

@@ -60,7 +60,19 @@ def _copy_force_overwrite(src: Path, dst: Path) -> None:
     DOWN on restart (observed 2026-07-01: a 0444 ``update-docs.md``). Grant
     owner-write before the copy (so it can overwrite) and after (so the next
     deploy can too).
+
+    Same-file skip: when ``dst`` already resolves to ``src`` (a prior "linked
+    host file" symlink, a hardlink, or a bind), the copy is a no-op — and
+    ``copy2`` raises ``SameFileError`` while ``chmod`` would FOLLOW the link and
+    mutate the shared host source. Skip cleanly. (INCIDENT 2026-07-02:
+    ``sac agents start/restart neurovista`` on ``~/.claude/commands/autonomous.md``,
+    whose dst was a symlink back to the host source.)
     """
+    try:
+        if dst.exists() and src.samefile(dst):
+            return
+    except OSError:  # stx-allow: fallback (unreadable/broken dst → proceed with the copy)
+        pass
     if dst.exists():
         dst.chmod(dst.stat().st_mode | 0o200)
     shutil.copy2(src, dst)
