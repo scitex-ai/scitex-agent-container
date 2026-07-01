@@ -83,7 +83,12 @@ def _append_audit(entry: dict[str, Any]) -> None:
         )
 
 
-async def host_exec(request: Request) -> JSONResponse:
+async def host_exec(
+    request: Request,
+    *,
+    group_resolver=resolve_group_name,
+    audit_writer=_append_audit,
+) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
 
     Body: ``{"argv": [str, ...], "cwd"?: str, "timeout_s"?: float, "env"?:
@@ -166,7 +171,7 @@ async def host_exec(request: Request) -> JSONResponse:
             reason="host_exec requires a resolvable caller (per-node bearer or 'caller' body claim)"
         )
 
-    group = resolve_group_name(name=caller)
+    group = group_resolver(name=caller)
     if group not in ELIGIBLE_GROUPS:
         return deny_response(
             reason=(
@@ -220,7 +225,7 @@ async def host_exec(request: Request) -> JSONResponse:
     duration_s = round(time.monotonic() - started, 3)
 
     # ---- 4. Audit + response ----------------------------------------------
-    _append_audit(
+    audit_writer(
         {
             "ts": time.time(),
             "caller": caller,
