@@ -6,7 +6,9 @@ satisfy PS-204 §2 orphan-test-file: every test file must mirror a
 single src file):
 
   - ``stage_build_context`` / ``build_layer_from_source`` /
-    ``_default_apptainer_build_runner`` — unit coverage of the helper.
+    ``resolve_bootstrap_sif`` — unit coverage of the helper. The build
+    delegates to scitex-container's atomic ``build`` via the module-level
+    ``_container_build`` seam (swapped for a real recording fake).
   - Shipped .def contract — every apptainer-*.def in the package's
     ``containers/`` dir must declare the bundled-source ``%files``
     entry, install sac from ``/opt/scitex-agent-container-src``, and
@@ -40,7 +42,6 @@ import pytest
 import scitex_agent_container
 from scitex_agent_container.cli_pkg import _image_source_build as isb
 from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
-from scitex_agent_container.runtimes import _apptainer_build as build_mod
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -86,37 +87,26 @@ def fake_def(tmp_path: Path) -> Path:
 
 
 @contextmanager
-def _use_apptainer_runner(runner_fn) -> Iterator[list[tuple]]:
-    """Swap ``_image_source_build._apptainer_build_runner`` for a real fake."""
+def _use_container_build(build_fn) -> Iterator[list[tuple]]:
+    """Swap ``_image_source_build._container_build`` for a real fake.
+
+    ``_container_build`` is the seam that delegates to scitex-container's
+    atomic ``build``; swapping it lets the unit tests exercise the
+    staging + mapping without importing scitex-container or shelling a
+    real apptainer. No MagicMock — a hand-rolled recording callable.
+    """
     calls: list[tuple] = []
 
     def _recording(*a, **kw):
         calls.append((a, kw))
-        return runner_fn(*a, **kw)
+        return build_fn(*a, **kw)
 
-    saved = isb._apptainer_build_runner
-    isb._apptainer_build_runner = _recording  # type: ignore[assignment]
+    saved = isb._container_build
+    isb._container_build = _recording  # type: ignore[assignment]
     try:
         yield calls
     finally:
-        isb._apptainer_build_runner = saved  # type: ignore[assignment]
-
-
-@contextmanager
-def _force_fakeroot_probe(value: bool) -> Iterator[None]:
-    """Swap ``runtimes._apptainer_build._should_use_fakeroot_for_build``.
-
-    The runner imports the probe lazily on each call, so swapping the
-    module attribute deterministically controls which SIF-build branch
-    the runner takes regardless of the host's actual ``/etc/subuid``
-    state. No MagicMock — a plain ``lambda`` returning the desired value.
-    """
-    saved = build_mod._should_use_fakeroot_for_build
-    build_mod._should_use_fakeroot_for_build = lambda: value  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        build_mod._should_use_fakeroot_for_build = saved  # type: ignore[assignment]
+        isb._container_build = saved  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -449,13 +439,28 @@ def test_stage_build_context_preserves_staging_dir_when_bootstrap_sif_missing(
 # ---------------------------------------------------------------------------
 
 
-def test_build_layer_from_source_invokes_runner_with_staging_cwd(
+def _stub_build_result(*_a, output_dir, image_name, sandbox, **_kw) -> Path:
+    """A fake ``_container_build`` that mimics scitex-container's returns.
+
+    SIF build → the resolved timestamped real SIF
+    (``<output_dir>/<image_name>/<image_name>-<ts>.sif``). Sandbox build →
+    the sandbox dir. ``build_layer_from_source`` derives the STABLE inner
+    boot symlink from ``output_dir`` + ``image_name`` itself, so the exact
+    timestamp here is irrelevant to what the helper returns.
+    """
+    image_dir = Path(output_dir) / image_name
+    if sandbox:
+        return image_dir / f"{image_name}.sandbox"
+    return image_dir / f"{image_name}-20260702T000000Z.sif"
+
+
+def test_build_layer_from_source_invokes_build_with_staging_cwd(
     tmp_path, fake_pkg_root, fake_def
 ):
     # Arrange
     out_dir = tmp_path / "out"
     # Act
-    with _use_apptainer_runner(lambda *a, **kw: 0) as calls:
+    with _use_container_build(_stub_build_result) as calls:
         isb.build_layer_from_source(
             layer="base",
             def_path=fake_def,
@@ -468,13 +473,79 @@ def test_build_layer_from_source_invokes_runner_with_staging_cwd(
     assert kwargs["cwd"] == expected_cwd and expected_cwd.is_dir()
 
 
-def test_build_layer_from_source_writes_output_into_layer_dir(
+def test_build_layer_from_source_maps_output_dir_and_image_name(
     tmp_path, fake_pkg_root, fake_def
 ):
-    # Arrange
+    # Arrange — the containers output dir maps straight to ``output_dir``;
+    # the layer maps to ``image_name`` (``sac-<layer>``) so scitex-
+    # container lands the artefact under ``<output_dir>/sac-<layer>/``.
     out_dir = tmp_path / "out"
     # Act
-    with _use_apptainer_runner(lambda *a, **kw: 0):
+    with _use_container_build(_stub_build_result) as calls:
+        isb.build_layer_from_source(
+            layer="base",
+            def_path=fake_def,
+            pkg_root=fake_pkg_root,
+            output_dir=out_dir,
+        )
+    # Assert
+    kwargs = calls[0][1]
+    assert kwargs["output_dir"] == out_dir and kwargs["image_name"] == "sac-base"
+
+
+def test_build_layer_from_source_passes_staged_def_and_force(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — ``def_path`` is the STAGED copy (in the build-context
+    # dir), not the source .def, so scitex-container resolves relative
+    # ``%files`` against the same staging dir it uses as ``cwd``.
+    out_dir = tmp_path / "out"
+    # Act
+    with _use_container_build(_stub_build_result) as calls:
+        isb.build_layer_from_source(
+            layer="base",
+            def_path=fake_def,
+            pkg_root=fake_pkg_root,
+            output_dir=out_dir,
+            force=True,
+        )
+    # Assert
+    kwargs = calls[0][1]
+    staged_def = out_dir / "sac-base" / "build-context" / "apptainer-base.def"
+    assert (
+        kwargs["def_path"] == staged_def
+        and kwargs["force"] is True
+        and kwargs["sandbox"] is False
+    )
+
+
+def test_build_layer_from_source_omits_retain_for_config_default(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — sac does not pin ``retain``; scitex-container falls back
+    # to the image config's retention default (keeps N previous + live).
+    out_dir = tmp_path / "out"
+    # Act
+    with _use_container_build(_stub_build_result) as calls:
+        isb.build_layer_from_source(
+            layer="base",
+            def_path=fake_def,
+            pkg_root=fake_pkg_root,
+            output_dir=out_dir,
+        )
+    # Assert
+    assert "retain" not in calls[0][1]
+
+
+def test_build_layer_from_source_returns_stable_inner_boot_symlink(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — build() returns a timestamped real SIF; the helper must
+    # return the STABLE inner boot symlink (layout-invariant across
+    # rebuilds), which callers + the next layer's bootstrap resolve.
+    out_dir = tmp_path / "out"
+    # Act
+    with _use_container_build(_stub_build_result):
         result = isb.build_layer_from_source(
             layer="base",
             def_path=fake_def,
@@ -485,13 +556,13 @@ def test_build_layer_from_source_writes_output_into_layer_dir(
     assert result == out_dir / "sac-base" / "sac-base.sif"
 
 
-def test_build_layer_from_source_sandbox_writes_sandbox_path(
+def test_build_layer_from_source_sandbox_returns_sandbox_path(
     tmp_path, fake_pkg_root, fake_def
 ):
     # Arrange
     out_dir = tmp_path / "out"
     # Act
-    with _use_apptainer_runner(lambda *a, **kw: 0):
+    with _use_container_build(_stub_build_result):
         result = isb.build_layer_from_source(
             layer="base",
             def_path=fake_def,
@@ -503,15 +574,20 @@ def test_build_layer_from_source_sandbox_writes_sandbox_path(
     assert result == out_dir / "sac-base" / "sac-base.sandbox"
 
 
-def test_build_layer_from_source_raises_RuntimeError_on_nonzero_exit(
+def test_build_layer_from_source_propagates_runtime_error(
     tmp_path, fake_pkg_root, fake_def
 ):
-    # Arrange
+    # Arrange — scitex-container's ``build`` raises RuntimeError on a
+    # failed apptainer build; the helper must let it propagate (the live
+    # image + symlinks are left intact by the atomic build).
     out_dir = tmp_path / "out"
+
+    def _raising(*_a, **_kw):
+        raise RuntimeError("apptainer build failed; see build log")
 
     # Act
     def _call():
-        with _use_apptainer_runner(lambda *a, **kw: 7):
+        with _use_container_build(_raising):
             isb.build_layer_from_source(
                 layer="base",
                 def_path=fake_def,
@@ -520,23 +596,25 @@ def test_build_layer_from_source_raises_RuntimeError_on_nonzero_exit(
             )
 
     # Assert
-    with pytest.raises(RuntimeError, match=r"apptainer build failed.*rc=7"):
+    with pytest.raises(RuntimeError, match=r"apptainer build failed"):
         _call()
 
 
 def test_build_layer_from_source_stages_source_at_known_relative_name(
     tmp_path, fake_pkg_root, fake_def
 ):
-    # Arrange — runner records cwd; we then check the staged tree on disk.
+    # Arrange — build() records cwd; we then check the staged tree on disk.
     out_dir = tmp_path / "out"
     seen_cwds: list[Path] = []
 
-    def _runner(*_a, cwd, **_kw):
+    def _record_cwd(*_a, cwd, output_dir, image_name, sandbox, **_kw):
         seen_cwds.append(cwd)
-        return 0
+        return _stub_build_result(
+            output_dir=output_dir, image_name=image_name, sandbox=sandbox
+        )
 
     # Act
-    with _use_apptainer_runner(_runner):
+    with _use_container_build(_record_cwd):
         isb.build_layer_from_source(
             layer="base",
             def_path=fake_def,
@@ -558,16 +636,18 @@ def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(
     tmp_path, fake_pkg_root, fake_def
 ):
     # Arrange — pin that the public builder forwards ``bootstrap_sif``
-    # through to ``stage_build_context`` so the staged context for a
-    # layered .def actually carries the prerequisite SIF. Without this,
-    # apptainer would FATAL on a half-staged context (the 2026-06-07
-    # cohort-A rebuild stall).
+    # through to ``stage_build_context`` so the staged context (== the
+    # ``cwd`` build context) for a layered .def carries the prerequisite
+    # SIF. Without this, apptainer would FATAL on a half-staged context
+    # (the 2026-06-07 cohort-A rebuild stall). This is exactly how the
+    # layered ``From: ./sac-base.sif`` resolves: the symlink lives in the
+    # ``cwd`` staging dir scitex-container's ``build`` runs against.
     out_dir = tmp_path / "out"
     fake_base_sif = tmp_path / "sac-base.sif"
     fake_base_sif.write_bytes(b"fake SIF")
 
     # Act
-    with _use_apptainer_runner(lambda *a, **kw: 0):
+    with _use_container_build(_stub_build_result):
         isb.build_layer_from_source(
             layer="scitex",
             def_path=fake_def,
@@ -584,117 +664,48 @@ def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(
 
 
 # ---------------------------------------------------------------------------
-# _default_apptainer_build_runner — argv shape (no real apptainer call)
+# resolve_bootstrap_sif — layer → prerequisite SIF policy
 # ---------------------------------------------------------------------------
 
 
-def test_default_runner_sif_argv_uses_sudo_when_subuid_absent(tmp_path):
-    # Arrange — fakeroot probe forced False (no /etc/subuid mapping for
-    # this user) so the runner takes the sudo fallback branch. Swap
-    # subprocess.run for a real recording callable.
-    seen: dict = {}
-
-    class _FakeResult:
-        returncode = 0
-
-    def _fake_run(argv, cwd=None):
-        seen["argv"] = list(argv)
-        seen["cwd"] = cwd
-        return _FakeResult()
-
-    saved = isb.subprocess.run
-    isb.subprocess.run = _fake_run  # type: ignore[assignment]
-    try:
-        # Act
-        with _force_fakeroot_probe(False):
-            rc = isb._default_apptainer_build_runner(
-                output_path=tmp_path / "x.sif",
-                staged_def=tmp_path / "x.def",
-                cwd=tmp_path,
-                sandbox=False,
-                force=True,
-            )
-    finally:
-        isb.subprocess.run = saved  # type: ignore[assignment]
-    # Assert
-    assert (
-        rc == 0
-        and seen["argv"][:3] == ["sudo", "apptainer", "build"]
-        and "--force" in seen["argv"]
-        and "--fakeroot" not in seen["argv"]
-        and str(tmp_path / "x.sif") in seen["argv"]
-        and str(tmp_path / "x.def") in seen["argv"]
-        and seen["cwd"] == str(tmp_path)
-    )
-
-
-def test_default_runner_sif_argv_uses_fakeroot_when_subuid_present(
-    tmp_path: Path, subprocess_shim
-):
-    """Lead's hand-built SIF on 2026-06-05 used the rootless fakeroot
-    path because /etc/subuid had a mapping; ``sac image build`` had
-    been falling back to sudo (silent password prompt in headless
-    contexts). Real PATH-installed ``apptainer`` shim records argv;
-    the production runner shells out via the real ``subprocess.run``
-    and the shim writes the argv to a log we read back. No MagicMock.
-    """
-    # Arrange — install a recording apptainer shim, force the probe True.
-    subprocess_shim.install("apptainer", exit=0)
+def test_resolve_bootstrap_sif_base_returns_none(tmp_path):
+    # Arrange — top-of-stack ``base`` has no prerequisite SIF.
+    out_dir = tmp_path / "out"
     # Act
-    with _force_fakeroot_probe(True):
-        rc = isb._default_apptainer_build_runner(
-            output_path=tmp_path / "x.sif",
-            staged_def=tmp_path / "x.def",
-            cwd=tmp_path,
-            sandbox=False,
-            force=True,
-        )
-    argv = subprocess_shim.argv_for("apptainer")
-    # Assert — argv carries --fakeroot, no sudo, and the build target.
-    assert (
-        rc == 0
-        and argv is not None
-        and argv[0] == "build"
-        and "--fakeroot" in argv
-        and "sudo" not in argv
-        and "--force" in argv
-        and str(tmp_path / "x.sif") in argv
-        and str(tmp_path / "x.def") in argv
-    )
+    result = isb.resolve_bootstrap_sif("base", out_dir)
+    # Assert
+    assert result is None
 
 
-def test_default_runner_sandbox_argv_uses_fakeroot_and_no_sudo(tmp_path):
-    # Arrange
-    seen: dict = {}
+def test_resolve_bootstrap_sif_scitex_returns_inner_base_boot_symlink(tmp_path):
+    # Arrange — under 0.3.0's atomic layout the prerequisite is the STABLE
+    # inner boot symlink ``<out>/sac-base/sac-base.sif`` (a symlink to the
+    # live timestamped SIF). ``is_file()`` follows it, so a valid symlink
+    # resolves. Model that: a real timestamped SIF + a symlink to it.
+    out_dir = tmp_path / "out"
+    base_dir = out_dir / "sac-base"
+    base_dir.mkdir(parents=True)
+    real_sif = base_dir / "sac-base-20260702T000000Z.sif"
+    real_sif.write_bytes(b"fake base SIF")
+    inner = base_dir / "sac-base.sif"
+    inner.symlink_to(real_sif.name)
+    # Act
+    result = isb.resolve_bootstrap_sif("scitex", out_dir)
+    # Assert
+    assert result == inner
 
-    class _FakeResult:
-        returncode = 0
 
-    def _fake_run(argv, cwd=None):
-        seen["argv"] = list(argv)
-        return _FakeResult()
+def test_resolve_bootstrap_sif_scitex_raises_when_base_missing(tmp_path):
+    # Arrange — scitex requested but sac-base.sif was never built.
+    out_dir = tmp_path / "out"
 
-    saved = isb.subprocess.run
-    isb.subprocess.run = _fake_run  # type: ignore[assignment]
-    try:
-        # Act
-        isb._default_apptainer_build_runner(
-            output_path=tmp_path / "sb",
-            staged_def=tmp_path / "x.def",
-            cwd=tmp_path,
-            sandbox=True,
-            force=False,
-        )
-    finally:
-        isb.subprocess.run = saved  # type: ignore[assignment]
-    # Assert — sandbox path does NOT prepend sudo, DOES include --fakeroot
-    assert (
-        seen["argv"][0] == "apptainer"
-        and "--sandbox" in seen["argv"]
-        and "--fakeroot" in seen["argv"]
-        and "sudo" not in seen["argv"]
-        and "--force" not in seen["argv"]  # force=False
-    )
+    # Act
+    def _call():
+        return isb.resolve_bootstrap_sif("scitex", out_dir)
+
+    # Assert
+    with pytest.raises(isb.BootstrapSifMissing, match=r"sac image build base"):
+        _call()
 
 
 # ---------------------------------------------------------------------------
