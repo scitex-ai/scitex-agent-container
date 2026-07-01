@@ -226,59 +226,26 @@ def test_listen_env_flags_omits_empty_sac_name(sandboxed_home: Path) -> None:
     assert not any(f.startswith("SAC_NAME=") for f in flags)
 
 
-def test_listen_env_flags_injects_scitex_todo_agent(sandboxed_home: Path) -> None:
-    # Arrange — a config carrying the agent's own name (scitex-dev is the
-    # incident agent whose .envrc lacked the export).
-    config = SimpleNamespace(name="scitex-dev", claude=SimpleNamespace(channels=[]))
-    # Act
-    flags = listen_env_flags(config)
-    # Assert — scitex-todo's creator identity is injected = the agent name, so
-    # cards it creates are attributed to it, not owner-less $USER.
-    assert "SCITEX_TODO_AGENT=scitex-dev" in flags
-
-
-def test_listen_env_flags_scitex_todo_agent_follows_an_env_token(
-    sandboxed_home: Path,
-) -> None:
-    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
-    config = SimpleNamespace(name="scitex-dev", claude=SimpleNamespace(channels=[]))
-    flags = listen_env_flags(config)
-    # Act
-    idx = flags.index("SCITEX_TODO_AGENT=scitex-dev")
-    # Assert
-    assert flags[idx - 1] == "--env"
-
-
-def test_listen_env_flags_omits_empty_scitex_todo_agent(
-    sandboxed_home: Path,
-) -> None:
-    # Arrange — an empty name must NOT be injected (an empty value would shadow
-    # a real one supplied elsewhere).
-    config = SimpleNamespace(name="", claude=SimpleNamespace(channels=[]))
-    # Act
-    flags = listen_env_flags(config)
-    # Assert
-    assert not any(f.startswith("SCITEX_TODO_AGENT=") for f in flags)
-
-
-def test_listen_env_flags_injects_scitex_todo_tasks_store(
+def test_listen_env_flags_injects_direnv_config_location(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
 ) -> None:
-    # Arrange — the canonical bound store path is identical for every agent.
+    # Arrange — every agent needs direnv's config location pointed at the base
+    # image's whitelist so per-project .envrc files load without manual
+    # `direnv allow`. Generic tooling knob, not coupled to any scitex-* package.
     # Act
     flags = listen_env_flags(no_bus_config)
-    # Assert — the shared tasks.yaml store is pinned so notifications resolve.
-    assert "SCITEX_TODO_TASKS=/home/agent/.scitex/todo/tasks.yaml" in flags
+    # Assert
+    assert "DIRENV_CONFIG=/etc/direnv" in flags
 
 
-def test_listen_env_flags_scitex_todo_tasks_follows_an_env_token(
+def test_listen_env_flags_direnv_config_follows_an_env_token(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
 ) -> None:
     # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
     flags = listen_env_flags(no_bus_config)
     # Act
-    idx = flags.index("SCITEX_TODO_TASKS=/home/agent/.scitex/todo/tasks.yaml")
+    idx = flags.index("DIRENV_CONFIG=/etc/direnv")
     # Assert
     assert flags[idx - 1] == "--env"
