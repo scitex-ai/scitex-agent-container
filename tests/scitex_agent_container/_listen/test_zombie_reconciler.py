@@ -157,13 +157,14 @@ class TestReconcileZombies:
 
 class TestZombieReconcilerLoop:
     def test_loop_runs_the_injected_reconcile_pass_each_tick(self) -> None:
-        # Arrange — a plain sync reconcile_once that records it ran.
+        # Arrange — a plain sync reconcile_once that records it ran. The loop
+        # sleeps BEFORE each tick, so use a tiny interval to see a tick fire.
         ran: list[str] = []
 
         async def drive() -> None:
             task = asyncio.create_task(
                 zombie_reconciler_loop(
-                    interval_s=100.0,
+                    interval_s=0.01,
                     reconcile_once=lambda: ran.append("tick") or [],
                 )
             )
@@ -177,7 +178,7 @@ class TestZombieReconcilerLoop:
         # Act
         asyncio.run(drive())
         # Assert
-        assert ran == ["tick"]
+        assert "tick" in ran
 
     def test_loop_cancellation_is_propagated_cleanly(self) -> None:
         # Arrange — a loop with a never-elapsing interval, then cancel it.

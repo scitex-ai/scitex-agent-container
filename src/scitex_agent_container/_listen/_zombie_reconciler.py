@@ -276,6 +276,13 @@ async def zombie_reconciler_loop(
     logger.info("zombie_reconciler: starting (interval_s=%.1f)", interval_s)
     try:
         while True:
+            # Sleep BEFORE the first reconcile — no immediate startup tick. This
+            # lets agents + the daemon stabilize after a restart before we clear
+            # anything, and keeps short-lived test lifespans (TestClient) from
+            # ever reaching a mutating tick: a startup tick would treat every
+            # test-registered instance (which has no apptainer_pid file) as a
+            # zombie and close its lease, polluting other tests' shared state.
+            await asyncio.sleep(interval_s)
             try:
                 from .._lifecycle._off_loop import run_blocking_or
 
@@ -296,9 +303,8 @@ async def zombie_reconciler_loop(
                 raise
             except Exception as exc:  # stx-allow: fallback (loop must not die on a transient registry/FS error)
                 logger.warning(
-                    "zombie_reconciler: tick failed (%s); sleeping + retry", exc
+                    "zombie_reconciler: tick failed (%s); retry next interval", exc
                 )
-            await asyncio.sleep(interval_s)
     except asyncio.CancelledError:
         logger.info("zombie_reconciler: cancelled cleanly")
         raise
