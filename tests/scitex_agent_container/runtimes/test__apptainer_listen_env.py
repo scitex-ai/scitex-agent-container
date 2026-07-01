@@ -224,3 +224,38 @@ def test_listen_env_flags_omits_empty_sac_name(sandboxed_home: Path) -> None:
     flags = listen_env_flags(config)
     # Assert
     assert not any(f.startswith("SAC_NAME=") for f in flags)
+
+
+def test_listen_env_flags_injects_scitex_todo_agent(sandboxed_home: Path) -> None:
+    # Arrange — a config carrying the agent's own name (scitex-dev is the
+    # incident agent whose .envrc lacked the export).
+    config = SimpleNamespace(name="scitex-dev", claude=SimpleNamespace(channels=[]))
+    # Act
+    flags = listen_env_flags(config)
+    # Assert — scitex-todo's creator identity is injected = the agent name, so
+    # cards it creates are attributed to it, not owner-less $USER.
+    assert "SCITEX_TODO_AGENT=scitex-dev" in flags
+
+
+def test_listen_env_flags_scitex_todo_agent_follows_an_env_token(
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    config = SimpleNamespace(name="scitex-dev", claude=SimpleNamespace(channels=[]))
+    flags = listen_env_flags(config)
+    # Act
+    idx = flags.index("SCITEX_TODO_AGENT=scitex-dev")
+    # Assert
+    assert flags[idx - 1] == "--env"
+
+
+def test_listen_env_flags_omits_empty_scitex_todo_agent(
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — an empty name must NOT be injected (an empty value would shadow
+    # a real one supplied elsewhere).
+    config = SimpleNamespace(name="", claude=SimpleNamespace(channels=[]))
+    # Act
+    flags = listen_env_flags(config)
+    # Assert
+    assert not any(f.startswith("SCITEX_TODO_AGENT=") for f in flags)

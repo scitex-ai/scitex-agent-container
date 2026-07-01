@@ -81,6 +81,15 @@ def listen_env_flags(config) -> list[str]:
     agent_name = getattr(config, "name", "") or ""
     if agent_name:
         flags += ["--env", f"SAC_NAME={agent_name}"]
+        # SCITEX-TODO CREATOR IDENTITY — scitex-todo stamps every card / comment
+        # write with ``$SCITEX_TODO_AGENT`` (falling back to ``$USER`` =
+        # blank/"operator" when unset). An agent whose project ``.envrc`` forgot
+        # the export therefore creates OWNER-LESS cards and trips the
+        # mandatory-creator rule (incident 2026-07-01: scitex-dev's .envrc had
+        # CCT_AGENT_ID but not SCITEX_TODO_AGENT). Inject it DETERMINISTICALLY =
+        # the agent name so card attribution never depends on per-project
+        # ``.envrc`` goodwill. Same empty-name skip as SAC_NAME.
+        flags += ["--env", f"SCITEX_TODO_AGENT={agent_name}"]
 
     # PERSISTENT TESTMON CACHE — point testmon's data file at the
     # container-side bind destination (see
