@@ -78,6 +78,20 @@ def _read_and_interpolate(src: Path, config: AgentConfig | None) -> str:
     return text
 
 
+def _dst_resolves_to_source(src: Path, dst: Path) -> bool:
+    """True when ``dst`` already refers to the SAME file as ``src``.
+
+    Happens when a prior deploy materialized this entry as a "linked host
+    file" (a symlink into ``~/.claude``), or via a hardlink/bind.
+    ``Path.samefile`` follows symlinks and compares device+inode; a missing
+    or broken ``dst`` returns ``False`` so the deploy proceeds normally.
+    """
+    try:
+        return dst.exists() and src.samefile(dst)
+    except OSError:  # stx-allow: fallback (unreadable/broken dst → treat as not-same, let deploy proceed)
+        return False
+
+
 def _deploy_plain_file(
     src: Path,
     dst: Path,
@@ -88,6 +102,15 @@ def _deploy_plain_file(
     """Full overwrite. Uses ``shutil.copy2`` for binary-safe perm preserve
     when no interpolation is needed; otherwise writes interpolated text."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    # If dst ALREADY resolves to src (a prior "linked host file" symlink, a
+    # hardlink, or a bind), the copy is a no-op — and worse, writing/interpolating
+    # would follow the link and CORRUPT the shared host source. Skip cleanly;
+    # ``shutil.copy2`` would otherwise raise ``SameFileError``. (INCIDENT
+    # 2026-07-02: ``sac agents restart neurovista`` failed on
+    # ``~/.claude/commands/autonomous.md`` — dst was a symlink back to src.)
+    if _dst_resolves_to_source(src, dst):
+        logger.info("to_home: %s already resolves to source; skip", rel)
+        return
     _clear_readonly_dst(dst)
     if config is None:
         shutil.copy2(src, dst)
