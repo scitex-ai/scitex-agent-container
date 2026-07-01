@@ -127,7 +127,7 @@ From: ./sac-base.sif
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.87" \
+            "claude-agent-sdk==0.2.110" \
             "scitex[all]" \
             xarray
         uv pip install --python /opt/venv-sac/bin/python \
@@ -157,7 +157,7 @@ From: ./sac-base.sif
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.87" \
+            "claude-agent-sdk==0.2.110" \
             "scitex[all]" \
             xarray
         /opt/venv-sac/bin/pip install --no-cache-dir \
