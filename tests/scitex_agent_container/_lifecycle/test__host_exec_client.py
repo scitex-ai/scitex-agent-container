@@ -62,6 +62,9 @@ def _opener_raising_http(code: int, body: dict[str, Any]):
             def read(self_inner) -> bytes:  # noqa: N805
                 return raw
 
+            def close(self_inner) -> None:  # noqa: N805
+                return None
+
         exc = urlerror.HTTPError(
             req.full_url, code, "reason", hdrs=None, fp=_ErrBody()
         )
