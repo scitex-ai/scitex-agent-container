@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import types
 from typing import Any
 
@@ -292,3 +293,23 @@ def test_host_exec_audit_entry_records_argv():
     _run(host_exec(req, group_resolver=_dev_resolver, audit_writer=entries.append))
     # Assert
     assert entries[0]["argv"] == ["echo", "audit"]
+
+
+def test_host_exec_does_not_block_the_event_loop():
+    # Arrange — two ~0.3s execs; off-loop dispatch lets them overlap, while
+    # a subprocess.run on the event loop would serialize them to ~0.6s.
+    req_a = _FakeRequest({"argv": ["sleep", "0.3"]}, authenticated_node="dev")
+    req_b = _FakeRequest({"argv": ["sleep", "0.3"]}, authenticated_node="dev")
+
+    async def _both() -> float:
+        start = time.monotonic()
+        await asyncio.gather(
+            host_exec(req_a, group_resolver=_dev_resolver, audit_writer=_noop_audit),
+            host_exec(req_b, group_resolver=_dev_resolver, audit_writer=_noop_audit),
+        )
+        return time.monotonic() - start
+
+    # Act
+    elapsed = _run(_both())
+    # Assert
+    assert elapsed < 0.5
