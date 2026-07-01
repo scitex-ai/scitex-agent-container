@@ -382,49 +382,75 @@ def test_boot_dry_run_mentions_pip_install_plan(
 # ---------------------------------------------------------------------------
 
 
-def _make_repo(path: Path, name: str) -> Path:
-    """Create a bare upstream and a clone with 'gitea' remote."""
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "t@t",
+}
+
+
+def _git(clone: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(clone), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **_GIT_ENV},
+    )
+
+
+def _make_repo(path: Path, name: str, *, branch: str = "develop") -> Path:
+    """Create a bare upstream on `develop` plus a clone tracking it.
+
+    The clone is checked out on ``branch`` with origin/develop as the
+    tracked upstream — exactly the fleet layout the cron script targets
+    (remote-agnostic: the remote is named ``origin``, not ``gitea``).
+    """
     upstream = path / f"{name}-upstream"
     clone = path / "proj" / name
     upstream.mkdir(parents=True)
-    clone.mkdir(parents=True)
 
     subprocess.run(
-        ["git", "init", "--bare", str(upstream)], check=True, capture_output=True
-    )
-    subprocess.run(["git", "init", str(clone)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(clone), "remote", "add", "gitea", str(upstream)],
+        ["git", "init", "--bare", "-b", "develop", str(upstream)],
         check=True,
         capture_output=True,
     )
-    (clone / "README.md").write_text("hello")
+    # Seed the upstream develop branch via a throwaway clone.
+    seed = path / f"{name}-seed"
     subprocess.run(
-        ["git", "-C", str(clone), "add", "."], check=True, capture_output=True
+        ["git", "clone", str(upstream), str(seed)], check=True, capture_output=True
     )
+    _git(seed, "checkout", "-b", "develop")
+    (seed / "README.md").write_text("hello")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "init")
+    _git(seed, "push", "-u", "origin", "develop")
+
+    # The fleet checkout: origin = upstream, on develop tracking it.
     subprocess.run(
-        ["git", "-C", str(clone), "commit", "--allow-empty", "-m", "init"],
-        check=True,
-        capture_output=True,
-        env={
-            **os.environ,
-            "GIT_AUTHOR_NAME": "test",
-            "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "test",
-            "GIT_COMMITTER_EMAIL": "t@t",
-        },
+        ["git", "clone", str(upstream), str(clone)], check=True, capture_output=True
     )
-    subprocess.run(
-        ["git", "-C", str(clone), "push", "gitea", "HEAD:develop"],
-        check=True,
-        capture_output=True,
-    )
+    _git(clone, "checkout", "develop")
+    if branch != "develop":
+        _git(clone, "checkout", "-b", branch)
     return clone
+
+
+def _advance_upstream(path: Path, name: str) -> None:
+    """Push a new develop commit upstream so the clone can fast-forward."""
+    upstream = path / f"{name}-upstream"
+    seed = path / f"{name}-seed"
+    (seed / "more.txt").write_text("more")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "second")
+    _git(seed, "push", "origin", "develop")
+    _ = upstream  # upstream already wired via origin
 
 
 def _post_merge_pull_script() -> Path:
     return (
-        Path(__file__).parent.parent
+        Path(__file__).parents[3]
         / "src"
         / "scitex_agent_container"
         / "cron"
@@ -440,45 +466,100 @@ def post_merge_pull_script() -> Path:
     return script
 
 
+def _run_script(script: Path, home: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(home)},
+    )
+
+
+def _log_text(home: Path) -> str:
+    log_dir = home / ".scitex" / "agent-container" / "runtime" / "logs"
+    return "\n".join(p.read_text() for p in log_dir.glob("post-merge-pull.*.log"))
+
+
+_REPO = "scitex-agent-container"
+
+
 @pytest.mark.integration
 class TestPostMergePullScript:
     """Real bash + real git — no mocks anywhere."""
 
-    def test_script_pulls_clean_repo_returns_zero(
-        self, tmp_path, post_merge_pull_script
-    ):
+    # -- clean develop checkout: fast-forwards from tracked upstream --------
+
+    @pytest.fixture
+    def clean_develop_run(self, tmp_path, post_merge_pull_script):
+        clone = _make_repo(tmp_path, _REPO)
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        _advance_upstream(tmp_path, _REPO)
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after
+
+    def test_clean_develop_returns_zero(self, clean_develop_run):
         # Arrange
-        _make_repo(tmp_path, "scitex-agent-container")
-        log_dir = tmp_path / ".scitex" / "orochi" / "shared" / "logs"
-        log_dir.mkdir(parents=True)
-        env = {**os.environ, "HOME": str(tmp_path)}
         # Act
-        result = subprocess.run(
-            ["bash", str(post_merge_pull_script)],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result, _before, _after = clean_develop_run
         # Assert
         assert result.returncode == 0
 
-    def test_script_skips_dirty_repo_with_warn(self, tmp_path, post_merge_pull_script):
+    def test_clean_develop_fast_forwards_to_upstream(self, clean_develop_run):
         # Arrange
-        clone = _make_repo(tmp_path, "scitex-agent-container")
-        (clone / "dirty.txt").write_text("unsaved")
-        subprocess.run(
-            ["git", "-C", str(clone), "add", "dirty.txt"], capture_output=True
-        )
-        log_dir = tmp_path / ".scitex" / "orochi" / "shared" / "logs"
-        log_dir.mkdir(parents=True)
-        env = {**os.environ, "HOME": str(tmp_path)}
         # Act
-        subprocess.run(
-            ["bash", str(post_merge_pull_script)],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        _result, before, after = clean_develop_run
         # Assert
-        log_files = list(log_dir.glob("post-merge-pull.*.log"))
-        assert log_files
+        assert after != before
+
+    # -- feature-branch checkout: never touched ----------------------------
+
+    @pytest.fixture
+    def feature_branch_run(self, tmp_path, post_merge_pull_script):
+        clone = _make_repo(tmp_path, _REPO, branch="feat/wip")
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        _advance_upstream(tmp_path, _REPO)
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after, _log_text(tmp_path)
+
+    def test_feature_branch_head_unchanged(self, feature_branch_run):
+        # Arrange
+        # Act
+        _result, before, after, _log = feature_branch_run
+        # Assert
+        assert after == before
+
+    def test_feature_branch_logs_skip(self, feature_branch_run):
+        # Arrange
+        # Act
+        _result, _before, _after, log = feature_branch_run
+        # Assert
+        assert "not 'develop'" in log
+
+    # -- dirty develop checkout: skipped with a warning --------------------
+
+    @pytest.fixture
+    def dirty_develop_run(self, tmp_path, post_merge_pull_script):
+        clone = _make_repo(tmp_path, _REPO)
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        (clone / "dirty.txt").write_text("unsaved")
+        _git(clone, "add", "dirty.txt")
+        _advance_upstream(tmp_path, _REPO)
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after, _log_text(tmp_path)
+
+    def test_dirty_develop_head_unchanged(self, dirty_develop_run):
+        # Arrange
+        # Act
+        _result, before, after, _log = dirty_develop_run
+        # Assert
+        assert after == before
+
+    def test_dirty_develop_logs_uncommitted_warning(self, dirty_develop_run):
+        # Arrange
+        # Act
+        _result, _before, _after, log = dirty_develop_run
+        # Assert
+        assert "uncommitted changes" in log

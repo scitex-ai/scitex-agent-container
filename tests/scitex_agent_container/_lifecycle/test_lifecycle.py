@@ -1388,17 +1388,31 @@ def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
     # ``resolve_config`` must find the spec under the standard
     # ``$HOME/.scitex/agent-container/agents/<name>/spec.yaml`` location.
     # ``_isolate_home`` (autouse) has already pointed HOME at tmp_path.
+    # Chdir to a project-less dir so the new $SAC_AGENT_SCOPE ambiguity
+    # rule sees ONLY the fleet registry (the sac worktree we'd otherwise
+    # run from ships a tracked project-local registry, which would make
+    # the scope ambiguous). A real fleet-from-non-project-cwd invocation
+    # is exactly the single-registry case this test means to exercise.
+    import os
+
+    prev_cwd = os.getcwd()
+    neutral = tmp_path / "_neutral_cwd"
+    neutral.mkdir()
+    os.chdir(str(neutral))
     agents_root = tmp_path / ".scitex" / "agent-container" / "agents"
     _write_spec(agents_root, name="beta")
     runtime = FakeRuntime(start_result=True)
     # Act — config_resolver left at its production default.
-    ok = lc.agent_restart(
-        "beta",
-        registry=registry,
-        runtime_factory=lambda _c: runtime,
-        sleep_fn=_no_sleep,
-        handover_mod=FakeHandover(),
-    )
+    try:
+        ok = lc.agent_restart(
+            "beta",
+            registry=registry,
+            runtime_factory=lambda _c: runtime,
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+        )
+    finally:
+        os.chdir(prev_cwd)
     # Assert — the default resolver found the spec and start ran.
     assert ok is True and len(runtime.start_calls) == 1
 

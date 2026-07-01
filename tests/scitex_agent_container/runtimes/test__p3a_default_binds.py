@@ -117,12 +117,16 @@ def test_apply_default_binds_lets_explicit_spec_entry_override_default(
 def test_apply_default_binds_returns_spec_only_when_host_dir_missing(
     fake_home: Path,
 ) -> None:
-    # Arrange
+    # Arrange: sandboxed $HOME has no ~/.scitex/todo so the home-relative
+    # todo default is gated out. Host-absolute defaults (the always-present
+    # ``/tmp`` -> ``/tmp/host`` handoff) ignore the $HOME swap, so we assert
+    # on the home-relative slice the gate actually governs.
     spec_binds = ["~/proj:/home/agent/proj:ro"]
     # Act
     result = apply_default_binds(spec_binds)
+    home_relative = [b for b in result if "/home/agent/" in b]
     # Assert
-    assert result == spec_binds
+    assert home_relative == spec_binds
 
 
 def test_apply_default_binds_handles_empty_spec_binds(fake_home: Path) -> None:
@@ -322,3 +326,70 @@ def test_default_binds_for_host_returns_absolute_host_paths_only(
     assert all(
         not src.startswith("~") and Path(src).is_absolute() for src in host_sources
     )
+
+
+# ---------------------------------------------------------------------------
+# Operator handoff bind (card sac-bind-host-tmp-emacs-handoff) — under
+# --containall the host /tmp is isolated, so agents need the emacs-claude-code
+# handoff dir bound read-only to read the operator's UI debug / screenshot
+# context. Skip-if-missing is covered by the host-existence-gate tests above.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_include_emacs_handoff_bind_read_only() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act
+    handoff = [b for b in _FLEET_DEFAULT_BINDS if "emacs-claude-code" in b]
+    # Assert — bound at the same host path, read-only.
+    assert handoff == ["/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro"]
+
+
+# ---------------------------------------------------------------------------
+# General host-/tmp handoff bind — host ``/tmp`` bound READ-ONLY at the
+# container subpath ``/tmp/host`` so anything the operator drops in host
+# ``/tmp`` is readable in-container at ``/tmp/host/...`` (generalises the
+# narrow emacs handoff above). ``ro`` because host ``/tmp`` carries other
+# processes' tempfiles + live sockets; the destination is a subpath under the
+# container's writable ``/tmp`` tmpfs so bind-dest auto-create is race-safe.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_include_host_tmp_handoff_bind_read_only() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act — filter by the container-side destination ``/tmp/host``.
+    host_tmp = [
+        b for b in _FLEET_DEFAULT_BINDS if b.split(":", 2)[1:2] == ["/tmp/host"]
+    ]
+    # Assert — host /tmp bound read-only at the /tmp/host subpath.
+    assert host_tmp == ["/tmp:/tmp/host:ro"]
+
+
+# ---------------------------------------------------------------------------
+# Persistent testmon cache bind — host ~/.cache/scitex-testmon bound rw to the
+# container-side /home/agent/.cache/scitex-testmon so testmon's data file
+# survives the fresh-git-worktree churn the develop-pin hook forces (scitex-dev
+# pre-commit-hook wrapper reads $SCITEX_TESTMON_CACHE_ROOT). Skip-if-missing
+# (no sac-side mkdir) is covered by the host-existence-gate tests above.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_include_testmon_cache_bind_rw() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act
+    testmon = [b for b in _FLEET_DEFAULT_BINDS if "scitex-testmon" in b]
+    # Assert — bound rw to the container-side cache path under /home/agent.
+    assert testmon == [
+        "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw"
+    ]

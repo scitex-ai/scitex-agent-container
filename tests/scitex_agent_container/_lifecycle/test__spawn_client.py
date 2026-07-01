@@ -91,17 +91,27 @@ _LISTEN_KEYS = (
 
 
 @pytest.fixture
-def listen_env() -> Iterator[callable]:
+def listen_env(tmp_path) -> Iterator[callable]:
     """Yield a setter; clears + restores both prefixes for every key.
 
     Tests call ``set("LISTEN_BASE_URL", "http://h:9100")`` etc. — the
     SAC_ short form is written so :func:`_env.getenv` resolves it.
+
+    HOME is also redirected to a clean ``tmp_path`` for the duration of
+    the test (saved + restored), so the bearer file-fallback in
+    :func:`_resolve_bearer` reads from an isolated, empty tokens dir —
+    never the operator's real
+    ``~/.scitex/agent-container/tokens/listen-<host>.token``. Tests that
+    want the file-fallback to fire write the token under
+    ``tmp_path/.scitex/agent-container/tokens/`` themselves.
     """
     saved = {k: os.environ.get(k) for k in _LISTEN_KEYS}
+    saved_home = os.environ.get("HOME")
     # Always start from a clean slate so a stray export in the operator's
     # shell can't make a "must fail" test silently pass.
     for k in _LISTEN_KEYS:
         os.environ.pop(k, None)
+    os.environ["HOME"] = str(tmp_path)
 
     def _set(suffix: str, value: str | None) -> None:
         long_form = f"SCITEX_AGENT_CONTAINER_{suffix}"
@@ -121,6 +131,10 @@ def listen_env() -> Iterator[callable]:
         for k, prev in saved.items():
             if prev is not None:
                 os.environ[k] = prev
+        if saved_home is not None:
+            os.environ["HOME"] = saved_home
+        else:
+            os.environ.pop("HOME", None)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +303,9 @@ def test_bearer_token_attached_as_authorization_header(listen_env) -> None:
 
 
 def test_no_authorization_header_when_bearer_unset(listen_env) -> None:
-    # Arrange — no bearer in env, none passed explicitly.
+    # Arrange — no bearer in env, none passed explicitly, AND no on-disk
+    # token file (listen_env redirects HOME to a clean tmp dir): the
+    # file-fallback finds nothing, so the request goes out unauthenticated.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
     # Act
@@ -439,3 +455,143 @@ def test_explicit_base_url_arg_overrides_env(listen_env) -> None:
     request_spawn("c", base_url="http://arg-host:9100", opener=opener)
     # Assert
     assert captured["url"] == "http://arg-host:9100/agents"
+
+
+# ---------------------------------------------------------------------------
+# Bearer file-fallback (card sac-agent-cannot-spawn-agents-listen-7878-...):
+# when SAC_LISTEN_BEARER is unset (the spawning agent's spec lacked the
+# server:sac channel so the runtime injected only the base URL), the spawn
+# POST must still authenticate by reading the host token file the listen
+# server validates against. Real bytes on disk, no mocks.
+# ---------------------------------------------------------------------------
+
+
+def _write_host_token_file(home, token: str) -> None:
+    """Write a real listen token file under ``home`` for the local host."""
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    path = default_token_path(home=home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+
+
+def test_bearer_falls_back_to_host_token_file_when_env_unset(
+    listen_env, tmp_path
+) -> None:
+    # Arrange — no bearer env; a real token file exists under the
+    # (tmp) HOME the listen_env fixture redirected to.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    _write_host_token_file(tmp_path, "file-tok-xyz")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", opener=opener)
+    # Assert — the on-disk token authenticates the spawn POST.
+    assert captured["headers"].get("authorization") == "Bearer file-tok-xyz"
+
+
+def test_env_bearer_takes_precedence_over_token_file(listen_env, tmp_path) -> None:
+    # Arrange — both the env var and the file are present; env wins.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    listen_env("LISTEN_BEARER", "env-tok")
+    _write_host_token_file(tmp_path, "file-tok")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", opener=opener)
+    # Assert
+    assert captured["headers"].get("authorization") == "Bearer env-tok"
+
+
+# ---------------------------------------------------------------------------
+# 401 is REACHABLE-but-rejected, NOT 'unreachable / timed out' (the core
+# misreport this card fixes). Mirrors #463's real-loopback transport test:
+# a genuine TCP server that always 401s — no mock/monkeypatch.
+# ---------------------------------------------------------------------------
+
+
+def test_real_loopback_401_surfaces_auth_error_not_unreachable(listen_env) -> None:
+    # Arrange — a real loopback HTTP server that always 401s, exactly like
+    # the bearer-auth gate when no/invalid token is presented.
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"missing bearer token"}')
+
+        def log_message(self, *_args):  # silence test noise
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    listen_env("LISTEN_BASE_URL", f"http://{host}:{port}")
+    message = ""
+    # Act — default opener (real urllib round-trip), no injected fake.
+    try:
+        request_spawn("c", bearer="", timeout_s=2.0)
+    except SpawnRequestError as exc:
+        message = str(exc)
+    finally:
+        server.shutdown()
+        thread.join(timeout=2.0)
+    # Assert — a reachable 401 reads as an auth/bearer problem, never as
+    # 'cannot reach' (the bug). The word 'auth' anchors the new message.
+    assert "auth" in message and "cannot reach" not in message
+
+
+def test_real_loopback_401_carries_status_401(listen_env) -> None:
+    # Arrange — same real 401 server; the structured status must be 401.
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"missing bearer token"}')
+
+        def log_message(self, *_args):
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    listen_env("LISTEN_BASE_URL", f"http://{host}:{port}")
+    status: object = "UNSET"
+    # Act
+    try:
+        request_spawn("c", bearer="", timeout_s=2.0)
+    except SpawnRequestError as exc:
+        status = exc.status
+    finally:
+        server.shutdown()
+        thread.join(timeout=2.0)
+    # Assert
+    assert status == 401
+
+
+def test_real_connection_failure_surfaces_unreachable(listen_env) -> None:
+    # Arrange — bind a loopback socket, grab its port, then close it so
+    # the port is (almost certainly) refused: a GENUINE transport failure,
+    # which MUST read as 'cannot reach' (unlike the 401 above).
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    _h, dead_port = probe.getsockname()
+    probe.close()
+    listen_env("LISTEN_BASE_URL", f"http://127.0.0.1:{dead_port}")
+    message = ""
+    # Act — default opener; the connection is refused.
+    try:
+        request_spawn("c", bearer="", timeout_s=2.0)
+    except SpawnRequestError as exc:
+        message = str(exc)
+    # Assert — only a real transport failure says 'cannot reach'.
+    assert "cannot reach listen" in message

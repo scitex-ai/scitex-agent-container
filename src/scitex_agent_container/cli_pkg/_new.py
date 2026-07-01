@@ -32,6 +32,13 @@ from pathlib import Path
 
 import click
 
+from ._new_dir_template import (
+    DirTemplateError,
+    discover_dir_templates,
+    instantiate_dir_template,
+    parse_set_pairs,
+)
+
 # Agent names follow the dir-as-SSoT convention: lowercase letters,
 # digits, dashes, underscores. Slashes / dots would write outside the
 # base dir or shadow YAML extension suffixes. Mirrors the constraints
@@ -165,12 +172,21 @@ _TEMPLATES = {
 
 
 def _default_base_dir() -> Path:
-    """Return ``~/.scitex/agent-container/agents`` (sac's primary root).
+    """Return sac's primary agents root (the resolver's ``primary`` base).
 
-    Resolved lazily so the CLI can be imported without touching the
-    filesystem (matters for cold-start budget + tab-completion).
+    Reuses :func:`scitex_agent_container.config._resolve._search_dirs`
+    so there is a single source of truth for "where agents live" — the
+    dir-template discovery scans this same root. Resolved lazily so the
+    CLI can be imported without touching the filesystem (matters for
+    cold-start budget + tab-completion).
     """
-    return Path.home() / ".scitex" / "agent-container" / "agents"
+    try:
+        from ..config._resolve import _search_dirs
+
+        primary, _env, _fleet = _search_dirs()
+        return primary
+    except Exception:  # stx-allow: fallback (reason: resolver import is best-effort; hardcoded default keeps `sac agents new` working if config pkg shifts)
+        return Path.home() / ".scitex" / "agent-container" / "agents"
 
 
 @click.command(name="new")
@@ -178,13 +194,47 @@ def _default_base_dir() -> Path:
 @click.option(
     "--template",
     "template_name",
-    type=click.Choice(sorted(_TEMPLATES), case_sensitive=False),
+    type=str,
     default="minimal",
     show_default=True,
     help=(
-        "Template preset to scaffold. 'minimal' = bare-minimum spec "
-        "(image + model). 'full' = annotated v3 spec with every "
-        "common block pre-filled."
+        "Template to scaffold. Inline presets: 'minimal' = bare-minimum "
+        "spec (image + model); 'full' = annotated v3 spec. Plus any "
+        "DIR-template discovered under the agents root as "
+        "``_template_<kind>/`` (the choice is the <kind> suffix, e.g. "
+        "'python_developer'). Discovery is dynamic — drop a new "
+        "``_template_foo/`` dir in and 'foo' just works."
+    ),
+)
+@click.option(
+    "--project",
+    "project",
+    type=str,
+    default=None,
+    help=(
+        "Fill the ``SAC_PLACEHOLDER_PROJECT`` token in dir-templates. "
+        "Required if the chosen dir-template carries that token."
+    ),
+)
+@click.option(
+    "--agent-id",
+    "agent_id",
+    type=str,
+    default=None,
+    help=(
+        "Fill the ``SAC_PLACEHOLDER_AGENT_ID`` token in dir-templates. "
+        "Defaults to <name> when omitted."
+    ),
+)
+@click.option(
+    "--set",
+    "set_pairs",
+    type=str,
+    multiple=True,
+    metavar="KEY=VALUE",
+    help=(
+        "Fill an arbitrary ``SAC_PLACEHOLDER_<KEY>`` token by exact name "
+        "(KEY is upper-cased). Repeatable, e.g. --set EXTRA=val."
     ),
 )
 @click.option(
@@ -193,9 +243,9 @@ def _default_base_dir() -> Path:
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
     help=(
-        "Parent directory under which ``<name>/spec.yaml`` is written. "
-        "Default: ~/.scitex/agent-container/agents/ (sac's primary "
-        "agents root, matches the resolver search-chain entry #1)."
+        "Parent directory under which ``<name>/spec.yaml`` is written "
+        "AND scanned for ``_template_*`` dir-templates. Default: sac's "
+        "primary agents root (resolver search-chain entry #1)."
     ),
 )
 @click.option(
@@ -207,19 +257,32 @@ def _default_base_dir() -> Path:
         "re-runs cannot clobber a customised spec."
     ),
 )
-def new(name: str, template_name: str, base_dir: Path | None, force: bool) -> None:
+def new(
+    name: str,
+    template_name: str,
+    project: str | None,
+    agent_id: str | None,
+    set_pairs: tuple[str, ...],
+    base_dir: Path | None,
+    force: bool,
+) -> None:
     """Scaffold a fresh v3 ``spec.yaml`` for a new agent.
 
-    Writes ``<base-dir>/<name>/spec.yaml`` (plus an empty ``to_home/``
-    sibling) from the chosen template. The template is guaranteed to
-    pass ``validate_config`` without operator edits.
+    Writes ``<base-dir>/<name>/spec.yaml`` (plus a ``to_home/`` sibling)
+    from the chosen template. Inline templates (``minimal``/``full``)
+    render a string; DIR-templates (``_template_<kind>/`` under the
+    agents root) are copied wholesale and have their
+    ``SAC_PLACEHOLDER_*`` tokens filled from ``--project``/``--agent-id``/
+    ``--set``. Any surviving placeholder fails the command loud and
+    removes the partial output.
 
     Examples:
 
     \b
         sac agents new my-agent
         sac agents new my-agent --template full
-        sac agents new my-agent --base-dir ./agents --force
+        sac agents new dev1 --template python_developer --project myproj
+        sac agents new r1 --template researcher --project p --set TEAM=x
     """
     if not _is_valid_agent_name(name):
         raise click.UsageError(
@@ -231,13 +294,51 @@ def new(name: str, template_name: str, base_dir: Path | None, force: bool) -> No
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
 
+    kind = template_name.lower()
+    dir_templates = discover_dir_templates(base)
+
+    # Dispatch: dir-template kind wins over inline names ONLY if it does
+    # not collide with the reserved inline names; a same-named inline
+    # preset always refers to the string template (operator can't shadow
+    # 'minimal'/'full' with a dir).
+    is_inline = kind in _TEMPLATES
+    is_dir = kind in dir_templates and not is_inline
+
+    if not is_inline and not is_dir:
+        choices = sorted(set(_TEMPLATES) | set(dir_templates))
+        raise click.UsageError(
+            f"Unknown template {template_name!r}. Available: "
+            f"{', '.join(choices)} "
+            f"(scanned {base} for _template_* dirs)."
+        )
+
+    if is_dir:
+        try:
+            extra = parse_set_pairs(set_pairs)
+            instantiate_dir_template(
+                dir_templates[kind],
+                agent_dir,
+                project=project,
+                agent_id=agent_id if agent_id is not None else name,
+                extra=extra,
+                force=force,
+            )
+        except DirTemplateError as exc:
+            raise click.ClickException(str(exc)) from exc
+        print(
+            f"Wrote {agent_dir} (template={kind}, dir-template).",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
     if spec_path.exists() and not force:
         raise click.ClickException(
             f"Refusing to overwrite existing spec at {spec_path}. "
             "Re-run with --force to replace, or pick a different name."
         )
 
-    template = _TEMPLATES[template_name.lower()]
+    template = _TEMPLATES[kind]
     body = template.format(name=name)
 
     agent_dir.mkdir(parents=True, exist_ok=True)
@@ -250,7 +351,7 @@ def new(name: str, template_name: str, base_dir: Path | None, force: bool) -> No
     to_home.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"Wrote {spec_path} (template={template_name}).",
+        f"Wrote {spec_path} (template={kind}).",
         file=sys.stderr,
         flush=True,
     )

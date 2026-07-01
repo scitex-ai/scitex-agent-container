@@ -39,11 +39,15 @@ from typing import Literal
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ..config._group_resolver import groups_mesh
 from .._state.state_db_nodes import (
     derive_group,
     has_grant,
+    is_developer,
     read_comms_policy,
+    resolve_group_name,
     resolve_node_token,
+    same_named_group,
     sender_target_relationship,
     spawn_allowed,
 )
@@ -81,8 +85,19 @@ def check_lineage_acl(
       * ``caller == target`` — self-management. A SAC agent
         managing its OWN runtime (e.g. ``sac agents status`` on
         itself) is always allowed regardless of lineage.
+      * ``caller`` is in the ``developer`` group (operator
+        2026-06-25) — full agent-CRUD authority over ANY target,
+        independent of lineage. See
+        :func:`_state.state_db_nodes.is_developer`.
       * ``target ∈ descendants_of(caller)`` — caller is a
         transitive ancestor; lineage-scoped operation permitted.
+      * ``groups_mesh(caller, target)`` (operator 2026-06-29
+        "agents manage agents") — caller and target BOTH resolve
+        into the standard fleet mesh (developer / researcher /
+        generalist). Manage authority is granted across these
+        groups with no lineage edge and no per-pair grant, exactly
+        as :func:`check_send_acl` meshes sends. A non-mesh group
+        (isolated solver) stays unmanageable cross-group.
       * Otherwise — deny with a structured reason naming the
         caller, the target, and the fact that no lineage edge
         connects them.
@@ -100,18 +115,43 @@ def check_lineage_acl(
         return ("allow", None)
     if caller == target:
         return ("allow", None)
+    # Developer group full authority (operator 2026-06-25): a caller in
+    # the ``developer`` group may manage ANY agent (stop / restart /
+    # delete / status / tail), not just its lineage descendants. Checked
+    # before the descendant walk so developer-group CRUD never depends on
+    # a lineage edge to the target.
+    if is_developer(name=caller, db_path=db_path):
+        return ("allow", None)
     from .._state._lineage import descendants_of
 
     descendants = descendants_of(name=caller, db_path=db_path)
     if target in descendants:
+        return ("allow", None)
+    # Standard-fleet manage mesh (operator 2026-06-29: "agents manage
+    # agents"). This BROADENS manage authority beyond lineage: a caller
+    # may also manage (stop / restart / delete / status / tail) a target
+    # when BOTH resolve into the standard group mesh (developer /
+    # researcher / generalist) — exactly the cross-group predicate
+    # ``check_send_acl`` uses for sends. So a researcher (e.g. neurovista)
+    # may restart a developer peer (e.g. scitex-todo) with no lineage edge
+    # and no per-pair grant. A non-mesh group (e.g. an isolated solver)
+    # is NOT meshed and stays unmanageable cross-group, preserving the
+    # solid isolation scientific rigor requires.
+    if groups_mesh(
+        resolve_group_name(name=caller, db_path=db_path),
+        resolve_group_name(name=target, db_path=db_path),
+    ):
         return ("allow", None)
     return (
         "deny",
         (
             f"lineage ACL deny: caller {caller!r} has no lineage edge "
             f"to target {target!r}. Permitted operations are self "
-            "(caller == target) or any transitive descendant via the "
-            "lineage table."
+            "(caller == target), any transitive descendant via the "
+            "lineage table, any target when the caller is in the "
+            "developer group, or any target when caller and target "
+            "both belong to the standard fleet mesh (developer / "
+            "researcher / generalist)."
         ),
     )
 
@@ -199,7 +239,16 @@ def check_send_acl(
     2. **Cross-group is denied by default.** The effective sender
        (authenticated_node, or claimed_from_agent for an
        administrative caller) must share a group with the target.
-       Same-name (self-send) is trivially allowed.
+       Same-name (self-send) is trivially allowed. Two group notions
+       are honoured, either of which permits the send:
+
+         * the lineage-derived group mesh (parent↔child / sibling↔
+           sibling) via :func:`_state.state_db_nodes.derive_group`, and
+         * the NAMED group (operator 2026-06-25): sender and target
+           resolve to the same non-empty ``metadata.labels.group`` /
+           role-derived group via
+           :func:`_state.state_db_nodes.same_named_group`.
+
     3. **Explicit cross-group grants flip a deny to allow** — see
        :func:`_state.state_db_nodes.grant_send`.
     4. The empty-sender case (no authenticated node AND no claimed
@@ -268,6 +317,32 @@ def check_send_acl(
 
     sender_group = derive_group(name=sender, db_path=db_path)
     if target in sender_group:
+        return ("allow", None)
+
+    # Named-group mesh (operator 2026-06-25): a send is allowed when
+    # sender and target resolve to the SAME non-empty NAMED group
+    # (``metadata.labels.group`` / role-derived). This is the
+    # "group-mesh by default" that replaces "per-pair grant by default"
+    # for grouped fleets — e.g. every ``developer``-group agent may
+    # address every other ``developer``-group agent with no per-pair
+    # grant. Additive: an ungrouped fleet shares no named group and
+    # falls through to the explicit-grant check below, unchanged.
+    if same_named_group(sender=sender, target=target, db_path=db_path):
+        return ("allow", None)
+
+    # Cross-group mesh (operator 2026-06-27): the three STANDARD fleet
+    # groups — developer / researcher / generalist — coordinate in all
+    # directions with NO per-pair grant. Evaluated AFTER the phase-3
+    # per-spec deny (so a solver's ``inbound.siblings=deny`` /
+    # ``lineage_group='solitary'`` isolation still wins) and AFTER the
+    # same-named-group mesh, but BEFORE the explicit-grant fallthrough.
+    # An agent in a non-mesh group (e.g. an isolated solver group) is
+    # NOT meshed and falls through to the grant check below, preserving
+    # the solid isolation scientific rigor requires.
+    if groups_mesh(
+        resolve_group_name(name=sender, db_path=db_path),
+        resolve_group_name(name=target, db_path=db_path),
+    ):
         return ("allow", None)
 
     if has_grant(sender=sender, target=target, db_path=db_path):
@@ -371,9 +446,26 @@ def check_spawn(
     as :func:`check_send_acl` so the listen-server handler can branch
     uniformly.
 
-    Current policy: root-only spawn. ``caller=None`` is the
-    administrative / human-operator path (allowed).
+    Policy:
+
+      * ``caller=None`` — administrative / human-operator path (allowed
+        by :func:`spawn_allowed`).
+      * **Developer group full authority (operator 2026-06-25)** — a
+        caller whose resolved NAMED group is ``developer`` may spawn
+        regardless of the root-only default. Checked BEFORE the
+        root-only gate so a developer child (non-root) is still allowed.
+      * Otherwise the default root-only policy (a node with no lineage
+        parent may spawn; a child may not).
+
+    The developer bypass deliberately does NOT override a per-spec
+    ``spec.lineage.may_spawn=false`` deny by *not consulting it*: a
+    developer caller is granted authority by the group policy here. A
+    deployment that needs an agent which still cannot spawn should keep
+    it out of the developer group (and rely on the root-only +
+    ``may_spawn`` gates in :func:`spawn_allowed`).
     """
+    if caller and is_developer(name=caller, db_path=db_path):
+        return ("allow", None)
     allowed, reason = spawn_allowed(caller=caller, db_path=db_path)
     if allowed:
         return ("allow", None)

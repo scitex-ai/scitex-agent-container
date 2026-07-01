@@ -95,6 +95,62 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
     return envelope if isinstance(envelope, dict) else {}
 
 
+def _should_try_host_bypass(exc: Exception) -> bool:
+    """Return True iff a LOCAL restart failure should fall back to the host.
+
+    The fallback fires only when BOTH hold:
+
+      * the failure is the "not found in registry" local-resolution miss
+        (an in-SIF agent cannot see a peer's bare-host registry row), and
+      * ``SAC_LISTEN_BASE_URL`` is set (we are a container with the host
+        listen reachable — the spawn bypass's precondition).
+
+    Any other RuntimeError (a real restart fault on a resolvable agent)
+    propagates unchanged so the bare-host operator path is untouched.
+    """
+    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
+
+    if "not found in registry" not in str(exc):
+        return False
+    try:
+        _resolve_base_url(None)
+    except RestartRequestError:
+        return False
+    return True
+
+
+def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
+    """Broker the restart to the HOST listen and return its JSON envelope.
+
+    Mirrors the spawn bypass (``agent_spawn`` → ``request_spawn``): the
+    in-SIF client POSTs to ``{SAC_LISTEN_BASE_URL}/agents/<name>/restart``
+    and the host runs ``sac agents restart <name> --yes`` (or, when
+    ``fresh``, ``sac agents start <name> --force --fresh``) on the bare host
+    (manage-gated by ``check_lineage_acl``). A :class:`RestartRequestError`
+    (transport / 401 / 403 / 5xx) propagates so the CLI's outer ``except``
+    surfaces it fail-loud.
+    """
+    from ..._lifecycle._restart_client import request_restart
+
+    return request_restart(name, fresh=fresh)
+
+
+def _bypass_base_url_available() -> bool:
+    """True iff a host-listen base URL resolves (we are an in-container agent).
+
+    The fresh-restart path is bypass-only: it has nothing to broker to on a
+    bare host, so the CLI fails loud there rather than silently doing a
+    resuming restart.
+    """
+    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
+
+    try:
+        _resolve_base_url(None)
+    except RestartRequestError:
+        return False
+    return True
+
+
 @click.command()
 @click.argument("name", shell_complete=agent_name_complete)
 @click.option(
@@ -122,7 +178,22 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
         "Required for cross-host dispatch — the lead parses peer stdout."
     ),
 )
-def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
+@click.option(
+    "--fresh",
+    "fresh",
+    is_flag=True,
+    default=False,
+    help=(
+        "Start a NEW Claude session instead of resuming (brokers "
+        "'start --force --fresh' to the host). The deterministic recovery for "
+        "an agent wedged on a boot prompt whose queued input keeps returning "
+        "on a plain restart. In-container only; on a bare host run "
+        "'sac agents start <name> --force --fresh' directly."
+    ),
+)
+def restart(
+    name: str, dry_run: bool, yes: bool, as_json: bool, fresh: bool
+) -> None:
     """Restart an agent.
 
     Resolves the agent's recorded host first: a row on a remote peer is
@@ -141,6 +212,38 @@ def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
     if not yes:
         click.echo(f"Refusing to restart agent '{name}' without --yes/-y.", err=True)
         raise SystemExit(2)
+    if fresh:
+        # Fresh restart is the in-container recovery path: broker
+        # ``start --force --fresh`` to the host listen. On a bare host there is
+        # no listen to broker to, so fail loud with the direct command rather
+        # than silently doing a resuming restart (which would re-wedge).
+        if not _bypass_base_url_available():
+            click.echo(
+                f"--fresh restart requires the host bypass (run inside a "
+                f"container). On a bare host run: sac agents start {name} "
+                f"--force --fresh",
+                err=True,
+            )
+            raise SystemExit(1)
+        envelope = _restart_via_host_bypass(name, fresh=True)
+        if as_json:
+            click.echo(
+                _json.dumps(
+                    {
+                        "name": name,
+                        "restarted": envelope.get("returncode") == 0,
+                        "dispatched": False,
+                        "via": "host-listen",
+                        "fresh": True,
+                        "host_response": envelope,
+                    }
+                )
+            )
+        else:
+            console.print(
+                f"[green]Agent '{name}' fresh-restarted via host listen[/green]"
+            )
+        return
     # stx-allow: fallback (reason: config resolution, cross-host ssh dispatch, or
     # agent_restart can raise if the agent is not running or the session cannot be
     # found; an error message + sys.exit(1) is cleaner than an unhandled traceback)
@@ -180,7 +283,38 @@ def restart(name: str, dry_run: bool, yes: bool, as_json: bool) -> None:
             return
 
         # Local restart (row on this host, or no row — spec fallback).
-        agent_restart(name)
+        # When that LOCAL resolution fails (no registry row AND no
+        # resolvable spec) AND we are inside a container with the host
+        # listen reachable (SAC_LISTEN_BASE_URL injected), broker the
+        # restart to the HOST listen — exactly like the spawn bypass.
+        # This is what lets an in-SIF agent restart a peer whose registry
+        # row lives on the bare host (it is unresolvable from inside the
+        # container). The bare-host operator keeps the local path (the row
+        # IS resolvable there, so the bypass never fires).
+        try:
+            agent_restart(name)
+        except RuntimeError as exc:
+            if not _should_try_host_bypass(exc):
+                raise
+            envelope = _restart_via_host_bypass(name)
+            if as_json:
+                click.echo(
+                    _json.dumps(
+                        {
+                            "name": name,
+                            "restarted": envelope.get("returncode") == 0,
+                            "dispatched": False,
+                            "via": "host-listen",
+                            "host_response": envelope,
+                        }
+                    )
+                )
+            else:
+                console.print(
+                    f"[green]Agent '{name}' restarted via host listen[/green]"
+                )
+                console.print(_json.dumps(envelope))
+            return
         if as_json:
             click.echo(
                 _json.dumps({"name": name, "restarted": True, "dispatched": False})

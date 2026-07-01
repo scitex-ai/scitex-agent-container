@@ -122,18 +122,55 @@ def _resolve_base_url(explicit: str | None) -> str:
 def _resolve_bearer(explicit: str | None) -> str | None:
     """Return the listen-server bearer token, or ``None`` if unset.
 
+    Resolution order:
+
+    1. ``explicit`` argument (tests pass a value, or ``""`` to force the
+       unauthenticated branch).
+    2. ``SAC_LISTEN_BEARER`` env var — injected by the apptainer runtime
+       (:mod:`runtimes._apptainer_listen_env`) for agents whose spec
+       registers the ``server:sac`` channel.
+    3. The host bearer **token file** at
+       ``~/.scitex/agent-container/tokens/listen-<host>.token`` — the
+       same credential the listen server validates against
+       (:func:`_listen.tokens.default_token_path`). This fallback is
+       what makes :func:`request_spawn` authenticate even when the
+       spawning agent's spec did NOT include ``server:sac`` (so the
+       runtime injected only ``SAC_LISTEN_BASE_URL``, not the bearer).
+       Without it, the spawn POST goes out unauthenticated and the
+       listen server rejects it with 401 — the bug this resolver path
+       closes (card sac-agent-cannot-spawn-agents-listen-7878-...).
+
     Unlike ``SAC_LISTEN_BASE_URL``, an absent bearer is NOT fatal here:
     the listen server may have been started with bearer auth disabled,
-    in which case the request still goes through. The server enforces
-    its own auth contract; we just forward whatever credential the
-    runtime injected.
+    in which case the request still goes through unauthenticated. The
+    server enforces its own auth contract; we just forward whatever
+    credential we can resolve.
     """
     if explicit is not None:
         return explicit or None
     from .._env import getenv
 
     raw = getenv("LISTEN_BEARER", "") or ""
-    return raw.strip() or None
+    tok = raw.strip()
+    if tok:
+        return tok
+    # Env unset/empty — fall back to the on-disk host token file, the
+    # same path the listen server reads its accepted token from. The
+    # bind that exposes ``~/.scitex/agent-container`` into the container
+    # makes this readable from inside the SIF.
+    return _read_bearer_token_file()
+
+
+def _read_bearer_token_file() -> str | None:
+    """Return the host listen bearer from its token file, or ``None``.
+
+    Never raises — a missing/unreadable token file yields ``None`` so
+    the caller proceeds (and the server's 401 then surfaces as a clear
+    auth error via :func:`request_spawn`).
+    """
+    from .._listen.tokens import default_token_path, read_token
+
+    return read_token(default_token_path())
 
 
 def _resolve_caller(explicit: str | None) -> str | None:
@@ -163,6 +200,37 @@ def _parse_body(raw: bytes) -> Any:
         # to the caller via SpawnRequestError.body — never silently
         # dropped or converted into a fake success).
         return raw.decode("utf-8", errors="replace")
+
+
+def _http_error_message(child_name: str, status: int, parsed: Any) -> str:
+    """Build a status-aware error message for a non-2xx listen response.
+
+    A 401/403 means the request REACHED the listen but was refused on
+    credentials — surface that as an explicit ``auth/bearer`` problem so
+    the operator fixes the token, NOT as 'cannot reach / timed out'
+    (the misreport this card fixes). 401 = missing/invalid bearer; 403 =
+    valid bearer but the ACL gate denied the caller. Every other non-2xx
+    keeps the generic 'rejected: HTTP <code>' shape.
+    """
+    if status == 401:
+        return (
+            f"spawn of {child_name!r} rejected: listen returned HTTP 401 "
+            f"(auth/bearer) — the spawn POST reached the host listen but "
+            f"the bearer token was missing or invalid. Ensure "
+            f"SAC_LISTEN_BEARER is injected, or that the host token file "
+            f"~/.scitex/agent-container/tokens/listen-<host>.token is "
+            f"readable from inside the container. Server said: {parsed!r}"
+        )
+    if status == 403:
+        return (
+            f"spawn of {child_name!r} rejected: listen returned HTTP 403 "
+            f"(auth/acl) — the bearer authenticated but the listen's "
+            f"check_spawn ACL denied this caller. Server said: {parsed!r}"
+        )
+    return (
+        f"spawn of {child_name!r} rejected: listen returned HTTP "
+        f"{status} ({parsed!r})"
+    )
 
 
 def request_spawn(
@@ -279,8 +347,9 @@ def request_spawn(
             raw = resp.read()
             status = int(getattr(resp, "status", 200))
     except urlerror.HTTPError as exc:
-        # Non-2xx — read the body if any so the caller sees the
-        # server's reason verbatim (ACL deny carries it).
+        # A real HTTP response arrived — the listen is REACHABLE, this is
+        # NOT a transport failure. Read the body so the caller sees the
+        # server's reason verbatim (ACL deny / auth error carry it).
         raw_body = b""
         try:
             raw_body = exc.read() or b""
@@ -294,12 +363,16 @@ def request_spawn(
             parsed,
         )
         raise SpawnRequestError(
-            f"spawn of {child_name!r} rejected: listen returned HTTP "
-            f"{exc.code} ({parsed!r})",
+            _http_error_message(child_name, exc.code, parsed),
             status=exc.code,
             body=parsed,
         ) from exc
     except (urlerror.URLError, OSError, ValueError) as exc:
+        # No HTTP exchange happened — connection refused / DNS / timeout.
+        # This (and only this) is a genuine "unreachable" condition. A
+        # 401/403 is NOT routed here: ``HTTPError`` (a URLError subclass)
+        # is caught above first, so an authenticated-but-rejected request
+        # never gets misreported as 'cannot reach / timed out'.
         logger.warning("spawn_client: POST %s transport error: %s", url, exc)
         raise SpawnRequestError(
             f"spawn of {child_name!r} failed: cannot reach listen at {base!r} ({exc})"
@@ -317,8 +390,7 @@ def request_spawn(
             parsed,
         )
         raise SpawnRequestError(
-            f"spawn of {child_name!r} rejected: listen returned HTTP "
-            f"{status} ({parsed!r})",
+            _http_error_message(child_name, status, parsed),
             status=status,
             body=parsed,
         )

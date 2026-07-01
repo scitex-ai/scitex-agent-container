@@ -212,7 +212,7 @@ def agent_stop(name: str) -> dict[str, Any]:
     return invoke_cli_text(["agents", "stop", name])
 
 
-def agent_restart(name: str) -> dict[str, Any]:
+def agent_restart(name: str, fresh: bool = False) -> dict[str, Any]:
     """Restart an agent (stop + start). Mirrors ``sac agents restart <name>``.
 
     Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
@@ -221,8 +221,26 @@ def agent_restart(name: str) -> dict[str, Any]:
     failed with "Refusing to restart ... without --yes/-y." (no-surprise:
     the documented MCP surface must actually work, not dead-end on an
     interactive guard that can never be satisfied over MCP).
+
+    Host bypass (operator 2026-06-29 "agents manage agents"): when this
+    tool runs INSIDE a container, the target peer's registry row lives on
+    the bare host and is unresolvable locally — the underlying CLI then
+    falls back to brokering the restart to the HOST listen
+    (``POST {SAC_LISTEN_BASE_URL}/agents/<name>/restart``, manage-gated by
+    ``check_lineage_acl``), exactly like ``agent_spawn`` brokers a spawn.
+    The fallback is transparent here: the CLI runs it internally so this
+    tool needs no extra wiring; on a bare host (row resolvable) the local
+    path runs unchanged.
+
+    ``fresh=True`` brokers a NEW Claude session (``start --force --fresh``)
+    instead of a resuming restart — the deterministic recovery for an agent
+    wedged on a boot prompt whose queued input keeps returning on a plain
+    restart.
     """
-    return invoke_cli_text(["agents", "restart", name, "--yes"])
+    argv = ["agents", "restart", name, "--yes"]
+    if fresh:
+        argv.append("--fresh")
+    return invoke_cli_text(argv)
 
 
 def agent_send(
@@ -280,6 +298,35 @@ def agent_send(
     )
 
 
+def agent_create(
+    name: str,
+    template: str = "developer",
+    workdir: str | None = None,
+    telegram_token: str | None = None,
+    group: str | None = None,
+    start: bool = False,
+) -> dict[str, Any]:
+    """Create a proven-shape agent spec from a template. Mirrors
+    ``sac agents create <name> --template developer|scientist``.
+
+    Writes ``<name>/spec.yaml`` from the developer/scientist skeleton,
+    filling identity (name -> project / workdir / overlay / state-db /
+    SCITEX_TODO_AGENT) and auto-detecting the editable-install block
+    (workdir ships a package) and the per-agent Telegram bot
+    (``telegram_token`` file present). ``start=True`` launches the agent
+    afterwards. The developer group is authorized to CRUD agents."""
+    argv = ["agents", "create", name, "--template", template]
+    if workdir:
+        argv += ["--workdir", workdir]
+    if telegram_token:
+        argv += ["--telegram-token", telegram_token]
+    if group:
+        argv += ["--group", group]
+    if start:
+        argv += ["--start"]
+    return invoke_cli_text(argv)
+
+
 def register_agent_tools(mcp) -> None:
     """Attach ``@mcp.tool()`` to every public function in this module."""
     for fn in (
@@ -290,6 +337,7 @@ def register_agent_tools(mcp) -> None:
         agent_find,
         agent_check,
         agent_recall,
+        agent_create,
         agent_start,
         agent_spawn,
         agent_stop,
@@ -307,6 +355,7 @@ __all__ = [
     "agent_find",
     "agent_check",
     "agent_recall",
+    "agent_create",
     "agent_start",
     "agent_spawn",
     "agent_stop",

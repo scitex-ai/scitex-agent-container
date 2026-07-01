@@ -14,6 +14,20 @@ the agent ships neither ``.env`` nor ``.envrc`` the whole flow is skipped.
 Fail-loud: a ``.envrc`` whose bash evaluation exits non-zero raises
 :class:`EnvrcEvalError` and aborts the deploy, rather than launching the agent
 with a half-applied environment.
+
+Secrets preamble (``SAC_SECRETS_ENVRC``): an agent's ``.envrc`` typically does
+``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_TODO"`` — which only resolves when the
+LAUNCHING process already carries the source secret. The operator's shell does;
+the ``sac-listen`` daemon's does NOT, so a daemon-restarted agent folds an EMPTY
+token. Set ``SAC_SECRETS_ENVRC`` to a colon-separated list of absolute secret
+files (non-existent entries are skipped) and each is sourced (``set -a``) into
+BOTH the baseline AND the loaded shells, BEFORE everything else. Because the
+secret files' own vars then appear in BOTH shells they are NOT in the diff →
+NOT folded into the agent ``.env`` (no leak); but the per-agent ``.envrc``'s
+references now resolve to the real values and, being NEW/CHANGED keys, ARE
+folded. Unset/empty ``SAC_SECRETS_ENVRC`` ⇒ behaviour is exactly as before. A
+secret file that exists but fails to source still raises (fail-loud); only a
+NON-EXISTENT path is skipped (matching the per-layer skip-if-missing posture).
 """
 
 from __future__ import annotations
@@ -31,9 +45,33 @@ logger = logging.getLogger(__name__)
 # ``.env``/``.envrc`` contribution, so excluded from the captured diff.
 _SHELL_NOISE = frozenset({"_", "SHLVL", "PWD", "OLDPWD"})
 
+# Env var naming the secrets-preamble files (colon-separated absolute paths).
+_SECRETS_ENVRC_VAR = "SAC_SECRETS_ENVRC"
+
 
 class EnvrcEvalError(RuntimeError):
     """An agent's ``.envrc`` failed to evaluate (fail-loud; aborts deploy)."""
+
+
+def _secrets_preamble_lines() -> list[str]:
+    """Return ``. <path>`` source lines for the ``SAC_SECRETS_ENVRC`` files.
+
+    Reads the colon-separated absolute paths from ``SAC_SECRETS_ENVRC``,
+    keeps only the entries that currently exist (a non-existent path is
+    skipped — matching the per-layer skip-if-missing posture), and returns
+    one quoted ``. <path>`` line per surviving file. Empty list when the var
+    is unset/empty — so the baseline and loaded scripts are unchanged from
+    pre-preamble behaviour. The same list is spliced into BOTH the baseline
+    and the loaded shell so the secret files' own vars cancel in the diff.
+    """
+    raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
+    lines: list[str] = []
+    for entry in raw.split(":"):
+        if not entry:
+            continue
+        if Path(entry).is_file():
+            lines.append(f". {shlex.quote(entry)}")
+    return lines
 
 
 def _capture_env(script: str, cwd: Path) -> dict[str, str]:
@@ -73,18 +111,24 @@ def eval_envrc(envrc: Path, *, base_env: Path | None = None) -> dict[str, str]:
     Raises :class:`EnvrcEvalError` (wrapping bash stderr) on a non-zero exit.
     """
     cwd = envrc.parent
-    baseline = _capture_env("env -0", cwd)
-    lines = ["set -a"]
+    preamble = _secrets_preamble_lines()
+    baseline_lines = ["set -a", *preamble, "set +a", "env -0"]
+    baseline = _capture_env("\n".join(baseline_lines), cwd)
+    lines = ["set -a", *preamble]
     if base_env is not None and base_env.is_file():
         lines.append(f". {shlex.quote(str(base_env))}")
     lines.append(f". {shlex.quote(str(envrc))}")
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
+    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
+    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
+    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
+    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
     return {
         key: val
         for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val
+        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
     }
 
 
@@ -142,8 +186,10 @@ def eval_envrc_cascade(
     if base_env is None and not files:
         return {}
     cwd = files[-1].parent if files else base_env.parent  # type: ignore[union-attr]
-    baseline = _capture_env("env -0", cwd)
-    lines = ["set -a"]
+    preamble = _secrets_preamble_lines()
+    baseline_lines = ["set -a", *preamble, "set +a", "env -0"]
+    baseline = _capture_env("\n".join(baseline_lines), cwd)
+    lines = ["set -a", *preamble]
     if base_env is not None and base_env.is_file():
         lines.append(f". {shlex.quote(str(base_env))}")
     for f in files:
@@ -152,10 +198,14 @@ def eval_envrc_cascade(
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
+    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
+    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
+    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
+    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
     return {
         key: val
         for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val
+        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
     }
 
 

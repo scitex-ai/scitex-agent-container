@@ -16,39 +16,7 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
-
-
-def _any_target_needs_anthropic_oauth(
-    single_targets: list[str], bulk_yamls: list[str]
-) -> bool:
-    """Return True iff at least one target spec uses Anthropic OAuth.
-
-    PR#314 (lead msg 24a8b27c): provider-backed specs (LiteLLM, vLLM,
-    DeepSeek, gateway via ``ANTHROPIC_BASE_URL``) route the SDK session
-    through a non-Anthropic backend; the parent's
-    ``~/.claude/.credentials.json`` is bind-mounted but never read.
-    When EVERY target has ``spec.claude.provider`` non-None, the
-    parent's OAuth preflight is moot.
-
-    Defensive default: if a spec fails to load (unresolvable name,
-    unparseable YAML, schema error), assume it needs OAuth. Better to
-    ask the operator for creds + surface the real spec error on the
-    actual dispatch loop than to skip the gate silently on a broken
-    spec the operator hasn't noticed yet.
-    """
-    from ...config import load_config
-    from ...config._resolve import resolve_with_prefix
-
-    for raw in list(single_targets) + list(bulk_yamls):
-        try:
-            cfg_path = resolve_with_prefix(raw)
-            cfg = load_config(cfg_path)
-        except Exception:  # stx-allow: fallback (reason: defensive — see docstring)
-            return True
-        provider = getattr(getattr(cfg, "claude", None), "provider", None)
-        if provider is None:
-            return True
-    return False
+from ._start_preflight_gate import make_preflight_runner
 
 
 @click.command()
@@ -227,6 +195,32 @@ def _any_target_needs_anthropic_oauth(
         "bearer never touches the operator's main token file."
     ),
 )
+@click.option(
+    "--concurrency",
+    "concurrency",
+    type=int,
+    default=3,
+    show_default=True,
+    help=(
+        "Max agents to launch at once when MULTIPLE targets (or a bulk "
+        "directory) are given. Each target is dispatched as its own "
+        "`sac agents start` subprocess (process isolation — race-safe "
+        "against the shared state DB / port allocator). Ignored for a "
+        "single target (which keeps the unchanged in-process path)."
+    ),
+)
+@click.option(
+    "--stagger",
+    "stagger",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help=(
+        "Seconds to wait between launching successive agents in a "
+        "multi-target / bulk start, so N agents don't all hit the port "
+        "allocator simultaneously. Ignored for a single target."
+    ),
+)
 def start(
     targets: tuple[str, ...],
     no_preflight: bool,
@@ -246,6 +240,8 @@ def start(
     strict_drift: bool,
     no_redispatch: bool,
     broker_self: bool,
+    concurrency: int,
+    stagger: float,
 ) -> None:
     """Start one or more agents.
 
@@ -282,66 +278,31 @@ def start(
         click.echo(_json.dumps(payload, ensure_ascii=False))
 
     # Session-continuity shorthand flags (--continue/-c, --fresh) fold into
-    # session_mode. They are mutually exclusive with each other and may not
-    # contradict an explicit --session. ``--continue`` overrides a spec that
-    # says fresh; ``--fresh`` overrides a spec that says continue — both via
-    # the normal session_override path (claude.session is mutated post-load),
-    # which is what the runtime/argv builder reads (precedence: CLI > spec >
-    # role-default > global default fresh).
-    if continue_session and fresh_session:
-        click.echo("Error: --continue and --fresh are mutually exclusive.", err=True)
-        sys.exit(2)
-    _shorthand = (
-        "continue" if continue_session else ("fresh" if fresh_session else None)
+    # session_mode. Validation + precedence live in ``_start_params`` to
+    # keep this click entry under the per-file line cap.
+    from ._start_params import resolve_session_shorthand
+
+    session_mode = resolve_session_shorthand(
+        continue_session=continue_session,
+        fresh_session=fresh_session,
+        session_mode=session_mode,
     )
-    if _shorthand is not None:
-        if session_mode is not None and session_mode.lower() != _shorthand:
-            click.echo(
-                f"Error: --{_shorthand} contradicts --session {session_mode}; "
-                "pass only one.",
-                err=True,
-            )
-            sys.exit(2)
-        session_mode = _shorthand
 
     # F-CS2: --params-file expands a template + CSV into N materialised
     # yamls; the resulting paths replace ``targets`` so downstream code
     # (preflight, singleton check, JSON report) treats them identically.
+    # Body lives in ``_start_params`` to keep this click entry under the
+    # per-file line cap.
     if params_file is not None:
-        if len(targets) != 1:
-            click.echo(
-                "Error: --params-file requires exactly one TARGET (the "
-                "template yaml). Got "
-                f"{len(targets)} targets.",
-                err=True,
-            )
-            sys.exit(2)
-        template_path = Path(targets[0]).expanduser()
-        if not template_path.is_file():
-            click.echo(
-                f"Error: --params-file template not found: {template_path}",
-                err=True,
-            )
-            sys.exit(2)
-        out_dir = (params_out or Path("params-fleet-out")).expanduser()
-        from ..._state.fleet_template import expand_params_file
+        from ._start_params import expand_params_targets
 
-        try:
-            materialised = expand_params_file(
-                template_path,
-                params_file,
-                out_dir,
-                overwrite=params_overwrite,
-            )
-        except (ValueError, FileExistsError) as exc:
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(2)
-        targets = tuple(str(p) for p in materialised)
-        if not as_json:
-            console.print(
-                f"[bold]--params-file[/bold]  expanded "
-                f"{len(materialised)} agent(s) under [cyan]{out_dir}[/cyan]"
-            )
+        targets = expand_params_targets(
+            targets,
+            params_file=params_file,
+            params_out=params_out,
+            params_overwrite=params_overwrite,
+            as_json=as_json,
+        )
 
     # Cold-start forms (operator TODO 2026-06-17): a target shaped like
     # <label>@<host>:/path, <host>:/path, an absolute /workdir, or "." is NOT an
@@ -352,6 +313,7 @@ def start(
     from ._cold_start import (
         ColdStartConflictError,
         ColdStartParseError,
+        render_cold_start_plans,
         resolve_cold_start_targets,
     )
 
@@ -382,26 +344,9 @@ def start(
             click.echo(f"Error: {exc}", err=True)
         sys.exit(2)
 
-    for _plan in _cs_plans:
-        if as_json:
-            _emit_json(
-                {
-                    "cold_start": {
-                        "label": _plan.label,
-                        "host": _plan.host,
-                        "workdir": _plan.workdir,
-                        "spec_path": _plan.spec_path,
-                        "action": _plan.action,
-                    }
-                }
-            )
-        else:
-            console.print(
-                f"[bold]cold-start[/bold] [cyan]{_plan.label}[/cyan] "
-                f"[dim]({_plan.action})[/dim]  host=[cyan]{_plan.host}[/cyan]  "
-                f"workdir=[cyan]{_plan.workdir}[/cyan]\n"
-                f"  spec: [dim]{_plan.spec_path}[/dim]"
-            )
+    render_cold_start_plans(
+        _cs_plans, as_json=as_json, emit_json=_emit_json, console=console
+    )
     targets = tuple(_rewritten)
     if not targets:
         # All targets were dry-run cold-starts: plan(s) shown, nothing to launch.
@@ -410,16 +355,13 @@ def start(
         return
 
     # Classify targets: directory targets expand to all <name>/<name>.yaml
-    # under them; non-directory targets are paths or agent names.
-    single_targets: list[str] = []
-    bulk_yamls_from_dirs: list[str] = []
-    for t in targets:
-        p = Path(t).expanduser()
-        if p.is_dir():
-            for _name, yp in _iter_agent_yamls(p):
-                bulk_yamls_from_dirs.append(yp)
-        else:
-            single_targets.append(t)
+    # under them; non-directory targets are paths or agent names. Body
+    # lives in ``_start_params`` to keep this click entry under the cap.
+    from ._start_params import classify_targets
+
+    single_targets, bulk_yamls_from_dirs = classify_targets(
+        targets, iter_agent_yamls=_iter_agent_yamls
+    )
     is_bulk = bool(bulk_yamls_from_dirs)
 
     if (resume_id or session_mode) and is_bulk:
@@ -448,50 +390,49 @@ def start(
     if resume_id and session_mode is None:
         session_mode = "resume"
 
-    # Preflight OAuth credential expiry. Lazy / one-shot: runs only
-    # when we're about to dispatch (skips pure-validation exits), once
-    # per invocation, skipped on --no-redispatch and when an
-    # ANTHROPIC_API_KEY / SAC_ANTHROPIC_API_KEY is set (api-key path —
-    # see provision_anthropic_auth in runtimes/_sdk_common.py). On
-    # failure: exit 1 with the helper's message on stderr, no
-    # traceback.
-    #
-    # PR#314 (lead msg 24a8b27c / clew Spartan dogfood 2026-06-06):
-    # also skip when the invocation is purely orchestrator-shaped:
-    #   * ``--broker-self`` parent — never talks to Anthropic; only
-    #     bootstraps a listen + spawns the capsule. The capsule's own
-    #     preflight runs separately (in the broker's child subprocess).
-    #   * EVERY target's spec.claude.provider is non-None — the SDK
-    #     session routes through a non-Anthropic backend (LiteLLM /
-    #     vLLM / DeepSeek / gateway via ANTHROPIC_BASE_URL), and the
-    #     bind-mounted Anthropic credentials are never read.
-    # Either condition is sufficient to skip; the gate stays surgical
-    # — any Anthropic-backed target still triggers the check.
-    _preflight_ran = False
+    # Preflight OAuth credential expiry — idempotent, lazy / once per
+    # invocation, shared by the single / bulk / parallel dispatch paths.
+    # The factory lives in ``_start_preflight_gate`` (which owns the
+    # skip rules: --no-redispatch, --broker-self, all-provider-backed).
+    _run_preflight_once = make_preflight_runner(
+        single_targets=single_targets,
+        bulk_yamls=bulk_yamls_from_dirs,
+        no_redispatch=no_redispatch,
+        broker_self=broker_self,
+    )
 
-    def _run_preflight_once() -> None:
-        nonlocal _preflight_ran
-        if _preflight_ran or no_redispatch:
-            return
-        _preflight_ran = True
-        # Orchestrator-only invocation — skip the parent's OAuth check.
-        if broker_self:
-            return
-        # All targets provider-backed — no parent-side Anthropic OAuth
-        # needed. Loaded once per invocation (cheap; the same configs
-        # are re-loaded inside run_single_targets / run_bulk_path for
-        # actual dispatch — a future refactor could thread the loaded
-        # configs through, but the duplication is small enough to leave
-        # for now).
-        if not _any_target_needs_anthropic_oauth(single_targets, bulk_yamls_from_dirs):
-            return
-        from ..._state._preflight_creds import check_oauth_token_expiry
+    # Serialized multi-start queue (sac-multi-start-queue-oauth, Half-A):
+    # when MULTIPLE targets (or a bulk directory) are launched in one
+    # invocation, dispatch each as its OWN ``sac agents start <target>
+    # --yes --no-redispatch`` subprocess, bounded by ``--concurrency``
+    # and spaced ``--stagger`` seconds apart. Process isolation makes
+    # this race-safe against the shared state DB / port allocator. A
+    # SINGLE target keeps the unchanged in-process path below. The guard
+    # + dispatch live in ``_start_parallel`` to keep this click entry
+    # under the per-file line cap; it returns True iff it handled the
+    # launch (multi-target + no per-target-interactive / report flag).
+    from ._start_parallel import maybe_run_parallel
 
-        try:
-            check_oauth_token_expiry()
-        except (FileNotFoundError, ValueError, RuntimeError) as exc:
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+    if maybe_run_parallel(
+        single_targets=single_targets,
+        bulk_yamls=bulk_yamls_from_dirs,
+        concurrency=concurrency,
+        stagger=stagger,
+        yes=yes,
+        no_preflight=no_preflight,
+        force=force,
+        session_mode=session_mode,
+        strict_drift=strict_drift,
+        broker_self=broker_self,
+        foreground=foreground,
+        multi_foreground=multi_foreground,
+        one_shot=one_shot,
+        resume_id=resume_id,
+        dry_run=dry_run,
+        as_json=as_json,
+        preflight_runner=_run_preflight_once,
+    ):
+        return
 
     # Bulk path: directory targets. Body lives in ``_start_bulk`` to
     # keep the click entry under the per-file line cap.

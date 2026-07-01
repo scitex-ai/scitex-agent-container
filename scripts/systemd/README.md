@@ -24,30 +24,81 @@ operator-started ad-hoc and could be found DOWN with nothing
 restarting it.
 
 ```bash
-# Install the unit (operator copies, then enables)
+# Install BOTH the listen unit and its health watchdog (preferred —
+# copies units + probe script, daemon-reload, enable --now, status):
+scripts/systemd/install-sac-listen.sh
+
+# Or by hand (listen unit only — does NOT install the watchdog):
 cp scripts/systemd/sac-listen.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now sac-listen.service
 
 # Verify
 systemctl --user status sac-listen.service
+systemctl --user list-timers sac-listen-health.timer
 journalctl --user -u sac-listen.service -n 50
+journalctl --user -u sac-listen-health.service -n 50   # LOUD restart/alarm lines
 
 # Healthcheck (echos the same /v1/health the unit's diagnostic
-# stderr names at boot)
+# stderr names at boot — and the same URL the watchdog probes)
 curl -s http://127.0.0.1:7878/v1/health   # → {"ok":true,"service":"sac-listen","v":1}
 
-# Disable / remove
-systemctl --user disable --now sac-listen.service
-rm ~/.config/systemd/user/sac-listen.service
-systemctl --user daemon-reload
+# Disable / remove (preferred — removes units + watchdog + probe)
+scripts/systemd/install-sac-listen.sh --uninstall
 ```
 
 ### Restart policy + companion guards
 
-* `Type=simple` + `Restart=on-failure` + `RestartSec=5s`. Brief
-  debounce so a launch that always fails (e.g. bad pip upgrade
-  surfaced as ImportError) doesn't hot-loop.
+* `Type=simple` + `Restart=always` + `RestartSec=5s`. Brief debounce
+  so a launch that always fails (e.g. bad pip upgrade surfaced as
+  ImportError) doesn't hot-loop. **Incident 2026-06-26** upgraded this
+  from `Restart=on-failure` to `Restart=always`: a clean 0-exit (e.g.
+  an unexpected SIGTERM that uvicorn turns into a graceful shutdown)
+  was NOT covered by `on-failure`, and that is exactly how the fleet
+  lost a2a comms silently with nothing restarting the listen.
+  `StartLimitIntervalSec=60s` / `StartLimitBurst=5` (in `[Unit]`)
+  rate-limit a permanently-broken launch so it can't spin forever; the
+  health watchdog clears the resulting `failed` state and keeps trying.
+* **Decoupled from agent/lead lifecycle.** The unit declares NO
+  `After=`/`Requires=`/`BindsTo=`/`PartOf=` against any agent or lead
+  unit — only `After=network.target`. Retiring, restarting, or
+  crashing any agent (or the lead) must NEVER take the listen down;
+  it is fleet infrastructure.
+
+### Health watchdog — sac-listen-health.{service,timer}
+
+`Restart=always` only sees a *process exit*. A **wedged** listen
+(process alive, port still bound, but the HTTP server no longer
+answering `/v1/health`) is invisible to systemd — and that silent
+mode is what the 2026-06-26 incident punished the fleet with. The
+companion watchdog closes the gap:
+
+* `sac-listen-health.timer` fires `sac-listen-health.service` every
+  ~30s (`OnBootSec=30s`, `OnUnitActiveSec=30s`).
+* `sac-listen-health.service` (oneshot) runs
+  `sac-listen-health-probe.sh`, which HTTP-probes
+  `http://127.0.0.1:7878/v1/health`. "Up" == *any* HTTP response
+  (incl. a 401/403 under bearer auth); only a transport failure
+  (connection refused / timeout) counts as "down" — the same
+  auth-change-proof liveness contract as
+  `_listen/_restart.py::wait_for_health`.
+* On a down probe the script:
+  1. logs a **LOUD ERROR** to the journal (`journalctl --user -u
+     sac-listen-health`) so the restart is VISIBLE, not silent;
+  2. best-effort emits the anomaly on the operator alarm path
+     (`sac fleet notify blocker`) — this may fail (the listen is the
+     transport for that notify), but is tried so a peer/lead listen or
+     a recovered inbox still surfaces it;
+  3. runs `systemctl --user reset-failed && restart sac-listen.service`
+     (the `reset-failed` clears a tripped `StartLimitBurst` so a
+     transient burst self-heals while a genuine hard-down stays
+     visible).
+* The watchdog is itself decoupled — it does NOT `Requires=`/`After=`
+  the listen (it must run and alarm precisely when the listen is
+  down), and the timer is enabled independently.
+* Tunables via env on the probe: `SAC_LISTEN_HEALTH_URL`,
+  `SAC_LISTEN_UNIT`, `SAC_LISTEN_PROBE_TIMEOUT`, `SAC_LISTEN_NOTIFY`.
+  `--check-only` probes without any side effects (used by tests).
 * The companion `_listen/_single_instance.py` flock guard (task
   #26 sub (1)) ensures `Restart=on-failure` can't double-bind the
   port. The kernel releases the flock on every dirty exit, so the

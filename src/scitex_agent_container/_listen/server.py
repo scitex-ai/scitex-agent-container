@@ -23,7 +23,6 @@ ADR-0004 (no backward compat).
 
 from __future__ import annotations
 
-import os
 import urllib.error as _urlerror
 import urllib.request as _urlrequest
 from typing import Any
@@ -340,86 +339,19 @@ from ._node_channel import (  # noqa: E402
     node_message_send,
 )
 
+# ``agent_delete`` (the DELETE /agents/<name> lifecycle handler) was
+# extracted into ``_agent_delete`` (server.py hit the per-file line cap);
+# re-imported here so route registration (:func:`_v1_agent_routes`) and
+# the historical ``from ..._listen.server import agent_delete`` import
+# path keep working unchanged.
+from ._agent_delete import agent_delete  # noqa: E402
 
-async def agent_delete(request: Request) -> JSONResponse:
-    """DELETE /agents/<name> — stop the agent.
-
-    Four cases distinguished by the response code:
-
-      * **200 OK** — agent is live; ``pid`` file present; SIGTERM sent.
-      * **410 Gone** (PR-1) — agent is *stillborn*: a ``STARTUP_FAILED``
-        marker is on disk (set by the POST /agents handler on a
-        non-zero ``sac agents start`` exit). The body carries the
-        failure details so the caller doesn't need to also
-        ``GET .../status``.
-      * **404 Not Found** — agent never existed or was already deleted.
-      * **403 Forbidden** (PR-3) — caller is identified (via
-        ``request.state.authenticated_node``) but lacks lineage-scoped
-        permission to operate on this target. Body shape:
-        ``{"error": "ACL deny", "kind": "acl_deny", "reason": "..."}``
-        — the 5th kind in the wire taxonomy pinned with clew.
-
-    Splitting 410 from 404 is the operator-actionable difference:
-    "never existed" vs. "existed, has been removed". Splitting 403
-    from both is identity-actionable: the agent exists (or doesn't,
-    irrelevant) but the caller can't touch it.
-    """
-    name = request.path_params["name"]
-    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` is the
-    # resolved per-node identity from NodeAuthMiddleware; ``None``
-    # is the administrative / host-wide bearer (always allowed by
-    # check_lineage_acl). The ACL is enforced BEFORE we touch the
-    # state dir / pid file so a denied caller learns nothing about
-    # whether the target exists (status, marker, runtime files).
-    from ._acl import check_lineage_acl, deny_response
-
-    caller = getattr(request.state, "authenticated_node", None)
-    decision, reason = check_lineage_acl(caller=caller, target=name)
-    if decision == "deny":
-        return deny_response(reason or "lineage ACL deny")
-    sd = state_dir_for(name)
-    pid_file = sd / "pid"
-    if not pid_file.is_file():
-        # PR-1 — distinguish stillborn (have STARTUP_FAILED marker) from
-        # genuinely not-found. Stillborn → 410 Gone + the structured
-        # failure body the operator/orchestrator can branch on without
-        # also hitting GET /agents/<name>/status.
-        #
-        # Wire shape per clew review (#287):
-        #
-        # The "headline" failure fields (status, phase, kind, failed_at,
-        # runtime_dir, remediation_hint) are LIFTED to the top level so a
-        # clew-launcher error renderer can branch / display without
-        # walking into ``details``. ``see_also`` is the host-absolute
-        # path to the on-disk marker so a human / sysadmin can ``cat``
-        # the marker (and the peer ``stdout.log`` / ``stderr.log`` in
-        # the same directory) without recomputing it. The full marker
-        # remains under ``details`` for parity with the marker file
-        # contents (and so an orchestrator can hash it for dedupe).
-        from .._lifecycle._startup_failed import MARKER_FILENAME, read_marker
-
-        marker = read_marker(sd)
-        if marker is not None:
-            runtime_dir = marker.get("runtime_dir", str(sd.resolve()))
-            body: dict[str, Any] = {
-                "name": name,
-                "status": "startup_failed",
-                "kind": marker.get("kind"),
-                "phase": marker.get("phase"),
-                "failed_at": marker.get("failed_at"),
-                "runtime_dir": runtime_dir,
-                "remediation_hint": marker.get("remediation_hint", ""),
-                "see_also": f"{runtime_dir}/{MARKER_FILENAME}",
-                "details": marker,
-            }
-            return JSONResponse(body, status_code=410)
-        return JSONResponse({"error": "no pid file"}, status_code=404)
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 15)  # SIGTERM
-    except (OSError, ValueError) as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse({"name": name, "stopped": True, "pid": pid})
+# ``agent_restart`` (POST /agents/<name>/restart) is the container-side
+# mirror of the spawn bypass: an in-SIF agent cannot resolve a peer's
+# LOCAL registry row, so it POSTs here and the HOST listen runs the
+# restart on the bare host (manage-gated by check_lineage_acl). Lives in
+# its own module to keep server.py under the per-file line cap.
+from ._agent_restart import agent_restart  # noqa: E402
 
 
 # --- App factory -----------------------------------------------------------
@@ -438,6 +370,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        Route(f"{prefix}/{{name}}/restart", agent_restart, methods=["POST"]),
         # WI-3 — node-identity-keyed inbox endpoints.
         Route(
             f"{prefix}/{{name}}/message:send",
@@ -458,7 +391,12 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
     ]
 
 
-def create_app(*, token: str, local_host: str | None = None) -> Starlette:
+def create_app(
+    *,
+    token: str,
+    local_host: str | None = None,
+    health_watchdog_port: int | None = None,
+) -> Starlette:
     """Build the Starlette app with bearer auth (ADR-0004 — ``/agents`` only).
 
     WI-3 wires a per-app :class:`Broker` + :class:`NodeRegistry` so
@@ -487,7 +425,24 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     :func:`state_db._resolve_host` (env + config + hostname chain).
     Passing the value explicitly matters for in-process multi-host
     tests where the env is shared.
+
+    ``health_watchdog_port`` — when set (the CLI passes the port it
+    hands to ``uvicorn.run``), the lifespan launches a fail-loud bind
+    watchdog that probes ``127.0.0.1:<port>/v1/health`` shortly after
+    startup and logs a LOUD ERROR if the daemon is up-but-not-serving
+    (the silent state that took the fleet's comms down). Omitted in
+    in-process tests that never actually bind a port.
     """
+    # The listen daemon IS the fleet control plane: it resolves agents from
+    # the user-scope fleet registry, never a cwd project-local one. Declare
+    # that scope so _resolve's project-local-vs-fleet ambiguity guard (which
+    # fails loud for the interactive CLI) does NOT fire inside the daemon when
+    # it runs from a repo carrying .scitex/agent-container/agents (CI, a dev
+    # checkout). An operator-set SAC_AGENT_SCOPE still wins (setdefault).
+    import os
+
+    os.environ.setdefault("SAC_AGENT_SCOPE", "user")
+
     # Task #27 PR B — ACL decision routes for the in-container
     # broker. The bare-host lead writes the host's state.db directly
     # via the CLI; an in-container ``sac a2a {unblock,block,grant}``
@@ -495,9 +450,18 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # (rather than the silently-ineffective per-container copy).
     from ._acl_routes import acl_block, acl_grant, acl_unblock
 
+    # Interim card-event delivery (scitex-todo escalation, P1). The board
+    # POSTs here (loopback, host-wide bearer) INSTEAD of a containerized
+    # agent's unreachable ``turn_url``; ``notify`` publishes the body into
+    # the agent's inbox bus via the same router path ``a2a_send`` uses, so
+    # a subscribed (containerized) agent receives it. Bearer-gated by the
+    # ``BearerAuthMiddleware`` below (not in its ``PUBLIC_PATHS``).
+    from ._notify import notify
+
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
         Route("/.well-known/agent-card.json", fleet_card_handler, methods=["GET"]),
+        Route("/v1/notify", notify, methods=["POST"]),
         Route("/v1/acl/unblock", acl_unblock, methods=["POST"]),
         Route("/v1/acl/block", acl_block, methods=["POST"]),
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
@@ -511,85 +475,19 @@ def create_app(*, token: str, local_host: str | None = None) -> Starlette:
     # effort (every failure logs and continues — startup MUST proceed).
     #
     # Starlette dropped the legacy ``on_startup=`` kwarg in favour of
-    # the ``lifespan`` async-context-manager API, so the persistence
-    # call goes inside an ``@asynccontextmanager`` adapter. The
-    # adapter awaits the persistence helper before yielding (= app
-    # ready), then yields control back so the server starts handling
-    # requests; teardown is a no-op (persistence is one-shot at boot).
-    from contextlib import asynccontextmanager
+    # the ``lifespan`` async-context-manager API. The lifespan — which
+    # awaits self-peer persistence, launches the three background loops
+    # (now off-loop-hardened so none can block the bind) and the
+    # fail-loud bind watchdog, then cancels them on teardown — lives in
+    # ``_lifecycle._listen_lifespan`` (extracted to keep this module
+    # under its line budget AND because it is the focal point of the
+    # silent-bind-hang fix).
+    from .._lifecycle._listen_lifespan import build_listen_lifespan
 
-    from .._lifecycle._github_ci_poll_loop import (
-        DEFAULT_CI_POLL_INTERVAL_S,
-        github_ci_poll_loop,
+    app = Starlette(
+        routes=routes,
+        lifespan=build_listen_lifespan(health_watchdog_port=health_watchdog_port),
     )
-    from .._lifecycle._periodic_drive_loop import periodic_drive_loop
-    from .._lifecycle._tui_heartbeat_loop import (
-        DEFAULT_TUI_HEARTBEAT_INTERVAL_S,
-        tui_heartbeat_loop,
-    )
-    from ._self_peer_persistence import persist_self_peers_on_listen_startup
-
-    @asynccontextmanager
-    async def _lifespan(app):  # type: ignore[no-untyped-def]
-        import asyncio as _asyncio
-        import os as _os
-
-        await persist_self_peers_on_listen_startup()
-        tasks: list = []
-        # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
-        # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
-        if _os.environ.get("SAC_PERIODIC_DRIVE_DISABLED", "") != "1":
-            task = _asyncio.create_task(periodic_drive_loop(app.state))
-            app.state.periodic_drive_task = task
-            tasks.append(task)
-        # GitHub-CI verdict-delivery poll loop (sac #404, feedback.pdf §3).
-        # The loop self-disables (fail-loud) when `gh` is unauthenticated
-        # or SAC_GITHUB_CI_POLLER_DISABLED=1, so launch unconditionally.
-        # Cadence override: SAC_GITHUB_CI_POLL_INTERVAL_S.
-        try:
-            _ci_interval = float(
-                _os.environ.get(
-                    "SAC_GITHUB_CI_POLL_INTERVAL_S", DEFAULT_CI_POLL_INTERVAL_S
-                )
-            )
-        except (TypeError, ValueError):
-            _ci_interval = DEFAULT_CI_POLL_INTERVAL_S
-        ci_task = _asyncio.create_task(
-            github_ci_poll_loop(poll_interval_s=_ci_interval)
-        )
-        app.state.github_ci_poller_task = ci_task
-        tasks.append(ci_task)
-        # TUI heartbeat writer (operator: "heartbeat must be available in
-        # tui as well"). Centralized writer so TUI agents get heartbeat.json
-        # parity with the SDK runner and stop showing empty heartbeat_at /
-        # "stopped" while alive. Self-disables (fail-loud) when `tmux` is
-        # missing or SAC_TUI_HEARTBEAT_DISABLED=1, so launch unconditionally.
-        # Cadence override: SAC_TUI_HEARTBEAT_INTERVAL_S.
-        try:
-            _tui_hb_interval = float(
-                _os.environ.get(
-                    "SAC_TUI_HEARTBEAT_INTERVAL_S", DEFAULT_TUI_HEARTBEAT_INTERVAL_S
-                )
-            )
-        except (TypeError, ValueError):
-            _tui_hb_interval = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
-        tui_hb_task = _asyncio.create_task(
-            tui_heartbeat_loop(interval_s=_tui_hb_interval)
-        )
-        app.state.tui_heartbeat_task = tui_hb_task
-        tasks.append(tui_hb_task)
-        try:
-            yield
-        finally:
-            for _t in tasks:
-                if _t is not None and not _t.done():
-                    _t.cancel()
-                    try:
-                        await _t
-                    except (_asyncio.CancelledError, Exception):
-                        pass
-
-    app = Starlette(routes=routes, lifespan=_lifespan)
     # Per-app shared state for the WI-3 inbox surface.
     app.state.inbox = Broker()
     app.state.nodes = NodeRegistry()

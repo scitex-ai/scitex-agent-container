@@ -131,6 +131,23 @@ class TmuxManager:
             f"exec {command}\n"
         )
 
+        # Apptainer launches (the TUI runtime wraps ``apptainer exec``
+        # in this tmux PTY) need the host ``~/.cargo/bin`` appended to the
+        # CONTAINER PATH so host-only cargo CLIs (e.g. rtk) resolve. The
+        # mechanism is apptainer's ``APPTAINERENV_APPEND_PATH`` directive,
+        # read from the apptainer HOST-process env — here, the tmux pane
+        # process that ``exec apptainer``s. We route it through the SAME
+        # ``-e KEY=VAL`` session-env channel below. Gated on an apptainer
+        # command so non-apptainer tmux callers are untouched; the pure
+        # helper skips-if-missing + appends-not-clobbers (see
+        # ``runtimes._apptainer_host_env``). No-op when ``~/.cargo/bin``
+        # is absent or the command is not an apptainer launch.
+        effective_session_env = dict(session_env or {})
+        if command.lstrip().startswith("apptainer "):
+            from ...runtimes._apptainer_host_env import host_cargo_bin_append_env
+
+            effective_session_env.update(host_cargo_bin_append_env(os.environ))
+
         Path(workdir).mkdir(parents=True, exist_ok=True)
         # Build argv with optional ``-e KEY=VAL`` pairs first; bash
         # without ``-l`` so login init files cannot overwrite the
@@ -138,8 +155,8 @@ class TmuxManager:
         # stay as a no-cost defense for any consumer that still
         # passes env_exports without session_env.
         argv: list[str] = ["tmux", "new-session", "-d", "-s", session_name]
-        if session_env:
-            for key, value in session_env.items():
+        if effective_session_env:
+            for key, value in effective_session_env.items():
                 argv += ["-e", f"{key}={value}"]
         argv += ["bash", "-c", shell_script]
         subprocess.run(argv, check=False)

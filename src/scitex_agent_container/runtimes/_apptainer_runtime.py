@@ -203,8 +203,18 @@ class ApptainerContainerRuntime(RuntimeBase):
             (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
             return True
 
+        # Append the host ``~/.cargo/bin`` to the CONTAINER PATH via
+        # apptainer's ``APPTAINERENV_APPEND_PATH`` directive, set on the
+        # apptainer HOST process env (NOT a ``--env`` flag — that sets a
+        # container var and ``--env PATH=...`` would clobber PATH). Lets
+        # host-only cargo CLIs (e.g. rtk) resolve inside the container.
+        # Skip-if-missing + append-not-clobber live in the pure helper.
+        from ._apptainer_host_env import host_cargo_bin_append_env
+
+        launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
+
         if foreground:
-            return subprocess.run(argv).returncode == 0
+            return subprocess.run(argv, env=launch_env).returncode == 0
 
         # Background as a detached child process; capture stdout/stderr
         # to a single tail-able log file. The wrapping shell's PID is
@@ -217,6 +227,7 @@ class ApptainerContainerRuntime(RuntimeBase):
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                env=launch_env,
             )
         (state_dir / APPTAINER_PID_FILE).write_text(str(proc.pid))
         return True

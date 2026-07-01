@@ -1,0 +1,20 @@
+[Unit]
+Description=Fire the sac listen health watchdog every ~30s
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+# Fleet infrastructure — decoupled from agent/lead lifecycle. See
+# sac-listen-health.service for the rationale.
+
+[Timer]
+# First probe 30s after boot/login so the listen has time to bind, then
+# every 30s thereafter. AccuracySec=5s keeps the cadence tight (the
+# default 1min accuracy would let systemd batch the probe up to a
+# minute late, widening the detection window).
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+# If the machine was asleep/off when a probe was due, fire once on
+# resume rather than skipping silently.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

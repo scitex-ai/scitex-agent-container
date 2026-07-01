@@ -1,0 +1,81 @@
+"""Tests for ``runtimes._apptainer_host_env`` — the cargo-bin PATH append.
+
+Incident: inside agent apptainer containers ``rtk`` fails with
+``rtk: not found`` because the operator's host ``~/.cargo/bin`` (where
+``rtk`` lives) is NOT on the container PATH — the SIF ships its own
+cargo at ``/opt/cargo/bin``. Fix: sac sets apptainer's
+``APPTAINERENV_APPEND_PATH`` on the apptainer HOST process so apptainer
+APPENDS the host ``~/.cargo/bin`` to the container PATH at launch.
+
+The pure helper :func:`host_cargo_bin_append_env` computes that env
+addition. These tests pin its three branches:
+
+  * ``~/.cargo/bin`` EXISTS  → returns the directive with that path.
+  * ``~/.cargo/bin`` ABSENT  → returns NO directive (skip-if-missing).
+  * directive PRE-EXISTS     → cargo bin appended after a ``:``.
+
+STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — real ``tmp_path``
+plus an explicit ``$HOME`` swap so ``~`` expansion is sandboxed.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Iterator
+
+import pytest
+
+from scitex_agent_container.runtimes._apptainer_host_env import (
+    APPTAINER_APPEND_PATH_ENV,
+    host_cargo_bin_append_env,
+)
+
+
+@pytest.fixture
+def fake_home(tmp_path: Path) -> Iterator[Path]:
+    """Yield a tmp_path-rooted ``$HOME`` so ``~`` expansion is sandboxed."""
+    prev = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        if prev is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = prev
+
+
+def test_cargo_bin_present_returns_directive_with_path(fake_home: Path) -> None:
+    """When ``~/.cargo/bin`` exists the helper emits the append directive
+    pointing at that absolute host path."""
+    # Arrange
+    cargo_bin = fake_home / ".cargo" / "bin"
+    cargo_bin.mkdir(parents=True)
+    # Act
+    result = host_cargo_bin_append_env({})
+    # Assert
+    assert result == {APPTAINER_APPEND_PATH_ENV: str(cargo_bin)}
+
+
+def test_cargo_bin_absent_returns_no_directive(fake_home: Path) -> None:
+    """Skip-if-missing: no ``~/.cargo/bin`` on the host → no directive."""
+    # Arrange: fake_home has no .cargo/bin dir created.
+    base_env: dict[str, str] = {}
+    # Act
+    result = host_cargo_bin_append_env(base_env)
+    # Assert
+    assert APPTAINER_APPEND_PATH_ENV not in result
+
+
+def test_preexisting_directive_is_appended_after_colon(fake_home: Path) -> None:
+    """A pre-set ``APPTAINERENV_APPEND_PATH`` is preserved and the cargo
+    bin appended after a ``:`` separator (never clobbered)."""
+    # Arrange
+    cargo_bin = fake_home / ".cargo" / "bin"
+    cargo_bin.mkdir(parents=True)
+    base_env = {APPTAINER_APPEND_PATH_ENV: "/opt/extra/bin"}
+    # Act
+    result = host_cargo_bin_append_env(base_env)
+    # Assert
+    assert result[APPTAINER_APPEND_PATH_ENV] == f"/opt/extra/bin:{cargo_bin}"

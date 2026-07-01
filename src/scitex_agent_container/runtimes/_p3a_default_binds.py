@@ -104,6 +104,51 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # canonical install. If a future SIF reintroduces a second venv
     # prefix, add its bind ONLY after confirming the destination dir
     # exists in that SIF.
+    #
+    # Operator handoff path (card sac-bind-host-tmp-emacs-handoff) — under
+    # ``--containall`` the host ``/tmp`` is isolated, so agents cannot read
+    # the UI debug + screenshot context the operator hands over at
+    # ``/tmp/emacs-claude-code/`` (``Element_Debug_Info_*.txt`` etc.), and
+    # ``ssh ywata-note-win`` from inside the container is refused. Bind the
+    # handoff dir READ-ONLY so an agent reads the file at the SAME path the
+    # operator names, with no manual copy-into-home step. Destination is a
+    # ``/tmp`` tmpfs path (writable under --containall), so apptainer's
+    # bind-dest auto-create cannot lose the overlay race the HAZARD above
+    # describes. ``default_binds_for_host`` skips it silently on hosts/times
+    # where the source dir does not exist (remote hosts, fresh boot before
+    # emacs writes) — no FATAL, no surprise mount.
+    "/tmp/emacs-claude-code:/tmp/emacs-claude-code:ro",
+    # GENERAL HOST-/tmp HANDOFF — generalise the narrow emacs entry above
+    # into an operator->agent file-handoff channel: anything the operator
+    # drops in host ``/tmp`` becomes readable in-container at
+    # ``/tmp/host/...``. READ-ONLY because host ``/tmp`` holds other
+    # processes' tempfiles + live sockets — an agent must NEVER clobber it.
+    # Destination ``/tmp/host`` is a SUBPATH under the container's writable
+    # ``/tmp`` tmpfs (writable under --containall), so apptainer's bind-dest
+    # auto-create cannot lose the overlay race the HAZARD above describes
+    # (same reasoning as the emacs entry). Host ``/tmp`` ALWAYS exists, so
+    # this default always applies. Do NOT bind over ``/tmp`` ITSELF — that
+    # would clobber the container's relocated scratch, the ``/tmp/sac-claude``
+    # credentials bind, and the nested-apptainer cache; mounting at the
+    # ``/tmp/host`` subpath sits harmlessly inside the tmpfs.
+    "/tmp:/tmp/host:ro",
+    # PERSISTENT TESTMON CACHE — survive the fresh-git-worktree churn the
+    # develop-pin hook forces. Every commit lands in a NEW worktree, so a
+    # worktree-local ``.testmondata`` is always cold and pytest re-runs the
+    # full ~2500-test suite (~2h). A peer package (scitex-dev) is building a
+    # pre-commit-hook wrapper that points testmon's data file at
+    # ``$SCITEX_TESTMON_CACHE_ROOT`` (sac injects that env var to the
+    # container-side path ``/home/agent/.cache/scitex-testmon`` — see
+    # ``_apptainer_listen_env.listen_env_flags``). Binding the host's
+    # ``~/.cache/scitex-testmon`` to that container path ``rw`` lets the
+    # cache PERSIST across worktree churn so only impacted tests re-run.
+    # ``rw`` because testmon must WRITE the updated cache after each run.
+    # The ``default_binds_for_host`` skip-if-missing filter means a missing
+    # host dir is a silent no-op (NO bind, NO crash) — so sac must NOT
+    # mkdir it; the operator/infra creates ``~/.cache/scitex-testmon`` on
+    # the host separately (non-container local dev falls back to the same
+    # ``~/.cache/scitex-testmon`` path the wrapper reads directly).
+    "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw",
 )
 
 

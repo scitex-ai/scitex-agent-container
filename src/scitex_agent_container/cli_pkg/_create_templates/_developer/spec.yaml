@@ -1,0 +1,93 @@
+# {{ NAME }} — sac developer agent for {{ WORKDIR }}.
+# Stamped by `sac agents create --template developer` from this skeleton.
+# Proven TUI shape; developer group. WRITE to its own repo via topic-branch -> PR.
+#
+# This file is the template SSoT (an underscore agent, skipped by the loader).
+# The CLI fills the double-brace placeholders below and toggles the
+# install / telegram comment regions by auto-detection (editable install iff the workdir ships a package;
+# per-agent Telegram bot iff a token file is present). Deeper changes = edit the
+# generated spec.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: {{ NAME }}
+    purpose: {{ NAME }}-maintainer
+    role: project-maintainer
+    groups:
+      - {{ GROUP }}
+    cardinality: singleton
+
+spec:
+  runtime: tui
+  host: local
+  workdir: {{ WORKDIR }}
+
+  apptainer:
+    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    relaxed: true
+    binds:
+      - /home/ywatanabe:/home/ywatanabe:rw
+      - /home/ywatanabe/.ssh:/home/agent/.ssh:ro
+      - /home/ywatanabe/.config/gh:/home/agent/.config/gh:ro
+      # >>>telegram
+      - /home/ywatanabe/.bun/bin/bun:/usr/local/bin/bun:ro
+      - {{ TELEGRAM_TOKEN }}:/run/dev-secrets/bot-token:ro
+      # <<<telegram
+    raw_args:
+      - --userns
+      - --containall
+      - --home
+      - /home/agent
+      - --overlay
+      - /home/ywatanabe/.scitex/agent-container/containers/overlays/{{ NAME }}/
+      - --env
+      - SCITEX_AGENT_CONTAINER_STATE_DB=/state/{{ NAME }}/state.db
+      - --env
+      - SCITEX_TODO_AGENT={{ NAME }}
+      - --env
+      - GIT_AUTHOR_NAME=Yusuke Watanabe
+      - --env
+      - GIT_AUTHOR_EMAIL=ywatanabe@scitex.ai
+      - --env
+      - GIT_COMMITTER_NAME=Yusuke Watanabe
+      - --env
+      - GIT_COMMITTER_EMAIL=ywatanabe@scitex.ai
+      - --env
+      - GIT_SSH_COMMAND=ssh -o ControlMaster=no -o ControlPath=none
+
+  claude:
+    model: claude-opus-4-8[1m]
+    credentials_file: /home/ywatanabe/.claude/.credentials.json
+    flags:
+      - --dangerously-skip-permissions
+    channels:
+      - server:sac
+      - server:scitex-todo
+      # >>>tg_channel
+      - server:claude-code-telegrammer
+      # <<<tg_channel
+
+  a2a:
+    port: auto
+
+  startup_commands:
+    - command: rm -rf $HOME/proj 2>/dev/null; ln -sfn /home/ywatanabe/proj $HOME/proj
+    - command: 'mkdir -p /uvwork/tmp /uvwork/bin && export TMPDIR=/uvwork/tmp UV_INSTALL_DIR=/uvwork/bin UV_CACHE_DIR=/uvwork/uvcache PATH=/uvwork/bin:$PATH && { [ -x /uvwork/bin/uv ] || curl -LsSf https://astral.sh/uv/install.sh | env TMPDIR=/uvwork/tmp UV_INSTALL_DIR=/uvwork/bin sh; }'
+      # >>>install
+    - command: '[ -x /uvwork/venv-agent/bin/python ] || { export TMPDIR=/uvwork/tmp UV_CACHE_DIR=/uvwork/uvcache PATH=/uvwork/bin:$PATH && cd {{ WORKDIR }} && uv venv /uvwork/venv-agent --python python3 && uv pip install --python /uvwork/venv-agent/bin/python -e .; }'
+      # <<<install
+
+  startup_prompts:
+    - Start or continue. Scan your scitex-todo card slice, resume any in-flight
+      or assigned work (hold idle if none), then report readiness. Follow
+      CLAUDE.md + your skills; don't restate, don't invent scope.
+
+  health:
+    enabled: true
+    interval: 60
+
+  restart:
+    policy: on-failure
+    max_retries: 3

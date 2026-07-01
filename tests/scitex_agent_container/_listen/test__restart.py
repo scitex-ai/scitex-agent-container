@@ -17,6 +17,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import pytest
+
+from scitex_agent_container._listen import _port_holder as ph_mod
 from scitex_agent_container._listen import _restart as restart_mod
 from scitex_agent_container._listen._restart import (
     format_escalation_warning,
@@ -42,6 +45,43 @@ def _swap(name: str, value) -> Iterator[None]:
         yield
     finally:
         setattr(restart_mod, name, saved)
+
+
+@contextmanager
+def _swap_ph(name: str, value) -> Iterator[None]:
+    """Replace a ``_port_holder.<name>`` seam for the block. The
+    discovery seams (``_probe_bound`` / ``_resolve_pids``) live on
+    ``_port_holder``, not ``_restart``.
+    """
+    saved = getattr(ph_mod, name)
+    setattr(ph_mod, name, value)
+    try:
+        yield
+    finally:
+        setattr(ph_mod, name, saved)
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_port_seams() -> Iterator[None]:
+    """Make the wedged-port-holder self-heal a hard no-op by default.
+
+    SAFETY: the real ``port_is_bound`` does a live socket connect, and
+    on a dev host the central ``sac listen`` is actually bound on 7878.
+    Without this guard a ``restart_listen(port=7878)`` test would probe
+    the real port, find it held, and FORCE-KILL the live fleet listen
+    as a test side effect. Defaulting the probe to "not bound" keeps
+    every test hermetic; the dedicated self-heal tests override these
+    two seams inside their own ``with`` block.
+    """
+    saved_bound = ph_mod._probe_bound
+    saved_holders = ph_mod._resolve_pids
+    ph_mod._probe_bound = lambda _host, _port: False
+    ph_mod._resolve_pids = lambda _port: []
+    try:
+        yield
+    finally:
+        ph_mod._probe_bound = saved_bound
+        ph_mod._resolve_pids = saved_holders
 
 
 def _no_sleep(_secs: float) -> None:
@@ -478,14 +518,26 @@ def test_wait_for_health_returns_true_on_first_200() -> None:
     assert result is True
 
 
-def test_wait_for_health_returns_false_when_never_200() -> None:
-    # Arrange
-    http = _HttpRecorder(statuses=[503, -1, 502])
+def test_wait_for_health_returns_false_when_transport_fails() -> None:
+    # Arrange — every probe is a transport failure (refused/timeout),
+    # i.e. ``-1``: the only signal that means the daemon is truly down.
+    http = _HttpRecorder(statuses=[-1, -1, -1])
     # Act
     with _swap("_http_get", http), _swap("_sleep", _no_sleep):
         result = wait_for_health(host="127.0.0.1", port=7878, deadline_secs=1.0)
     # Assert
     assert result is False
+
+
+def test_wait_for_health_returns_true_on_401_under_bearer_auth() -> None:
+    # Arrange — bearer-auth gate answers the unauthenticated probe with
+    # 401: the daemon is ALIVE (it answered), so liveness must pass.
+    http = _HttpRecorder(statuses=[401])
+    # Act
+    with _swap("_http_get", http), _swap("_sleep", _no_sleep):
+        result = wait_for_health(host="127.0.0.1", port=7878, deadline_secs=5.0)
+    # Assert
+    assert result is True
 
 
 def test_wait_for_health_polls_correct_url() -> None:
@@ -494,8 +546,20 @@ def test_wait_for_health_polls_correct_url() -> None:
     # Act
     with _swap("_http_get", http), _swap("_sleep", _no_sleep):
         wait_for_health(host="127.0.0.1", port=7878, deadline_secs=5.0)
+    # Assert — the ONLY registered liveness route is /v1/health, NOT
+    # the previously-probed /v1/sac/health (latent-bug fix, card
+    # sac-listen-restart-selfheal-cli).
+    assert http.calls[0][0] == "http://127.0.0.1:7878/v1/health"
+
+
+def test_wait_for_health_does_not_poll_v1_sac_health() -> None:
+    # Arrange — guard against regressing back to the unregistered route.
+    http = _HttpRecorder(statuses=[200])
+    # Act
+    with _swap("_http_get", http), _swap("_sleep", _no_sleep):
+        wait_for_health(host="127.0.0.1", port=7878, deadline_secs=5.0)
     # Assert
-    assert http.calls[0][0] == "http://127.0.0.1:7878/v1/sac/health"
+    assert "/v1/sac/health" not in http.calls[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +617,8 @@ def test_failed_health_check_sets_ok_false(tmp_path: Path) -> None:
 
 
 def test_failed_health_check_carries_error_message(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — health never answers AND the port is not bound (default
+    # neutralized seam) → the "bind failed" fail-loud branch fires.
     kill = _KillRecorder(alive_script=[False])
     subproc = _SubprocessRecorder(returncodes=[0])
     http = _HttpRecorder(statuses=[-1])
@@ -572,8 +637,8 @@ def test_failed_health_check_carries_error_message(tmp_path: Path) -> None:
             systemd_unit_path=tmp_path / "absent.service",
             sac_listen_argv=["echo", "stub"],
         )
-    # Assert
-    assert "/v1/sac/health" in result.error
+    # Assert — loud, names the real cause (bind failed) + the right route.
+    assert "ERROR: bind failed" in result.error and "/v1/health" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -886,7 +951,7 @@ def test_cli_listen_restart_failure_exits_nonzero_with_error(tmp_path: Path) -> 
             prior_pid_alive=False,
             health_ok=False,
             took_systemd_path=False,
-            error="daemon did not respond 200 on /v1/sac/health within 30s",
+            error="ERROR: bind failed — nothing is listening on 127.0.0.1:7878",
         )
 
     runner = CliRunner()
@@ -897,5 +962,228 @@ def test_cli_listen_restart_failure_exits_nonzero_with_error(tmp_path: Path) -> 
         result = runner.invoke(listen_grp, ["restart"])
     finally:
         restart_mod_alias.restart_listen = saved  # type: ignore[assignment]
+    # Assert — non-zero exit + the loud ERROR cause surfaces to stderr.
+    assert result.exit_code != 0 and "ERROR: bind failed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Self-heal: wedged port holder ("curl hangs forever") force-killed
+# (card sac-listen-restart-selfheal-cli). The pidfile is gone / names a
+# dead PID, but an UNtracked remnant still holds the port. restart must
+# discover + kill it, then start — no manual rm/pkill/setsid.
+# ---------------------------------------------------------------------------
+
+
+def test_restart_force_kills_untracked_port_holder(tmp_path: Path) -> None:
+    # Arrange — NO pidfile (operator already rm-ed it), but the port is
+    # still bound by a remnant PID 4242. force=True → SIGKILL it.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+    # Port is bound BEFORE the kill, free AFTER (two probes per heal call).
+    bound_states = iter([True, False])
+
+    def _bound(_host: str, _port: int) -> bool:
+        return next(bound_states, False)
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", _bound),
+        _swap_ph("_resolve_pids", lambda _port: [4242]),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            force=True,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert — the remnant PID was force-killed off the port.
+    assert result.port_holders_killed == (4242,)
+
+
+def test_restart_with_wedged_holder_sends_sigkill_to_remnant(tmp_path: Path) -> None:
+    # Arrange — wedged remnant on the port; force=True must SIGKILL it
+    # (the "curl hangs forever" recovery, no manual pkill).
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+    bound_states = iter([True, False])
+
+    def _bound(_host: str, _port: int) -> bool:
+        return next(bound_states, False)
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", _bound),
+        _swap_ph("_resolve_pids", lambda _port: [4242]),
+    ):
+        restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            force=True,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert — SIGKILL (9) was delivered to the remnant PID 4242.
+    assert (4242, signal.SIGKILL) in kill.calls
+
+
+def test_restart_succeeds_after_clearing_wedged_holder(tmp_path: Path) -> None:
+    # Arrange — remnant killed, port freed, relaunch answers health.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+    bound_states = iter([True, False])
+
+    def _bound(_host: str, _port: int) -> bool:
+        return next(bound_states, False)
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", _bound),
+        _swap_ph("_resolve_pids", lambda _port: [4242]),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            force=True,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
     # Assert
-    assert result.exit_code != 0 and "/v1/sac/health" in result.output
+    assert result.ok is True
+
+
+def test_restart_fails_loud_when_holder_unkillable(tmp_path: Path) -> None:
+    # Arrange — port stays bound even AFTER the force-kill (holder is a
+    # different uid / zombie). Must fail loud naming the surviving PID,
+    # NOT relaunch into EADDRINUSE.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", lambda _host, _port: True),  # never frees
+        _swap_ph("_resolve_pids", lambda _port: [4242]),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            force=True,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert — loud, non-empty error naming the surviving PID + port.
+    assert result.ok is False and "still held by PID 4242" in result.error
+
+
+def test_restart_fails_loud_when_port_held_but_no_pid_found(tmp_path: Path) -> None:
+    # Arrange — port is bound but NO holder PID resolves (no
+    # lsof/ss/fuser). Must NOT relaunch into EADDRINUSE; fail loud.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", lambda _host, _port: True),
+        _swap_ph("_resolve_pids", lambda _port: []),  # nothing resolves
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            force=True,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert
+    assert result.ok is False and "no holding PID could be resolved" in result.error
+
+
+def test_restart_does_not_kill_when_port_free(tmp_path: Path) -> None:
+    # Arrange — nothing holds the port (clean restart). The self-heal
+    # must be a no-op: no holders recorded as killed.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[200])
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", lambda _host, _port: False),
+        _swap_ph("_resolve_pids", lambda _port: [9999]),  # would-be, unused
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert
+    assert result.port_holders_killed == ()
+
+
+def test_unhealthy_with_bound_port_names_wedged_pid(tmp_path: Path) -> None:
+    # Arrange — relaunch happens, port comes up bound, but health never
+    # answers (up-but-not-serving). The fail-loud cause must name the
+    # wedged PID, aligning with _lifecycle/_bind_watchdog.py.
+    kill = _KillRecorder(alive_script=[False])
+    subproc = _SubprocessRecorder(returncodes=[0])
+    http = _HttpRecorder(statuses=[-1, -1])
+    # First two probes (the heal step) say not-bound so we relaunch;
+    # the post-relaunch diagnosis probe says bound (wedged).
+    bound_states = iter([False, True, True])
+
+    def _bound(_host: str, _port: int) -> bool:
+        return next(bound_states, True)
+
+    # Act
+    with (
+        _swap("_kill", kill),
+        _swap("_sleep", _no_sleep),
+        _swap("_run_subprocess", subproc),
+        _swap("_http_get", http),
+        _swap_ph("_probe_bound", _bound),
+        _swap_ph("_resolve_pids", lambda _port: [7171]),
+    ):
+        result = restart_listen(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=tmp_path,
+            health_deadline_secs=0.5,
+            systemd_unit_path=tmp_path / "absent.service",
+            sac_listen_argv=["echo", "stub"],
+        )
+    # Assert — loud "UP but NOT SERVING" cause naming the wedged PID.
+    assert "NOT SERVING" in result.error and "7171" in result.error

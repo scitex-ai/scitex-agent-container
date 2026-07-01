@@ -12,6 +12,8 @@ Named ``test__envrc.py`` for the PS-204 §2 orphan-test mirror against
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,21 @@ from scitex_agent_container.runtimes._envrc import (
     fold_envrc_cascade_into_env,
     fold_envrc_into_env,
 )
+
+_SECRETS_VAR = "SAC_SECRETS_ENVRC"
+
+
+@pytest.fixture
+def secrets_envrc() -> Iterator[None]:
+    """Save/restore ``SAC_SECRETS_ENVRC`` so a test may set it freely."""
+    saved = os.environ.get(_SECRETS_VAR)
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(_SECRETS_VAR, None)
+        else:
+            os.environ[_SECRETS_VAR] = saved
 
 
 def test_eval_envrc_captures_exported_var(tmp_path: Path) -> None:
@@ -150,3 +167,59 @@ def test_fold_envrc_cascade_writes_combined_env_file(tmp_path: Path) -> None:
     # Assert — the folded .env carries BOTH sources.
     text = (dest / ".env").read_text()
     assert "FROM_ENV=1" in text and "FROM_LAYER=2" in text
+
+
+def test_secrets_preamble_resolves_referenced_secret(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — a secret file in scope; the .envrc references its var.
+    secret = tmp_path / "secret.env"
+    secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+    # Act
+    out = eval_envrc(envrc)
+    # Assert — the .envrc reference resolved to the real secret value.
+    assert out.get("PUBLIC") == "abc123"
+
+
+def test_secrets_preamble_does_not_leak_source_secret(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — same setup as the resolve test.
+    secret = tmp_path / "secret.env"
+    secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+    # Act
+    out = eval_envrc(envrc)
+    # Assert — the source secret var is NOT folded (cancels in the diff).
+    assert "SECRET_TOK" not in out
+
+
+def test_empty_unresolved_reference_is_dropped(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — SAC_SECRETS_ENVRC unset; .envrc references an undefined var,
+    # so the export resolves to an empty string.
+    os.environ.pop(_SECRETS_VAR, None)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+    # Act
+    out = eval_envrc(envrc)
+    # Assert — an empty value is DROPPED (not folded as ""), so it cannot shadow
+    # a real value a later layer supplies under another spelling.
+    assert "PUBLIC" not in out
+
+
+def test_fold_omits_empty_valued_var(tmp_path: Path) -> None:
+    # Arrange — .envrc exports one real var and one that resolves empty.
+    (tmp_path / ".envrc").write_text(
+        'export REAL=ok\nexport EMPTY="$UNSET_SOURCE"\n', encoding="utf-8"
+    )
+    # Act
+    fold_envrc_into_env(tmp_path)
+    # Assert — the empty var is not written into the folded .env.
+    assert "EMPTY=" not in (tmp_path / ".env").read_text()
