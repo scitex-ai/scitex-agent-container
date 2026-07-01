@@ -311,7 +311,7 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     uv pip install --python /opt/venv-sac/bin/python \
-        "claude-agent-sdk==0.2.87" \
+        "claude-agent-sdk==0.2.110" \
         "scitex-todo[mcp]>=0.3.0" \
         /opt/scitex-agent-container-src
 
