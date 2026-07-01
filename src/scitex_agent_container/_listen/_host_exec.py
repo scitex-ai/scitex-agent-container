@@ -33,6 +33,7 @@ downstream consumers pass user input.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -195,7 +196,16 @@ async def host_exec(
     exit_code = -1
     exec_error: str | None = None
     try:
-        completed = subprocess.run(
+        # Dispatch the blocking subprocess OFF the event loop. Running
+        # subprocess.run() directly in this async handler blocks the SINGLE
+        # uvicorn event loop for the command's whole lifetime — a long
+        # host_exec (e.g. a ~13-min `sac image build`) then starves EVERY
+        # other endpoint (a2a, health, spawn), the exact "agents can't reach
+        # sac" outage (INCIDENT 2026-07-02). asyncio.to_thread keeps the loop
+        # free to serve other requests concurrently; subprocess.TimeoutExpired
+        # raised inside the thread still propagates through the await.
+        completed = await asyncio.to_thread(
+            subprocess.run,
             argv,
             cwd=cwd_raw,
             timeout=timeout_s,
