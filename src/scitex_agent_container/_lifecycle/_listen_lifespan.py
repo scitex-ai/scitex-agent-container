@@ -48,6 +48,12 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         ENV_STALE_S as LIVENESS_TICK_ENV_STALE_S,
         liveness_tick_reconciler_loop,
     )
+    from .._listen._deploy_freshness import (
+        DEFAULT_INTERVAL_S as DEFAULT_DEPLOY_FRESHNESS_INTERVAL_S,
+        ENV_DISABLED as DEPLOY_FRESHNESS_ENV_DISABLED,
+        ENV_INTERVAL_S as DEPLOY_FRESHNESS_ENV_INTERVAL_S,
+        deploy_freshness_loop,
+    )
     from ._bind_watchdog import bind_watchdog_loop
     from ._github_ci_poll_loop import (
         DEFAULT_CI_POLL_INTERVAL_S,
@@ -155,6 +161,26 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             )
             app.state.liveness_tick_task = lt_task
             tasks.append(lt_task)
+
+        # Deploy-freshness reconciler (INCIDENT 2026-07-02: a full day of
+        # merged PRs ran stale because the host checkout silently sat 18
+        # commits behind origin/develop with nothing surfacing the drift).
+        # Each tick does a ``git fetch`` + ``rev-list`` (OFF the event loop
+        # via ``_off_loop`` so a wedged fetch can never starve the bind) and,
+        # when the checkout is behind origin/develop, FAILS LOUD: a warning
+        # log + an anomaly on the ``scitex_todo.hooks`` bus. Sleeps before
+        # the first tick. Honour SAC_DEPLOY_FRESHNESS_DISABLED=1 to skip.
+        if os.environ.get(DEPLOY_FRESHNESS_ENV_DISABLED, "") != "1":
+            df_task = asyncio.create_task(
+                deploy_freshness_loop(
+                    interval_s=_env_float(
+                        DEPLOY_FRESHNESS_ENV_INTERVAL_S,
+                        DEFAULT_DEPLOY_FRESHNESS_INTERVAL_S,
+                    ),
+                )
+            )
+            app.state.deploy_freshness_task = df_task
+            tasks.append(df_task)
 
         # FAIL-LOUD bind watchdog (operator: "when failure occurs, fail
         # loud"). If we know the bind port, probe it shortly after startup
