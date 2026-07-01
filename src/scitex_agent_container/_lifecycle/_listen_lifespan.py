@@ -156,6 +156,25 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             app.state.liveness_tick_task = lt_task
             tasks.append(lt_task)
 
+        # Zombie reconciler — auto-clear stale 'running' registrations whose
+        # agent has NO live apptainer container (operator directive
+        # 2026-07-01: rebuild/daemon-restart leaves agents that no-op on a
+        # normal restart). Registry read + apptainer-pid probe + lease close
+        # route through _off_loop so it can never starve the bind.
+        # SAC_ZOMBIE_RECONCILE_DISABLED=1 to skip launching.
+        from .._listen._zombie_reconciler import (
+            ENV_DISABLED as _ZOMBIE_ENV_DISABLED,
+            _env_interval_s as _zombie_interval_s,
+            zombie_reconciler_loop,
+        )
+
+        if os.environ.get(_ZOMBIE_ENV_DISABLED, "") != "1":
+            zt_task = asyncio.create_task(
+                zombie_reconciler_loop(interval_s=_zombie_interval_s())
+            )
+            app.state.zombie_reconciler_task = zt_task
+            tasks.append(zt_task)
+
         # FAIL-LOUD bind watchdog (operator: "when failure occurs, fail
         # loud"). If we know the bind port, probe it shortly after startup
         # and scream an ERROR if the daemon is up-but-not-serving — the
