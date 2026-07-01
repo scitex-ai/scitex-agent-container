@@ -213,6 +213,14 @@ def agent_start(
         agent_name=config.name,
     )
 
+    # Data-safety invariant (UNCONDITIONAL — not gated by ``no_preflight``):
+    # refuse specs whose $HOME resolves onto an operator-writable host bind,
+    # which would let the agent's home writes clobber the operator's real
+    # dotfiles. See :mod:`..runtimes._home_isolation_guard`.
+    from ..runtimes._home_isolation_guard import assert_home_not_operator_writable
+
+    assert_home_not_operator_writable(config)
+
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
 
