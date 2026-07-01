@@ -354,6 +354,39 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
     deploy_settings_cascade(dest, settings_layer_dirs(config))
+    # HOST DEEP-MERGE (developer agents only). For a FULL-DEVELOPER agent
+    # (metadata.labels.group==developer, or group-unset + a developer role),
+    # overlay the host operator's ~/.claude/{commands,skills,hooks} as per-file
+    # ABSOLUTE symlinks ON TOP of the agent layers just materialized — union,
+    # agent layer wins, host-session hooks deny-listed. Runs LAST so the walk's
+    # symlink-deref has already happened (our links are kept as symlinks) and
+    # the agent-layer real files exist for the agent-layer-wins check. A
+    # capsule/solitary agent is a no-op (no host bleed). The boot self-check
+    # re-materializes from scratch and fails loud on residual drift — never
+    # serves a stale/partial host view. See :mod:`_host_merge`.
+    _apply_host_merge_with_drift_guard(config, dest)
+
+
+def _apply_host_merge_with_drift_guard(config: AgentConfig, dest: Path) -> None:
+    """Materialize the host deep-merge then assert it matches host+agent layers.
+
+    Boot-time fail-loud (operator requirement): :func:`apply_host_merge`
+    re-derives every host-merge symlink from scratch (self-healing — a host
+    file added/removed since last start is reflected). Then
+    :func:`verify_host_merge` recomputes the expected set and, if ANYTHING is
+    still off (e.g. a host file vanished mid-deploy, leaving a dangling link),
+    we raise rather than launch on a partial view. No silent fallback.
+    """
+    from ._host_merge import HostMergeDriftError, apply_host_merge, verify_host_merge
+
+    apply_host_merge(config, dest)
+    findings = verify_host_merge(config, dest)
+    if findings:
+        bullet = "\n  - ".join(findings)
+        raise HostMergeDriftError(
+            f"host deep-merge still drifted after re-materialize for agent "
+            f"{config.name!r} at {dest}/.claude:\n  - {bullet}"
+        )
 
 
 def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":

@@ -282,7 +282,64 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     except Exception:  # stx-allow: fallback (explain is best-effort; never crash)
         pass
 
+    # Host deep-merge (developer agents): how many host
+    # ~/.claude/{commands,skills,hooks} files this agent links in, plus any
+    # drift vs. the live host. Capsule/solitary agents show "off". Best-effort:
+    # never crash explain. Materializes into a throwaway home (ground truth).
+    try:
+        lines.extend(_host_merge_lines(config))
+    except Exception:  # stx-allow: fallback (explain is best-effort; never crash)
+        pass
+
     return "\n".join(lines)
+
+
+def _host_merge_lines(config: AgentConfig) -> "list[str]":
+    """Host deep-merge summary for ``sac agents explain`` (ground-truth read).
+
+    Runs the production host-merge into a THROWAWAY home and reports the count
+    of linked host files per ``.claude`` subdir plus any drift the verifier
+    finds — so the operator sees, before launch, whether a developer agent's
+    host overlay is healthy. Empty list for a non-developer agent's "off" line
+    is still shown so the gate decision is visible.
+    """
+    import shutil
+    import tempfile
+
+    from ..runtimes._host_merge import (
+        apply_host_merge,
+        is_full_developer,
+        verify_host_merge,
+    )
+    from ..runtimes._to_home import deploy_to_home
+
+    out: list[str] = ["", "Host deep-merge (~/.claude → $HOME/.claude):"]
+    if not is_full_developer(config):
+        out.append("  off (not a full-developer agent — agent layers only)")
+        return out
+    tmp = tempfile.mkdtemp(prefix="sac-hostmerge-")
+    try:
+        deploy_to_home(config, tmp)
+        created = apply_host_merge(config, tmp)
+        by_dir: dict[str, int] = {}
+        for link in created:
+            sub = link.parent
+            # climb to the .claude/<subdir> name
+            parts = link.relative_to(Path(tmp) / ".claude").parts
+            key = parts[0] if parts else "?"
+            by_dir[key] = by_dir.get(key, 0) + 1
+        summary = ", ".join(f"{k}={by_dir[k]}" for k in sorted(by_dir)) or "0 files"
+        out.append(f"  on — linked host files: {summary}")
+        drift = verify_host_merge(config, tmp)
+        if drift:
+            out.append(f"  ⚠ DRIFT ({len(drift)}):")
+            for d in drift:
+                out.append(f"    - {d}")
+        else:
+            out.append("  ✓ no drift (matches live host + agent layers)")
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @click.command("explain")
