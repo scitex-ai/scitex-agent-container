@@ -160,11 +160,13 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
       $ sac image build --sandbox      # writable sandbox dir
     """
     out_dir = _ensure_containers_dir()
-    # Existing artefact warning — operators forget that `sac image
-    # build` overwrites the SIF in place. Surface the target path
-    # (and its current size + mtime, if any) BEFORE the
-    # refuse-without-yes gate so a `-y` re-invocation knows what it's
-    # about to clobber.
+    # Existing-artefact notice. A SIF rebuild is now ATOMIC (delegated to
+    # scitex-container's ``build``): it lands a fresh timestamped SIF and
+    # swaps the stable ``sac-<layer>.sif`` boot symlink all-at-once, so on
+    # success the live image is replaced but on failure the prior one is
+    # left intact (no in-place clobber). A sandbox rebuild is still in
+    # place. ``existing`` is the stable inner boot symlink for SIFs;
+    # ``.stat()`` follows it to the live timestamped target.
     artifact_dir = out_dir / f"sac-{layer}"
     existing = artifact_dir / (
         f"sac-{layer}.sandbox" if sandbox else f"sac-{layer}.sif"
@@ -177,9 +179,10 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
             timespec="seconds"
         )
         kind = "sandbox dir" if sandbox else "SIF"
+        verb = "overwritten" if sandbox else "replaced (atomic swap)"
         click.echo(
             f"⚠  Existing {kind} at {existing} "
-            f"({size_mb:.0f} MB, built {mtime}) will be overwritten.",
+            f"({size_mb:.0f} MB, built {mtime}) will be {verb}.",
             err=True,
         )
 
@@ -202,42 +205,25 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
     # /opt/scitex-agent-container-src, which gets there via a %files
     # copy of a sibling directory next to the .def at build time. The
     # staging helper (cli_pkg/_image_source_build.py) creates that
-    # sibling copy under <out>/sac-<layer>/build-context/ and runs
-    # ``apptainer build`` with cwd set there so the .def's relative
-    # %files path resolves correctly.
-    #
-    # We bypass scitex-container's build helper for this path because
-    # it doesn't expose a ``cwd`` parameter — without cwd control,
-    # apptainer would resolve the .def's relative %files against
-    # whatever directory the operator happened to ``sac image build``
-    # from, which is not predictable. The non-build verbs (sandbox,
-    # update, freeze, list, status, snapshot) still delegate to the
-    # scitex-container backend since they operate on already-built
-    # SIFs and don't need build-context staging.
+    # sibling copy under <out>/sac-<layer>/build-context/, then delegates
+    # to scitex-container 0.3.0's atomic ``build`` with ``cwd`` set to
+    # that staging dir so the .def's relative %files + ``From: ./sac-
+    # base.sif`` resolve. ``build`` lands a timestamped SIF and swaps the
+    # stable ``sac-<layer>.sif`` boot symlink all-at-once — a failed
+    # build leaves the prior image intact (atomic, rollback-safe). The
+    # non-build verbs (sandbox, update, freeze, list, status, snapshot)
+    # also delegate to the scitex-container backend.
     pkg_root = _RECIPES_DIR.parent
 
-    # Layered .defs (currently: ``scitex``) bootstrap off a prior
-    # layer's SIF via ``Bootstrap: localimage`` / ``From: ./<name>.sif``
-    # — the .def references the SIF as a sibling of itself in the
-    # build-context dir. Resolve the prerequisite SIF path here so
-    # build_layer_from_source can symlink it into the staging dir, and
-    # FAIL LOUD when the prerequisite is missing rather than letting
-    # apptainer FATAL on a half-staged context (the 2026-06-07 cohort-
-    # A rebuild stall: ``sac image build scitex`` ran without the
-    # freshly-built sac-base.sif staged → apptainer FATAL "no such
-    # file or directory" mid-build).
-    bootstrap_sif: Path | None = None
-    if layer == "scitex":
-        bootstrap_sif = out_dir / "sac-base" / "sac-base.sif"
-        if not bootstrap_sif.is_file():
-            click.echo(
-                f"error: scitex layer requires a built sac-base.sif at "
-                f"{bootstrap_sif}; build the base layer first:\n"
-                f"  $ sac image build base -y\n"
-                f"then retry `sac image build scitex -y`.",
-                err=True,
-            )
-            sys.exit(1)
+    # Layered .defs (currently: ``scitex``) bootstrap off a prior layer's
+    # SIF (``From: ./sac-base.sif``). Resolve the prerequisite here — the
+    # helper FAILS LOUD when it is missing so apptainer never FATAL's on a
+    # half-staged context (the 2026-06-07 cohort-A rebuild stall).
+    try:
+        bootstrap_sif = _image_source_build.resolve_bootstrap_sif(layer, out_dir)
+    except _image_source_build.BootstrapSifMissing as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
 
     try:
         output = _build_layer_from_source(

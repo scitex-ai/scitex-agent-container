@@ -60,7 +60,13 @@ dependencies = [
     # v0.3.0 was the release that split public from ecosystem-internal
     # and exposed both surfaces — that is our hard minimum.
     "scitex-config>=0.3.0",
-    "scitex-container>=0.1.0",
+    # 0.3.0 floor: sac's source-bundled ``sac image build`` delegates to
+    # scitex-container's atomic ``build(...)`` (timestamped SIF + stable
+    # symlink swap; failed build leaves the prior image intact). That API
+    # — ``cwd`` (build context independent of ``output_dir``),
+    # ``image_name``, ``retain``, Path return — landed in 0.3.0. See
+    # cli_pkg/_image_source_build.py::_default_container_build.
+    "scitex-container>=0.3.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).

@@ -25,25 +25,35 @@ copy of the package root. This module owns that staging step:
 
     build_layer_from_source(layer, def_path, pkg_root, output_dir, ...)
         -> stages a build context under output_dir/sac-<layer>/build-context/
-        -> runs ``apptainer build`` with cwd=staging_dir
-        -> returns the path to the built SIF (or sandbox dir)
+        -> delegates to ``scitex_container.build`` with cwd=staging_dir
+        -> returns the stable boot symlink of the built SIF (or the sandbox dir)
 
-The scitex_container.apptainer.build helper does not expose a ``cwd``
-parameter and locates .def files by name via its own search heuristic, so
-the source-bundled build path bypasses it and shells out to ``apptainer``
-directly. The backend abstraction in image_group.py is preserved for the
-non-build verbs (sandbox / update / freeze / list / status / snapshot)
-which manage already-built SIFs.
+scitex-container 0.3.0 exposes an atomic ``build(...)`` that accepts a
+``cwd`` (build context, independent of ``output_dir``), a ``def_path``
+(so out-of-tree callers whose recipes ship inside their own wheel bypass
+``find_containers_dir``), and an ``image_name``. It builds to a
+timestamped ``<output_dir>/<image_name>/<image_name>-<ts>.sif`` and then
+atomically swaps two stable symlinks — the INNER boot path
+``<output_dir>/<image_name>/<image_name>.sif`` and the TOP-level
+``<output_dir>/<image_name>.sif`` (which resolves a layered .def's
+``From: ./<image_name>.sif``). A failed build never touches the live
+symlinks, so the prior image stays intact — no more in-place overwrite.
+sac now delegates to that helper rather than shelling ``apptainer build
+--force`` itself; the source-bundled staging (this module) still owns the
+build-context prep so the .def's relative ``%files`` +
+``From: ./sac-base.sif`` resolve. The backend abstraction in
+image_group.py is preserved for the non-build verbs (sandbox / update /
+freeze / list / status / snapshot) which manage already-built SIFs.
 
 Testability follows the same save/restore pattern as ``image_group``'s
-``_load_apptainer`` hook: ``_apptainer_build_runner`` is a module-level
-callable that tests reassign to a real (no MagicMock) recording fake.
+``_load_apptainer`` hook: ``_container_build`` is a module-level callable
+that tests reassign to a real (no MagicMock) recording fake, so the unit
+tests never shell a real apptainer.
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -256,69 +266,53 @@ def stage_build_context(
 # ---------------------------------------------------------------------------
 
 
-def _default_apptainer_build_runner(
-    output_path: Path,
-    staged_def: Path,
+def _default_container_build(
     *,
+    def_path: Path,
+    output_dir: Path,
     cwd: Path,
+    image_name: str,
     sandbox: bool,
     force: bool,
-) -> int:
-    """Default runner — shells out to ``apptainer build``.
+) -> Path:
+    """Default builder — delegates to scitex-container's atomic ``build``.
 
-    Returns the apptainer exit code (0 on success). Sandbox builds use
-    ``--fakeroot`` (apptainer's sandbox-from-def path requires it on
-    rootless installs).
+    scitex-container 0.3.0 builds to a timestamped
+    ``<output_dir>/<image_name>/<image_name>-<ts>.sif`` and then swaps
+    two stable symlinks all-at-once (the INNER boot path
+    ``<output_dir>/<image_name>/<image_name>.sif`` and the TOP-level
+    ``<output_dir>/<image_name>.sif`` that a layered .def's
+    ``From: ./<image_name>.sif`` resolves against). A failed build leaves
+    the prior live image + symlinks untouched — atomic, rollback-safe.
 
-    SIF builds prefer ``--fakeroot`` when the user already has
-    ``/etc/subuid`` + ``/etc/subgid`` mappings (the lead's hand-built
-    SIF on 2026-06-05 used this path), and fall back to ``sudo
-    apptainer build`` only when no mappings exist. The sudo fallback
-    works on an interactive shell but fails silently in headless /
-    detached / no-tty contexts (sudo prompts for a password) — which
-    is exactly what bit the lead's ``sac image build`` invocation
-    earlier today. The fakeroot probe lives in
-    :mod:`runtimes._apptainer_build` so both the lifecycle build and
-    this CLI build agree on the heuristic.
+    ``cwd`` is the staged build context (independent of ``output_dir``),
+    so the .def's relative ``%files scitex-agent-container-src ...`` and
+    ``From: ./sac-base.sif`` (staged into ``cwd`` by
+    :func:`stage_build_context`) resolve at build time. ``retain`` is
+    omitted so scitex-container uses its config-resolved retention
+    default. Returns the resolved timestamped SIF (SIF build) or the
+    sandbox directory (sandbox build).
     """
-    # Local import — runtimes/_apptainer_build pulls config etc. and
-    # we don't want to pay that cost on the cold ``sac image`` startup
-    # path until the actual build runs.
-    from ..runtimes._apptainer_build import _should_use_fakeroot_for_build
+    # Local import — scitex-container pulls its own deps and we don't
+    # want to pay that cost on the cold ``sac image`` startup path until
+    # the actual build runs.
+    from scitex_container import build as _sc_build
 
-    if sandbox:
-        argv = [
-            "apptainer",
-            "build",
-            "--sandbox",
-            "--fakeroot",
-        ]
-        if force:
-            argv.append("--force")
-        argv += [str(output_path), str(staged_def)]
-    elif _should_use_fakeroot_for_build():
-        # Rootless user-namespace build — no sudo prompt. This is the
-        # path the lead's hand-built SIF used today.
-        argv = ["apptainer", "build", "--fakeroot"]
-        if force:
-            argv.append("--force")
-        argv += [str(output_path), str(staged_def)]
-    else:
-        # No subuid mappings: fall back to sudo. Works interactively;
-        # FAILS in headless contexts (silent password prompt).
-        argv = ["sudo", "apptainer", "build"]
-        if force:
-            argv.append("--force")
-        argv += [str(output_path), str(staged_def)]
-
-    result = subprocess.run(argv, cwd=str(cwd))
-    return result.returncode
+    return _sc_build(
+        def_path=def_path,
+        output_dir=output_dir,
+        cwd=cwd,
+        image_name=image_name,
+        sandbox=sandbox,
+        force=force,
+    )
 
 
 # Module-level overridable reference — same swap-and-restore pattern as
 # image_group._load_apptainer. Tests reassign this to a real recording
-# callable (no MagicMock).
-_apptainer_build_runner: Callable[..., int] = _default_apptainer_build_runner
+# callable (no MagicMock) so the unit suite never shells a real apptainer
+# or imports scitex-container.
+_container_build: Callable[..., Path] = _default_container_build
 
 
 def build_layer_from_source(
@@ -333,16 +327,20 @@ def build_layer_from_source(
 ) -> Path:
     """Build a sac SIF (or sandbox) from a .def that bundles its own source.
 
-    Stages a build context under ``output_dir/sac-<layer>/build-context/``,
-    invokes ``apptainer build`` with cwd set to that staging dir (so the
-    .def's relative ``%files scitex-agent-container-src ...`` resolves to
-    the bundled source copy), and returns the path of the built artefact.
+    Stages a build context under ``output_dir/sac-<layer>/build-context/``
+    (so the .def's relative ``%files scitex-agent-container-src ...``
+    resolves to the bundled source copy, and a layered .def's
+    ``From: ./sac-base.sif`` resolves to the symlinked prerequisite SIF),
+    then delegates to :func:`scitex_container.build` with that staging dir
+    as the build context (``cwd``). The build is atomic: it lands a
+    timestamped SIF and swaps stable symlinks all-at-once, leaving the
+    prior image intact on failure.
 
     Parameters
     ----------
     layer : str
-        Layer name (``base`` / ``scitex`` / ``proxy``). Used to name the
-        per-layer artefact dir and the output filename.
+        Layer name (``base`` / ``scitex`` / ``proxy``). Maps to the
+        ``sac-<layer>`` image name (per-image subdir + artefact stem).
     def_path : Path
         Source .def file. Copied (not modified) into the staging dir.
     pkg_root : Path
@@ -350,30 +348,37 @@ def build_layer_from_source(
         ``scitex-agent-container-src/``.
     output_dir : Path
         Containers dir (typically ``~/.scitex/agent-container/containers``).
-        The per-layer subdir is created here.
+        scitex-container lands the artefact under
+        ``<output_dir>/sac-<layer>/`` and publishes the stable
+        ``<output_dir>/sac-<layer>/sac-<layer>.sif`` boot symlink.
     sandbox : bool
         If True, build a writable sandbox directory rather than a SIF.
     force : bool
-        Pass ``--force`` to apptainer (overwrite existing artefact).
+        Force a rebuild even when the recipe hash is unchanged.
     bootstrap_sif : Path | None
         Optional prerequisite SIF for a layered .def. Forwarded to
         :func:`stage_build_context` which symlinks it into the staging
-        dir so the .def's ``Bootstrap: localimage`` / ``From: ./<name>.
-        sif`` line resolves at build time. ``None`` for top-of-stack
-        defs (``base``, ``proxy``). Required for ``scitex`` (bootstraps
-        off ``sac-base.sif``); omitting it produces a half-staged
-        context and apptainer FATAL's on "no such file or directory".
+        dir under its own name so the .def's ``Bootstrap: localimage`` /
+        ``From: ./<name>.sif`` line resolves against the build context
+        (``cwd``) at build time. ``None`` for top-of-stack defs
+        (``base``, ``proxy``). Required for ``scitex`` (bootstraps off
+        ``sac-base.sif``); omitting it produces a half-staged context
+        and apptainer FATAL's on "no such file or directory".
 
     Returns
     -------
     Path
-        Path to the built ``.sif`` (or sandbox dir).
+        For a SIF build, the STABLE inner boot symlink
+        (``<output_dir>/sac-<layer>/sac-<layer>.sif``) — what callers
+        (and downstream layers' ``bootstrap_sif``) resolve against,
+        unchanged from the pre-atomic layout. For a sandbox build, the
+        sandbox directory (``<output_dir>/sac-<layer>/sac-<layer>.sandbox``).
 
     Raises
     ------
     RuntimeError
-        If the apptainer subprocess exits non-zero. The build context
-        is left in place for post-mortem inspection.
+        Propagated from :func:`scitex_container.build` if the underlying
+        apptainer build fails. The live image + symlinks are left intact.
     FileNotFoundError
         Propagated from :func:`stage_build_context` if inputs are missing.
     """
@@ -385,28 +390,76 @@ def build_layer_from_source(
         pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
     )
 
-    output_path = artifact_dir / (
-        f"sac-{layer}.sandbox" if sandbox else f"sac-{layer}.sif"
-    )
-
-    rc = _apptainer_build_runner(
-        output_path,
-        staged_def,
+    image_name = f"sac-{layer}"
+    result = _container_build(
+        def_path=staged_def,
+        output_dir=output_dir,
         cwd=staging_dir,
+        image_name=image_name,
         sandbox=sandbox,
         force=force,
     )
-    if rc != 0:
-        raise RuntimeError(
-            f"apptainer build failed (rc={rc}) for layer={layer} "
-            f"def={staged_def} cwd={staging_dir}"
+
+    if sandbox:
+        # Sandbox: scitex-container returns the sandbox dir itself
+        # (<artifact_dir>/<image_name>.sandbox); no symlink layer.
+        return Path(result)
+    # SIF: scitex-container returns the RESOLVED timestamped real SIF.
+    # Callers (and the next layer's bootstrap_sif) want the STABLE inner
+    # boot symlink, which is layout-invariant across rebuilds.
+    return artifact_dir / f"{image_name}.sif"
+
+
+class BootstrapSifMissing(FileNotFoundError):
+    """Raised when a layered build's prerequisite SIF is absent.
+
+    Carries the fail-loud remediation text the CLI surfaces verbatim, so
+    the layer→prerequisite policy lives with the source-build path rather
+    than inline in the ``sac image build`` command.
+    """
+
+
+def resolve_bootstrap_sif(layer: str, output_dir: Path) -> Path | None:
+    """Return the prerequisite SIF a layered ``.def`` bootstraps off.
+
+    Layered .defs (currently only ``scitex``) start ``From: ./sac-base.sif``
+    — a path RELATIVE to the build-context dir. The prerequisite is the
+    prior layer's STABLE inner boot symlink,
+    ``<output_dir>/sac-base/sac-base.sif`` (a symlink to the live
+    timestamped SIF under scitex-container 0.3.0's atomic layout).
+    :func:`build_layer_from_source` symlinks it into the staging dir so
+    apptainer's relative ``From:`` resolves at build time.
+
+    Returns ``None`` for top-of-stack layers (``base``) which bootstrap
+    off a registry image, not a prior SIF.
+
+    Raises
+    ------
+    BootstrapSifMissing
+        When a layered build is requested but the prerequisite SIF has not
+        been built. Fails loud BEFORE staging so apptainer never FATAL's
+        on a half-staged context (the 2026-06-07 cohort-A rebuild stall).
+        The exception message names the missing path AND the remediation
+        command.
+    """
+    if layer != "scitex":
+        return None
+    bootstrap_sif = output_dir / "sac-base" / "sac-base.sif"
+    if not bootstrap_sif.is_file():
+        raise BootstrapSifMissing(
+            f"scitex layer requires a built sac-base.sif at "
+            f"{bootstrap_sif}; build the base layer first:\n"
+            f"  $ sac image build base -y\n"
+            f"then retry `sac image build scitex -y`."
         )
-    return output_path
+    return bootstrap_sif
 
 
 __all__ = [
     "stage_build_context",
     "build_layer_from_source",
-    "_default_apptainer_build_runner",
-    "_apptainer_build_runner",
+    "resolve_bootstrap_sif",
+    "BootstrapSifMissing",
+    "_default_container_build",
+    "_container_build",
 ]
