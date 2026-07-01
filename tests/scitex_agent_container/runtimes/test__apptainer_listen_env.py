@@ -259,3 +259,26 @@ def test_listen_env_flags_omits_empty_scitex_todo_agent(
     flags = listen_env_flags(config)
     # Assert
     assert not any(f.startswith("SCITEX_TODO_AGENT=") for f in flags)
+
+
+def test_listen_env_flags_injects_scitex_todo_tasks_store(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — the canonical bound store path is identical for every agent.
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert — the shared tasks.yaml store is pinned so notifications resolve.
+    assert "SCITEX_TODO_TASKS=/home/agent/.scitex/todo/tasks.yaml" in flags
+
+
+def test_listen_env_flags_scitex_todo_tasks_follows_an_env_token(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    flags = listen_env_flags(no_bus_config)
+    # Act
+    idx = flags.index("SCITEX_TODO_TASKS=/home/agent/.scitex/todo/tasks.yaml")
+    # Assert
+    assert flags[idx - 1] == "--env"

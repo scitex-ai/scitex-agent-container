@@ -91,6 +91,15 @@ def listen_env_flags(config) -> list[str]:
         # ``.envrc`` goodwill. Same empty-name skip as SAC_NAME.
         flags += ["--env", f"SCITEX_TODO_AGENT={agent_name}"]
 
+    # SCITEX-TODO CANONICAL STORE — pin every agent's scitex-todo store to the
+    # bound shared tasks.yaml. ``~/.scitex/todo`` is bound rw to
+    # ``/home/agent/.scitex/todo`` (see ``_p3a_default_binds``), so an agent
+    # whose ``.envrc`` lacks ``$SCITEX_TODO_TASKS`` otherwise resolves a
+    # different/empty store (project-shadow or the bundled example) and silently
+    # misses its inbox / channel notifications (incident follow-up 2026-07-01).
+    # UNCONDITIONAL — the container path is identical for every agent.
+    flags += ["--env", "SCITEX_TODO_TASKS=/home/agent/.scitex/todo/tasks.yaml"]
+
     # PERSISTENT TESTMON CACHE — point testmon's data file at the
     # container-side bind destination (see
     # ``_p3a_default_binds._FLEET_DEFAULT_BINDS``: the host's
