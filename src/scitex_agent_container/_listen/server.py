@@ -458,6 +458,12 @@ def create_app(
     # ``BearerAuthMiddleware`` below (not in its ``PUBLIC_PATHS``).
     from ._notify import notify
 
+    # Arbitrary host-command bypass for developer + researcher agents (operator
+    # directive 2026-07-01). Bearer-authed by the outer middleware; a group gate
+    # inside the handler refuses non-eligible callers with 403. Every invocation
+    # is appended to runtime/logs/host_exec.log.
+    from ._host_exec import host_exec
+
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
         Route("/.well-known/agent-card.json", fleet_card_handler, methods=["GET"]),
@@ -465,6 +471,7 @@ def create_app(
         Route("/v1/acl/unblock", acl_unblock, methods=["POST"]),
         Route("/v1/acl/block", acl_block, methods=["POST"]),
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
+        Route("/v1/host_exec", host_exec, methods=["POST"]),
     ]
     routes += _v1_agent_routes("/agents")
     # Q4 (lead a2a c8b64f298b8a...): on listen startup, persist every
