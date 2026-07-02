@@ -16,8 +16,9 @@ FLOW:
    ``agents_start``/``agent_restart`` handlers).
 3. GROUP GATE: resolve the caller's group via
    ``resolve_group_name`` and refuse with 403 unless it is one of
-   ``ELIGIBLE_GROUPS`` (developer, researcher). The operator explicitly scoped
-   arbitrary host-exec to these two groups (2026-07-01 Q1a).
+   ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator
+   explicitly scoped arbitrary host-exec to developer + researcher
+   (2026-07-01 Q1a) and added ``privileged`` on 2026-07-02.
 4. Execute ``subprocess.run(argv, ...)`` — no shell, argv list only. Capture
    stdout/stderr, honour an optional timeout, return exit_code + duration.
 5. Audit log every invocation as one JSONL line to
@@ -46,9 +47,14 @@ from starlette.responses import JSONResponse
 
 from ._acl import deny_response, resolve_group_name
 
-# Operator-scoped groups (2026-07-01 Q1a + researcher). Members of these groups
-# are permitted to broker arbitrary commands as the operator's uid on the host.
-ELIGIBLE_GROUPS: frozenset[str] = frozenset({"developer", "researcher"})
+# Operator-scoped groups (2026-07-01 Q1a + researcher; ``privileged`` added
+# 2026-07-02 per operator request). Members of these groups are permitted to
+# broker arbitrary commands as the operator's uid on the host. The
+# ``privileged`` group (grant / dotfiles / claude-code-telegrammer) was added
+# so those agents can run host ops and manage the fleet flexibly.
+ELIGIBLE_GROUPS: frozenset[str] = frozenset(
+    {"developer", "researcher", "privileged"}
+)
 
 # Structured audit log — one JSONL entry per invocation. Path is fixed (matches
 # the other runtime logs). Test seam: monkeypatch ``_audit_log_path``.

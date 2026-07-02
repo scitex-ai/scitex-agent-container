@@ -20,6 +20,7 @@ from __future__ import annotations
 from scitex_agent_container.config._group_resolver import (
     DEVELOPER_GROUP,
     GENERALIST_GROUP,
+    PRIVILEGED_GROUP,
     RESEARCHER_GROUP,
     group_from_labels,
     groups_mesh,
@@ -314,5 +315,45 @@ def test_groups_mesh_false_when_one_side_is_ungrouped() -> None:
     # Arrange
     # Act
     result = groups_mesh(RESEARCHER_GROUP, "")
+    # Assert
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# privileged group (operator 2026-07-02): host-exec eligible + mesh member so
+# it can manage agents across groups
+# ---------------------------------------------------------------------------
+
+
+def test_is_mesh_group_true_for_privileged() -> None:
+    # Arrange
+    group = PRIVILEGED_GROUP
+    # Act
+    result = is_mesh_group(group)
+    # Assert
+    assert result is True
+
+
+def test_groups_mesh_true_privileged_manages_developer() -> None:
+    # Arrange — privileged meshes with the standard fleet, so a privileged
+    # caller may manage (start / restart / …) a developer target cross-group.
+    # Act
+    result = groups_mesh(PRIVILEGED_GROUP, DEVELOPER_GROUP)
+    # Assert
+    assert result is True
+
+
+def test_groups_mesh_true_privileged_manages_researcher() -> None:
+    # Arrange
+    # Act
+    result = groups_mesh(PRIVILEGED_GROUP, RESEARCHER_GROUP)
+    # Assert
+    assert result is True
+
+
+def test_groups_mesh_false_privileged_against_non_mesh_group() -> None:
+    # Arrange — an isolated solver stays unmanageable even by privileged.
+    # Act
+    result = groups_mesh(PRIVILEGED_GROUP, "solver")
     # Assert
     assert result is False

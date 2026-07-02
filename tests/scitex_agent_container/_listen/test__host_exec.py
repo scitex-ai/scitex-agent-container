@@ -188,9 +188,41 @@ def test_host_exec_allows_the_researcher_group():
     assert resp.status_code == 200
 
 
+def test_host_exec_allows_the_privileged_group():
+    # Arrange — privileged is eligible per operator scope (2026-07-02).
+    req = _FakeRequest({"argv": ["true"]}, authenticated_node="a-privileged")
+    # Act
+    resp = _run(
+        host_exec(
+            req,
+            group_resolver=lambda name: "privileged",
+            audit_writer=_noop_audit,
+        )
+    )
+    # Assert
+    assert resp.status_code == 200
+
+
+def test_host_exec_denies_unlabeled_privileged_style_caller_helpfully():
+    # Arrange — an agent that has NOT been labeled into the privileged group
+    # resolves to the ungrouped "" (or any non-eligible group) and is refused
+    # with a structured 403 that names the eligible groups.
+    req = _FakeRequest({"argv": ["true"]}, authenticated_node="unlabeled-agent")
+    # Act
+    resp = _run(
+        host_exec(
+            req,
+            group_resolver=lambda name: "",
+            audit_writer=_noop_audit,
+        )
+    )
+    # Assert
+    assert resp.status_code == 403
+
+
 def test_host_exec_eligible_groups_set_matches_operator_scope():
     # Arrange
-    expected = frozenset({"developer", "researcher"})
+    expected = frozenset({"developer", "researcher", "privileged"})
     # Act
     actual = ELIGIBLE_GROUPS
     # Assert

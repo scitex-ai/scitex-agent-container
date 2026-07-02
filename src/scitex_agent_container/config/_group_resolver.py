@@ -48,6 +48,7 @@ __all__ = [
     "DEVELOPER_GROUP",
     "GENERALIST_GROUP",
     "MESH_GROUPS",
+    "PRIVILEGED_GROUP",
     "RESEARCHER_GROUP",
     "group_from_labels",
     "groups_mesh",
@@ -68,12 +69,23 @@ DEVELOPER_GROUP = "developer"
 RESEARCHER_GROUP = "researcher"
 GENERALIST_GROUP = "generalist"
 
+# The privileged group (operator 2026-07-02): grant / dotfiles /
+# claude-code-telegrammer. Like ``developer`` it may broker arbitrary
+# host-exec (see :data:`._listen._host_exec.ELIGIBLE_GROUPS`) and, by being
+# a MESH group below, may manage agents across groups (start / restart /
+# stop / delete / status / tail via :func:`._listen._acl.check_lineage_acl`)
+# with no lineage edge and no per-pair grant — "work flexibly".
+PRIVILEGED_GROUP = "privileged"
 
-# Cross-group mesh (operator 2026-06-27): the three STANDARD fleet groups
-# coordinate with each other in all directions — a ``developer`` may
-# address a ``researcher`` may address a ``generalist``, no per-pair grant
-# needed. This is "fleet-mesh by default" for the standard groups, the
-# layer above the same-named-group mesh.
+
+# Cross-group mesh (operator 2026-06-27; ``privileged`` added 2026-07-02):
+# the STANDARD fleet groups coordinate with each other in all directions —
+# a ``developer`` may address a ``researcher`` may address a ``generalist``
+# may address a ``privileged``, no per-pair grant needed. This is
+# "fleet-mesh by default" for the standard groups, the layer above the
+# same-named-group mesh. Being a mesh group is ALSO what lets ``privileged``
+# manage agents across groups (start / restart / stop / delete / status /
+# tail) via :func:`._listen._acl.check_lineage_acl`.
 #
 # A group OUTSIDE this set does NOT mesh: e.g. a paper-scitex-clew solver
 # in an isolated group (and/or ``lineage_group='solitary'`` + per-spec
@@ -81,7 +93,7 @@ GENERALIST_GROUP = "generalist"
 # preserving the solid isolation scientific rigor requires. To mesh a new
 # group, add its name here (single-line edit, zero schema change).
 MESH_GROUPS: frozenset[str] = frozenset(
-    {DEVELOPER_GROUP, RESEARCHER_GROUP, GENERALIST_GROUP}
+    {DEVELOPER_GROUP, RESEARCHER_GROUP, GENERALIST_GROUP, PRIVILEGED_GROUP}
 )
 
 
