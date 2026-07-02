@@ -41,6 +41,12 @@ START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 # ``CCT_ALLOWED_USERS`` / ``CCT_STATE_DIR`` and any future ``CCT_*`` var.
 _RUNTIME_ONLY_VARS = frozenset(
     {
+        # scitex-todo >= 0.7.30 names
+        "SCITEX_TODO_AGENT_ID",
+        "SCITEX_TODO_TASKS_YAML_SHARED",
+        # Legacy pre-0.7.30 names — kept as a GUARD only (never injected by
+        # sac anymore): a stale deployer shell exporting the old names must
+        # still not bake them into materialized files.
         "SCITEX_TODO_AGENT",
         "SCITEX_TODO_TASKS",
         "SAC_NAME",

@@ -196,7 +196,7 @@ def create(
 
     Writes ``<base-dir>/<name>/spec.yaml`` from the matching underscore-agent
     skeleton, filling identity (name -> project / workdir / overlay /
-    state-db / SCITEX_TODO_AGENT) and auto-detecting the editable-install and
+    state-db / SCITEX_TODO_AGENT_ID) and auto-detecting the editable-install and
     Telegram-bot blocks.
 
     Examples:

@@ -311,7 +311,7 @@ def agent_create(
 
     Writes ``<name>/spec.yaml`` from the developer/scientist skeleton,
     filling identity (name -> project / workdir / overlay / state-db /
-    SCITEX_TODO_AGENT) and auto-detecting the editable-install block
+    SCITEX_TODO_AGENT_ID) and auto-detecting the editable-install block
     (workdir ships a package) and the per-agent Telegram bot
     (``telegram_token`` file present). ``start=True`` launches the agent
     afterwards. The developer group is authorized to CRUD agents."""

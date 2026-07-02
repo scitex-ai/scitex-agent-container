@@ -27,9 +27,22 @@ def test_interpolate_env_keeps_cct_agent_id_literal_even_when_set(env_save_resto
     assert out == "id=${CCT_AGENT_ID}"
 
 
-def test_interpolate_env_keeps_scitex_todo_agent_literal_even_when_set(
+def test_interpolate_env_keeps_scitex_todo_agent_id_literal_even_when_set(
     env_save_restore,
 ):
+    # Arrange
+    env_save_restore.set("SCITEX_TODO_AGENT_ID", "agent:scitex-agent-container")
+    # Act
+    out = interpolate_env("agent=${SCITEX_TODO_AGENT_ID}")
+    # Assert
+    assert out == "agent=${SCITEX_TODO_AGENT_ID}"
+
+
+def test_interpolate_env_keeps_legacy_scitex_todo_agent_literal_even_when_set(
+    env_save_restore,
+):
+    # Legacy pre-0.7.30 name kept as a guard: a stale deployer shell must
+    # still not bake it into materialized files.
     # Arrange
     env_save_restore.set("SCITEX_TODO_AGENT", "agent:scitex-agent-container")
     # Act

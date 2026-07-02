@@ -45,7 +45,7 @@ spec:
       - --env
       - SCITEX_AGENT_CONTAINER_STATE_DB=/state/{{ NAME }}/state.db
       - --env
-      - SCITEX_TODO_AGENT={{ NAME }}
+      - SCITEX_TODO_AGENT_ID={{ NAME }}
       - --env
       - GIT_AUTHOR_NAME=Yusuke Watanabe
       - --env
