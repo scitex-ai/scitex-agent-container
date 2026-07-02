@@ -34,7 +34,7 @@ def _default_agents_dir() -> Path:
 
 
 def _default_tasks_path() -> Path:
-    env = os.environ.get("SCITEX_TODO_TASKS")
+    env = os.environ.get("SCITEX_TODO_TASKS_YAML_SHARED")
     if env:
         return Path(env).expanduser()
     return Path.home() / ".scitex" / "todo" / "tasks.yaml"
