@@ -54,6 +54,10 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         github_ci_poll_loop,
     )
     from ._periodic_drive_loop import periodic_drive_loop
+    from ._sdk_heartbeat_loop import (
+        DEFAULT_SDK_HEARTBEAT_INTERVAL_S,
+        sdk_heartbeat_loop,
+    )
     from ._tui_heartbeat_loop import (
         DEFAULT_TUI_HEARTBEAT_INTERVAL_S,
         tui_heartbeat_loop,
@@ -131,6 +135,26 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         tui_hb_task = asyncio.create_task(tui_heartbeat_loop(interval_s=_tui_hb_interval))
         app.state.tui_heartbeat_task = tui_hb_task
         tasks.append(tui_hb_task)
+
+        # SDK/claude-session heartbeat writer (fix
+        # liveness-live-agents-read-stopped): parity with the TUI writer
+        # for the non-TUI runtimes, so a running-but-quiet SDK agent's
+        # host-side ``heartbeat_at`` stays fresh instead of freezing at
+        # its start time. Self-disables via SAC_SDK_HEARTBEAT_DISABLED=1.
+        # Cadence override: SAC_SDK_HEARTBEAT_INTERVAL_S.
+        try:
+            _sdk_hb_interval = float(
+                os.environ.get(
+                    "SAC_SDK_HEARTBEAT_INTERVAL_S", DEFAULT_SDK_HEARTBEAT_INTERVAL_S
+                )
+            )
+        except (TypeError, ValueError):
+            _sdk_hb_interval = DEFAULT_SDK_HEARTBEAT_INTERVAL_S
+        sdk_hb_task = asyncio.create_task(
+            sdk_heartbeat_loop(interval_s=_sdk_hb_interval)
+        )
+        app.state.sdk_heartbeat_task = sdk_hb_task
+        tasks.append(sdk_hb_task)
 
         # Liveness-tick reconciler (card sac-card-anchored-stop-reconciler):
         # deterministic alarm-engine producer — reads cards (truth) vs.

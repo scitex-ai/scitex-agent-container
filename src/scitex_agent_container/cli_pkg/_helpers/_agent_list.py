@@ -1,15 +1,17 @@
-"""Agent-list assembly + presentation (JSON + rich-table)."""
+"""Agent-list DATA ASSEMBLY (probes, labels, movement, discovery).
+
+The READER-facing presentation (JSON dump + rich-table) lives in the
+sibling :mod:`_agent_list_render` (split for the 512-line per-file cap);
+its public names — ``print_agent_list`` / ``print_agent_list_json`` /
+``_is_ghost_row`` / ``_extract_damaged_fields`` — are re-exported at the
+bottom of this module so existing ``from ._agent_list import ...``
+importers are unchanged.
+"""
 
 from __future__ import annotations
 
-import json as json_mod
-
-import click
-from rich.table import Table
-
 from ..._state.registry import Registry
 from ...config import load_config
-from ._console import console
 
 
 def _safe_port_for(name: str) -> int | None:
@@ -91,25 +93,34 @@ def _movement_fields(name: str) -> dict:
 
 
 def _probe_local(cfg) -> bool | None:
-    """Probe an agent's liveness via ContainerRuntime.
+    """Probe an agent's liveness via its DECLARED runtime adapter.
 
-    F-CS17 stage 3b: replaces the legacy ``_probe_remote`` /
-    ``_detect_multiplexer`` machinery. Sac is a container wrapper —
-    liveness is whatever ``docker inspect`` reports for the
-    container_id sidecar in the agent's state dir. Cross-host
-    liveness moved to F-CS12's ``sac --on <peer> agent status``
-    pattern; the local helper here NEVER does its own ssh.
+    Must select the SAME runtime ``agent_status`` uses
+    (:func:`_lifecycle._runtime_select._get_runtime`, which branches on
+    ``spec.runtime``) — NOT a hardcoded ``ClaudeSessionRuntime``. That
+    hardcode was the root cause of "live agent reads stopped" (fix
+    ``liveness-live-agents-read-stopped``): the DEFAULT runtime is
+    ``tui``, whose liveness is the ``tui-<name>`` tmux session's
+    pane-activity (``TuiSessionRuntime.is_running``). Probing a live TUI
+    agent through ``ClaudeSessionRuntime`` instead reached
+    ``ApptainerContainerRuntime.is_running`` → ``os.kill(read_pid, 0)``,
+    but a TUI agent NEVER writes an ``apptainer_pid`` file (it launches
+    via tmux, not ``subprocess.Popen`` with a pidfile), so ``_read_pid``
+    returned ``None`` → ``is_running`` returned ``False`` → status
+    "stopped" for a provably-running agent. Routing through
+    ``_get_runtime`` makes ``sac agents list`` agree with
+    ``sac agents status``.
 
     Returns None on exception (e.g. malformed config) so the caller
     surfaces ``status='unknown'`` rather than crashing the list.
     """
-    # stx-allow: fallback (reason: container engine may be missing or
-    # state-dir may not exist for an agent that never ran; either case
-    # maps to liveness_unknown rather than a hard error.)
+    # stx-allow: fallback (reason: runtime may be missing or state-dir may
+    # not exist for an agent that never ran; either case maps to
+    # liveness_unknown rather than a hard error.)
     try:
-        from ...runtimes.claude_session import ClaudeSessionRuntime
+        from ..._lifecycle._runtime_select import _get_runtime
 
-        return ClaudeSessionRuntime().is_running(cfg)
+        return _get_runtime(cfg).is_running(cfg)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return None
 
@@ -417,156 +428,13 @@ def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
     return pairs
 
 
-def print_agent_list_json(
-    registry: Registry,
-    capability: str | None = None,
-    machine: str | None = None,
-) -> None:
-    """Print agent list as JSON."""
-    data = get_agent_list_data(registry, capability=capability, machine=machine)
-    click.echo(json_mod.dumps(data, indent=2))
+# Presentation layer lives in the sibling ``_agent_list_render`` module
+# (512-line cap split). Re-exported here so ``from ._agent_list import
+# print_agent_list`` and the ``_helpers/__init__`` lazy map keep resolving.
+from ._agent_list_render import (  # noqa: E402,F401
+    _extract_damaged_fields,
+    _is_ghost_row,
+    print_agent_list,
+    print_agent_list_json,
+)
 
-
-def _is_ghost_row(row: dict) -> bool:
-    """True for a dead registry entry: a LOCAL agent whose spec file is gone.
-
-    Operator 2026-06-17: ``sac agents list`` should show only active agents
-    by default. Stale ``instances`` rows (e.g. left by a pytest run whose
-    tmp spec dir was cleaned) surface as ``status="unknown"`` with a
-    ``"File not found"`` validation error — pure noise. They are hidden by
-    default and revealed with ``--all``.
-
-    Safety: only a LOCAL spec-missing row is a ghost. A REMOTE agent's spec
-    lives on its own host (a local "File not found" says nothing about it),
-    and a remote liveness-probe timeout also reports ``status="unknown"`` —
-    neither must be hidden, or the fleet view would erase live peers. An
-    on-disk spec that merely fails SCHEMA validation (``status="invalid"``)
-    also stays visible so the operator can see and fix it.
-    """
-    host = row.get("host") or "local"
-    if host not in ("local", ""):
-        return False
-    errors = row.get("validation_errors") or []
-    return any("File not found" in str(e) for e in errors)
-
-
-def print_agent_list(
-    registry: Registry,
-    capability: str | None = None,
-    machine: str | None = None,
-    *,
-    verbose: bool = False,
-    show_all: bool = False,
-) -> None:
-    """Print a rich table of all registered agents.
-
-    By default shows only active agents (dead spec-missing registry ghosts
-    are hidden — see :func:`_is_ghost_row`) and omits the full spec ``Path``
-    column (it folds every row to 10+ lines). ``show_all=True`` includes the
-    ghosts; ``verbose=True`` adds the ``Path`` column back.
-    """
-    data = get_agent_list_data(registry, capability=capability, machine=machine)
-    if not data:
-        console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
-        return
-
-    hidden = 0
-    if not show_all:
-        kept = [r for r in data if not _is_ghost_row(r)]
-        hidden = len(data) - len(kept)
-        data = kept
-    if not data:
-        console.print(
-            "[dim]No active agents (all hidden as stale; --all to show).[/dim]"
-        )
-        return
-
-    table = Table(title="Agents")
-    # ``no_wrap`` keeps the agent name (the primary identifier) intact:
-    # rich shrinks the fold-able Account/Path columns instead of
-    # ellipsising the name when the terminal is narrow.
-    table.add_column("Name", style="bold", no_wrap=True)
-    table.add_column("Status")
-    table.add_column("YAML")
-    table.add_column("Host")
-    # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
-    # the cell rather than stealing width from the name column.
-    # Account folds the long ``<name> (<email>)`` label to ~5 lines; show the
-    # short account name only by default (no_wrap), full label in --verbose.
-    if verbose:
-        table.add_column("Account", overflow="fold")
-    else:
-        table.add_column("Account", no_wrap=True, overflow="ellipsis")
-    # ``Path`` (full spec.yaml path) folds every row to 10+ lines, so it is
-    # verbose-only (operator 2026-06-17).
-    if verbose:
-        table.add_column("Path", overflow="fold")
-    table.add_column("Started")
-    cmap = {
-        "running": "green",
-        "stopped": "red",
-        "defined": "yellow",
-        "invalid": "bold red",
-        "unknown": "dim",
-    }
-    for row in data:
-        col = cmap.get(row["status"], "white")
-        host = row.get("host") or "local"
-        host_cell = host if host in ("local", "") else f"[cyan]{host}[/cyan]"
-        errors = row.get("validation_errors") or []
-        yaml_cell = (
-            f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
-            if errors
-            else "[green]✓[/green]"
-        )
-        started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
-        account_cell = row.get("account") or "—"
-        # Drop the ``(email)`` parenthetical in the default (compact) view so
-        # the row stays one line; --verbose keeps the full ``name (email)``.
-        if not verbose and " (" in account_cell:
-            account_cell = account_cell.split(" (", 1)[0]
-        cells = [
-            row["name"],
-            f"[{col}]{row['status']}[/{col}]",
-            yaml_cell,
-            host_cell,
-            account_cell,
-        ]
-        if verbose:
-            cells.append(row.get("path") or "—")
-        cells.append(started)
-        table.add_row(*cells)
-
-    console.print(table)
-    if hidden:
-        console.print(
-            f"[dim]({hidden} stale/ghost agent(s) hidden — --all to show, "
-            "-v for paths)[/dim]"
-        )
-    # Full error text follows the table so the operator can copy-paste.
-    for row in data:
-        if row.get("validation_errors"):
-            console.print(f"[bold red]✗ {row['name']}[/bold red] validation errors:")
-            for err in row["validation_errors"]:
-                console.print(f"    [red]- {err}[/red]")
-
-
-def _extract_damaged_fields(errors: list[str]) -> list[str]:
-    """Pull `spec.<field>` / top-level field names out of validator
-    error strings so the YAML column can show *which* keys are broken
-    without dumping the full error message into a narrow cell.
-    """
-    import re as _re
-
-    fields: list[str] = []
-    seen: set[str] = set()
-    pat = _re.compile(r"(spec\.[a-zA-Z_][a-zA-Z_0-9.]*|metadata\.[a-zA-Z_]+)")
-    for err in errors:
-        for m in pat.findall(err):
-            if m not in seen:
-                seen.add(m)
-                fields.append(m)
-    # Cap the column width.
-    if len(fields) > 4:
-        fields = fields[:3] + [f"+{len(fields) - 3} more"]
-    return fields

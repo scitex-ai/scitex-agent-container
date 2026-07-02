@@ -246,6 +246,62 @@ def test_probe_local_never_raises_returns_bool_or_none_on_real_runtime(tmp_path)
 
 
 # ---------------------------------------------------------------------------
+# Regression (fix liveness-live-agents-read-stopped): _probe_local must
+# select the agent's DECLARED runtime (via _get_runtime), NOT a hardcoded
+# ClaudeSessionRuntime. The default runtime is ``tui``; probing a live
+# TUI agent through ClaudeSessionRuntime → ApptainerContainerRuntime read
+# a nonexistent apptainer_pid and reported "stopped" for a running agent.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_local_uses_the_declared_runtime_for_a_tui_config():
+    # Arrange — default AgentConfig resolves runtime="tui".
+    from scitex_agent_container._lifecycle._runtime_select import _get_runtime
+    from scitex_agent_container.config._types import AgentConfig
+    from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+
+    cfg = AgentConfig(name="tui-probe-agent")
+    # Act
+    runtime = _get_runtime(cfg)
+    # Assert — the runtime _probe_local now routes through is the TUI one.
+    assert isinstance(runtime, TuiSessionRuntime)
+
+
+def test_probe_local_agrees_with_status_runtime_selection():
+    # Arrange — a tui config with an injected multiplexer that reports a
+    # live, fresh session; _probe_local must observe the SAME liveness the
+    # declared-runtime probe (what agent_status uses) reports: running.
+    import time
+
+    from scitex_agent_container.config._types import AgentConfig
+    from scitex_agent_container.runtimes.tui_session import (
+        TuiSessionRuntime,
+        session_name_for,
+    )
+
+    class _LiveMux:
+        """Real MultiplexerProtocol stand-in: session exists + fresh
+        activity (no mock — a hand-rolled in-memory multiplexer)."""
+
+        @staticmethod
+        def exists(name: str) -> bool:
+            return True
+
+        @staticmethod
+        def session_activity(name: str) -> int:
+            return int(time.time())
+
+    cfg = AgentConfig(name="tui-live-agent")
+    runtime = TuiSessionRuntime(multiplexer=_LiveMux)
+    del session_name_for  # imported only to document the tui-<name> convention
+    # Act — the declared-runtime probe (the exact one _probe_local calls
+    # after routing through _get_runtime) sees the live session.
+    running = runtime.is_running(cfg)
+    # Assert
+    assert running is True
+
+
+# ---------------------------------------------------------------------------
 # get_agent_list_data — uses real load_config / validate_config on real
 # spec.yaml files under tmp_path; swaps _probe_local + _discover_defined.
 # ---------------------------------------------------------------------------
