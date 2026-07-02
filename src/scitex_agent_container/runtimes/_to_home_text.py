@@ -20,6 +20,44 @@ from ._to_home_errors import WorkspaceCLAUDEMarkerError
 END_MARKER = "<!-- End of scitex-agent-container generated section -->"
 START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 
+# Per-agent IDENTITY vars that must NEVER be baked at deploy time.
+#
+# WHY (INCIDENT 2026-07-02, card
+# sac-mcp-json-per-agent-identity-not-ambient-env-...): ``interpolate_env``
+# runs host-side inside the ``sac agents start`` process, so it substitutes
+# ``${VAR}`` from the LAUNCHING SHELL's ``os.environ``. Running
+# ``sac agents start neurovista`` from the sac repo dir (whose ``.envrc``
+# exports ``CCT_AGENT_ID=scitex-agent-container`` + that bot's token) baked
+# ``CCT_AGENT_ID=scitex-agent-container`` and the wrong bot token into
+# neurovista's materialized ``.mcp.json`` — neurovista's telegrammer then
+# attached with the wrong identity.
+#
+# Per-agent identity must ALWAYS come from the agent's OWN runtime env (its
+# ``.envrc`` via direnv, working since the ``DIRENV_CONFIG`` fix), never from
+# whatever directory ``sac agents start`` was typed in. So we leave these
+# refs as literal ``${VAR}`` placeholders for RUNTIME expansion, and we keep
+# secrets (bot tokens) out of materialized files on disk. The ``CCT_`` prefix
+# rule below covers ``CCT_AGENT_ID`` / ``CCT_BOT_TOKEN`` /
+# ``CCT_ALLOWED_USERS`` / ``CCT_STATE_DIR`` and any future ``CCT_*`` var.
+_RUNTIME_ONLY_VARS = frozenset(
+    {
+        "SCITEX_TODO_AGENT",
+        "SCITEX_TODO_TASKS",
+        "SAC_NAME",
+        "CLAUDE_AGENT_ID",
+        "CLAUDE_AGENT_ROLE",
+    }
+)
+
+
+def _is_runtime_only_var(name: str) -> bool:
+    """True when ``name`` is per-agent identity → keep as ``${VAR}`` literal.
+
+    Any ``CCT_*`` var is runtime-only (identity + telegram secrets), plus the
+    explicit members of :data:`_RUNTIME_ONLY_VARS`.
+    """
+    return name.startswith("CCT_") or name in _RUNTIME_ONLY_VARS
+
 
 def validate_marker_invariants(text: str, source_name: str) -> None:
     """Hard-fail if Start/End markers are missing or malformed."""
@@ -90,12 +128,22 @@ def interpolate_env(text: str) -> str:
     """Substitute ``${VAR}`` with ``os.environ[VAR]``, leaving unknown
     refs untouched (so an unset env var becomes a visible artefact
     rather than silently collapsing to empty string).
+
+    Per-agent IDENTITY vars (see :data:`_RUNTIME_ONLY_VARS` and the
+    ``CCT_`` prefix rule) are NEVER substituted here — they stay as literal
+    ``${VAR}`` for RUNTIME expansion from the agent's own env, regardless of
+    whether they happen to be present in the deployer's ``os.environ``. This
+    is the fix for the 2026-07-02 wrong-identity incident (see the module
+    header on ``_RUNTIME_ONLY_VARS``).
     """
-    return re.sub(
-        r"\$\{(\w+)\}",
-        lambda m: os.environ.get(m.group(1), m.group(0)),
-        text,
-    )
+
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        if _is_runtime_only_var(name):
+            return m.group(0)  # keep ${VAR} literal for runtime expansion
+        return os.environ.get(name, m.group(0))
+
+    return re.sub(r"\$\{(\w+)\}", _replace, text)
 
 
 def interpolate_metadata(text: str, config: AgentConfig) -> str:
