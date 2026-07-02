@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config._types import AgentConfig
-from scitex_agent_container.runtimes._mcp_merge import McpMergeConflict
 from scitex_agent_container.runtimes._to_home import (
     END_MARKER,
     DanglingToHomeSymlinkError,
@@ -726,7 +725,7 @@ def test_mcp_json_two_pass_unions_baseline_and_agent_servers(tmp_path):
     assert set(merged["mcpServers"]) == {"sac", "todo", "figrecipe"}
 
 
-def test_mcp_json_conflicting_server_across_layers_fails_loud(tmp_path):
+def test_mcp_json_conflicting_server_across_layers_per_agent_wins(tmp_path):
     # Arrange — same server name, different command in baseline vs agent.
     spec_dir, per_agent, baseline = _build_layered(tmp_path)
     (baseline / ".mcp.json").write_text(
@@ -738,9 +737,10 @@ def test_mcp_json_conflicting_server_across_layers_fails_loud(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     # Act
+    materialize_to_home(spec_dir, home)
+    merged = json.loads((home / ".mcp.json").read_text())
     # Assert
-    with pytest.raises(McpMergeConflict):
-        materialize_to_home(spec_dir, home)
+    assert merged["mcpServers"]["sac"]["command"] == "B"
 
 
 def test_mcp_json_invalid_agent_json_fails_loud(tmp_path):

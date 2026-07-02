@@ -1,29 +1,24 @@
-"""Tests for the fail-loud `.mcp.json` deep-merge (W1 / operator 2026-06-17).
+"""Tests for the `.mcp.json` deep-merge with per-agent precedence.
 
 The shared baseline `_shared/to_home/.mcp.json` must DEEP-MERGE with each
 agent's own `.mcp.json` — union the `mcpServers` so every agent inherits the
 default servers (sac / scitex-todo / claude-code-telegrammer) AND keeps its
-own. Today the to_home deploy FULL-OVERWRITES `.mcp.json`, so a per-agent file
-would silently drop the baseline defaults — exactly the silent-fallback the
-operator forbids.
+own. A plain full-overwrite would silently drop the baseline defaults.
 
-Contract (fail-fast, fail-loud, no silent fallback):
+Contract (operator 2026-07-02 — per-agent precedence, warn-not-fatal):
   * disjoint server names  → union.
   * same name, IDENTICAL definition → kept once (idempotent).
-  * same name, DIFFERENT definition → raise `McpMergeConflict` (the operator
-    must resolve it explicitly; never silently pick a winner).
+  * same name, DIFFERENT definition → recursively DEEP-MERGE with the per-agent
+    (overlay) value winning on leaf conflicts; a genuine override is LOGGED at
+    WARNING (visible, not fatal).
 
-Conventions: one assert / AAA markers (a `pytest.raises` block IS the assert);
-no mocks — pure dict inputs.
+Conventions: one assert / AAA markers; no mocks — pure dict inputs (`caplog`
+is a real log capture, not a mock).
 """
 
 from __future__ import annotations
 
-import pytest
-from scitex_agent_container.runtimes._mcp_merge import (
-    McpMergeConflict,
-    merge_mcp_json,
-)
+from scitex_agent_container.runtimes._mcp_merge import merge_mcp_json
 
 
 def test_disjoint_servers_are_unioned():
@@ -47,14 +42,38 @@ def test_identical_same_name_server_is_kept_once():
     assert merged["mcpServers"]["sac"] == srv
 
 
-def test_conflicting_same_name_server_fails_loud():
-    # Arrange — same name, different command → must NOT silently pick one.
+def test_conflicting_same_name_server_per_agent_wins():
+    # Arrange — same name, different command → per-agent (overlay) wins.
     base = {"mcpServers": {"sac": {"command": "/opt/venv-sac/bin/sac"}}}
     overlay = {"mcpServers": {"sac": {"command": "/usr/bin/sac"}}}
     # Act
+    merged = merge_mcp_json(base, overlay)
     # Assert
-    with pytest.raises(McpMergeConflict):
+    assert merged["mcpServers"]["sac"]["command"] == "/usr/bin/sac"
+
+
+def test_same_name_server_env_deep_merges_per_agent_wins():
+    # Arrange — overlay overrides one env key; baseline's other env key survives.
+    base = {"mcpServers": {"cct": {"env": {"CCT_AGENT_ID": "sac", "KEEP": "yes"}}}}
+    overlay = {"mcpServers": {"cct": {"env": {"CCT_AGENT_ID": "neurovista"}}}}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert merged["mcpServers"]["cct"]["env"] == {
+        "CCT_AGENT_ID": "neurovista",
+        "KEEP": "yes",
+    }
+
+
+def test_conflicting_same_name_server_logs_warning(caplog):
+    # Arrange — a genuine override should be visible (WARNING), not silent.
+    base = {"mcpServers": {"sac": {"command": "/opt/venv-sac/bin/sac"}}}
+    overlay = {"mcpServers": {"sac": {"command": "/usr/bin/sac"}}}
+    # Act
+    with caplog.at_level("WARNING"):
         merge_mcp_json(base, overlay)
+    # Assert
+    assert "per-agent overrides shared baseline" in caplog.text
 
 
 def test_overlay_only_servers_survive_when_baseline_empty():
