@@ -249,3 +249,28 @@ def test_listen_env_flags_direnv_config_follows_an_env_token(
     idx = flags.index("DIRENV_CONFIG=/etc/direnv")
     # Assert
     assert flags[idx - 1] == "--env"
+
+
+def test_listen_env_flags_injects_uv_project_environment(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — every agent's uv must default to the container-only venv
+    # ``/uvwork/venv-agent`` so ad-hoc uv commands never create ``./.venv``
+    # in the shared ``~/proj/<agent>`` bind (INCIDENT 2026-07-02).
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert
+    assert "UV_PROJECT_ENVIRONMENT=/uvwork/venv-agent" in flags
+
+
+def test_listen_env_flags_uv_project_environment_follows_an_env_token(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    flags = listen_env_flags(no_bus_config)
+    # Act
+    idx = flags.index("UV_PROJECT_ENVIRONMENT=/uvwork/venv-agent")
+    # Assert
+    assert flags[idx - 1] == "--env"

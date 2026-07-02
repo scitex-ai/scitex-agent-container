@@ -96,6 +96,21 @@ def listen_env_flags(config) -> list[str]:
     # sac/other-package standalone boundary.
     flags += ["--env", "DIRENV_CONFIG=/etc/direnv"]
 
+    # UV DEFAULT VENV — force ``uv``'s project venv to the container-only
+    # boot-built path ``/uvwork/venv-agent`` so any ad-hoc ``uv run`` /
+    # ``uv pip install`` / ``uv sync`` an agent runs WITHOUT an explicit
+    # ``--python`` resolves there instead of defaulting to ``./.venv`` inside
+    # the shared ``~/proj/<agent>`` host<->container bind. A container-created
+    # ``./.venv`` uses the container python (``/opt/python3.12``) whose
+    # ``pyvenv.cfg home=`` then DANGLES on the host (no ``/opt/python3.12``
+    # host-side), breaking host ``uv``/``sac`` — INCIDENT 2026-07-02:
+    # ``~/proj/neurovista/.venv`` broke host tooling exactly this way. The
+    # shared ``~/proj/<agent>/.venv`` stays reserved for the host's own
+    # python. UNCONDITIONAL — every agent's uv must default to the
+    # container-only venv. Generic uv-tooling knob, not coupled to any
+    # scitex-* package.
+    flags += ["--env", "UV_PROJECT_ENVIRONMENT=/uvwork/venv-agent"]
+
     # PERSISTENT TESTMON CACHE — point testmon's data file at the
     # container-side bind destination (see
     # ``_p3a_default_binds._FLEET_DEFAULT_BINDS``: the host's
