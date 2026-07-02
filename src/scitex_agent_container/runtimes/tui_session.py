@@ -1,56 +1,24 @@
-"""``tui`` runtime adapter — June-15 SDK-pool-cutoff TUI pivot (hedge).
+"""``tui`` runtime adapter — SDK-pool-cutoff TUI pivot (hedge).
 
-Operator directive 12861 (lead a2a ``e39ab77a181340b6975b6ad7aea70329``):
-from June 15 the SDK / ``claude -p`` path becomes increasingly
-disadvantageous for subscription users (the Max-pool cutoff —
-``project_sdk_subscription_cutoff_tui_pivot``). The operator wants
-the fleet to gradually shift weight to TUI mode while keeping sac
-as the always-launcher (single SSoT = spec.yaml).
+``spec.runtime: tui`` selects this adapter (opt-in per agent; the default
+``claude-agent-sdk`` path is untouched). The bundled ``claude`` CLI runs
+interactively inside a detached tmux session that sac owns, INSIDE apptainer —
+same isolation/binds/overlay/auth/to_home delivery as ``ClaudeSessionRuntime``
+(assembled by :func:`_apptainer_build_argv.build_run_argv` with ``tui=True``).
+tmux is a PTY holder only (it never runs ``claude`` on the host); it lets the
+agent survive operator detach and gives the inner TUI a PTY.
 
-``spec.runtime: tui`` selects this adapter. The bundled ``claude`` CLI
-runs interactively inside a tmux session that sac owns; sac wires
-the agent's MCP, healthchecks the TUI's responsiveness, and restarts
-the inner process on crash — same lifecycle contract as
-``ClaudeSessionRuntime`` for ``runtime: claude-agent-sdk``.
+This module is a thin adapter — it owns the session-name convention and the
+``RuntimeBase`` surface, and delegates:
 
-Cherry-picked Day-1 substance from parked PR #353 (``feat/tmux-runner-day1-salvage``):
-the ``_runners/_tmux/`` modules (multiplexer / tmux / pane_capture /
-prompts / auto) are the primitives this runtime delegates to. The
-adapter is intentionally a thin shim — it owns the session-name
-convention and the ``RuntimeBase`` surface; the tmux mechanics
-themselves live in their salvaged home so screen / future-other
-multiplexer adapters can share them.
+  * tmux mechanics → ``_runners/_tmux/`` (multiplexer / tmux / pane_capture);
+  * $HOME materialisation → :mod:`_tui_workspace`;
+  * modal drain → :mod:`_tui_drain` (pure, injectable);
+  * compose-buffer clear / submit-verify → :mod:`_tui_compose` (pure);
+  * startup-prompt injection → :mod:`_tui_inject`.
 
-The four TUI-stability risks I named in the design A2A (lead a2a
-``c8edc13babb44852a8f547b1398e200b``):
-
-  1. **Session-detach survival** — HANDLED. ``TmuxManager.start``
-     spawns a detached tmux session (``new-session -d``); the agent
-     survives operator detach + terminal-emulator restart.
-  2. **Health-check signal** — DEFERRED to follow-up PR. ``is_running``
-     today only proves the tmux session exists, not that the inner
-     ``claude`` process is responsive. Follow-up wires a tui-alive
-     probe (pane-activity timestamp or a sidecar heartbeat file).
-  3. **Restart-on-crash semantics** — PARTIALLY HANDLED. The
-     RestartPolicy + this runtime's ``is_running`` lets the
-     supervisor detect a dead tmux session; INNER-process death
-     while the tmux session is still alive is the deferred half
-     (paired with risk 2).
-  4. **Memory pressure under long-running TUI** — DEFERRED. Requires
-     ``spec.context_management: auto-compact`` parity inside the TUI
-     runner; tracked in a follow-up so this hedge ships before the
-     2026-06-15 cutoff.
-
-The hedge is INTENTIONALLY behind ``spec.runtime: tui`` (operator
-opt-in per agent); the default ``"claude-agent-sdk"`` path is
-untouched. No live cutover is implied — operator decides when to
-flip a specific agent.
-
-Cross-thread context: the hub Workspace-Console SIF rebuild (task
-#11, hub card ``sif-claude-sdk-bundle``) ships the SDK-bundled
-``claude`` CLI as ``/usr/local/bin/claude`` in the apptainer image
-— the SAME binary this runner exec's. Lands in parallel; the TUI
-runner picks up whatever ``claude`` version the rebuilt SIF provides.
+``is_running`` is a responsiveness probe (tmux ``session_activity`` freshness),
+so the supervisor's RestartPolicy catches an inner-hang, not just a dead session.
 """
 
 from __future__ import annotations
@@ -65,21 +33,21 @@ from .._runners._tmux.tmux import (
     TuiInputNotReadyError,
 )
 from ..config import AgentConfig
-from . import prompts as _prompts
 from ._apptainer_build_argv import build_run_argv
 from ._tui_compose import (
     _compose_pending_live,
-    _pane_tail,
     clear_compose_buffer,
     verify_submit_by_advancement,
 )
-from ._to_home import deploy_to_home
-from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
+from ._tui_drain import (
+    drain_modals_until_ready,
+    wait_until_input_ready as _wait_until_input_ready,
+)
 from ._tui_auth_stage import TuiAuthStageError
+from ._tui_bridge_seam import TurnBridgeSeamMixin
+from ._tui_inject import StartupPromptInjectorMixin
+from ._tui_workspace import materialize_workspace as _materialize_workspace
 from .base import RuntimeBase
-from .claude_md import setup_claude_md
-from .onboarding import ensure_project_onboarding
-from .settings_json import ensure_global_settings_json, setup_settings_json
 
 __all__ = [
     "TuiAuthStageError",
@@ -87,15 +55,15 @@ __all__ = [
     "TuiSessionRuntime",
     "_compose_pending_live",
     "clear_compose_buffer",
+    "drain_modals_until_ready",
     "session_name_for",
+    "start_succeeded",
     "state_dir_for_config",
     "verify_submit_by_advancement",
 ]
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
-
-_REQUIRED_CONFIG_ATTRS = ("expanded_workdir", "skills", "claude", "env", "labels")
 
 # Default max-idle window for the tui-alive probe (see
 # ``TuiSessionRuntime.is_running``). 300s mirrors the SDK runtime's
@@ -115,28 +83,55 @@ _DEFAULT_MAX_IDLE_S = 300.0
 _STARTUP_BOOT_DRAIN_S = 240.0
 
 
+def start_succeeded(
+    *,
+    session_alive: bool,
+    reached_ready: bool | None,
+    is_running: bool,
+) -> bool:
+    """Pure decision: did the TUI start actually succeed? (BUG 3 — no false success.)
+
+    ``tmux new-session`` succeeding is NOT success — the inner claude can die
+    mid-boot (e.g. an Escape cancelled the dev-channels modal) or hang before
+    binding its input. This function encodes the fail-loud contract so it is
+    unit-testable without a live TUI:
+
+      * ``session_alive`` False → FAILURE. A dead tmux session can never be a
+        running agent, whatever the drain thought.
+      * ``session_alive`` True and ``reached_ready`` True → SUCCESS. The
+        boot-drain observed the input-ready / ``bypass permissions`` marker.
+      * ``session_alive`` True and ``reached_ready`` False → FAILURE. The drain
+        RAN and did NOT reach ready within its window (the modal never cleared /
+        claude never bound input) — loud failure, not a claimed success.
+      * ``session_alive`` True and ``reached_ready`` None (drain disabled this
+        boot) → defer to ``is_running`` (the liveness probe): alive+responsive
+        counts as success, otherwise failure.
+    """
+    if not session_alive:
+        return False
+    if reached_ready is True:
+        return True
+    if reached_ready is False:
+        return False
+    return is_running
+
+
 def session_name_for(config: AgentConfig) -> str:
     """Return the tmux session name owned by sac for this agent.
 
-    ``tui-<agent-name>`` namespace-prefixes the session so it cannot
-    collide with operator-owned tmux sessions on the same host;
-    ``TmuxManager.exists`` keys off the same string so the runtime
-    can probe its own session deterministically across processes.
+    ``tui-<agent-name>`` namespace-prefixes the session so it cannot collide
+    with operator-owned tmux sessions; ``TmuxManager.exists`` keys off the same
+    string so the runtime probes its own session deterministically.
     """
     return f"tui-{config.name}"
 
 
 def state_dir_for_config(config: AgentConfig) -> Path:
-    """Per-agent state dir on the host: project-local if the agent's
-    spec lives under a project-scope ``.scitex/agent-container/`` tree
-    (a git repo with that subdir), else
-    ``~/.scitex/agent-container/runtime/<name>/``.
-
-    Mirrors ``ClaudeSessionRuntime._state_dir`` so the TUI runtime
-    lands per-agent files in the same place the SDK runtime would —
-    the operator's ``sac agents status`` / ``sac agents prune-claude``
-    / external tooling can address ``<state>/`` uniformly regardless
-    of which runtime is selected.
+    """Per-agent state dir on the host: project-local if the agent's spec lives
+    under a project-scope ``.scitex/agent-container/`` tree, else
+    ``~/.scitex/agent-container/runtime/<name>/``. Mirrors
+    ``ClaudeSessionRuntime._state_dir`` so both runtimes land per-agent files in
+    the same place.
     """
     from .._runners import claude_session as _runner
 
@@ -156,17 +151,12 @@ def state_dir_for_config(config: AgentConfig) -> Path:
     return _runner.state_dir_for(config.name, root=root)
 
 
-class TuiSessionRuntime(RuntimeBase):
-    """Interactive tmux-backed Claude TUI runtime.
+class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, RuntimeBase):
+    """Interactive tmux-backed Claude TUI runtime (``spec.runtime: tui``).
 
-    Selected by ``spec.runtime: tui``. Delegates all multiplexer
-    mechanics to ``TmuxManager`` (salvaged module — see the
-    cherry-pick note in the module docstring); the adapter owns
-    only the session-name convention and the ``RuntimeBase`` surface.
-
-    Tests inject an alternative ``multiplexer`` (any class satisfying
-    ``MultiplexerProtocol``) so the suite runs without requiring tmux
-    in the CI container.
+    Delegates multiplexer mechanics to ``TmuxManager``; owns the session-name
+    convention + the ``RuntimeBase`` surface. Tests inject an alternative
+    ``multiplexer`` (any ``MultiplexerProtocol``) so the suite runs without tmux.
     """
 
     def __init__(
@@ -177,37 +167,22 @@ class TuiSessionRuntime(RuntimeBase):
         turn_bridge_start: Any | None = None,
         turn_bridge_stop: Any | None = None,
     ) -> None:
-        # Default to the real TmuxManager; tests pass an in-memory
-        # MultiplexerProtocol fake. No mocks — the fake is a real
-        # implementation of the same Protocol the real TmuxManager
-        # satisfies, just backed by a dict instead of subprocess.
+        # Injection seams (tests pass in-memory fakes — real Protocol impls,
+        # no mocks): ``multiplexer`` (MultiplexerProtocol; default TmuxManager),
+        # ``command_builder`` ((config) -> apptainer-exec argv | None; default
+        # :meth:`_default_argv`), and the A2A ``turn_bridge_start/stop`` seams
+        # (None → resolve the real launcher lazily to avoid an import cycle).
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
-        # Injection seam (mirrors ``multiplexer`` + ClaudeSessionRuntime's
-        # ``container_runtime_for``): ``(config) -> list[str] | None`` —
-        # the ``apptainer exec ... claude`` argv to launch in tmux, or
-        # ``None`` when no SIF could be resolved. Tests inject a fake that
-        # returns a deterministic argv so the tmux-dispatch glue runs
-        # without a real apptainer/SIF. Default = :meth:`_default_argv`.
         self._command_builder = command_builder or self._default_argv
-        # Injection seams for the A2A turn bridge — ``(config) -> Any``.
-        # The bridge gives a TUI agent the same ``/v1/turn`` endpoint the
-        # SDK runner serves, so a bus-pushed message WAKES the idle TUI
-        # (see :mod:`_tui_turn_bridge`). ``None`` → resolve the real
-        # launcher lazily at call time (avoids an import cycle:
-        # ``_tui_turn_bridge`` imports this module). Tests inject recording
-        # fakes so start()/stop() never spawn a real subprocess.
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
 
     def _default_argv(self, config: AgentConfig) -> list[str] | None:
-        """Resolve the SIF and render the ``apptainer exec ... claude``
-        argv (``tui=True``) — the production launch command.
-
-        Returns ``None`` when no SIF resolves (e.g. apptainer absent);
-        :meth:`start` turns that into a fail-loud error on a real run.
-        Reuses ``ApptainerContainerRuntime`` so SIF resolution / build /
-        the missing-apptainer diagnostic stay identical to the SDK path.
+        """Resolve the SIF and render the ``apptainer exec ... claude`` argv
+        (``tui=True``) — the production launch command. Returns ``None`` when no
+        SIF resolves (:meth:`start` turns that into a fail-loud error). Reuses
+        ``ApptainerContainerRuntime`` so SIF resolution stays SDK-identical.
         """
         from ._apptainer_runtime import ApptainerContainerRuntime
 
@@ -219,111 +194,17 @@ class TuiSessionRuntime(RuntimeBase):
         return build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
-        """Materialise per-agent ``to_home/`` + CLAUDE.md into the
-        container ``$HOME`` and return the host-side ``<state>/home/`` path.
+        """Materialise per-agent ``to_home/`` + CLAUDE.md into the container
+        ``$HOME`` and return the host-side ``<state>/home/`` path.
 
-        Mirrors ``ClaudeSessionRuntime._setup_workspace`` EXACTLY so the
-        in-apptainer TUI gets the same $HOME surface as the SDK path:
-
-          * ``setup_claude_md`` writes the sac-managed CLAUDE.md skill
-            chain into ``<state>/home/CLAUDE.md``.
-          * ``deploy_to_home`` overlays the shared ``_shared/to_home``
-            baseline + per-agent ``to_home/`` (.mcp.json, .env,
-            .claude/{hooks,skills,settings.json}) into ``<state>/home/``
-            (the host dir bound at ``/home/agent``). The baseline ships its
-            hook suite as ``.claude/settings.json`` so the TUI reads it at
-            USER scope (a legacy ``settings.local.json`` is folded forward by
-            ``setup_settings_json`` below).
-          * ``setup_settings_json`` then deep-merges sac's managed keys
-            into ``$HOME/.claude/settings.json`` (``filename="settings.json"``):
-            ``skipDangerousModePermissionPrompt`` (so the TUI never blocks on
-            "Do you want to proceed?") + the SAC channel/event-ring hooks +
-            statusLine — PRESERVING the ``_shared`` baseline's honest-grounding
-            Stop gate / lint PostToolUse the deploy just landed. The interactive
-            TUI reads hooks from ``$HOME/.claude/settings.json`` at USER scope;
-            it does NOT read a ``$HOME/.claude/settings.local.json`` (no such
-            scope exists — ``.local.json`` is PROJECT-scope only), so the file
-            MUST be ``settings.json`` or the whole hook suite is INERT
-            (paper-scitex-clew 2026-06-20: a TUI agent polluted ``/work`` root
-            despite ``inhibit_project_root_pollution`` and a Stop hook never
-            fired — the baseline shipped under ``settings.local.json`` at
-            ``$HOME``, which the TUI never read). This MUST run after
-            ``deploy_to_home`` so the baseline gate is present for the
-            deep-merge; ``setup_settings_json`` also folds a legacy
-            ``settings.local.json`` sibling into ``settings.json`` so a baseline
-            deployed under the old name is not lost. Parity with the SDK runner,
-            which resolves the same ``$HOME`` file via
-            ``_sdk_common._container_settings_path`` (``settings.json``-first).
-            ``build_run_argv(tui=True)`` additionally passes ``--settings``
-            pointing at the same file (belt-and-suspenders; the flag is a no-op
-            for the interactive TUI but harmless — see
-            ``_apptainer_inner_argv._tui_runner_argv``).
-          * ``deploy_to_home_overlay`` mirrors the SAME tree into the
-            overlay upper-home for relaxed ``--home``/``--overlay`` specs
-            (where the workspace-home bind is shadowed). No-op otherwise.
-            ``setup_settings_json`` runs against the overlay upper-home too so
-            the merged settings reach the container ``$HOME`` under either
-            home-delivery mode.
-
-        Credentials are NOT staged here: the in-apptainer TUI receives
-        them via the writable file-bind ``spec.claude.credentials_file``
-        (or the account/host dir-bind) emitted in ``build_run_argv`` —
-        single source of truth, no copy to desync.
-
-        ``ensure_project_onboarding`` pre-seeds the per-workspace entry
-        in ``$HOME/.claude.json`` so the TUI skips the workspace-trust
-        wizard; it is written into BOTH the workspace-home and (when
-        present) the overlay upper-home so it lands regardless of which
-        home-delivery mode the spec uses.
-
-        Returns ``None`` for stub configs lacking the full AgentConfig
-        surface (unit-test ``SimpleNamespace`` fixtures); the caller
-        treats that as "skip materialise".
+        Thin delegator to :func:`_tui_workspace.materialize_workspace` (extracted
+        to keep this module under the line limit). See that function's docstring
+        for the per-step rationale (SDK-parity $HOME surface, settings.json USER
+        scope, overlay upper-home, onboarding pre-seed).
         """
-        if not all(hasattr(config, a) for a in _REQUIRED_CONFIG_ATTRS):
-            return None
-        home_dir = state_dir_for_config(config) / "home"
-        home_dir.mkdir(parents=True, exist_ok=True)
-        setup_claude_md(config, str(home_dir))
-        deploy_to_home(config, str(home_dir))
-        # Deep-merge sac's managed settings into the just-deployed
-        # ``$HOME/.claude/settings.json`` (skip-permissions + SAC channel hooks
-        # + statusLine), PRESERVING the ``_shared`` baseline's honest-grounding
-        # Stop gate / lint PostToolUse. ``filename="settings.json"`` is REQUIRED:
-        # the interactive TUI reads hooks from ``$HOME/.claude/settings.json`` at
-        # USER scope and never from a ``$HOME/.claude/settings.local.json`` (no
-        # such scope), so writing the old name leaves the hook suite INERT.
-        # MUST follow deploy_to_home (so the baseline gate exists to merge
-        # against); setup_settings_json also folds a legacy settings.local.json
-        # sibling forward so a baseline deployed under the old name survives.
-        # Without this the TUI hit live permission prompts AND reached DONE with
-        # an empty clew DAG (the gate never fired). ``ensure_global_settings_json``
-        # seeds ~/.claude/settings.json so the host has a valid user-scope file
-        # too.
-        ensure_global_settings_json()
-        setup_settings_json(config, str(home_dir), filename="settings.json")
-        # Relaxed ``--home``/directory-overlay specs shadow the
-        # workspace-home bind; mirror the same to_home tree into the
-        # overlay upper-home so it reaches the container $HOME. No-op for
-        # non-overlay specs (the workspace-home bind suffices).
-        deploy_to_home_overlay(config)
-        workdir = (
-            getattr(config, "expanded_workdir", "")
-            or getattr(config, "workdir", "")
-            or "/tmp"
+        return _materialize_workspace(
+            config, state_dir_for_config=state_dir_for_config
         )
-        ensure_project_onboarding(workdir, home=home_dir)
-        upper_home = resolve_overlay_upper_home(config)
-        if upper_home is not None and upper_home.is_dir():
-            ensure_project_onboarding(workdir, home=upper_home)
-            # The overlay upper-home is a SEPARATE copy of the to_home tree
-            # (deploy_to_home_overlay re-ran deploy_to_home into it), so its
-            # baseline settings carry only the baseline gate — merge the managed
-            # keys there too (again into USER-scope ``settings.json``), else
-            # relaxed-overlay TUI agents lose skip-permissions + the SAC hooks at
-            # the path the TUI reads.
-            setup_settings_json(config, str(upper_home), filename="settings.json")
-        return home_dir
 
     def start(
         self,
@@ -337,38 +218,26 @@ class TuiSessionRuntime(RuntimeBase):
         inject_startup_prompts: bool = True,
         boot_drain_timeout_s: float = 30.0,
     ) -> bool:
-        """Launch the interactive ``claude`` TUI **inside apptainer**,
-        held open by a detached tmux session sac owns.
+        """Launch the interactive ``claude`` TUI **inside apptainer**, held open
+        by a detached tmux session sac owns.
 
-        Parity with ``ClaudeSessionRuntime`` (the SDK runtime): the
-        agent runs in the SIF with the SAME isolation, binds, overlay,
-        auth, and to_home delivery — assembled by
-        :func:`_apptainer_build_argv.build_run_argv` with ``tui=True``.
-        The only differences from the SDK path are (1) the inner process
-        is the interactive ``claude`` TUI instead of the ``python -m``
-        session runner, and (2) tmux wraps the ``apptainer exec`` so the
-        TUI gets a PTY and survives operator detach. tmux is a PTY
-        holder only — it never runs ``claude`` on the host.
+        Parity with ``ClaudeSessionRuntime``: same SIF isolation / binds /
+        overlay / auth / to_home — assembled by ``build_run_argv(tui=True)``.
+        tmux wraps ``apptainer exec`` only to give the TUI a PTY and survive
+        detach; it never runs ``claude`` on the host. ``force=True`` stops an
+        existing session first; ``dry_run=True`` materialises the workspace +
+        writes the argv to ``<state>/apptainer_run.argv.txt`` but skips
+        ``tmux new-session``. ``foreground`` / ``no_preflight`` / ``one_shot``
+        are accepted for RuntimeBase parity (no-ops for a detached session).
 
-        ``force=True`` stops any existing session before starting
-        (idempotent-restart contract). ``dry_run=True`` materialises the
-        workspace + writes the rendered argv to
-        ``<state>/apptainer_run.argv.txt`` but skips ``tmux new-session``.
-        ``foreground`` / ``no_preflight`` / ``one_shot`` are accepted for
-        RuntimeBase parity; a detached-by-design tmux session has no
-        foreground mode, and one-shot termination is governed by
-        ``spec.autonomous.drive_until`` + the harness submission gate, not
-        a runtime flag (mirrors ``ClaudeSessionRuntime.start``).
+        Returns ``True`` only when the session is alive AND the boot-drain
+        reached ready (BUG 3 — no false success); otherwise logs LOUD and
+        returns ``False`` so ``agent_start`` surfaces the real boot failure.
         """
         del no_preflight, foreground, one_shot
         name = session_name_for(config)
-        # Duplicate-session guard: starting an agent whose tmux session already
-        # exists used to fall through to ``tmux new-session`` (which errors
-        # "duplicate session: <name>" in plain text) and then paste the boot
-        # prompt into the ALREADY-running pane (the Ink-drops-Enter mess). Detect
-        # it up front, say so LOUDLY (red), and — outside --force/--dry-run —
-        # no-op idempotently instead of relaunching over a live session. Shown in
-        # --dry-run too (emitted before the dry-run branch below).
+        # Duplicate-session guard: no-op idempotently (outside --force/--dry-run)
+        # instead of relaunching over a live session, and say so LOUDLY.
         if self._mux.exists(name) and not force:
             from ..cli_pkg._helpers._console import system_msg
 
@@ -411,28 +280,17 @@ class TuiSessionRuntime(RuntimeBase):
             (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
             return True
 
-        # tmux runs ``exec <command>`` in a bash -c; pass the apptainer
-        # argv shell-quoted so the PTY wraps ``apptainer exec ... claude``.
-        # No HOME/CLAUDE_CONFIG_DIR session env: the container sets its
-        # own $HOME (=/home/agent) and the host-side tmux shell's env is
-        # irrelevant to the in-SIF process. The host workdir is only the
-        # tmux launch cwd — the agent's real cwd is ``--pwd`` inside the SIF.
+        # The host workdir is only the tmux launch cwd — the agent's real cwd is
+        # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).
         workdir = (
             getattr(config, "expanded_workdir", "")
             or getattr(config, "workdir", "")
             or "/tmp"
         )
-        # B->A feedback (fail-fast / fail-loud / no silent fallback): the inner
-        # ``apptainer exec … claude`` renders its TUI to the tmux PANE (stdout),
-        # but its STDERR — where apptainer's FATAL mount errors and an immediate
-        # claude exit land — would otherwise die with the pane, leaving the
-        # launcher only a cause-less "<empty>" pane tail. Redirect that stderr
-        # to a DURABLE per-agent log from t=0 (no pipe-pane race) so
-        # ``agent_start`` (``_read_boot_stderr_section``) surfaces the real boot
-        # failure. ``2>`` truncates per start. No mkdir here: deploy_to_home
-        # already created ``<state>/home`` (so ``<state>/`` exists), and keeping
-        # this seam free of real-FS writes lets the unit suite record the
-        # command via a fake mux without polluting ``~/.scitex``.
+        # Redirect the inner ``apptainer exec … claude`` STDERR (apptainer FATAL
+        # mount errors / an immediate claude exit) to a DURABLE per-agent log so
+        # ``agent_start`` surfaces the real boot failure instead of a cause-less
+        # ``<empty>`` pane tail. ``2>`` truncates per start.
         boot_stderr_log = state_dir_for_config(config) / "boot.stderr.log"
         command = " ".join(shlex.quote(a) for a in argv) + (
             f" 2> {shlex.quote(str(boot_stderr_log))}"
@@ -445,223 +303,74 @@ class TuiSessionRuntime(RuntimeBase):
                 session_env={"CLAUDE_DISABLE_AUTO_UPDATE": "1"},
             )
         )
+        # BUG 3 (false success): whether the boot-drain observed a ready
+        # signal. Only meaningful when the drain ran; ``None`` means "not
+        # verified this boot" (drain disabled) → we fall back to a liveness
+        # check at the end rather than blindly claiming success.
+        reached_ready: bool | None = None
         if started and drain_pickers_at_boot:
-            # URGENT (lead a2a 278159b5, 2026-06-14): drain the
-            # picker registry AT BOOT so the supervisor + downstream
-            # send paths land on a TUI already at the input field.
-            # Wiring drain into send_turn alone was lazy — the
-            # supervisor never calls send_turn during boot, so the
-            # picker sat up and every `sac agents send` then timed
-            # out. Failure here MUST NOT fail the start (supervisor
-            # restart loop would oscillate); log + let the send_turn
-            # retry on its own hook.
-            #
-            # Adaptive window (2026-06-15): when ``startup_commands``
-            # delay ``exec claude`` (e.g. an in-container uv install of
-            # minutes), a fixed 30s drain expires BEFORE claude renders
-            # its first modal — the bypass-permissions / trust picker
-            # then sits forever because nothing re-drains it at boot.
-            # Stretch the window to cover the bootstrap; the drain
-            # returns as soon as claude is up (it does NOT block the
-            # full window — see ``_drain_at_boot``).
+            # Drain the picker registry AT BOOT so the supervisor + downstream
+            # send paths land on a TUI already at the input field (the
+            # supervisor never calls send_turn during boot). Adaptive window:
+            # ``startup_commands`` can delay ``exec claude`` by minutes, so
+            # stretch the drain to cover the bootstrap (it returns as soon as
+            # claude is up — see ``_drain_at_boot``).
             effective_timeout = boot_drain_timeout_s
             if list(getattr(config, "startup_commands", []) or []):
                 effective_timeout = max(boot_drain_timeout_s, _STARTUP_BOOT_DRAIN_S)
-            self._drain_at_boot(config, timeout_s=effective_timeout)
+            reached_ready = self._drain_at_boot(config, timeout_s=effective_timeout)
         if started and inject_startup_prompts:
-            # Boot-mission injection (lead a2a 4973264a, 2026-06-14):
-            # parity with SDK runtime — feed spec.startup_prompts to
-            # claude as the first turn(s) on start. Without this a
-            # flipped TUI agent sits at an empty ❯ — operator-facing
-            # regression. Best-effort: failure logs + continues.
+            # Boot-mission injection — parity with the SDK runtime: feed
+            # spec.startup_prompts as the first turn(s). Best-effort.
             self._inject_startup_prompts(config)
         if started:
-            # A2A wake-on-push parity: give the interactive TUI the same
-            # ``/v1/turn`` endpoint the SDK runner serves so a bus-pushed
-            # message (the ``sac mcp channel`` subscriber's wake POST)
-            # DRIVES a turn in the idle TUI instead of timing out on a dead
-            # port. Best-effort — a failed bridge must not fail the start.
+            # A2A wake-on-push parity: give the TUI the same ``/v1/turn``
+            # endpoint the SDK runner serves. Best-effort — a failed bridge
+            # must not fail the start.
             self._maybe_start_turn_bridge(config)
+        # BUG 3 (false success — constitution §2 "no surprises / fail loud"):
+        # up to here ``started`` only proves ``tmux new-session`` succeeded, NOT
+        # that the inner claude survived boot and reached its input-ready state.
+        # A continue-mode agent whose session DIED (e.g. an Escape cancelled the
+        # dev-channels modal) still had ``started=True`` — so agent_start printed
+        # "restarted" over a corpse. Now verify: session alive AND (drain saw
+        # ready, or — when the drain was disabled — a liveness probe agrees). On
+        # failure return False so ``agent_start`` raises its LOUD diagnostic
+        # (pane tail + boot.stderr + `tmux attach` hint) and no success line is
+        # printed.
+        if started and not dry_run:
+            alive = self._mux.exists(name)
+            ok = start_succeeded(
+                session_alive=alive,
+                reached_ready=reached_ready,
+                is_running=self.is_running(config) if alive else False,
+            )
+            if not ok:
+                import logging
+
+                logging.getLogger(__name__).error(
+                    "TuiSessionRuntime: start FAILED for %s — tmux session "
+                    "%s (session_alive=%s, reached_ready=%s). The inner claude "
+                    "did not survive boot and reach its input field. Reproduce "
+                    "live: `tmux attach -t %s`. (See the boot-drain errors above "
+                    "and <state>/boot.stderr.log for the cause.)",
+                    getattr(config, "name", "?"),
+                    "is GONE" if not alive else "is alive but never signalled ready",
+                    alive,
+                    reached_ready,
+                    name,
+                )
+                return False
         return started
-
-    def _maybe_start_turn_bridge(self, config: AgentConfig) -> None:
-        """Start the A2A turn bridge (best-effort; lazy default seam).
-
-        Resolves the real launcher lazily to avoid the import cycle
-        (:mod:`_tui_turn_bridge` imports this module). Tests inject a
-        recording ``turn_bridge_start`` so no subprocess is spawned. A
-        no-op for agents without a resolved ``a2a.port`` (the launcher
-        itself returns None — see :func:`_tui_turn_bridge.start_turn_bridge`).
-        """
-        import logging
-
-        fn = self._turn_bridge_start
-        if fn is None:
-            from ._tui_turn_bridge import start_turn_bridge
-
-            fn = start_turn_bridge
-        try:
-            fn(config)
-        except Exception as exc:  # stx-allow: fallback (reason: a bridge spawn failure must never wedge agent start — the agent still runs, only wake-on-push is degraded; logged for the operator)
-            logging.getLogger(__name__).warning(
-                "TuiSessionRuntime: A2A turn bridge failed to start for %s: %s",
-                getattr(config, "name", "?"),
-                exc,
-            )
-
-    def _maybe_stop_turn_bridge(self, config: AgentConfig) -> None:
-        """Stop the A2A turn bridge (best-effort; lazy default seam)."""
-        import logging
-
-        fn = self._turn_bridge_stop
-        if fn is None:
-            from ._tui_turn_bridge import stop_turn_bridge
-
-            fn = stop_turn_bridge
-        try:
-            fn(config)
-        except Exception as exc:  # stx-allow: fallback (reason: bridge teardown is best-effort; a failure must not block stop())
-            logging.getLogger(__name__).warning(
-                "TuiSessionRuntime: A2A turn bridge failed to stop for %s: %s",
-                getattr(config, "name", "?"),
-                exc,
-            )
-
-    def _inject_startup_prompts(self, config: AgentConfig) -> None:
-        """Feed spec.startup_prompts as the first user turn(s).
-
-        Each prompt = separate turn via ``send_text_and_submit``, gated
-        on ``wait_until_input_ready`` BEFORE the send and followed by a
-        defensive trailing ``Enter`` keystroke. Empty list → no-op.
-        Per-prompt failure logged and skipped; total failure does NOT
-        raise so the supervisor restart cycle never oscillates.
-
-        P0 fix (2026-06-15, operator-reported): figrecipe + todo +
-        neurovista all booted but stalled because the prompt was pasted
-        into the input field without an Enter actually submitting it.
-        ``send_text_and_submit`` does issue Enter, but during the
-        post-boot Ink-mount window claude can eat that Enter while
-        still binding the input. The fix:
-
-          1. Gate on ``wait_until_input_ready`` (the same gate
-             ``send_turn`` uses) so the keystrokes never land on a
-             not-yet-bound input.
-          2. Append an explicit defensive ``Enter`` via
-             ``send_keys(name, "Enter")`` — operator-recovered each
-             stuck agent by attaching tmux and pressing this. Baking
-             it in removes the manual rescue.
-
-        Stale-compose fix (2026-06-26, card sac-tui-clear-compose-buffer-on-boot):
-        a persistent tmux pane carries EXTERNAL pasted-but-unsent text (e.g. a
-        burst of stale ``/compact`` slash-commands the operator typed while the
-        pane was busy) ACROSS an agent restart. If we paste + submit the
-        startup prompt with that stack still in the compose box, the boot Enter
-        submits the WHOLE stale stack too (observed: 9× ``/compact`` + a stray
-        ``2``). So BEFORE the per-prompt loop we
-        :meth:`_clear_compose_buffer` — a no-op when the box is already empty
-        (the common case), an empirically-verified double-``Escape`` clear when
-        it is not.
-        """
-        import logging
-
-        log = logging.getLogger(__name__)
-        prompts = list(getattr(config, "startup_prompts", []) or [])
-        if not prompts:
-            return
-        name = session_name_for(config)
-        # Drop any stale "compose-pending-unsent" text the persistent pane
-        # carried across the restart, BEFORE the first paste/submit, so the
-        # boot Enter never submits an external stale stack. Fail-loud, never
-        # fatal: a failed clear logs LOUD and boot still proceeds (the
-        # downstream _verify_submitted is the second net).
-        self._clear_compose_buffer(name)
-        for index, prompt in enumerate(prompts, start=1):
-            if not prompt:
-                continue
-            try:
-                self.wait_until_input_ready(config)
-                self._mux.send_text_and_submit(name, prompt)
-                self._mux.send_keys(name, "Enter")
-                self._verify_submitted(name)
-                log.info(
-                    "TuiSessionRuntime: injected startup_prompt %d/%d "
-                    "(%d chars) into %s (with defensive Enter)",
-                    index,
-                    len(prompts),
-                    len(prompt),
-                    name,
-                )
-            except Exception as exc:  # stx-allow: fallback (per-prompt best-effort)
-                log.warning(
-                    "TuiSessionRuntime: startup_prompt %d/%d failed for %s: %s",
-                    index,
-                    len(prompts),
-                    name,
-                    exc,
-                )
-
-    def _clear_compose_buffer(
-        self,
-        name: str,
-        *,
-        max_attempts: int = 5,
-        poll_s: float = 0.4,
-    ) -> bool:
-        """Clear stale compose-pending text before the boot submit.
-
-        Thin wrapper that wires the real tmux callables into the pure,
-        unit-testable :func:`clear_compose_buffer` (mirrors how
-        :meth:`_verify_submitted` wraps :func:`verify_submit_by_advancement`).
-        See that function's docstring for the no-op-when-empty / double-Escape
-        algorithm (the fix for /compact-burst-on-restart,
-        sac-tui-clear-compose-buffer-on-boot).
-        """
-        return clear_compose_buffer(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            max_attempts=max_attempts,
-            poll_s=poll_s,
-        )
-
-    def _verify_submitted(
-        self,
-        name: str,
-        *,
-        max_resends: int = 8,
-        poll_s: float = 0.6,
-        appear_timeout_s: float = 5.0,
-        idle_wait_s: float = 30.0,
-    ) -> bool:
-        """Verify a just-pasted turn was SUBMITTED; resend Enter once idle.
-
-        Thin wrapper that wires the real tmux callables into the pure,
-        unit-testable :func:`verify_submit_by_advancement` loop. See that
-        function's docstring for the wait-for-idle + verify-by-advancement
-        algorithm (the fix for the boot Enter-drop: the OLD loop fired all
-        ``max_resends`` Enters back-to-back INSIDE the busy/initializing
-        window, where the Ink TUI drops every one — sac-tui-enter-drop-on-boot).
-        """
-        return verify_submit_by_advancement(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            max_resends=max_resends,
-            poll_s=poll_s,
-            appear_timeout_s=appear_timeout_s,
-            idle_wait_s=idle_wait_s,
-        )
 
     def stop(self, config: AgentConfig) -> bool:
         """Kill the tmux session sac owns for this agent.
 
-        Returns True iff a session existed AND has been terminated.
-        A no-op-on-absent-session contract (matches the existing
-        ``TmuxManager.stop`` semantics so the supervisor's
-        ``stop()->start()`` cycle remains idempotent).
+        Returns True iff a session existed AND was terminated (no-op on absent
+        session, so the supervisor's ``stop()->start()`` cycle stays idempotent).
         """
-        # Tear down the A2A turn bridge first so it stops accepting wake
-        # POSTs before the tmux session it injects into goes away.
+        # Tear down the A2A turn bridge first so it stops accepting wake POSTs
+        # before the tmux session it injects into goes away.
         self._maybe_stop_turn_bridge(config)
         name = session_name_for(config)
         return bool(self._mux.stop(name))
@@ -671,35 +380,15 @@ class TuiSessionRuntime(RuntimeBase):
     ) -> bool:
         """True iff sac's tmux session for this agent is **responsive**.
 
-        Step 4/4 of the TUI hedge (lead a2a
-        ``d383f5389dc548a49a293bffe390d619``): risk-2's deferred half.
-        Before step 4, this method only proved the multiplexer session
-        existed — a hung-but-alive inner ``claude`` process (e.g. an
-        infinite-loop in the Ink renderer that never exits but never
-        reads stdin either) would still return True and the supervisor
-        would never restart it. Now the probe additionally requires
-        pane activity within the last ``max_idle_s`` seconds, so the
-        supervisor's existing ``RestartPolicy`` automatically catches
-        the inner-hang case via the same is_running poll it already
-        runs.
+        Not just "session exists": requires pane activity within the last
+        ``max_idle_s`` seconds (``tmux display -p '#{session_activity}'``
+        advances on every pane read OR write), so the supervisor's RestartPolicy
+        also catches an inner-hang (a claude that neither exits nor reads stdin),
+        not only a dead session. ``max_idle_s`` defaults to 300s (the SDK
+        ``health.interval`` default) so a quiet-but-healthy TUI has grace.
 
-        Implementation: ``tmux display -p '#{session_activity}'``
-        advances on every pane read OR write, so a responsive TUI
-        keeps its activity stamp fresh (banner draws, periodic Ink
-        re-renders, operator input, ``send_turn``). A hung claude
-        stops writing; a deadlocked claude stops reading. Either way
-        the stamp goes stale and ``is_running`` flips False.
-
-        ``max_idle_s`` defaults to 300s — the same window the SDK
-        runtime's ``health.interval`` default uses — so a quiet but
-        healthy TUI gets a generous grace window before the
-        supervisor restarts it. Callers (notably a custom
-        ``spec.health`` policy) can tighten or loosen this per-poll.
-
-        Returns ``False`` when the session is absent, when
-        ``session_activity`` is unavailable (legacy multiplexer fakes
-        that don't implement it return ``None``), or when the stamp
-        is older than ``max_idle_s``.
+        Returns ``False`` when the session is absent, when ``session_activity``
+        is unavailable (``None``), or when the stamp is older than ``max_idle_s``.
         """
         name = session_name_for(config)
         if not self._mux.exists(name):
@@ -718,63 +407,23 @@ class TuiSessionRuntime(RuntimeBase):
     ) -> bool:
         """Deliver one turn of input to the in-tmux TUI.
 
-        Uses the multiplexer's ``send_text_and_submit`` (text first,
-        settle delay, then a separate ``Enter`` keystroke) — the same
-        primitive the salvaged ``claude_code._run_startup_commands``
-        uses to defeat the "Enter dropped during a TUI re-render"
-        race the operator reported in #353.
+        Uses ``send_text_and_submit`` (text first, settle delay, then a separate
+        ``Enter``) — the bare primitive proven to reach the claude TUI input and
+        submit cleanly on the live host. Returns ``False`` (and skips the send)
+        when sac's tmux session for this agent does not exist — the TUI analogue
+        of the SDK "no live turn endpoint" guard, so a caller can distinguish
+        "delivered" from "no runtime to deliver to".
 
-        Returns ``False`` (and skips the send) when sac's tmux session
-        for this agent does not exist; this is the TUI analogue of
-        the SDK runtime's "no live HTTP turn endpoint" guard — it
-        lets a caller distinguish "delivered" from "no runtime to
-        deliver to" without inspecting the multiplexer directly.
-
-        Step 3 of the TUI hedge (lead a2a
-        ``d383f5389dc548a49a293bffe390d619`` + clarification
-        ``edfe809e55a24640b6a42318872c8b58``): this is the
-        delivery-side primitive; the response-side primitive is
-        ``logs(...)`` via ``mux.capture_logs``. End-to-end turn
-        completion = ``send_turn`` then poll ``logs`` for the
-        expected response token. Step 3 is intentionally hermetic
-        (auth- and network-independent): the real-binary suite
-        exercises delivery via a deterministic stand-in command
-        (``bash -c 'cat'``) so the test proves DELIVERY through
-        real tmux without coupling to operator credentials or
-        Anthropic's API. Authenticated-claude "answers a turn"
-        verification is owned by the step-4 tui-alive integration
-        probe, gated on credentials being present.
+        When ``wait_ready`` (the default; skippable for the in-memory unit
+        suite), first :meth:`wait_until_input_ready` to drain any first-launch /
+        mid-session modal via the :mod:`runtimes.prompts` registry before
+        delivering, so keystrokes never land on a not-yet-bound input.
         """
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
         if wait_ready:
-            # State-table dispatch (lead a2a
-            # ``286ce8f625744cd08e4ee23eddf2c7aa``, 2026-06-14):
-            # before delivering the turn, drain any first-launch /
-            # mid-session modals via the existing
-            # ``runtimes/prompts.py`` registry (theme picker, login
-            # method, file-trust, dev-channels, etc. — 12 handlers
-            # today, all keystroke-driven). The driver no longer
-            # ad-hoc-detects gates inline; the SAME registry that
-            # the SDK runtime uses serves the TUI runtime.
-            #
-            # Skippable via ``wait_ready=False`` for the in-memory
-            # unit suite where the multiplexer fake doesn't render
-            # an input-ready marker (the modal drain has no work
-            # to do anyway). Real-binary callers always wait.
             self.wait_until_input_ready(config)
-        # Bare send (lead a2a c6707941, 2026-06-14): operator's
-        # diagnostic on the live host proved `tmux send-keys <text>`
-        # + `tmux send-keys Enter` reaches the claude TUI input
-        # field and submits cleanly every time. The verified
-        # variant's echo-detection (substring match on Ink-rendered
-        # capture-pane glyphs) was raising TuiKeystrokeDropError
-        # despite the keystrokes landing — net effect was a 60s
-        # `sac agents send` timeout despite a working pipeline.
-        # Switch the default back to the bare primitive (the same
-        # one claude_code._run_startup_commands uses against
-        # startup_prompts).
         self._mux.send_text_and_submit(name, text)
         return True
 
@@ -785,28 +434,12 @@ class TuiSessionRuntime(RuntimeBase):
         timeout_s: float,
         poll_s: float = 0.5,
     ) -> bool:
-        """Dismiss claude's first-run modals at boot; return as soon as
-        the TUI is up — NOT when it goes idle.
-
-        Differs from :meth:`wait_until_input_ready` (the send_turn drain,
-        which waits for the ``? for shortcuts`` idle marker) on two
-        boot-specific realities:
-
-          * ``startup_commands`` can delay ``exec claude`` by minutes —
-            the loop just keeps polling (nothing in the install log
-            matches a modal) until claude finally renders its first
-            screen. The caller passes a window wide enough to cover the
-            bootstrap (:data:`_STARTUP_BOOT_DRAIN_S`).
-          * an autonomous agent with ``startup_prompts`` goes STRAIGHT to
-            work once the modals clear, so the idle marker may never
-            show. Exit on the marker OR :func:`prompts.is_ready` (claude
-            launched with no blocking ``Enter to confirm`` modal),
-            whichever first — so start() never blocks the full window
-            after the bypass/trust picker is dismissed.
-
-        Best-effort: never raises. A timeout just means the modal will be
-        re-drained by the next :meth:`send_turn`. Returns True iff a
-        ready signal was observed within the window.
+        """Dismiss claude's first-run modals at boot; return as soon as the TUI
+        is up (marker OR :func:`prompts.is_ready`) — not when it goes idle, so
+        an autonomous agent that goes straight to work is not waited out, and a
+        ``startup_commands``-delayed ``exec claude`` is polled through. Thin
+        wrapper over :meth:`_drain_modals_until_ready`. Best-effort: never
+        raises. Returns True iff a ready signal was observed within the window.
         """
         name = session_name_for(config)
         if not self._mux.exists(name):
@@ -819,124 +452,24 @@ class TuiSessionRuntime(RuntimeBase):
         *,
         timeout_s: float,
         poll_s: float = 0.5,
-        settle_s: float = 1.0,
-        max_resends: int = 6,
     ) -> bool:
         """Verified, retrying, fail-loud modal drain. True iff ready in window.
 
-        The fix for the silent boot-swallow (operator rule: fail-fast /
-        fail-loud / no-silent-fallback / feedback A→B→A): the old loop fired a
-        modal's keystrokes ONCE and marked it ``accepted`` — so a key dropped
-        by Claude's Ink render race left the modal up forever while the drainer
-        skipped it, then returned a quiet ``False`` after a 240 s WARNING. Here
-        each loop instead:
-
-          1. captures the pane; exits on the ready marker / ``is_ready``;
-          2. :func:`prompts.detect`\\ s the on-screen modal (detect-only);
-          3. :func:`prompts.respond_modal`\\ s (sends its keys), then SETTLES;
-          4. re-detects next loop — if the SAME modal is still up the keys were
-             dropped, so it RESENDS (up to ``max_resends``).
-
-        A modal that survives ``max_resends`` verified resends, or a window
-        timeout with a modal still up / no ready marker, is logged LOUD (error)
-        with the modal name + pane tail + an actionable ``tmux attach`` hint —
-        never a silent best-effort return.
+        Thin wrapper over the pure, unit-testable
+        :func:`_tui_drain.drain_modals_until_ready` (fail-fast-on-session-death,
+        settle-before-send [BUG 2], verified-resend). Dismisses modals by their
+        REGISTERED keys (Enter/digit, never Escape), so a dev-channels
+        "Esc to cancel" modal is CONFIRMED — the session-killing Escape lives
+        only in the guarded compose-buffer clear (BUG 1).
         """
-        import logging
-
-        log = logging.getLogger(__name__)
-        marker = "? for shortcuts"
-        deadline = time.monotonic() + timeout_s
-        resends: dict[str, int] = {}
-        # Keep the most recent NON-empty pane: when the inner process EXITS the
-        # session is torn down and ``capture_content`` returns empty, which
-        # would otherwise erase the actual exit error from every log below.
-        last_pane = ""
-        while time.monotonic() < deadline:
-            # Fail FAST on session death. If the inner claude EXITED (e.g.
-            # ``claude -c`` with no conversation -> "No conversation found to
-            # continue"), the tmux session is gone and ready can NEVER arrive —
-            # polling out the whole window here is the silent 240 s stall that
-            # misdiagnosed a dead session as a "login wall". Surface the last
-            # pane we saw (the real exit error) and abort now.
-            if not self._mux.exists(name):
-                log.error(
-                    "TuiSessionRuntime: boot-drain ABORTED for %s — the inner "
-                    "claude process EXITED during boot (tmux session gone), so "
-                    "it can never reach ready. This is NOT a login wall or a "
-                    "timeout; read the last pane for the real cause. Reproduce "
-                    "live: `tmux attach -t %s` (default socket). Last pane "
-                    "before exit:\n%s",
-                    name,
-                    name,
-                    _pane_tail(last_pane) if last_pane else "(nothing captured)",
-                )
-                return False
-            pane = self._mux.capture_content(name)
-            if pane.strip():
-                last_pane = pane
-            if marker in pane or _prompts.is_ready(pane):
-                return True
-            modal = _prompts.detect(pane)
-            if modal is None:
-                # No known modal + not ready: claude is still rendering or
-                # running startup_commands. Keep polling (no fallback action).
-                if poll_s > 0:
-                    time.sleep(poll_s)
-                continue
-            n = resends.get(modal, 0)
-            if n >= max_resends:
-                log.error(
-                    "TuiSessionRuntime: boot-drain STUCK on modal %r for %s — "
-                    "its keystrokes did NOT dismiss it after %d verified "
-                    "resends. The detector/keys in runtimes/prompts.py are "
-                    "likely stale for this claude build, or the Ink TUI is "
-                    "dropping input. Inspect with `tmux attach -t %s` (default "
-                    "socket). Pane tail:\n%s",
-                    modal,
-                    name,
-                    n,
-                    name,
-                    _pane_tail(last_pane or pane),
-                )
-                return False
-            _prompts.respond_modal(modal, lambda key: self._mux.send_keys(name, key))
-            resends[modal] = n + 1
-            if settle_s > 0:
-                time.sleep(settle_s)
-        # Window elapsed. Report what is ACTUALLY observable — alive-but-not-ready
-        # vs exited — never a guessed "login wall".
-        pane = self._mux.capture_content(name)
-        if pane.strip():
-            last_pane = pane
-        alive = self._mux.exists(name)
-        stuck = _prompts.detect(last_pane)
-        if stuck:
-            diagnosis = (
-                f"Still showing modal {stuck!r} after resends (see errors above)."
-            )
-        elif alive:
-            diagnosis = (
-                "Session is ALIVE but never signalled ready — claude is still "
-                "mid-render, or is sitting at an UNHANDLED prompt (add a handler "
-                "in runtimes/prompts.py for whatever the pane shows)."
-            )
-        else:
-            diagnosis = (
-                "Session has EXITED — the inner command died (read the last pane "
-                "for the cause; this is NOT a credential/login problem)."
-            )
-        log.error(
-            "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s without "
-            "a ready signal. %s Reproduce live: `tmux attach -t %s` (default "
-            "socket). Pane tail:\n%s",
-            timeout_s,
+        return drain_modals_until_ready(
             name,
-            diagnosis,
-            name,
-            _pane_tail(last_pane),
+            capture_fn=self._mux.capture_content,
+            send_keys_fn=lambda key: self._mux.send_keys(name, key),
+            exists_fn=self._mux.exists,
+            timeout_s=timeout_s,
+            poll_s=poll_s,
         )
-        return False
 
     def wait_until_input_ready(
         self,
@@ -946,83 +479,29 @@ class TuiSessionRuntime(RuntimeBase):
         poll_s: float = 0.4,
         sleep_fn=time.sleep,
     ) -> bool:
-        """Drain first-launch / mid-session modals, then block until the
-        TUI input field is bound.
+        """Drain first-launch / mid-session modals, then block until the TUI
+        input field is bound.
 
-        Lead a2a ``286ce8f625744cd08e4ee23eddf2c7aa`` (2026-06-14): the
-        TUI driving is no longer a tower of ad-hoc inline detections.
-        Each polling frame is matched against the existing
-        :mod:`runtimes.prompts` registry (12 handlers today —
-        theme-selection / login-method / file-trust / dev-channels /
-        bypass-permissions / press-enter-continue / external-imports /
-        mcp-json-edit / thinking-effort / skip-permissions-yn /
-        compose-pending-unsent / file-trust-radio); the FIRST matching
-        handler runs its registered keystrokes (``send_keys`` via the
-        multiplexer) and is added to the ``accepted`` set so a
-        re-render of the same modal doesn't double-send. Polling
-        continues until either the ``? for shortcuts`` input-ready
-        marker appears OR :class:`TuiInputNotReadyError` is raised on
-        timeout.
-
-        The 401 / rate-limited / processing / response-ready states
-        the operator named in the new spec land in the SAME registry
-        as additional handlers (see :mod:`runtimes.prompts`); when
-        their detect strings match, the registered action runs
-        without further driver changes.
-
-        ``poll_s`` defaults to 400ms — long enough that the
-        capture-pane subprocess doesn't dominate the wall, short
-        enough that Ink modal re-renders are caught within a few
-        frames.
+        Thin wrapper over the pure, unit-testable
+        :func:`_tui_drain.wait_until_input_ready`: dismisses each modal by its
+        REGISTERED keys (never Escape → dev-channels is CONFIRMED, BUG 1) and
+        SETTLES the pane before sending (BUG 2). Raises
+        :class:`TuiInputNotReadyError` on timeout.
         """
+        del sleep_fn  # honoured internally by the extracted function's default
         name = session_name_for(config)
-        if not self._mux.exists(name):
-            raise TuiInputNotReadyError(
-                f"TUI session {name!r} does not exist; nothing to wait for."
-            )
-
-        # ``accepted`` is intentionally per-call: a fresh modal
-        # sequence on each turn (e.g. a context-window press-enter)
-        # should be dismissed afresh.
-        accepted: set[str] = set()
-        marker = "? for shortcuts"
-        deadline = time.monotonic() + timeout_s
-        last_pane = ""
-        send_keys_fn = self._mux.send_keys
-        while time.monotonic() < deadline:
-            last_pane = self._mux.capture_content(name)
-            # Claude Code v2.1.150 dropped the "? for shortcuts" idle marker; its
-            # ready state shows the "bypass permissions" status bar instead (input
-            # live behind the first-launch welcome box). Accept is_ready() too —
-            # mirroring _drain_at_boot — so prompt injection is not blocked by an
-            # outdated marker (paper-scitex-clew handoff 2026-06-20: agent idled
-            # at a live input, "drained 0 modals").
-            if marker in last_pane or _prompts.is_ready(last_pane):
-                return True
-            handled = _prompts.detect_and_respond(
-                last_pane, accepted, send_keys_fn=lambda key: send_keys_fn(name, key)
-            )
-            if handled is not None:
-                accepted.add(handled)
-                # Re-capture immediately after a keystroke — the
-                # modal may dismiss in <poll_s and the input field
-                # bind on the very next frame.
-                continue
-            if poll_s > 0:
-                sleep_fn(poll_s)
-        raise TuiInputNotReadyError(
-            f"TUI input-ready marker {marker!r} not seen in pane "
-            f"{name!r} within {timeout_s:.1f}s after draining "
-            f"{len(accepted)} modal(s) ({sorted(accepted)}). "
-            f"Last pane content:\n{last_pane}"
+        return _wait_until_input_ready(
+            name,
+            capture_fn=self._mux.capture_content,
+            send_keys_fn=lambda key: self._mux.send_keys(name, key),
+            exists_fn=self._mux.exists,
+            timeout_s=timeout_s,
+            poll_s=poll_s,
         )
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
-        """Return the last ``lines`` of pane output for the session.
-
-        Empty string when the session does not exist (the supervisor
-        can distinguish "no logs because no session" from "session
-        alive but quiet" by checking ``is_running`` first).
+        """Return the last ``lines`` of pane output; empty string when the
+        session does not exist (distinguish via ``is_running`` first).
         """
         name = session_name_for(config)
         if not self._mux.exists(name):

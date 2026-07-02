@@ -145,18 +145,59 @@ def clear_compose_buffer(
          raise — boot must still proceed (same fail-loud-not-fatal posture as
          the rest of the file). The downstream
          :func:`verify_submit_by_advancement` is the second safety net.
+
+    **BUG 1 guard (Esc-cancel):** the CLEAR keystrokes are ``Escape`` — but
+    while a modal whose dismissal treats Esc as CANCEL is on screen (the
+    ``--dangerously-load-development-channels`` confirmation footer "Esc to
+    cancel"), an ``Escape`` CANCELS the launch → claude exits → the tmux
+    session DIES mid-boot (observed: ``^[^[^[^[`` then the session is gone).
+    So BEFORE sending any ``Escape`` — on the initial capture AND before every
+    resend — we re-check :func:`prompts.has_esc_cancel_modal`. When such a modal
+    is present we REFUSE to Esc (log LOUD, return ``False``): the dev-channels
+    modal must be dismissed by the modal drainer (Enter to confirm option 1)
+    FIRST; the compose clear runs only once no cancelable modal remains.
     """
     import logging
+
+    from . import prompts as _prompts
 
     log = logging.getLogger(__name__)
 
     pane = capture_fn(name)
+    if _prompts.has_esc_cancel_modal(pane):
+        # A dev-channels / "Esc to cancel" modal is up: an Escape here would
+        # CANCEL the launch and kill the session. Refuse to clear now — the
+        # modal drainer must dismiss it (Enter → option 1) first.
+        log.error(
+            "TuiSessionRuntime: REFUSING compose-buffer clear for %s — a "
+            "cancelable modal ('Esc to cancel', e.g. dev-channels) is on "
+            "screen; sending Escape would CANCEL the launch and kill the "
+            "session. The modal drainer must dismiss it (Enter to confirm) "
+            "before any Escape-based clear. Attach to inspect: "
+            "`tmux attach -t %s`. Pane tail:\n%s",
+            name,
+            name,
+            _pane_tail(pane),
+        )
+        return False
     if not _compose_pending_live(pane):
         # Common case: nothing stale in the live box — no-op.
         return True
 
     last_pane = pane
     for _ in range(max_attempts):
+        # Re-check before EVERY resend: a modal may have (re)appeared between
+        # attempts, and an Escape into it would cancel/kill the session.
+        current = capture_fn(name)
+        if _prompts.has_esc_cancel_modal(current):
+            log.error(
+                "TuiSessionRuntime: aborting compose-buffer clear for %s "
+                "mid-loop — a cancelable modal appeared; Escape would kill the "
+                "session. Let the modal drainer dismiss it first. Pane tail:\n%s",
+                name,
+                _pane_tail(current),
+            )
+            return False
         for key in _COMPOSE_CLEAR_KEYS:
             send_keys_fn(key)
         # Let the clear render, then re-capture and verify the live box is empty.

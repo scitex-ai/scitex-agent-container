@@ -59,6 +59,35 @@ def _detect_dev_channels(content: str) -> bool:
     )
 
 
+def has_esc_cancel_modal(content: str) -> bool:
+    """True iff an on-screen modal treats **Esc as CANCEL / EXIT**.
+
+    The fatal boot bug (card
+    ``sac-boot-automation-devchannels-modal-continue-compose-buffer``): the
+    stale-compose clear sends ``Escape``, but while the ``--dangerously-load-
+    development-channels`` confirmation is up ("❯ 1. I am using this for local
+    development … Enter to confirm · **Esc to cancel**") an ``Escape`` CANCELS
+    the launch → claude exits → the tmux session DIES mid-boot. Any drain step
+    that would send ``Escape`` (the compose-buffer clear) MUST first verify no
+    such cancelable modal is on screen.
+
+    Detection is deliberately BROAD — a keystroke that kills the session is far
+    costlier than a spurious "don't-Esc" skip:
+
+      * the explicit ``Esc to cancel`` footer any confirm-modal renders, OR
+      * the dev-channels modal specifically (its footer wording has varied
+        across Claude Code builds; match the option text too so a reworded
+        footer still guards).
+
+    Pure + string-only so the drain-ordering guard is unit-testable without a
+    live TUI.
+    """
+    lowered = content.lower()
+    if "esc to cancel" in lowered or "escape to cancel" in lowered:
+        return True
+    return _detect_dev_channels(content)
+
+
 def _detect_thinking_effort(content: str) -> bool:
     """Thinking effort level selector.
 

@@ -618,10 +618,17 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
 
 
 class _PrimedMemoryMultiplexer(_MemoryMultiplexer):
-    """In-memory mux whose ``capture_content`` returns a scripted
-    sequence so the wait_until_input_ready tests can simulate the
-    pane evolving from "modal up" → "marker present" deterministically.
-    Real class, not a mock; mirrors the priority-0 STX-policy.
+    """In-memory mux whose ``capture_content`` returns a scripted sequence so
+    the drain tests can simulate the pane evolving "modal up" → "marker
+    present" deterministically. Real class, not a mock; mirrors the priority-0
+    STX-policy.
+
+    The scripted frame advances on ``send_keys`` (a STATE TRANSITION), not on
+    every ``capture_content`` — mirroring real tmux, where a pane capture is
+    IDEMPOTENT between renders and the screen only changes after input lands.
+    This keeps the fake robust to the BUG-2 settle step, which polls
+    ``capture_content`` several times per modal (waiting for a quiet window)
+    before it sends the modal's keys.
     """
 
     _scripted_frames: list[str]
@@ -634,10 +641,15 @@ class _PrimedMemoryMultiplexer(_MemoryMultiplexer):
     def capture_content(cls, session_name: str) -> str:
         if not cls._scripted_frames:
             return "? for shortcuts"
-        frame = cls._scripted_frames[0]
+        return cls._scripted_frames[0]
+
+    @classmethod
+    def send_keys(cls, session_name: str, *keys: str) -> None:
+        # Record keys on the session pane (parent behaviour) AND advance the
+        # scripted frame — the keystrokes are what make the modal dismiss.
+        super().send_keys(session_name, *keys)
         if len(cls._scripted_frames) > 1:
             cls._scripted_frames = cls._scripted_frames[1:]
-        return frame
 
 
 @pytest.fixture
