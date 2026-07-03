@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._skills_boot_log import log_effective_skills
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from .claude_md import setup_claude_md
@@ -77,6 +78,7 @@ def materialize_workspace(
     home_dir.mkdir(parents=True, exist_ok=True)
     setup_claude_md(config, str(home_dir))
     deploy_to_home(config, str(home_dir))
+    log_effective_skills(config, home_dir)
     ensure_global_settings_json()
     setup_settings_json(config, str(home_dir), filename="settings.json")
     deploy_to_home_overlay(config)

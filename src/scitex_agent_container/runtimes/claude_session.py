@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._skills_boot_log import log_effective_skills
 from ._to_home import deploy_to_home
 from .base import RuntimeBase
 from .claude_md import cleanup_claude_md, setup_claude_md
@@ -60,6 +61,7 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
             "Refusing to start with stale config."
         )
     deploy_to_home(config, home_dir)
+    log_effective_skills(config, home_dir)
 
 
 # F-CS8 — silent SDK failure on heavy workdir/.claude/ trees.
