@@ -168,6 +168,61 @@ class TestMaterializeToHomeBasics:
         assert home.is_dir()
 
 
+class TestSkillsSubtreeMaterialization:
+    """LOCK: ``to_home/.claude/skills/`` is materialized VERBATIM and DEEPLY.
+
+    sac's only skills job is to copy the whole ``.claude/skills/`` subtree into
+    the agent home; ``@``-imports live in each agent's OWN
+    ``to_home/.claude/CLAUDE.md`` (author-controlled), never in sac. A
+    paper-scitex-clew solver's ``@skills/<name>/SKILL.md`` import resolves
+    in-container ONLY if ``_walk_and_apply`` recurses into
+    ``.claude/skills/<name>/`` and copies ``SKILL.md`` byte-for-byte. These
+    tests guard that dependency (a regression here silently breaks their run).
+    """
+
+    def test_skill_md_lands_verbatim(self, tmp_path):
+        # Arrange — a staged skill dir with a SKILL.md.
+        spec_dir = tmp_path / "spec"
+        sk = spec_dir / "to_home" / ".claude" / "skills" / "scitexification"
+        sk.mkdir(parents=True)
+        body = "---\nname: scitexification\n---\nDo the thing.\n"
+        (sk / "SKILL.md").write_text(body)
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert — byte-for-byte, at the in-home relative path.
+        landed = home / ".claude" / "skills" / "scitexification" / "SKILL.md"
+        assert landed.read_text() == body
+
+    def test_nested_skill_resource_is_preserved(self, tmp_path):
+        # Arrange — a resource nested BELOW the skill dir (deep recursion).
+        spec_dir = tmp_path / "spec"
+        sk = spec_dir / "to_home" / ".claude" / "skills" / "foo"
+        (sk / "references").mkdir(parents=True)
+        (sk / "SKILL.md").write_text("---\nname: foo\n---\n")
+        (sk / "references" / "table.md").write_text("row\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert
+        nested = home / ".claude" / "skills" / "foo" / "references" / "table.md"
+        assert nested.read_text() == "row\n"
+
+    def test_multiple_skill_dirs_all_materialize(self, tmp_path):
+        # Arrange
+        spec_dir = tmp_path / "spec"
+        root = spec_dir / "to_home" / ".claude" / "skills"
+        for nm in ("alpha", "beta"):
+            (root / nm).mkdir(parents=True)
+            (root / nm / "SKILL.md").write_text(f"---\nname: {nm}\n---\n")
+        home = tmp_path / "home"
+        # Act
+        materialize_to_home(spec_dir, home)
+        # Assert — both staged skills landed (host-curated extras allowed).
+        got = {p.parent.name for p in (home / ".claude" / "skills").rglob("SKILL.md")}
+        assert {"alpha", "beta"} <= got
+
+
 class TestCredentialLeakGuard:
     """``to_home/`` must never carry a ``.credentials.json``.
 
