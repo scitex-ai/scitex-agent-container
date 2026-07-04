@@ -44,3 +44,22 @@ def test_agents_status_and_list_share_same_callback() -> None:
     same_callback = status_cmd.callback is list_cmd.callback
     # Assert
     assert same_callback
+
+
+def test_agents_create_command_is_removed() -> None:
+    # Arrange — `create` was folded into `new --template developer|scientist`
+    # (card refactor/consolidate-create-into-new-templates); the standalone
+    # command must no longer be registered.
+    # Act
+    is_registered = "create" in agent_group.commands
+    # Assert
+    assert is_registered is False
+
+
+def test_agents_help_does_not_list_create() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — the Lifecycle section no longer names `create`.
+    assert "create" not in result.output

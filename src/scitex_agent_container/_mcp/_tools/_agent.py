@@ -310,30 +310,44 @@ def agent_send(
 def agent_create(
     name: str,
     template: str = "developer",
-    workdir: str | None = None,
-    telegram_token: str | None = None,
-    group: str | None = None,
+    project: str | None = None,
     start: bool = False,
 ) -> dict[str, Any]:
     """Create a proven-shape agent spec from a template. Mirrors
-    ``sac agents create <name> --template developer|scientist``.
+    ``sac agents new <name> --template developer|scientist --project <p>``.
 
-    Writes ``<name>/spec.yaml`` from the developer/scientist skeleton,
-    filling identity (name -> project / workdir / overlay / state-db /
-    SCITEX_TODO_AGENT_ID) and auto-detecting the editable-install block
-    (workdir ships a package) and the per-agent Telegram bot
-    (``telegram_token`` file present). ``start=True`` launches the agent
-    afterwards. The developer group is authorized to CRUD agents."""
-    argv = ["agents", "create", name, "--template", template]
-    if workdir:
-        argv += ["--workdir", workdir]
-    if telegram_token:
-        argv += ["--telegram-token", telegram_token]
-    if group:
-        argv += ["--group", group]
-    if start:
-        argv += ["--start"]
-    return invoke_cli_text(argv)
+    ``create`` was folded into ``new``'s dir-template system
+    (``_template_developer`` / ``_template_scientist`` — card
+    refactor/consolidate-create-into-new-templates): the underscore-agent
+    skeleton is copied wholesale and its ``SAC_PLACEHOLDER_PROJECT`` /
+    ``SAC_PLACEHOLDER_AGENT_ID`` tokens filled from ``project`` (defaults
+    to ``name``) and ``name`` respectively. The old auto-detected
+    editable-install toggle is gone — the install step is now
+    unconditional in the template (delete it by hand if the target repo
+    ships no Python package); likewise there is no per-agent Telegram
+    bot-token wiring — add ``server:claude-code-telegrammer`` + a
+    per-project ``.envrc`` by hand after creation. ``start=True`` launches
+    the agent afterwards. The developer group is authorized to CRUD
+    agents."""
+    argv = [
+        "agents",
+        "new",
+        name,
+        "--template",
+        template,
+        "--project",
+        project or name,
+        "--agent-id",
+        name,
+    ]
+    result = invoke_cli_text(argv)
+    if start and result.get("exit_code") == 0:
+        start_result = invoke_cli_text(["agents", "start", name])
+        result = {
+            "exit_code": start_result.get("exit_code"),
+            "stdout": result.get("stdout", "") + start_result.get("stdout", ""),
+        }
+    return result
 
 
 def host_exec_local(

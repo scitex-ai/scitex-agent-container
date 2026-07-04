@@ -13,7 +13,6 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
-from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
 from ._new import new as _new_impl
@@ -51,7 +50,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["new", "create", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            ["new", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
@@ -72,12 +71,12 @@ def agent_group() -> None:
 # sac-fresh-agent-specs, 2026-06-13). Placed FIRST in the lifecycle
 # block — authoring precedes start/stop.
 agent_group.add_command(_rebind(_new_impl, "new"))
-# `create` stamps a proven-shape developer/scientist agent from the
-# underscore-agent skeletons (card sac-templated-agent-create, 2026-06-25)
-# — folds the retired new_agent_spec.sh / gen_ecosystem_dev_specs.sh
-# stampers. `new` is the bare scaffold; `create` is the opinionated,
-# auto-detecting proven shape.
-agent_group.add_command(_rebind(_create_impl, "create"))
+# `create` (card sac-templated-agent-create, 2026-06-25) was folded into
+# `new`'s dir-template system as `_template_developer/` / `_template_scientist/`
+# (card refactor/consolidate-create-into-new-templates) — the auto-detect /
+# marker-block machinery is retired in favor of the plain, unconditional
+# convention the other dir-templates already use. Use
+# `sac agents new <name> --template developer|scientist --project <p>`.
 agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))

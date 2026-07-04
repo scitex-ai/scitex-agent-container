@@ -189,7 +189,61 @@ def _default_base_dir() -> Path:
         return Path.home() / ".scitex" / "agent-container" / "agents"
 
 
-@click.command(name="new")
+def _extract_base_dir_arg(raw_args: list[str]) -> Path | None:
+    """Recover an explicit ``--base-dir`` value from the raw argv.
+
+    ``--help`` is an eager click option: its callback prints help and
+    exits before non-eager options (like ``--base-dir``) are parsed into
+    ``ctx.params``. Scanning the raw args directly (stashed by
+    :meth:`_NewCommand.parse_args`) lets the dynamic help epilog honor an
+    explicit ``--base-dir`` regardless of where ``--help`` falls in the
+    invocation.
+    """
+    for i, arg in enumerate(raw_args):
+        if arg == "--base-dir" and i + 1 < len(raw_args):
+            return Path(raw_args[i + 1])
+        if arg.startswith("--base-dir="):
+            return Path(arg.split("=", 1)[1])
+    return None
+
+
+class _NewCommand(click.Command):
+    """``new`` with a live-scanned template list in its ``--help`` output.
+
+    The ``--template`` option's static ``help=`` text cannot name the
+    current ``_template_*`` set — dir-templates are dropped into the
+    agents root with no code change (see :func:`discover_dir_templates`).
+    Overriding :meth:`format_epilog` defers that scan to ``--help``
+    invocation time so the printed list is always live, never stale.
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # Stash the raw args so format_epilog can recover --base-dir even
+        # when --help (eager) exits before --base-dir (non-eager) would
+        # otherwise be parsed into ctx.params.
+        ctx.meta["_new_raw_args"] = list(args)
+        return super().parse_args(ctx, args)
+
+    def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        super().format_epilog(ctx, formatter)
+        raw_args = ctx.meta.get("_new_raw_args", [])
+        base = _extract_base_dir_arg(raw_args) or _default_base_dir()
+        dir_templates = sorted(discover_dir_templates(base))
+        with formatter.section("Available templates (live-scanned)"):
+            formatter.write_text("inline: " + ", ".join(sorted(_TEMPLATES)))
+            if dir_templates:
+                formatter.write_text(
+                    f"_template_* under {base}: " + ", ".join(dir_templates)
+                )
+            else:
+                formatter.write_text(
+                    f"_template_* under {base}: (none found — drop a "
+                    "_template_<kind>/ dir there to add one, no code change "
+                    "needed)"
+                )
+
+
+@click.command(name="new", cls=_NewCommand)
 @click.argument("name", type=str)
 @click.option(
     "--template",
@@ -198,12 +252,9 @@ def _default_base_dir() -> Path:
     default="minimal",
     show_default=True,
     help=(
-        "Template to scaffold. Inline presets: 'minimal' = bare-minimum "
-        "spec (image + model); 'full' = annotated v3 spec. Plus any "
-        "DIR-template discovered under the agents root as "
-        "``_template_<kind>/`` (the choice is the <kind> suffix, e.g. "
-        "'python_developer'). Discovery is dynamic — drop a new "
-        "``_template_foo/`` dir in and 'foo' just works."
+        "Template kind: 'minimal'/'full' (built-in) or any "
+        "_template_<kind>/ dir under the agents root. Run "
+        "`sac agents new --help` to see the CURRENT live list."
     ),
 )
 @click.option(
