@@ -130,5 +130,10 @@ def parse_apptainer(spec: dict):
         if "tmpfs_size" in raw
         else "2G",
         relaxed=bool(raw.get("relaxed", False)),
+        # JAILED-capsule mount-boundary opt-in (security guardrail — see
+        # runtimes/_apptainer_jail.py). Solver-group specs are jailed
+        # automatically regardless of this flag; other capsule types set
+        # ``jail: true`` to opt in.
+        jail=bool(raw.get("jail", False)),
         nested_build=bool(raw.get("nested_build", False)),
     )

@@ -213,6 +213,17 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
 
+        # Jailed-capsule guardrail: strip the apptainer/singularity bind
+        # env vars from the launch environment so NO env-injected bind
+        # survives (--containall drops apptainer's DEFAULT auto-binds but
+        # not an APPTAINER_BIND-injected one). build_run_argv already
+        # fail-loud-rejects a forbidden env bind before we get here; this
+        # scrub is the belt-and-suspenders removal for a jailed capsule.
+        from ._apptainer_jail import is_jailed, scrub_bind_env
+
+        if is_jailed(config):
+            scrub_bind_env(launch_env)
+
         if foreground:
             return subprocess.run(argv, env=launch_env).returncode == 0
 
