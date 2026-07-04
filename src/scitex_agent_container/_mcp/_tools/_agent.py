@@ -95,6 +95,15 @@ def agent_start(
     :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
     directly.
 
+    Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
+    start against a non-running agent (exit 2, "refusing to start ...
+    without --yes/-y"), but an MCP tool call has no TTY to prompt on,
+    so the call itself IS the confirmation. Without this the tool
+    always failed the same way ``agent_restart`` did before it was
+    patched (no-surprise: the documented MCP surface must actually
+    work, not dead-end on an interactive guard that can never be
+    satisfied over MCP).
+
     Args:
         name: The agent to start.
         foreground: Attach to the caller's terminal (claude-session only).
@@ -122,7 +131,7 @@ def agent_start(
        broker semantics in a hybrid script that might also run on
        the bare host.
     """
-    argv = ["agents", "start", name]
+    argv = ["agents", "start", name, "--yes"]
     if foreground:
         argv.append("--foreground")
     if session is not None:
