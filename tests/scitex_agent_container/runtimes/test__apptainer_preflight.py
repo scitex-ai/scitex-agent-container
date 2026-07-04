@@ -31,6 +31,21 @@ def _inner_after_sif(argv: list[str], sif: Path) -> list[str]:
     return argv[argv.index(str(sif)) + 1 :]
 
 
+def _unwrap_git_alias_shell(tokens: list[str]) -> list[str]:
+    """Peel the unconditional ``/bin/bash -lc "<git-alias>; exec <inner>"``
+    wrapper (see ``_apptainer_inner_argv._GIT_ENV_ALIAS_STEPS``) if present.
+
+    Every agent's inner argv is now wrapped in this alias shell regardless
+    of ``startup_commands``/``relaxed``, so both the "relaxed" (no D2
+    preflight) and the D2-wrapped tricky-quoting fixtures need one more
+    unwrap step than before that step existed.
+    """
+    if len(tokens) >= 3 and tokens[0] == "/bin/bash" and tokens[1] == "-lc":
+        _, _, exec_line = tokens[2].rpartition("; exec ")
+        return shlex.split(exec_line)
+    return tokens
+
+
 # ---------------------------------------------------------------------------
 # Fixtures: default-wrapped invocation (preflight active)
 # ---------------------------------------------------------------------------
@@ -140,7 +155,7 @@ def test_preflight_relaxed_inner_starts_with_tini(
     # Arrange
     _argv, inner = relaxed_argv
     # Act
-    first = inner[0]
+    first = _unwrap_git_alias_shell(inner)[0]
     # Assert
     assert first == "/usr/bin/tini"
 
@@ -191,7 +206,10 @@ def tricky_inner(tmp_path: Path) -> list[str]:
 def tricky_exec_argv(tricky_inner: list[str]) -> list[str]:
     script = tricky_inner[2]
     _, _, exec_line = script.rpartition("\nexec ")
-    return shlex.split(exec_line)
+    # The D2 preflight's own exec line is itself the unconditional
+    # ``/bin/bash -lc "<git-alias>; exec <inner>"`` wrapper — one more
+    # unwrap is needed to reach the actual tini/mission invocation.
+    return _unwrap_git_alias_shell(shlex.split(exec_line))
 
 
 def test_preflight_quoting_wraps_with_bash_dash_c(tricky_inner: list[str]) -> None:
