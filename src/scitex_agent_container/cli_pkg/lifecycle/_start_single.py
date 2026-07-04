@@ -71,6 +71,7 @@ def run_single_targets(
     preflight_runner: Callable[[], None],
     broker_self: bool = False,
     yes: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -86,6 +87,14 @@ def run_single_targets(
     in-SIF broker has somewhere to POST, then tears the listen down
     on exit. ``--dry-run`` short-circuits this — the listen isn't
     needed to inspect the planned argv.
+
+    ``verbose`` (``-v``/``--verbose``): when the interactive
+    refuse-without-``--yes`` preview fires, show the FULL effective
+    launch plan (``render_plan`` — same detail as ``sac agents
+    explain``) instead of the default short summary
+    (``render_plan_summary``: identity, spec path, runtime/image,
+    workdir + backed-by-bind check, model). Either way the refusal
+    without ``--yes``/``-y`` is unchanged.
     """
 
     def _emit_json(payload: dict) -> None:
@@ -209,9 +218,14 @@ def run_single_targets(
                     broker_self=broker_self,
                     is_tty=sys.stdin.isatty(),
                 ):
-                    from .._explain import render_plan
+                    from .._explain import render_plan, render_plan_summary
 
-                    click.echo(render_plan(config, spec_path=Path(config_path)))
+                    plan = (
+                        render_plan(config, spec_path=Path(config_path))
+                        if verbose
+                        else render_plan_summary(config, spec_path=Path(config_path))
+                    )
+                    click.echo(plan)
                     system_msg(
                         f"refusing to start {config.name} without --yes/-y — the "
                         "plan above shows exactly what will mount and run; re-run "

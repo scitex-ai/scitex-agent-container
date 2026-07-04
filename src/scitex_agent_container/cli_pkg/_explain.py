@@ -168,17 +168,14 @@ def _materialized_hooks_and_sections(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
-    """Return the human-readable effective launch plan for ``config``."""
-    argv = _argv_for(config)
-    binds = _binds(argv)
-    pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
-    sif = next((a for a in argv if isinstance(a, str) and a.endswith(".sif")), "(none)")
-    claude = getattr(config, "claude", None)
+def _identity_lines(
+    config: AgentConfig, *, spec_path: Path | None, sif: str, claude: object
+) -> list[str]:
+    """Agent identity header: name, project/role, spec path, runtime/image,
+    account/creds — the part every plan variant (full + summary) starts with.
+    """
     labels = getattr(config, "labels", {}) or {}
-
-    lines: list[str] = []
-    lines.append(f"Agent: {config.name}")
+    lines: list[str] = [f"Agent: {config.name}"]
     meta = ", ".join(f"{k}={v}" for k, v in labels.items() if k in ("project", "role"))
     if meta:
         lines.append(f"  {meta}")
@@ -189,11 +186,54 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     creds = getattr(claude, "credentials_file", "") or ""
     if account or creds:
         lines.append(f"  account: {account or '(host live)'}   creds: {creds or '-'}")
+    return lines
 
-    lines.append("")
+
+def _workdir_line(pwd: str, binds: list[tuple[str, str, str]]) -> str:
+    """The ``Workdir (--pwd): ...`` line, with the backed-by-a-bind check."""
     backed = _pwd_is_backed(pwd, binds)
     flag = "✓ backed by a bind" if backed else "⚠ NOT backed by any bind — no cwd!"
-    lines.append(f"Workdir (--pwd): {pwd}   [{flag}]")
+    return f"Workdir (--pwd): {pwd}   [{flag}]"
+
+
+def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -> str:
+    """Short variant of :func:`render_plan` for ``sac agents start``'s
+    refuse-without-``--yes`` preview.
+
+    Reuses the same already-computed identity/workdir/model pieces as the
+    full plan, but stops there — no Mounts, Env, Flags/Channels, Skills,
+    Startup prompts, Hooks, Instruction sections, Settings sources, or Host
+    deep-merge. Use ``sac agents explain <name>`` (``render_plan``) for the
+    full detail.
+    """
+    argv = _argv_for(config)
+    binds = _binds(argv)
+    pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
+    sif = next((a for a in argv if isinstance(a, str) and a.endswith(".sif")), "(none)")
+    claude = getattr(config, "claude", None)
+
+    lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
+    lines.append("")
+    lines.append(_workdir_line(pwd, binds))
+
+    model = getattr(claude, "model", "") or getattr(config, "model", "")
+    lines.append("")
+    lines.append(f"Model: {model}")
+    return "\n".join(lines)
+
+
+def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
+    """Return the human-readable effective launch plan for ``config``."""
+    argv = _argv_for(config)
+    binds = _binds(argv)
+    pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
+    sif = next((a for a in argv if isinstance(a, str) and a.endswith(".sif")), "(none)")
+    claude = getattr(config, "claude", None)
+
+    lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
+
+    lines.append("")
+    lines.append(_workdir_line(pwd, binds))
 
     lines.append("")
     lines.append("Mounts (apptainer.binds — the single source of truth):")

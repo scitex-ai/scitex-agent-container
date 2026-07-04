@@ -110,6 +110,20 @@ from ._start_preflight_gate import make_preflight_runner
     "interactive confirmations).",
 )
 @click.option(
+    "-v",
+    "--verbose",
+    "verbose",
+    is_flag=True,
+    default=False,
+    help=(
+        "Show the FULL effective launch-plan detail (mounts, env, skills, "
+        "hooks, instruction sections, settings sources, host deep-merge — "
+        "same as `sac agents explain`) in the refuse-without-`--yes` "
+        "preview, instead of the default short summary (identity, spec "
+        "path, runtime/image, workdir, model)."
+    ),
+)
+@click.option(
     "--foreground",
     "foreground",
     is_flag=True,
@@ -232,6 +246,7 @@ def start(
     dry_run: bool,
     as_json: bool,
     yes: bool,
+    verbose: bool,
     foreground: bool,
     one_shot: bool,
     params_file: Path | None,
@@ -262,6 +277,10 @@ def start(
     (use ``--force`` to overwrite). ``--dry-run`` prints the plan without writing
     or starting; ``--json`` emits it as structured output. Malformed forms fail
     loud (no silent fallback).
+
+    An interactive launch (real tty, no ``--yes``) previews the effective plan
+    then refuses to start — a short summary by default, or the FULL detail
+    (mounts, env, hooks, ...) with ``-v``/``--verbose``.
 
     \b
     Example:
@@ -479,6 +498,7 @@ def start(
         preflight_runner=_run_preflight_once,
         broker_self=broker_self,
         yes=yes,
+        verbose=verbose,
     )
 
 
