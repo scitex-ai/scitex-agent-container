@@ -2,7 +2,7 @@
 name: scitex-agent-container
 description: |
   [WHAT] Declarative YAML AI-agent lifecycle — define an agent in one `spec.yaml`; `sac agents start` runs it as a long-lived Claude SDK session inside Apptainer, with A2A inbound (`POST /v1/turn`), SSH remote deploy, JSON status.
-  [WHEN] Launching/managing a Claude Code agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker.
+  [WHEN] Launching/managing a Claude Code agent or fleet, running one on a remote host, wiring MCP, talking over A2A, or any mention of `sac agents start`, `scitex-agent-container`, `spec.yaml`, fleet head/worker. Also trigger on paraphrased asks that don't name sac directly: running Claude Code as a persistent background daemon that survives restarts, spinning up an AI agent on a remote server via SSH, or having multiple Claude Code agents message each other.
   [HOW] `pip install scitex-agent-container`, then `sac agents start <name>` or `import scitex_agent_container`.
 tags: [scitex-agent-container]
 primary_interface: cli
