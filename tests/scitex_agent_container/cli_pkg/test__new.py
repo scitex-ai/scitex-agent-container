@@ -392,3 +392,237 @@ def test_new_inline_minimal_still_works_with_dir_templates_present(
     errors = validate_config(base / "inl" / "spec.yaml")
     # Assert
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# `create` consolidation — developer/scientist are now `_template_*` dirs
+# (card refactor/consolidate-create-into-new-templates), not a separate
+# `sac agents create` command. These fixtures mirror the SHAPE of the real
+# `_template_developer` / `_template_scientist` dirs shipped in the operator's
+# agents root (outside this repo, like `_template_researcher`) — same
+# SAC_PLACEHOLDER_PROJECT / SAC_PLACEHOLDER_AGENT_ID tokens, groups, and
+# purpose suffix — so the mechanism + shape is covered hermetically in CI.
+# ---------------------------------------------------------------------------
+
+_DEVELOPER_DEMO_SPEC = """\
+# SAC_PLACEHOLDER_PROJECT — developer agent (mirrors _template_developer).
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: SAC_PLACEHOLDER_PROJECT
+    purpose: SAC_PLACEHOLDER_PROJECT-maintainer
+    role: project-maintainer
+    groups: [developer]
+    cardinality: singleton
+
+spec:
+  runtime: tui
+  host: local
+  workdir: /home/ywatanabe/proj/SAC_PLACEHOLDER_PROJECT
+
+  apptainer:
+    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    relaxed: true
+    binds:
+      - /home/ywatanabe:/home/ywatanabe:rw
+    raw_args:
+      - --userns
+      - --containall
+      - --home=/home/agent
+      - --overlay=/home/ywatanabe/.scitex/agent-container/containers/overlays/SAC_PLACEHOLDER_AGENT_ID/
+      - --env=SCITEX_AGENT_CONTAINER_STATE_DB=/state/SAC_PLACEHOLDER_AGENT_ID/state.db
+      - --env=SCITEX_TODO_AGENT_ID=SAC_PLACEHOLDER_AGENT_ID
+
+  claude:
+    model: claude-opus-4-8[1m]
+    flags:
+      - --dangerously-skip-permissions
+    channels:
+      - server:claude-code-telegrammer
+      - server:sac
+      - server:scitex-todo
+
+  a2a:
+    port: auto
+
+  startup_commands:
+    - command: 'echo install-step'
+
+  startup_prompts:
+    - Start or continue.
+
+  health:
+    enabled: true
+    interval: 60
+
+  restart:
+    policy: on-failure
+    max_retries: 3
+"""
+
+_SCIENTIST_DEMO_SPEC = _DEVELOPER_DEMO_SPEC.replace(
+    "SAC_PLACEHOLDER_PROJECT-maintainer", "SAC_PLACEHOLDER_PROJECT-research"
+).replace("groups: [developer]", "groups: [scientist]")
+
+
+def _write_dir_template(base: Path, kind: str, body: str) -> Path:
+    """Create a fake ``_template_<kind>/`` dir under ``base`` and return it."""
+    tdir = base / f"_template_{kind}"
+    (tdir / "to_home").mkdir(parents=True)
+    (tdir / "spec.yaml").write_text(body)
+    return tdir
+
+
+def test_new_developer_template_leaves_no_placeholder(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["dev1", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+    )
+    # Assert
+    assert _no_placeholder_remains(base / "dev1")
+
+
+def test_new_developer_template_validates(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["dev2", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+    )
+    errors = validate_config(base / "dev2" / "spec.yaml")
+    # Assert
+    assert errors == []
+
+
+def test_new_developer_template_group_label(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["dev3", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+    )
+    parsed = yaml.safe_load((base / "dev3" / "spec.yaml").read_text())
+    # Assert
+    assert parsed["metadata"]["labels"]["groups"] == ["developer"]
+
+
+def test_new_scientist_template_leaves_no_placeholder(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["sci1", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+    )
+    # Assert
+    assert _no_placeholder_remains(base / "sci1")
+
+
+def test_new_scientist_template_validates(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["sci2", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+    )
+    errors = validate_config(base / "sci2" / "spec.yaml")
+    # Assert
+    assert errors == []
+
+
+def test_new_scientist_template_group_label(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["sci3", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+    )
+    parsed = yaml.safe_load((base / "sci3" / "spec.yaml").read_text())
+    # Assert
+    assert parsed["metadata"]["labels"]["groups"] == ["scientist"]
+
+
+def test_new_scientist_template_purpose_suffix(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
+    # Act
+    runner.invoke(
+        new_cmd,
+        ["sci4", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+    )
+    parsed = yaml.safe_load((base / "sci4" / "spec.yaml").read_text())
+    # Assert — scientist purpose is the research suffix (mirrors retired `create`).
+    assert parsed["metadata"]["labels"]["purpose"] == "paperx-research"
+
+
+# ---------------------------------------------------------------------------
+# `--help` shows the LIVE `_template_*` set, not a stale hardcoded list.
+# ---------------------------------------------------------------------------
+
+
+def test_new_help_lists_live_dir_templates(tmp_path: Path) -> None:
+    # Arrange — a brand-new throwaway dir-template with NO code change must
+    # surface in --help, proving the list is live-scanned, not hardcoded.
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "zzz_test", _DEVELOPER_DEMO_SPEC)
+    # Act
+    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    # Assert
+    assert "zzz_test" in result.output
+
+
+def test_new_help_lists_inline_templates(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    # Assert — built-in presets are always listed alongside any dir-templates.
+    assert "minimal" in result.output and "full" in result.output
+
+
+def test_new_help_omits_dir_template_absent_from_root(tmp_path: Path) -> None:
+    # Arrange — an EMPTY agents root: no _template_* dirs exist.
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    # Assert — nothing invented; the live scan reports none found.
+    assert "none found" in result.output
+
+
+def test_new_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> None:
+    # Arrange — regression check: an unknown --template still fails loud
+    # and names the valid choices (unaffected by the --help epilog change).
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
+    # Act
+    result = runner.invoke(
+        new_cmd, ["whoops", "--base-dir", str(base), "--template", "nope"]
+    )
+    # Assert
+    assert "developer" in result.output and result.exit_code != 0
