@@ -79,6 +79,56 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 | `SAC_ANTHROPIC_API_KEY` | Sac-namespaced auth handoff. Accepts both OAuth (`sk-ant-oat*`) and API-key (`sk-ant-api*`) forms; runner detects by prefix. Local shells populate via `sac dev credential2apikey`; CI populates via the GitHub Actions secret of the same name (rotate with `sac dev upload-apikey-from-credentials-to-github`). | `—` | string |
 | `SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN` | Telegram bot token for agent bridge. | `—` | string |
 
+## Fleet `.envrc` conventions — git identity + host paths (NOT read by sac's Python code)
+
+Everything above this section is a var sac's own Python reads at import
+or runtime. This section is different: it documents a **direnv `.envrc`
+convention** the operator's fleet relies on, that sac code only touches
+in one narrow, values-agnostic spot. Listed here (rather than in a
+separate doc) because the naming looks sac-owned (`SAC_*`) and belongs
+next to the vars above for discoverability.
+
+**Git identity.** SSOT lives in `~/proj/.envrc` — the common ancestor
+directory of every fleet project — not in sac code or any `spec.yaml`.
+Every project's own `.envrc` sources it as its first line
+(`source_up`), so each project inherits these via direnv's native
+per-directory walk-up (fleet-wide since 2026-07-05):
+
+| Variable | Purpose |
+|---|---|
+| `SAC_GIT_AUTHOR_NAME` / `SAC_GIT_AUTHOR_EMAIL` | Canonical git author identity. |
+| `SAC_GIT_COMMITTER_NAME` / `SAC_GIT_COMMITTER_EMAIL` | Canonical git committer identity. |
+| `SAC_GIT_SSH_COMMAND` | Canonical `GIT_SSH_COMMAND` value (ControlMaster options etc.). |
+
+`git` itself only reads the unprefixed `GIT_*` names, so sac's
+apptainer runtime carries one generic alias step
+(`_GIT_ENV_ALIAS_STEPS` in `runtimes/_apptainer_inner_argv.py`) that
+exports `GIT_AUTHOR_NAME` etc. from `SAC_GIT_AUTHOR_NAME` etc. when
+set — a no-op when unset, and it never overwrites an already-correct
+`GIT_*`. The `SAC_` prefix is kept (rather than exporting `GIT_*`
+directly from `.envrc`) so `printenv | grep SAC_` stays a complete
+picture of every sac-relevant var (PR #532).
+
+**Host paths.** Same `~/proj/.envrc` → `source_up` chain also exports
+the operator's real host paths, for agent scripts/skills that need to
+reference the true host home or host `/tmp` explicitly instead of
+hardcoding. Purely a documentation/convention pair — no sac Python code
+reads either:
+
+| Variable | Purpose |
+|---|---|
+| `SAC_HOME_HOST` | The operator's real host `$HOME`. An agent's own `$HOME` is `/home/agent`, not the host's real home — even though for `tui`+`apptainer` fleet agents the whole-home bind lands at the same literal path inside the container. |
+| `SAC_TMP_DIR_HOST` | The host's real `/tmp`, bound read-only at `/tmp/host` inside the container (the container's own `/tmp` is a separate tmpfs, not the host's). |
+
+Every fleet agent's `startup_prompts` mission text now includes a
+one-line reminder of this `$HOME` / `/tmp` ambiguity (2026-07-05).
+
+This is unrelated to [22_host-passthrough.md](22_host-passthrough.md),
+which covers the `runtime: docker` isolated-worker pattern
+(`spec.mounts` / `spec.env.HOME`) — a different mechanism from the
+`tui`+`apptainer` fleet pattern these vars belong to. Do not merge the
+two.
+
 ## Context compaction
 
 | Variable | Purpose | Default | Type |
