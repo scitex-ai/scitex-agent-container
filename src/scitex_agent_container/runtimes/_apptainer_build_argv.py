@@ -364,13 +364,8 @@ def build_run_argv(
     # (apptainer applies user binds after home setup). No-op for
     # non-relaxed / non-directory-overlay specs (resolver returns
     # None) and when the upper-home wasn't materialised.
-    from ._to_home_overlay import (
-        resolve_container_home,
-        resolve_overlay_upper_home,
-    )
-
-    # Reuse the up-front resolution (see the home_backing block above) so
-    # the skip-the-workspace-home decision and this bind agree exactly.
+    # resolve_container_home / resolve_overlay_upper_home already imported at
+    # the top of this function; reuse the up-front resolution.
     upper_home = _upper_home
     if upper_home is not None and upper_home.is_dir():
         container_home = resolve_container_home(config)
@@ -498,6 +493,11 @@ def build_run_argv(
 
         inner_str = " ".join(shlex.quote(a) for a in inner_argv)
         argv += ["bash", "-c", f"{PREFLIGHT_SCRIPT}\nexec {inner_str}"]
+    # Jailed-capsule mount boundary (non-bypassable, fail-loud): forces
+    # --containall + rejects shared-FS binds/--pwd. See _apptainer_jail.
+    from ._apptainer_jail import enforce_jail
+
+    enforce_jail(config, argv)
     return argv
 
 
