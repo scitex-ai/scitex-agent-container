@@ -32,10 +32,12 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state import registry as _reg
+from scitex_agent_container._state.state_db_blocks import block_send
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
     grant_send,
     mint_node_token,
+    record_comms_policy,
     record_lineage,
 )
 
@@ -110,7 +112,9 @@ def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_acl_denies_cross_group_without_grant(db_path: Path) -> None:
+def test_acl_allows_cross_group_by_default(db_path: Path) -> None:
+    """Messaging default-allow (operator 2026-07-03): two unrelated
+    lineage families, no grant → ALLOW."""
     # Arrange — two unrelated families
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
@@ -122,22 +126,25 @@ def test_acl_denies_cross_group_without_grant(db_path: Path) -> None:
         db_path=db_path,
     )
     # Assert
-    assert decision == "deny"
+    assert decision == "allow"
 
 
-def test_acl_deny_carries_explanatory_reason(db_path: Path) -> None:
-    # Arrange
+def test_acl_blocked_sender_is_blocked(db_path: Path) -> None:
+    """Override preserved: an explicit block still yields a "block"
+    decision even under the cross-group default-allow."""
+    # Arrange — two unrelated families + an explicit block
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    block_send(sender="child-1", target="child-2", db_path=db_path)
     # Act
-    _decision, reason = check_send_acl(
+    decision, _reason = check_send_acl(
         authenticated_node="child-1",
         claimed_from_agent="child-1",
         target="child-2",
         db_path=db_path,
     )
     # Assert
-    assert reason is not None and "cross-group" in reason
+    assert decision == "block"
 
 
 def test_acl_allows_cross_group_with_explicit_grant(db_path: Path) -> None:
@@ -327,10 +334,11 @@ def _payload(sender: str, content: str = "x") -> dict:
     }
 
 
-def test_http_node_message_send_denies_cross_group_with_403(
+def test_http_node_message_send_allows_cross_group_by_default(
     isolated_listen_env, db_path: Path
 ) -> None:
-    """End-to-end: cross-group sender → 403."""
+    """End-to-end: messaging default-allow — a cross-group sender (two
+    unrelated lineage families) now lands (< 400)."""
     # Arrange
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
@@ -343,27 +351,29 @@ def test_http_node_message_send_denies_cross_group_with_403(
             headers={"authorization": f"Bearer {TOKEN}"},
         )
     # Assert
-    assert r.status_code == 403, r.text
+    assert r.status_code < 400, r.text
 
 
-def test_http_node_message_send_403_body_carries_reason(
+def test_http_node_message_send_403_body_carries_per_spec_reason(
     isolated_listen_env, db_path: Path
 ) -> None:
-    """The 403 body explains the denial."""
-    # Arrange
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    """A per-spec ``inbound.siblings=deny`` override still 403s and the
+    body explains the denial (the deny path survives default-allow)."""
+    # Arrange — siblings so the per-spec inbound-sibling deny applies.
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-b", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
         r = client.post(
-            "/agents/child-2/message:send",
-            json=_payload("child-1"),
+            "/agents/worker-b/message:send",
+            json=_payload("worker-a"),
             headers={"authorization": f"Bearer {TOKEN}"},
         )
     body = r.json()
     # Assert
-    assert "reason" in body and "cross-group" in body["reason"]
+    assert "reason" in body and "inbound deny" in body["reason"]
 
 
 def test_http_node_message_send_allows_intra_group(
@@ -556,9 +566,16 @@ def _denied_attempt_rows(target: str, db_path: Path) -> list[dict]:
 
 @pytest.fixture
 def cross_group_deny_scenario(isolated_listen_env, db_path: Path) -> dict:
-    """Cross-group denied send via host bearer (admin caller path)."""
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    """A denied send via host bearer (admin caller path).
+
+    Since messaging is now DEFAULT-ALLOW cross-group (operator
+    2026-07-03), the denied-attempt notification machinery is exercised
+    via the surviving deny path: a per-spec ``inbound.siblings=deny`` on
+    the target. child-1 and child-2 are siblings under a shared root so
+    the sibling relationship applies."""
+    record_lineage(child="child-1", parent="root", db_path=db_path)
+    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
         resp = client.post(
@@ -620,7 +637,7 @@ def test_cross_group_deny_notification_carries_reason(
     # Act
     reason = event.get("extra", {}).get("deny_reason", "")
     # Assert
-    assert "cross-group" in reason
+    assert "inbound deny" in reason
 
 
 def test_cross_group_deny_notification_carries_positive_timestamp(
@@ -642,9 +659,12 @@ _SECRET = "PII / credentials / anything the sender shoved in here"
 
 @pytest.fixture
 def body_leak_scenario(isolated_listen_env, db_path: Path) -> dict:
-    """Denied send carrying a secret in its body — must not leak."""
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    """Denied send carrying a secret in its body — must not leak. Denial
+    is triggered by a per-spec ``inbound.siblings=deny`` (the surviving
+    deny path under messaging default-allow)."""
+    record_lineage(child="child-1", parent="root", db_path=db_path)
+    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
         resp = client.post(
@@ -698,12 +718,14 @@ def test_body_leak_scenario_secret_absent_from_serialized_notification(
 
 @pytest.fixture
 def fanout_scope_scenario(isolated_listen_env, db_path: Path) -> dict:
-    """Cross-group denied send — only the *real* target's inbox should
+    """A per-spec denied send — only the *real* target's inbox should
     carry a notif; bystander targets and the empty-name inbox stay
-    untouched.
+    untouched. Denial via ``inbound.siblings=deny`` on child-2 (siblings
+    child-1/child-2 under a shared root); bystander is unrelated.
     """
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root", db_path=db_path)
+    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     record_lineage(child="bystander", parent="root-3", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
@@ -827,8 +849,9 @@ def live_broker_event(isolated_listen_env, db_path: Path) -> dict:
 
     import httpx
 
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root", db_path=db_path)
+    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
 
     async def driver() -> dict:
@@ -893,13 +916,13 @@ def test_live_broker_event_content_is_empty(live_broker_event) -> None:
     assert content == ""
 
 
-def test_live_broker_event_carries_cross_group_reason(live_broker_event) -> None:
+def test_live_broker_event_carries_deny_reason(live_broker_event) -> None:
     # Arrange
     event = live_broker_event
     # Act
     reason = event.get("extra", {}).get("deny_reason", "")
     # Assert
-    assert "cross-group" in reason
+    assert "inbound deny" in reason
 
 
 def test_live_broker_event_does_not_leak_body(live_broker_event) -> None:

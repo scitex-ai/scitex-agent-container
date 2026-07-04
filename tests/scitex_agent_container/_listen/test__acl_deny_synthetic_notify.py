@@ -12,8 +12,10 @@ can grant proactively. Rate-limited per (sender, target) pair
 REPLACES the prior parent/child auto-grant policy.
 
 No-mocks (PA-306): real on-disk state.db, real Starlette TestClient,
-real fake-deny scenario (cross-group sender → target). AAA markers
-(TQ002), one assert per test (TQ007), 3+-word test names.
+real deny scenario (a per-spec ``inbound.siblings=deny`` sender →
+target — the surviving deny path now that cross-group messaging is
+default-allow). AAA markers (TQ002), one assert per test (TQ007),
+3+-word test names.
 """
 
 from __future__ import annotations
@@ -33,7 +35,10 @@ from scitex_agent_container._state.state_db_acl_deny_notify import (
     last_notified_at,
 )
 from scitex_agent_container._state.state_db_channel import list_undelivered
-from scitex_agent_container._state.state_db_nodes import record_lineage
+from scitex_agent_container._state.state_db_nodes import (
+    record_comms_policy,
+    record_lineage,
+)
 
 _TOKEN = "test-token-acl-deny-synthetic-notify"
 
@@ -59,9 +64,15 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     # that drives ``now=`` to exercise the throttle).
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "0"
     try:
-        # Seed parent → child lineage so ``worker-a → lead`` is
-        # cross-group (the canonical deny scenario item D fixes).
+        # Seed the canonical deny scenario item D fixes. Since messaging
+        # is now DEFAULT-ALLOW cross-group (operator 2026-07-03), the
+        # synthetic ACL-deny notification is exercised via the surviving
+        # deny path: ``worker-a`` and ``lead`` are siblings under a shared
+        # root and ``lead`` carries a per-spec ``inbound.siblings=deny``,
+        # so ``worker-a → lead`` is denied.
         record_lineage(child="worker-a", parent="root", db_path=db)
+        record_lineage(child="lead", parent="root", db_path=db)
+        record_comms_policy(name="lead", inbound_siblings="deny", db_path=db)
         yield db
     finally:
         state_db.DEFAULT_DB_PATH = saved_default

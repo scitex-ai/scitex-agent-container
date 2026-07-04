@@ -157,8 +157,8 @@ async def list_agents(_request: Request) -> JSONResponse:
     # keep theirs (the discovery layer is the authoritative source for
     # those).
     from ._registry_endpoints import enrich_row_with_endpoint
-
-    rows = [enrich_row_with_endpoint(row) for row in rows]
+    from ._registry_endpoints import enrich_row_with_role_owner
+    rows = [enrich_row_with_role_owner(enrich_row_with_endpoint(row)) for row in rows]
     return JSONResponse({"agents": rows})
 
 

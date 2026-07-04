@@ -164,9 +164,86 @@ def enrich_row_with_endpoint(row: dict) -> dict:
     return out
 
 
+def resolve_role_and_project(agent_name: str) -> tuple[str | None, str | None]:
+    """Return ``(role, project)`` for ``agent_name``, best-effort.
+
+    Operator directive 2026-07-03: an agent's ROLE and the project /
+    repo it OWNS must be discoverable fleet-wide via ``a2a peers`` so a
+    peer can see "scitex-dev owns X" without asking.
+
+    Sourcing (from the agent's spec — the same config
+    :func:`server.agent_status` already loads for a single agent):
+
+    * ``role`` — ``metadata.labels.role`` (the field the group resolver
+      and the ``CLAUDE_AGENT_ROLE`` env injection both read).
+    * ``project`` — the basename of the agent's resolved workdir (the
+      directory / repo the agent works in and thus "owns").
+
+    Best-effort: every failure (spec not found, unreadable, no role /
+    workdir) degrades the affected field to ``None`` so a peers row is
+    never blocked — the peers list is a discovery surface, not a gate.
+    """
+    role: str | None = None
+    project: str | None = None
+    try:
+        from pathlib import Path
+
+        from ..config import load_config
+        from ..config._resolve import resolve_config
+
+        cfg = load_config(resolve_config(agent_name))
+        labels = getattr(cfg, "labels", None)
+        if isinstance(labels, dict):
+            raw_role = labels.get("role")
+            if isinstance(raw_role, str) and raw_role.strip():
+                role = raw_role.strip()
+        workdir = getattr(cfg, "expanded_workdir", None)
+        if isinstance(workdir, str) and workdir.strip():
+            base = Path(workdir).name
+            if base:
+                project = base
+    except Exception:  # stx-allow: fallback (best-effort peers enrichment — a missing role/project surfaces as a null field)
+        return (role, project)
+    return (role, project)
+
+
+def enrich_row_with_role_owner(row: dict, *, resolver=resolve_role_and_project) -> dict:
+    """Add ``role`` and ``project`` to ``row`` (idempotent, best-effort).
+
+    Mirrors :func:`enrich_row_with_endpoint`: a row that already carries a
+    NON-NONE ``role`` / ``project`` keeps its own value; otherwise the
+    field is resolved from the agent's spec via ``resolver`` (injectable
+    so the pure enrichment logic is testable without an on-disk spec). A
+    row with no usable ``name`` still gets both keys (as ``None``) so the
+    ``GET /agents`` response shape stays uniform for every row.
+    """
+    if not isinstance(row, dict):
+        return row
+    name = row.get("name")
+    existing_role = row.get("role")
+    existing_project = row.get("project")
+    if not isinstance(name, str) or not name:
+        out = dict(row)
+        out.setdefault("role", existing_role)
+        out.setdefault("project", existing_project)
+        return out
+    if existing_role is None or existing_project is None:
+        resolved_role, resolved_project = resolver(name)
+    else:
+        resolved_role, resolved_project = existing_role, existing_project
+    out = dict(row)
+    out["role"] = existing_role if existing_role is not None else resolved_role
+    out["project"] = (
+        existing_project if existing_project is not None else resolved_project
+    )
+    return out
+
+
 __all__ = [
     "derive_turn_url",
     "enrich_row_with_endpoint",
+    "enrich_row_with_role_owner",
     "resolve_a2a_host",
     "resolve_a2a_port",
+    "resolve_role_and_project",
 ]
