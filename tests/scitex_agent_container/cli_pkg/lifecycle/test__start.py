@@ -915,7 +915,7 @@ class TestColdStart:
         # Act
         CliRunner().invoke(start, [str(work), "--dry-run"])
         # Assert — dry-run must not materialize into the real agents root.
-        from scitex_agent_container.cli_pkg._new import _default_base_dir
+        from scitex_agent_container.cli_pkg._create import _default_base_dir
 
         assert not (_default_base_dir() / "figdemo-unique-xyz").exists()
 

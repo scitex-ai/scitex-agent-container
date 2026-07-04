@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Directory-template support for ``sac agents new``.
+"""Directory-template support for ``sac agents create``.
 
 Beyond the two inline string templates (``minimal`` / ``full``), the
 operator ships *directory* templates that live in the agents root,
@@ -11,7 +11,7 @@ kind needs, with literal placeholder tokens of the form
 ``SAC_PLACEHOLDER_<NAME>`` baked into the files (workdir paths, install
 targets, labels, STATE_DB names, …).
 
-``sac agents new <name> --template <kind>`` instantiates such a template
+``sac agents create <name> --template <kind>`` instantiates such a template
 by *copying the whole tree* to ``<base-dir>/<name>/`` and substituting
 the placeholder tokens. The substitution is fail-loud: if ANY
 ``SAC_PLACEHOLDER_*`` token survives, the partial output directory is

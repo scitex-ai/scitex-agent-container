@@ -1,9 +1,14 @@
-"""Tests for ``sac agents new`` — scaffold a fresh v3 spec.yaml.
+"""Tests for ``sac agents create`` — scaffold a fresh v3 spec.yaml.
 
 Card sac-fresh-agent-specs (2026-06-13). Authoring policy is "fresh
-template, not in-place repair": the operator runs ``sac agents new
+template, not in-place repair": the operator runs ``sac agents create
 <name>`` and gets a v3-clean spec.yaml + to_home/ skeleton next to it,
 ready to edit. The validator must accept the output as-is.
+
+Renamed from ``new`` to ``create`` (card
+refactor/consolidate-create-into-new-templates) — CRUD-consistent
+naming now that the old, narrower ``create`` command was folded into
+this one's dir-template system, freeing the name back up.
 
 Discipline: AAA markers each on their own line; one literal ``assert``
 per test; real filesystem fixtures (``tmp_path``), no mocks.
@@ -16,51 +21,51 @@ from pathlib import Path
 import yaml
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg._new import new as new_cmd
+from scitex_agent_container.cli_pkg._create import create as create_cmd
 from scitex_agent_container.config._validation import validate_config
 
 
-def test_new_writes_spec_yaml_at_target(tmp_path: Path) -> None:
+def test_create_writes_spec_yaml_at_target(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    runner.invoke(new_cmd, ["my-agent", "--base-dir", str(base)])
+    runner.invoke(create_cmd, ["my-agent", "--base-dir", str(base)])
     # Assert
     assert (base / "my-agent" / "spec.yaml").is_file()
 
 
-def test_new_minimal_template_passes_v3_validator(tmp_path: Path) -> None:
+def test_create_minimal_template_passes_v3_validator(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
     runner.invoke(
-        new_cmd, ["fresh-agent", "--base-dir", str(base), "--template", "minimal"]
+        create_cmd, ["fresh-agent", "--base-dir", str(base), "--template", "minimal"]
     )
     errors = validate_config(base / "fresh-agent" / "spec.yaml")
     # Assert — fresh template must satisfy the live validator (zero errors).
     assert errors == []
 
 
-def test_new_full_template_passes_v3_validator(tmp_path: Path) -> None:
+def test_create_full_template_passes_v3_validator(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
     runner.invoke(
-        new_cmd, ["full-fresh", "--base-dir", str(base), "--template", "full"]
+        create_cmd, ["full-fresh", "--base-dir", str(base), "--template", "full"]
     )
     errors = validate_config(base / "full-fresh" / "spec.yaml")
     # Assert
     assert errors == []
 
 
-def test_new_default_template_is_minimal(tmp_path: Path) -> None:
+def test_create_default_template_is_minimal(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
-    runner.invoke(new_cmd, ["defaulty", "--base-dir", str(base)])
+    runner.invoke(create_cmd, ["defaulty", "--base-dir", str(base)])
     # Act — parse the spec YAML to inspect the rendered config keys, NOT
     # the prose docstring (the comment legitimately MENTIONS the field
     # name as an "add this if you need it" pointer).
@@ -69,82 +74,82 @@ def test_new_default_template_is_minimal(tmp_path: Path) -> None:
     assert "startup_prompts" not in parsed.get("spec", {})
 
 
-def test_new_creates_to_home_skeleton(tmp_path: Path) -> None:
+def test_create_creates_to_home_skeleton(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    runner.invoke(new_cmd, ["agent-x", "--base-dir", str(base)])
+    runner.invoke(create_cmd, ["agent-x", "--base-dir", str(base)])
     # Assert — to_home/ exists as a sibling of spec.yaml so the runtime
     # auto-discovers it (spec-reference §to_home).
     assert (base / "agent-x" / "to_home").is_dir()
 
 
-def test_new_refuses_to_overwrite_existing_spec(tmp_path: Path) -> None:
+def test_create_refuses_to_overwrite_existing_spec(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     (base / "dupe").mkdir(parents=True)
     (base / "dupe" / "spec.yaml").write_text("# pre-existing\n")
     # Act
-    result = runner.invoke(new_cmd, ["dupe", "--base-dir", str(base)])
+    result = runner.invoke(create_cmd, ["dupe", "--base-dir", str(base)])
     # Assert — non-zero exit so accidental clobber is impossible without --force.
     assert result.exit_code != 0
 
 
-def test_new_force_overwrites_existing_spec(tmp_path: Path) -> None:
+def test_create_force_overwrites_existing_spec(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     (base / "dupe2").mkdir(parents=True)
     (base / "dupe2" / "spec.yaml").write_text("# stale\n")
     # Act
-    runner.invoke(new_cmd, ["dupe2", "--base-dir", str(base), "--force"])
+    runner.invoke(create_cmd, ["dupe2", "--base-dir", str(base), "--force"])
     text = (base / "dupe2" / "spec.yaml").read_text()
     # Assert — fresh template replaces the stale stub (apiVersion line is canonical).
     assert "scitex-agent-container/v3" in text
 
 
-def test_new_rejects_unknown_template(tmp_path: Path) -> None:
+def test_create_rejects_unknown_template(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
     result = runner.invoke(
-        new_cmd, ["bad", "--base-dir", str(base), "--template", "nope"]
+        create_cmd, ["bad", "--base-dir", str(base), "--template", "nope"]
     )
     # Assert — Click's Choice raises UsageError (exit code 2).
     assert result.exit_code != 0
 
 
-def test_new_emits_canonical_apiversion_header(tmp_path: Path) -> None:
+def test_create_emits_canonical_apiversion_header(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    runner.invoke(new_cmd, ["headered", "--base-dir", str(base)])
+    runner.invoke(create_cmd, ["headered", "--base-dir", str(base)])
     first_lines = (base / "headered" / "spec.yaml").read_text().splitlines()[:10]
     # Assert — apiVersion appears in the file head (no buried boilerplate).
     assert any("apiVersion: scitex-agent-container/v3" in line for line in first_lines)
 
 
-def test_new_template_kind_is_agent_not_agentproxy(tmp_path: Path) -> None:
+def test_create_template_kind_is_agent_not_agentproxy(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    runner.invoke(new_cmd, ["kindly", "--base-dir", str(base)])
+    runner.invoke(create_cmd, ["kindly", "--base-dir", str(base)])
     text = (base / "kindly" / "spec.yaml").read_text()
     # Assert — default scaffold is the common case (SDK runner).
     assert "kind: Agent" in text
 
 
-def test_new_rejects_invalid_agent_name(tmp_path: Path) -> None:
+def test_create_rejects_invalid_agent_name(tmp_path: Path) -> None:
     # Arrange — names with slashes would write outside the base dir.
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    result = runner.invoke(new_cmd, ["bad/name", "--base-dir", str(base)])
+    result = runner.invoke(create_cmd, ["bad/name", "--base-dir", str(base)])
     # Assert
     assert result.exit_code != 0
 
@@ -222,12 +227,12 @@ def _invoke_demo(
 ) -> object:
     """Instantiate the demo dir-template under ``base`` and return result."""
     return runner.invoke(
-        new_cmd,
+        create_cmd,
         [name, "--base-dir", str(base), "--template", "demo", *extra_args],
     )
 
 
-def test_new_dir_template_instantiation_exits_zero(tmp_path: Path) -> None:
+def test_create_dir_template_instantiation_exits_zero(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -240,7 +245,7 @@ def test_new_dir_template_instantiation_exits_zero(tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
-def test_new_dir_template_writes_spec_yaml(tmp_path: Path) -> None:
+def test_create_dir_template_writes_spec_yaml(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -251,7 +256,7 @@ def test_new_dir_template_writes_spec_yaml(tmp_path: Path) -> None:
     assert (base / "demo1" / "spec.yaml").is_file()
 
 
-def test_new_dir_template_leaves_no_placeholder(tmp_path: Path) -> None:
+def test_create_dir_template_leaves_no_placeholder(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -262,7 +267,7 @@ def test_new_dir_template_leaves_no_placeholder(tmp_path: Path) -> None:
     assert _no_placeholder_remains(base / "demo1")
 
 
-def test_new_dir_template_filled_spec_validates(tmp_path: Path) -> None:
+def test_create_dir_template_filled_spec_validates(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -274,14 +279,14 @@ def test_new_dir_template_filled_spec_validates(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_new_dir_template_copies_to_home_tree(tmp_path: Path) -> None:
+def test_create_dir_template_copies_to_home_tree(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _make_demo_template(base)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["d2", "--base-dir", str(base), "--template", "demo", "--project", "p"],
     )
     home = (base / "d2" / "to_home" / "CLAUDE.md").read_text()
@@ -289,14 +294,14 @@ def test_new_dir_template_copies_to_home_tree(tmp_path: Path) -> None:
     assert "agent=d2 project=p" in home
 
 
-def test_new_dir_template_agent_id_defaults_to_name(tmp_path: Path) -> None:
+def test_create_dir_template_agent_id_defaults_to_name(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _make_demo_template(base)
     # Act — omit --agent-id; it must default to <name>.
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["nameddefault", "--base-dir", str(base), "--template", "demo", "--project", "p"],
     )
     text = (base / "nameddefault" / "to_home" / "CLAUDE.md").read_text()
@@ -304,7 +309,7 @@ def test_new_dir_template_agent_id_defaults_to_name(tmp_path: Path) -> None:
     assert "agent=nameddefault" in text
 
 
-def test_new_dir_template_missing_placeholder_exits_nonzero(tmp_path: Path) -> None:
+def test_create_dir_template_missing_placeholder_exits_nonzero(tmp_path: Path) -> None:
     # Arrange — omit --project so SAC_PLACEHOLDER_PROJECT cannot be filled.
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -315,7 +320,7 @@ def test_new_dir_template_missing_placeholder_exits_nonzero(tmp_path: Path) -> N
     assert result.exit_code != 0
 
 
-def test_new_dir_template_missing_placeholder_names_token(tmp_path: Path) -> None:
+def test_create_dir_template_missing_placeholder_names_token(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -326,7 +331,7 @@ def test_new_dir_template_missing_placeholder_names_token(tmp_path: Path) -> Non
     assert "SAC_PLACEHOLDER_PROJECT" in result.output
 
 
-def test_new_dir_template_missing_placeholder_leaves_no_output(tmp_path: Path) -> None:
+def test_create_dir_template_missing_placeholder_leaves_no_output(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -337,7 +342,7 @@ def test_new_dir_template_missing_placeholder_leaves_no_output(tmp_path: Path) -
     assert not (base / "partial").exists()
 
 
-def test_new_dir_template_set_exits_zero(tmp_path: Path) -> None:
+def test_create_dir_template_set_exits_zero(tmp_path: Path) -> None:
     # Arrange — demo carries a custom SAC_PLACEHOLDER_EXTRA token.
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -350,7 +355,7 @@ def test_new_dir_template_set_exits_zero(tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
-def test_new_dir_template_set_fills_custom_token(tmp_path: Path) -> None:
+def test_create_dir_template_set_fills_custom_token(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -362,7 +367,7 @@ def test_new_dir_template_set_fills_custom_token(tmp_path: Path) -> None:
     assert "extra=val" in text
 
 
-def test_new_dir_template_discovery_is_dynamic(tmp_path: Path) -> None:
+def test_create_dir_template_discovery_is_dynamic(tmp_path: Path) -> None:
     # Arrange — a brand-new _template_demo/ dir with NO code change must
     # be accepted as a --template choice.
     runner = CliRunner()
@@ -370,14 +375,14 @@ def test_new_dir_template_discovery_is_dynamic(tmp_path: Path) -> None:
     _make_demo_template(base)
     # Act
     result = runner.invoke(
-        new_cmd,
+        create_cmd,
         ["dyn", "--base-dir", str(base), "--template", "demo", "--project", "p"],
     )
     # Assert
     assert result.exit_code == 0
 
 
-def test_new_inline_minimal_still_works_with_dir_templates_present(
+def test_create_inline_minimal_still_works_with_dir_templates_present(
     tmp_path: Path,
 ) -> None:
     # Arrange — dir-template present, but inline 'minimal' must still render
@@ -387,7 +392,7 @@ def test_new_inline_minimal_still_works_with_dir_templates_present(
     _make_demo_template(base)
     # Act
     runner.invoke(
-        new_cmd, ["inl", "--base-dir", str(base), "--template", "minimal"]
+        create_cmd, ["inl", "--base-dir", str(base), "--template", "minimal"]
     )
     errors = validate_config(base / "inl" / "spec.yaml")
     # Assert
@@ -395,13 +400,16 @@ def test_new_inline_minimal_still_works_with_dir_templates_present(
 
 
 # ---------------------------------------------------------------------------
-# `create` consolidation — developer/scientist are now `_template_*` dirs
-# (card refactor/consolidate-create-into-new-templates), not a separate
-# `sac agents create` command. These fixtures mirror the SHAPE of the real
-# `_template_developer` / `_template_scientist` dirs shipped in the operator's
-# agents root (outside this repo, like `_template_researcher`) — same
-# SAC_PLACEHOLDER_PROJECT / SAC_PLACEHOLDER_AGENT_ID tokens, groups, and
-# purpose suffix — so the mechanism + shape is covered hermetically in CI.
+# Old-`create` consolidation — the retired, narrower `sac agents create`
+# (auto-detect / marker-block machinery, card sac-templated-agent-create
+# 2026-06-25) was folded into the dir-template system rather than kept as
+# a separate command (card refactor/consolidate-create-into-new-templates).
+# `developer`/`scientist` below are SYNTHETIC demo fixtures exercising the
+# generic `_template_<kind>/` mechanism hermetically in CI — they do NOT
+# mirror any real shipped template. The fleet's actual dir-templates are
+# `_template_python_developer` / `_template_researcher` / `_template_generalist`
+# (operator's agents root, outside this repo); there is no
+# `_template_developer` / `_template_scientist` and there never will be.
 # ---------------------------------------------------------------------------
 
 _DEVELOPER_DEMO_SPEC = """\
@@ -474,28 +482,28 @@ def _write_dir_template(base: Path, kind: str, body: str) -> Path:
     return tdir
 
 
-def test_new_developer_template_leaves_no_placeholder(tmp_path: Path) -> None:
+def test_create_developer_template_leaves_no_placeholder(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["dev1", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
     )
     # Assert
     assert _no_placeholder_remains(base / "dev1")
 
 
-def test_new_developer_template_validates(tmp_path: Path) -> None:
+def test_create_developer_template_validates(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["dev2", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
     )
     errors = validate_config(base / "dev2" / "spec.yaml")
@@ -503,14 +511,14 @@ def test_new_developer_template_validates(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_new_developer_template_group_label(tmp_path: Path) -> None:
+def test_create_developer_template_group_label(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["dev3", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
     )
     parsed = yaml.safe_load((base / "dev3" / "spec.yaml").read_text())
@@ -518,28 +526,28 @@ def test_new_developer_template_group_label(tmp_path: Path) -> None:
     assert parsed["metadata"]["labels"]["groups"] == ["developer"]
 
 
-def test_new_scientist_template_leaves_no_placeholder(tmp_path: Path) -> None:
+def test_create_scientist_template_leaves_no_placeholder(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["sci1", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
     )
     # Assert
     assert _no_placeholder_remains(base / "sci1")
 
 
-def test_new_scientist_template_validates(tmp_path: Path) -> None:
+def test_create_scientist_template_validates(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["sci2", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
     )
     errors = validate_config(base / "sci2" / "spec.yaml")
@@ -547,14 +555,14 @@ def test_new_scientist_template_validates(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_new_scientist_template_group_label(tmp_path: Path) -> None:
+def test_create_scientist_template_group_label(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["sci3", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
     )
     parsed = yaml.safe_load((base / "sci3" / "spec.yaml").read_text())
@@ -562,14 +570,14 @@ def test_new_scientist_template_group_label(tmp_path: Path) -> None:
     assert parsed["metadata"]["labels"]["groups"] == ["scientist"]
 
 
-def test_new_scientist_template_purpose_suffix(tmp_path: Path) -> None:
+def test_create_scientist_template_purpose_suffix(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "scientist", _SCIENTIST_DEMO_SPEC)
     # Act
     runner.invoke(
-        new_cmd,
+        create_cmd,
         ["sci4", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
     )
     parsed = yaml.safe_load((base / "sci4" / "spec.yaml").read_text())
@@ -582,39 +590,39 @@ def test_new_scientist_template_purpose_suffix(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_new_help_lists_live_dir_templates(tmp_path: Path) -> None:
+def test_create_help_lists_live_dir_templates(tmp_path: Path) -> None:
     # Arrange — a brand-new throwaway dir-template with NO code change must
     # surface in --help, proving the list is live-scanned, not hardcoded.
     runner = CliRunner()
     base = tmp_path / "agents"
     _write_dir_template(base, "zzz_test", _DEVELOPER_DEMO_SPEC)
     # Act
-    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    result = runner.invoke(create_cmd, ["--base-dir", str(base), "--help"])
     # Assert
     assert "zzz_test" in result.output
 
 
-def test_new_help_lists_inline_templates(tmp_path: Path) -> None:
+def test_create_help_lists_inline_templates(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    result = runner.invoke(create_cmd, ["--base-dir", str(base), "--help"])
     # Assert — built-in presets are always listed alongside any dir-templates.
     assert "minimal" in result.output and "full" in result.output
 
 
-def test_new_help_omits_dir_template_absent_from_root(tmp_path: Path) -> None:
+def test_create_help_omits_dir_template_absent_from_root(tmp_path: Path) -> None:
     # Arrange — an EMPTY agents root: no _template_* dirs exist.
     runner = CliRunner()
     base = tmp_path / "agents"
     # Act
-    result = runner.invoke(new_cmd, ["--base-dir", str(base), "--help"])
+    result = runner.invoke(create_cmd, ["--base-dir", str(base), "--help"])
     # Assert — nothing invented; the live scan reports none found.
     assert "none found" in result.output
 
 
-def test_new_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> None:
+def test_create_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> None:
     # Arrange — regression check: an unknown --template still fails loud
     # and names the valid choices (unaffected by the --help epilog change).
     runner = CliRunner()
@@ -622,7 +630,7 @@ def test_new_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> Non
     _write_dir_template(base, "developer", _DEVELOPER_DEMO_SPEC)
     # Act
     result = runner.invoke(
-        new_cmd, ["whoops", "--base-dir", str(base), "--template", "nope"]
+        create_cmd, ["whoops", "--base-dir", str(base), "--template", "nope"]
     )
     # Assert
     assert "developer" in result.output and result.exit_code != 0
