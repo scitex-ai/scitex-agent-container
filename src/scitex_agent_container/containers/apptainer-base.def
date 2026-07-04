@@ -259,7 +259,18 @@ From: ubuntu:24.04
     rm -rf /tmp/unix-tree-*
 
     # ---- 6. uv (Astral) + pipx + pre-commit ----------------------------
-    UV_INSTALL_DIR=/usr/local/bin curl -LsSf https://astral.sh/uv/install.sh | sh
+    # uv (Astral) — install, then place uv+uvx at a WORLD-READABLE path.
+    # The curl|sh installer ignores UV_INSTALL_DIR and lands in
+    # $HOME/.local/bin (=/root/.local/bin under the root build shell),
+    # which is unreachable to the uid-1000 `agent` user (/root is 0700) —
+    # which is why agents used to re-curl|sh uv into /uvwork at boot.
+    # Copy to /usr/local/bin (0755) so the baked uv is on agent's PATH.
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    for b in uv uvx; do
+        src="$(command -v "$b" 2>/dev/null || echo "/root/.local/bin/$b")"
+        [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
+    done
+    /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
     python3 -m pip install --no-cache-dir --break-system-packages pipx
     # pre-commit into SYSTEM python on purpose: every repo's git hook execs
     # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
@@ -307,10 +318,12 @@ From: ubuntu:24.04
     # this .def (no `git+...@main` snapshot drift). The wheel build
     # via hatchling happens inside the SIF, against the bundled tree.
     #
-    # uv landed at /root/.local/bin/uv (the uv installer ignores
-    # UV_INSTALL_DIR for the curl|sh path and uses XDG_BIN_HOME ->
-    # ~/.local/bin under root). PATH below is conservative — extend
-    # it explicitly rather than rely on the build shell.
+    # uv is now baked WORLD-READABLE at /usr/local/bin/uv (section 6
+    # copies it out of /root/.local/bin, which the curl|sh installer
+    # uses despite UV_INSTALL_DIR and which is unreachable to the
+    # uid-1000 `agent` user). /root/.local/bin is kept on PATH below
+    # for the build shell only (harmless); /usr/local/bin is what
+    # matters at runtime.
     python3 -m venv /opt/venv-sac
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     # P3a-1.5 (operator directive feedback_scitex_todo_single_shared_store,
