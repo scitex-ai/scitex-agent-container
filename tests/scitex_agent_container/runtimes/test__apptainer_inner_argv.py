@@ -1,13 +1,18 @@
 """Tests for ``runtimes/_apptainer_inner_argv.py``.
 
-Covers the startup_commands shell-exec wrapper and the absence of
-the legacy --mission fallback. See commit message
+Covers the startup_commands shell-exec wrapper, the absence of the
+legacy --mission fallback, and the unconditional SAC_GIT_* -> GIT_*
+env-alias step (see commit message
+``feat(launch): generic SAC_GIT_* -> GIT_* env alias in the container
+shell wrapper``). See also commit message
 ``feat(startup_commands): execute as container shell``.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from scitex_agent_container.config import AgentConfig
@@ -18,6 +23,7 @@ from scitex_agent_container.config._types import (
     StartupCommand,
 )
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
+    _GIT_ENV_ALIAS_STEPS,
     _SUPERVISOR_RESTART_FLOOR,
     _agent_runner_argv,
     _format_shell_steps,
@@ -37,13 +43,34 @@ def _mk_cfg(**kwargs):
 # ---------------------------------------------------------------------------
 
 
-def test_startup_commands_empty_returns_plain_tini_argv():
+def test_startup_commands_empty_still_wraps_in_bash():
+    # Arrange — EMPTY startup_commands. Before the SAC_GIT_* alias step
+    # existed this returned the bare tini argv unwrapped; now the alias
+    # is unconditional, so every agent (even one with no startup_commands
+    # at all) gets the bash -lc wrapper.
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert argv[0] == "/bin/bash"
+
+
+def test_startup_commands_empty_still_passes_dash_lc():
     # Arrange
     cfg = _mk_cfg()
     # Act
     argv = build_inner_argv(cfg)
     # Assert
-    assert argv[0] == "/usr/bin/tini"
+    assert argv[1] == "-lc"
+
+
+def test_startup_commands_empty_still_execs_tini():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "exec /usr/bin/tini" in argv[2]
 
 
 def test_single_startup_command_wraps_in_bash():
@@ -64,13 +91,16 @@ def test_single_startup_command_passes_dash_lc():
     assert argv[1] == "-lc"
 
 
-def test_single_startup_command_emits_set_e_first():
-    # Arrange
+def test_single_startup_command_emits_set_e_after_git_alias():
+    # Arrange — the fixed SAC_GIT_* alias steps are now unconditionally
+    # prepended, so "set -e" (from _format_shell_steps) is no longer the
+    # very first thing in the inline script; it still directly precedes
+    # the user's own startup command.
     cfg = _mk_cfg(startup_commands=[StartupCommand(command="pip install foo")])
     # Act
     argv = build_inner_argv(cfg)
     # Assert
-    assert argv[2].startswith("set -e;")
+    assert "; set -e; pip install foo;" in argv[2]
 
 
 def test_single_startup_command_emits_exec_then_tini():
@@ -107,12 +137,13 @@ def test_startup_command_delay_emits_sleep_n():
 
 
 def test_empty_command_string_is_filtered_out():
-    # Arrange
+    # Arrange — the blank command contributes NO shell step of its own,
+    # but the wrap still happens (the unconditional git-alias step).
     cfg = _mk_cfg(startup_commands=[StartupCommand(command="")])
     # Act
     argv = build_inner_argv(cfg)
     # Assert
-    assert argv[0] == "/usr/bin/tini"
+    assert "exec /usr/bin/tini" in argv[2]
 
 
 def test_shlex_quote_protects_paths_with_spaces():
@@ -129,6 +160,125 @@ def test_shlex_quote_protects_paths_with_spaces():
     # here since a2a is unset, but shlex.quote is exercised on every
     # element).
     assert "/bin/bash" in argv
+
+
+# ---------------------------------------------------------------------------
+# SAC_GIT_* -> GIT_* env alias: generic, values-agnostic, always present.
+# git itself only reads the literal GIT_* names; the alias mirrors whichever
+# SAC_GIT_* vars are already in the shell env (source: each project's own
+# .envrc via direnv source_up — entirely outside this module's concern) onto
+# them. See _GIT_ENV_ALIAS_STEPS.
+# ---------------------------------------------------------------------------
+
+_EXPECTED_GIT_ALIAS_MAPPINGS = (
+    ("SAC_GIT_AUTHOR_NAME", "GIT_AUTHOR_NAME"),
+    ("SAC_GIT_AUTHOR_EMAIL", "GIT_AUTHOR_EMAIL"),
+    ("SAC_GIT_COMMITTER_NAME", "GIT_COMMITTER_NAME"),
+    ("SAC_GIT_COMMITTER_EMAIL", "GIT_COMMITTER_EMAIL"),
+    ("SAC_GIT_SSH_COMMAND", "GIT_SSH_COMMAND"),
+)
+
+
+def test_git_alias_step_count_is_exactly_five():
+    # Arrange — one guarded export per mapping, no more, no less.
+    steps = _GIT_ENV_ALIAS_STEPS
+    # Act
+    count = len(steps)
+    # Assert
+    assert count == 5
+
+
+def test_git_alias_steps_contain_all_five_mappings():
+    # Arrange
+    joined = "; ".join(_GIT_ENV_ALIAS_STEPS)
+    expected = [
+        f'[ -n "${{{src}:-}}" ] && export {dst}="${src}"'
+        for src, dst in _EXPECTED_GIT_ALIAS_MAPPINGS
+    ]
+    # Act
+    missing = [line for line in expected if line not in joined]
+    # Assert — every SAC_GIT_* -> GIT_* mapping is present verbatim.
+    assert missing == []
+
+
+def test_empty_startup_commands_argv_contains_git_alias_steps():
+    # Arrange — an agent with NO startup_commands at all still gets the
+    # alias baked into its wrapper.
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "SAC_GIT_AUTHOR_NAME" in argv[2]
+
+
+def test_git_alias_precedes_exec_in_empty_startup_commands_case():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert — alias runs before the tini exec, not after.
+    assert argv[2].index("SAC_GIT_AUTHOR_NAME") < argv[2].index("exec ")
+
+
+def test_git_alias_precedes_custom_startup_command():
+    # Arrange — an agent WITH its own startup_commands still gets the
+    # alias step prepended BEFORE its own steps.
+    cfg = _mk_cfg(startup_commands=[StartupCommand(command="echo custom-step")])
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert argv[2].index("SAC_GIT_AUTHOR_NAME") < argv[2].index("echo custom-step")
+
+
+def test_git_alias_runs_before_set_e_from_startup_commands():
+    # Arrange — the alias lines must run BEFORE any `set -e` emitted for
+    # startup_commands, so a false `[ -n ... ]` (unset SAC_GIT_*) never
+    # aborts the launch under set -e.
+    cfg = _mk_cfg(startup_commands=[StartupCommand(command="echo custom-step")])
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert argv[2].index("SAC_GIT_AUTHOR_NAME") < argv[2].index("set -e")
+
+
+def test_git_alias_is_noop_shell_when_source_vars_unset():
+    # Arrange — real bash execution (no mocks): clear every SAC_GIT_*/GIT_*
+    # from the env, run the exact generated alias snippet, then dump env.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("SAC_GIT_") and not k.startswith("GIT_")
+    }
+    script = "; ".join(_GIT_ENV_ALIAS_STEPS) + "; env"
+    # Act
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert — no GIT_* leaked into the child env; silent no-op.
+    assert "GIT_AUTHOR_NAME" not in result.stdout
+
+
+def test_git_alias_mirrors_value_when_source_var_set():
+    # Arrange — real bash execution proving the mechanism end-to-end.
+    env = dict(os.environ)
+    env["SAC_GIT_AUTHOR_NAME"] = "Test Author"
+    script = (
+        "; ".join(_GIT_ENV_ALIAS_STEPS) + '; printf "%s" "$GIT_AUTHOR_NAME"'
+    )
+    # Act
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert
+    assert result.stdout == "Test Author"
 
 
 # ---------------------------------------------------------------------------
@@ -353,13 +503,31 @@ def _tui_argv(session: str) -> list[str]:
     return build_inner_argv(cfg, tui=True)
 
 
+def _exec_tail_tokens(argv: list[str]) -> list[str]:
+    """Tokenize the ``exec <runner...>`` tail of a bash -lc wrapped argv.
+
+    ``build_inner_argv`` now ALWAYS wraps in ``/bin/bash -lc <inline>``
+    (unconditional SAC_GIT_* alias step), so the actual runner argv
+    (e.g. ``claude --model haiku -c``) is embedded as shell-quoted text
+    inside ``argv[2]`` rather than being ``argv`` itself. Token-splitting
+    the ``exec`` tail (instead of a raw substring check) avoids false
+    matches against unrelated ``-c``-containing text elsewhere in the
+    alias/startup-command steps.
+    """
+    import shlex as _shlex
+
+    inline = argv[2]
+    exec_part = inline.split("exec ", 1)[1]
+    return _shlex.split(exec_part)
+
+
 def test_tui_session_fresh_omits_continue_flag():
     # Arrange — fresh is the default mode; an experiment trial must start
     # an independent session.
     # Act
     argv = _tui_argv("fresh")
     # Assert
-    assert "-c" not in argv
+    assert "-c" not in _exec_tail_tokens(argv)
 
 
 def test_tui_session_continue_with_history_appends_continue_flag():
@@ -380,7 +548,7 @@ def test_tui_session_continue_with_history_appends_continue_flag():
     finally:
         shutil.rmtree(Path(home) / ".claude", ignore_errors=True)
     # Assert
-    assert "-c" in argv
+    assert "-c" in _exec_tail_tokens(argv)
 
 
 def test_tui_session_continue_without_history_omits_continue_flag():
@@ -397,7 +565,7 @@ def test_tui_session_continue_without_history_omits_continue_flag():
     # Act
     argv = build_inner_argv(cfg, tui=True)
     # Assert
-    assert "-c" not in argv
+    assert "-c" not in _exec_tail_tokens(argv)
 
 
 def test_tui_session_resume_omits_continue_flag():
@@ -405,7 +573,7 @@ def test_tui_session_resume_omits_continue_flag():
     # Act
     argv = _tui_argv("resume")
     # Assert
-    assert "-c" not in argv
+    assert "-c" not in _exec_tail_tokens(argv)
 
 
 def test_tui_session_new_session_alias_omits_continue_flag():
@@ -415,7 +583,7 @@ def test_tui_session_new_session_alias_omits_continue_flag():
     # Act
     argv = _tui_argv("new-session")
     # Assert
-    assert "-c" not in argv
+    assert "-c" not in _exec_tail_tokens(argv)
 
 
 def test_tui_inner_argv_default_claudespec_is_fresh_no_continue_flag():
@@ -425,4 +593,4 @@ def test_tui_inner_argv_default_claudespec_is_fresh_no_continue_flag():
     # Act
     argv = build_inner_argv(cfg, tui=True)
     # Assert
-    assert "-c" not in argv
+    assert "-c" not in _exec_tail_tokens(argv)

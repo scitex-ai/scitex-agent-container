@@ -30,6 +30,7 @@ to keep the mirror 1:1.
 from __future__ import annotations
 
 import os
+import shlex
 import socket
 from pathlib import Path
 from typing import Iterator
@@ -140,6 +141,19 @@ def tui_config(tmp_path):
     return load_config(str(spec))
 
 
+def _effective_inner_argv(inner: list[str]) -> list[str]:
+    """Token-list of the actual ``claude`` invocation.
+
+    ``build_inner_argv`` now ALWAYS wraps the runner argv in
+    ``/bin/bash -lc <inline>`` (the unconditional SAC_GIT_* env alias
+    step — see ``_apptainer_inner_argv._GIT_ENV_ALIAS_STEPS``), so the
+    literal inner command is shell-quoted text after ``exec `` inside
+    ``inner[2]`` rather than being ``inner`` itself.
+    """
+    exec_part = inner[2].split("exec ", 1)[1]
+    return shlex.split(exec_part)
+
+
 # ---------------------------------------------------------------------------
 # build_inner_argv(tui=True) — interactive claude as the inner process
 # ---------------------------------------------------------------------------
@@ -148,7 +162,7 @@ def tui_config(tmp_path):
 def test_tui_inner_argv_runs_claude_binary(tui_config) -> None:
     # Arrange — config from the tui_config fixture.
     # Act
-    inner = build_inner_argv(tui_config, tui=True)
+    inner = _effective_inner_argv(build_inner_argv(tui_config, tui=True))
     # Assert — the inner command is the interactive claude TUI.
     assert inner[0] == "claude"
 
@@ -156,7 +170,7 @@ def test_tui_inner_argv_runs_claude_binary(tui_config) -> None:
 def test_tui_inner_argv_threads_model_flag(tui_config) -> None:
     # Arrange — config from the tui_config fixture.
     # Act
-    inner = build_inner_argv(tui_config, tui=True)
+    inner = _effective_inner_argv(build_inner_argv(tui_config, tui=True))
     # Assert
     assert "--model" in inner and "claude-opus-4-8[1m]" in inner
 
@@ -164,7 +178,7 @@ def test_tui_inner_argv_threads_model_flag(tui_config) -> None:
 def test_tui_inner_argv_appends_spec_flags(tui_config) -> None:
     # Arrange — config from the tui_config fixture.
     # Act
-    inner = build_inner_argv(tui_config, tui=True)
+    inner = _effective_inner_argv(build_inner_argv(tui_config, tui=True))
     # Assert
     assert "--dangerously-skip-permissions" in inner
 

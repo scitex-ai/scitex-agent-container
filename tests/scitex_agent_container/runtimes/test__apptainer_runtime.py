@@ -161,16 +161,29 @@ def _proxy_config(workdir: Path, **kw) -> AgentConfig:
 
 
 def _extract_inner_argv(argv: list[str]) -> list[str]:
-    """Unwrap the D2 ``bash -c "<preflight>\\nexec <inner>"`` wrapper.
+    """Unwrap the D2 ``bash -c "<preflight>\\nexec <inner>"`` wrapper
+    and/or the container-shell ``/bin/bash -lc "<alias/startup>; exec
+    <inner>"`` wrapper (UNCONDITIONAL since the SAC_GIT_* env-alias step
+    was added — see ``_apptainer_inner_argv._GIT_ENV_ALIAS_STEPS`` — so
+    every agent's inner argv is now shell-wrapped, not just those with
+    ``startup_commands``).
 
-    When ``apptainer.relaxed=true`` no wrapper is present and the inner
-    argv lives flat in ``argv``.
+    The two wrappers NEST — the D2 preflight's ``exec`` line is itself
+    ``exec /bin/bash -lc '<git-alias>; exec <runner...>'`` (one shell
+    string, single-quoted) — so a single non-recursive unwrap only peels
+    the outer layer, leaving the inner ``/bin/bash -lc`` triplet
+    unresolved. Recurse until the ``/usr/bin/tini`` marker (or a flat
+    ``apptainer.relaxed=true`` argv with no wrapper at all) is reached.
     """
     for i, a in enumerate(argv):
         if a == "bash" and i + 2 < len(argv) and argv[i + 1] == "-c":
             script = argv[i + 2]
             _, _, exec_line = script.rpartition("\nexec ")
-            return shlex.split(exec_line)
+            return _extract_inner_argv(shlex.split(exec_line))
+        if a == "/bin/bash" and i + 2 < len(argv) and argv[i + 1] == "-lc":
+            script = argv[i + 2]
+            _, _, exec_line = script.rpartition("; exec ")
+            return _extract_inner_argv(shlex.split(exec_line))
         if a == "/usr/bin/tini":
             return argv[i:]
     return []
