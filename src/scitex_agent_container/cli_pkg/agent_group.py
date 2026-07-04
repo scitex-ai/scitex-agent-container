@@ -15,7 +15,7 @@ import click
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
-from ._new import new as _new_impl
+from ._create import create as _create_impl
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
@@ -50,7 +50,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["new", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            ["create", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
@@ -67,16 +67,20 @@ def agent_group() -> None:
 
 
 # Lifecycle verbs
-# `new` scaffolds a fresh v3 spec.yaml + to_home/ skeleton (card
+# `create` scaffolds a fresh v3 spec.yaml + to_home/ skeleton (card
 # sac-fresh-agent-specs, 2026-06-13). Placed FIRST in the lifecycle
 # block — authoring precedes start/stop.
-agent_group.add_command(_rebind(_new_impl, "new"))
-# `create` (card sac-templated-agent-create, 2026-06-25) was folded into
-# `new`'s dir-template system as `_template_developer/` / `_template_scientist/`
-# (card refactor/consolidate-create-into-new-templates) — the auto-detect /
-# marker-block machinery is retired in favor of the plain, unconditional
-# convention the other dir-templates already use. Use
-# `sac agents new <name> --template developer|scientist --project <p>`.
+#
+# This command was named `new` until card
+# refactor/consolidate-create-into-new-templates: the OLD, narrower
+# `sac agents create` (auto-detect / marker-block machinery, card
+# sac-templated-agent-create 2026-06-25) was folded into `new`'s
+# dir-template system, which freed the `create` name back up — `new`
+# was then renamed to `create` for CRUD-consistent naming (the CLI
+# already has `delete`). Use
+# `sac agents create <name> --template python_developer|researcher|generalist
+# --project <p>`.
+agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))

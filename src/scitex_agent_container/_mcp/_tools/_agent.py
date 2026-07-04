@@ -309,29 +309,34 @@ def agent_send(
 
 def agent_create(
     name: str,
-    template: str = "developer",
+    template: str = "python_developer",
     project: str | None = None,
     start: bool = False,
 ) -> dict[str, Any]:
     """Create a proven-shape agent spec from a template. Mirrors
-    ``sac agents new <name> --template developer|scientist --project <p>``.
+    ``sac agents create <name> --template python_developer|researcher|generalist
+    --project <p>``.
 
-    ``create`` was folded into ``new``'s dir-template system
-    (``_template_developer`` / ``_template_scientist`` — card
-    refactor/consolidate-create-into-new-templates): the underscore-agent
-    skeleton is copied wholesale and its ``SAC_PLACEHOLDER_PROJECT`` /
-    ``SAC_PLACEHOLDER_AGENT_ID`` tokens filled from ``project`` (defaults
-    to ``name``) and ``name`` respectively. The old auto-detected
-    editable-install toggle is gone — the install step is now
-    unconditional in the template (delete it by hand if the target repo
-    ships no Python package); likewise there is no per-agent Telegram
-    bot-token wiring — add ``server:claude-code-telegrammer`` + a
-    per-project ``.envrc`` by hand after creation. ``start=True`` launches
-    the agent afterwards. The developer group is authorized to CRUD
-    agents."""
+    ``create`` was folded into ``new``'s dir-template system (card
+    refactor/consolidate-create-into-new-templates), and ``new`` was in
+    turn renamed to ``create`` (CRUD naming, reusing the vacated verb).
+    There is no ``developer``/``scientist`` template — those were the
+    planned-then-dropped names; the fleet's PROVEN dir-templates already
+    cover the same ground: use ``python_developer`` for a developer-role
+    agent and ``researcher`` for a research-role agent (``generalist`` for
+    anything else). The underscore-agent skeleton is copied wholesale and
+    its ``SAC_PLACEHOLDER_PROJECT`` / ``SAC_PLACEHOLDER_AGENT_ID`` tokens
+    filled from ``project`` (defaults to ``name``) and ``name``
+    respectively. The old auto-detected editable-install toggle is gone —
+    the install step is now unconditional in the template (delete it by
+    hand if the target repo ships no Python package); likewise there is no
+    per-agent Telegram bot-token wiring — add
+    ``server:claude-code-telegrammer`` + a per-project ``.envrc`` by hand
+    after creation. ``start=True`` launches the agent afterwards. The
+    developer group is authorized to CRUD agents."""
     argv = [
         "agents",
-        "new",
+        "create",
         name,
         "--template",
         template,

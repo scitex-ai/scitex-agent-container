@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# Agent-name charset (mirrors cli_pkg._new validation): lowercase letters,
+# Agent-name charset (mirrors cli_pkg._create validation): lowercase letters,
 # digits, hyphen, underscore; must start with a letter.
 _VALID_LABEL = re.compile(r"^[a-z][a-z0-9_-]*$")
 
@@ -36,7 +36,7 @@ _VALID_LABEL = re.compile(r"^[a-z][a-z0-9_-]*$")
 # (``local`` = the caller's host; dispatch runs remote when it names a peer).
 _COLD_START_SPEC = """\
 # {label} — cold-started by `sac start` ({stamp_note}).
-# Standardized TUI spec; edit freely or `sac agents new` for the full tour.
+# Standardized TUI spec; edit freely or `sac agents create` for the full tour.
 apiVersion: scitex-agent-container/v3
 kind: Agent
 metadata:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``sac agents new NAME`` — scaffold a fresh v3 agent spec.
+"""``sac agents create NAME`` — scaffold a fresh v3 agent spec.
 
 Card sac-fresh-agent-specs (2026-06-13). "Author fresh specs from a
 clean template, not in-place repair" — operators get a v3-clean
@@ -23,6 +23,14 @@ Two templates ship out of the box:
 The CLI refuses to overwrite an existing ``spec.yaml`` unless ``--force``
 is passed — protects the "60 stale ``*-quality`` specs already pending
 uncommitted" scenario the card calls out.
+
+Named ``create`` (renamed from ``new``, card
+refactor/consolidate-create-into-new-templates): CRUD naming
+(Create/Read/Update/Delete) lines up with the existing ``delete``
+verb. The old narrow ``sac agents create`` (auto-detected
+editable-install toggle, marker-block machinery) was retired in the
+same card and folded into this command's dir-template system, which
+freed the ``create`` name back up.
 """
 
 from __future__ import annotations
@@ -58,7 +66,7 @@ def _is_valid_agent_name(name: str) -> bool:
 
 
 _MINIMAL_TEMPLATE = """\
-# {name} — fresh v3 spec scaffolded by ``sac agents new``.
+# {name} — fresh v3 spec scaffolded by ``sac agents create``.
 #
 # This is the minimal shape — every field the validator REQUIRES (no hidden
 # defaults): placement, workdir, image + binds, model, health, restart. Add
@@ -97,7 +105,7 @@ spec:
 
 
 _FULL_TEMPLATE = """\
-# {name} — fresh v3 spec scaffolded by ``sac agents new --template full``.
+# {name} — fresh v3 spec scaffolded by ``sac agents create --template full``.
 #
 # Every field below validates against the live v3 schema. Delete blocks
 # you don't need rather than chase the spec reference for what's
@@ -185,7 +193,7 @@ def _default_base_dir() -> Path:
 
         primary, _env, _fleet = _search_dirs()
         return primary
-    except Exception:  # stx-allow: fallback (reason: resolver import is best-effort; hardcoded default keeps `sac agents new` working if config pkg shifts)
+    except Exception:  # stx-allow: fallback (reason: resolver import is best-effort; hardcoded default keeps `sac agents create` working if config pkg shifts)
         return Path.home() / ".scitex" / "agent-container" / "agents"
 
 
@@ -195,8 +203,8 @@ def _extract_base_dir_arg(raw_args: list[str]) -> Path | None:
     ``--help`` is an eager click option: its callback prints help and
     exits before non-eager options (like ``--base-dir``) are parsed into
     ``ctx.params``. Scanning the raw args directly (stashed by
-    :meth:`_NewCommand.parse_args`) lets the dynamic help epilog honor an
-    explicit ``--base-dir`` regardless of where ``--help`` falls in the
+    :meth:`_CreateCommand.parse_args`) lets the dynamic help epilog honor
+    an explicit ``--base-dir`` regardless of where ``--help`` falls in the
     invocation.
     """
     for i, arg in enumerate(raw_args):
@@ -207,8 +215,8 @@ def _extract_base_dir_arg(raw_args: list[str]) -> Path | None:
     return None
 
 
-class _NewCommand(click.Command):
-    """``new`` with a live-scanned template list in its ``--help`` output.
+class _CreateCommand(click.Command):
+    """``create`` with a live-scanned template list in its ``--help`` output.
 
     The ``--template`` option's static ``help=`` text cannot name the
     current ``_template_*`` set — dir-templates are dropped into the
@@ -221,12 +229,12 @@ class _NewCommand(click.Command):
         # Stash the raw args so format_epilog can recover --base-dir even
         # when --help (eager) exits before --base-dir (non-eager) would
         # otherwise be parsed into ctx.params.
-        ctx.meta["_new_raw_args"] = list(args)
+        ctx.meta["_create_raw_args"] = list(args)
         return super().parse_args(ctx, args)
 
     def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         super().format_epilog(ctx, formatter)
-        raw_args = ctx.meta.get("_new_raw_args", [])
+        raw_args = ctx.meta.get("_create_raw_args", [])
         base = _extract_base_dir_arg(raw_args) or _default_base_dir()
         dir_templates = sorted(discover_dir_templates(base))
         with formatter.section("Available templates (live-scanned)"):
@@ -243,7 +251,7 @@ class _NewCommand(click.Command):
                 )
 
 
-@click.command(name="new", cls=_NewCommand)
+@click.command(name="create", cls=_CreateCommand)
 @click.argument("name", type=str)
 @click.option(
     "--template",
@@ -254,7 +262,7 @@ class _NewCommand(click.Command):
     help=(
         "Template kind: 'minimal'/'full' (built-in) or any "
         "_template_<kind>/ dir under the agents root. Run "
-        "`sac agents new --help` to see the CURRENT live list."
+        "`sac agents create --help` to see the CURRENT live list."
     ),
 )
 @click.option(
@@ -308,7 +316,7 @@ class _NewCommand(click.Command):
         "re-runs cannot clobber a customised spec."
     ),
 )
-def new(
+def create(
     name: str,
     template_name: str,
     project: str | None,
@@ -330,10 +338,10 @@ def new(
     Examples:
 
     \b
-        sac agents new my-agent
-        sac agents new my-agent --template full
-        sac agents new dev1 --template python_developer --project myproj
-        sac agents new r1 --template researcher --project p --set TEAM=x
+        sac agents create my-agent
+        sac agents create my-agent --template full
+        sac agents create dev1 --template python_developer --project myproj
+        sac agents create r1 --template researcher --project p --set TEAM=x
     """
     if not _is_valid_agent_name(name):
         raise click.UsageError(
@@ -408,4 +416,4 @@ def new(
     )
 
 
-__all__ = ["new"]
+__all__ = ["create"]
