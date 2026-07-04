@@ -46,7 +46,13 @@ resolves under a forbidden prefix is still caught. We deliberately avoid
 
 Prefix matching is PATH-COMPONENT-AWARE (``os.path.commonpath``), so
 ``/homework`` does NOT match the ``/home`` prefix — a bare ``startswith``
-would false-positive.
+would false-positive. A source is refused when it is at/under a forbidden
+prefix OR an ANCESTOR of one: ``--bind /:/host`` or ``--bind /data:/data``
+would mount the whole shared FS (including ``/data/gpfs``) and is strictly
+worse than ``--bind /data/gpfs/x`` — so both directions are caught
+(``commonpath ∈ {source, prefix}``). Disjoint node-local subtrees
+(``/tmp``, ``$TMPDIR/workdir``) share only a higher ancestor equal to
+neither side, so they still pass.
 """
 
 from __future__ import annotations
@@ -130,17 +136,27 @@ def forbidden_prefixes() -> list[str]:
 
 
 def _is_under(realpath: str, prefix: str) -> bool:
-    """Component-aware "is ``realpath`` at or under ``prefix``".
+    """Component-aware "does ``realpath`` intersect the forbidden subtree".
 
-    Uses ``os.path.commonpath`` so ``/homework`` does NOT match the
-    ``/home`` prefix (a bare ``startswith`` would). Both args must be
-    normalised absolute paths.
+    Returns True when ``realpath`` is at/under ``prefix`` (e.g.
+    ``/data/gpfs/x`` vs ``/data/gpfs``) OR an ANCESTOR of ``prefix``
+    (e.g. ``/data`` or ``/`` vs ``/data/gpfs``) — an ancestor bind mounts
+    the ENTIRE shared FS including ``prefix``, so it is strictly worse and
+    must also be refused (HPC reviewer, PR #529). The predicate is
+    ``commonpath ∈ {realpath, prefix}``.
+
+    Uses ``os.path.commonpath`` (path-component-aware) so ``/homework``
+    does NOT match the ``/home`` prefix (a bare ``startswith`` would), and
+    a disjoint node-local subtree (``/tmp``, ``$TMPDIR/workdir``) whose
+    commonpath with ``prefix`` is a shared ancestor equal to NEITHER side
+    still passes. Both args must be normalised absolute paths.
     """
     try:
-        return os.path.commonpath([realpath, prefix]) == prefix
+        cp = os.path.commonpath([realpath, prefix])
     except ValueError:
         # Different roots / a relative path slipped in — no match.
         return False
+    return cp == prefix or cp == realpath
 
 
 def match_forbidden(source: str, prefixes: list[str]) -> tuple[str, str] | None:

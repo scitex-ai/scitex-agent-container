@@ -170,6 +170,33 @@ def test_jailed_spec_binds_gpfs_scratch_refused(tmp_path: Path) -> None:
         _build(cfg, tmp_path)
 
 
+def test_jailed_root_bind_ancestor_refused(tmp_path: Path) -> None:
+    # Arrange — `--bind /:/host` mounts the WHOLE FS (incl. /data/gpfs),
+    # strictly worse than binding /data/gpfs directly. An ANCESTOR of a
+    # forbidden prefix must be refused too.
+    cfg = _solver_cfg(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(raw_args=["--bind", "/:/host"]),
+    )
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="forbidden"):
+        _build(cfg, tmp_path)
+
+
+def test_jailed_data_parent_bind_ancestor_refused(tmp_path: Path) -> None:
+    # Arrange — `--bind /data:/data` is an ancestor of /data/gpfs and
+    # /data/scratch; mounting it exposes both. Must be refused.
+    cfg = _solver_cfg(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(binds=["/data:/data"]),
+    )
+    # Act
+    # Assert
+    with pytest.raises(RuntimeError, match="forbidden"):
+        _build(cfg, tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # (b) symlinked source resolving under /data/gpfs → rejected (realpath)
 # ---------------------------------------------------------------------------
