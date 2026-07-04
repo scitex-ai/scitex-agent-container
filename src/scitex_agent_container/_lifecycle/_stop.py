@@ -44,6 +44,7 @@ def agent_stop(
     *,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     handover_mod: Any = None,
+    prune_runtime: bool = False,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -58,6 +59,13 @@ def agent_stop(
         handover_mod: Injectable real handover collaborator (default
             ``None`` resolves to the real
             :mod:`._lifecycle.handover` module).
+        prune_runtime: When True AND the agent opted in
+            (``restart.policy: never`` + ``restart.prune_on_stop: true``),
+            prune its runtime dir + overlay after teardown (inode
+            hygiene). Default False so the internal ``agent_stop`` calls
+            made by ``agent_restart`` / force-``agent_start`` NEVER prune
+            the runtime they are about to reuse — only the terminal
+            ``sac agents stop`` entry point passes True.
     """
     registry = registry or Registry()
     entry = registry.get(name)
@@ -139,6 +147,20 @@ def agent_stop(
     # Release the A2A port claim so the next agent can re-use it.
     release_a2a_port(name)
     registry.remove(name)
+
+    # Inode-hygiene prune (sac-runtime-state-hygiene incident). Only the
+    # terminal ``sac agents stop`` entry passes ``prune_runtime=True``;
+    # the gate inside further restricts to opted-in ephemeral agents
+    # (``restart.policy: never`` + ``restart.prune_on_stop: true``), so
+    # persistent agents are never pruned. Best-effort + fail-loud-log —
+    # never raises, so it cannot break the stop path.
+    if prune_runtime:
+        from ._prune_runtime import maybe_prune_agent_runtime
+
+        try:
+            maybe_prune_agent_runtime(config)
+        except Exception:  # stx-allow: fallback (reason: prune is best-effort teardown hygiene; any unexpected failure must not fail an otherwise-successful stop)
+            traceback.print_exc()
     return True
 
 
@@ -147,6 +169,7 @@ def agent_stop_all(
     force: bool = False,
     *,
     stop_fn: Optional[Callable[..., bool]] = None,
+    prune_runtime: bool = False,
 ) -> list[tuple[str, bool, str]]:
     """Stop every agent in the registry.
 
@@ -160,15 +183,21 @@ def agent_stop_all(
         stop_fn: Injectable real per-agent stop callable (default
             ``None`` uses module-level :func:`agent_stop`). Tests pass a
             real callable that records calls and optionally raises.
+        prune_runtime: Forwarded to each per-agent :func:`agent_stop`
+            (inode-hygiene prune for opted-in ephemeral agents).
     """
     registry = registry or Registry()
     stopper = stop_fn or agent_stop
     results: list[tuple[str, bool, str]] = []
     for entry in registry.list_all():
         name = entry.get("name", "?")
+        # Forward ``prune_runtime`` only when set so an injected
+        # ``stop_fn`` with the historical ``(name, registry, force)``
+        # signature keeps working (the default path never opts in).
+        extra = {"prune_runtime": True} if prune_runtime else {}
         # stx-allow: fallback (reason: stopping one agent may fail due to a missing config or dead session; other agents in the registry should still be stopped)
         try:
-            stopper(name, registry=registry, force=force)
+            stopper(name, registry=registry, force=force, **extra)
             results.append((name, True, "stopped"))
         except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             results.append((name, False, str(exc)))

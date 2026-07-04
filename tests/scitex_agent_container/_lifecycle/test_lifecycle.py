@@ -62,6 +62,7 @@ def _write_spec(
     name: str = "alpha",
     runtime: str = "apptainer",
     extra_spec: str = "",
+    restart_block: str = "  restart:\n    policy: on-failure\n    max_retries: 3\n",
 ) -> Path:
     """Write a real, validator-passing v3 YAML at ``<tmp>/<name>/spec.yaml``.
 
@@ -91,9 +92,7 @@ def _write_spec(
         "  health:\n"
         "    enabled: true\n"
         "    interval: 60\n"
-        "  restart:\n"
-        "    policy: on-failure\n"
-        "    max_retries: 3\n"
+        f"{restart_block}"
         "  hooks:\n"
         "    pre_start: ['echo pre']\n"
         "    post_start: ['echo post']\n"
@@ -1054,6 +1053,88 @@ def test_agent_stop_happy_path_removes_registry_entry(
     )
     # Assert
     assert not registry.exists("alpha")
+
+
+def _stop_with_prune(
+    tmp_path: Path,
+    registry: Registry,
+    env_save_restore,
+    *,
+    name: str,
+    restart_block: str,
+) -> Path:
+    """Relocate the runtime base to tmp, register a real agent whose spec
+    carries ``restart_block``, seed its runtime state dir, then run a
+    terminal ``agent_stop(prune_runtime=True)``. Returns the state dir.
+    """
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(tmp_path / "rt"))
+    ss = importlib.reload(
+        importlib.import_module("scitex_agent_container._runners._session_state")
+    )
+    spec = _write_spec(tmp_path, name=name, restart_block=restart_block)
+    registry.add(name, str(spec), f"cld-{name}")
+    state_dir = ss.state_dir_for(name)
+    state_dir.mkdir(parents=True)
+    (state_dir / "heartbeat.json").write_text("{}")
+    lc.agent_stop(
+        name,
+        registry=registry,
+        runtime_factory=lambda _c: FakeRuntime(),
+        handover_mod=FakeHandover(),
+        prune_runtime=True,
+    )
+    return state_dir
+
+
+def test_agent_stop_prune_removes_ephemeral_runtime_dir(
+    tmp_path: Path, registry: Registry, env_save_restore
+) -> None:
+    # Arrange
+    restart_block = (
+        "  restart:\n    policy: never\n    max_retries: 3\n    prune_on_stop: true\n"
+    )
+    try:
+        # Act — never-policy agent that opted in via prune_on_stop.
+        state_dir = _stop_with_prune(
+            tmp_path,
+            registry,
+            env_save_restore,
+            name="cap",
+            restart_block=restart_block,
+        )
+        # Assert
+        assert not state_dir.exists()
+    finally:
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+        importlib.reload(
+            importlib.import_module("scitex_agent_container._runners._session_state")
+        )
+
+
+def test_agent_stop_prune_keeps_persistent_runtime_dir(
+    tmp_path: Path, registry: Registry, env_save_restore
+) -> None:
+    # Arrange — persistent (always) agent must NEVER be pruned, even when
+    # the terminal stop passes prune_runtime=True.
+    restart_block = (
+        "  restart:\n    policy: always\n    max_retries: 3\n    prune_on_stop: true\n"
+    )
+    try:
+        # Act
+        state_dir = _stop_with_prune(
+            tmp_path,
+            registry,
+            env_save_restore,
+            name="coord",
+            restart_block=restart_block,
+        )
+        # Assert
+        assert state_dir.exists()
+    finally:
+        env_save_restore.delete("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
+        importlib.reload(
+            importlib.import_module("scitex_agent_container._runners._session_state")
+        )
 
 
 def test_agent_stop_yaml_gone_with_force_succeeds(

@@ -332,7 +332,11 @@ def stop(
                         f"'{envelope_holder.get('_peer')}'[/green]"
                     )
                 continue
-            agent_stop(name, force=force)
+            # Terminal operator stop: opt into the inode-hygiene prune.
+            # The gate inside agent_stop restricts it to opted-in
+            # ephemeral agents (restart.policy: never + prune_on_stop:
+            # true), so persistent agents are untouched.
+            agent_stop(name, force=force, prune_runtime=True)
             if as_json:
                 click.echo(
                     _json.dumps(

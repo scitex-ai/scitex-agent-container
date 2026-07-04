@@ -297,6 +297,14 @@ class RestartSpec:
     backoff_initial: int = 30
     backoff_max: int = 300
     backoff_multiplier: int = 2
+    # Inode-hygiene opt-in (sac-runtime-state-hygiene incident): when
+    # True AND ``policy == "never"``, a CLEAN terminal ``sac agents stop``
+    # prunes this agent's runtime dir + overlay so ephemeral capsules
+    # don't accumulate one-per-run forever. EXPLICIT opt-in is required
+    # (default False) — ``policy`` itself DEFAULTS to "never", so a
+    # persistent coordinator that merely omits a ``restart:`` block must
+    # NOT be pruned; only specs that deliberately set this flag are.
+    prune_on_stop: bool = False
 
 
 # Inbound A2A surface for an agent. The SDK runner launches a sidecar
