@@ -253,6 +253,21 @@ EOF
     # at a removed path). No new python is installed — this is a guard.
     /usr/bin/python3 --version
 
+    # ---- 6. Bake the scitex-* version manifest (`sac versions`) --------
+    # `sac versions --json` reads this baked manifest (source="manifest",
+    # near-zero cost — a `cat`, not a full `pip list`) so scitex-dev's
+    # ecosystem drift aggregator can see the base-image venv layer cheaply.
+    # The verb falls back to a live `apptainer exec <sif> pip list` when
+    # this file is absent (older images), so shipping it is purely additive.
+    # This layer's scitex[all] + scitex-dev/-writer/-audio/-cv make the
+    # manifest much richer than :base. Filtered to scitex-* and written in
+    # pip's `--format=json` shape. Pure pipe + `python -c` (dash-safe — no
+    # bash process substitution under /bin/sh).
+    /opt/venv-sac/bin/pip list --format=json \
+        | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
+        > /opt/scitex-versions.json
+    cat /opt/scitex-versions.json
+
 %environment
     export PATH=/opt/venv-sac/bin:$PATH
     export VIRTUAL_ENV=/opt/venv-sac
