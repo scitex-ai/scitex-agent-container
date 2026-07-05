@@ -47,6 +47,7 @@ import os
 from typing import Any
 
 from .._env import getenv as _sac_env
+from ..a2a._inbox_bus import DAEMON_SENDER
 
 log = logging.getLogger(__name__)
 
@@ -165,10 +166,11 @@ def should_emit_reaction_ack(event: dict[str, Any]) -> bool:
     * the event is itself a structural reaction
       (``kind == "reaction"``) — belt-and-suspenders so a future
       regression in marker handling cannot start a 👀-on-👀 cycle;
-    * the event is a system / synthetic notification
-      (``from_agent == "system"`` or ``kind`` in the synthetic-only
-      allow-list) — reacting to a system notification would post a
-      reaction back to ``system`` which the sender never sees and
+    * the event is a daemon / synthetic notification
+      (``from_agent`` is a bare ``"system"`` or the canonical daemon
+      sender :data:`DAEMON_SENDER`, or ``kind`` in the synthetic-only
+      allow-list) — reacting to a daemon notification would post a
+      reaction back to a non-agent sender the daemon never reads and
       pollutes the dispatch ledger.
 
     The dispatch-id threading is OPTIONAL — a sender that did not
@@ -186,7 +188,7 @@ def should_emit_reaction_ack(event: dict[str, Any]) -> bool:
         return False
     if kind in {"denied_attempt", "acl_deny_notify"}:
         return False
-    if event.get("from_agent") == "system":
+    if event.get("from_agent") in ("system", DAEMON_SENDER):
         return False
     return True
 
