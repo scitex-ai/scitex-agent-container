@@ -275,9 +275,11 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             return False
 
         if dry_run:
+            from ._apptainer_argv_record import write_redacted_argv
+
             state_dir = state_dir_for_config(config)
             state_dir.mkdir(parents=True, exist_ok=True)
-            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
+            write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is

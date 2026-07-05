@@ -10,11 +10,12 @@ reality. Resolution honours the project-over-user cascade (a repo's
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import click
 
+from .._state._meta.secrets import _redact_env_entry as _redact
+from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
 from ..config import AgentConfig, load_config
 
 
@@ -57,19 +58,6 @@ def _binds(argv: list[str]) -> list[tuple[str, str, str]]:
             mode = parts[2] if len(parts) > 2 else "rw"
             out.append((src, dst, mode))
     return out
-
-
-_SECRET_ENV = re.compile(
-    r"(SECRET|TOKEN|BEARER|PASSWORD|API_KEY|_KEY|CREDENTIAL)", re.IGNORECASE
-)
-
-
-def _redact(entry: str) -> str:
-    """Mask the VALUE of a secret-named env var — never echo a key/token."""
-    key, sep, val = entry.partition("=")
-    if sep and val and _SECRET_ENV.search(key):
-        return f"{key}=<redacted: {len(val)} chars>"
-    return entry
 
 
 def _envs(argv: list[str]) -> list[str]:
