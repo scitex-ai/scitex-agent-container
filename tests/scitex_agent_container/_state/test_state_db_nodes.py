@@ -31,6 +31,7 @@ from scitex_agent_container._state.state_db_nodes import (
     list_comms_grants,
     list_node_tokens,
     mint_node_token,
+    record_comms_policy,
     record_lineage,
     resolve_node_token,
     revoke_send,
@@ -226,7 +227,7 @@ def test_spawn_allowed_returns_false_for_child_node(db_path: Path) -> None:
     assert allowed is False
 
 
-def test_spawn_allowed_deny_reason_explains_lift_able_policy(
+def test_spawn_allowed_deny_reason_explains_role_policy(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -234,7 +235,131 @@ def test_spawn_allowed_deny_reason_explains_lift_able_policy(
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "lift-able policy" in reason
+    assert reason is not None and "not one of the roles permitted to spawn" in reason
+
+
+def test_spawn_allowed_returns_true_for_developer_group_child(
+    db_path: Path,
+) -> None:
+    """A developer-group child may spawn even though it has a parent."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-a", group_name="developer", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_returns_true_for_researcher_group_child(
+    db_path: Path,
+) -> None:
+    """A researcher-group child may spawn even though it has a parent."""
+    # Arrange
+    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_returns_false_for_non_dev_research_group_child(
+    db_path: Path,
+) -> None:
+    """A child in an unrelated named group is still denied."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert allowed is False
+
+
+def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
+    db_path: Path,
+) -> None:
+    """The deny reason names the role-based policy."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert reason is not None and "not one of the roles permitted to spawn" in reason
+
+
+def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
+    db_path: Path,
+) -> None:
+    """Per-spec may_spawn=false overrides the developer-group allow."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_comms_policy(
+        name="worker-a",
+        group_name="developer",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert allowed is False
+
+
+def test_spawn_allowed_may_spawn_false_reason_for_developer_child(
+    db_path: Path,
+) -> None:
+    """The deny reason names the per-spec may_spawn=false override."""
+    # Arrange
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_comms_policy(
+        name="worker-a",
+        group_name="developer",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert reason is not None and "may_spawn=false" in reason
+
+
+def test_spawn_allowed_may_spawn_false_still_denies_researcher_child(
+    db_path: Path,
+) -> None:
+    """Per-spec may_spawn=false overrides the researcher-group allow."""
+    # Arrange
+    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_comms_policy(
+        name="neurovista",
+        group_name="researcher",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
+    # Assert
+    assert allowed is False
+
+
+def test_spawn_allowed_may_spawn_false_reason_for_researcher_child(
+    db_path: Path,
+) -> None:
+    """The deny reason names the per-spec may_spawn=false override."""
+    # Arrange
+    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_comms_policy(
+        name="neurovista",
+        group_name="researcher",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    _allowed, reason = spawn_allowed(caller="neurovista", db_path=db_path)
+    # Assert
+    assert reason is not None and "may_spawn=false" in reason
 
 
 # ---------------------------------------------------------------------------
