@@ -31,7 +31,6 @@ from typing import Any, Iterator
 import pytest
 
 from scitex_agent_container._state import state_db
-from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.cli_pkg.lifecycle._start_single import (
     run_single_targets,
 )
