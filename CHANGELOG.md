@@ -6,6 +6,29 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **fix(apptainer): scrub legacy scitex-todo env vars from the launch
+  environment** — INCIDENT 2026-07-05 (reported convergently by
+  claude-code-telegrammer and scitex-dev): apptainer passes the FULL
+  ambient environment of whatever host process invokes it into the
+  container, so a stale pre-0.7.30 `SCITEX_TODO_AGENT` /
+  `SCITEX_TODO_TASKS` export left in an operator's launching shell
+  leaked straight through and tripped scitex-todo's old-var-present
+  hard-reject on the MCP write path, even though neither `.mcp.json`
+  nor `spec.yaml` ever named the legacy var. Adds
+  `_apptainer_host_env.scrub_legacy_env` (reusing the single
+  `_to_home_text.LEGACY_RENAMED_ENV_VARS` denylist already used by the
+  materialized-file guard) and applies it at BOTH exec sites —
+  `_apptainer_runtime.py`'s SDK-Popen `launch_env` construction and
+  `_runners/_tmux/tmux.py`'s `TmuxManager.start` (which previously
+  inherited the full ambient env implicitly, with no `env=` kwarg at
+  all). Also adds a defense-in-depth `unset` step, regenerated fresh
+  every boot in `_apptainer_inner_argv.build_inner_argv` (no image
+  rebuild required), for launch paths that bypass sac's Python env
+  construction entirely (e.g. a raw `apptainer instance start`).
+  Extensible: a future var rename only needs one new entry in
+  `LEGACY_RENAMED_ENV_VARS`.
+
 ## [0.21.11] — 2026-06-09
 
 PATCH release. Re-cut of v0.21.10's accounts-list redesign after the

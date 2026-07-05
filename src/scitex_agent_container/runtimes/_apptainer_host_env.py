@@ -23,6 +23,17 @@ ADDITIONS (never mutates ``os.environ`` itself) so the exec sites
 (:mod:`_apptainer_runtime` SDK-Popen path and :mod:`tui_session` tmux
 path) can merge them into the env they hand to the ``apptainer``
 process.
+
+It also carries the mirror-image SUBTRACTION helper,
+:func:`scrub_legacy_env` — apptainer passes the FULL ambient
+environment of whatever host process invokes it into the container
+(the exact same passthrough class that motivates
+``APPTAINER_APPEND_PATH`` above), so a stale legacy env var left over
+in the launching shell (e.g. ``SCITEX_TODO_AGENT`` from before the
+scitex-todo 0.7.30 rename) leaks straight through regardless of what
+sac's own ``--env=`` list or to_home materialization says (INCIDENT
+2026-07-05). Both exec sites must pop the same denylist from the env
+dict they hand to the ``apptainer``/``tmux`` subprocess before exec.
 """
 
 from __future__ import annotations
@@ -30,9 +41,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
+from ._to_home_text import LEGACY_RENAMED_ENV_VARS
+
+#: Denylist of legacy-renamed env var names that must never survive into
+#: an apptainer launch environment, however they got into the calling
+#: process's ambient env. Single source of truth shared with the
+#: materialized-file guard in :mod:`_to_home_text` — a future rename only
+#: needs one new entry in :data:`_to_home_text.LEGACY_RENAMED_ENV_VARS`,
+#: not a fresh audit of every exec site.
+LEGACY_ENV_DENYLIST = LEGACY_RENAMED_ENV_VARS
+
 __all__ = [
     "APPTAINER_APPEND_PATH_ENV",
+    "LEGACY_ENV_DENYLIST",
     "host_cargo_bin_append_env",
+    "scrub_legacy_env",
 ]
 
 #: The apptainer runtime directive var. Apptainer strips the
@@ -76,3 +99,24 @@ def host_cargo_bin_append_env(base_env: Mapping[str, str]) -> dict[str, str]:
     else:
         value = cargo_bin_str
     return {APPTAINER_APPEND_PATH_ENV: value}
+
+
+def scrub_legacy_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return a copy of ``env`` with :data:`LEGACY_ENV_DENYLIST` removed.
+
+    Pure — does NOT mutate ``env`` (mirrors :func:`host_cargo_bin_append_env`'s
+    no-mutation contract). Call this at the SAME point each exec site builds
+    the environment dict it hands to the ``apptainer``/``tmux`` subprocess,
+    so a legacy var present in the calling shell's ambient ``os.environ``
+    (however it got there) cannot physically survive into the container —
+    regardless of what sac's own ``--env=`` list or to_home materialization
+    says (INCIDENT 2026-07-05: apptainer's default full-ambient-env
+    passthrough leaked a stale ``SCITEX_TODO_AGENT`` straight through,
+    tripping scitex-todo's old-var-present hard-reject).
+
+    A future scitex-todo (or other) env-var rename only needs one new
+    entry added to :data:`_to_home_text.LEGACY_RENAMED_ENV_VARS` — this
+    function and every exec site that calls it pick the new name up for
+    free, no per-site audit required.
+    """
+    return {k: v for k, v in env.items() if k not in LEGACY_ENV_DENYLIST}

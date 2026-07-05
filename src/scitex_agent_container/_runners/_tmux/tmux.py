@@ -159,7 +159,21 @@ class TmuxManager:
             for key, value in effective_session_env.items():
                 argv += ["-e", f"{key}={value}"]
         argv += ["bash", "-c", shell_script]
-        subprocess.run(argv, check=False)
+
+        # ``subprocess.run`` with no ``env=`` kwarg inherits THIS process's
+        # full ambient environment into the tmux pane — the same
+        # full-ambient-env passthrough class that leaks a stale legacy
+        # var (e.g. SCITEX_TODO_AGENT, left over from before the
+        # scitex-todo 0.7.30 rename) straight through into the eventual
+        # ``exec apptainer ...`` inside the pane (INCIDENT 2026-07-05).
+        # Explicitly scrub the denylisted names from the inherited base
+        # before handing it to tmux, matching the SDK-Popen exec site in
+        # ``_apptainer_runtime.py``. The ``-e KEY=VAL`` overrides above
+        # (cargo-bin append etc.) still layer on top via tmux itself.
+        from ...runtimes._apptainer_host_env import scrub_legacy_env
+
+        launch_env = scrub_legacy_env(os.environ)
+        subprocess.run(argv, check=False, env=launch_env)
 
         time.sleep(2)
         return TmuxManager.exists(session_name)

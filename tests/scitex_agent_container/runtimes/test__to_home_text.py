@@ -14,7 +14,10 @@ STX-TQ002 / TQ007: AAA markers per test, one fact per test.
 
 from __future__ import annotations
 
-from scitex_agent_container.runtimes._to_home_text import interpolate_env
+from scitex_agent_container.runtimes._to_home_text import (
+    LEGACY_RENAMED_ENV_VARS,
+    interpolate_env,
+)
 
 
 # interpolate_env — per-agent identity stays literal
@@ -77,3 +80,34 @@ def test_interpolate_env_leaves_unset_non_identity_var_literal(env_save_restore)
     out = interpolate_env("v=${SAC_TEST_DEFINITELY_UNSET_VAR}")
     # Assert
     assert out == "v=${SAC_TEST_DEFINITELY_UNSET_VAR}"
+
+
+# LEGACY_RENAMED_ENV_VARS — single source of truth shared with
+# _apptainer_host_env.scrub_legacy_env and _apptainer_inner_argv's
+# defense-in-depth unset step (INCIDENT 2026-07-05).
+def test_legacy_renamed_env_vars_contains_scitex_todo_agent():
+    # Arrange
+    names = LEGACY_RENAMED_ENV_VARS
+    # Act
+    present = "SCITEX_TODO_AGENT" in names
+    # Assert
+    assert present
+
+
+def test_legacy_renamed_env_vars_contains_scitex_todo_tasks():
+    # Arrange
+    names = LEGACY_RENAMED_ENV_VARS
+    # Act
+    present = "SCITEX_TODO_TASKS" in names
+    # Assert
+    assert present
+
+
+def test_legacy_renamed_env_vars_is_exactly_two_names():
+    # Arrange — future renames add here deliberately, not by accident
+    # growing the set.
+    names = LEGACY_RENAMED_ENV_VARS
+    # Act
+    expected = {"SCITEX_TODO_AGENT", "SCITEX_TODO_TASKS"}
+    # Assert
+    assert names == expected

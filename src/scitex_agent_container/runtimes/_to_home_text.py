@@ -20,6 +20,33 @@ from ._to_home_errors import WorkspaceCLAUDEMarkerError
 END_MARKER = "<!-- End of scitex-agent-container generated section -->"
 START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 
+# Legacy pre-0.7.30 scitex-todo env var names, renamed to the ``_ID`` /
+# ``_YAML_SHARED`` forms. Single source of truth for TWO independent guards:
+#
+#   (a) never bake these into materialized to_home files (this module's
+#       ``_RUNTIME_ONLY_VARS``, below); and
+#   (b) never let a stale value of these survive into the apptainer LAUNCH
+#       ENVIRONMENT (:func:`_apptainer_host_env.scrub_legacy_env`).
+#
+# INCIDENT (2026-07-05, reported convergently by claude-code-telegrammer and
+# scitex-dev): apptainer passes the FULL ambient environment of whatever
+# host shell/process invokes ``apptainer exec`` / ``instance start`` into
+# the container (the same passthrough class documented in
+# ``_apptainer_host_env.py``'s ``APPTAINERENV_APPEND_PATH`` mechanism). A
+# stale ``SCITEX_TODO_AGENT`` export left in an operator's launching shell
+# (from before the 0.7.30 rename) leaked straight through into containers
+# even though neither ``.mcp.json`` nor ``spec.yaml`` ever named it —
+# tripping scitex-todo's strict "old var present -> hard reject" MCP
+# write-path check. This module's guard (a) only ever protected
+# MATERIALIZED FILES; it never touched the live process environment handed
+# to the ``apptainer`` subprocess, which is exactly what broke.
+LEGACY_RENAMED_ENV_VARS = frozenset(
+    {
+        "SCITEX_TODO_AGENT",
+        "SCITEX_TODO_TASKS",
+    }
+)
+
 # Per-agent IDENTITY vars that must NEVER be baked at deploy time.
 #
 # WHY (INCIDENT 2026-07-02, card
@@ -47,8 +74,7 @@ _RUNTIME_ONLY_VARS = frozenset(
         # Legacy pre-0.7.30 names — kept as a GUARD only (never injected by
         # sac anymore): a stale deployer shell exporting the old names must
         # still not bake them into materialized files.
-        "SCITEX_TODO_AGENT",
-        "SCITEX_TODO_TASKS",
+        *LEGACY_RENAMED_ENV_VARS,
         "SAC_NAME",
         "CLAUDE_AGENT_ID",
         "CLAUDE_AGENT_ROLE",

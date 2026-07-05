@@ -28,7 +28,9 @@ import pytest
 
 from scitex_agent_container.runtimes._apptainer_host_env import (
     APPTAINER_APPEND_PATH_ENV,
+    LEGACY_ENV_DENYLIST,
     host_cargo_bin_append_env,
+    scrub_legacy_env,
 )
 
 
@@ -79,3 +81,42 @@ def test_preexisting_directive_is_appended_after_colon(fake_home: Path) -> None:
     result = host_cargo_bin_append_env(base_env)
     # Assert
     assert result[APPTAINER_APPEND_PATH_ENV] == f"/opt/extra/bin:{cargo_bin}"
+
+
+# ----------------------------------------------------------------------
+# scrub_legacy_env — INCIDENT 2026-07-05 (apptainer ambient-env passthrough
+# leaking stale pre-rename scitex-todo env vars into containers).
+# ----------------------------------------------------------------------
+def test_scrub_legacy_env_removes_denylisted_keys() -> None:
+    """Every :data:`LEGACY_ENV_DENYLIST` key is stripped from the output,
+    even when it is present in the base env passed in (simulating a
+    stale export surviving in the launching shell's ambient env)."""
+    # Arrange
+    base_env = {name: "stale-value" for name in LEGACY_ENV_DENYLIST}
+    base_env["UNRELATED_VAR"] = "keep-me"
+    # Act
+    result = scrub_legacy_env(base_env)
+    # Assert
+    assert not (set(result) & LEGACY_ENV_DENYLIST)
+
+
+def test_scrub_legacy_env_keeps_unrelated_keys() -> None:
+    """Non-denylisted keys survive the scrub untouched."""
+    # Arrange
+    base_env = {"SCITEX_TODO_AGENT_ID": "proj-x", "PATH": "/usr/bin"}
+    # Act
+    result = scrub_legacy_env(base_env)
+    # Assert
+    assert result == base_env
+
+
+def test_scrub_legacy_env_does_not_mutate_input() -> None:
+    """Pure function — the caller's dict (often a live ``os.environ`` copy)
+    must be left untouched; only the returned copy is scrubbed."""
+    # Arrange
+    base_env = {"SCITEX_TODO_AGENT": "stale", "PATH": "/usr/bin"}
+    original = dict(base_env)
+    # Act
+    scrub_legacy_env(base_env)
+    # Assert
+    assert base_env == original

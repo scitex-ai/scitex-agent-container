@@ -209,9 +209,16 @@ class ApptainerContainerRuntime(RuntimeBase):
         # container var and ``--env PATH=...`` would clobber PATH). Lets
         # host-only cargo CLIs (e.g. rtk) resolve inside the container.
         # Skip-if-missing + append-not-clobber live in the pure helper.
-        from ._apptainer_host_env import host_cargo_bin_append_env
+        from ._apptainer_host_env import host_cargo_bin_append_env, scrub_legacy_env
 
-        launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
+        # scrub_legacy_env strips stale pre-rename env vars (e.g.
+        # SCITEX_TODO_AGENT) that apptainer's full-ambient-env passthrough
+        # would otherwise leak straight into the container from whatever
+        # shell launched this sac process (INCIDENT 2026-07-05) — applied
+        # BEFORE exec so no such leak ever reaches the ``apptainer`` argv.
+        launch_env = scrub_legacy_env(
+            {**os.environ, **host_cargo_bin_append_env(os.environ)}
+        )
 
         # Jailed-capsule guardrail: strip the apptainer/singularity bind
         # env vars from the launch environment so NO env-injected bind

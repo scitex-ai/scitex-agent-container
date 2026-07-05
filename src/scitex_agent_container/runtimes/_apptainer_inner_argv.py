@@ -26,6 +26,7 @@ from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
     tui_channel_config,
     tui_channel_plan,
 )
+from ._to_home_text import LEGACY_RENAMED_ENV_VARS
 
 if TYPE_CHECKING:
     from ..config import AgentConfig
@@ -79,6 +80,24 @@ _GIT_ENV_ALIAS_STEPS: list[str] = [
     '[ -n "${SAC_GIT_SSH_COMMAND:-}" ] && export GIT_SSH_COMMAND="$SAC_GIT_SSH_COMMAND"',
 ]
 
+# Defense-in-depth (belt-and-suspenders) — INCIDENT 2026-07-05: apptainer's
+# full-ambient-env passthrough can leak a stale legacy env var (e.g. a
+# pre-scitex-todo-0.7.30-rename ``SCITEX_TODO_AGENT`` export) straight
+# through into the container from whatever shell/process invoked
+# ``apptainer exec`` / ``instance start``, even when sac's own Python-side
+# env construction has already been scrubbed (see
+# ``_apptainer_host_env.scrub_legacy_env``, applied at both exec sites).
+# This step runs FIRST, inside the container, regenerated fresh every boot
+# from this same builder — no ``.def``/image rebuild required — so a leak
+# that bypassed sac's Python env construction entirely (e.g. an operator
+# running raw ``apptainer instance start`` directly) is still caught before
+# ``exec``ing the actual runner. Single source of truth: the same
+# :data:`_to_home_text.LEGACY_RENAMED_ENV_VARS` frozenset the materialized-
+# file guard and the process-env scrub both read.
+_LEGACY_ENV_UNSET_STEPS: list[str] = [
+    "unset " + " ".join(sorted(LEGACY_RENAMED_ENV_VARS)),
+]
+
 
 def _format_shell_steps(cmds: list) -> list[str]:
     # list[StartupCommand] -> shell statement list. `set -e` so any
@@ -112,9 +131,12 @@ def build_inner_argv(
     """Return the apptainer-inner argv. Dispatches on ``config.kind``.
 
     The argv is now ALWAYS wrapped in
-    ``[/bin/bash, -lc, "<git-env-alias>; [set -e; <cmd1>; sleep N; <cmd2>;]
-    exec <tini ...>"]`` — never returned bare. The first steps are the
-    fixed, unconditional :data:`_GIT_ENV_ALIAS_STEPS` (see there); when
+    ``[/bin/bash, -lc, "<legacy-env-unset>; <git-env-alias>;
+    [set -e; <cmd1>; sleep N; <cmd2>;] exec <tini ...>"]`` — never returned
+    bare. The very first step is the fixed, unconditional
+    :data:`_LEGACY_ENV_UNSET_STEPS` (defense-in-depth against a leaked
+    legacy env var surviving apptainer's ambient-env passthrough — see
+    there), then :data:`_GIT_ENV_ALIAS_STEPS` (see there); when
     ``spec.startup_commands`` is also non-empty those follow next, run as
     container-internal shell BEFORE the claude SDK process starts. ``exec``
     replaces bash with tini, keeping PID 1 clean. NOT a claude prompt — see
@@ -155,10 +177,16 @@ def build_inner_argv(
         )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
-    # Alias step is unconditional (every agent gets it); startup_cmds steps
-    # follow it when present. This means shell_steps is NEVER empty, so the
-    # bash -lc wrap now ALWAYS happens — see docstring.
-    shell_steps = _GIT_ENV_ALIAS_STEPS + _format_shell_steps(startup_cmds)
+    # Legacy-env unset + git-alias steps are unconditional (every agent gets
+    # them); startup_cmds steps follow when present. This means shell_steps
+    # is NEVER empty, so the bash -lc wrap now ALWAYS happens — see
+    # docstring. The unset step runs FIRST so no later step can observe a
+    # leaked legacy var.
+    shell_steps = (
+        _LEGACY_ENV_UNSET_STEPS
+        + _GIT_ENV_ALIAS_STEPS
+        + _format_shell_steps(startup_cmds)
+    )
 
     quoted_runner = " ".join(shlex.quote(p) for p in runner_tail)
     inline = "; ".join(shell_steps + [f"exec {quoted_runner}"])

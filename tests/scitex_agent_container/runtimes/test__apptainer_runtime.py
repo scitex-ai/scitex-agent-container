@@ -1519,6 +1519,62 @@ def test_start_force_overrides_stale_pid_and_starts(
     assert ok is True
 
 
+# ---------------------------------------------------------------------------
+# Legacy env scrub at the launch-env construction site (INCIDENT
+# 2026-07-05) — apptainer's full-ambient-env passthrough must never
+# carry a stale legacy scitex-todo var (e.g. SCITEX_TODO_AGENT, renamed
+# to SCITEX_TODO_AGENT_ID at 0.7.30) from the launching shell into the
+# ``apptainer`` subprocess this runtime execs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def apptainer_env_dump_on_path(subprocess_shim) -> Path:
+    """Like ``apptainer_on_path`` but the fake binary also dumps its own
+    ``os.environ`` (JSON) to a file — lets a test assert on exactly what
+    the REAL launch environment looked like when ``apptainer`` execs,
+    rather than inspecting the Python-side dict sac built."""
+    bin_dir = subprocess_shim._bin
+    script = bin_dir / "apptainer"
+    env_dump = bin_dir / "apptainer.env.json"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"with open({_q(str(env_dump))}, 'w') as fh:\n"
+        "    json.dump(dict(os.environ), fh)\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return env_dump
+
+
+def test_start_foreground_scrubs_legacy_env_from_apptainer_launch(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_env_dump_on_path: Path,
+    env_save_restore,
+) -> None:
+    """A stale ``SCITEX_TODO_AGENT`` export present in this test process's
+    ambient env (simulating a launching operator shell that never
+    migrated off the pre-0.7.30 name) must NOT reach the ``apptainer``
+    subprocess env, even though nothing in sac's own ``--env=``
+    construction ever names it."""
+    # Arrange
+    env_save_restore.set("SCITEX_TODO_AGENT", "stale-legacy-value")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    rt.start(cfg, foreground=True)
+    # Assert
+    import json as _json
+
+    dumped_env = _json.loads(apptainer_env_dump_on_path.read_text())
+    assert "SCITEX_TODO_AGENT" not in dumped_env
+
+
 def test_is_running_false_when_no_pid_file(state_root: Path, tmp_path: Path) -> None:
     # Arrange
     rt = ApptainerContainerRuntime()

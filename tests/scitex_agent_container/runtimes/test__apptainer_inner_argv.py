@@ -24,6 +24,7 @@ from scitex_agent_container.config._types import (
 )
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     _GIT_ENV_ALIAS_STEPS,
+    _LEGACY_ENV_UNSET_STEPS,
     _SUPERVISOR_RESTART_FLOOR,
     _agent_runner_argv,
     _format_shell_steps,
@@ -32,6 +33,7 @@ from scitex_agent_container.runtimes._apptainer_inner_argv import (
     _resolve_restart_backoff_s,
     build_inner_argv,
 )
+from scitex_agent_container.runtimes._to_home_text import LEGACY_RENAMED_ENV_VARS
 
 
 def _mk_cfg(**kwargs):
@@ -279,6 +281,72 @@ def test_git_alias_mirrors_value_when_source_var_set():
     )
     # Assert
     assert result.stdout == "Test Author"
+
+
+# ---------------------------------------------------------------------------
+# Defense-in-depth legacy-env unset (INCIDENT 2026-07-05) — a stale legacy
+# scitex-todo env var (e.g. SCITEX_TODO_AGENT) must be unset FIRST, inside
+# the container, before anything else runs, regardless of whether sac's own
+# process-env scrub (``_apptainer_host_env.scrub_legacy_env``) caught it
+# upstream. See ``_LEGACY_ENV_UNSET_STEPS``.
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_env_unset_step_names_every_denylisted_var():
+    # Arrange
+    joined = "; ".join(_LEGACY_ENV_UNSET_STEPS)
+    # Act
+    missing = [name for name in LEGACY_RENAMED_ENV_VARS if name not in joined]
+    # Assert — every legacy-renamed var is named in the unset step.
+    assert missing == []
+
+
+def test_empty_startup_commands_argv_contains_legacy_unset_step():
+    # Arrange — an agent with NO startup_commands still gets the unset
+    # step baked into its wrapper.
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "unset " in argv[2]
+
+
+def test_legacy_env_unset_precedes_git_alias():
+    # Arrange — the unset step must run BEFORE the git alias (and
+    # everything else) so no later step can observe a leaked var.
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert argv[2].index("unset ") < argv[2].index("SAC_GIT_AUTHOR_NAME")
+
+
+def test_legacy_env_unset_precedes_exec():
+    # Arrange
+    cfg = _mk_cfg()
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert argv[2].index("unset ") < argv[2].index("exec ")
+
+
+def test_legacy_env_unset_step_real_bash_execution_strips_var():
+    # Arrange — real bash execution (no mocks): a stale legacy var IS
+    # present in the child env, proving the generated snippet actually
+    # removes it rather than merely looking plausible as a string.
+    env = dict(os.environ)
+    env["SCITEX_TODO_AGENT"] = "stale-legacy-value"
+    script = "; ".join(_LEGACY_ENV_UNSET_STEPS) + "; env"
+    # Act
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Assert
+    assert "SCITEX_TODO_AGENT=" not in result.stdout
 
 
 # ---------------------------------------------------------------------------
