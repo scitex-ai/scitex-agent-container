@@ -61,21 +61,57 @@ START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 # scitex-todo and claude-code-telegrammer have both shipped templates using
 # ``${RUNTIME:VAR}`` for their identity vars — that migration + removal is a
 # separate follow-up PR.
-_RUNTIME_ONLY_VARS = frozenset(
+# Legacy pre-0.7.30 identity ALIASES — deprecated names that a downstream
+# consumer now HARD-REJECTS if present. scitex-todo's MCP server refuses any
+# call when ``SCITEX_TODO_AGENT`` is set ("was renamed to
+# ``SCITEX_TODO_AGENT_ID``; unset the old var"), so a stale copy of one of
+# these baked into a materialized/folded ``.env`` is not merely redundant like
+# the current ``_ID`` names — it is FATAL to the consumer (live write-outage,
+# INCIDENT 2026-07-05/06). Kept as its OWN named subset (unioned into
+# :data:`_RUNTIME_ONLY_VARS` below, so the name list is defined ONCE) precisely
+# so the ``.env``-fold guard in :mod:`_envrc` can drop ONLY these legacy
+# aliases while the CURRENT identity vars (``SCITEX_TODO_AGENT_ID`` / ``CCT_*``
+# / ``SAC_NAME``) legitimately REMAIN in the ``--env-file`` the container needs
+# at runtime (the materialized ``.mcp.json`` expands ``${SCITEX_TODO_AGENT_ID}``
+# from that container env). Dropping the current vars from the fold too would
+# strip the agent's live identity — a second outage — so the fold must NOT use
+# the broad :func:`_is_runtime_only_var`.
+_LEGACY_IDENTITY_VARS = frozenset(
     {
-        # scitex-todo >= 0.7.30 names
-        "SCITEX_TODO_AGENT_ID",
-        "SCITEX_TODO_TASKS_YAML_SHARED",
-        # Legacy pre-0.7.30 names — kept as a GUARD only (never injected by
-        # sac anymore): a stale deployer shell exporting the old names must
-        # still not bake them into materialized files.
         "SCITEX_TODO_AGENT",
         "SCITEX_TODO_TASKS",
-        "SAC_NAME",
-        "CLAUDE_AGENT_ID",
-        "CLAUDE_AGENT_ROLE",
     }
 )
+
+_RUNTIME_ONLY_VARS = (
+    frozenset(
+        {
+            # scitex-todo >= 0.7.30 names
+            "SCITEX_TODO_AGENT_ID",
+            "SCITEX_TODO_TASKS_YAML_SHARED",
+            "SAC_NAME",
+            "CLAUDE_AGENT_ID",
+            "CLAUDE_AGENT_ROLE",
+        }
+    )
+    # Legacy pre-0.7.30 names — kept as a GUARD only (never injected by sac
+    # anymore): a stale deployer shell exporting the old names must still not
+    # bake them into materialized files.
+    | _LEGACY_IDENTITY_VARS
+)
+
+
+def _is_legacy_identity_var(name: str) -> bool:
+    """True when ``name`` is a DEPRECATED identity alias the downstream
+    consumer hard-rejects → must be DROPPED from a folded ``.env``.
+
+    Narrower than :func:`_is_runtime_only_var` on purpose: the ``.env`` fold
+    (:func:`_envrc.eval_envrc` / :func:`_envrc.eval_envrc_cascade`) produces
+    the container's ``--env-file``, so the CURRENT identity vars must survive
+    there — only the fatal legacy aliases in :data:`_LEGACY_IDENTITY_VARS` are
+    stripped. See that constant's comment.
+    """
+    return name in _LEGACY_IDENTITY_VARS
 
 
 def _is_runtime_only_var(name: str) -> bool:
