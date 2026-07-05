@@ -7,7 +7,9 @@ from __future__ import annotations
 import pytest
 
 from scitex_agent_container.a2a._inbox_bus import (
+    DAEMON_SENDER,
     Broker,
+    mint_acl_deny_synthetic_notification,
     mint_deny_notification,
     mint_event,
 )
@@ -458,3 +460,84 @@ def test_mint_deny_notification_includes_timestamp() -> None:
     ts = event.get("ts")
     # Assert
     assert isinstance(ts, float) and ts > 0
+
+
+# ---------------------------------------------------------------------------
+# DAEMON_SENDER — canonical ``from_agent`` (sender) value for messages sac's
+# OWN daemon originates (operator directive 2026-07-05, bracket form). The
+# channel tag renders ``<- <clean-source> [<sender>]``; a daemon frame's
+# sender is ``"daemon"`` (renders ``<- sac [daemon]``). The source stays the
+# clean, UNSUFFIXED channel name — no ``*-system`` token. Sender-supplied
+# sources (agent a2a from_agent, other channels' tags) MUST pass through
+# unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_sender_constant_value() -> None:
+    # Arrange — pin the exact wire literal the operator's bracket
+    # convention depends on.
+    expected = "daemon"
+    # Act
+    actual = DAEMON_SENDER
+    # Assert
+    assert actual == expected
+
+
+def test_acl_deny_synthetic_uses_daemon_sender() -> None:
+    # Arrange — a sac-originated daemon notification (no sender-supplied
+    # source) must be tagged with the canonical daemon sender.
+    event = mint_acl_deny_synthetic_notification(
+        target="alice", sender="mallory", reason="cross-group"
+    )
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == DAEMON_SENDER
+
+
+def test_acl_deny_synthetic_is_not_bare_system() -> None:
+    # Arrange — regression guard: the old bare ``"system"`` tag must no
+    # longer appear on sac's own daemon messages.
+    event = mint_acl_deny_synthetic_notification(
+        target="alice", sender="mallory", reason="cross-group"
+    )
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent != "system"
+
+
+def test_daemon_sender_is_not_package_suffixed() -> None:
+    # Arrange — regression guard: the sender must NOT be a package-
+    # suffixed ``*-system`` token; the source stays clean and the
+    # bracket carries the plain ``daemon`` sender.
+    event = mint_acl_deny_synthetic_notification(
+        target="alice", sender="mallory", reason="cross-group"
+    )
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert not from_agent.endswith("-system")
+
+
+def test_mint_event_passes_through_sender_supplied_source_unchanged() -> None:
+    # Arrange — a message that arrives WITH a sender-supplied source
+    # (e.g. another channel's tag such as scitex-todo's) must be
+    # delivered with THAT source unchanged; sac only applies its own
+    # daemon sender to messages it originates with no sender-supplied
+    # source.
+    event = mint_event("alice", content="hi", from_agent="scitex-todo-system")
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == "scitex-todo-system"
+
+
+def test_mint_event_does_not_override_agent_sender_with_daemon() -> None:
+    # Arrange — an agent's own a2a ``from_agent`` must never be re-tagged
+    # to the daemon sender; it keeps its agent identity in the bracket.
+    event = mint_event("alice", content="hi", from_agent="worker-b")
+    # Act
+    from_agent = event["from_agent"]
+    # Assert
+    assert from_agent == "worker-b"

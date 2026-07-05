@@ -40,6 +40,26 @@ from typing import Any
 # drop oldest than block the publisher's HTTP handler.
 _QUEUE_CAP = 64
 
+# Canonical ``from_agent`` (sender) value for messages sac's OWN
+# daemon originates — as opposed to an agent's a2a reasoning, which
+# keeps its own ``from_agent``.
+#
+# Operator directive (2026-07-05, bracket form): the channel tag an
+# agent sees renders as ``<- <source> [<sender>]`` where ``source``
+# stays the CLEAN, unsuffixed channel name (sac's channel identity,
+# e.g. ``sac``) and the SENDER (bracket) says whether the frame came
+# from the daemon or a peer agent. ``_build_notification`` projects
+# the event's ``from_agent`` into ``meta.source`` (the bracket), so a
+# sac daemon frame with ``from_agent=DAEMON_SENDER`` renders as
+# ``<- sac [daemon]`` and an agent frame renders ``<- sac [<agent>]``.
+#
+# This tag is applied ONLY to messages sac itself originates as the
+# daemon with no sender-supplied source. A message that already
+# carries a sender's ``from_agent`` (agent a2a) or another channel's
+# tag passes through UNCHANGED — sac never re-tags those, and the
+# source is never suffixed.
+DAEMON_SENDER = "daemon"
+
 
 class Broker:
     """In-memory pub/sub keyed by agent name."""
@@ -207,11 +227,14 @@ def mint_acl_deny_synthetic_notification(
 
     Differences from :func:`mint_deny_notification`:
 
-    * ``from_agent`` is the literal ``"system"`` (not the would-be
-      sender) — the receiver MUST know the notification did not
-      originate from a granted peer (the message body never leaks
-      pre-decision, and surfacing the sender as the apparent author
-      is the same leak in a different shape).
+    * ``from_agent`` is the canonical daemon sender
+      :data:`DAEMON_SENDER` (``"daemon"``, not the would-be sender) —
+      the receiver MUST know the notification did not originate from a
+      granted peer (the message body never leaks pre-decision, and
+      surfacing the sender as the apparent author is the same leak in a
+      different shape). Rendered in the channel bracket as
+      ``<- sac [daemon]`` so the receiver distinguishes this SAC daemon
+      frame from an agent-authored message.
     * ``content`` carries a human-readable, operator-actionable
       string embedding the exact ``sac a2a grant`` command keyed to
       the actual ``<sender>`` / ``<target>`` names. This is the
@@ -237,7 +260,7 @@ def mint_acl_deny_synthetic_notification(
     return mint_event(
         target,
         content=content,
-        from_agent="system",
+        from_agent=DAEMON_SENDER,
         priority="normal",
         kind="acl_deny_notify",
         extra={
@@ -251,6 +274,7 @@ def mint_acl_deny_synthetic_notification(
 
 
 __all__ = [
+    "DAEMON_SENDER",
     "Broker",
     "mint_event",
     "mint_deny_notification",
