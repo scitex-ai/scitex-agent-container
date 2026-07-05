@@ -1,27 +1,17 @@
 """Liveness-tick reconciler: ALARM on a stuck OPEN card (alarm-engine producer).
 
 Card ``sac-card-anchored-stop-reconciler``. PRINCIPLE (operator): do not
-trust agentic flow; harness it deterministically. The card store CARD
+trust agentic flow; harness it deterministically. The scitex-todo CARD
 is the anchor of truth — a card stays OPEN until explicitly resolved.
 This is the deterministic reconciler that runs INSIDE ``sac listen``,
 reads cards (truth) vs. real agent activity, and ALARMS on a mismatch so
 a stuck/crashed agent can never sit silent.
 
-SEPARATION OF CONCERNS: **sac only DETECTS and EMITS.** sac does NOT
-write to the card store. We emit an anomaly event on sac's own
-``scitex_agent_container.hooks`` entry-point event bus; a downstream
-card-store consumer (registered separately, on its side) turns it into a
-card record + operator push. Nothing here writes the card store.
-
-BUS-GROUP TRANSITION (backward-compat): this bus was originally named
-``scitex_todo.hooks`` and scitex-todo still registers its consumer / emits
-card-events on that legacy group. So we DUAL-SUPPORT during the
-transition — sac loads consumers from BOTH the new
-``scitex_agent_container.hooks`` group AND the legacy ``scitex_todo.hooks``
-group (see :data:`HOOKS_ENTRY_POINT_GROUP` /
-:data:`LEGACY_HOOKS_ENTRY_POINT_GROUP`), so sac's emits still reach
-scitex-todo's consumer and sac still receives scitex-todo's card-events.
-The legacy group is removed once scitex-todo migrates to the new name.
+SEPARATION OF CONCERNS (locked with the scitex-todo team): **sac only
+DETECTS and EMITS.** sac does NOT write to the card store. We emit an
+anomaly event on the ``scitex_todo.hooks`` entry-point bus; scitex-todo's
+own consumer (registered separately, on their side) turns it into a card
+record + operator push. Nothing here writes ``tasks.yaml``.
 
 Bind-safety (cards ``sac-listen-self-peer-persist-blocks-bind`` /
 ``sac-listen-watchdog-autorestart-alarm``): the only blocking IO — reading
@@ -69,24 +59,11 @@ DEFAULT_INTERVAL_S = 120.0
 DEFAULT_STALE_S = 900.0
 DEFAULT_RENOTIFY_S = 3600.0
 
-# The entry-point event bus sac emits an anomaly onto. A downstream
-# card-store consumer registers here (separately, on its side); sac is
-# the FIRST producer — until a consumer is registered the emit degrades
-# to a logged line. Generic, sac-namespaced group (matches the
-# ``scitex_dev.*`` entry-point convention in this repo's pyproject).
-HOOKS_ENTRY_POINT_GROUP = "scitex_agent_container.hooks"
-
-# DEPRECATED — dual-supported for transition; remove once scitex-todo
-# migrates to ``scitex_agent_container.hooks``. This is the ORIGINAL group
-# name (a cross-package contract): scitex-todo registers its consumer on
-# it and emits card-events on it. sac loads/emits on BOTH groups so
-# neither side breaks mid-migration.
-LEGACY_HOOKS_ENTRY_POINT_GROUP = "scitex_todo.hooks"
-
-# Both groups sac loads consumers from (emit reaches all) and — mirrored in
-# pyproject — registers its own consumer under (so producers on either
-# group reach sac). New group first so it wins any ordering.
-HOOKS_ENTRY_POINT_GROUPS = (HOOKS_ENTRY_POINT_GROUP, LEGACY_HOOKS_ENTRY_POINT_GROUP)
+# The entry-point bus sac emits an anomaly onto. scitex-todo registers
+# its consumer here (separately, on their side); sac is the FIRST
+# producer — until a consumer is registered the emit degrades to a logged
+# line.
+HOOKS_ENTRY_POINT_GROUP = "scitex_todo.hooks"
 
 
 # --- IO resolvers (run OFF the event loop via run_blocking_or) --------------
@@ -203,42 +180,31 @@ def _resolve_doc_and_liveness(tasks_path: Path) -> tuple[dict, dict[str, AgentLi
 
 
 def _load_hook_consumers() -> list[Callable[[dict], Any]]:
-    """Load every callable registered on sac's hook event-bus groups.
-
-    Loads from BOTH :data:`HOOKS_ENTRY_POINT_GROUP` (the generic,
-    sac-owned group) AND the legacy ``scitex_todo.hooks`` group
-    (DEPRECATED — dual-supported for transition; see
-    :data:`LEGACY_HOOKS_ENTRY_POINT_GROUP`), so sac's emits reach a
-    consumer registered on either group and no side breaks while
-    scitex-todo migrates. De-dups by loaded callable identity so a
-    consumer registered under both groups is delivered to only once.
+    """Load every callable registered on the ``scitex_todo.hooks`` group.
 
     Uses the stdlib selectable ``entry_points`` API. Fail-soft per entry:
     one un-loadable entry-point contributes nothing. Returns ``[]`` when
-    both groups are empty (no consumer registered yet)."""
+    the group is empty (no consumer registered yet)."""
     from importlib.metadata import entry_points
 
+    try:
+        eps = entry_points(group=HOOKS_ENTRY_POINT_GROUP)
+    except Exception:  # stx-allow: fallback (metadata read hiccup → no consumers this call)
+        return []
     consumers: list[Callable[[dict], Any]] = []
-    seen: set[int] = set()
-    for group in HOOKS_ENTRY_POINT_GROUPS:
+    for ep in eps:
         try:
-            eps = entry_points(group=group)
-        except Exception:  # stx-allow: fallback (metadata read hiccup → no consumers this group)
+            fn = ep.load()
+        except Exception as exc:  # stx-allow: fallback (one bad entry-point contributes nothing)
+            logger.warning(
+                "liveness_tick: failed to load %s consumer %r: %s",
+                HOOKS_ENTRY_POINT_GROUP,
+                getattr(ep, "name", ep),
+                exc,
+            )
             continue
-        for ep in eps:
-            try:
-                fn = ep.load()
-            except Exception as exc:  # stx-allow: fallback (one bad entry-point contributes nothing)
-                logger.warning(
-                    "liveness_tick: failed to load %s consumer %r: %s",
-                    group,
-                    getattr(ep, "name", ep),
-                    exc,
-                )
-                continue
-            if callable(fn) and id(fn) not in seen:
-                seen.add(id(fn))
-                consumers.append(fn)
+        if callable(fn):
+            consumers.append(fn)
     return consumers
 
 
@@ -256,7 +222,7 @@ def emit_anomaly(event: dict, consumers: Iterable[Callable[[dict], Any]]) -> int
             delivered += 1
         except Exception as exc:  # stx-allow: fallback (a consumer failure must never crash the alarm loop)
             logger.warning(
-                "liveness_tick: hook-bus consumer %r raised on emit "
+                "liveness_tick: scitex_todo.hooks consumer %r raised on emit "
                 "(%s); continuing — the alarm loop must stay up",
                 getattr(fn, "__name__", fn),
                 exc,
@@ -289,10 +255,8 @@ async def liveness_tick_reconciler_loop(
 
     Each tick: resolve ``tasks.yaml`` + owner liveness OFF the event loop
     (bind-safe), run the pure :func:`find_stuck_cards` rule, and emit one
-    anomaly event per newly-stuck ``(agent, card_id)`` onto sac's
-    ``scitex_agent_container.hooks`` event bus (dual-supported on the
-    legacy ``scitex_todo.hooks`` group during the migration). DEDUP: at
-    most one emit per ``(agent,
+    anomaly event per newly-stuck ``(agent, card_id)`` onto the
+    ``scitex_todo.hooks`` bus. DEDUP: at most one emit per ``(agent,
     card_id)`` per ``renotify_s`` cooldown (in-memory; the daemon is
     long-running), so a persistently-stuck card does NOT spam per tick.
 
@@ -313,15 +277,14 @@ async def liveness_tick_reconciler_loop(
         renotify_s,
     )
 
-    # Startup probe: warn ONCE if no consumer is registered yet on EITHER
-    # group (sac is the first producer; a card-store consumer registers
-    # separately, on the legacy group today).
+    # Startup probe: warn ONCE if no consumer is registered yet (sac is the
+    # first producer; scitex-todo registers its consumer separately).
     if consumers_source is None and not _load_hook_consumers():
         logger.warning(
-            "liveness_tick: no consumer registered on %s — anomalies will "
-            "be DETECTED and logged but not delivered until a card-store "
-            "consumer registers (sac is the first producer on this bus)",
-            " / ".join(HOOKS_ENTRY_POINT_GROUPS),
+            "liveness_tick: no %s consumer registered — anomalies will be "
+            "DETECTED and logged but not delivered until scitex-todo "
+            "registers its consumer (sac is the first producer on this bus)",
+            HOOKS_ENTRY_POINT_GROUP,
         )
 
     last_emit_at: dict[tuple[str, str], float] = {}
@@ -393,8 +356,6 @@ __all__ = [
     "ENV_RENOTIFY_S",
     "ENV_STALE_S",
     "HOOKS_ENTRY_POINT_GROUP",
-    "HOOKS_ENTRY_POINT_GROUPS",
-    "LEGACY_HOOKS_ENTRY_POINT_GROUP",
     "StuckCard",
     "emit_anomaly",
     "find_stuck_cards",

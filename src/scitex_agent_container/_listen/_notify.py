@@ -24,9 +24,7 @@ body is published into the named agent's inbox bus via the EXACT same
 subscribed (containerized) agent.
 
 The full event-driven rail (C10) is :mod:`._card_event_delivery`, which
-registers a card-event consumer on sac's ``scitex_agent_container.hooks``
-event bus (dual-supported on the legacy ``scitex_todo.hooks`` group) and
-calls the same
+registers a ``scitex_todo.hooks`` consumer and calls the same
 :func:`publish_to_agent` helper. This module owns the HTTP seam; that
 one owns the bus-consumer seam. Both deliver through ``publish_to_agent``
 so there is ONE router-publish code path.
