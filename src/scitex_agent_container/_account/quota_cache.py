@@ -14,10 +14,9 @@ requirements:
   ``/var/sac/quota-cache.json`` (read-only) so both consumers see the
   same file with the same path.
 
-The TS bridge (``claude-code-telegrammer/ts/lib/signature.ts``) consumes
-the same JSON file with the same ``short``-field lookup rule — keeping
-the two implementations symmetric. PR-A wires the bridge; this module
-wires the Python side.
+An external channel bridge may consume the same JSON file with the same
+``short``-field lookup rule — keeping the two implementations symmetric.
+PR-A wires that bridge; this module wires the Python side.
 
 The reader **never raises** — every failure mode (missing env, missing
 file, malformed JSON, no matching account, wrong-typed entry fields)
@@ -34,8 +33,8 @@ from pathlib import Path
 from typing import Any
 
 # In-container path the apptainer runtime binds the host file at. PR-A
-# (telegrammer) and PR-B (sac CLI / a2a metadata) both default to this
-# same path so a single bind in
+# (the channel bridge) and PR-B (sac CLI / a2a metadata) both default to
+# this same path so a single bind in
 # ``_apptainer_runtime.ApptainerContainerRuntime.build_run_argv`` makes
 # every consumer work without per-component plumbing.
 DEFAULT_QUOTA_CACHE_PATH = "/var/sac/quota-cache.json"

@@ -164,7 +164,7 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         "",
         "claude-agent-sdk walks <workdir>/.claude/ at session start to",
         "discover hooks/skills/settings. A heavy walk either silently times",
-        "out spawning MCP servers (the bun telegrammer server is the canary",
+        "out spawning MCP servers (a bun-based MCP server is the canary",
         "— it just won't show up in the SDK's tool surface) or makes the",
         "agent return 0 tokens per turn with no log line. Verified field",
         "failure: proj-scitex-orochi at 41,873 files / 884 MB (2026-06-03).",

@@ -210,24 +210,14 @@ def agent_start(
     # the spec.yaml.
     resolve_a2a_port(config)
 
-    # Bug #41 preflight — refuse to start when spec.claude.channels
-    # requests ``server:claude-code-telegrammer`` but spec.a2a.port is
-    # unset/null. Without the /v1/turn endpoint the standalone
-    # telegrammer poller has no URL to POST inbound Telegram to and an
-    # idle agent silently won't wake. Catching this here makes the
-    # misconfig loud at ``sac agents start`` time rather than the
-    # operator discovering it via "agent doesn't reply to Telegram"
-    # three messages later. See ``runtimes/_sdk_channels.
-    # validate_telegrammer_wake_wiring`` for the contract; F3 (MCP key
-    # mis-keyed in to_home/.mcp.json) is covered by the matching
-    # runner-side WARN/ERROR logs in ``_wire_telegrammer_wake``.
-    from ..runtimes._sdk_channels import validate_telegrammer_wake_wiring
-
-    validate_telegrammer_wake_wiring(
-        getattr(config.claude, "channels", None),
-        getattr(config.a2a, "port", None),
-        agent_name=config.name,
-    )
+    # Wake-on-push is now GENERIC (sac exposes SAC_AGENT_TURN_URL; any
+    # external channel MCP opts in by referencing ${SAC_AGENT_TURN_URL} in
+    # its own to_home/.mcp.json env — see runtimes/_sdk_channels). sac names
+    # no channel, so there is no channel-specific preflight here: the
+    # turn-url is simply present whenever spec.a2a.port resolves and absent
+    # otherwise. An MCP that needs the wake but has no port available just
+    # gets an unresolved placeholder — a spec-authoring concern, not a
+    # sac-enforced invariant.
 
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
@@ -370,10 +360,10 @@ def agent_start(
     # Scan for any stdio-MCP server child belonging to this agent's PREVIOUS
     # incarnation (matched by env-injected agent name + MCP-cmdline marker)
     # and SIGKILL it BEFORE we boot the runtime's replacement poller. Without
-    # this, an orphaned ``claude-code-telegrammer`` poller continues to hold
-    # Telegram's getUpdates long-poll slot, the new poller hits HTTP 409
-    # ("terminated by other getUpdates request"), and the operator sees
-    # "telegrammer dead, agent alive but silent". The helper NEVER raises —
+    # this, an orphaned MCP poller continues to hold its upstream long-poll
+    # slot, the new poller collides on that slot (e.g. an HTTP 409 Conflict
+    # from a messaging API), and the operator sees "channel dead, agent
+    # alive but silent". The helper NEVER raises —
     # orphan cleanup is best-effort defence and must not wedge start. See
     # :mod:`._orphan_mcp_cleanup` for the match policy and seam contract.
     from ._orphan_mcp_cleanup import kill_orphan_mcp_children

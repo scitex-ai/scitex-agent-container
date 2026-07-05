@@ -196,5 +196,3 @@ input on cache hits.
   same inbox Telegram does; short turns matter for ALL inbound.
 - ``29_progress-reporting-to-lead.md`` — push milestones to the lead;
   don't make peers poll while a heavy compile blocks your inbox.
-- ``23_telegram-integration.md`` — the delivery path this rule
-  exists to keep responsive.

@@ -69,8 +69,8 @@ DEVELOPER_GROUP = "developer"
 RESEARCHER_GROUP = "researcher"
 GENERALIST_GROUP = "generalist"
 
-# The privileged group (operator 2026-07-02): grant / dotfiles /
-# claude-code-telegrammer. Like ``developer`` it may broker arbitrary
+# The privileged group (operator 2026-07-02): e.g. grant / dotfiles /
+# channel-broker agents. Like ``developer`` it may broker arbitrary
 # host-exec (see :data:`._listen._host_exec.ELIGIBLE_GROUPS`) and, by being
 # a MESH group below, may manage agents across groups (start / restart /
 # stop / delete / status / tail via :func:`._listen._acl.check_lineage_acl`)

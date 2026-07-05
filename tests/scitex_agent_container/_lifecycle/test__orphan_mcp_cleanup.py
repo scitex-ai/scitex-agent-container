@@ -61,11 +61,11 @@ def _agent_env(name: str) -> dict[str, str]:
     return {"SCITEX_AGENT_CONTAINER_NAME": name, "PATH": "/usr/bin"}
 
 
-def _orphan_telegrammer(pid: int, name: str) -> _FakeProcess:
-    """A canonical telegrammer-orphan fake matching both signals."""
+def _orphan_mcp_poller(pid: int, name: str) -> _FakeProcess:
+    """A canonical stdio-MCP-poller orphan fake matching both signals."""
     return _FakeProcess(
         pid=pid,
-        cmdline=["bun", "run", "claude-code-telegrammer/server.ts"],
+        cmdline=["bun", "run", "channel-poller/server.ts"],
         environ=_agent_env(name),
     )
 
@@ -77,7 +77,7 @@ def _orphan_telegrammer(pid: int, name: str) -> _FakeProcess:
 
 def test_dry_run_returns_orphan_pid_without_killing() -> None:
     # Arrange
-    orphan = _orphan_telegrammer(pid=4242, name="alpha")  # stx-allow: STX-NL001
+    orphan = _orphan_mcp_poller(pid=4242, name="alpha")  # stx-allow: STX-NL001
     killer = _KillRecorder()
     # Act
     killed = kill_orphan_mcp_children(
@@ -94,8 +94,8 @@ def test_dry_run_returns_orphan_pid_without_killing() -> None:
 def test_dry_run_with_multiple_orphans_returns_all_candidate_pids() -> None:
     # Arrange
     procs = [
-        _orphan_telegrammer(pid=100, name="beta"),  # stx-allow: STX-NL001
-        _orphan_telegrammer(pid=101, name="beta"),  # stx-allow: STX-NL001
+        _orphan_mcp_poller(pid=100, name="beta"),  # stx-allow: STX-NL001
+        _orphan_mcp_poller(pid=101, name="beta"),  # stx-allow: STX-NL001
     ]
     killer = _KillRecorder()
     # Act
@@ -199,7 +199,7 @@ def test_current_process_excluded_from_kill_list() -> None:
     # Arrange — the sac CLI's own pid may share the env (it set
     # SCITEX_AGENT_CONTAINER_NAME for hook propagation) — must never
     # SIGKILL ourselves. ``self_pid`` parameter wires the guard.
-    orphan = _orphan_telegrammer(pid=999, name="eta")  # stx-allow: STX-NL001
+    orphan = _orphan_mcp_poller(pid=999, name="eta")  # stx-allow: STX-NL001
     killer = _KillRecorder()
     # Act
     killed = kill_orphan_mcp_children(
@@ -216,7 +216,7 @@ def test_process_with_different_agent_env_is_skipped() -> None:
     # Arrange — env carries a *different* agent name; cleanup must NOT
     # cross agent boundaries (an orphan of agent 'theta' is theta's
     # problem, never iota's).
-    other_proc = _orphan_telegrammer(pid=222, name="theta")  # stx-allow: STX-NL001
+    other_proc = _orphan_mcp_poller(pid=222, name="theta")  # stx-allow: STX-NL001
     killer = _KillRecorder()
     # Act
     killed = kill_orphan_mcp_children(
@@ -256,7 +256,7 @@ def test_process_with_no_env_visibility_is_skipped() -> None:
     # env signal we have no agent-ownership evidence → must NOT kill.
     blind_proc = _FakeProcess(
         pid=444,
-        cmdline=["bun", "run", "claude-code-telegrammer/server.ts"],
+        cmdline=["bun", "run", "channel-poller/server.ts"],
         environ={},
     )
     killer = _KillRecorder()
@@ -278,7 +278,7 @@ def test_process_with_no_env_visibility_is_skipped() -> None:
 
 def test_orphan_kill_invokes_kill_fn_with_sigkill() -> None:
     # Arrange
-    orphan = _orphan_telegrammer(pid=555, name="mu")  # stx-allow: STX-NL001
+    orphan = _orphan_mcp_poller(pid=555, name="mu")  # stx-allow: STX-NL001
     killer = _KillRecorder()
     # Act
     kill_orphan_mcp_children(
@@ -298,7 +298,7 @@ def test_kill_fn_raising_oserror_does_not_propagate() -> None:
     def _raises_esrch(pid: int, sig: int) -> None:
         raise OSError("no such process")
 
-    orphan = _orphan_telegrammer(pid=666, name="nu")  # stx-allow: STX-NL001
+    orphan = _orphan_mcp_poller(pid=666, name="nu")  # stx-allow: STX-NL001
     # Act
     killed = kill_orphan_mcp_children(
         "nu",

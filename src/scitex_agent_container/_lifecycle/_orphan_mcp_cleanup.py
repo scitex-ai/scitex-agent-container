@@ -1,13 +1,13 @@
 """Pre-start defence against orphaned MCP-server child processes.
 
 Operator-listed top fleet failure mode (bug "MCP-on-restart 409 orphan"):
-when an agent restarts, the previous ``claude-code-telegrammer`` poller
-(or any stdio-MCP server child) sometimes survives the SIGTERM the SDK
-sent it. The new poller then long-polls Telegram with ``getUpdates`` and
-the Bot API returns HTTP 409 Conflict ("terminated by other getUpdates
-request"). Operator-visible symptom: the operator sees "telegrammer
-dead, agent alive but silent" — claude is running fine but no Telegram
-inbound ever wakes it because the orphan stole the long-poll slot.
+when an agent restarts, a previous stdio-MCP server child (e.g. an
+external channel poller) sometimes survives the SIGTERM the SDK sent it.
+A replacement long-poller can then collide with the orphan on a shared
+upstream (e.g. a messaging API returns HTTP 409 Conflict when two clients
+long-poll the same slot). Operator-visible symptom: "channel dead, agent
+alive but silent" — claude is running fine but no inbound ever wakes it
+because the orphan stole the long-poll slot.
 
 Two angles addressed this class of bug:
 
@@ -37,11 +37,10 @@ Hard guarantees:
     snapshots without monkeypatching ``psutil`` internals.
   * Match by **two** signals — env var ``SCITEX_AGENT_CONTAINER_NAME``
     OR ``SAC_NAME`` equals ``name`` AND cmdline contains one of the
-    MCP markers (``bun``, ``telegrammer``, ``mcp``, ``claude-code-
-    telegrammer``). The env match alone is strong evidence the
-    process belongs to this agent's last incarnation; the cmdline
-    filter prevents the cleanup from killing unrelated children (eg
-    a user-spawned editor that happened to inherit the env).
+    MCP markers (``bun``, ``mcp``). The env match alone is strong
+    evidence the process belongs to this agent's last incarnation; the
+    cmdline filter prevents the cleanup from killing unrelated children
+    (eg a user-spawned editor that happened to inherit the env).
   * ``dry_run=True`` returns the would-kill PID list without actually
     sending SIGKILL — used by the test that does NOT want to touch
     real processes, and by future ``sac agents diagnose`` plumbing.
@@ -64,8 +63,6 @@ __all__ = ["kill_orphan_mcp_children", "MCP_CMDLINE_MARKERS"]
 # MCP-server child. Kept narrow on purpose — broadening to "claude" or
 # "node" risks reaping the agent's own runtime or a shared interpreter.
 MCP_CMDLINE_MARKERS: tuple[str, ...] = (
-    "claude-code-telegrammer",
-    "telegrammer",
     "bun",
     "mcp",
 )

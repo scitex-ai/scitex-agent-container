@@ -214,7 +214,7 @@ def _wait_for_previous_runtime_to_exit(
                 "start anyway. WARNING: this may trigger the apptainer "
                 'double-mount race ("destination is already in the mount '
                 'point list") and stdio-MCP lock-file contention (the '
-                "standalone bun telegrammer poller exits 1 on lock held by "
+                "standalone bun MCP poller exits 1 on lock held by "
                 "the orphaned previous PID, claude then silently drops the "
                 "MCP). If %r repeatedly fails to honor SIGTERM, investigate "
                 "the runtime stop path (see ApptainerContainerRuntime.stop).",
@@ -261,7 +261,7 @@ def agent_restart(
     recorded host before reaching here, like ``stop`` does). By the
     time control reaches this function the target is local.
 
-    Teardown gate (2026-06-07, bug #42 — telegrammer drops after restart):
+    Teardown gate (2026-06-07, bug #42 — channel MCP drops after restart):
     Between ``agent_stop`` (which sends SIGTERM and returns immediately —
     ``ApptainerContainerRuntime.stop`` says "No wait loop yet — sac's
     outer lifecycle does its own poll") and ``agent_start``, this function
@@ -271,8 +271,8 @@ def agent_restart(
     loaded host. Operator-visible symptom: the new container booted while
     the old one still held the ``/home/agent`` overlay (apptainer warned
     "destination is already in the mount point list"), AND the old SDK's
-    per-agent stdio MCP child (the standalone bun telegrammer poller)
-    was still alive holding ``$HOME/.claude-code-telegrammer-*/...lock``.
+    per-agent stdio MCP child (a standalone bun MCP poller)
+    was still alive holding its per-agent lock file.
     The new bun child's ``acquireLock`` then hit ``process.kill(old_pid,
     0)`` SUCCESS → ``process.exit(1)``, claude silently marked the MCP
     failed and never retried it. ``sac`` + Mermaid MCPs reloaded fine

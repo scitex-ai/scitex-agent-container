@@ -50,8 +50,8 @@ from ._acl import deny_response, resolve_group_name
 # Operator-scoped groups (2026-07-01 Q1a + researcher; ``privileged`` added
 # 2026-07-02 per operator request). Members of these groups are permitted to
 # broker arbitrary commands as the operator's uid on the host. The
-# ``privileged`` group (grant / dotfiles / claude-code-telegrammer) was added
-# so those agents can run host ops and manage the fleet flexibly.
+# ``privileged`` group (e.g. grant / dotfiles / channel-broker agents) was
+# added so those agents can run host ops and manage the fleet flexibly.
 ELIGIBLE_GROUPS: frozenset[str] = frozenset(
     {"developer", "researcher", "privileged"}
 )

@@ -157,7 +157,7 @@ def _tui_runner_argv(
     # multiple space-separated values after a single flag, but the real
     # binary silently drops every value past the first. Symptom on the
     # failing fleet (figrecipe / todo / neurovista): the TUI pane showed
-    # ``server:claude-code-telegrammer,server:sac · no MCP server
+    # ``server:<external-channel>,server:sac · no MCP server
     # configured with that name`` even though the workspace ``.mcp.json``
     # path AND the inline ``sac mcp channel`` JSON were both passed.
     # Emitting one flag per value matches the SDK runtime's repeated-
@@ -294,9 +294,9 @@ def tui_channel_plan(config: "AgentConfig") -> "ChannelPlan":
     the resolved ``spec.a2a.port``, the agent name) to the runtime-agnostic
     ``_sdk_channels.compute_channel_plan``. Both :func:`tui_channel_config`
     (the inner ``--mcp-config`` / ``--dangerously-load-development-channels``)
-    and ``build_run_argv`` (the telegrammer wake ``--env``) call this, so the
-    TUI wires the SAME channel decisions as the SDK ``apply_channels`` path —
-    no drift.
+    and ``build_run_argv`` (the generic ``SAC_AGENT_TURN_URL`` wake ``--env``)
+    call this, so the TUI wires the SAME channel decisions as the SDK
+    ``apply_channels`` path — no drift.
     """
     from ._sdk_channels import compute_channel_plan
 

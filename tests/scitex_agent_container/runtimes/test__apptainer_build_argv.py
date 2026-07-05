@@ -234,7 +234,7 @@ def test_build_run_argv_injects_env_file_when_present(tui_config, tmp_path) -> N
     state_dir = tmp_path / "state"
     (state_dir / "home").mkdir(parents=True, exist_ok=True)
     (state_dir / "home" / ".env").write_text(
-        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN=123:not-a-real-secret\n",
+        "EXAMPLE_CHANNEL_BOT_TOKEN=123:not-a-real-secret\n",
         encoding="utf-8",
     )
     # Act
@@ -514,7 +514,7 @@ spec:
 """
 
 
-_SPEC_WITH_TELEGRAMMER_AND_PORT = """\
+_SPEC_WITH_A2A_PORT = """\
 apiVersion: scitex-agent-container/v3
 kind: Agent
 metadata:
@@ -536,7 +536,7 @@ spec:
   claude:
     model: sonnet
     channels:
-      - server:claude-code-telegrammer
+      - server:example-channel
   a2a:
     port: 19007
 """
@@ -607,16 +607,15 @@ def test_build_run_argv_tui_adds_dev_channels_flag(
     assert "--dangerously-load-development-channels server:sac" in " ".join(argv)
 
 
-def test_build_run_argv_tui_wires_telegrammer_wake_env(
+def test_build_run_argv_tui_wires_generic_turn_url_env(
     tmp_path, listen_bearer_token
 ) -> None:
-    # Arrange — a TUI agent requesting its own telegrammer channel with a
-    # resolved a2a port (as resolve_a2a_port sets at agent_start). SDK parity:
-    # the SDK injects the wake via mcp_servers; the TUI forwards it as a
-    # container --env the telegrammer inherits (same path as its bot token via
-    # --env-file), so an inbound message POSTs to /v1/turn and wakes an idle
-    # session — the SDK<->TUI drift this closes.
-    spec = _write_spec(tmp_path, _SPEC_WITH_TELEGRAMMER_AND_PORT)
+    # Arrange — a TUI agent with a resolved a2a port (as resolve_a2a_port
+    # sets at agent_start). SDK parity: the SDK resolves ${SAC_AGENT_TURN_URL}
+    # in mcp_servers; the TUI forwards the value as a container --env. Any
+    # external channel MCP opts into wake-on-push by referencing the generic
+    # ${SAC_AGENT_TURN_URL} placeholder in its own env — sac names no channel.
+    spec = _write_spec(tmp_path, _SPEC_WITH_A2A_PORT)
     config = load_config(str(spec))
     state_dir = tmp_path / "state"
     (state_dir / "home").mkdir(parents=True)
@@ -626,7 +625,7 @@ def test_build_run_argv_tui_wires_telegrammer_wake_env(
     )
     # Assert
     assert (
-        "--env CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
+        "--env SAC_AGENT_TURN_URL=http://127.0.0.1:19007/v1/turn"
         in " ".join(argv)
     )
 

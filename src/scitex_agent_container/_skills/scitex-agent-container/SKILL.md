@@ -87,7 +87,6 @@ session inside Apptainer (local or remote via SSH), observe via
 - [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
 - [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env` for host fs/git/gh access
-- [23_telegram-integration.md](23_telegram-integration.md) — Telegram bridge (`_telegram/`), `telegram_*` MCP tools, channel-push, lead-only auth
 
 ## 30-second start
 

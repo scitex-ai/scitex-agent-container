@@ -330,9 +330,10 @@ def agent_create(
     respectively. The old auto-detected editable-install toggle is gone —
     the install step is now unconditional in the template (delete it by
     hand if the target repo ships no Python package); likewise there is no
-    per-agent Telegram bot-token wiring — add
-    ``server:claude-code-telegrammer`` + a per-project ``.envrc`` by hand
-    after creation. ``start=True`` launches the agent afterwards. The
+    per-agent channel bot-token wiring — add your channel MCP server entry
+    (via ``spec.claude.channels`` + ``to_home/.mcp.json``) + a per-project
+    ``.envrc`` by hand after creation. ``start=True`` launches the agent
+    afterwards. The
     developer group is authorized to CRUD agents."""
     argv = [
         "agents",

@@ -12,8 +12,8 @@ channels in OR:
   providers' cap shape), ``529`` (Anthropic overload).
 * REACTIVE TEXTUAL — substring / regex match in session.jsonl or
   runner stderr/stdout. Real-world cap phrasing from the field:
-  ``"You've hit your weekly limit · resets ..."`` (telegrammer
-  account, observed 2026-06-12 by operator).
+  ``"You've hit your weekly limit · resets ..."`` (observed on an
+  agent account 2026-06-12 by operator).
 * REACTIVE AUTH-EVENT — the existing ``_runners/_auth_failure``
   hook emits an ``account_capped`` status the SDK runner already
   surfaces. We subscribe to that channel rather than re-parsing
@@ -128,8 +128,8 @@ def classify_http_status(status: int) -> RateLimitSignal | None:
 # Adding a pattern: drop a new ``r"..."`` string into the tuple.
 # Removing a pattern: delete it. No tests depend on internal order.
 DEFAULT_TEXTUAL_PATTERNS: tuple[str, ...] = (
-    # Anthropic weekly-cap phrasing observed by operator on the
-    # telegrammer account, 2026-06-12 ("You've hit your weekly
+    # Anthropic weekly-cap phrasing observed by operator on an
+    # agent account, 2026-06-12 ("You've hit your weekly
     # limit · resets at 2026-06-18T05:00Z").
     r"hit your weekly limit",
     # Generic "weekly limit" / "usage limit" phrasing — covers

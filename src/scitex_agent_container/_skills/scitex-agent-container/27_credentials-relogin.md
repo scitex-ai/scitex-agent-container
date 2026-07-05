@@ -103,9 +103,7 @@ Hook the refresher (or the keepalive cron) so that on a 401 it:
 1. Spawns `claude auth login` in an isolated `CLAUDE_CONFIG_DIR`.
 2. Captures + reassembles the wrapped URL.
 3. Notifies the operator with `{machine, host, agent, account, URL}` —
-   typically via Telegram MCP tools (see
-   [23_telegram-integration.md](23_telegram-integration.md)) for one-click
-   + reply with the code.
+   typically via a channel MCP for one-click + reply with the code.
 4. Pastes the returned `<code>#<state>` via `tmux send-keys` (or an A2A
    turn carrying the code) into the running login process.
 5. Promotes the new credentials JSON to the canonical (step 7 above) and

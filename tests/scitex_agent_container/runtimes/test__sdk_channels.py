@@ -4,13 +4,17 @@
 No auth, registry, or env fixtures needed — the tests pass real dicts and
 assert on the mutation.
 
-The load-bearing behaviour this guards (the Task A generalization): the
-``--dangerously-load-development-channels`` flag fires for ANY
-``spec.claude.channels`` entry, not just ``server:sac``. Before the fix a
-foreign channel (e.g. ``server:claude-code-telegrammer`` for an agent's own
-telegrammer bot) survived the runner argv but was DROPPED at the gate, so
-claude never rendered its ``<channel>`` tags and the notifications were
-silently ignored.
+Two load-bearing behaviours this guards:
+
+  * the dev-channels flag fires for ANY ``spec.claude.channels`` entry, not
+    just ``server:sac``. Before the fix a foreign channel (an agent's own
+    external channel bot) survived the runner argv but was DROPPED at the
+    gate, so claude never rendered its ``<channel>`` tags.
+  * GENERIC wake-on-push: sac exposes the agent's own ``/v1/turn`` under the
+    package-agnostic ``SAC_AGENT_TURN_URL`` env var. ANY MCP server entry may
+    opt in by referencing ``${SAC_AGENT_TURN_URL}`` in its own env — sac
+    names no channel and no downstream package. The tests use a placeholder
+    channel/MCP name to prove the mechanism carries zero package knowledge.
 
 TQ: each test is Arrange / Act / Assert with a single assertion; multi-fact
 scenarios are split into sibling tests so the failing line names the
@@ -25,14 +29,41 @@ import os
 import pytest
 
 from scitex_agent_container.runtimes._sdk_channels import (
+    SAC_AGENT_TURN_URL_ENV,
     SAC_BIN_ENV,
     SacBinaryNotFoundError,
-    TelegrammerWakeWiringError,
+    agent_turn_url,
     apply_channels,
     compute_channel_plan,
+    export_agent_turn_url,
     merge_home_mcp_servers,
-    validate_telegrammer_wake_wiring,
 )
+
+# A stand-in for whatever external channel an operator wires. sac must know
+# NOTHING about it — the mechanism works purely by the spec entry referencing
+# the generic ``${SAC_AGENT_TURN_URL}`` placeholder.
+_EXAMPLE_CHANNEL = "server:example-channel"
+_EXAMPLE_MCP_KEY = "example-channel"
+# The downstream package keeps its OWN env-var name; it just maps it to the
+# generic sac placeholder in its spec entry.
+_EXAMPLE_TURN_ENV = "EXAMPLE_CHANNEL_TURN_URL"
+
+
+@pytest.fixture(autouse=True)
+def _clean_agent_turn_url_env():
+    """Ensure ``SAC_AGENT_TURN_URL`` is unset around every test.
+
+    ``export_agent_turn_url`` uses ``setdefault`` (operator-override
+    semantics), so a value leaked by one test would pin the resolution in
+    the next. Save/restore keeps each test hermetic (PA-306: no monkeypatch).
+    """
+    saved = os.environ.pop(SAC_AGENT_TURN_URL_ENV, None)
+    try:
+        yield
+    finally:
+        os.environ.pop(SAC_AGENT_TURN_URL_ENV, None)
+        if saved is not None:
+            os.environ[SAC_AGENT_TURN_URL_ENV] = saved
 
 
 @pytest.fixture
@@ -70,10 +101,10 @@ def home_with_mcp(tmp_path):
         json.dumps(
             {
                 "mcpServers": {
-                    "claude-code-telegrammer": {
+                    _EXAMPLE_MCP_KEY: {
                         "command": "bash",
-                        "args": ["-c", "exec bun run /tg/telegram-server.ts"],
-                        "env": {"TG_STATE": "/home/agent/.tg-clew"},
+                        "args": ["-c", "exec run /srv/channel-server"],
+                        "env": {"CHANNEL_STATE": "/home/agent/.channel-clew"},
                     }
                 }
             }
@@ -109,23 +140,30 @@ def _devflag(kwargs: dict) -> str | None:
 
 class TestComputeChannelPlan:
     """The shared plan both runtimes apply (SDK -> kwargs, TUI -> argv): one
-    source of truth for the channel set, sac sidecar, and telegrammer wake."""
+    source of truth for the channel set, sac sidecar, and generic turn URL."""
 
-    def test_telegrammer_channel_with_port_yields_wake_url(self):
-        # Arrange
-        channels = ["server:claude-code-telegrammer"]
+    def test_agent_turn_url_present_when_port_set(self):
+        # Arrange — no channel gating: the turn URL is generic.
+        channels = [_EXAMPLE_CHANNEL]
         # Act
         plan = compute_channel_plan(channels, 700, "clew")
         # Assert
-        assert plan.telegrammer_turn_url == "http://127.0.0.1:700/v1/turn"
+        assert plan.agent_turn_url == "http://127.0.0.1:700/v1/turn"
 
-    def test_telegrammer_channel_without_port_yields_no_wake(self):
+    def test_agent_turn_url_present_even_without_any_channel(self):
+        # Arrange — the turn URL does NOT depend on any channel being set.
+        # Act
+        plan = compute_channel_plan([], 700, "clew")
+        # Assert
+        assert plan.agent_turn_url == "http://127.0.0.1:700/v1/turn"
+
+    def test_agent_turn_url_none_without_port(self):
         # Arrange
-        channels = ["server:claude-code-telegrammer"]
+        channels = [_EXAMPLE_CHANNEL]
         # Act
         plan = compute_channel_plan(channels, None, "clew")
         # Assert
-        assert plan.telegrammer_turn_url is None
+        assert plan.agent_turn_url is None
 
     def test_sac_channel_yields_sidecar_args_with_turn_url(self):
         # Arrange
@@ -154,90 +192,153 @@ class TestComputeChannelPlan:
 class TestForeignChannelTurnsOnDevChannels:
     """A non-sac channel must enable dev-channels (the regression guard)."""
 
-    def test_telegrammer_channel_sets_dev_flag(self):
+    def test_foreign_channel_sets_dev_flag(self):
         # Arrange
         kwargs: dict = {}
         # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], None, "clew")
         # Assert
-        assert _devflag(kwargs) == "server:claude-code-telegrammer"
+        assert _devflag(kwargs) == _EXAMPLE_CHANNEL
 
-    def test_telegrammer_channel_does_not_register_sac_mcp(self):
+    def test_foreign_channel_does_not_register_sac_mcp(self):
         # Arrange
         kwargs: dict = {}
         # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], None, "clew")
         # Assert: sac sidecar is server:sac-only — must NOT auto-wire here.
         assert "sac" not in kwargs.get("mcp_servers", {})
 
 
-class TestTelegrammerWakeWiring:
-    """Concern (c): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so the agent's own
-    telegrammer bot WAKES an idle SDK session (symmetric with server:sac)."""
+class TestAgentTurnUrlHelpers:
+    """The generic turn-url helpers sac exposes: value + os.environ publish."""
 
-    def _kwargs_with_telegrammer_mcp(self) -> dict:
+    def test_agent_turn_url_builds_loopback(self):
+        # Arrange
+        port = 19007
+        # Act
+        url = agent_turn_url(port)
+        # Assert
+        assert url == "http://127.0.0.1:19007/v1/turn"
+
+    def test_agent_turn_url_none_without_port(self):
+        # Arrange
+        port = None
+        # Act
+        url = agent_turn_url(port)
+        # Assert
+        assert url is None
+
+    def test_export_publishes_into_os_environ(self):
+        # Arrange
+        port = 19007
+        # Act
+        export_agent_turn_url(port)
+        # Assert
+        assert os.environ[SAC_AGENT_TURN_URL_ENV] == "http://127.0.0.1:19007/v1/turn"
+
+    def test_export_returns_url(self):
+        # Arrange
+        port = 19007
+        # Act
+        url = export_agent_turn_url(port)
+        # Assert
+        assert url == "http://127.0.0.1:19007/v1/turn"
+
+    def test_export_noop_without_port(self):
+        # Arrange
+        port = None
+        # Act
+        export_agent_turn_url(port)
+        # Assert — nothing published.
+        assert SAC_AGENT_TURN_URL_ENV not in os.environ
+
+    def test_export_does_not_override_preset(self):
+        # Arrange — an operator/spec pre-set value must win (setdefault).
+        os.environ[SAC_AGENT_TURN_URL_ENV] = "http://operator.example/v1/turn"
+        # Act
+        export_agent_turn_url(19007)
+        # Assert
+        assert os.environ[SAC_AGENT_TURN_URL_ENV] == "http://operator.example/v1/turn"
+
+
+class TestGenericWakeOnPush:
+    """Concern (c) — GENERIC wake-on-push. An MCP entry opts in purely by
+    referencing ``${SAC_AGENT_TURN_URL}``; sac names no channel/package."""
+
+    def _kwargs_with_referencing_mcp(self) -> dict:
+        # The downstream MCP maps its OWN env var to the generic placeholder.
         return {
             "mcp_servers": {
-                "claude-code-telegrammer": {
+                _EXAMPLE_MCP_KEY: {
                     "type": "stdio",
                     "command": "bash",
-                    "args": ["-c", "exec bun run telegram-server.ts"],
-                    "env": {"CLAUDE_CODE_TELEGRAMMER_TELEGRAM_AGENT_ID": "clew"},
+                    "args": ["-c", "exec run channel-server"],
+                    "env": {_EXAMPLE_TURN_ENV: "${SAC_AGENT_TURN_URL}"},
                 }
             }
         }
 
-    def test_turn_url_injected_into_telegrammer_env(self):
+    def test_placeholder_resolved_when_port_set(self):
         # Arrange
-        kwargs = self._kwargs_with_telegrammer_mcp()
+        kwargs = self._kwargs_with_referencing_mcp()
         # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], 19007, "clew")
         # Assert
-        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
-        assert env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] == (
-            "http://127.0.0.1:19007/v1/turn"
-        )
+        env = kwargs["mcp_servers"][_EXAMPLE_MCP_KEY]["env"]
+        assert env[_EXAMPLE_TURN_ENV] == "http://127.0.0.1:19007/v1/turn"
 
-    def test_no_turn_url_when_a2a_port_missing(self):
+    def test_placeholder_unresolved_when_no_port(self):
         # Arrange
-        kwargs = self._kwargs_with_telegrammer_mcp()
-        # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
+        kwargs = self._kwargs_with_referencing_mcp()
+        # Act — no a2a port: sac has no value to expose, placeholder survives.
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], None, "clew")
         # Assert
-        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
-        assert "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in env
+        env = kwargs["mcp_servers"][_EXAMPLE_MCP_KEY]["env"]
+        assert env[_EXAMPLE_TURN_ENV] == "${SAC_AGENT_TURN_URL}"
 
-    def test_operator_set_turn_url_is_preserved(self):
+    def test_resolution_is_channel_agnostic(self):
+        # Arrange — an entry that references the placeholder but whose channel
+        # is NOT even in spec.claude.channels still gets the value (the value
+        # is exposed whenever a port resolves; opt-in is by reference alone).
+        kwargs = self._kwargs_with_referencing_mcp()
+        # Act — only server:sac requested, yet the example entry resolves.
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], 19007, "clew")
+        env = kwargs["mcp_servers"][_EXAMPLE_MCP_KEY]["env"]
+        # Assert — no channel name appears in the resolved value.
+        assert "example-channel" not in env[_EXAMPLE_TURN_ENV]
+
+    def test_entry_without_placeholder_untouched(self):
+        # Arrange — an MCP that does NOT opt in keeps its env verbatim.
+        kwargs: dict = {
+            "mcp_servers": {
+                _EXAMPLE_MCP_KEY: {
+                    "type": "stdio",
+                    "command": "bash",
+                    "env": {"CHANNEL_AGENT_ID": "clew"},
+                }
+            }
+        }
+        # Act
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], 19007, "clew")
+        # Assert
+        env = kwargs["mcp_servers"][_EXAMPLE_MCP_KEY]["env"]
+        assert env == {"CHANNEL_AGENT_ID": "clew"}
+
+    def test_no_crash_when_no_mcp_servers(self):
+        # Arrange — port set but nothing to resolve.
+        kwargs: dict = {}
+        # Act
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], 19007, "clew")
+        # Assert — dev flag still set; no mcp_servers created by the wake path.
+        assert _devflag(kwargs) == _EXAMPLE_CHANNEL
+
+    def test_publishes_turn_url_into_os_environ(self):
         # Arrange
-        kwargs = self._kwargs_with_telegrammer_mcp()
-        kwargs["mcp_servers"]["claude-code-telegrammer"]["env"][
-            "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
-        ] = "http://operator.example/v1/turn"
+        kwargs = self._kwargs_with_referencing_mcp()
         # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
-        # Assert
-        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
-        assert env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] == (
-            "http://operator.example/v1/turn"
-        )
-
-    def test_no_injection_without_telegrammer_channel(self, fake_sac_bin):
-        # Arrange
-        kwargs = self._kwargs_with_telegrammer_mcp()
-        # Act — channel not requested, only the MCP entry present.
-        # ``fake_sac_bin`` so the sac sidecar resolver does not raise.
-        apply_channels(kwargs, ["server:sac"], 19007, "clew")
-        # Assert
-        env = kwargs["mcp_servers"]["claude-code-telegrammer"]["env"]
-        assert "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in env
-
-    def test_no_crash_when_telegrammer_mcp_absent(self):
-        # Arrange — channel requested but no backing MCP entry merged
-        kwargs: dict = {"mcp_servers": {}}
-        # Act
-        apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
-        # Assert
-        assert "claude-code-telegrammer" not in kwargs["mcp_servers"]
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL], 19007, "clew")
+        # Assert — a spawned MCP that reads the var directly also sees it.
+        assert os.environ[SAC_AGENT_TURN_URL_ENV] == "http://127.0.0.1:19007/v1/turn"
 
 
 class TestSacChannelStillWorks:
@@ -385,19 +486,15 @@ class TestBothChannelsCoexist:
         # Arrange
         kwargs: dict = {}
         # Act
-        apply_channels(
-            kwargs, ["server:sac", "server:claude-code-telegrammer"], None, "clew"
-        )
+        apply_channels(kwargs, ["server:sac", _EXAMPLE_CHANNEL], None, "clew")
         # Assert: claude needs the full set to render both channels' tags.
-        assert _devflag(kwargs) == "server:sac,server:claude-code-telegrammer"
+        assert _devflag(kwargs) == f"server:sac,{_EXAMPLE_CHANNEL}"
 
     def test_sac_mcp_registered_when_sac_present_among_many(self, fake_sac_bin):
         # Arrange
         kwargs: dict = {}
         # Act
-        apply_channels(
-            kwargs, ["server:claude-code-telegrammer", "server:sac"], None, "clew"
-        )
+        apply_channels(kwargs, [_EXAMPLE_CHANNEL, "server:sac"], None, "clew")
         # Assert
         assert "sac" in kwargs["mcp_servers"]
 
@@ -440,7 +537,8 @@ class TestMergeHomeMcpServers:
     The apptainer SDK runner's ``resolve_agent_workspace`` returns ``{}``
     inside the container, and ``setting_sources=[]`` kills the SDK's own
     project-scope ``.mcp.json`` discovery — so this merge is the ONLY way
-    a per-agent MCP (e.g. an agent's own telegrammer) reaches the SDK.
+    a per-agent MCP (e.g. an agent's own external channel bot) reaches the
+    SDK.
     """
 
     def test_home_mcp_server_is_merged_in(self, home_with_mcp):
@@ -449,7 +547,7 @@ class TestMergeHomeMcpServers:
         # Act
         out = merge_home_mcp_servers(existing)
         # Assert
-        assert "claude-code-telegrammer" in out
+        assert _EXAMPLE_MCP_KEY in out
 
     def test_merged_entry_gets_default_stdio_type(self, home_with_mcp):
         # Arrange
@@ -457,15 +555,15 @@ class TestMergeHomeMcpServers:
         # Act
         out = merge_home_mcp_servers(existing)
         # Assert
-        assert out["claude-code-telegrammer"]["type"] == "stdio"
+        assert out[_EXAMPLE_MCP_KEY]["type"] == "stdio"
 
     def test_registry_entry_wins_on_key_collision(self, home_with_mcp):
         # Arrange — same key already present from resolve_agent_workspace.
-        existing = {"claude-code-telegrammer": {"command": "registry", "type": "stdio"}}
+        existing = {_EXAMPLE_MCP_KEY: {"command": "registry", "type": "stdio"}}
         # Act
         out = merge_home_mcp_servers(existing)
         # Assert
-        assert out["claude-code-telegrammer"]["command"] == "registry"
+        assert out[_EXAMPLE_MCP_KEY]["command"] == "registry"
 
     def test_missing_home_mcp_file_is_noop(self, home_without_mcp):
         # Arrange
@@ -494,192 +592,3 @@ class TestMergeHomeMcpServers:
                 os.environ["MY_REF"] = saved
         # Assert
         assert out["x"]["env"]["K"] == "resolved-value"
-
-
-# ---------------------------------------------------------------------------
-# Bug #41 hardening — diagnostics for the telegrammer-wake silent-skip paths.
-#
-# The runner-side ``_wire_telegrammer_wake`` (called from ``apply_channels``)
-# now LOGs every silent-skip case so the operator can see exactly which gate
-# failed when an idle agent doesn't wake on Telegram. The host-side
-# ``validate_telegrammer_wake_wiring`` HARD-FAILS the start when the channel
-# is requested but the a2a port is unset — catching the misconfig at
-# ``sac agents start`` time instead of after the operator's third
-# un-replied Telegram message.
-# ---------------------------------------------------------------------------
-
-
-class TestTelegrammerWakeDiagnostics:
-    """``_wire_telegrammer_wake`` must LOG (not silently no-op) on each
-    skip path so the operator can see the precise misconfig."""
-
-    def test_a2a_port_missing_logs_warning(self, caplog):
-        # Arrange
-        kwargs: dict = {"mcp_servers": {}}
-        # Act
-        with caplog.at_level(
-            "WARNING", logger="scitex_agent_container.runtimes._sdk_channels"
-        ):
-            apply_channels(kwargs, ["server:claude-code-telegrammer"], None, "clew")
-        # Assert
-        assert any(
-            "spec.a2a.port is unset" in rec.getMessage() for rec in caplog.records
-        )
-
-    def test_mcp_entry_missing_logs_error(self, caplog):
-        # Arrange — channel + a2a port present, but no claude-code-telegrammer
-        # entry in mcp_servers.
-        kwargs: dict = {"mcp_servers": {"some-other-mcp": {"type": "stdio"}}}
-        # Act
-        with caplog.at_level(
-            "ERROR", logger="scitex_agent_container.runtimes._sdk_channels"
-        ):
-            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
-        # Assert
-        assert any(
-            "claude-code-telegrammer" in rec.getMessage()
-            and "no MCP entry keyed" in rec.getMessage()
-            for rec in caplog.records
-        )
-
-    def test_successful_wiring_logs_info(self, caplog):
-        # Arrange
-        kwargs: dict = {
-            "mcp_servers": {
-                "claude-code-telegrammer": {
-                    "type": "stdio",
-                    "command": "bash",
-                    "args": ["-c", "exec bun run telegram-server.ts"],
-                    "env": {},
-                }
-            }
-        }
-        # Act
-        with caplog.at_level(
-            "INFO", logger="scitex_agent_container.runtimes._sdk_channels"
-        ):
-            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
-        # Assert
-        assert any(
-            "telegrammer wake wired" in rec.getMessage() for rec in caplog.records
-        )
-
-    def test_no_log_when_channel_not_requested(self, caplog):
-        # Arrange — channel set has NO telegrammer entry, so the wake helper
-        # must produce NO log lines (a benign no-op, not a misconfig).
-        kwargs: dict = {"mcp_servers": {}}
-        # Act
-        with caplog.at_level(
-            "WARNING", logger="scitex_agent_container.runtimes._sdk_channels"
-        ):
-            apply_channels(kwargs, ["server:sac"], 19007, "clew")
-        # Assert
-        assert all(
-            "telegrammer" not in rec.getMessage().lower() for rec in caplog.records
-        )
-
-    def test_operator_set_url_preserved_and_logged(self, caplog):
-        # Arrange
-        kwargs: dict = {
-            "mcp_servers": {
-                "claude-code-telegrammer": {
-                    "type": "stdio",
-                    "command": "bash",
-                    "args": ["-c", "exec bun run telegram-server.ts"],
-                    "env": {
-                        "CLAUDE_CODE_TELEGRAMMER_TURN_URL": "http://operator.example/v1/turn"
-                    },
-                }
-            }
-        }
-        # Act
-        with caplog.at_level(
-            "INFO", logger="scitex_agent_container.runtimes._sdk_channels"
-        ):
-            apply_channels(kwargs, ["server:claude-code-telegrammer"], 19007, "clew")
-        # Assert
-        assert any("pre-set by operator" in rec.getMessage() for rec in caplog.records)
-
-
-class TestValidateTelegrammerWakeWiring:
-    """Host-side preflight in ``_lifecycle/_start.agent_start``: hard-fail
-    the start when the wake wiring provably won't succeed."""
-
-    def test_no_channels_returns_none(self):
-        # Arrange — no channels requested at all.
-        channels = None
-        # Act
-        result = validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-        # Assert — returns None (no validation needed).
-        assert result is None
-
-    def test_empty_channels_returns_none(self):
-        # Arrange — empty channel list.
-        channels: list[str] = []
-        # Act
-        result = validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-        # Assert
-        assert result is None
-
-    def test_other_channel_only_returns_none(self):
-        # Arrange — server:sac is fine without a2a port for this check.
-        channels = ["server:sac"]
-        # Act
-        result = validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-        # Assert
-        assert result is None
-
-    def test_telegrammer_channel_with_port_returns_none(self):
-        # Arrange — channel requested and a2a port set: the runtime can wire.
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        result = validate_telegrammer_wake_wiring(channels, 19007, agent_name="clew")
-        # Assert
-        assert result is None
-
-    def test_telegrammer_channel_without_port_raises(self):
-        # Arrange
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        # Assert — pytest.raises is the assertion (TQ007: one per test).
-        with pytest.raises(TelegrammerWakeWiringError):
-            validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-
-    def test_telegrammer_channel_without_port_message_names_agent(self):
-        # Arrange
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        # Assert — `match` folds the message content into the raises block
-        # so the operator-naming contract is checked as part of the same
-        # assertion (TQ007 compliant: one assertion per test).
-        with pytest.raises(TelegrammerWakeWiringError, match="clew"):
-            validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-
-    def test_telegrammer_channel_without_port_message_names_channel(self):
-        # Arrange
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        # Assert — the raised message must name the offending channel so the
-        # operator can spot the mis-spec in their YAML.
-        with pytest.raises(
-            TelegrammerWakeWiringError, match="server:claude-code-telegrammer"
-        ):
-            validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-
-    def test_telegrammer_channel_without_port_message_names_missing_field(self):
-        # Arrange
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        # Assert — the raised message must name the missing field so the
-        # operator knows exactly what to set in spec.yaml.
-        with pytest.raises(TelegrammerWakeWiringError, match=r"spec\.a2a\.port"):
-            validate_telegrammer_wake_wiring(channels, None, agent_name="clew")
-
-    def test_telegrammer_channel_without_port_no_agent_name(self):
-        # Arrange — caller may not have an agent name (host-side preflight is
-        # called from agent_start which has it; future callers may not).
-        channels = ["server:claude-code-telegrammer"]
-        # Act
-        # Assert — raise still happens without agent_name.
-        with pytest.raises(TelegrammerWakeWiringError):
-            validate_telegrammer_wake_wiring(channels, None)

@@ -96,7 +96,7 @@ def build_run_argv(
     # here won and silently shadowed the overlay upper, so the freshly
     # materialised to_home (.mcp.json / settings.json / credentials
     # placeholder) vanished — the agent booted on a stale/empty home
-    # (cred FATAL; per-agent telegrammer MCP absent). Resolve the
+    # (cred FATAL; per-agent external MCP absent). Resolve the
     # upper-home up-front and, when it will back /home/agent, SKIP this
     # workspace-home bind so the overlay upper (bound below, after
     # raw_args) is the SINGLE authoritative home. Everything that
@@ -141,8 +141,8 @@ def build_run_argv(
 
     # Quota-cache bind (#16) — see module-level docstring in
     # _apptainer_runtime. Bind read-only + advertise the in-container
-    # path to the telegrammer bridge so its default-path lookup hits
-    # the bind without any per-agent spec change.
+    # path to the in-container quota-cache reader so its default-path
+    # lookup hits the bind without any per-agent spec change.
     quota_src = _resolve_quota_cache_host_path()
     if quota_src.is_file():
         argv += [
@@ -326,18 +326,16 @@ def build_run_argv(
 
     argv += listen_env_flags(config)
 
-    # TUI parity with the SDK's telegrammer wake (apply_channels →
-    # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an
-    # inbound Telegram message POSTs to the agent's /v1/turn and wakes an idle
-    # session. The TUI telegrammer inherits the container env (same path as its
-    # bot token via --env-file), so forward the SAME shared-plan wake URL here.
-    # Without it an idle TUI agent never wakes on Telegram (the SDK↔TUI drift).
+    # TUI parity with the SDK's generic wake-on-push: forward the agent's own
+    # /v1/turn under the generic SAC_AGENT_TURN_URL container env. An external
+    # channel MCP opts in via ${SAC_AGENT_TURN_URL} in its to_home/.mcp.json
+    # env; sac names no channel. Present when an a2a port resolves.
     if tui:
         from ._apptainer_inner_argv import tui_channel_plan
-
-        _wake_url = tui_channel_plan(config).telegrammer_turn_url
+        from ._sdk_channels import SAC_AGENT_TURN_URL_ENV
+        _wake_url = tui_channel_plan(config).agent_turn_url
         if _wake_url:
-            argv += ["--env", f"CLAUDE_CODE_TELEGRAMMER_TURN_URL={_wake_url}"]
+            argv += ["--env", f"{SAC_AGENT_TURN_URL_ENV}={_wake_url}"]
 
     # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
     # appended verbatim after all curated args, before the SIF +
@@ -357,7 +355,7 @@ def build_run_argv(
     # $HOME/CLAUDE.md, $HOME/.claude/ are all silently absent in the
     # container. The SDK runner's ``merge_home_mcp_servers`` then
     # reads an empty ``$HOME/.mcp.json`` and a per-agent MCP (e.g. an
-    # agent's own telegrammer bot) never reaches the SDK.
+    # agent's own external channel bot) never reaches the SDK.
     #
     # Fix: bind the materialised upper-home OVER the container HOME,
     # appended AFTER raw_args so it wins over the ``--home`` tmpfs
