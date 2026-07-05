@@ -62,6 +62,7 @@ def agent_start(
     no_preflight: bool = False,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
     strict_drift: bool | None = None,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
@@ -83,6 +84,20 @@ def agent_start(
         foreground: Run the runtime in the foreground.
         one_shot: Run the startup prompts once and exit; requires
             ``spec.startup_prompts`` to be non-empty.
+        assume_yes: The CLI caller's own ``-y``/``--yes`` consent,
+            propagated to the in-SIF broker (bug fix 2026-07-05,
+            paper-scitex-clew report). When ``agent_start`` is invoked
+            from inside an apptainer SIF, the spawn is brokered to the
+            host's ``sac listen`` (see :func:`_in_sif_broker.
+            maybe_broker_in_sif_spawn`), which shells a FRESH
+            ``sac agents start <name>`` on the bare host — a subprocess
+            that re-runs the same interactive refuse-without-``--yes``
+            gate the ORIGINAL caller already satisfied. Without
+            threading this through, that consent never reached the host
+            subprocess and every brokered start refused itself even
+            though ``-y`` was explicitly passed at the CLI. Ignored on
+            the non-SIF (direct) path — it has no interactive gate of
+            its own to satisfy.
         strict_drift: Escalate a drifted spec-source git repo from a
             loud warning to a hard block (raise before launch). ``None``
             (default) reads ``SAC_STRICT_DRIFT`` / ``--strict-drift`` is
@@ -124,6 +139,7 @@ def agent_start(
         opener=in_sif_opener,
         foreground=foreground,
         one_shot=one_shot,
+        assume_yes=assume_yes,
     ):
         return True
 

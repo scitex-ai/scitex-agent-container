@@ -291,6 +291,36 @@ def test_body_omits_foreground_and_one_shot_when_default_false(
     assert "foreground" not in body and "one_shot" not in body
 
 
+# ---------------------------------------------------------------------------
+# Consent-propagation fix (2026-07-05, paper-scitex-clew report): the host's
+# ``/agents`` handler shells a FRESH ``sac agents start <name>`` subprocess
+# that re-runs the interactive refuse-without-``--yes`` gate. request_spawn
+# emits an ``assume_yes`` body field only when truthy — same back-compat
+# rationale as ``foreground``/``one_shot`` above.
+# ---------------------------------------------------------------------------
+
+
+def test_body_includes_assume_yes_true_when_requested(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", assume_yes=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["assume_yes"] is True
+
+
+def test_body_omits_assume_yes_when_default_false(listen_env) -> None:
+    # Arrange — default kwargs absent on the call.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", opener=opener)
+    # Assert — key must be ABSENT (not present-but-false), matching the
+    # wire shape of pre-fix brokers.
+    assert "assume_yes" not in json.loads(captured["body"])
+
+
 def test_bearer_token_attached_as_authorization_header(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")

@@ -11,6 +11,7 @@ delegates the per-target loop here. Mirrors the existing sibling
 from __future__ import annotations
 
 import json as _json
+import os
 import sys
 import traceback
 from contextlib import nullcontext
@@ -95,7 +96,23 @@ def run_single_targets(
     (``render_plan_summary``: identity, spec path, runtime/image,
     workdir + backed-by-bind check, model). Either way the refusal
     without ``--yes``/``-y`` is unchanged.
+
+    ``SAC_ASSUME_YES=1`` env-var fallback (bug fix 2026-07-05,
+    paper-scitex-clew report): OR'd into ``yes`` here — the ONE place
+    in this module where ``yes`` is finally resolved before the
+    refuse-without-``--yes`` gate fires and before the value is
+    forwarded into ``agent_start``. This is the escape valve for
+    callers that cannot easily thread ``assume_yes`` through every
+    layer (e.g. an operator wiring up a bespoke launcher): the host's
+    ``/agents`` handler (``_listen/_agent_exec.py``) sets this env var
+    on the brokered subprocess's environment when the original in-SIF
+    caller's ``assume_yes`` body field was true, so a brokered
+    ``sac agents start <name> -y`` no longer refuses itself on the
+    host side. Does NOT weaken the human-at-a-TTY default-refuse
+    safety net — a real interactive operator invocation never has
+    this env var set.
     """
+    effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
@@ -210,7 +227,7 @@ def run_single_targets(
                 # supervisor / spawn-broker / scripts (non-tty, or --yes/
                 # foreground/one-shot/broker-self) launch without refusal.
                 if should_preview_and_require_yes(
-                    yes=yes,
+                    yes=effective_yes,
                     dry_run=dry_run,
                     as_json=as_json,
                     foreground=foreground,
@@ -265,6 +282,7 @@ def run_single_targets(
                     resume_id_override=resume_id,
                     foreground=foreground,
                     one_shot=one_shot,
+                    assume_yes=effective_yes,
                     strict_drift=strict_drift,
                 )
                 if as_json:
