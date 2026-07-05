@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -1428,6 +1429,151 @@ def test_start_dry_run_argv_file_begins_with_apptainer(
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
     assert argv_file.read_text().splitlines()[0] == "apptainer"
+
+
+def test_start_dry_run_argv_file_omits_the_raw_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — security regression test for card
+    # ``sac-argv-token-plaintext`` (found 2026-05-24): the dry-run argv
+    # file used to embed ``SAC_ANTHROPIC_API_KEY`` in PLAINTEXT because
+    # the write bypassed the console-preview's redaction. A fake token
+    # in the host env must never appear verbatim in the on-disk file.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert — the raw secret never hits disk.
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "sk-ant-oat01-supersecrettoken" not in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_carries_the_redacted_marker(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — same incident as above: the redacted placeholder (the
+    # same shape ``sac agents explain`` prints to the console) must
+    # replace the raw value rather than the key vanishing entirely.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "SAC_ANTHROPIC_API_KEY=<redacted:" in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_is_owner_only_readable(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — belt-and-suspenders: even a redacted-at-rest file should
+    # not be group/world readable (card ``sac-argv-token-plaintext``
+    # follow-up on runtime-dir permissions).
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert stat.S_IMODE(argv_file.stat().st_mode) == 0o600
+
+
+def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+) -> None:
+    # Arrange — the redaction must be scoped to secret-named keys; an
+    # ordinary env entry (e.g. the always-emitted state-db path) must
+    # still be readable verbatim for debugging.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv_file.read_text()
+
+
+def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
+    state_root: Path,
+    tmp_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — the fix must ONLY touch the on-disk dry-run record; the
+    # real argv the runtime hands to the actual ``apptainer exec``
+    # subprocess must still carry the real secret value, or the SDK
+    # inside the container would never authenticate. Exercises the
+    # real (unmocked) ``build_run_argv`` the runtime launches with.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=rt._state_dir(cfg), sif_path=sif)
+
+    # Assert
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in argv
+
+
+def test_start_background_apptainer_subprocess_receives_the_real_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    subprocess_shim,
+    env_save_restore,
+) -> None:
+    # Arrange — end-to-end confirmation (real subprocess, no Popen
+    # mocking): a real launch's ``apptainer exec`` child process must
+    # still receive the real secret in its argv, even though the
+    # on-disk dry-run record never would. ``apptainer_on_path`` installs
+    # a fake ``apptainer`` binary that logs its own received argv.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg)
+    for _ in range(50):
+        if subprocess_shim.call_count("apptainer") > 0:
+            break
+        time.sleep(0.1)
+
+    # Assert
+    received = subprocess_shim.argv_for("apptainer") or []
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in received
 
 
 def test_start_background_returns_true(
