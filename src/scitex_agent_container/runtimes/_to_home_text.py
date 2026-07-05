@@ -39,6 +39,28 @@ START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 # secrets (bot tokens) out of materialized files on disk. The ``CCT_`` prefix
 # rule below covers ``CCT_AGENT_ID`` / ``CCT_BOT_TOKEN`` /
 # ``CCT_ALLOWED_USERS`` / ``CCT_STATE_DIR`` and any future ``CCT_*`` var.
+#
+# DEPRECATED — name-based, pending removal (INCIDENT 2026-07-05, operator
+# /incident): hardcoding OTHER packages' exact env-var names here is a
+# separation-of-concerns violation — sac has no business knowing
+# scitex-todo's or claude-code-telegrammer's internal identity-var naming,
+# and this NAME-based list (plus the ``CCT_`` prefix rule) must eventually go
+# away entirely. The replacement is the ``${RUNTIME:VAR}`` SYNTAX-based
+# escape marker below (see :func:`interpolate_env`): sac recognizes only the
+# ``RUNTIME:`` marker SHAPE, never any variable NAME, and the decision of
+# which vars are runtime-only shifts to the TEMPLATE AUTHOR (each downstream
+# package writes its own ``.mcp.json`` / template files and opts individual
+# ``${VAR}`` refs into ``${RUNTIME:VAR}`` itself).
+#
+# This hardcoded set is kept running IN PARALLEL with the new syntax for
+# now — deliberately NOT removed in the same change that introduces
+# ``${RUNTIME:VAR}`` — because removing it here, before downstream packages
+# have migrated their OWN templates to the new escape syntax, would bake
+# these vars as literal values into materialized files (a real regression).
+# DO NOT delete entries from here (or the ``CCT_`` prefix rule) until
+# scitex-todo and claude-code-telegrammer have both shipped templates using
+# ``${RUNTIME:VAR}`` for their identity vars — that migration + removal is a
+# separate follow-up PR.
 _RUNTIME_ONLY_VARS = frozenset(
     {
         # scitex-todo >= 0.7.30 names
@@ -60,7 +82,10 @@ def _is_runtime_only_var(name: str) -> bool:
     """True when ``name`` is per-agent identity → keep as ``${VAR}`` literal.
 
     Any ``CCT_*`` var is runtime-only (identity + telegram secrets), plus the
-    explicit members of :data:`_RUNTIME_ONLY_VARS`.
+    explicit members of :data:`_RUNTIME_ONLY_VARS`. Both are DEPRECATED
+    NAME-based mechanisms kept only as a fallback alongside the new
+    SYNTAX-based ``${RUNTIME:VAR}`` escape marker — see the module-level
+    comment on :data:`_RUNTIME_ONLY_VARS` and :func:`interpolate_env`.
     """
     return name.startswith("CCT_") or name in _RUNTIME_ONLY_VARS
 
@@ -130,26 +155,58 @@ def extract_user_tail(workspace_path: Path) -> str:
     return existing[idx + len(END_MARKER) :]
 
 
+# Marker prefix for the SYNTAX-based runtime-only escape form
+# ``${RUNTIME:VAR}`` (INCIDENT 2026-07-05 corrected design — see the
+# module-level comment on :data:`_RUNTIME_ONLY_VARS`). This is a pure
+# ESCAPE SHAPE: sac's ``interpolate_env`` recognizes the ``RUNTIME:`` marker
+# and never inspects, branches on, or needs to know the variable NAME
+# wrapped inside it. The decision of WHICH vars are runtime-only lives
+# entirely with the TEMPLATE AUTHOR — a downstream package (scitex-todo,
+# claude-code-telegrammer, ...) writes its own ``.mcp.json`` / template
+# files and opts individual ``${VAR}`` refs into ``${RUNTIME:VAR}`` itself,
+# with zero sac-side knowledge of what that var is for. A matched
+# ``${RUNTIME:VAR}`` collapses to plain ``${VAR}`` in the materialized
+# output — unchanged from what downstream runtime tooling (direnv / the
+# agent's own ``.envrc``) already expects to expand at container boot.
+_RUNTIME_ESCAPE_PREFIX = "RUNTIME:"
+
+# Matches EITHER the runtime-escape form ``${RUNTIME:VAR}`` (group
+# "escaped") OR a plain substitution ref ``${VAR}`` (group "plain"). Order
+# matters only in that both alternatives are tried per match; the escape
+# form is checked first since it is the more specific shape.
+_ENV_REF_RE = re.compile(r"\$\{RUNTIME:(?P<escaped>\w+)\}|\$\{(?P<plain>\w+)\}")
+
+
 def interpolate_env(text: str) -> str:
     """Substitute ``${VAR}`` with ``os.environ[VAR]``, leaving unknown
     refs untouched (so an unset env var becomes a visible artefact
     rather than silently collapsing to empty string).
 
-    Per-agent IDENTITY vars (see :data:`_RUNTIME_ONLY_VARS` and the
-    ``CCT_`` prefix rule) are NEVER substituted here — they stay as literal
-    ``${VAR}`` for RUNTIME expansion from the agent's own env, regardless of
-    whether they happen to be present in the deployer's ``os.environ``. This
-    is the fix for the 2026-07-02 wrong-identity incident (see the module
-    header on ``_RUNTIME_ONLY_VARS``).
+    Two mechanisms keep a ref from being substituted here, so it survives
+    as a literal ``${VAR}`` for RUNTIME expansion from the agent's own env
+    instead (the fix for the 2026-07-02 wrong-identity incident):
+
+    1. **SYNTAX-based (current, preferred)** — the template author writes
+       ``${RUNTIME:VAR}`` instead of ``${VAR}``. Recognized purely by
+       shape; sac never inspects the variable name. See
+       :data:`_RUNTIME_ESCAPE_PREFIX`.
+    2. **NAME-based (deprecated fallback, still active)** — :data:`_RUNTIME_ONLY_VARS`
+       and the ``CCT_`` prefix rule via :func:`_is_runtime_only_var`. Kept
+       running IN PARALLEL with mechanism 1 until every known downstream
+       template has migrated to ``${RUNTIME:VAR}``; removal is a separate
+       follow-up PR (see the module header on ``_RUNTIME_ONLY_VARS``).
     """
 
     def _replace(m: re.Match) -> str:
-        name = m.group(1)
+        escaped_name = m.group("escaped")
+        if escaped_name is not None:
+            return "${" + escaped_name + "}"  # collapse marker to plain ${VAR}
+        name = m.group("plain")
         if _is_runtime_only_var(name):
             return m.group(0)  # keep ${VAR} literal for runtime expansion
         return os.environ.get(name, m.group(0))
 
-    return re.sub(r"\$\{(\w+)\}", _replace, text)
+    return _ENV_REF_RE.sub(_replace, text)
 
 
 def interpolate_metadata(text: str, config: AgentConfig) -> str:
