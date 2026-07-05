@@ -15,9 +15,18 @@ Conventions: one assertion per test (STX-TQ007); AAA markers; no mocks
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from scitex_agent_container._lifecycle._ci_owner import resolve_owner, tracked_repos
+import pytest
+
+from scitex_agent_container._lifecycle._ci_owner import (
+    ENV_CARD_STORE,
+    ENV_CARD_STORE_LEGACY,
+    _default_tasks_path,
+    resolve_owner,
+    tracked_repos,
+)
 
 
 def _write_spec(agents_dir: Path, agent_name: str, project: str) -> None:
@@ -109,3 +118,63 @@ def test_tracked_repos_empty_when_no_specs(tmp_path: Path):
     repos = tracked_repos(agents_dir=agents, org="ywatanabe1989")
     # Assert
     assert repos == []
+
+
+# ---------------------------------------------------------------------------
+# Card-store PATH resolution: generic sac var → legacy var → default.
+# Real ``os.environ`` set/restore (NOT monkeypatch of any internal).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_card_store_env():
+    """Snapshot + restore the two card-store env vars around a test."""
+    saved = {k: os.environ.get(k) for k in (ENV_CARD_STORE, ENV_CARD_STORE_LEGACY)}
+    for k in (ENV_CARD_STORE, ENV_CARD_STORE_LEGACY):
+        os.environ.pop(k, None)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_generic_sac_env_var_is_read_first(tmp_path: Path, clean_card_store_env):
+    # Arrange — BOTH vars set; the generic sac var must win.
+    generic = tmp_path / "generic-cards.yaml"
+    os.environ[ENV_CARD_STORE] = str(generic)
+    os.environ[ENV_CARD_STORE_LEGACY] = str(tmp_path / "legacy.yaml")
+    # Act
+    path = _default_tasks_path()
+    # Assert
+    assert path == generic
+
+
+def test_legacy_env_var_is_deprecated_fallback(tmp_path: Path, clean_card_store_env):
+    # Arrange — only the legacy scitex-todo var set.
+    legacy = tmp_path / "legacy-cards.yaml"
+    os.environ[ENV_CARD_STORE_LEGACY] = str(legacy)
+    # Act
+    path = _default_tasks_path()
+    # Assert — still honoured so old environments don't break.
+    assert path == legacy
+
+
+def test_default_path_when_no_env_var_set(clean_card_store_env):
+    # Arrange — neither var set (fixture cleared both).
+    # Act
+    path = _default_tasks_path()
+    # Assert — on-disk default under the user's ~/.scitex/todo.
+    assert path == Path.home() / ".scitex" / "todo" / "tasks.yaml"
+
+
+def test_generic_env_var_name_is_sac_namespaced():
+    # Arrange
+    name = ENV_CARD_STORE
+    # Act
+    observed = name
+    # Assert — no scitex_todo hardcoding in the primary var name.
+    assert observed == "SAC_CARD_STORE"

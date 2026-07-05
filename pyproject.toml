@@ -175,17 +175,27 @@ scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
 [project.entry-points."scitex_dev.jobs"]
 scitex-agent-container = "scitex_agent_container._jobs_plugin:provide_jobs"
 
-# C10 — sac's consumer on scitex-todo's shared card-event bus. When
-# scitex-todo's board emits a card-event (commented / created /
-# reassigned / status_changed / completed / committed / pushed /
-# merged), this callable is invoked in the board's process; it resolves
-# the card's owner + collaborators + subscribers and delivers the
-# notification to each via the local ``sac listen`` daemon's
-# ``/v1/notify`` router endpoint — so a CONTAINERIZED owner-agent (whose
-# a2a port is unreachable inbound) still receives it. The consumer
-# filters for the card-event kinds and ignores everything else, incl.
-# sac's OWN liveness-tick anomaly events on the same bus. Bus-only
-# contract: no import of scitex_todo.
+# C10 — sac's consumer on the shared card-event bus. When a card-store
+# board emits a card-event (commented / created / reassigned /
+# status_changed / completed / committed / pushed / merged), this
+# callable is invoked in the board's process; it resolves the card's
+# owner + collaborators + subscribers and delivers the notification to
+# each via the local ``sac listen`` daemon's ``/v1/notify`` router
+# endpoint — so a CONTAINERIZED owner-agent (whose a2a port is
+# unreachable inbound) still receives it. The consumer filters for the
+# card-event kinds and ignores everything else, incl. sac's OWN
+# liveness-tick anomaly events on the same bus. Bus-only contract: no
+# import of the card-store package.
+#
+# GENERIC sac-owned group (matches the ``scitex_dev.*`` entry-point
+# convention above). New producers should emit here.
+[project.entry-points."scitex_agent_container.hooks"]
+scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
+
+# DEPRECATED — dual-registered for the transition; remove once scitex-todo
+# migrates its producer to ``scitex_agent_container.hooks``. scitex-todo's
+# board still emits card-events on this legacy group, so sac must stay
+# registered here to keep receiving them.
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 

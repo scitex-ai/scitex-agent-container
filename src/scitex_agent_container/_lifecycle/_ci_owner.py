@@ -33,10 +33,32 @@ def _default_agents_dir() -> Path:
     return Path.home() / ".scitex" / "agent-container" / "agents"
 
 
+# Generic, sac-owned env var naming the card-store path. Read FIRST so an
+# operator can point sac at any card store without sac knowing which
+# package owns it.
+ENV_CARD_STORE = "SAC_CARD_STORE"
+# DEPRECATED — legacy fallback; remove once every environment sets
+# ``SAC_CARD_STORE``. Kept so environments still exporting the old
+# scitex-todo-specific var don't break.
+ENV_CARD_STORE_LEGACY = "SCITEX_TODO_TASKS_YAML_SHARED"
+
+
 def _default_tasks_path() -> Path:
-    env = os.environ.get("SCITEX_TODO_TASKS_YAML_SHARED")
+    """Resolve the card-store path: generic sac var → legacy var → default.
+
+    NOTE (known follow-up): sac still PARSES the card-store YAML format
+    (``{"tasks": [...]}`` with per-task ``repo``/``agent``/``assignee``)
+    below in :func:`_owner_from_tasks` to resolve CI owners — a deeper,
+    format-level coupling to scitex-todo's schema. Only the PATH SOURCE
+    (env-var name) is genericized here; the format coupling is
+    out-of-scope and load-bearing."""
+    env = os.environ.get(ENV_CARD_STORE)
     if env:
         return Path(env).expanduser()
+    # DEPRECATED fallback — legacy scitex-todo-specific env var.
+    legacy = os.environ.get(ENV_CARD_STORE_LEGACY)
+    if legacy:
+        return Path(legacy).expanduser()
     return Path.home() / ".scitex" / "todo" / "tasks.yaml"
 
 
@@ -142,4 +164,9 @@ def tracked_repos(*, agents_dir: Path | None = None, org: str | None = None) -> 
     return [f"{resolved_org}/{p}" for p in sorted(projects)]
 
 
-__all__ = ["resolve_owner", "tracked_repos"]
+__all__ = [
+    "ENV_CARD_STORE",
+    "ENV_CARD_STORE_LEGACY",
+    "resolve_owner",
+    "tracked_repos",
+]

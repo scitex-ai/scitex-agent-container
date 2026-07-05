@@ -22,11 +22,16 @@ from datetime import datetime, timezone
 
 import pytest
 
+import importlib
+import sys
+
 from scitex_agent_container._listen._liveness_tick import (
     DEFAULT_INTERVAL_S,
     DEFAULT_RENOTIFY_S,
     DEFAULT_STALE_S,
     HOOKS_ENTRY_POINT_GROUP,
+    HOOKS_ENTRY_POINT_GROUPS,
+    LEGACY_HOOKS_ENTRY_POINT_GROUP,
     AgentLiveness,
     emit_anomaly,
     liveness_tick_reconciler_loop,
@@ -88,13 +93,29 @@ class TestDefaults:
         # Assert
         assert observed == 3600.0
 
-    def test_entry_point_group_is_scitex_todo_hooks(self) -> None:
+    def test_entry_point_group_is_generic_sac_owned(self) -> None:
         # Arrange
         constant = HOOKS_ENTRY_POINT_GROUP
         # Act
         observed = constant
-        # Assert
+        # Assert — generic, sac-namespaced group (no scitex_todo hardcoding).
+        assert observed == "scitex_agent_container.hooks"
+
+    def test_legacy_entry_point_group_is_scitex_todo_hooks(self) -> None:
+        # Arrange — the DEPRECATED, dual-supported legacy group.
+        constant = LEGACY_HOOKS_ENTRY_POINT_GROUP
+        # Act
+        observed = constant
+        # Assert — kept for backward-compat until scitex-todo migrates.
         assert observed == "scitex_todo.hooks"
+
+    def test_groups_tuple_lists_new_then_legacy(self) -> None:
+        # Arrange
+        constant = HOOKS_ENTRY_POINT_GROUPS
+        # Act
+        observed = constant
+        # Assert — both groups are loaded/emitted-on, new first.
+        assert observed == ("scitex_agent_container.hooks", "scitex_todo.hooks")
 
 
 # ===========================================================================
@@ -143,6 +164,101 @@ class TestEmitAnomaly:
         delivered = emit_anomaly({"agent": "a"}, [boom, ok])
         # Assert — the healthy consumer still got it (count == 1).
         assert delivered == 1
+
+
+# ===========================================================================
+# _load_hook_consumers — dual-group loading (REAL entry points, no mocks)
+# ===========================================================================
+
+
+def _install_fake_hook_dist(site, dist_name, module_name, entry_points_txt, src):
+    """Materialise a REAL importable dist with real ``entry_points.txt``.
+
+    Writes a module + a ``*.dist-info`` under ``site`` so
+    ``importlib.metadata.entry_points`` genuinely discovers the registered
+    callables once ``site`` is on ``sys.path`` — no mock of the metadata
+    API, a real distribution on disk."""
+    (site / f"{module_name}.py").write_text(src)
+    dist_info = site / f"{dist_name}-0.0.0.dist-info"
+    dist_info.mkdir(parents=True, exist_ok=True)
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {dist_name}\nVersion: 0.0.0\n"
+    )
+    (dist_info / "entry_points.txt").write_text(entry_points_txt)
+
+
+@pytest.fixture
+def hook_site_on_path(tmp_path):
+    """Put a real ``site`` dir on ``sys.path`` and tear it down cleanly."""
+    site = tmp_path / "site"
+    site.mkdir()
+    sys.path.insert(0, str(site))
+    importlib.invalidate_caches()
+    try:
+        yield site
+    finally:
+        try:
+            sys.path.remove(str(site))
+        except ValueError:  # stx-allow: fallback (already removed)
+            pass
+        for name in list(sys.modules):
+            if name.startswith("fake_hook_"):
+                del sys.modules[name]
+        importlib.invalidate_caches()
+
+
+class TestLoadHookConsumersDualGroup:
+    def test_loads_consumers_from_both_new_and_legacy_groups(
+        self, hook_site_on_path
+    ) -> None:
+        # Arrange — one consumer on the NEW group, one on the LEGACY group.
+        _install_fake_hook_dist(
+            hook_site_on_path,
+            dist_name="fake-hook-both",
+            module_name="fake_hook_both",
+            entry_points_txt=(
+                "[scitex_agent_container.hooks]\n"
+                "c_new = fake_hook_both:consumer_new\n\n"
+                "[scitex_todo.hooks]\n"
+                "c_legacy = fake_hook_both:consumer_legacy\n"
+            ),
+            src="def consumer_new(e):\n    return 1\n\n"
+            "def consumer_legacy(e):\n    return 2\n",
+        )
+        importlib.invalidate_caches()
+        import fake_hook_both  # real import of the installed fake module
+
+        # Act
+        loaded = mod._load_hook_consumers()
+        # Assert — BOTH the new-group and legacy-group consumers are loaded.
+        assert (
+            fake_hook_both.consumer_new in loaded
+            and fake_hook_both.consumer_legacy in loaded
+        )
+
+    def test_dedups_a_consumer_registered_under_both_groups(
+        self, hook_site_on_path
+    ) -> None:
+        # Arrange — the SAME callable registered on both groups.
+        _install_fake_hook_dist(
+            hook_site_on_path,
+            dist_name="fake-hook-dup",
+            module_name="fake_hook_dup",
+            entry_points_txt=(
+                "[scitex_agent_container.hooks]\n"
+                "a = fake_hook_dup:consumer_shared\n\n"
+                "[scitex_todo.hooks]\n"
+                "b = fake_hook_dup:consumer_shared\n"
+            ),
+            src="def consumer_shared(e):\n    return 0\n",
+        )
+        importlib.invalidate_caches()
+        import fake_hook_dup
+
+        # Act
+        loaded = mod._load_hook_consumers()
+        # Assert — appears exactly once despite the dual registration.
+        assert loaded.count(fake_hook_dup.consumer_shared) == 1
 
 
 # ===========================================================================

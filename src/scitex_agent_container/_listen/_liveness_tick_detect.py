@@ -48,7 +48,7 @@ _SEVERITY_CRITICAL_MULT = 4.0
 class StuckCard:
     """A detected anomaly: an OPEN, unblocked, stale card whose owner is
     not progressing. :func:`find_stuck_cards` returns these; the loop
-    turns each into a ``scitex_todo.hooks`` bus event."""
+    turns each into a ``scitex_agent_container.hooks`` event-bus event."""
 
     agent: str
     card_id: str

@@ -1,12 +1,14 @@
-"""Unit tests for the C10 ``scitex_todo.hooks`` consumer.
+"""Unit tests for the C10 hook-bus card-event consumer.
 
 Mirrors ``src/scitex_agent_container/_listen/_card_event_delivery.py``
-(PS-204 §2).
+(PS-204 §2). The consumer is registered on sac's generic
+``scitex_agent_container.hooks`` group AND the legacy ``scitex_todo.hooks``
+group (dual-registered during the migration).
 
 What this proves
 ================
-:func:`deliver_card_event` is sac's consumer on scitex-todo's shared
-card-event bus. It MUST:
+:func:`deliver_card_event` is sac's consumer on the shared card-event
+bus. It MUST:
 
 * FILTER — deliver on a card-event kind; NO-OP on an unrecognized kind,
   most importantly sac's OWN liveness-tick anomaly events on the same
