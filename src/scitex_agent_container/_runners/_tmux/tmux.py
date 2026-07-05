@@ -164,7 +164,20 @@ class TmuxManager:
             for key, value in effective_session_env.items():
                 argv += ["-e", f"{key}={value}"]
         argv += ["bash", "-c", shell_script]
-        subprocess.run(argv, check=False)
+        # Generic clean launch env (operator directive 2026-07-05): hand
+        # the tmux subprocess a NAME-AGNOSTIC allowlist of the ambient env
+        # rather than the full ``os.environ`` (whose default inheritance
+        # would leak any stale ambient var of ANY name into the pane and,
+        # for an apptainer launch, on into the container). The explicit
+        # ``-e KEY=VAL`` pairs above still carry every container-needed var
+        # (incl. sac's ``APPTAINERENV_APPEND_PATH``); ``minimal_launch_env``
+        # keeps PATH/HOME/locale/apptainer-owned namespaces so the pane can
+        # still find + run apptainer. Belt-and-suspenders behind the primary
+        # fix (``--cleanenv`` is now unconditionally in the apptainer argv).
+        # sac's code names ZERO downstream-package vars here.
+        from ...runtimes._apptainer_host_env import minimal_launch_env
+
+        subprocess.run(argv, check=False, env=minimal_launch_env(os.environ))
 
         time.sleep(2)
         return TmuxManager.exists(session_name)

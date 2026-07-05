@@ -29,6 +29,7 @@ import pytest
 from scitex_agent_container.runtimes._apptainer_host_env import (
     APPTAINER_APPEND_PATH_ENV,
     host_cargo_bin_append_env,
+    minimal_launch_env,
 )
 
 
@@ -79,3 +80,73 @@ def test_preexisting_directive_is_appended_after_colon(fake_home: Path) -> None:
     result = host_cargo_bin_append_env(base_env)
     # Assert
     assert result[APPTAINER_APPEND_PATH_ENV] == f"/opt/extra/bin:{cargo_bin}"
+
+
+# ----------------------------------------------------------------------
+# minimal_launch_env — generic clean-environment allowlist
+# (operator directive 2026-07-05). Proves NO ambient var of any name
+# survives except the generic system + apptainer-owned namespaces.
+# ----------------------------------------------------------------------
+def test_minimal_launch_env_drops_arbitrary_poison_var() -> None:
+    """A poison var of an arbitrary GENERIC name is dropped — the point
+    of the name-agnostic allowlist is that it needs no knowledge of the
+    offending var's name."""
+    # Arrange
+    base = {"PATH": "/usr/bin", "LEAK_TEST_CANARY": "SHOULD_NOT_APPEAR"}
+    # Act
+    result = minimal_launch_env(base)
+    # Assert
+    assert "LEAK_TEST_CANARY" not in result
+
+
+def test_minimal_launch_env_drops_downstream_package_var() -> None:
+    """A stale downstream-package var (the reported leak) is dropped
+    without sac's code ever naming it."""
+    # Arrange
+    base = {"PATH": "/usr/bin", "SCITEX_TODO_AGENT": "POISON_LEGACY"}
+    # Act
+    result = minimal_launch_env(base)
+    # Assert
+    assert "SCITEX_TODO_AGENT" not in result
+
+
+def test_minimal_launch_env_keeps_path() -> None:
+    """PATH survives so the apptainer binary + its helpers resolve."""
+    # Arrange
+    base = {"PATH": "/usr/bin:/bin"}
+    # Act
+    result = minimal_launch_env(base)
+    # Assert
+    assert result["PATH"] == "/usr/bin:/bin"
+
+
+def test_minimal_launch_env_keeps_apptainerenv_append_path() -> None:
+    """sac's own ``APPTAINERENV_APPEND_PATH`` directive survives (matches
+    the ``APPTAINERENV_`` prefix rule) so the cargo-bin PATH append is
+    preserved even under the curated launch env."""
+    # Arrange
+    base = {"PATH": "/usr/bin", APPTAINER_APPEND_PATH_ENV: "/host/cargo/bin"}
+    # Act
+    result = minimal_launch_env(base)
+    # Assert
+    assert result[APPTAINER_APPEND_PATH_ENV] == "/host/cargo/bin"
+
+
+def test_minimal_launch_env_keeps_locale_prefix() -> None:
+    """A generic ``LC_*`` locale var survives (prefix rule)."""
+    # Arrange
+    base = {"PATH": "/usr/bin", "LC_ALL": "C.UTF-8"}
+    # Act
+    result = minimal_launch_env(base)
+    # Assert
+    assert result["LC_ALL"] == "C.UTF-8"
+
+
+def test_minimal_launch_env_does_not_mutate_input() -> None:
+    """Pure — the caller's ``base_env`` is untouched."""
+    # Arrange
+    base = {"PATH": "/usr/bin", "LEAK_TEST_CANARY": "x"}
+    # Act
+    minimal_launch_env(base)
+    # Assert
+    assert base == {"PATH": "/usr/bin", "LEAK_TEST_CANARY": "x"}

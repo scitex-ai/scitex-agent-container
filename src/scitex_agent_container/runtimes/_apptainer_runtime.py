@@ -203,15 +203,30 @@ class ApptainerContainerRuntime(RuntimeBase):
             (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
             return True
 
-        # Append the host ``~/.cargo/bin`` to the CONTAINER PATH via
+        # Build the host-side ``apptainer`` PROCESS env from a GENERIC,
+        # name-agnostic allowlist (operator directive 2026-07-05) — NOT
+        # the full ambient ``os.environ``. ``minimal_launch_env`` keeps
+        # only generic system + apptainer-owned namespaces, so no stale
+        # ambient var of ANY name reaches the apptainer process (and thus
+        # the container). This is defense-in-depth behind the primary fix
+        # (``--cleanenv`` is now unconditionally in the argv — see
+        # ``_apptainer_iso_flags``); sac's code names ZERO downstream vars.
+        #
+        # Then append the host ``~/.cargo/bin`` to the CONTAINER PATH via
         # apptainer's ``APPTAINERENV_APPEND_PATH`` directive, set on the
         # apptainer HOST process env (NOT a ``--env`` flag — that sets a
         # container var and ``--env PATH=...`` would clobber PATH). Lets
         # host-only cargo CLIs (e.g. rtk) resolve inside the container.
         # Skip-if-missing + append-not-clobber live in the pure helper.
-        from ._apptainer_host_env import host_cargo_bin_append_env
+        # ``APPTAINERENV_APPEND_PATH`` survives ``--cleanenv`` (verified),
+        # so relaxed agents keep their cargo-bin PATH append.
+        from ._apptainer_host_env import (
+            host_cargo_bin_append_env,
+            minimal_launch_env,
+        )
 
-        launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
+        launch_env = minimal_launch_env(os.environ)
+        launch_env.update(host_cargo_bin_append_env(launch_env))
 
         # Jailed-capsule guardrail: strip the apptainer/singularity bind
         # env vars from the launch environment so NO env-injected bind

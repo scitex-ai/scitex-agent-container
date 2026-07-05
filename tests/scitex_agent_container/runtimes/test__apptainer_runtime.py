@@ -18,6 +18,7 @@ seams.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shlex
 import subprocess
@@ -2622,14 +2623,19 @@ def test_cleanenv_present_by_default(tmp_path: Path) -> None:
     assert "--cleanenv" in argv
 
 
-def test_cleanenv_absent_when_relaxed_true(tmp_path: Path) -> None:
+def test_cleanenv_present_even_when_relaxed_true(tmp_path: Path) -> None:
+    # --cleanenv is DECOUPLED from `relaxed` (operator directive
+    # 2026-07-05): env-cleanliness is orthogonal to filesystem-relaxation,
+    # so a relaxed spec (which skips --containall/--writable-tmpfs/--home)
+    # STILL gets --cleanenv — the generic, name-agnostic mechanism that
+    # stops ANY ambient host var from forwarding into the container.
     # Arrange
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path, apptainer=ApptainerSpec(relaxed=True))
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert
-    assert "--cleanenv" not in argv
+    assert "--cleanenv" in argv
 
 
 def test_cleanenv_not_doubled_when_operator_set(tmp_path: Path) -> None:
@@ -2640,6 +2646,117 @@ def test_cleanenv_not_doubled_when_operator_set(tmp_path: Path) -> None:
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert
     assert argv.count("--cleanenv") == 1
+
+
+# ---------------------------------------------------------------------------
+# GOLD-STANDARD: generic clean-env launch — no ambient var of ANY name
+# reaches the container. Real ``apptainer`` subprocess (env-dumping fake)
+# proves the launch_env handed to the process excludes a poison var, and
+# the argv carries --cleanenv so apptainer itself drops ambient
+# passthrough. Covers BOTH relaxed and non-relaxed specs. (operator
+# directive 2026-07-05)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def apptainer_env_dump_on_path(subprocess_shim) -> Path:
+    """Fake ``apptainer`` that dumps its OWN process env to
+    ``<bin>/apptainer.env.json`` on every exec. Lets a test read back the
+    REAL ``launch_env`` production handed the subprocess — no mocking of
+    ``subprocess.run``."""
+    bin_dir = subprocess_shim._bin
+    script = bin_dir / "apptainer"
+    env_dump = bin_dir / "apptainer.env.json"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"with open({_q(str(env_dump))}, 'w') as fh:\n"
+        "    json.dump(dict(os.environ), fh)\n"
+        "if len(sys.argv) >= 3 and sys.argv[1] == 'build':\n"
+        "    from pathlib import Path\n"
+        "    Path(sys.argv[2]).write_bytes(b'\\x00')\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return env_dump
+
+
+def _dump_launch_env(
+    rt, tmp_path: Path, env_dump: Path, *, relaxed: bool
+) -> dict:
+    """Run a real foreground ``apptainer`` subprocess (env-dumping fake)
+    and return the env production handed it."""
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    cfg = _config(
+        tmp_path / "wd", image=str(sif), apptainer=ApptainerSpec(relaxed=relaxed)
+    )
+    rt.start(cfg, foreground=True)
+    return json.loads(env_dump.read_text())
+
+
+@pytest.mark.parametrize("relaxed", [False, True])
+def test_launch_env_excludes_generic_poison_var(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_env_dump_on_path: Path,
+    env_save_restore,
+    relaxed: bool,
+) -> None:
+    """A GENERIC poison var set in sac's own process env does NOT reach
+    the apptainer subprocess — for BOTH relaxed and non-relaxed specs.
+    sac never names it; the allowlist is name-agnostic."""
+    # Arrange — poison the launcher's ambient env.
+    env_save_restore.set("LEAK_TEST_CANARY", "SHOULD_NOT_APPEAR")
+    rt = ApptainerContainerRuntime()
+    # Act
+    dumped = _dump_launch_env(
+        rt, tmp_path, apptainer_env_dump_on_path, relaxed=relaxed
+    )
+    # Assert
+    assert "LEAK_TEST_CANARY" not in dumped
+
+
+@pytest.mark.parametrize("relaxed", [False, True])
+def test_launch_env_excludes_legacy_downstream_var(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_env_dump_on_path: Path,
+    env_save_restore,
+    relaxed: bool,
+) -> None:
+    """The reported legacy downstream var does NOT reach the apptainer
+    subprocess — for BOTH relaxed and non-relaxed specs — without sac's
+    code ever naming it."""
+    # Arrange
+    env_save_restore.set("SCITEX_TODO_AGENT", "POISON_LEGACY")
+    rt = ApptainerContainerRuntime()
+    # Act
+    dumped = _dump_launch_env(
+        rt, tmp_path, apptainer_env_dump_on_path, relaxed=relaxed
+    )
+    # Assert
+    assert "SCITEX_TODO_AGENT" not in dumped
+
+
+def test_launch_env_keeps_path_for_apptainer_to_run(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_env_dump_on_path: Path,
+) -> None:
+    """PATH survives the curated launch env — apptainer + helpers still
+    resolve."""
+    # Arrange
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    rt.start(cfg, foreground=True)
+    # Assert
+    dumped = json.loads(apptainer_env_dump_on_path.read_text())
+    assert dumped.get("PATH")
 
 
 def test_writable_tmpfs_present_by_default(tmp_path: Path) -> None:

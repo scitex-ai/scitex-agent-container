@@ -32,8 +32,86 @@ from typing import Mapping
 
 __all__ = [
     "APPTAINER_APPEND_PATH_ENV",
+    "LAUNCH_ENV_ALLOW_EXACT",
+    "LAUNCH_ENV_ALLOW_PREFIXES",
     "host_cargo_bin_append_env",
+    "minimal_launch_env",
 ]
+
+# ----------------------------------------------------------------------
+# Generic clean-environment launch (operator directive 2026-07-05)
+# ----------------------------------------------------------------------
+# The env handed to the host-side ``apptainer`` PROCESS must carry ONLY
+# what apptainer itself needs to run — NOT the launcher's whole ambient
+# environment. This is a NAME-AGNOSTIC allowlist: it names ZERO
+# downstream-package variables. Any var that is neither in the exact set
+# below nor matches an allowed prefix is dropped, so a stale var of ANY
+# name (e.g. a legacy per-agent identity export left in the launching
+# shell) can never reach the ``apptainer`` process — and thus can never
+# be forwarded into the container.
+#
+# This is DEFENSE-IN-DEPTH behind the primary fix (``--cleanenv`` is now
+# unconditionally in the apptainer argv — see ``_apptainer_iso_flags``),
+# so even if ``--cleanenv`` were ever absent, there is no package var in
+# the process env to forward in the first place.
+#
+# The allowlist is deliberately generic:
+#   * exact keys apptainer + a normal login context need (PATH to find
+#     apptainer + its helpers, HOME for ~/.apptainer cache/config, the
+#     user/locale/tty basics);
+#   * prefix rules for apptainer's OWN namespaces — ``APPTAINER_*`` /
+#     ``SINGULARITY_*`` (its config env) and ``APPTAINERENV_*`` /
+#     ``SINGULARITYENV_*`` (its explicit container-injection directives,
+#     incl. sac's own ``APPTAINERENV_APPEND_PATH``) — plus ``LC_*`` /
+#     ``XDG_*`` system namespaces. These are apptainer/system-owned
+#     prefixes, not downstream-package names.
+LAUNCH_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "LANG",
+        "LANGUAGE",
+        "TZ",
+        "TMPDIR",
+        "PWD",
+    }
+)
+LAUNCH_ENV_ALLOW_PREFIXES: tuple[str, ...] = (
+    "LC_",
+    "XDG_",
+    "APPTAINER_",
+    "SINGULARITY_",
+    "APPTAINERENV_",
+    "SINGULARITYENV_",
+)
+
+
+def minimal_launch_env(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Return a name-agnostic allowlist copy of ``base_env`` for the
+    host-side ``apptainer`` process.
+
+    Keeps only keys in :data:`LAUNCH_ENV_ALLOW_EXACT` or matching a
+    prefix in :data:`LAUNCH_ENV_ALLOW_PREFIXES`; drops everything else.
+    Pure — does NOT read or mutate ``os.environ``; the caller passes the
+    base environment (usually ``os.environ``) and hands the returned
+    dict (after merging sac's own explicit additions like
+    :func:`host_cargo_bin_append_env`) to the ``apptainer`` subprocess.
+
+    Contains ZERO downstream-package variable names — the rule is purely
+    "generic system / apptainer-owned namespaces in, everything else
+    out", so a future package env-var rename needs no change here.
+    """
+    out: dict[str, str] = {}
+    for key, val in base_env.items():
+        if key in LAUNCH_ENV_ALLOW_EXACT or key.startswith(
+            LAUNCH_ENV_ALLOW_PREFIXES
+        ):
+            out[key] = val
+    return out
 
 #: The apptainer runtime directive var. Apptainer strips the
 #: ``APPTAINERENV_`` prefix and appends the value to the container PATH.

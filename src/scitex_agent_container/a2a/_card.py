@@ -269,7 +269,13 @@ def _isolation_block(spec: dict[str, Any]) -> dict[str, Any]:
     return {
         "level": _isolation_level(spec),
         "containall": _has_flag(spec, "--containall") or _hardened(spec),
-        "cleanenv": _has_flag(spec, "--cleanenv") or _hardened(spec),
+        # --cleanenv is DECOUPLED from `relaxed` (operator directive
+        # 2026-07-05) and now ALWAYS applied by the launch argv (see
+        # runtimes._apptainer_iso_flags): env-cleanliness is orthogonal to
+        # the filesystem-isolation `relaxed` opt-out, so a relaxed capsule
+        # still gets a clean (no-ambient-passthrough) environment. Report
+        # it as unconditionally on so the attestation card matches reality.
+        "cleanenv": True,
         "writable_tmpfs": _has_writable_tmpfs(spec),
         "preflight_passed": ([] if _relaxed(spec) else ["uid-nonzero", "no-host-home"]),
         "preflight_allowed": _preflight_allowed(spec),

@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- **fix(apptainer): generic clean-env launch — no ambient env leak, zero
+  package-name knowledge** (supersedes the name-scrub in #538). sac no
+  longer forwards the launching process's ambient environment into
+  agent containers, and does so WITHOUT naming any specific downstream
+  variable. Two orthogonal, name-agnostic mechanisms:
+  - **Primary — `--cleanenv` decoupled from `relaxed`**
+    (`runtimes/_apptainer_iso_flags.py`): `--cleanenv` is now applied
+    unconditionally (unless operator-declared in `raw_args`), no longer
+    gated on `not relaxed`. Env-cleanliness is orthogonal to the
+    filesystem-isolation `relaxed` opt-out, so a relaxed capsule still
+    gets a clean environment. Verified: `--cleanenv` still honours
+    `APPTAINERENV_*` directives (sac's `APPTAINERENV_APPEND_PATH`
+    cargo-bin append survives), so relaxed agents keep everything they
+    actually rely on — only un-asked-for ambient passthrough is dropped.
+  - **Defense-in-depth — curated launch env**
+    (`runtimes/_apptainer_host_env.py` `minimal_launch_env`): the
+    host-side `apptainer` PROCESS env is built from a generic,
+    name-agnostic allowlist (generic system vars + apptainer-owned
+    `APPTAINER_*` / `APPTAINERENV_*` / `SINGULARITY*` / `LC_*` / `XDG_*`
+    prefixes), NOT the full `os.environ`. Applied at the SDK-Popen
+    launch site (`runtimes/_apptainer_runtime.py`) and the tmux/TUI
+    launch site (`_runners/_tmux/tmux.py`). Names ZERO downstream
+    package variables, so a future env-var rename needs no change here.
+  - The a2a attestation card now reports `cleanenv: True` unconditionally
+    (`a2a/_card.py`) to match the always-on behaviour.
+
 ## [0.21.11] — 2026-06-09
 
 PATCH release. Re-cut of v0.21.10's accounts-list redesign after the

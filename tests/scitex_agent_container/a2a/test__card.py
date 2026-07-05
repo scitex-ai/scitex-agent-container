@@ -233,12 +233,15 @@ def relaxed_isolation() -> dict:
     [
         ("level", "relaxed"),
         ("containall", False),
-        ("cleanenv", False),
+        # --cleanenv is DECOUPLED from `relaxed` (operator directive
+        # 2026-07-05): env-cleanliness is orthogonal to filesystem
+        # relaxation, so a relaxed capsule STILL reports a clean env.
+        ("cleanenv", True),
         ("writable_tmpfs", False),
         ("preflight_passed", []),
     ],
 )
-def test_isolation_relaxed_true_flips_all_booleans(
+def test_isolation_relaxed_true_flips_fs_booleans_but_keeps_cleanenv(
     relaxed_isolation: dict, field: str, expected
 ) -> None:
     # Arrange

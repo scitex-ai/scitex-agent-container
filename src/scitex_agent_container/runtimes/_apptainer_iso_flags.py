@@ -14,6 +14,27 @@ list of flags that ``build_run_argv`` should prepend right after
 
 ``--writable-tmpfs`` is additionally skipped when ``apptainer.overlay``
 is set — apptainer rejects the combination.
+
+Env-cleanliness is DECOUPLED from ``relaxed`` (operator directive
+2026-07-05). ``--cleanenv`` is ALWAYS applied (unless the operator
+declared it in ``raw_args``) — i.e. it is NOT gated on ``not relaxed``
+like the filesystem-isolation flags. Rationale: ``relaxed`` is about
+FILESYSTEM / bind isolation (whether ``--containall`` drops the default
+``$HOME`` / ``$PWD`` / ``/tmp`` auto-binds, whether ``--home`` /
+``--writable-tmpfs`` are forced). Whether the container inherits the
+launching process's AMBIENT environment is an ORTHOGONAL concern: the
+container's env must come ONLY from sac's explicit ``--env`` /
+``--env-file`` flags + apptainer's own ``APPTAINERENV_*`` directives +
+the SIF ``%environment`` — NEVER from ambient host-process passthrough.
+Without ``--cleanenv``, apptainer forwards the ENTIRE ambient process
+env into the container, so any stale var in the launching shell/daemon
+(of ANY name) rides through into the agent. Making ``--cleanenv``
+unconditional is a GENERIC clean-environment launch that needs zero
+knowledge of any specific downstream variable name. Verified safe for
+relaxed agents: ``--cleanenv`` still honours the ``APPTAINERENV_*``
+injection directives (e.g. sac's ``APPTAINERENV_APPEND_PATH`` cargo-bin
+append), so relaxed agents keep everything they actually rely on — only
+the un-asked-for ambient passthrough is dropped.
 """
 
 from __future__ import annotations
@@ -36,7 +57,13 @@ def compute_iso_prepend(config) -> list[str]:
     out: list[str] = []
     if (not relaxed) and not op_containall:
         out.append("--containall")
-    if (not relaxed) and not op_cleanenv:
+    # --cleanenv is DECOUPLED from `relaxed` (operator directive
+    # 2026-07-05): always applied unless operator-declared in raw_args.
+    # See module docstring — env-cleanliness is orthogonal to the
+    # filesystem-isolation `relaxed` opt-out, and is the generic,
+    # name-agnostic mechanism that stops ANY ambient host var (of any
+    # name) from forwarding into the container.
+    if not op_cleanenv:
         out.append("--cleanenv")
     if (not relaxed) and not op_writable_tmpfs and not overlay:
         out.append("--writable-tmpfs")
