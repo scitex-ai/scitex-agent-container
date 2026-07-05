@@ -74,7 +74,7 @@ def _read_and_interpolate(src: Path, config: AgentConfig | None) -> str:
     text = src.read_text()
     if config is not None and text.strip():
         text = interpolate_metadata(text, config)
-        text = interpolate_env(text)
+        text = interpolate_env(text, config)
     return text
 
 
