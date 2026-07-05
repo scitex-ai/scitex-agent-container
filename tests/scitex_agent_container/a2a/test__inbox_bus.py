@@ -4,6 +4,9 @@ A2A push channel slice). See docs/sac-and-orochi.md.
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from scitex_agent_container.a2a._inbox_bus import (
@@ -121,6 +124,111 @@ async def test_unsubscribe_then_publish_reports_zero_delivered() -> None:
     delivered = await broker.publish("alice", {"x": 3})
     # Assert
     assert delivered == 0
+
+
+# ---------------------------------------------------------------------------
+# Broker.close / get_or_close — SIGTERM shutdown cancellation
+# (card sac-listen-sigterm-sse-shutdown-hang). The SSE inbox-stream loops
+# use ``get_or_close`` instead of a bare ``queue.get()`` so a graceful
+# shutdown can unblock them promptly via ``close()`` rather than parking
+# until uvicorn force-cancels / restart --force SIGKILLs.
+# ---------------------------------------------------------------------------
+
+
+def test_broker_is_not_closing_before_close() -> None:
+    # Arrange
+    broker = Broker()
+    # Act
+    closing = broker.is_closing()
+    # Assert
+    assert closing is False
+
+
+def test_close_sets_is_closing_true() -> None:
+    # Arrange
+    broker = Broker()
+    # Act
+    broker.close()
+    # Assert
+    assert broker.is_closing() is True
+
+
+def test_close_is_idempotent() -> None:
+    # Arrange
+    broker = Broker()
+    # Act
+    broker.close()
+    broker.close()
+    # Assert
+    assert broker.is_closing() is True
+
+
+@pytest.mark.asyncio
+async def test_get_or_close_blocks_while_idle_and_open() -> None:
+    # Arrange
+    broker = Broker()
+    q = await broker.subscribe("alice")
+    waiter = asyncio.ensure_future(broker.get_or_close(q))
+    # Act
+    await asyncio.sleep(0.15)
+    parked = not waiter.done()
+    waiter.cancel()
+    # Assert
+    assert parked is True
+
+
+@pytest.mark.asyncio
+async def test_get_or_close_returns_none_when_broker_closes() -> None:
+    # Arrange
+    broker = Broker()
+    q = await broker.subscribe("alice")
+    waiter = asyncio.ensure_future(broker.get_or_close(q))
+    await asyncio.sleep(0.1)
+    # Act
+    broker.close()
+    result = await asyncio.wait_for(waiter, timeout=1.0)
+    # Assert
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_or_close_unblocks_within_bounded_time_on_close() -> None:
+    # Arrange
+    broker = Broker()
+    q = await broker.subscribe("alice")
+    waiter = asyncio.ensure_future(broker.get_or_close(q))
+    await asyncio.sleep(0.1)
+    # Act
+    t0 = time.monotonic()
+    broker.close()
+    await asyncio.wait_for(waiter, timeout=1.0)
+    elapsed = time.monotonic() - t0
+    # Assert
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_get_or_close_delivers_a_pending_event() -> None:
+    # Arrange
+    broker = Broker()
+    q = await broker.subscribe("alice")
+    await q.put({"msg_id": "m1", "content": "hi"})
+    # Act
+    event = await asyncio.wait_for(broker.get_or_close(q), timeout=1.0)
+    # Assert
+    assert event == {"msg_id": "m1", "content": "hi"}
+
+
+@pytest.mark.asyncio
+async def test_get_or_close_returns_none_immediately_if_already_closed() -> None:
+    # Arrange
+    broker = Broker()
+    q = await broker.subscribe("alice")
+    broker.close()
+    # Act
+    result = await asyncio.wait_for(broker.get_or_close(q), timeout=1.0)
+    # Assert
+    assert result is None
 
 
 @pytest.mark.asyncio

@@ -67,6 +67,83 @@ class Broker:
     def __init__(self) -> None:
         self._subs: dict[str, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
         self._lock = asyncio.Lock()
+        # Set on graceful shutdown so the SSE inbox-stream loops stop
+        # parking on ``queue.get()`` and return promptly (card
+        # ``sac-listen-sigterm-sse-shutdown-hang``). ``asyncio.Event``
+        # binds its loop lazily on first ``wait()``, so constructing it
+        # here (outside any running loop, mirroring ``self._lock``) is
+        # safe.
+        self._closing = asyncio.Event()
+
+    def closing_event(self) -> asyncio.Event:
+        """Return the shutdown Event the SSE loops race ``get()`` against."""
+        return self._closing
+
+    def is_closing(self) -> bool:
+        """True once :meth:`close` has fired (graceful shutdown started)."""
+        return self._closing.is_set()
+
+    def close(self) -> None:
+        """Signal every SSE subscriber loop to stop promptly.
+
+        Idempotent. Sets the shutdown Event the inbox-stream loops race
+        their ``queue.get()`` against (see :meth:`get_or_close`), so a
+        graceful ``sac listen`` shutdown (SIGTERM) cancels in-flight SSE
+        connections at once instead of leaving them parked on
+        ``queue.get()`` until uvicorn force-cancels / ``restart --force``
+        escalates to SIGKILL after 10 s.
+        """
+        self._closing.set()
+
+    async def get_or_close(
+        self, q: asyncio.Queue[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """Await the next event on ``q``, or ``None`` when the broker is
+        closing.
+
+        The SSE inbox-stream handlers loop on this instead of a bare
+        ``await q.get()``. A bare ``get()`` parks forever when no event
+        is flowing, so uvicorn's graceful shutdown (SIGTERM) waits on the
+        in-flight stream until it force-cancels / ``sac listen restart
+        --force`` escalates to SIGKILL after 10 s (card
+        ``sac-listen-sigterm-sse-shutdown-hang``). Racing ``get()``
+        against the shutdown Event lets the loop return the instant
+        :meth:`close` fires, so the daemon exits cleanly.
+
+        A live event still in flight when close fires is delivered (not
+        dropped) so a normal event landing on the same tick is not lost
+        to the shutdown race.
+        """
+        if self._closing.is_set():
+            return None
+        get_task = asyncio.ensure_future(q.get())
+        close_task = asyncio.ensure_future(self._closing.wait())
+        try:
+            await asyncio.wait(
+                {get_task, close_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            # The whole stream is being cancelled (client gone, or
+            # uvicorn's timeout-graceful-shutdown force path). Clean up
+            # both child futures before re-raising so neither is left
+            # pending.
+            get_task.cancel()
+            close_task.cancel()
+            raise
+        # Prefer a delivered event even if close fired on the same tick —
+        # an event already pulled off the queue must not be dropped.
+        if (
+            get_task.done()
+            and not get_task.cancelled()
+            and get_task.exception() is None
+        ):
+            close_task.cancel()
+            return get_task.result()
+        # Closing won (or the queue errored) — abandon the pending get and
+        # signal the loop to stop.
+        get_task.cancel()
+        close_task.cancel()
+        return None
 
     async def subscribe(self, agent: str) -> asyncio.Queue[dict[str, Any]]:
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_QUEUE_CAP)

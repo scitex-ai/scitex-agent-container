@@ -200,9 +200,50 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             app.state.bind_watchdog_task = wd_task
             tasks.append(wd_task)
 
+        # SIGTERM shutdown bridge (card sac-listen-sigterm-sse-shutdown-hang).
+        # The SSE inbox-stream handlers park on ``queue.get()``; uvicorn's
+        # graceful shutdown WAITS for those in-flight responses before it
+        # even runs this lifespan's teardown, so a SIGTERM hangs the daemon
+        # until ``sac listen restart --force`` SIGKILLs at 10 s. Uvicorn
+        # sets ``server.should_exit`` SYNCHRONOUSLY in its signal handler,
+        # well before that wait — so this task polls that flag and closes
+        # the inbox broker the instant it flips. Closing the broker fires
+        # the shutdown Event the SSE loops race ``queue.get()`` against, so
+        # every in-flight stream returns at once, the connections drain,
+        # and the daemon exits cleanly in well under the restart grace.
+        #
+        # The server handle is stashed on ``app.state.uvicorn_server`` by
+        # the boot path (:func:`cli_pkg.listen_cmds._do_start_listen`). When
+        # absent (in-process ASGI runs / tests with no uvicorn Server) the
+        # bridge is skipped — the teardown ``finally`` below still closes
+        # the broker so those runs free their SSE subscribers cleanly.
+        _srv = getattr(app.state, "uvicorn_server", None)
+        _broker = getattr(app.state, "inbox", None)
+        if _srv is not None and _broker is not None:
+
+            async def _shutdown_bridge(srv=_srv, broker=_broker):  # type: ignore[no-untyped-def]
+                try:
+                    while not getattr(srv, "should_exit", False):
+                        await asyncio.sleep(0.1)
+                finally:
+                    # Close on the normal path AND on cancellation (the
+                    # teardown cancels this task) so the broker is always
+                    # signalled exactly once — ``close`` is idempotent.
+                    broker.close()
+
+            bridge_task = asyncio.create_task(_shutdown_bridge())
+            app.state.shutdown_bridge_task = bridge_task
+            tasks.append(bridge_task)
+
         try:
             yield
         finally:
+            # Signal the SSE inbox-stream loops to stop FIRST (idempotent),
+            # so an in-process lifespan shutdown with no uvicorn bridge
+            # still frees any parked subscriber before we cancel the loops.
+            _broker_td = getattr(app.state, "inbox", None)
+            if _broker_td is not None:
+                _broker_td.close()
             for _t in tasks:
                 if _t is not None and not _t.done():
                     _t.cancel()
