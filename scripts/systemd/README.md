@@ -23,6 +23,29 @@ broker, lead inbox. Before this unit landed, the listen was
 operator-started ad-hoc and could be found DOWN with nothing
 restarting it.
 
+> **Also federated as `sac.listen`** (2026-07-05, clew incident
+> `clew-incident-sac-host-listen-down`): sac's `provide_jobs()`
+> (`src/scitex_agent_container/_jobs_plugin.py`) now registers a
+> `kind="service"` JobSpec for the same daemon, installable via
+> `scitex-dev ecosystem systemd install --name sac.listen --yes`. This
+> is an ALTERNATIVE activation path to the hand-maintained unit below
+> — the two are NOT meant to run simultaneously (both would try to
+> bind `127.0.0.1:7878`; the flock-backed single-instance guard stops
+> a double *process*, but a double *unit* still fights over restarts).
+> Pick ONE:
+> * `scripts/systemd/install-sac-listen.sh` — hand-maintained unit +
+>   the `sac-listen-health.timer` wedge-detection watchdog (hang, not
+>   just crash, coverage). Prefer this today — the federated path has
+>   no equivalent hang-detection yet.
+> * `scitex-dev ecosystem systemd install --name sac.listen --yes` —
+>   federated unit, no separate watchdog. Simpler, single source of
+>   truth with the rest of the ecosystem's scheduled jobs, but only
+>   covers crash (`Restart=always`), not a wedged-but-alive process.
+>
+> If you switch from the hand-maintained unit to the federated one (or
+> vice versa), `systemctl --user disable --now` the one you are
+> retiring first.
+
 ```bash
 # Install BOTH the listen unit and its health watchdog (preferred —
 # copies units + probe script, daemon-reload, enable --now, status):
