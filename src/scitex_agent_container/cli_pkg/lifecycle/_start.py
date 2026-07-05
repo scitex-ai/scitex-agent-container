@@ -50,6 +50,11 @@ from ._start_preflight_gate import make_preflight_runner
     "and overrides the YAML's claude.session / claude.resume_id.",
 )
 @click.option(
+    "-n", "--tail-lines", "tail_lines", type=int, default=None,
+    help="Trailing transcript messages to preview per resumable session "
+    "on a stale --resume (sac-session-candidates-tail-preview).",
+)
+@click.option(
     "--session",
     "session_mode",
     type=click.Choice(
@@ -257,6 +262,7 @@ def start(
     broker_self: bool,
     concurrency: int,
     stagger: float,
+    tail_lines: int | None,
 ) -> None:
     """Start one or more agents.
 
@@ -499,6 +505,7 @@ def start(
         broker_self=broker_self,
         yes=yes,
         verbose=verbose,
+        tail_lines=tail_lines,
     )
 
 

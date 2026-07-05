@@ -72,6 +72,7 @@ def run_single_targets(
     broker_self: bool = False,
     yes: bool = False,
     verbose: bool = False,
+    tail_lines: int | None = None,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -95,6 +96,12 @@ def run_single_targets(
     (``render_plan_summary``: identity, spec path, runtime/image,
     workdir + backed-by-bind check, model). Either way the refusal
     without ``--yes``/``-y`` is unchanged.
+
+    ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
+    ``--resume`` preflight's candidate listing — how many trailing
+    transcript messages to preview per resumable conversation
+    (sac-session-candidates-tail-preview). ``None`` defers to the
+    module default.
     """
 
     def _emit_json(payload: dict) -> None:
@@ -255,7 +262,12 @@ def run_single_targets(
                         else (spec_host or None)
                     )
                     is_remote = bool(target_host) and target_host != current_host
-                    preflight_resume_id(config, resume_id, is_remote=is_remote)
+                    preflight_resume_id(
+                        config,
+                        resume_id,
+                        is_remote=is_remote,
+                        tail_lines=tail_lines,
+                    )
                 agent_start(
                     config_path,
                     no_preflight=no_preflight,
