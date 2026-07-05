@@ -1,17 +1,20 @@
-"""Graceful-shutdown coverage for the ``sac listen`` SSE inbox stream.
+"""End-to-end: ``sac listen`` graceful shutdown does not hang on an
+in-flight SSE inbox stream (card ``sac-listen-sigterm-sse-shutdown-hang``).
 
-Card ``sac-listen-sigterm-sse-shutdown-hang``: the per-agent SSE
-inbox-stream handler parks on ``asyncio.Queue.get()`` with no shutdown
-signal, so a SIGTERM graceful shutdown of ``sac listen`` waits on the
-in-flight stream until ``sac listen restart --force`` escalates to
-SIGKILL after 10 s. The fix races ``queue.get()`` against a broker-level
-shutdown Event (:meth:`Broker.get_or_close` / :meth:`Broker.close`) and
-wires a lifespan shutdown-bridge that closes the broker the instant
-uvicorn's ``should_exit`` flips, so in-flight streams cancel promptly.
+Lives under ``tests/integration/`` (real uvicorn server on loopback +
+real ``httpx`` SSE client, no subprocess) rather than the PS-204 mirror
+tree — it exercises the *interaction* of ``_listen/_node_channel`` (the
+SSE handler), ``a2a/_inbox_bus`` (the broker close path), and
+``_lifecycle/_listen_lifespan`` (the shutdown bridge), not one src module.
 
-All real primitives — a real :class:`Broker`, a real ``asyncio.Queue``,
-and (for the end-to-end case) a real uvicorn server driven over loopback
-TCP with a real ``httpx`` SSE client. No mocks (PA-306).
+Root cause it guards against: the SSE handler used to park on
+``await queue.get()`` with no shutdown signal, so uvicorn's graceful
+shutdown (which waits for in-flight requests) hung until
+``sac listen restart --force`` escalated to SIGKILL after 10 s. The fix
+races ``queue.get()`` against a broker shutdown Event and closes the
+broker the instant uvicorn's ``should_exit`` flips.
+
+All real primitives — no mocks (PA-306).
 """
 
 from __future__ import annotations
@@ -31,142 +34,8 @@ import uvicorn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container.a2a._inbox_bus import Broker
 
 TOKEN = "test-token-shutdown-sse"
-
-
-# --- Broker-level unit tests (pure asyncio, no server) ----------------------
-
-
-async def _park_then_probe_done() -> bool:
-    """Park a ``get_or_close`` on an idle+open broker; report whether it
-    completed (it must not)."""
-    broker = Broker()
-    q = await broker.subscribe("alice")
-    waiter = asyncio.ensure_future(broker.get_or_close(q))
-    await asyncio.sleep(0.15)
-    done = waiter.done()
-    waiter.cancel()
-    with contextlib.suppress(BaseException):
-        await waiter
-    return done
-
-
-async def _close_then_collect_result() -> object:
-    """Park a ``get_or_close``, then ``close()`` the broker and return
-    whatever the parked call resolves to."""
-    broker = Broker()
-    q = await broker.subscribe("alice")
-    waiter = asyncio.ensure_future(broker.get_or_close(q))
-    await asyncio.sleep(0.1)
-    broker.close()
-    return await asyncio.wait_for(waiter, timeout=1.0)
-
-
-async def _close_then_measure_unblock_seconds() -> float:
-    """Park a ``get_or_close``, ``close()``, and return the seconds it
-    took to unblock."""
-    broker = Broker()
-    q = await broker.subscribe("alice")
-    waiter = asyncio.ensure_future(broker.get_or_close(q))
-    await asyncio.sleep(0.1)
-    t0 = time.monotonic()
-    broker.close()
-    await asyncio.wait_for(waiter, timeout=1.0)
-    return time.monotonic() - t0
-
-
-async def _deliver_pending_event() -> object:
-    """A queued event must be returned by ``get_or_close`` (not dropped)."""
-    broker = Broker()
-    q = await broker.subscribe("alice")
-    await q.put({"msg_id": "m1", "content": "hi"})
-    return await asyncio.wait_for(broker.get_or_close(q), timeout=1.0)
-
-
-async def _result_when_already_closed() -> object:
-    """``get_or_close`` on an already-closed broker resolves at once."""
-    broker = Broker()
-    q = await broker.subscribe("alice")
-    broker.close()
-    return await asyncio.wait_for(broker.get_or_close(q), timeout=1.0)
-
-
-def test_get_or_close_blocks_while_idle_and_open() -> None:
-    # Arrange
-    scenario = _park_then_probe_done()
-    # Act
-    completed = asyncio.run(scenario)
-    # Assert
-    assert completed is False
-
-
-def test_get_or_close_returns_none_when_broker_closes() -> None:
-    # Arrange
-    scenario = _close_then_collect_result()
-    # Act
-    result = asyncio.run(scenario)
-    # Assert
-    assert result is None
-
-
-def test_get_or_close_unblocks_within_bounded_time_on_close() -> None:
-    # Arrange
-    scenario = _close_then_measure_unblock_seconds()
-    # Act
-    elapsed = asyncio.run(scenario)
-    # Assert
-    assert elapsed < 0.5
-
-
-def test_get_or_close_delivers_a_pending_event() -> None:
-    # Arrange
-    scenario = _deliver_pending_event()
-    # Act
-    event = asyncio.run(scenario)
-    # Assert
-    assert event == {"msg_id": "m1", "content": "hi"}
-
-
-def test_get_or_close_returns_none_immediately_if_already_closed() -> None:
-    # Arrange
-    scenario = _result_when_already_closed()
-    # Act
-    result = asyncio.run(scenario)
-    # Assert
-    assert result is None
-
-
-def test_broker_is_not_closing_before_close() -> None:
-    # Arrange
-    broker = Broker()
-    # Act
-    closing = broker.is_closing()
-    # Assert
-    assert closing is False
-
-
-def test_close_sets_is_closing_true() -> None:
-    # Arrange
-    broker = Broker()
-    # Act
-    broker.close()
-    # Assert
-    assert broker.is_closing() is True
-
-
-def test_close_is_idempotent() -> None:
-    # Arrange
-    broker = Broker()
-    # Act
-    broker.close()
-    broker.close()
-    # Assert
-    assert broker.is_closing() is True
-
-
-# --- End-to-end: real uvicorn daemon shutdown does not hang on SSE ----------
 
 
 @pytest.fixture
