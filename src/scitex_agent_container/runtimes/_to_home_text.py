@@ -10,23 +10,12 @@ the orchestrator module.
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._to_home_errors import WorkspaceCLAUDEMarkerError
-
-try:  # pragma: no cover - trivial import shim
-    import tomllib  # Python >= 3.11 stdlib
-except ModuleNotFoundError:  # pragma: no cover - py3.10 fallback
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:  # pragma: no cover - tomli not installed either
-        tomllib = None  # type: ignore[assignment]
-
-logger = logging.getLogger(__name__)
 
 END_MARKER = "<!-- End of scitex-agent-container generated section -->"
 START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
@@ -51,19 +40,27 @@ START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 # rule below covers ``CCT_AGENT_ID`` / ``CCT_BOT_TOKEN`` /
 # ``CCT_ALLOWED_USERS`` / ``CCT_STATE_DIR`` and any future ``CCT_*`` var.
 #
-# DEPRECATED — pending migration (INCIDENT 2026-07-05, operator /incident):
-# hardcoding OTHER packages' exact env-var names here is a separation-of-
-# concerns violation — sac has no business knowing scitex-todo's or
-# claude-code-telegrammer's internal identity-var naming. The generic,
-# non-hardcoded replacement is :func:`_load_project_runtime_only_vars`,
-# which reads a per-project opt-in manifest from that project's OWN
-# ``pyproject.toml`` (``[tool.sac] runtime_only_env_vars = [...]``). This
-# frozenset is kept as-is (additive-only fix) so nothing regresses for
-# packages that haven't added the manifest yet — DO NOT delete entries from
-# here until the owning package (scitex-todo, etc.) has shipped the
-# ``[tool.sac]`` table AND a deploy cycle has run against it. Once every
-# known consumer has migrated, a follow-up cleanup PR can shrink/delete this
-# set.
+# DEPRECATED — name-based, pending removal (INCIDENT 2026-07-05, operator
+# /incident): hardcoding OTHER packages' exact env-var names here is a
+# separation-of-concerns violation — sac has no business knowing
+# scitex-todo's or claude-code-telegrammer's internal identity-var naming,
+# and this NAME-based list (plus the ``CCT_`` prefix rule) must eventually go
+# away entirely. The replacement is the ``${RUNTIME:VAR}`` SYNTAX-based
+# escape marker below (see :func:`interpolate_env`): sac recognizes only the
+# ``RUNTIME:`` marker SHAPE, never any variable NAME, and the decision of
+# which vars are runtime-only shifts to the TEMPLATE AUTHOR (each downstream
+# package writes its own ``.mcp.json`` / template files and opts individual
+# ``${VAR}`` refs into ``${RUNTIME:VAR}`` itself).
+#
+# This hardcoded set is kept running IN PARALLEL with the new syntax for
+# now — deliberately NOT removed in the same change that introduces
+# ``${RUNTIME:VAR}`` — because removing it here, before downstream packages
+# have migrated their OWN templates to the new escape syntax, would bake
+# these vars as literal values into materialized files (a real regression).
+# DO NOT delete entries from here (or the ``CCT_`` prefix rule) until
+# scitex-todo and claude-code-telegrammer have both shipped templates using
+# ``${RUNTIME:VAR}`` for their identity vars — that migration + removal is a
+# separate follow-up PR.
 _RUNTIME_ONLY_VARS = frozenset(
     {
         # scitex-todo >= 0.7.30 names
@@ -81,76 +78,16 @@ _RUNTIME_ONLY_VARS = frozenset(
 )
 
 
-def _load_project_runtime_only_vars(workdir: str | None) -> frozenset[str]:
-    """Read a project's own opt-in runtime-only env-var manifest.
-
-    Generic replacement for the hardcoded :data:`_RUNTIME_ONLY_VARS`
-    (INCIDENT 2026-07-05): instead of sac's source knowing OTHER packages'
-    exact identity-var names, each downstream package declares its own list
-    in ITS OWN ``pyproject.toml``::
-
-        [tool.sac]
-        runtime_only_env_vars = ["SCITEX_TODO_AGENT_ID", "SCITEX_TODO_TASKS_YAML_SHARED"]
-
-    ``workdir`` is the agent's project root (``AgentConfig.expanded_workdir``
-    — the same path the apptainer runtime ``cwd``s into, see
-    ``_apptainer_argv_guard.py``). Missing ``workdir``, missing
-    ``pyproject.toml``, a missing/malformed ``[tool.sac]`` table, or no TOML
-    parser available are all EXPECTED, common states for a package that
-    hasn't migrated yet — never raised loud, just logged at DEBUG and
-    treated as an empty contribution.
-    """
-    if not workdir or tomllib is None:
-        return frozenset()
-    pyproject_path = Path(workdir).expanduser() / "pyproject.toml"
-    if not pyproject_path.is_file():
-        return frozenset()
-    try:
-        with open(pyproject_path, "rb") as fh:
-            doc = tomllib.load(fh)
-    except (
-        OSError,
-        tomllib.TOMLDecodeError,
-    ) as exc:  # stx-allow: fallback (reason: not-yet-migrated project is expected)
-        logger.debug(
-            "to_home: could not parse %s for [tool.sac]: %s", pyproject_path, exc
-        )
-        return frozenset()
-    tool_table = doc.get("tool", {})
-    sac_table = tool_table.get("sac", {}) if isinstance(tool_table, dict) else {}
-    if not isinstance(sac_table, dict):
-        logger.debug(
-            "to_home: %s has non-table [tool.sac]; ignoring", pyproject_path
-        )
-        return frozenset()
-    names = sac_table.get("runtime_only_env_vars", [])
-    if not isinstance(names, list):
-        logger.debug(
-            "to_home: %s [tool.sac].runtime_only_env_vars is not a list; ignoring",
-            pyproject_path,
-        )
-        return frozenset()
-    return frozenset(n for n in names if isinstance(n, str))
-
-
-def _is_runtime_only_var(
-    name: str, extra_runtime_only_vars: frozenset[str] = frozenset()
-) -> bool:
+def _is_runtime_only_var(name: str) -> bool:
     """True when ``name`` is per-agent identity → keep as ``${VAR}`` literal.
 
-    Any ``CCT_*`` var is runtime-only (identity + telegram secrets — this
-    prefix rule is a candidate for its own future manifest key, e.g.
-    ``[tool.sac] runtime_only_env_prefixes = ["CCT_"]``, but that
-    generalization is out of scope here), plus the explicit members of
-    :data:`_RUNTIME_ONLY_VARS` (deprecated hardcoded fallback) and
-    ``extra_runtime_only_vars`` (per-project manifest, see
-    :func:`_load_project_runtime_only_vars`).
+    Any ``CCT_*`` var is runtime-only (identity + telegram secrets), plus the
+    explicit members of :data:`_RUNTIME_ONLY_VARS`. Both are DEPRECATED
+    NAME-based mechanisms kept only as a fallback alongside the new
+    SYNTAX-based ``${RUNTIME:VAR}`` escape marker — see the module-level
+    comment on :data:`_RUNTIME_ONLY_VARS` and :func:`interpolate_env`.
     """
-    return (
-        name.startswith("CCT_")
-        or name in _RUNTIME_ONLY_VARS
-        or name in extra_runtime_only_vars
-    )
+    return name.startswith("CCT_") or name in _RUNTIME_ONLY_VARS
 
 
 def validate_marker_invariants(text: str, source_name: str) -> None:
@@ -218,36 +155,58 @@ def extract_user_tail(workspace_path: Path) -> str:
     return existing[idx + len(END_MARKER) :]
 
 
-def interpolate_env(text: str, config: AgentConfig | None = None) -> str:
+# Marker prefix for the SYNTAX-based runtime-only escape form
+# ``${RUNTIME:VAR}`` (INCIDENT 2026-07-05 corrected design — see the
+# module-level comment on :data:`_RUNTIME_ONLY_VARS`). This is a pure
+# ESCAPE SHAPE: sac's ``interpolate_env`` recognizes the ``RUNTIME:`` marker
+# and never inspects, branches on, or needs to know the variable NAME
+# wrapped inside it. The decision of WHICH vars are runtime-only lives
+# entirely with the TEMPLATE AUTHOR — a downstream package (scitex-todo,
+# claude-code-telegrammer, ...) writes its own ``.mcp.json`` / template
+# files and opts individual ``${VAR}`` refs into ``${RUNTIME:VAR}`` itself,
+# with zero sac-side knowledge of what that var is for. A matched
+# ``${RUNTIME:VAR}`` collapses to plain ``${VAR}`` in the materialized
+# output — unchanged from what downstream runtime tooling (direnv / the
+# agent's own ``.envrc``) already expects to expand at container boot.
+_RUNTIME_ESCAPE_PREFIX = "RUNTIME:"
+
+# Matches EITHER the runtime-escape form ``${RUNTIME:VAR}`` (group
+# "escaped") OR a plain substitution ref ``${VAR}`` (group "plain"). Order
+# matters only in that both alternatives are tried per match; the escape
+# form is checked first since it is the more specific shape.
+_ENV_REF_RE = re.compile(r"\$\{RUNTIME:(?P<escaped>\w+)\}|\$\{(?P<plain>\w+)\}")
+
+
+def interpolate_env(text: str) -> str:
     """Substitute ``${VAR}`` with ``os.environ[VAR]``, leaving unknown
     refs untouched (so an unset env var becomes a visible artefact
     rather than silently collapsing to empty string).
 
-    Per-agent IDENTITY vars (see :data:`_RUNTIME_ONLY_VARS`, the ``CCT_``
-    prefix rule, and — when ``config`` is supplied — that agent project's
-    own ``[tool.sac].runtime_only_env_vars`` manifest via
-    :func:`_load_project_runtime_only_vars`) are NEVER substituted here —
-    they stay as literal ``${VAR}`` for RUNTIME expansion from the agent's
-    own env, regardless of whether they happen to be present in the
-    deployer's ``os.environ``. This is the fix for the 2026-07-02
-    wrong-identity incident (see the module header on
-    ``_RUNTIME_ONLY_VARS``); the ``config`` parameter is the 2026-07-05
-    follow-up that lets a project declare its own runtime-only vars instead
-    of sac hardcoding them.
+    Two mechanisms keep a ref from being substituted here, so it survives
+    as a literal ``${VAR}`` for RUNTIME expansion from the agent's own env
+    instead (the fix for the 2026-07-02 wrong-identity incident):
+
+    1. **SYNTAX-based (current, preferred)** — the template author writes
+       ``${RUNTIME:VAR}`` instead of ``${VAR}``. Recognized purely by
+       shape; sac never inspects the variable name. See
+       :data:`_RUNTIME_ESCAPE_PREFIX`.
+    2. **NAME-based (deprecated fallback, still active)** — :data:`_RUNTIME_ONLY_VARS`
+       and the ``CCT_`` prefix rule via :func:`_is_runtime_only_var`. Kept
+       running IN PARALLEL with mechanism 1 until every known downstream
+       template has migrated to ``${RUNTIME:VAR}``; removal is a separate
+       follow-up PR (see the module header on ``_RUNTIME_ONLY_VARS``).
     """
-    extra_runtime_only_vars = (
-        _load_project_runtime_only_vars(getattr(config, "expanded_workdir", None))
-        if config is not None
-        else frozenset()
-    )
 
     def _replace(m: re.Match) -> str:
-        name = m.group(1)
-        if _is_runtime_only_var(name, extra_runtime_only_vars):
+        escaped_name = m.group("escaped")
+        if escaped_name is not None:
+            return "${" + escaped_name + "}"  # collapse marker to plain ${VAR}
+        name = m.group("plain")
+        if _is_runtime_only_var(name):
             return m.group(0)  # keep ${VAR} literal for runtime expansion
         return os.environ.get(name, m.group(0))
 
-    return re.sub(r"\$\{(\w+)\}", _replace, text)
+    return _ENV_REF_RE.sub(_replace, text)
 
 
 def interpolate_metadata(text: str, config: AgentConfig) -> str:

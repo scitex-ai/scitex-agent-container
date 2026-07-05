@@ -7,13 +7,14 @@ sac-mcp-json-per-agent-identity-not-ambient-env). Non-identity vars are
 still substituted from ``os.environ`` (regression guard against
 over-denylisting).
 
-Also covers the 2026-07-05 follow-up: a per-project opt-in manifest
-(``[tool.sac] runtime_only_env_vars`` in that project's OWN
-``pyproject.toml``) that lets downstream packages declare their own
-identity vars instead of sac hardcoding them (see
-:func:`_load_project_runtime_only_vars`). The hardcoded
-``_RUNTIME_ONLY_VARS`` set is kept as a deprecated fallback — both paths
-must keep working.
+Also covers the 2026-07-05 corrected design: a SYNTAX-based escape marker
+``${RUNTIME:VAR}`` that ``interpolate_env`` recognizes purely by SHAPE, with
+zero name-based logic — the decision of which vars are runtime-only shifts
+to the template author, who opts individual ``${VAR}`` refs into
+``${RUNTIME:VAR}`` in their OWN template files. The deprecated NAME-based
+fallback (``_RUNTIME_ONLY_VARS`` / the ``CCT_`` prefix rule) is kept running
+IN PARALLEL for now (see the module header in ``_to_home_text.py``) — both
+mechanisms must keep working until downstream templates migrate.
 
 STX-NM002: no mocks/monkeypatch — env mutated via the ``env_save_restore``
 fixture (auto-reverts on teardown).
@@ -22,14 +23,10 @@ STX-TQ002 / TQ007: AAA markers per test, one fact per test.
 
 from __future__ import annotations
 
-from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.runtimes._to_home_text import (
-    _load_project_runtime_only_vars,
-    interpolate_env,
-)
+from scitex_agent_container.runtimes._to_home_text import interpolate_env
 
 
-# interpolate_env — per-agent identity stays literal
+# interpolate_env — per-agent identity stays literal (deprecated NAME-based fallback)
 def test_interpolate_env_keeps_cct_agent_id_literal_even_when_set(env_save_restore):
     # Arrange
     env_save_restore.set("CCT_AGENT_ID", "scitex-agent-container")
@@ -91,105 +88,57 @@ def test_interpolate_env_leaves_unset_non_identity_var_literal(env_save_restore)
     assert out == "v=${SAC_TEST_DEFINITELY_UNSET_VAR}"
 
 
-# _load_project_runtime_only_vars — per-project [tool.sac] manifest
-def test_load_project_runtime_only_vars_reads_declared_names(tmp_path):
-    # Arrange
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.sac]\nruntime_only_env_vars = ["MYPKG_AGENT_ID", "MYPKG_TOKEN"]\n'
-    )
-    # Act
-    out = _load_project_runtime_only_vars(str(tmp_path))
-    # Assert
-    assert out == frozenset({"MYPKG_AGENT_ID", "MYPKG_TOKEN"})
-
-
-def test_load_project_runtime_only_vars_missing_pyproject_is_empty(tmp_path):
-    # Arrange: no pyproject.toml written at all.
-    # Act
-    out = _load_project_runtime_only_vars(str(tmp_path))
-    # Assert
-    assert out == frozenset()
-
-
-def test_load_project_runtime_only_vars_missing_tool_sac_table_is_empty(tmp_path):
-    # Arrange
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "mypkg"\n')
-    # Act
-    out = _load_project_runtime_only_vars(str(tmp_path))
-    # Assert
-    assert out == frozenset()
-
-
-def test_load_project_runtime_only_vars_malformed_toml_is_empty(tmp_path):
-    # Arrange
-    (tmp_path / "pyproject.toml").write_text("this is not [valid toml")
-    # Act
-    out = _load_project_runtime_only_vars(str(tmp_path))
-    # Assert
-    assert out == frozenset()
-
-
-def test_load_project_runtime_only_vars_non_list_value_is_empty(tmp_path):
-    # Arrange
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.sac]\nruntime_only_env_vars = "not-a-list"\n'
-    )
-    # Act
-    out = _load_project_runtime_only_vars(str(tmp_path))
-    # Assert
-    assert out == frozenset()
-
-
-def test_load_project_runtime_only_vars_no_workdir_is_empty():
-    # Arrange: no workdir at all (None).
-    # Act
-    out = _load_project_runtime_only_vars(None)
-    # Assert
-    assert out == frozenset()
-
-
-# interpolate_env — per-project manifest vars stay literal (regression)
-def test_interpolate_env_keeps_project_manifest_var_literal_even_when_set(
-    tmp_path, env_save_restore
+# interpolate_env — ${RUNTIME:VAR} SYNTAX-based escape marker (2026-07-05
+# corrected design). Recognized by SHAPE only: works for ANY variable name,
+# including names sac has never heard of, proving there is no name-based
+# branching involved.
+def test_interpolate_env_runtime_escape_collapses_to_plain_var_literal(
+    env_save_restore,
 ):
-    # Arrange
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.sac]\nruntime_only_env_vars = ["MYPKG_AGENT_ID"]\n'
-    )
-    config = AgentConfig(name="x", workdir=str(tmp_path))
-    env_save_restore.set("MYPKG_AGENT_ID", "wrong-identity")
+    # Arrange: an arbitrary var name NOT in any hardcoded list, unset.
+    env_save_restore.delete("MYPKG_ARBITRARY_IDENTITY_VAR")
     # Act
-    out = interpolate_env("agent=${MYPKG_AGENT_ID}", config)
-    # Assert
-    assert out == "agent=${MYPKG_AGENT_ID}"
+    out = interpolate_env("agent=${RUNTIME:MYPKG_ARBITRARY_IDENTITY_VAR}")
+    # Assert: collapses to plain ${VAR} for the container's own runtime expansion.
+    assert out == "agent=${MYPKG_ARBITRARY_IDENTITY_VAR}"
 
 
-def test_interpolate_env_still_honors_hardcoded_fallback_with_config(
-    tmp_path, env_save_restore
+def test_interpolate_env_runtime_escape_never_substitutes_even_when_set(
+    env_save_restore,
 ):
-    # No [tool.sac] manifest in this project — existing hardcoded
-    # _RUNTIME_ONLY_VARS entries must still be protected (no regression).
+    # Proves shape-based recognition: this name is unknown to sac (not in
+    # _RUNTIME_ONLY_VARS, no CCT_ prefix) yet the escape marker still wins
+    # over substitution purely because of the ${RUNTIME:...} shape.
     # Arrange
-    config = AgentConfig(name="x", workdir=str(tmp_path))
-    env_save_restore.set("SCITEX_TODO_AGENT_ID", "wrong-identity")
+    env_save_restore.set("MYPKG_ARBITRARY_IDENTITY_VAR", "wrong-deploy-time-value")
     # Act
-    out = interpolate_env("agent=${SCITEX_TODO_AGENT_ID}", config)
+    out = interpolate_env("agent=${RUNTIME:MYPKG_ARBITRARY_IDENTITY_VAR}")
+    # Assert
+    assert out == "agent=${MYPKG_ARBITRARY_IDENTITY_VAR}"
+
+
+def test_interpolate_env_runtime_escape_works_for_hardcoded_name_too(
+    env_save_restore,
+):
+    # The new syntax mechanism is independent of the deprecated name list —
+    # it also works for a name that happens to already be hardcoded.
+    # Arrange
+    env_save_restore.set("SCITEX_TODO_AGENT_ID", "wrong-deploy-time-value")
+    # Act
+    out = interpolate_env("agent=${RUNTIME:SCITEX_TODO_AGENT_ID}")
     # Assert
     assert out == "agent=${SCITEX_TODO_AGENT_ID}"
 
 
-def test_interpolate_env_substitutes_non_identity_var_with_config(
-    tmp_path, env_save_restore
+def test_interpolate_env_plain_var_form_unaffected_by_escape_marker_support(
+    env_save_restore,
 ):
-    # A project manifest present but the var in question isn't in it —
-    # still substitutes normally.
+    # A plain (non-escaped) ${VAR} for a normal, non-identity var must keep
+    # substituting exactly as before — the new alternation in the regex
+    # must not change existing plain-form behavior.
     # Arrange
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.sac]\nruntime_only_env_vars = ["MYPKG_AGENT_ID"]\n'
-    )
-    config = AgentConfig(name="x", workdir=str(tmp_path))
     env_save_restore.set("SAC_TEST_NON_IDENTITY_VAR", "expanded-value")
     # Act
-    out = interpolate_env("v=${SAC_TEST_NON_IDENTITY_VAR}", config)
+    out = interpolate_env("v=${SAC_TEST_NON_IDENTITY_VAR}")
     # Assert
     assert out == "v=expanded-value"
