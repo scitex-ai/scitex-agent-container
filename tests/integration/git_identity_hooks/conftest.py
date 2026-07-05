@@ -2,8 +2,14 @@
 
 Drives the real ``enforce_commit_author_allowlist.sh`` shell hook against
 real ephemeral git repos (no mocks, no patches) — the fleet rule for hook
-tests. The script is resolved by package-relative path so a refactor of
-the asset location is caught at collection time, not at spawn time.
+tests. The script is a ``.sh`` asset with no ``.py`` source counterpart,
+so — like the ``_real.py`` integration pattern (see
+``02_package/06_project-structure-tests.md``) — these tests live under
+``tests/integration/`` to stay OUT of PS-204's ``tests/<pkg>/`` mirror
+scope while ``pytest tests/`` still collects and runs them.
+
+The hook is resolved by repo-relative path so a refactor of the asset
+location is caught at collection time, not at spawn time.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ from typing import Iterator
 import pytest
 
 HOOK_DIR = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[3]
     / "src"
     / "scitex_agent_container"
     / "_baseline_assets"

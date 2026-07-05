@@ -6,6 +6,10 @@ its commits were authored ``agent@scitex-hpc``, mapping to no allowlisted
 GitHub account). These tests drive the real shell hook against real
 ephemeral git repos — no mocks — and assert the block/allow decision plus
 the shape of the actionable message.
+
+Located under ``tests/integration/`` (not ``tests/<pkg>/``) because the
+hook is a ``.sh`` asset with no ``.py`` source to mirror; PS-204 only
+scans the ``tests/<pkg>/`` mirror tree.
 """
 
 from __future__ import annotations
