@@ -1,19 +1,23 @@
 """Resolve a repo → the owning agent for CI-verdict delivery (sac #404).
 
 feedback.pdf §3 + scitex-dev handoff (2026-06-17): when sac polls a CI
-verdict it must deliver it to the agent that owns the repo. Resolution
-order (dev-confirmed — most authoritative + sac-local first):
+verdict it must deliver it to the agent that owns the repo. Ownership is
+SAC'S OWN DATA — every agent spec already names its target repo — so sac
+answers "which agent owns this failing repo" entirely from its OWN
+agent-spec registry, with no read of any external task store.
+
+Resolution order (sac-local first):
 
   1. PRIMARY — sac's own agent specs ``<agents_dir>/*/spec.yaml``:
      ``metadata.labels.project`` matched against the repo basename. The
      returned owner is the agent's directory name (the canonical
      ``sac agents`` name that :func:`peer.post_turn` resolves).
-  2. tasks.yaml — a task whose ``repo`` matches → its ``agent``/``assignee``.
-  3. FALLBACK — a ``Owner: <agent>`` line in the PR body.
+  2. FALLBACK — a ``Owner: <agent>`` line in the PR body (a per-PR
+     override for a repo that has no owning agent spec).
 
-All reads are fail-soft (a malformed spec / tasks file contributes
-nothing) so one bad row never blocks delivery to a resolvable owner.
-``None`` means "no owner found" → the caller skips delivery for that PR.
+All reads are fail-soft (a malformed spec contributes nothing) so one
+bad row never blocks delivery to a resolvable owner. ``None`` means "no
+owner found" → the caller skips delivery for that PR.
 """
 
 from __future__ import annotations
@@ -33,35 +37,6 @@ def _default_agents_dir() -> Path:
     return Path.home() / ".scitex" / "agent-container" / "agents"
 
 
-# Generic, sac-owned env var naming the card-store path. Read FIRST so an
-# operator can point sac at any card store without sac knowing which
-# package owns it.
-ENV_CARD_STORE = "SAC_CARD_STORE"
-# DEPRECATED — legacy fallback; remove once every environment sets
-# ``SAC_CARD_STORE``. Kept so environments still exporting the old
-# scitex-todo-specific var don't break.
-ENV_CARD_STORE_LEGACY = "SCITEX_TODO_TASKS_YAML_SHARED"
-
-
-def _default_tasks_path() -> Path:
-    """Resolve the card-store path: generic sac var → legacy var → default.
-
-    NOTE (known follow-up): sac still PARSES the card-store YAML format
-    (``{"tasks": [...]}`` with per-task ``repo``/``agent``/``assignee``)
-    below in :func:`_owner_from_tasks` to resolve CI owners — a deeper,
-    format-level coupling to scitex-todo's schema. Only the PATH SOURCE
-    (env-var name) is genericized here; the format coupling is
-    out-of-scope and load-bearing."""
-    env = os.environ.get(ENV_CARD_STORE)
-    if env:
-        return Path(env).expanduser()
-    # DEPRECATED fallback — legacy scitex-todo-specific env var.
-    legacy = os.environ.get(ENV_CARD_STORE_LEGACY)
-    if legacy:
-        return Path(legacy).expanduser()
-    return Path.home() / ".scitex" / "todo" / "tasks.yaml"
-
-
 def _owner_from_agent_specs(basename: str, agents_dir: Path) -> str | None:
     if not agents_dir.is_dir():
         return None
@@ -78,26 +53,6 @@ def _owner_from_agent_specs(basename: str, agents_dir: Path) -> str | None:
     return None
 
 
-def _owner_from_tasks(basename: str, tasks_path: Path) -> str | None:
-    if not tasks_path.is_file():
-        return None
-    import yaml
-
-    try:
-        doc = yaml.safe_load(tasks_path.read_text()) or {}
-    except Exception:  # stx-allow: fallback (unreadable tasks store → no owner here)
-        return None
-    for task in doc.get("tasks", []) or []:
-        if not isinstance(task, dict):
-            continue
-        repo = str(task.get("repo", "")).strip()
-        if repo and _repo_basename(repo) == basename:
-            owner = task.get("agent") or task.get("assignee")
-            if isinstance(owner, str) and owner.strip():
-                return owner.strip()
-    return None
-
-
 def _owner_from_pr_body(pr_body: str) -> str | None:
     m = _OWNER_LINE.search(pr_body)
     return m.group(1) if m else None
@@ -108,25 +63,21 @@ def resolve_owner(
     *,
     pr_body: str | None = None,
     agents_dir: Path | None = None,
-    tasks_path: Path | None = None,
 ) -> str | None:
     """Resolve ``repo`` → owning agent name, or ``None`` if unresolvable.
 
-    See module docstring for the (spec → tasks.yaml → PR ``Owner:``)
-    precedence. ``agents_dir`` / ``tasks_path`` are injection seams for
-    tests; production callers leave them ``None`` to use the canonical
-    host locations.
+    See module docstring for the (agent-spec → PR ``Owner:``) precedence.
+    Resolution is entirely from sac's own agent-spec registry; no external
+    task store is read. ``agents_dir`` is an injection seam for tests;
+    production callers leave it ``None`` to use the canonical host
+    location.
     """
     basename = _repo_basename(repo)
     if not basename:
         return None
     agents_dir = agents_dir if agents_dir is not None else _default_agents_dir()
-    tasks_path = tasks_path if tasks_path is not None else _default_tasks_path()
 
     owner = _owner_from_agent_specs(basename, agents_dir)
-    if owner:
-        return owner
-    owner = _owner_from_tasks(basename, tasks_path)
     if owner:
         return owner
     if pr_body:
@@ -165,8 +116,6 @@ def tracked_repos(*, agents_dir: Path | None = None, org: str | None = None) -> 
 
 
 __all__ = [
-    "ENV_CARD_STORE",
-    "ENV_CARD_STORE_LEGACY",
     "resolve_owner",
     "tracked_repos",
 ]

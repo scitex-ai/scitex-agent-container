@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import timezone
 from pathlib import Path
@@ -70,9 +71,17 @@ HOOKS_ENTRY_POINT_GROUP = "scitex_todo.hooks"
 
 
 def _default_tasks_path() -> Path:
-    from .._lifecycle._ci_owner import _default_tasks_path as _p
+    """Resolve the scitex-todo card-store path this reconciler reads.
 
-    return _p()
+    This is the load-bearing scitex-todo handoff (the liveness-tick reads
+    OPEN cards as truth); scitex-todo owns this path, so the legacy
+    ``SCITEX_TODO_TASKS_YAML_SHARED`` env var and the on-disk default live
+    HERE (not in ``_ci_owner``, whose CI-owner lookup is now sac-local).
+    Removed once scitex-todo takes over the stuck-card reconciliation."""
+    env = os.environ.get("SCITEX_TODO_TASKS_YAML_SHARED")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".scitex" / "todo" / "tasks.yaml"
 
 
 def _load_tasks_doc(tasks_path: Path) -> dict:
