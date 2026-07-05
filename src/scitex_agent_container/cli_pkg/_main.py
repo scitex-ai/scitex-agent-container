@@ -48,7 +48,7 @@ COMMAND_CATEGORIES = [
     ("Build & Install", ["image", "installation"]),
     ("Diagnostics", ["doctor"]),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["mcp", "list-python-apis", "skills"]),
+    ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -90,6 +90,10 @@ class _MainGroup(LazyGroup):
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
+        # scitex-* version introspection across sac's base + overlay layers
+        # (drift-report aggregation surface for scitex-dev ecosystem
+        # check-versions — the 2 layers only sac can see).
+        "versions": f"{_PKG}.versions_cmds:versions",
     }
 
     # Tracks whether scitex_dev._cli._completion has been attached.

@@ -372,6 +372,21 @@ From: ubuntu:24.04
     # Fail loud if the build did not produce a working binary.
     /opt/cargo/bin/rtk --version
 
+    # ---- 8. Bake the scitex-* version manifest (`sac versions`) --------
+    # `sac versions --json` reads this baked manifest (source="manifest",
+    # near-zero cost — a `cat`, not a full `pip list`) so scitex-dev's
+    # ecosystem drift aggregator can see the base-image venv layer cheaply.
+    # The verb falls back to a live `apptainer exec <sif> pip list` when
+    # this file is absent (older images not yet rebuilt), so shipping it is
+    # purely additive. Filtered to the scitex-* ecosystem packages; written
+    # in pip's own `--format=json` shape so the reader parses both paths
+    # identically. Pure pipe + `python -c` (dash-safe — apptainer %post runs
+    # under /bin/sh, which has no bash process substitution).
+    /opt/venv-sac/bin/pip list --format=json \
+        | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
+        > /opt/scitex-versions.json
+    cat /opt/scitex-versions.json
+
 %environment
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
