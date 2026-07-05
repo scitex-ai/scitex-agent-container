@@ -40,46 +40,19 @@ time.
 
 ## How `spec.host` resolves — concrete hostname → local or remote
 
-`spec.host` is a CONCRETE canonical hostname; at `sac agents start` time
-sac resolves *where that host is* and picks the launch path. You write the
-machine's name — not `"remote"` vs `"local"` — and sac routes it:
+`spec.host` is a CONCRETE hostname; `sac agents start` resolves *where it is*:
 
-| `spec.host` value | Classifies as | Launch path |
-|---|---|---|
-| `local` or absent | local | local `agent_start` |
-| the current machine's canonical name or a known alias of it | local | local `agent_start` — **byte-for-byte identical** to `host: local` |
-| a peer key from `config.yaml::peers:` (incl. `spartan-*` globs) | remote | remote ssh dispatch (`_dispatch_remote_start`) |
-| anything else — unregistered name / typo | unknown | **never ssh** — falls through to the liveness-gated singleton-skip (defer if live on the pinned host, else start locally) |
+| `spec.host` | Launch path |
+|---|---|
+| `local` / absent, or this machine's canonical name / alias | local `agent_start` (identical to `host: local`) |
+| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch (`_dispatch_remote_start`) |
+| unregistered / typo | never ssh; defers to the liveness-gated singleton-skip |
 
-Resolution consults exactly the two registries an operator already keeps:
-
-1. **The host's own identity** — the canonical name + aliases in
-   `config.yaml::host:` (`host.canonical` / `host.aliases`, plus the
-   `SCITEX_AGENT_CONTAINER_HOSTNAME` / `SAC_HOST` overrides). Any spelling
-   that denotes THIS machine classifies as local.
-2. **The peers registry** — `config.yaml::peers:` (each peer's `ssh:` may be
-   a bare `~/.ssh/config` Host alias). A match that is NOT the local machine
-   classifies as remote.
-
-The local-identity check runs **before** the peer table, so a machine that
-is ALSO registered as a peer so other hosts can reach it (e.g.
-`ywata-note-win: {ssh: localhost}`) is never ssh-dispatched to itself — its
-own canonical name still resolves local. This is what makes the
-concrete-hostname convention safe: `host: ywata-note-win` on
-`ywata-note-win` is the same local launch as `host: local`, while the same
-spec shipped as `host: spartan` dispatches over ssh to the `spartan` peer.
-
-Only a resolved **remote peer** ever reaches ssh. An unknown / unregistered
-host is never silently ssh-dispatched to nowhere; it defers to the existing
-liveness-gated singleton-skip — the agent is skipped when it is verified
-live on its pinned host, otherwise the stale-binding fall-through starts it
-locally (so a mistyped host is never a silent no-op that leaves the agent
-unstarted everywhere).
-
-The resolver lives in
-`cli_pkg/lifecycle/_common.classify_dispatch_host` (pure: concrete host →
-`local` / `remote` / `unknown`); `try_dispatch` dispatches only `remote`
-and returns local-path control for `local` / `unknown`.
+Identity is `config.yaml::host:` (canonical + aliases); peers are
+`config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias). The local check
+precedes the peer table, so a self-registered peer (`ywata-note-win: {ssh:
+localhost}`) is never ssh'd to itself. Resolver:
+`_common.classify_dispatch_host` (`try_dispatch` dispatches only `remote`).
 
 ## YAML — multi-instance, one per peer
 
