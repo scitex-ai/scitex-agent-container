@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from ._host_cwd import resolve_host_cwd
+
 # Inter-keystroke delay inside send_keys() and settle delay before
 # Enter inside send_text_and_submit(). These defeat the race where
 # Claude Code's TUI (Ink / React) hasn't finished rendering the
@@ -104,6 +106,10 @@ class TmuxManager:
         Returns:
             True if the tmux session was created successfully.
         """
+        # Must precede the workdir-relative venv resolution and the shell
+        # script's ``cd`` so all three agree on the effective pane cwd.
+        workdir = resolve_host_cwd(workdir)
+
         venv_activate = ""
         if venv:
             venv_path = Path(venv)
@@ -148,7 +154,6 @@ class TmuxManager:
 
             effective_session_env.update(host_cargo_bin_append_env(os.environ))
 
-        Path(workdir).mkdir(parents=True, exist_ok=True)
         # Build argv with optional ``-e KEY=VAL`` pairs first; bash
         # without ``-l`` so login init files cannot overwrite the
         # tmux-side env. The script's belt-and-suspenders exports
