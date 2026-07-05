@@ -19,8 +19,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from scitex_agent_container._drift import versions as V
 
 # A pip `list --format=json` payload mixing scitex-* and non-scitex rows.
