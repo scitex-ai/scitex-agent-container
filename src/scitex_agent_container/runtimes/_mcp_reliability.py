@@ -42,11 +42,17 @@ CRITICAL_MCP_SERVERS: tuple[str, ...] = (
     "scitex-todo",
 )
 
-# Client MCP startup connect timeout, in milliseconds. 30 s gives the multi-
-# second ``fastmcp`` cold-start (worse on a cold / slow container FS) a wide
-# margin, while still bounding how long ``alwaysLoad`` blocks a genuinely dead
-# server before the session proceeds.
-MCP_STARTUP_TIMEOUT_MS: str = "30000"
+# Client MCP startup connect timeout, in milliseconds. Raised to 120 s
+# (2026-07-07) for the single ``scitex serve`` aggregator: its cold start
+# (matplotlib font-cache build + ~30 heavy scientific peer imports + bounded
+# 8 s hung-peer resolve timeouts) can exceed 30 s on a fresh container home,
+# and under ``alwaysLoad`` a too-short timeout darkens the whole tool surface
+# (the same dark-tool-MCPs failure the aggregator is meant to close). 120 s
+# gives cold starts wide margin while still bounding a genuinely dead server.
+# Revert toward 30 s once the SIF bakes the matplotlib font cache and the
+# hung-import peers (types/resource/orochi) are fixed — both drop the
+# aggregator cold start to a few seconds.
+MCP_STARTUP_TIMEOUT_MS: str = "120000"
 
 # Env var name Claude Code reads for the MCP startup connect timeout.
 MCP_TIMEOUT_ENV_VAR: str = "MCP_TIMEOUT"
