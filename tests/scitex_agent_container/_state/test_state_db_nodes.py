@@ -31,6 +31,7 @@ from scitex_agent_container._state.state_db_nodes import (
     list_comms_grants,
     list_node_tokens,
     mint_node_token,
+    record_comms_policy,
     record_lineage,
     resolve_node_token,
     revoke_send,
@@ -235,6 +236,75 @@ def test_spawn_allowed_deny_reason_explains_lift_able_policy(
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
     assert reason is not None and "lift-able policy" in reason
+
+
+# ---------------------------------------------------------------------------
+# spawn_allowed — group-scoped child allowance (operator 2026-07-06 ACL
+# incident): a developer- OR research-group child may spawn / restart a peer
+# to self-heal a DOWN agent, without waiting on the operator.
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_allowed_allows_developer_group_child(db_path: Path) -> None:
+    """A child in the developer group may spawn (group short-circuit)."""
+    # Arrange
+    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-dev", group_name="developer", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-dev", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_allows_research_group_child(db_path: Path) -> None:
+    """A child in the researcher group may spawn (the incident's case)."""
+    # Arrange
+    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_denies_child_in_neither_group(db_path: Path) -> None:
+    """A child in NEITHER the developer nor research group stays denied."""
+    # Arrange
+    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-gen", db_path=db_path)
+    # Assert
+    assert allowed is False
+
+
+def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
+    """The neither-group deny reason states the new group-scoped policy."""
+    # Arrange
+    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
+    # Assert
+    assert reason is not None and "developer/research group members, may spawn" in reason
+
+
+def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
+    db_path: Path,
+) -> None:
+    """The per-spec may_spawn=false deny survives the group short-circuit."""
+    # Arrange
+    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_comms_policy(
+        name="worker-dev",
+        group_name="developer",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-dev", db_path=db_path)
+    # Assert
+    assert allowed is False
 
 
 # ---------------------------------------------------------------------------
