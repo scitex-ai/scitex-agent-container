@@ -145,11 +145,22 @@ From: ./sac-base.sif
         #   scitex-writer>=2.22.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
+        # scitex-todo >=0.7.38 is floored for a DIFFERENT reason (NOT a
+        # system-deps provider): 0.7.38 carries #338 (the store critical-section
+        # to_thread offload). Below 0.7.38 the ``scitex-todo mcp start`` server
+        # wedges on the ~22s synchronous store write during its MCP init
+        # handshake; with .mcp.json ``alwaysLoad: true`` doing a BLOCKING serial
+        # load, that stalled init cascades and starves sibling tool-MCP servers'
+        # registration too → ToolSearch finds zero tools ("dark tool-MCPs"
+        # incident, 2026-07-06, root-caused on scitex-clew). Flooring here
+        # upgrades past whatever scitex[all] pulls — same OVERRIDE pattern as
+        # the providers, decoupled from the umbrella re-pin.
         uv pip install --python /opt/venv-sac/bin/python \
             "scitex-dev>=0.20.1" \
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-todo>=0.7.38"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -169,11 +180,15 @@ From: ./sac-base.sif
         # install in section 3 can discover every leaf's
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
         # above. Matches this branch's plain ``pip install`` style.
+        # scitex-todo >=0.7.38 floored for the store-wedge #338 fix — see the
+        # uv branch above for the full rationale (MCP-init wedge → alwaysLoad
+        # serial-load cascade → dark tool-MCPs). Same OVERRIDE pattern.
         /opt/venv-sac/bin/pip install --no-cache-dir \
             "scitex-dev>=0.20.1" \
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-todo>=0.7.38"
     fi
 
     # ---- 3. Federated system (apt) deps — SSoT install -----------------
