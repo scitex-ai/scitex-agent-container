@@ -126,14 +126,25 @@ def test_record_lineage_idempotent_no_duplicate_rows(db_path: Path) -> None:
     assert len(rows) == 1
 
 
-def test_record_lineage_re_parent_raises(db_path: Path) -> None:
-    """A child cannot silently switch parents."""
+def test_record_lineage_re_parent_keeps_existing_parent(db_path: Path) -> None:
+    """A re-parent attempt keeps the original parent (no raise, no switch).
+
+    A restart of an existing agent by a different-lineage caller must not
+    be blocked and must not re-parent — the original parent is kept, so
+    identity drift stays impossible while restarts succeed. (No raise is
+    implicit: a raising record_lineage would error this test.)
+    """
     # Arrange
     record_lineage(child="bob", parent="alice", db_path=db_path)
-    # Act
-    # Assert
-    with pytest.raises(ValueError, match="refusing to re-parent"):
-        record_lineage(child="bob", parent="other-root", db_path=db_path)
+    # Act — a different parent must NOT raise; it keeps "alice"
+    record_lineage(child="bob", parent="other-root", db_path=db_path)
+    # Assert — original parent kept, not switched to the new caller
+    conn_ctx = state_db.open_db(db_path)
+    with conn_ctx as conn:
+        row = conn.execute(
+            "SELECT parent_name FROM lineage WHERE child_name='bob'"
+        ).fetchone()
+    assert row["parent_name"] == "alice"
 
 
 # ---------------------------------------------------------------------------
