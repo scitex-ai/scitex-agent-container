@@ -91,9 +91,15 @@ def spec_identity(v3: dict[str, Any]) -> dict[str, Any]:
         elif roles:
             out["role"] = roles
 
-    # responsibilities — prefer the top-level spec list; fall back to a
+    # responsibilities — prefer spec.extensions.responsibilities (the
+    # schema-valid custom-data slot; a bare top-level spec.responsibilities
+    # is rejected by the strict v3 validator). Then a top-level list, then a
     # labels entry (list or CSV) for specs that carry it there instead.
-    responsibilities = as_str_list(spec.get("responsibilities"))
+    extensions = spec.get("extensions")
+    extensions = extensions if isinstance(extensions, dict) else {}
+    responsibilities = as_str_list(extensions.get("responsibilities"))
+    if not responsibilities:
+        responsibilities = as_str_list(spec.get("responsibilities"))
     if not responsibilities:
         responsibilities = as_str_list(labels.get("responsibilities"))
     if responsibilities:
