@@ -66,6 +66,32 @@ def test_listen_env_flags_injects_testmon_cache_root_var(
     )
 
 
+def test_listen_env_flags_injects_mcp_timeout(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — fixtures supply an empty-channel config + sandboxed $HOME.
+    _ = sandboxed_home
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert — the raised MCP startup connect timeout reaches the launch env
+    # (fleet incident 2026-07-06 cold-start race fix).
+    assert "MCP_TIMEOUT=30000" in flags
+
+
+def test_listen_env_flags_mcp_timeout_follows_an_env_token(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    _ = sandboxed_home
+    flags = listen_env_flags(no_bus_config)
+    # Act
+    idx = flags.index("MCP_TIMEOUT=30000")
+    # Assert
+    assert flags[idx - 1] == "--env"
+
+
 def test_listen_env_flags_testmon_var_follows_an_env_token(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
