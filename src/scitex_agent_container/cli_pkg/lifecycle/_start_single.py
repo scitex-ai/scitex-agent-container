@@ -73,6 +73,7 @@ def run_single_targets(
     broker_self: bool = False,
     yes: bool = False,
     verbose: bool = False,
+    tail_lines: int | None = None,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -111,6 +112,12 @@ def run_single_targets(
     host side. Does NOT weaken the human-at-a-TTY default-refuse
     safety net — a real interactive operator invocation never has
     this env var set.
+
+    ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
+    ``--resume`` preflight's candidate listing — how many trailing
+    transcript messages to preview per resumable conversation
+    (sac-session-candidates-tail-preview). ``None`` defers to the
+    module default.
     """
     effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
@@ -272,7 +279,12 @@ def run_single_targets(
                         else (spec_host or None)
                     )
                     is_remote = bool(target_host) and target_host != current_host
-                    preflight_resume_id(config, resume_id, is_remote=is_remote)
+                    preflight_resume_id(
+                        config,
+                        resume_id,
+                        is_remote=is_remote,
+                        tail_lines=tail_lines,
+                    )
                 agent_start(
                     config_path,
                     no_preflight=no_preflight,
