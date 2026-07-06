@@ -15,7 +15,16 @@ from __future__ import annotations
 import logging
 import sys
 
-from ._tools import register_all_tools
+# NOTE: ``register_all_tools`` is deliberately NOT imported at module top
+# level. Importing it here would pull in all nine tool modules (and their
+# ``click.testing`` helper) at ``import scitex_agent_container._mcp`` time —
+# i.e. on the `sac mcp start` cold-start path, BEFORE the stdio handshake.
+# The heavy tool implementations (host_exec / agent-spawn / db / image /
+# template clients) are already lazy-imported inside each tool body; keeping
+# the registration import lazy too means a bare ``import _mcp`` (doctor,
+# list-tools, the package _api surface) stays cheap, and the tool modules are
+# only imported when the server is actually built in ``_build_server``. See
+# ``docs/mcp-cold-start.md`` and the F-CS15 cold-start-race fix.
 
 
 def _ensure_stderr_logging() -> None:
@@ -61,6 +70,10 @@ def _build_server():
             "fastmcp is required for the sac MCP server — "
             "install with `pip install scitex-agent-container[mcp]`"
         ) from exc
+
+    # Lazy tool-module import (cold-start race fix): the nine tool modules are
+    # imported HERE, at build time, rather than at ``import _mcp`` module load.
+    from ._tools import register_all_tools
 
     server = FastMCP(name="scitex-agent-container", instructions=_INSTRUCTIONS)
     register_all_tools(server)

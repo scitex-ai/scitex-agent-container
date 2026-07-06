@@ -29,6 +29,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._mcp_merge import merge_mcp_json
+from ._mcp_reliability import inject_always_load
 from ._to_home_errors import WorkspaceMcpMergeError
 from ._to_home_text import (
     END_MARKER,
@@ -164,6 +165,11 @@ def _deploy_mcp_merge(
         merged = merge_mcp_json(base_doc, overlay_doc)
     else:
         merged = overlay_doc
+    # Cold-start race fix (fleet incident 2026-07-06): stamp ``alwaysLoad:true``
+    # onto the critical stdio MCP servers so Claude Code BLOCKS on startup until
+    # they connect (capped at MCP_TIMEOUT) instead of racing the slow fastmcp
+    # cold-start and running the whole session tool-less. Idempotent + fail-open.
+    inject_always_load(merged)
     dst.write_text(json.dumps(merged, indent=2) + "\n")
     logger.info("to_home: deep-merged .mcp.json %s -> %s", rel, dst)
 

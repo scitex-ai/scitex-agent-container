@@ -104,3 +104,16 @@ def test_non_mcpservers_keys_are_preserved_from_both():
     merged = merge_mcp_json(base, overlay)
     # Assert
     assert merged["_note"] == "baseline"
+
+
+def test_baseline_always_load_survives_overlay_without_it():
+    # Arrange — the cold-start-race fix stamps ``alwaysLoad`` on the baseline
+    # server; an agent overlay that overrides only a leaf (env) must NOT drop
+    # it (fleet incident 2026-07-06 — the merge preserves unknown per-server
+    # fields).
+    base = {"mcpServers": {"scitex-todo": {"command": "st", "alwaysLoad": True}}}
+    overlay = {"mcpServers": {"scitex-todo": {"env": {"X": "1"}}}}
+    # Act
+    merged = merge_mcp_json(base, overlay)
+    # Assert
+    assert merged["mcpServers"]["scitex-todo"]["alwaysLoad"] is True

@@ -68,6 +68,7 @@ def listen_env_flags(config) -> list[str]:
 
     from .._listen._config import listen_base_url
     from ._apptainer_build import _listen_token_path, _read_listen_bearer
+    from ._mcp_reliability import mcp_timeout_env_flags
 
     flags: list[str] = ["--env", f"SAC_LISTEN_BASE_URL={listen_base_url()}"]
 
@@ -144,6 +145,20 @@ def listen_env_flags(config) -> list[str]:
         "--env",
         "SCITEX_GENAI_BASE_URL=http://127.0.0.1:4000/v1",
     ]
+
+    # MCP STARTUP CONNECT TIMEOUT — raise Claude Code's per-server MCP startup
+    # timeout (fleet incident 2026-07-06). The ``sac`` + ``scitex-todo`` stdio
+    # MCP servers pull in ``fastmcp``, whose import alone is multiple seconds on
+    # a cold / slow container FS; Claude Code's default startup cap intermittently
+    # loses that race, and it does NOT auto-reconnect a failed *stdio* MCP — so
+    # the agent then runs its ENTIRE session missing host_exec / agent_spawn /
+    # db_* / the todo tools. ``MCP_TIMEOUT`` is the CLIENT startup-timeout env var
+    # (ms), DISTINCT from the per-server ``timeout`` field (per-tool-call). Paired
+    # with ``alwaysLoad:true`` on those servers (see ``_mcp_reliability``), the
+    # session deterministically WAITS for the (slow) connect. UNCONDITIONAL —
+    # every agent needs it; a generic Claude-Code tooling knob, not coupled to any
+    # scitex-* package.
+    flags += mcp_timeout_env_flags()
 
     # ALWAYS inject the agent-spec search path so the in-container sac
     # resolves peer specs even when the launching env has nothing set.
