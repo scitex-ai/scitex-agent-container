@@ -26,6 +26,9 @@ import pytest
 from scitex_agent_container.runtimes._apptainer_listen_env import (
     listen_env_flags,
 )
+from scitex_agent_container.runtimes._mcp_reliability import (
+    MCP_STARTUP_TIMEOUT_MS,
+)
 
 
 @pytest.fixture
@@ -76,7 +79,7 @@ def test_listen_env_flags_injects_mcp_timeout(
     flags = listen_env_flags(no_bus_config)
     # Assert — the raised MCP startup connect timeout reaches the launch env
     # (fleet incident 2026-07-06 cold-start race fix).
-    assert "MCP_TIMEOUT=30000" in flags
+    assert f"MCP_TIMEOUT={MCP_STARTUP_TIMEOUT_MS}" in flags
 
 
 def test_listen_env_flags_mcp_timeout_follows_an_env_token(
@@ -87,7 +90,7 @@ def test_listen_env_flags_mcp_timeout_follows_an_env_token(
     _ = sandboxed_home
     flags = listen_env_flags(no_bus_config)
     # Act
-    idx = flags.index("MCP_TIMEOUT=30000")
+    idx = flags.index(f"MCP_TIMEOUT={MCP_STARTUP_TIMEOUT_MS}")
     # Assert
     assert flags[idx - 1] == "--env"
 
