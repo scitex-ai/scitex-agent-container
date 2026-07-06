@@ -71,6 +71,7 @@ def preflight_resume_id(
     resume_id: str,
     *,
     is_remote: bool = False,
+    tail_lines: int | None = None,
 ) -> None:
     """Validate an explicit ``--resume`` id; fail loud + informative on miss.
 
@@ -92,10 +93,21 @@ def preflight_resume_id(
 
     ``is_remote`` lets the caller skip the local-store assertion for
     cross-host agents (their conversations are not on this host).
+
+    ``tail_lines`` (CLI ``-n``/``--tail-lines``, ``sac-session-candidates-
+    tail-preview``): how many TRAILING messages of each candidate's
+    transcript to preview in the listing below — more identifying than
+    the opening prompt when picking which conversation to resume. ``None``
+    (the default) defers to :data:`_session_candidates.DEFAULT_TAIL_LINES`.
     """
     from ..._runners._session_candidates import (
+        DEFAULT_TAIL_LINES,
         format_candidates,
         list_session_candidates,
+    )
+
+    effective_tail_lines = (
+        DEFAULT_TAIL_LINES if tail_lines is None else tail_lines
     )
 
     if is_remote:
@@ -128,7 +140,9 @@ def preflight_resume_id(
     from pathlib import Path as _Path
 
     workdir = str(_Path(config.workdir).expanduser())
-    candidates = list_session_candidates(workdir, home=home)
+    candidates = list_session_candidates(
+        workdir, home=home, tail_lines=effective_tail_lines
+    )
     if any(c.session_id == resume_id for c in candidates):
         return  # valid choice — proceed to launch.
 
