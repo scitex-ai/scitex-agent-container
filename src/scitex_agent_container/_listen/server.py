@@ -156,9 +156,9 @@ async def list_agents(_request: Request) -> JSONResponse:
     # Idempotent: self-peer rows that already carry a non-None value
     # keep theirs (the discovery layer is the authoritative source for
     # those).
-    from ._registry_endpoints import enrich_row_with_endpoint
+    from ._registry_endpoints import enrich_row
 
-    rows = [enrich_row_with_endpoint(row) for row in rows]
+    rows = [enrich_row(row) for row in rows]
     return JSONResponse({"agents": rows})
 
 
@@ -224,9 +224,9 @@ async def agent_status(request: Request) -> JSONResponse:
     # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
     # ``a2a_port`` + derived ``turn_url`` so a status poll yields the
     # same endpoint shape ``GET /agents`` does.
-    from ._registry_endpoints import enrich_row_with_endpoint
+    from ._registry_endpoints import enrich_row
 
-    body = enrich_row_with_endpoint(body)
+    body = enrich_row(body)
     return JSONResponse(body)
 
 
