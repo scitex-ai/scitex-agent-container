@@ -108,6 +108,15 @@ def test_spec_identity_reads_responsibilities_from_spec_list() -> None:
     assert identity["responsibilities"] == ["triage CI", "review PRs"]
 
 
+def test_spec_identity_prefers_responsibilities_from_extensions() -> None:
+    # Arrange — spec.extensions.responsibilities is the schema-valid slot.
+    v3 = {"spec": {"extensions": {"responsibilities": ["own X", "own Y"]}}}
+    # Act
+    identity = spec_identity(v3)
+    # Assert
+    assert identity["responsibilities"] == ["own X", "own Y"]
+
+
 def test_spec_identity_responsibilities_fall_back_to_labels_csv() -> None:
     # Arrange — no spec.responsibilities; labels carries a CSV instead.
     v3 = {"metadata": {"labels": {"responsibilities": "a, b"}}, "spec": {}}
