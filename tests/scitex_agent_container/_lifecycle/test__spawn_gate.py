@@ -175,16 +175,17 @@ def test_gate_denies_child_caller_under_root_only_policy(db_path, sac_name) -> N
         enforce_spawn_gate("grandchild")
 
 
-def test_gate_denies_reparent_to_different_caller(db_path, sac_name) -> None:
-    # Arrange — child-f already parented to "root-1"; re-spawn under a
-    # different root must be rejected (identity drift the ACL prevents).
+def test_gate_allows_restart_keeps_existing_parent(db_path, sac_name) -> None:
+    # Arrange — child-f already parented to "root-1"; a restart by a
+    # different-lineage caller must SUCCEED in-place (no re-parent, no
+    # SpawnDeniedError) — the 409 the ACL previously raised is now gone,
+    # so a developer/research peer can restart a down agent.
     record_lineage(child="child-f", parent="root-1", db_path=db_path)
     sac_name("root-2")
-    # Act
-    ctx = pytest.raises(SpawnDeniedError)
-    # Assert
-    with ctx:
-        enforce_spawn_gate("child-f")
+    # Act — must not raise; record_lineage keeps the existing parent
+    result = enforce_spawn_gate("child-f")
+    # Assert — the restart proceeded, returning the resolved caller
+    assert result == "root-2"
 
 
 # ---------------------------------------------------------------------------

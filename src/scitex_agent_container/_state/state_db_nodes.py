@@ -37,6 +37,7 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from pathlib import Path
@@ -49,6 +50,8 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -169,13 +172,13 @@ def record_lineage(
     parent: str,
     db_path: Path | None = None,
 ) -> None:
-    """Record ``parent`` as the parent of ``child``.
+    """Record ``parent`` as ``child``'s parent (keep-first-parent).
 
-    Idempotent — a second call with the same child+parent leaves the
-    row untouched. A different parent for an existing child raises
-    ``ValueError`` (re-parenting is not a quiet operation; a child
-    that "switches groups" is exactly the kind of identity drift the
-    ACL is meant to prevent).
+    Idempotent; a child's parent is set once and immutable. A DIFFERENT
+    parent KEEPS the existing one (logged, not raised) so a restart by a
+    non-original-parent caller works in-place without re-parenting;
+    identity drift stays impossible. Permission is gated upstream by
+    ``check_spawn``.
     """
     if not child or not parent:
         raise ValueError("record_lineage: child and parent must be non-empty")
@@ -188,11 +191,11 @@ def record_lineage(
         if existing is not None:
             if existing["parent_name"] == parent:
                 return  # idempotent no-op
-            raise ValueError(
-                f"record_lineage: child {child!r} already has parent "
-                f"{existing['parent_name']!r}; refusing to re-parent to "
-                f"{parent!r}"
+            _logger.warning(
+                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
+                child, existing["parent_name"], parent,
             )
+            return
         conn.execute(
             "INSERT INTO lineage (child_name, parent_name, created_at) "
             "VALUES (?, ?, ?)",
