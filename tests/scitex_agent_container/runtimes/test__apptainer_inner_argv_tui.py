@@ -1,9 +1,10 @@
-"""TUI ``--resume <id>`` for ``spec.claude.session: resume`` + ``resume_id``.
+"""Tests for ``runtimes/_apptainer_inner_argv_tui.py``.
 
-The interactive TUI argv builder (``_tui_runner_argv``) must translate an
-id-addressed resume pin into ``claude --resume <uuid>`` — mirroring the
-legacy tmux runner — distinct from the bare ``-c`` (latest-for-home)
-continue path. No mocks: the real builder is exercised on a real config.
+Covers the interactive-TUI ``--resume <id>`` branch: ``spec.claude.session:
+resume`` + ``spec.claude.resume_id`` translates to ``claude --resume <uuid>``
+(mirrors the legacy tmux runner), distinct from the bare ``-c``
+(latest-for-home) continue path. No mocks: the real builder is exercised
+on a real config.
 """
 
 from __future__ import annotations
