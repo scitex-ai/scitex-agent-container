@@ -32,14 +32,43 @@ _DEFAULT_LOG_PATH = (
 
 
 def _select_next_account(
-    accounts: list[dict], current_email: str | None
+    accounts: list[dict],
+    current_email: str | None,
+    *,
+    store_dir: Path | None = None,
+    home: Path | None = None,
+    now: float | None = None,
 ) -> dict | None:
-    """Pick the account with lowest 5h usage that isn't the current one."""
+    """Pick the HEALTHY account with lowest 5h usage that isn't the current one.
+
+    Health is credential-snapshot freshness — a non-expired
+    ``claudeAiOauth.expiresAt`` — reusing
+    :func:`.._creds._pick_healthy.account_health` (the same predicate the
+    boot-time picker uses). An account whose stored credential is EXPIRED
+    or ABSENT is NEVER selected, even when its usage reads 0.0%.
+
+    This is the fix for the 2026-07-06 rotation bug: the selector rotated
+    the live account to the EXPIRED account ``ywata1989-gmail-com`` purely
+    because its usage read 0.0%, handing the fleet a dead token. Freshness
+    now gates the candidate set before quota ordering.
+
+    Returns ``None`` when NO healthy non-current candidate exists — the
+    caller must stay put rather than rotate to an unhealthy account.
+    """
+    from .._creds._pick_healthy import account_health
+
     others = [a for a in accounts if a.get("email_address") != current_email]
-    if not others:
+    healthy = [
+        a
+        for a in others
+        if account_health(
+            a.get("name", ""), store_dir=store_dir, home=home, now=now
+        ).is_healthy
+    ]
+    if not healthy:
         return None
-    # Sort by quota_5h_used_pct (None treated as 0 = fresh)
-    return sorted(others, key=lambda a: a.get("quota_5h_used_pct") or 0)[0]
+    # Sort by quota_5h_used_pct (None treated as 0 = fresh) among HEALTHY only.
+    return sorted(healthy, key=lambda a: a.get("quota_5h_used_pct") or 0)[0]
 
 
 def check_and_rotate(
@@ -120,15 +149,25 @@ def check_and_rotate(
                 ),
             }
 
-        next_acct = _select_next_account(accounts, current_email)
+        next_acct = _select_next_account(
+            accounts, current_email, store_dir=store_dir, home=home
+        )
         if next_acct is None:
+            # No HEALTHY non-current candidate. This covers both "only one
+            # account stored" and "every other account's credential is
+            # EXPIRED/ABSENT". Staying put is the safe choice — rotating to
+            # an unhealthy account would hand the fleet a dead token
+            # (the 2026-07-06 expired-account bug). Never rotate here.
             return {
                 "action": "no_accounts",
                 "quota_5h_pct": q5,
                 "quota_7d_pct": q7,
                 "switched_to": None,
                 "message": (
-                    f"ALERT: quota {q5}% (5h) — only one account stored, cannot rotate"
+                    f"ALERT: quota {q5}% (5h) — no HEALTHY account to rotate to "
+                    "(other accounts absent or credential-expired); staying put. "
+                    "Refresh a stored account with `claude /login` + "
+                    "`sac accounts sync-live`."
                 ),
             }
 
