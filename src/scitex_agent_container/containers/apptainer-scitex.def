@@ -145,7 +145,13 @@ From: ./sac-base.sif
         #   scitex-writer>=2.22.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
-        # scitex-todo >=0.7.38 is floored for a DIFFERENT reason (NOT a
+        # scitex-todo >=0.7.32 (TEMP downgrade from 0.7.38: 0.7.38 is NOT yet on
+        # PyPI — max published is 0.7.32 — so a >=0.7.38 floor makes the build
+        # UNSATISFIABLE (uv/pip resolve exit-255). Path B (the `scitex serve`
+        # aggregator) mounts scitex-todo IN-PROCESS and drops the standalone
+        # `scitex-todo mcp start` server, so the #338 wedge cannot occur under
+        # the aggregator → 0.7.32 is safe. Restore >=0.7.38 when it publishes.)
+        # Historical 0.7.38 rationale (NOT a
         # system-deps provider): 0.7.38 carries #338 (the store critical-section
         # to_thread offload). Below 0.7.38 the ``scitex-todo mcp start`` server
         # wedges on the ~22s synchronous store write during its MCP init
@@ -160,7 +166,7 @@ From: ./sac-base.sif
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
-            "scitex-todo>=0.7.38"
+            "scitex-todo>=0.7.32"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -180,7 +186,8 @@ From: ./sac-base.sif
         # install in section 3 can discover every leaf's
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
         # above. Matches this branch's plain ``pip install`` style.
-        # scitex-todo >=0.7.38 floored for the store-wedge #338 fix — see the
+        # scitex-todo >=0.7.32 (TEMP: 0.7.38 unpublished — see uv-branch note;
+        # aggregator moots #338). Historically floored for the store-wedge #338 — see the
         # uv branch above for the full rationale (MCP-init wedge → alwaysLoad
         # serial-load cascade → dark tool-MCPs). Same OVERRIDE pattern.
         /opt/venv-sac/bin/pip install --no-cache-dir \
@@ -188,7 +195,7 @@ From: ./sac-base.sif
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
-            "scitex-todo>=0.7.38"
+            "scitex-todo>=0.7.32"
     fi
 
     # ---- 3. Federated system (apt) deps — SSoT install -----------------
