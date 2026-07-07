@@ -21,12 +21,17 @@ specs (``--containall`` + explicit ``raw_args``) bypass the preflight
 wrapper but still need bus auth, otherwise their adapter can never
 subscribe.
 
-Fail-loud contract: when ``server:sac`` is registered but the bearer
-cannot be resolved, this raises ``RuntimeError`` rather than launching an
-agent whose adapter can never authenticate (the silent wake-on-push
-failure this guard exists to prevent). When ``server:sac`` is absent a
-missing token is harmless (nothing subscribes) — we inject only the base
-URL and log a loud warning.
+Auto-degrade contract: when ``server:sac`` is registered but the bearer
+cannot be resolved (e.g. a Spartan SLURM compute node running a one-shot
+cohort-solver capsule, where there is no per-node ``sac listen``), this
+DROPS ``server:sac`` from the agent's channel set and launches normally
+with the bus disabled — rather than raising and sending the capsule
+supervisor into an infinite fresh-restart loop. A loud warning explains
+the degrade. When ``server:sac`` is absent a missing token is harmless
+(nothing subscribes) — we inject only the base URL and log a warning.
+The ``sac-builtin: "off"`` label remains the pre-existing FULL opt-out
+(see ``config/_loaders.py``); this branch is the graceful fallback for a
+listen-less node that never got the opt-out label.
 """
 
 from __future__ import annotations
@@ -57,8 +62,11 @@ def listen_env_flags(config) -> list[str]:
     are visible in-container via the host-home bind.
 
     Pure except for reading the host token file, config, host env, and
-    host home; raises ``RuntimeError`` when a ``server:sac`` spec has no
-    resolvable bearer.
+    host home, plus one in-place mutation of ``config.claude.channels``
+    on the auto-degrade path (dropping ``server:sac`` when the bus is
+    wanted but no bearer resolves), so downstream inner-argv builders —
+    which read the same ``channels`` list AFTER this helper runs — never
+    register the un-authable bus adapter.
     """
     # Local imports keep these resolvable even if a formatter strips
     # module-level unused imports during a refactor, and avoid a circular
@@ -192,15 +200,30 @@ def listen_env_flags(config) -> list[str]:
     if bearer:
         flags += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
     elif wants_bus:
-        raise RuntimeError(
-            "spec.claude.channels includes 'server:sac' but the bus bearer "
-            f"token file {_listen_token_path()} is absent or empty, so the "
-            "in-container channel adapter could never authenticate to "
-            "`sac listen` (401). Subscriptions would never land and every "
-            "pushed turn would report delivered_subscriber_count=0 — "
-            "refusing to launch an agent whose adapter can never subscribe. "
-            "Start `sac listen` to generate the token, then restart this "
-            "agent."
+        # AUTO-DEGRADE (was: fatal RuntimeError). This node has no
+        # resolvable `sac listen` bearer — e.g. a Spartan SLURM compute
+        # node running a one-shot cohort-solver capsule, where there is no
+        # per-node `sac listen`. Raising here aborted launch, and the
+        # capsule supervisor then restarted straight back into the same
+        # abort → an infinite fresh-restart loop. Instead, DROP `server:sac`
+        # from the channel set so the in-container bus adapter is never
+        # registered (no 401 auth attempt, no message-reader fatal), and
+        # fall through to launch normally with the bus disabled. The
+        # `sac-builtin: "off"` label is the pre-existing FULL opt-out; this
+        # is the graceful fallback for a listen-less node without it.
+        remaining = [c for c in channels if str(c).strip() != "server:sac"]
+        if claude_spec is not None:
+            claude_spec.channels = remaining
+        logger.warning(
+            "SAC_LISTEN_BEARER not injected: bus token file %s is absent, so "
+            "'server:sac' has been DROPPED from this agent's channels — the "
+            "in-container bus adapter is NOT registered and pushed turns are "
+            "disabled. This is the expected auto-degrade on a node with no "
+            "`sac listen` (e.g. a Spartan SLURM compute node running a "
+            "one-shot capsule). Start `sac listen` and restart to re-enable "
+            "the bus, or set the label 'sac-builtin: \"off\"' to opt out "
+            "entirely.",
+            _listen_token_path(),
         )
     else:
         logger.warning(

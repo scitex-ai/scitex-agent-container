@@ -280,6 +280,112 @@ def test_listen_env_flags_direnv_config_follows_an_env_token(
     assert flags[idx - 1] == "--env"
 
 
+@pytest.fixture
+def bus_config() -> SimpleNamespace:
+    """A config whose ``claude.channels`` requests the bus (``server:sac``).
+
+    Used by the listen-less auto-degrade tests: with a bus channel wanted
+    but no bearer token on the node, ``listen_env_flags`` must DROP
+    ``server:sac`` and launch (no longer raise).
+    """
+    return SimpleNamespace(
+        name="cohort-solver",
+        claude=SimpleNamespace(channels=["server:sac", "server:other"]),
+    )
+
+
+@pytest.fixture
+def present_token(sandboxed_home: Path) -> Path:
+    """Materialise a host ``sac listen`` bearer under the sandboxed $HOME.
+
+    Yields the token path so the bearer-PRESENT regression tests exercise
+    the unchanged inject-``server:sac``+bearer path.
+    """
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    path = default_token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("test-bearer-token", encoding="utf-8")
+    return path
+
+
+def test_listen_env_flags_no_raise_when_bus_wanted_but_token_absent(
+    bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — bus wanted (server:sac in channels) + sandboxed $HOME with
+    # NO token file (a listen-less Spartan SLURM compute node).
+    _ = sandboxed_home
+    # Act — must AUTO-DEGRADE, not raise (the old infinite fresh-restart loop).
+    flags = listen_env_flags(bus_config)
+    # Assert — no bearer was injected (there is none to inject).
+    assert not any(f.startswith("SAC_LISTEN_BEARER=") for f in flags)
+
+
+def test_listen_env_flags_drops_server_sac_when_token_absent(
+    bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — bus wanted but no token on this node.
+    _ = sandboxed_home
+    # Act — the helper mutates config.claude.channels in place.
+    listen_env_flags(bus_config)
+    # Assert — server:sac dropped so the inner-argv builders never register
+    # the un-authable bus adapter (other channels untouched).
+    assert "server:sac" not in bus_config.claude.channels
+
+
+def test_listen_env_flags_keeps_other_channels_on_degrade(
+    bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — bus wanted but no token; a non-bus channel is also present.
+    _ = sandboxed_home
+    # Act
+    listen_env_flags(bus_config)
+    # Assert — only server:sac is dropped; unrelated channels survive.
+    assert bus_config.claude.channels == ["server:other"]
+
+
+def test_listen_env_flags_warns_on_bus_degrade(
+    bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange — bus wanted but no token; capture the degrade warning.
+    _ = sandboxed_home
+    # Act
+    with caplog.at_level("WARNING"):
+        listen_env_flags(bus_config)
+    # Assert — the loud warning names the dropped channel.
+    assert any("server:sac" in rec.message for rec in caplog.records)
+
+
+def test_listen_env_flags_injects_bearer_when_token_present(
+    bus_config: SimpleNamespace,
+    present_token: Path,
+) -> None:
+    # Arrange — bus wanted AND a host bearer token is present (token-PRESENT
+    # path must be UNCHANGED: still inject server:sac + bearer).
+    _ = present_token
+    # Act
+    flags = listen_env_flags(bus_config)
+    # Assert — the bearer is injected unchanged.
+    assert "SAC_LISTEN_BEARER=test-bearer-token" in flags
+
+
+def test_listen_env_flags_keeps_server_sac_when_token_present(
+    bus_config: SimpleNamespace,
+    present_token: Path,
+) -> None:
+    # Arrange — bus wanted AND bearer present; server:sac must NOT be dropped.
+    _ = present_token
+    # Act
+    listen_env_flags(bus_config)
+    # Assert — the bus channel survives so the adapter is registered.
+    assert "server:sac" in bus_config.claude.channels
+
+
 def test_listen_env_flags_injects_uv_project_environment(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
