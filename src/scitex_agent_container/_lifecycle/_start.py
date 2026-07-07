@@ -380,6 +380,16 @@ def agent_start(
 
     kill_orphan_mcp_children(config.name)
 
+    # Spec-pinned session resume (``spec.claude.session: resume`` +
+    # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
+    # marker from the pinned uuid — but ONLY when no marker exists yet
+    # (first boot / migration). Must run BEFORE ``runtime.start`` so the
+    # in-container runner sees the seeded id on its first resume attempt.
+    # Seed-if-absent preserves a later SDK fork (see ``_session_seed``).
+    from ._session_seed import seed_pinned_session_id
+
+    seed_pinned_session_id(config, runtime)
+
     # Start — ``force`` is propagated to the runtime. The legacy
     # ``config.remote.no_preflight`` override was retired with
     # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the
