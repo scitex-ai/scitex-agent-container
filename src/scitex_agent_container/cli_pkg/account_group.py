@@ -255,76 +255,23 @@ def account_switch(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# quota-watch — exposed both at top-level (legacy) and under ``account``.
+# mint-token — master-side ACCESS-ONLY credential minting. Lives in its own
+# module (like refresh / sync-live) to keep this file under the per-file
+# line cap; attached onto the group at import time.
 # ---------------------------------------------------------------------------
+from ._account_mint_token import register_mint_token_command
+
+register_mint_token_command(account)
 
 
-@account.command("watch-quota")
-@click.option(
-    "--threshold",
-    default=80.0,
-    show_default=True,
-    help="Rotate when usage exceeds this %.",
-)
-@click.option(
-    "--interval",
-    default=300,
-    show_default=True,
-    help="Check interval in seconds.",
-)
-@click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
-@click.option("--once", is_flag=True, help="Run once instead of looping.")
-@click.option(
-    "--daemon",
-    is_flag=True,
-    help="Double-fork into background (UNIX only). Logs to --log-file.",
-)
-@click.option(
-    "--log-file",
-    default=None,
-    show_default=False,
-    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
-)
-def account_watch_quota(
-    threshold: float,
-    interval: int,
-    dry_run: bool,
-    once: bool,
-    daemon: bool,
-    log_file: str | None,
-) -> None:
-    """Monitor quota and auto-rotate credentials when threshold exceeded.
+# ---------------------------------------------------------------------------
+# quota-watch — exposed both at top-level (legacy `quota_watch`, re-exported
+# below) and under ``account``. Bodies extracted to ``_account_quota_watch``
+# to keep this file under the per-file line cap.
+# ---------------------------------------------------------------------------
+from ._account_quota_watch import quota_watch, register_quota_watch_commands
 
-    \b
-    Examples:
-      $ sac account watch-quota --once
-      $ sac account watch-quota
-      $ sac account watch-quota --daemon
-    """
-    from pathlib import Path
-
-    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
-
-    if once or dry_run:
-        result = check_and_rotate(threshold=threshold, dry_run=dry_run)
-        click.echo(f"[{result['action']}] {result['message']}")
-        sv = survival_mode_check()
-        if sv["survival_mode"]:
-            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
-        return
-
-    log_path = Path(log_file) if log_file else None
-    if daemon:
-        click.echo(
-            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
-            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
-        )
-    run_loop(
-        threshold=threshold,
-        interval=interval,
-        daemon=daemon,
-        log_path=log_path,
-    )
+register_quota_watch_commands(account)
 
 
 # ---------------------------------------------------------------------------
@@ -380,78 +327,6 @@ def account_status(host: str | None, as_json: bool) -> None:
         click.echo(_json.dumps(snapshot, ensure_ascii=False, indent=2))
     else:
         click.echo(format_status_prose(snapshot))
-
-
-@click.command("watch-quota")
-@click.option(
-    "--threshold",
-    default=80.0,
-    show_default=True,
-    help="Rotate when usage exceeds this %.",
-)
-@click.option(
-    "--interval",
-    default=300,
-    show_default=True,
-    help="Check interval in seconds.",
-)
-@click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
-@click.option("--once", is_flag=True, help="Run once instead of looping.")
-@click.option(
-    "--daemon",
-    is_flag=True,
-    help="Double-fork into background (UNIX only). Logs to --log-file.",
-)
-@click.option(
-    "--log-file",
-    default=None,
-    show_default=False,
-    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
-)
-def quota_watch(
-    threshold: float,
-    interval: int,
-    dry_run: bool,
-    once: bool,
-    daemon: bool,
-    log_file: str | None,
-) -> None:
-    """Monitor quota and auto-rotate credentials when threshold exceeded.
-
-    \b
-    Examples:
-      # single check
-      scitex-agent-container watch-quota --once
-      # foreground loop every 5 min
-      scitex-agent-container watch-quota
-      # background daemon
-      scitex-agent-container watch-quota --daemon
-    """
-    from pathlib import Path
-
-    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
-
-    if once or dry_run:
-        result = check_and_rotate(threshold=threshold, dry_run=dry_run)
-        click.echo(f"[{result['action']}] {result['message']}")
-        # Also report survival mode in single-check mode
-        sv = survival_mode_check()
-        if sv["survival_mode"]:
-            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
-        return
-
-    log_path = Path(log_file) if log_file else None
-    if daemon:
-        click.echo(
-            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
-            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
-        )
-    run_loop(
-        threshold=threshold,
-        interval=interval,
-        daemon=daemon,
-        log_path=log_path,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +424,10 @@ def account_quota(json_out: bool, strict: bool) -> None:
             f"7d={round(meta['used_pct_7d'])} percent "
             f"ttl={meta['token_ttl_hours']:.2f}h"
         )
+
+
+# ``quota_watch`` is re-exported (defined in ``_account_quota_watch``) so the
+# lazy entry-point path ``account_group:quota_watch`` in ``_main.py`` keeps
+# resolving after the body was extracted. Named in ``__all__`` so linters do
+# not flag the re-export as an unused import.
+__all__ = ["account", "quota_watch"]
