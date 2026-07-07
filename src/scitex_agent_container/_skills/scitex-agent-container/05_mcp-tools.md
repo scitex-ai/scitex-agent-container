@@ -1,85 +1,55 @@
 ---
 description: |
-  [TOPIC] sac MCP server — exposed tools, transport, install snippet
-  [DETAILS] Convention §3-§5 surface: every `sac mcp <verb>` plus the
-  bare-name MCP tools (`agent_*`, `db_*`, `host_*`, `image_*`,
-  `template_*`, `account_*`, `quota_*`, `skills_*`, `mcp_*`,
-  `list_python_apis`). Both stdio and HTTP transports. Install with
-  `pip install scitex-agent-container[mcp]`.
+  [TOPIC] sac MCP server — how it relates to the CLI, and the gotchas
+  [DETAILS] CLI↔MCP parity (every `sac <noun> <verb>` is an MCP tool of the same shape), install extra, Claude Code config, which verbs mutate state, and where the impl lives. The live tool list is self-describing — call `sac mcp list-tools` (or read the MCP schema); this leaf does NOT re-table it.
 tags: [scitex-agent-container-mcp-tools]
 ---
 
-# sac MCP server
+# sac MCP server — the parity contract
 
-Implements convention §13 (CLI ↔ MCP parity). Every `sac <noun> <verb>`
-on the CLI is reachable as an MCP tool with the same parameter shape.
+Implements convention §13 (CLI ↔ MCP parity): **every `sac <noun>
+<verb>` on the CLI is reachable as an MCP tool with the same parameter
+shape** (bare `<verb>_<noun>` name per Convention A; the scitex
+aggregator adds the `agent_container_` prefix at mount time).
 
-## Install
+Because of that parity, the tool inventory and every tool's parameters
+are self-describing. Get the live list — never a stale hand-copied
+table:
+
+```bash
+sac mcp list-tools [--json]     # or, from the host, read the MCP tool schema
+```
+
+## Install + wire into Claude Code
 
 ```bash
 pip install scitex-agent-container[mcp]   # adds fastmcp
-sac mcp doctor                             # verify
+sac mcp doctor                             # verify registration
+sac mcp install --claude-code             # prints the mcpServers snippet
 ```
 
-## Subcommands (CLI face)
+The Claude Code config just runs `sac mcp start` (stdio; `--http
+--port N` for HTTP transport) as the server command — `sac mcp
+install` emits the exact snippet, so there's nothing to memorize here.
 
-```bash
-sac mcp start                          # stdio (default)
-sac mcp start --http --port 8970       # HTTP transport
-sac mcp doctor                         # version + tool count + registration
-sac mcp list-tools [--json]            # enumerate tools
-sac mcp install [--claude-code]        # config snippet
-```
+## Gotchas
 
-## Claude Code config
+- **Mutating verbs are NOT gated by the server.** `agent_start`,
+  `agent_stop`, `agent_restart`, `db_clean`, `db_export`, `db_import`
+  change state, and the MCP server invokes them unconditionally — the
+  host (Claude Code / your embedder) is expected to mediate via its own
+  permission flow before the call.
+- **No MCP server is bundled with agents.** sac agents spawn their own
+  via `to_home/.mcp.json`; `sac mcp start` is the server you point a
+  host at, not something the runner auto-launches.
 
-```json
-{
-  "mcpServers": {
-    "scitex-agent-container": {
-      "command": "sac",
-      "args": ["mcp", "start"]
-    }
-  }
-}
-```
+## Where it lives (read the code for the how)
 
-`sac mcp install --claude-code` prints the same snippet for copy-paste.
-
-## Tool inventory
-
-Bare-name `<verb>_<noun>` shape per Convention A. The sac umbrella mount
-adds the `agent_container_` prefix at scitex aggregator time.
-
-| Group       | Tools                                                                                                                                                                                                                                  |
-|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `agent`     | `list`, `status`, `logs`, `health`, `find`, `check`, `validate`, `inspect`, `recall`, `check_priority`, `take_snapshot`, `start`, `stop`, `restart`, `attach`                                                                          |
-| `db`        | `show`, `query`, `clean`, `tick`, `migrate`, `export`, `import`                                                                                                                                                                        |
-| `host`      | `list`, `validate`, `probe`, `exec`                                                                                                                                                                                            |
-| `image`     | `build`                                                                                                                                                                                                                                |
-| `template`  | `render_contributor_spec`                                                                                                                                                                                                              |
-| `account`   | `account_show`, `quota_watch`                                                                                                                                                                                                          |
-| `skills`    | `skills_list`, `skills_get` — convention §5 mandatory pair                                                                                                                                                                             |
-| `info`      | `list_python_apis`, `mcp_list_tools`, `mcp_doctor` — self-introspection                                                                                                                                                                |
-
-Get the live list any time with `sac mcp list-tools` (or, from Python,
-`scitex_agent_container._mcp.server.get_server().list_tools()`).
-
-## Implementation pointers
-
-- `src/scitex_agent_container/_mcp/server.py` — `FastMCP` instance,
-  lazy-built so the bare `import` doesn't require fastmcp.
-- `src/scitex_agent_container/_mcp/_tools/` — one file per noun group.
-  Each tool wraps the Click CLI through `_helpers.invoke_cli_*` so
-  CLI ↔ MCP parity stays automatic as new commands land.
-- `src/scitex_agent_container/cli_pkg/mcp_group.py` — Click face
-  (`start / doctor / list-tools / install`).
-- `src/scitex_agent_container/_mcp_server.py` — re-export shim so the
-  scitex-dev `audit-mcp-tools` linter's hard-coded path works.
-
-## Mutating verbs
-
-`agent_start`, `agent_stop`, `agent_restart`, `db_clean`, `db_export`,
-`db_import` mutate state. The MCP server itself does not gate them —
-the host (Claude Code, custom embedder) is expected to mediate via its
-own permission flow before invoking the tool.
+- `_mcp/server.py` — `FastMCP` instance, lazy-built so a bare `import`
+  doesn't require fastmcp.
+- `_mcp/_tools/` — one file per noun group; each tool wraps the Click
+  CLI through `_helpers.invoke_cli_*`, which is *why* parity stays
+  automatic as new commands land.
+- `cli_pkg/mcp_group.py` — the `sac mcp` Click face.
+- `_mcp_server.py` — re-export shim for the scitex-dev
+  `audit-mcp-tools` linter's hard-coded path.

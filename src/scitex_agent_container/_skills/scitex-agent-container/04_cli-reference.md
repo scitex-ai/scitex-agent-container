@@ -1,131 +1,75 @@
 ---
 description: |
-  [TOPIC] sac CLI reference
-  [DETAILS] Lifecycle (start/stop/restart/status/health/tail/recall/check/find), image lifecycle (build/sandbox/update/freeze/list/switch/rollback/status/snapshot — delegates to scitex-container), account/quota, network/peer/A2A, db, registry, event, MCP introspection. Long-form flag tables in 10_cli.md.
+  [TOPIC] sac CLI — map of command groups + the non-obvious gotchas
+  [DETAILS] Which `sac` group does which job (agents / image / accounts / host / peer / a2a / fleet / db / mcp), plus renamed-verb history, apptainer-only build, the image sandbox cycle, and other judgment the `--help` output does NOT tell you. The exhaustive per-command flag list is self-describing — run `sac --help-recursive`.
 tags: [scitex-agent-container-cli-reference]
 ---
 
-# CLI Reference
+# CLI Reference — intent map, not a flag dump
 
-Entry: `sac` (alias for `scitex-agent-container`).
+Entry point: `sac` (alias for `scitex-agent-container`) — one Click app.
 
-```
-sac [OPTIONS] COMMAND [ARGS]...
-```
+**The authoritative, always-current command + flag list is the CLI
+itself.** Do not read it from a skill (it drifts):
 
-Global flags:
-- `-h / --help` — show help
-- `--help-recursive` — show help for the root command and every subcommand
-- `--json` — emit structured JSON where supported (status / actions / events)
-- `--on PEER` — dispatch the rest of argv via ssh on `PEER` (defined in `config.yaml`'s `peers:` block)
-
-## Agent lifecycle (most-used)
-
-| Command | Purpose |
-|---|---|
-| `sac agents start <agent> [--foreground]` | Start the agent. Daemon by default; `--foreground` streams stdio + blocks. Honors `spec.host` / `spec.hosts` (cross-host placement; see [11_remote-deploy.md](11_remote-deploy.md)) and `spec.a2a.port` (HTTP inbound). |
-| `sac agents stop <agent>` | SIGTERM the runner; escalate to SIGKILL after 5 s. ssh-mediated for remote agents. |
-| `sac agents restart <agent>` | Stop + start, preserving session_id resume. |
-| `sac agents status [<agent>]` | Per-agent rich payload, or fleet view if no name. `--snapshot` persists a state capsule, `--priority` adds the singleton-yield report. |
-| `sac agents health <agent>` | Health-method poll (`sdk-alive`). |
-| `sac agents tail   <agent>` | Render `session.jsonl` (user / assistant / tool / result events). ssh-tails remote logs. |
-| `sac agents recall <agent>` | Human summary of the agent's session. |
-| `sac agents check  <agent>` | Preflight: validate yaml + probe runtime deps (docker/python). |
-| `sac agents find   <capability>` | Search agents by capability label. |
-
-Multi-target: `sac agents start a b c` works for daemon mode; `--foreground` is single-target only.
-
-The earlier verbs `validate`, `take-snapshot`, `check-priority`, `inspect`, `logs`, `list` were folded into `check`, `status --snapshot`, `status --priority`, `status` (per-agent), `tail`, and `status` (fleet view) respectively.
-
-## Image lifecycle (`sac image`)
-
-Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
-
-| Command | Purpose |
-|---|---|
-| `sac image build [base\|scitex] [--sandbox]` | Build a layered Apptainer image. Default target: `base`. `--sandbox` builds a writable rootfs directory instead of an immutable SIF. Sac is apptainer-only since 2026-05-13 — no `--runtime` flag. |
-| `sac image sandbox SOURCE` | Convert an existing SIF (or layer name) into a writable sandbox. |
-| `sac image update SANDBOX [-p PKG]` | Refresh packages inside a sandbox via `pip install --upgrade`. Default: `scitex[all]`. |
-| `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
-| `sac image list` | Installed SIF versions on disk. |
-| `sac image switch <version>` | Atomically switch the active SIF symlink to a different version. |
-| `sac image rollback` | Restore the previous active version. |
-| `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
-| `sac image snapshot [-o env.json]` | Reproducibility capsule: pip + apt + conda + git + active SIF hash. |
-
-Typical "scitex updates often" cycle:
-
-```
-sac image build scitex --sandbox       # one-time
-sac image update sandbox/              # any time
-sac image freeze sandbox/ scitex-X.sif # when stable
-sac image switch X
+```bash
+sac --help-recursive        # root + every subcommand, one shot
+sac <group> --help          # e.g. sac agents --help
 ```
 
-## Account / quota (`sac accounts`)
+This leaf keeps only what `--help` can't tell you: which group to
+reach for, and the gotchas.
 
-| Command | Purpose |
+## Which group for which job
+
+| Job | Group |
 |---|---|
-| `sac accounts list` | Stored Claude Code accounts + active block; per-store freshness column (`VALID (+Xh)` / `EXPIRED (-Xh)` / `ABSENT`). |
-| `sac accounts save <name>` | Snapshot current credentials under `<name>` for later rotation. |
-| `sac accounts sync-live` | Snapshot the live credential into its matching store (store-name = email slugified). Idempotent; fails loud on an expired/absent live cred (never saves a stale token). |
-| `sac accounts watch-live` | Daemon: watch `~/.claude/.credentials.json` (inotify or poll) and auto-run `sync-live` on every change — "the moment I log in → auto-saved". |
-| `sac accounts switch <name>` | Switch active credentials to a stored account. |
-| `sac accounts delete <name>` | Remove a stored account. |
-| `sac accounts status` | One-shot quota snapshot (5h%, 7d%, account email + tier). |
-| `sac accounts watch-quota` | Monitor quota and auto-rotate when threshold exceeded. |
+| Start/stop/inspect an agent | `sac agents …` (start, stop, restart, status, health, tail, recall, check, find, send) |
+| Resume a running agent for one more turn | `sac agents send <name> "…"` (see [15_claude-session.md](15_claude-session.md)) |
+| Build / switch the Apptainer image | `sac image …` (delegates to [scitex-container](https://github.com/ywatanabe1989/scitex-container)) |
+| Rotate / snapshot Claude credentials | `sac accounts …` (see [26_credentials-rotation.md](26_credentials-rotation.md)) |
+| Host routing / cross-host exec | `sac host …` |
+| Drive another agent's `/v1/turn` | `sac peer post-turn`, `sac a2a …` (see [07_a2a-protocol.md](07_a2a-protocol.md)) |
+| Push a typed event to the lead | `sac fleet notify done\|blocker\|status` |
+| Inspect the state DB | `sac db …` |
+| HTTP/JSON control plane | `sac listen …` (see [10_cli.md](10_cli.md)) |
 
-## Network / peer / A2A
+Global flags worth knowing: `--json` (structured output where
+supported), `--on PEER` (dispatch the rest of argv over ssh to a peer
+from `config.yaml`).
 
-| Command | Purpose |
-|---|---|
-| `sac host list / add / remove / set / probe / exec / validate` | Local hostname + peer machine routing (ssh round-trip / exec on PEER). |
-| `sac host add-peer / list-peers / remove-peer` | Cross-host `sac listen` bearer registry (who may push into this host). |
-| `sac host ssh-opts` | Print sac's ssh ControlMaster flags shell-quoted — use as `ssh $(sac host ssh-opts) host cmd`. |
-| `sac host probe-hub` | WSL → fleet-hub layered connectivity probe (DNS, gateway, TCP, HTTPS). |
-| `sac peer post-turn AGENT TEXT` | Outbound A2A — POST a turn to another agent's `/v1/turn`. |
-| `sac peer resolve-url AGENT` | Print the URL `peer post-turn` would target. |
-| `sac a2a serve <yamls...>` | A2A inbound HTTP server (sidecar mode for non-SDK runtimes). For `runtime: apptainer` agents the runner hosts `POST /v1/turn` itself. |
-| `sac a2a doctor AGENT` | Probe an agent's A2A AgentCard endpoint and report health. |
+## Gotchas the help text won't warn you about
 
-## Fleet (`sac fleet`)
+- **Renamed verbs.** The old `validate` / `take-snapshot` /
+  `check-priority` / `inspect` / `logs` / `list` were folded into
+  `check` / `status --snapshot` / `status --priority` / `status` /
+  `tail` / `status` (fleet view). If a script calls an old verb, this
+  is why it broke.
+- **`--foreground` is single-target only.** `sac agents start a b c`
+  works in daemon mode; `--foreground` streams stdio and blocks, so
+  one agent at a time.
+- **Apptainer-only since 2026-05-13.** `sac image build` has no
+  `--runtime` flag; there is no docker path.
+- **`sac a2a serve` is the sidecar path only.** For `runtime:
+  apptainer` (SDK) agents the runner hosts `POST /v1/turn` itself —
+  you don't run `a2a serve` for them.
+- **`sac accounts sync-live` fails loud on a stale/absent live
+  credential** — it never snapshots a stale token. That's intentional.
 
-| Command | Purpose |
-|---|---|
-| `sac fleet launch PEER <name>...` | Rsync each agent's spec to PEER and run `sac agents start <name>` there. |
-| `sac fleet notify done\|blocker\|status --summary "..."` | Agent→lead push channel (ADR-0013 Phase 1) — POST a typed event to the lead's `sac listen` inbox. `--detail`, `--conversation-id`, `--dry-run`, `--json`. |
+## The image sandbox cycle (workflow, not obvious from --help)
 
-## State database / registry / events
+`scitex[all]` updates often; rebuild-per-change is slow. The pattern:
 
-| Command | Purpose |
-|---|---|
-| `sac db query / show / clean / migrate / tick` | Inspect and maintain the sac state database (`state.db`). `db clean` replaces the legacy `registry clean`. |
-| `sac db export / import` | Dump state.db rows as a JSON delta / ingest a dump (cross-host registry sync). |
-| `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
-| `sac event ingest` | Append a Claude Code hook event to the per-agent ring buffer. |
-
-## Build / install / templates
-
-| Command | Purpose |
-|---|---|
-| `sac installation` | Bootstrap helpers for a new fleet host. |
-| `sac installation setup-cron` | Add (or remove) the post-merge-pull crontab entry. |
-| `sac template render-contributor-spec` | Materialize a contributor agent spec from the v3 template. |
-
-## Other
-
-| Command | Purpose |
-|---|---|
-| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). |
-| `sac subagent get-state` | Pure state data for every matching Claude Code Agent-tool subagent (Type 2). |
-| `sac mcp list-tools` | Local MCP introspection (no MCP server bundled — sac agents spawn their own via `to_home/.mcp.json`). |
-| `sac skills list / get` | Bundled agent-facing skills. |
-| `sac list-python-apis` | Enumerate the public Python API. |
-| `sac auto-accept` | Auto-accept TUI handler for legacy claude-code agents (the apptainer/SDK runner doesn't need it). |
+```bash
+sac image build scitex --sandbox        # one-time writable rootfs
+sac image update sandbox/               # pip --upgrade any time
+sac image freeze sandbox/ scitex-X.sif  # bake when stable
+sac image switch X                      # atomically flip the symlink
+```
 
 ## See also
 
-- [10_cli.md](10_cli.md) — long-form flag tables + Python-API mirror
-- [03_python-api.md](03_python-api.md) — programmatic surface (mirrors the lifecycle commands)
+- [10_cli.md](10_cli.md) — `sac listen` control-plane + Python-API mirror
+- [03_python-api.md](03_python-api.md) — the programmatic surface
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment internals
 - [13_observability.md](13_observability.md) — `status --json` contract
