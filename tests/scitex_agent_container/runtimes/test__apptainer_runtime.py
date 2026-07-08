@@ -1083,15 +1083,17 @@ def test_argv_mounts_credentials_dir_when_present(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/).
-    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:ro" for a in argv)
 
 
-def test_argv_credentials_bind_is_read_write(
+def test_argv_credentials_bind_is_read_only(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — RW lets the in-container CLI refresh the OAuth
-    # accessToken in place when it expires (~1h cadence), avoiding the
-    # manual scp-from-lead dance to re-seed expired peers.
+    # Arrange — master-host single-refresher model (operator 2026-07-08):
+    # the credential bind is READ-ONLY so the in-container CLI can never
+    # refresh/rotate the OAuth token (that consumed the single-use
+    # refresh_token = the "cred churn"). The host-side timer is the sole
+    # refresher; the DIRECTORY bind still surfaces its refreshes.
     creds = home_redirect / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
@@ -1101,7 +1103,7 @@ def test_argv_credentials_bind_is_read_write(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if ":/tmp/sac-claude:" in a)
     # Assert
-    assert ":ro" not in creds_arg
+    assert creds_arg.endswith(":ro")
 
 
 def test_argv_sets_claude_config_dir_when_credentials_present(
@@ -1180,9 +1182,9 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     # atomic-replace writers in creds_sync / account_store /
     # claude_usage, regressing into the per-copy collision-401 disease
     # the snapshot model was meant to fix). The bound dir's child
-    # ``.credentials.json`` remains the snapshot itself; refresh
-    # writeback by the in-container CLI lands in the same on-disk file
-    # every same-account agent reads from.
+    # ``.credentials.json`` remains the snapshot itself, bound :ro; the
+    # host-side sac-accounts-refresh timer refreshes it and every
+    # same-account agent reads the timer-kept-fresh token.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
@@ -1196,7 +1198,7 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     creds_arg = next(
         a
         for a in argv
-        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:rw")
+        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:ro")
     )
     # Assert — the bound host-side source IS the account directory
     # (snapshot.parent), neither the snapshot file alone, a per-agent
@@ -1223,7 +1225,7 @@ def test_argv_pins_account_does_not_create_state_dir_copy(
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     legacy_copy = state_dir / "claude" / ".credentials.json"
     # Assert — no per-agent copy materialised; the snapshot is the
-    # only place the in-container CLI's :rw refresh writeback lands.
+    # single source the :ro agents read and the host timer refreshes.
     assert not legacy_copy.exists()
 
 
@@ -1243,7 +1245,7 @@ def test_argv_no_account_dir_binds_host_claude(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/);
     # bind dest is the DIRECTORY /tmp/sac-claude, not the file inside it.
-    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:rw" for a in argv)
+    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:ro" for a in argv)
 
 
 def test_argv_pinned_account_missing_snapshot_raises_pinned_account_error(
