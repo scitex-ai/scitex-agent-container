@@ -98,6 +98,34 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
             pass
 
     save_account(name, meta, home=home)
+
+    # Rotation audit: `save` snapshots a live login into the store — record
+    # it (best-effort, never fails the save). Only an opaque fingerprint of
+    # the snapshotted access token is recorded, never the token itself.
+    if ".credentials.json" in copied:
+        # stx-allow: fallback (reason: audit is a durable side-record; a
+        # failure to write it must never fail the account save.)
+        try:
+            from .._account._rotation_audit import (
+                fingerprint_token,
+                log_rotation_event,
+            )
+            from .._account.claude_usage import _read_tokens_at
+
+            access, _refresh, _cid, _exp = _read_tokens_at(
+                cred_dir / ".credentials.json"
+            )
+            log_rotation_event(
+                store=store,
+                event="save",
+                from_account=meta.get("email_address") or name,
+                to_account=name,
+                reason="account save (manual snapshot of live login into store)",
+                to_token_fp=fingerprint_token(access),
+            )
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            pass
+
     click.echo(
         f"Saved account '{name}' to {cred_dir} (files: {copied or 'none found'})"
     )

@@ -198,7 +198,8 @@ def account_refresh(
     """
     import json as _json
 
-    from .._account.claude_usage import refresh_account_credentials
+    from .._account._rotation_audit import fingerprint_token, log_rotation_event
+    from .._account.claude_usage import _read_tokens_at, refresh_account_credentials
     from .._state.account_store import _store_path, list_accounts
 
     if not do_all and not name:
@@ -248,6 +249,8 @@ def account_refresh(
     results: list[dict] = []
     for acct_name in targets:
         creds_path = store / acct_name / ".credentials.json"
+        # OUTGOING token fingerprint (before the refresh POST rotates it).
+        old_access, old_refresh, _, _ = _read_tokens_at(creds_path)
         # stx-allow: fallback (reason: refresh_account_credentials is documented never-raise, but defence-in-depth so one bad row never crashes --all)
         try:
             r = refresh_account_credentials(creds_path)
@@ -260,6 +263,22 @@ def account_refresh(
             }
         r["name"] = acct_name
         results.append(r)
+
+        # Rotation audit: a successful refresh IS a single-use refresh_token
+        # rotation — THE key "mystery expiry" event. Best-effort, never fails
+        # the refresh run. Only opaque fingerprints are recorded.
+        if r.get("success"):
+            new_access, new_refresh, _, _ = _read_tokens_at(creds_path)
+            log_rotation_event(
+                store=store,
+                event="refresh",
+                from_account=acct_name,
+                to_account=acct_name,
+                reason="single-use refresh_token rotated (headless access-token refresh)",
+                from_token_fp=fingerprint_token(old_access),
+                to_token_fp=fingerprint_token(new_access),
+                refresh_token_fp=fingerprint_token(new_refresh or old_refresh),
+            )
 
     if as_json:
         click.echo(_json.dumps(results, ensure_ascii=False, indent=2))

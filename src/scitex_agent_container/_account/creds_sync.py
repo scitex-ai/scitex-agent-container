@@ -134,6 +134,30 @@ def _read_oauth_expiry_seconds(path: Path) -> float | None:
     return val / 1000.0 if val > 1e12 else val
 
 
+def _read_access_token_fingerprint(path: Path) -> str | None:
+    """Best-effort OPAQUE ``sha256:<hex>`` fingerprint of a snapshot's access token.
+
+    Reads ``claudeAiOauth.accessToken`` from ``path`` and returns its
+    one-way fingerprint (NEVER the token). ``None`` on any missing/corrupt
+    file. Used only to make a token FROM→TO rotation visible in the audit
+    record. Never raises.
+    """
+    # stx-allow: fallback (reason: fingerprint is a cosmetic audit field; a
+    # missing/corrupt snapshot must degrade to None, never break the sync.)
+    try:
+        from ._rotation_audit import fingerprint_token
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        oauth = data.get("claudeAiOauth")
+        if not isinstance(oauth, dict):
+            return None
+        return fingerprint_token(oauth.get("accessToken"))
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
 def _read_active_email(home: Path) -> str | None:
     """Return the active-account email from ``~/.claude.json``, or None.
 
@@ -359,12 +383,34 @@ def sync_live(
                 "so the token can be verified."
             )
 
+    # Capture the OUTGOING store fingerprint BEFORE we overwrite it, so the
+    # audit shows the token FROM→TO change without exposing the secret.
+    from_token_fp = _read_access_token_fingerprint(snapshot)
+
     _atomic_copy(live_path, snapshot)
     # Refresh the safe metadata (email label) so `account list` resolves
     # the email even for a store created purely by auto-sync.
     save_account(
         store_name, {"email_address": target_email}, store_dir=store_dir, home=_home
     )
+
+    # --- Rotation audit (best-effort, never breaks the sync) ---------------
+    # stx-allow: fallback (reason: the audit record is a durable side-effect;
+    # a failure to write it must never fail the credential snapshot itself.)
+    try:
+        from ._rotation_audit import log_rotation_event
+
+        log_rotation_event(
+            store=store,
+            event="sync-live",
+            from_account=store_name,
+            to_account=store_name,
+            reason="login-capture (live credential snapshotted into store)",
+            from_token_fp=from_token_fp,
+            to_token_fp=_read_access_token_fingerprint(snapshot),
+        )
+    except Exception:  # stx-allow: fallback (reason: audit is best-effort; never fail the sync on it)
+        pass
 
     return SyncResult(
         action="saved",
