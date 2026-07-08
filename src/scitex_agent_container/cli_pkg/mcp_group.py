@@ -183,6 +183,50 @@ def mcp_channel(name: str | None, listen_url: str | None, turn_url: str | None) 
     _channel_main(name=name, listen_url=listen_url, turn_url=turn_url)
 
 
+@mcp.command("healthcheck")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the result as JSON.",
+)
+def mcp_healthcheck(as_json: bool) -> None:
+    """Boot self-check + auto-heal for the critical MCP connections.
+
+    Verifies the ``scitex-agent-container`` + ``scitex-todo`` stdio MCP
+    servers actually CONNECTED (via ``claude mcp list``), logs the expected
+    capability surface so a missing tool reads as "MCP broken → heal" rather
+    than "I lack capability", and — if a critical server failed to connect —
+    raises a loud alarm and requests a rate-limited ``--fresh`` self-restart
+    through the host ``sac listen`` plane. FAIL-OPEN: always exits 0, so a
+    ``SessionStart`` hook that runs this never blocks the agent's boot.
+
+    \b
+    Example (SessionStart hook):
+      $ sac mcp healthcheck
+    """
+    # Lazy import: keep this out of the cold-start path and out of the CLI's
+    # module-import budget. ``_healthcheck`` pulls no heavy deps (no fastmcp).
+    from .._mcp._healthcheck import run_healthcheck
+
+    result = run_healthcheck()
+    if as_json:
+        click.echo(json_mod.dumps(result))
+    else:
+        action = result.get("action", "ok")
+        failed = result.get("failed") or []
+        if failed:
+            click.secho(
+                f"MCP healthcheck: {', '.join(failed)} FAILED — action={action}",
+                fg="red",
+            )
+        else:
+            click.secho(f"MCP healthcheck: all critical MCPs OK (action={action})", fg="green")
+    # Fail-open: NEVER non-zero. A boot hook must not block the session.
+    raise SystemExit(0)
+
+
 @mcp.command("doctor")
 def mcp_doctor() -> None:
     """Check MCP server dependencies + tool registration health.

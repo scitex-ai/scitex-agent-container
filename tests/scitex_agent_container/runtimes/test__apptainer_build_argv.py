@@ -285,7 +285,7 @@ def test_credentials_file_bind_empty_when_unset(tui_config) -> None:
     assert flags == []
 
 
-def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
+def test_credentials_file_bind_mounts_designated_file_ro(tmp_path) -> None:
     # Arrange — a designated credentials file on disk carrying a valid,
     # unexpired OAuth token (the bind now fails loud on a stale or
     # unverifiable pinned credential — see the expiry tests below).
@@ -302,10 +302,11 @@ def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — writable bind onto the canonical container creds path.
+    # Assert — READ-ONLY bind onto the canonical container creds path
+    # (master-host single-refresher model: the agent never refreshes).
     assert flags == [
         "--bind",
-        f"{creds}:/home/agent/.claude/.credentials.json:rw",
+        f"{creds}:/home/agent/.claude/.credentials.json:ro",
     ]
 
 
@@ -348,11 +349,12 @@ def test_credentials_file_bind_resolves_account_when_no_explicit_file(
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — single-file rw bind onto the canonical container creds path,
+    # Assert — single-file :ro bind onto the canonical container creds path,
     # source = the per-host snapshot. NO copy, NO CLAUDE_CONFIG_DIR redirect.
+    # READ-ONLY: the agent reads the snapshot; the host timer refreshes it.
     assert flags == [
         "--bind",
-        f"{snap}:/home/agent/.claude/.credentials.json:rw",
+        f"{snap}:/home/agent/.claude/.credentials.json:ro",
     ]
 
 
@@ -384,10 +386,10 @@ def test_credentials_file_bind_explicit_file_wins_over_account(
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — explicit file path is the source.
+    # Assert — explicit file path is the source, bound READ-ONLY.
     assert flags == [
         "--bind",
-        f"{explicit}:/home/agent/.claude/.credentials.json:rw",
+        f"{explicit}:/home/agent/.claude/.credentials.json:ro",
     ]
 
 
@@ -739,7 +741,7 @@ def test_build_run_argv_appends_credentials_bind_last(tmp_path) -> None:
     # Assert — the creds bind sits immediately before the sif path so no
     # later home bind can shadow it.
     sif_idx = argv.index("/img/sac.sif")
-    assert argv[sif_idx - 1] == f"{creds}:/home/agent/.claude/.credentials.json:rw"
+    assert argv[sif_idx - 1] == f"{creds}:/home/agent/.claude/.credentials.json:ro"
 
 
 # ---------------------------------------------------------------------------

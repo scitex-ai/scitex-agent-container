@@ -166,6 +166,20 @@ def _collect_pinned_running_accounts(home: Path | None = None) -> set[str]:
     ),
 )
 @click.option(
+    "--include-active",
+    "include_active",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --all, refresh EVERY stored account INCLUDING the active "
+        "and any pinned-running one (skip nothing). This is the mode the "
+        "host-side sac-accounts-refresh timer runs under the master-host "
+        "single-refresher model: agents bind the credential :ro and never "
+        "refresh, so the timer must refresh the active account too or its "
+        "agents die at token expiry. Mutually exclusive with --skip-active."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -173,7 +187,11 @@ def _collect_pinned_running_accounts(home: Path | None = None) -> set[str]:
     help="Emit a JSON array on stdout instead of human prose.",
 )
 def account_refresh(
-    name: str | None, do_all: bool, skip_active: bool, as_json: bool
+    name: str | None,
+    do_all: bool,
+    skip_active: bool,
+    include_active: bool,
+    as_json: bool,
 ) -> None:
     """Mint a fresh access_token from the stored refresh_token, headlessly.
 
@@ -189,16 +207,27 @@ def account_refresh(
     the currently-active ``~/.claude`` login, so the refresh job never
     rotates the in-use refresh_token out from under the live session.
 
+    ``--include-active`` (with ``--all``) is the opposite intent, made
+    explicit: refresh EVERY account including the active + pinned-running
+    ones (skip nothing). Under the master-host single-refresher model
+    (2026-07-08) agents bind the credential ``:ro`` and never refresh, so
+    the host-side ``sac-accounts-refresh`` timer is the SOLE refresher and
+    MUST refresh the active account too — otherwise the active account's
+    agents die when its access_token expires. The timer's ExecStart uses
+    this flag. Mutually exclusive with ``--skip-active``.
+
     \b
     Examples:
       $ sac accounts refresh work
       $ sac accounts refresh --all
       $ sac accounts refresh --all --skip-active
+      $ sac accounts refresh --all --include-active   # timer mode
       $ sac accounts refresh --all --json
     """
     import json as _json
 
-    from .._account.claude_usage import refresh_account_credentials
+    from .._account._rotation_audit import fingerprint_token, log_rotation_event
+    from .._account.claude_usage import _read_tokens_at, refresh_account_credentials
     from .._state.account_store import _store_path, list_accounts
 
     if not do_all and not name:
@@ -211,6 +240,13 @@ def account_refresh(
     if do_all and name:
         click.echo("error: pass either a name or --all, not both", err=True)
         raise SystemExit(2)
+    if skip_active and include_active:
+        click.echo(
+            "error: --skip-active and --include-active are mutually "
+            "exclusive (one skips the active account, the other forces it in)",
+            err=True,
+        )
+        raise SystemExit(2)
 
     home = Path.home()
     store = _store_path(None, home)
@@ -218,6 +254,14 @@ def account_refresh(
     if do_all:
         accounts = list_accounts(home=home)
         targets = [a["name"] for a in accounts]
+        if include_active:
+            # Master-host single-refresher: refresh everything, skip
+            # nothing. Log it so the operator can see the timer's intent.
+            click.echo(
+                "[include-active] refreshing ALL accounts including the "
+                "active + pinned-running ones (single-refresher model).",
+                err=True,
+            )
         if skip_active:
             active_name = _resolve_active_account_name(home, accounts)
             pinned_running = _collect_pinned_running_accounts(home)
@@ -248,6 +292,8 @@ def account_refresh(
     results: list[dict] = []
     for acct_name in targets:
         creds_path = store / acct_name / ".credentials.json"
+        # OUTGOING token fingerprint (before the refresh POST rotates it).
+        old_access, old_refresh, _, _ = _read_tokens_at(creds_path)
         # stx-allow: fallback (reason: refresh_account_credentials is documented never-raise, but defence-in-depth so one bad row never crashes --all)
         try:
             r = refresh_account_credentials(creds_path)
@@ -260,6 +306,22 @@ def account_refresh(
             }
         r["name"] = acct_name
         results.append(r)
+
+        # Rotation audit: a successful refresh IS a single-use refresh_token
+        # rotation — THE key "mystery expiry" event. Best-effort, never fails
+        # the refresh run. Only opaque fingerprints are recorded.
+        if r.get("success"):
+            new_access, new_refresh, _, _ = _read_tokens_at(creds_path)
+            log_rotation_event(
+                store=store,
+                event="refresh",
+                from_account=acct_name,
+                to_account=acct_name,
+                reason="single-use refresh_token rotated (headless access-token refresh)",
+                from_token_fp=fingerprint_token(old_access),
+                to_token_fp=fingerprint_token(new_access),
+                refresh_token_fp=fingerprint_token(new_refresh or old_refresh),
+            )
 
     if as_json:
         click.echo(_json.dumps(results, ensure_ascii=False, indent=2))

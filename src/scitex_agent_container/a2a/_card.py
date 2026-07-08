@@ -23,6 +23,8 @@ from typing import Any
 from a2a.types import AgentCard
 from google.protobuf.json_format import ParseDict
 
+from ._card_identity import as_str_list, spec_identity
+
 DEFAULT_INPUT_MODES = ["text/plain", "application/json"]
 DEFAULT_OUTPUT_MODES = ["text/plain", "application/json"]
 
@@ -65,7 +67,18 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
     label_skills = [s.strip() for s in skills_csv.split(",") if s.strip()]
     legacy_skills = (spec.get("skills") or {}).get("required") or []
     required_skills = list(label_skills) + list(legacy_skills)
-    role = labels.get("role", "agent")
+    # ``role`` here is the string ROLE-CLASS used for the skill id and the
+    # provider/description fallbacks — it must stay a scalar string. A
+    # (future) multi-role spec carries a list; collapse to its first entry
+    # so the string-typed skill fields stay proto-valid. The faithful
+    # value (string OR list) is surfaced separately under
+    # ``x-scitex-agent-container`` via :func:`spec_identity` below.
+    _role_label = labels.get("role")
+    if isinstance(_role_label, str) and _role_label.strip():
+        role = _role_label.strip()
+    else:
+        _roles = as_str_list(_role_label)
+        role = _roles[0] if _roles else "agent"
     function = labels.get("function", "")
 
     agent_base = f"{base}/agents/{name}"
@@ -106,6 +119,32 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
                 },
             }
         )
+
+    x_block: dict[str, Any] = {
+        "role_class": role,
+        "cardinality": labels.get("cardinality"),
+        "scheduling": _scheduling(spec),
+        "runtime": spec.get("runtime"),
+        # v3 moves model under spec.claude.model; legacy v2 had it at
+        # spec.model. Prefer v3, fall back to v2 for back-compat.
+        "model": (spec.get("claude") or {}).get("model") or spec.get("model"),
+        "multiplexer": spec.get("multiplexer"),
+        "required_skills": list(required_skills),
+        # D3 — structured isolation block (see
+        # docs/adr/0001-isolation-hardening.md). External verifiers (Clew,
+        # orochi attestation) read these booleans to attest specific
+        # properties; ``level`` is the human shorthand.
+        "isolation": _isolation_block(spec),
+    }
+    # Operator 2026-07-06: surface the spec-authored identity — the ROLE
+    # headline (string, or list for multi-role) + a RESPONSIBILITIES
+    # bullet list, plus groups / purpose / owned-repo — so a peer reading
+    # this agent's AgentCard sees who it is and what it owns. Same
+    # projection the ``a2a peers`` rows use, so the two a2a discovery
+    # surfaces never drift. Only spec-declared fields are added (the
+    # extension namespace is stripped before v1 proto validation, so this
+    # is schema-safe regardless of which fields appear).
+    x_block.update(spec_identity(v3))
 
     return {
         "name": name,
@@ -153,22 +192,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
                 "tags": sorted(set(capabilities_tags + list(required_skills))),
             }
         ],
-        "x-scitex-agent-container": {
-            "role_class": role,
-            "cardinality": labels.get("cardinality"),
-            "scheduling": _scheduling(spec),
-            "runtime": spec.get("runtime"),
-            # v3 moves model under spec.claude.model; legacy v2 had it at
-            # spec.model. Prefer v3, fall back to v2 for back-compat.
-            "model": (spec.get("claude") or {}).get("model") or spec.get("model"),
-            "multiplexer": spec.get("multiplexer"),
-            "required_skills": list(required_skills),
-            # D3 — structured isolation block (see
-            # docs/adr/0001-isolation-hardening.md). External
-            # verifiers (Clew, orochi attestation) read these booleans to
-            # attest specific properties; ``level`` is the human shorthand.
-            "isolation": _isolation_block(spec),
-        },
+        "x-scitex-agent-container": x_block,
     }
 
 

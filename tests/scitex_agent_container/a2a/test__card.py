@@ -372,3 +372,90 @@ def test_isolation_preflight_allow_surfaces_in_preflight_allowed(
     allowed = iso["preflight_allowed"]
     # Assert
     assert allowed == ["$HOME/.gitconfig"]
+
+
+# ---------------------------------------------------------------------------
+# Operator 2026-07-06 — spec-authored identity on the local-agent AgentCard.
+# The role HEADLINE + RESPONSIBILITIES bullets (plus groups/purpose/owner)
+# are surfaced under ``x-scitex-agent-container`` so a peer reading the card
+# sees who the agent is. The extension namespace is stripped before v1 proto
+# validation, so these fields are schema-safe.
+# ---------------------------------------------------------------------------
+
+
+def test_card_surfaces_role_headline_from_labels() -> None:
+    # Arrange
+    v3 = {
+        "metadata": {"labels": {"role": "project-maintainer"}},
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert card["x-scitex-agent-container"]["role"] == "project-maintainer"
+
+
+def test_card_surfaces_responsibilities_bullets_from_spec() -> None:
+    # Arrange
+    v3 = {
+        "metadata": {"labels": {"role": "worker"}},
+        "spec": {
+            "runtime": "apptainer",
+            "responsibilities": ["triage CI", "review PRs"],
+        },
+    }
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert card["x-scitex-agent-container"]["responsibilities"] == [
+        "triage CI",
+        "review PRs",
+    ]
+
+
+def test_card_omits_responsibilities_when_spec_declares_none() -> None:
+    # Arrange
+    v3 = {"metadata": {"labels": {"role": "worker"}}, "spec": {"runtime": "apptainer"}}
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert "responsibilities" not in card["x-scitex-agent-container"]
+
+
+def test_card_surfaces_multi_role_list_without_crashing() -> None:
+    """A (future) multi-role spec surfaces ``role`` as a list, no crash."""
+    # Arrange
+    v3 = {
+        "metadata": {"labels": {"role": ["maintainer", "reviewer"]}},
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert card["x-scitex-agent-container"]["role"] == ["maintainer", "reviewer"]
+
+
+def test_card_multi_role_skill_name_stays_a_string() -> None:
+    """The skills[0].name (a proto string field) collapses a role list to
+    its first entry so the card stays v1-schema valid."""
+    # Arrange
+    v3 = {
+        "metadata": {"labels": {"role": ["maintainer", "reviewer"]}},
+        "spec": {"runtime": "apptainer"},
+    }
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert card["skills"][0]["name"] == "maintainer"
+
+
+def test_card_surfaces_project_owner_from_workdir() -> None:
+    # Arrange
+    v3 = {
+        "metadata": {"labels": {"role": "worker"}},
+        "spec": {"runtime": "apptainer", "workdir": "/home/u/proj/scitex-dev"},
+    }
+    # Act
+    card = project_card("alpha", v3, "http://127.0.0.1:7901")
+    # Assert
+    assert card["x-scitex-agent-container"]["project"] == "scitex-dev"

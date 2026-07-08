@@ -67,6 +67,7 @@ from ._apptainer_build_argv import (  # noqa: F401
 from ._apptainer_build_argv import (
     build_run_argv as _build_run_argv_impl,
 )
+from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 from .base import RuntimeBase
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
@@ -200,7 +201,7 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv = self.build_run_argv(config, state_dir=state_dir, sif_path=sif_path)
         if dry_run:
-            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
+            _write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
         # Append the host ``~/.cargo/bin`` to the CONTAINER PATH via

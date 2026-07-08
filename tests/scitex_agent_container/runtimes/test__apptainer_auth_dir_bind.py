@@ -162,9 +162,12 @@ def test_pinned_bind_destination_is_directory_not_file_path(
     assert spec is not None and spec.split(":")[1] == "/tmp/sac-claude"
 
 
-def test_pinned_bind_is_rw(tmp_path: Path, home_redirect: Path) -> None:
-    # Arrange — the bind must stay :rw so refresh writeback by the
-    # in-container Claude CLI lands on the shared snapshot.
+def test_pinned_bind_is_ro(tmp_path: Path, home_redirect: Path) -> None:
+    # Arrange — master-host single-refresher model (operator 2026-07-08):
+    # the bind must be :ro so the agent NEVER refreshes/rotates the
+    # credential. The host-side sac-accounts-refresh timer is the sole
+    # refresher; the DIRECTORY bind still surfaces its atomic-replace
+    # refreshes to the container without a restart.
     now = time.time()
     _write_snapshot(home_redirect, "alpha", now + 3_600)
     cfg = _pinned_config(tmp_path / "wd", account="alpha")
@@ -172,7 +175,7 @@ def test_pinned_bind_is_rw(tmp_path: Path, home_redirect: Path) -> None:
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
     spec = _extract_bind_spec_for_target_prefix(argv, "/tmp/sac-claude")
     # Assert
-    assert spec is not None and spec.split(":")[-1] == "rw"
+    assert spec is not None and spec.split(":")[-1] == "ro"
 
 
 def test_pinned_claude_config_dir_env_unchanged(

@@ -1417,6 +1417,60 @@ def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
     assert ok is True and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_passes_assume_yes_to_start_leg(
+    tmp_path: Path, registry: Registry
+) -> None:
+    """A restart's inner ``agent_start`` MUST carry ``assume_yes=True``.
+
+    Regression guard for the in-SIF broker 502 reproduced 2026-07-09: a
+    ``sac agents restart <name>`` run inside an apptainer SIF reaches the
+    LOCAL ``agent_restart`` → ``agent_start`` path; ``agent_start`` then
+    brokers the start to the host's ``sac listen`` ``POST /agents``
+    handler, which shells a FRESH ``sac agents start <name>`` subprocess.
+    That subprocess re-runs the interactive refuse-without-``--yes`` gate,
+    so unless the ORIGINAL restart's consent is threaded through as
+    ``assume_yes`` the host refused itself with "refusing to start <name>
+    without --yes/-y" → HTTP 502 — even though the restart was explicitly
+    authorized. The host-side ``assume_yes`` → ``--yes`` argv plumbing is
+    proven in ``test__agent_exec_subprocess.py``; this pins the missing
+    link: ``agent_restart`` actually SETS ``assume_yes=True``.
+
+    Real seam (no MagicMock): the ``_start.agent_start`` module attribute
+    is swapped for a capture callable and restored in ``finally`` — the
+    same save/restore-a-real-callable pattern the
+    ``test_fire_forget_hook_swallows_run_hook_exceptions`` test uses.
+    """
+    # Arrange — a real on-disk spec so the pre-start stop/settle legs run
+    # against a real FakeRuntime, then capture the kwargs the (swapped)
+    # start leg receives.
+    spec = _write_spec(tmp_path)
+    from scitex_agent_container._lifecycle import _start as _start_mod
+
+    captured: dict[str, Any] = {}
+    original_start = _start_mod.agent_start
+
+    def _capture_start(config_path: str, registry: Any = None, **kwargs: Any) -> bool:
+        captured["config_path"] = config_path
+        captured.update(kwargs)
+        return True
+
+    _start_mod.agent_start = _capture_start  # real callable, not Mock
+    try:
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+            config_resolver=lambda _name: str(spec),
+        )
+    finally:
+        _start_mod.agent_start = original_start
+    # Assert — the restart's start leg asserted the already-given consent.
+    assert captured.get("assume_yes") is True, captured
+
+
 class _StaggeredRuntime(FakeRuntime):
     """Real fake whose ``is_running`` returns the next bool from a stage list.
 

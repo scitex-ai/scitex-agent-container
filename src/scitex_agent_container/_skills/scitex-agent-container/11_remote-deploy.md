@@ -38,6 +38,22 @@ spec:
 order; first available wins). The agent runs on exactly one peer at a
 time.
 
+## How `spec.host` resolves — concrete hostname → local or remote
+
+`spec.host` is a CONCRETE hostname; `sac agents start` resolves *where it is*:
+
+| `spec.host` | Launch path |
+|---|---|
+| `local` / absent, or this machine's canonical name / alias | local `agent_start` (identical to `host: local`) |
+| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch (`_dispatch_remote_start`) |
+| unregistered / typo | never ssh; defers to the liveness-gated singleton-skip |
+
+Identity is `config.yaml::host:` (canonical + aliases); peers are
+`config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias). The local check
+precedes the peer table, so a self-registered peer (`ywata-note-win: {ssh:
+localhost}`) is never ssh'd to itself. Resolver:
+`_common.classify_dispatch_host` (`try_dispatch` dispatches only `remote`).
+
 ## YAML — multi-instance, one per peer
 
 ```yaml

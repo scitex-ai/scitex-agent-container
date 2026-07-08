@@ -86,6 +86,45 @@ apply_secrets_envrc() {
   log "# SAC_SECRETS_ENVRC=${value} -> baked into ${unit}"
 }
 
+# Resolve the absolute path to the `sac` binary to bake into the
+# installed listen unit's ExecStart. WHY: systemd-user services do NOT
+# inherit the operator's interactive shell PATH (no .bashrc/.bash_profile/
+# venv-activation) — only the login-manager's default PATH. `sac` is
+# typically installed into a per-project venv (e.g.
+# .venv/bin/sac), which is never on that default PATH, so the repo
+# template's generic `ExecStart=/usr/bin/env sac listen` resolves to
+# nothing and the unit fails with exit 127 on first start (confirmed
+# live 2026-07-05: an installed-but-never-started unit failed exactly
+# this way on first install).
+#   - Operator override: if SAC_BIN is already exported when the
+#     installer runs, use it verbatim (mirrors the SAC_SECRETS_ENVRC
+#     override in secrets_envrc_value above).
+#   - Default: `command -v sac`, resolved in the INSTALLER's own shell
+#     context — which, unlike systemd-user, DOES see the operator's
+#     activated venv/PATH when this script is run interactively.
+# UNLIKE secrets_envrc_value (which silently omits its line when
+# nothing is found), this function FAILS LOUD: a listen unit with no
+# resolvable sac binary must never be installed, since that guarantees
+# a silent, unannounced exit-127 restart loop with no useful signal.
+resolve_sac_bin() {
+  if [ -n "${SAC_BIN:-}" ]; then
+    printf '%s' "$SAC_BIN"
+    return 0
+  fi
+  local resolved
+  resolved="$(command -v sac || true)"
+  if [ -z "$resolved" ]; then
+    log "ERROR: sac not found on PATH — activate the venv this script" \
+        "should run from (e.g. 'source .venv/bin/activate'), or pass" \
+        "SAC_BIN=<absolute-path-to-sac> explicitly. Refusing to install" \
+        "a listen unit with an unresolvable ExecStart (systemd-user does" \
+        "not inherit your interactive shell PATH, so guessing here would" \
+        "just move the exit-127 failure from install-time to boot-time)."
+    exit 1
+  fi
+  printf '%s' "$resolved"
+}
+
 uninstall() {
   log "# Disabling + removing sac listen units from ${DEST_DIR}"
   systemctl --user disable --now "$HEALTH_TIMER" >/dev/null 2>&1 || true
@@ -110,15 +149,30 @@ fi
 
 mkdir -p "$DEST_DIR"
 
+# 0. Resolve SAC_BIN FIRST, before installing/enabling anything. This is
+#    a fail-loud step (see resolve_sac_bin above): an unresolvable sac
+#    must abort the whole install, not land a broken unit that only
+#    fails once systemd tries to start it.
+SAC_BIN="$(resolve_sac_bin)"
+log "# SAC_BIN=${SAC_BIN} -> will be baked into ${LISTEN_UNIT}'s ExecStart"
+
 # 1. Copy the probe script first (the health .service ExecStart points
 #    at the installed copy) and make it executable.
 install -m 0755 "${SRC_DIR}/${PROBE_SCRIPT}" "${DEST_DIR}/${PROBE_SCRIPT}"
 log "# Installed ${DEST_DIR}/${PROBE_SCRIPT}"
 
-# 2. Copy the listen unit and the health timer verbatim.
-install -m 0644 "${SRC_DIR}/${LISTEN_UNIT}" "${DEST_DIR}/${LISTEN_UNIT}"
+# 2. Copy the listen unit, rewriting the ExecStart line to the resolved
+#    absolute SAC_BIN path (systemd-user does not inherit the
+#    interactive shell PATH that `/usr/bin/env sac` in the repo
+#    template relies on — see resolve_sac_bin's comment above). Same
+#    sed-stream-rewrite technique as the health .service step below;
+#    the repo template itself is left untouched (only the INSTALLED
+#    copy gets the concrete path). The health timer copies verbatim.
+sed "s#^ExecStart=.*#ExecStart=${SAC_BIN} listen#" \
+    "${SRC_DIR}/${LISTEN_UNIT}" > "${DEST_DIR}/${LISTEN_UNIT}"
+chmod 0644 "${DEST_DIR}/${LISTEN_UNIT}"
 install -m 0644 "${SRC_DIR}/${HEALTH_TIMER}" "${DEST_DIR}/${HEALTH_TIMER}"
-log "# Installed ${DEST_DIR}/${LISTEN_UNIT}"
+log "# Installed ${DEST_DIR}/${LISTEN_UNIT} (ExecStart -> ${SAC_BIN} listen)"
 log "# Installed ${DEST_DIR}/${HEALTH_TIMER}"
 
 # 2b. Bake SAC_SECRETS_ENVRC into the installed listen unit so the daemon

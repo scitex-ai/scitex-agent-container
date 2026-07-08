@@ -21,11 +21,15 @@ from typing import Any
 
 import pytest
 
+from scitex_agent_container._state.host_config import PeerSpec
 from scitex_agent_container.cli_pkg.lifecycle._dispatch import (
     _dispatch_remote_start,
     lookup_remote_peer,
+    try_dispatch,
     try_dispatch_remote,
 )
+from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._types import HostsSpec
 
 # ---------------------------------------------------------------------------
 # Shim helpers — dual-behavior rsync (dry-run vs real) plus a fake ssh.
@@ -741,3 +745,141 @@ class TestTryDispatchRemote:
         # Assert
         with pytest.raises(RuntimeError, match="NOT in"):
             _do()
+
+
+# ---------------------------------------------------------------------------
+# try_dispatch — concrete-host routing: local (no ssh) / remote (ssh argv) /
+# unknown (fail loud). local + unknown reach no ssh; the remote path reuses
+# the PATH-shim ssh + rsync (no live network) to assert the constructed argv.
+# ``local_names`` is injected so routing is hermetic (no host_config read).
+# ---------------------------------------------------------------------------
+
+
+def _cfg_host(name: str, host) -> AgentConfig:
+    """AgentConfig carrying a v3 ``spec.host`` pin (str / list / '')."""
+    c = AgentConfig(name=name)
+    c.hosts_spec = HostsSpec(host=host, hosts=[])
+    return c
+
+
+class TestTryDispatchClassification:
+    def test_canonical_host_stays_local_and_skips_ssh(self, shim_bin, capsys):
+        # Arrange — host == this machine; an ssh shim is present to prove it
+        # is never invoked, and a peer map that would NOT rescue the name.
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", "ywata-note-win")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        out = try_dispatch(
+            cfg,
+            "ywata-note-win",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"ywata-note-win"},
+        )
+        # Assert
+        assert out is False and _ssh_invocations(shim_bin) == []
+
+    def test_alias_of_self_that_is_also_a_peer_stays_local(self, shim_bin, capsys):
+        # Arrange — the machine is ALSO a peer (ssh: localhost); an alias
+        # spelling must resolve local, never ssh-dispatch to itself.
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", "ywata-note-win")
+        peers = {"ywata-note-win": PeerSpec(name="ywata-note-win", ssh="localhost")}
+        # Act
+        out = try_dispatch(
+            cfg,
+            "raw-short-name",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"raw-short-name", "ywata-note-win"},
+        )
+        # Assert
+        assert out is False and _ssh_invocations(shim_bin) == []
+
+    def test_absent_host_stays_local(self, shim_bin, capsys):
+        # Arrange — host: local / absent normalizes to '' upstream.
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", "")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        out = try_dispatch(
+            cfg,
+            "ywata-note-win",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"ywata-note-win"},
+        )
+        # Assert
+        assert out is False and _ssh_invocations(shim_bin) == []
+
+    def test_unknown_host_falls_through_to_local_returning_false(self, capsys):
+        # Arrange — host is a typo: neither this machine nor a peer key. It
+        # must NOT dispatch; try_dispatch returns False so the caller runs the
+        # unchanged singleton-skip logic (skip-if-live-elsewhere, else local).
+        cfg = _cfg_host("alpha", "spartn-gpgpu")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        out = try_dispatch(
+            cfg,
+            "ywata-note-win",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"ywata-note-win"},
+        )
+        # Assert
+        assert out is False
+
+    def test_unknown_host_never_dispatches_ssh(self, shim_bin, capsys):
+        # Arrange — an ssh shim is present; the unknown path must not touch it
+        # (negative-safety: an unknown host is never routed to ssh).
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", "spartn-gpgpu")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        try_dispatch(
+            cfg,
+            "ywata-note-win",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"ywata-note-win"},
+        )
+        # Assert
+        assert _ssh_invocations(shim_bin) == []
+
+    def test_known_peer_dispatches_remote_with_expected_ssh_argv(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        # Arrange — host is a known peer distinct from the caller; PATH-shim
+        # rsync (clean first-launch) + ssh (ok JSON) stand in for the network.
+        # _dispatch_remote_start re-loads peers from the on-disk config for
+        # build_ssh_argv, so register peer-host there too (real config.yaml).
+        _write_peer_config(fake_home, env_save_restore, peer="peer-host")
+        _install_rsync_shim(shim_bin, **_RK_OK)
+        _install_ssh_shim(shim_bin, **_SK_OK)
+        cfg = _cfg_host("alpha", "peer-host")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        out = try_dispatch(
+            cfg,
+            "ywata-note-win",
+            peers,
+            dry_run=False,
+            force=False,
+            local_names={"ywata-note-win"},
+        )
+        # Assert — dispatched, and the ssh argv runs the peer-side start verb.
+        ssh_calls = _ssh_invocations(shim_bin)
+        assert out is True and ssh_calls[0][-6:] == [
+            "sac",
+            "agents",
+            "start",
+            "alpha",
+            "--no-redispatch",
+            "--json",
+        ]
