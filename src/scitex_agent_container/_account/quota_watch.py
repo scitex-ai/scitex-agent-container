@@ -180,7 +180,14 @@ def check_and_rotate(
                 "message": "dry-run: would rotate",
             }
 
-        result = switch_account(next_acct["name"], store_dir=store_dir, home=home)
+        result = switch_account(
+            next_acct["name"],
+            store_dir=store_dir,
+            home=home,
+            event="auto-rotate",
+            reason=f"quota threshold {threshold:.0f}% hit (5h={q5}% 7d={q7}%)",
+            from_account=current_email,
+        )
         return {
             "action": "rotated",
             "quota_5h_pct": q5,
