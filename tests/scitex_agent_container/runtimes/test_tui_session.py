@@ -12,6 +12,7 @@ STX-TQ002 AAA-marker + STX-TQ007 one-assert. No mocks.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -37,10 +38,17 @@ class _MemorySession:
     workdir: str
     pane: list[str] = field(default_factory=list)
     # Unix-epoch timestamp of last simulated pane activity. The runtime's
-    # is_running probe (step 4/4) reads session_activity to gate on a
-    # "responsive" window; tests that want to simulate a stale session
-    # mutate this field directly to back-date the stamp.
+    # is_responsive probe reads session_activity to gate on a "moving"
+    # window; tests that want to simulate a stale session mutate this
+    # field directly to back-date the stamp.
     activity_at: float = 0.0
+    # Identity liveness signals the runtime's is_running probe reads:
+    # ``pane_pid`` is the pane's process (a live pid by default so a
+    # started-but-idle session reads "running"); tests that simulate a
+    # dead pane set ``pane_pid`` to a guaranteed-dead pid or ``pane_dead``
+    # to True.
+    pane_pid: int = 0
+    pane_dead: bool = False
 
 
 class _MemoryMultiplexer:
@@ -84,6 +92,10 @@ class _MemoryMultiplexer:
             command=command,
             workdir=workdir,
             activity_at=time.time(),
+            # Default to the test process's own pid — a guaranteed-live
+            # pid — so a freshly started session reads "running" via the
+            # identity-based liveness probe (os.kill(pane_pid, 0)).
+            pane_pid=os.getpid(),
         )
         return True
 
@@ -166,6 +178,29 @@ class _MemoryMultiplexer:
         if sess is None:
             return None
         return int(sess.activity_at)
+
+    @classmethod
+    def pane_pid(cls, session_name: str) -> int | None:
+        """Identity liveness signal: PID of the process in the pane, or
+        ``None`` when no such session exists. Mirrors the real
+        ``TmuxManager.pane_pid`` contract so the runtime's ``is_running``
+        liveness probe is exercised end-to-end without tmux.
+        """
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return None
+        return sess.pane_pid
+
+    @classmethod
+    def pane_dead(cls, session_name: str) -> bool | None:
+        """Whether the pane's process exited but the pane is retained, or
+        ``None`` when no such session exists. Mirrors
+        ``TmuxManager.pane_dead``.
+        """
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return None
+        return sess.pane_dead
 
 
 @dataclass
@@ -428,7 +463,7 @@ def test_tui_runtime_stop_returns_false_when_no_session(
 
 
 # ---------------------------------------------------------------------------
-# is_running — proxy for session existence (risk-2 deferred)
+# is_running — IDENTITY-BASED liveness (session exists AND pane alive)
 # ---------------------------------------------------------------------------
 
 
@@ -457,59 +492,135 @@ def test_tui_runtime_is_running_false_when_session_absent(
     assert alive is False
 
 
-# ---------------------------------------------------------------------------
-# is_running — step 4 pane-activity probe semantics
-# ---------------------------------------------------------------------------
-
-
-def test_tui_runtime_is_running_false_when_activity_stale_beyond_window(
+def test_tui_runtime_is_running_true_when_idle_but_pane_alive(
     mux: type[_MemoryMultiplexer],
 ) -> None:
-    # Arrange — start session, then back-date activity beyond default window.
+    # REGRESSION (card sac-fix-live-agents-read-stopped): a live-but-quiet
+    # agent — no pane I/O for hours, so session_activity is far stale —
+    # must still read RUNNING because its pane process is alive. The old
+    # activity-freshness gate wrongly flipped this to "stopped".
+    # Arrange — start, then back-date activity beyond any max-idle window.
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
-    config = _Config(name="nu-stale")
+    config = _Config(name="nu-idle")
     runtime.start(config)
-    mux._sessions["tui-nu-stale"].activity_at = time.time() - 9_999.0
+    mux._sessions["tui-nu-idle"].activity_at = time.time() - 99_999.0
     # Act
     alive = runtime.is_running(config)
-    # Assert — pane went silent past default max-idle: probe flips False.
+    # Assert — pane pid is live ⇒ running, regardless of stale activity.
+    assert alive is True
+
+
+def test_tui_runtime_is_running_false_when_pane_process_dead(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — session exists but its pane pid is a guaranteed-dead pid.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="omicron-dead")
+    runtime.start(config)
+    mux._sessions["tui-omicron-dead"].pane_pid = 2_147_483_646  # never a live pid
+    # Act
+    alive = runtime.is_running(config)
+    # Assert
     assert alive is False
 
 
-def test_tui_runtime_is_running_respects_max_idle_s_override(
+def test_tui_runtime_is_running_false_when_pane_dead_flag_set(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a retained-dead pane (remain-on-exit) reads stopped even
+    # though the session still exists and pane_pid is a live pid.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="pi-retained")
+    runtime.start(config)
+    mux._sessions["tui-pi-retained"].pane_dead = True
+    # Act
+    alive = runtime.is_running(config)
+    # Assert
+    assert alive is False
+
+
+def test_tui_runtime_is_running_true_when_mux_lacks_pane_pid_probe(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — a legacy multiplexer that predates the pane-pid probe
+    # (no pane_pid / pane_dead attrs) falls back to session-exists =
+    # alive, so an existing session still reads "running".
+    class _LegacyMux(mux):  # type: ignore[valid-type, misc]
+        pane_pid = None  # type: ignore[assignment]
+        pane_dead = None  # type: ignore[assignment]
+
+    runtime = TuiSessionRuntime(multiplexer=_LegacyMux, command_builder=_fake_builder)
+    config = _Config(name="rho-legacy")
+    runtime.start(config)
+    # Act
+    alive = runtime.is_running(config)
+    # Assert
+    assert alive is True
+
+
+# ---------------------------------------------------------------------------
+# is_responsive — the preserved activity-freshness (hang-detection) signal
+# ---------------------------------------------------------------------------
+
+
+def test_tui_runtime_is_responsive_true_when_activity_fresh(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="sigma-fresh")
+    runtime.start(config)
+    # Act
+    responsive = runtime.is_responsive(config)
+    # Assert
+    assert responsive is True
+
+
+def test_tui_runtime_is_responsive_false_when_activity_stale_beyond_window(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange — back-date activity beyond the default max-idle window.
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="tau-stale")
+    runtime.start(config)
+    mux._sessions["tui-tau-stale"].activity_at = time.time() - 9_999.0
+    # Act
+    responsive = runtime.is_responsive(config)
+    # Assert — pane silent past max-idle: responsiveness flips False.
+    assert responsive is False
+
+
+def test_tui_runtime_is_responsive_respects_max_idle_s_override(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange — back-date activity 100s; tighten window to 50s.
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
-    config = _Config(name="xi-tight")
+    config = _Config(name="upsilon-tight")
     runtime.start(config)
-    mux._sessions["tui-xi-tight"].activity_at = time.time() - 100.0
+    mux._sessions["tui-upsilon-tight"].activity_at = time.time() - 100.0
     # Act
-    alive = runtime.is_running(config, max_idle_s=50.0)
-    # Assert — tighter window means the same stamp is now stale.
-    assert alive is False
+    responsive = runtime.is_responsive(config, max_idle_s=50.0)
+    # Assert
+    assert responsive is False
 
 
-def test_tui_runtime_is_running_false_when_session_activity_unavailable(
+def test_tui_runtime_is_responsive_false_when_session_activity_unavailable(
     mux: type[_MemoryMultiplexer],
 ) -> None:
-    # Arrange — a legacy multiplexer fake that lacks session_activity
-    # (returns None) must NOT be silently treated as "alive". The probe
-    # has to fail loud to "not responsive" so the supervisor restarts.
+    # Arrange — a multiplexer whose session_activity returns None must not
+    # be treated as responsive (the hang-detection signal fails loud).
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
-    config = _Config(name="omicron-legacy")
+    config = _Config(name="phi-noactivity")
     runtime.start(config)
 
-    # Monkey-patch the activity probe to return None for this test only,
-    # simulating a multiplexer impl that doesn't expose session_activity.
     def _no_activity(_name: str) -> int | None:
         return None
 
     mux.session_activity = staticmethod(_no_activity)  # type: ignore[method-assign]
     # Act
-    alive = runtime.is_running(config)
+    responsive = runtime.is_responsive(config)
     # Assert
-    assert alive is False
+    assert responsive is False
 
 
 # ---------------------------------------------------------------------------

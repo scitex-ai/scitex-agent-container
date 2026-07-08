@@ -111,6 +111,15 @@ def _probe_local(cfg) -> bool | None:
     ``_get_runtime`` makes ``sac agents list`` agree with
     ``sac agents status``.
 
+    SECOND fix (card ``sac-fix-live-agents-read-stopped``, 2026-07-08):
+    even after routing here, ``TuiSessionRuntime.is_running`` still gated
+    on ``session_activity`` freshness (pane I/O within 300s). tmux
+    advances that stamp only on pane read/write, so every quiet-but-alive
+    agent sitting at its input prompt read "stopped" minutes after its
+    last output. ``is_running`` is now IDENTITY-based liveness (session
+    exists AND its pane process is alive via ``os.kill(pane_pid, 0)``),
+    so this probe reports a live idle agent as running.
+
     Returns None on exception (e.g. malformed config) so the caller
     surfaces ``status='unknown'`` rather than crashing the list.
     """
