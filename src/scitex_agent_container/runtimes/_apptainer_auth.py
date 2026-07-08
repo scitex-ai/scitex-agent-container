@@ -87,13 +87,23 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
     # credentials file without needing $HOME pollution.
     #
-    # Mounted RW (no ``:ro``) so the in-container Claude CLI can
-    # refresh the OAuth ``accessToken`` in place when the host's
-    # token expires (~1h cadence). Without RW the bind-mounted file
-    # is frozen and every container 401s after token-expiry, forcing
-    # a manual scp-from-lead dance to re-seed peers. The CLI's
-    # refresh code-path itself is responsible for any concurrency
-    # locking — the bind is just a file passthrough.
+    # Mounted READ-ONLY (``:ro``) — master-host single-refresher model
+    # (operator 2026-07-08, credential-churn root-cause fix). The agent
+    # is a READ-ONLY CONSUMER of the credential: it NEVER refreshes or
+    # rotates the OAuth token. Previously this dir was bound ``:rw`` so
+    # the in-container Claude CLI could refresh the ``accessToken`` in
+    # place — but that made every running agent a refresher, and an
+    # agent refresh CONSUMES the single-use OAuth refresh_token: the
+    # instant an operator logged a fresh account in, a running agent ate
+    # its refresh_token (the "cred churn" disease). Now the host-side
+    # ``sac-accounts-refresh`` timer is the SOLE refresher; it rotates
+    # every account's snapshot on a fixed cadence, and the DIRECTORY
+    # bind (below) makes the timer's atomic-replace refreshes visible to
+    # the container on the next open — so a ``:ro`` agent still tracks
+    # the freshest token without ever writing one. The fail-loud expiry
+    # checks still apply: a ``:ro`` agent bound to an already-expired
+    # token cannot work, so an expired snapshot is an operator/timer
+    # problem to fix before launch, not something the agent can rescue.
     #
     # OAuth credentials bind shape: DIRECTORY bind, unconditionally
     # (operator task #11 + task #13).
@@ -110,10 +120,14 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # silently loses the shared file, regressing into the per-copy
     # collision-401 disease the snapshot model was meant to fix.
     # A DIRECTORY bind resolves child files by name through the
-    # underlying filesystem on every open, so a tmp+rename inside the
-    # dir is visible to the container immediately — in BOTH directions
-    # (host writes seen by the container, and in-container CLI refresh
-    # writes seen by host writers).
+    # underlying filesystem on every open, so a host-side tmp+rename
+    # inside the dir is visible to the container immediately. Under the
+    # ``:ro`` single-refresher model this matters in ONE direction that
+    # counts: the host-side ``sac-accounts-refresh`` timer's atomic
+    # replace of ``.credentials.json`` is picked up by the container on
+    # the next open, so a read-only agent tracks the freshest token
+    # without a restart. The container no longer writes back (``:ro``),
+    # which is the whole point — no agent-side refresh, no churn.
     #
     # PR #262 (task #11) made the PINNED branch dir-bind; this module
     # (task #13) makes the UNPINNED/host-live branch dir-bind too. The
@@ -172,7 +186,11 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
 
     argv += [
         "--bind",
-        f"{bind_src}:{bind_dest}:rw",
+        # READ-ONLY: the agent consumes the credential but never
+        # refreshes it (master-host single-refresher model). See the
+        # "Mounted READ-ONLY" rationale above. The host-side timer is
+        # the sole refresher; the dir bind surfaces its refreshes.
+        f"{bind_src}:{bind_dest}:ro",
         "--env",
         "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
     ]
@@ -246,7 +264,7 @@ def _assert_credential_unexpired(
 def credentials_file_bind(
     config: AgentConfig, *, now: float | None = None
 ) -> list[str]:
-    """Render the writable file-bind for the agent's credentials file.
+    """Render the READ-ONLY file-bind for the agent's credentials file.
 
     Emitted LAST in :func:`_apptainer_build_argv.build_run_argv` (after
     the overlay-upper-home bind) so a relaxed ``--home`` tmpfs or
@@ -267,22 +285,42 @@ def credentials_file_bind(
          AUTOMATICALLY without any manual ``credentials_file:`` line.
       3. Neither set or a provider backend is active → no bind.
 
-    Binds the resolved host file ``rw`` at ``<container_home>/.claude/
-    .credentials.json`` so the in-container ``claude`` (both SDK and
-    TUI variants) reads AND refreshes that single file directly. The
-    SAME path the interactive ``claude`` auto-discovers when no
-    ``$CLAUDE_CONFIG_DIR`` redirect is set — operator-confirmed working
-    shape (figrecipe + scitex-todo manual test 2026-06-15).
+    Binds the resolved host file READ-ONLY (``:ro``) at
+    ``<container_home>/.claude/.credentials.json`` so the in-container
+    ``claude`` (both SDK and TUI variants) READS that single file
+    directly but NEVER refreshes or rotates it. The SAME path the
+    interactive ``claude`` auto-discovers when no ``$CLAUDE_CONFIG_DIR``
+    redirect is set — operator-confirmed working shape (figrecipe +
+    scitex-todo manual test 2026-06-15).
 
-    Caveat: a single-file bind is on the file's inode. An in-container
-    refresh that rewrites in-place persists to the source; one that
-    does tmp+rename orphans the bind (the source keeps the pre-rename
-    token). For account-pinned mode the snapshot dir is owned by
-    sac-account tooling that the operator controls; coordinate writers
-    accordingly. For explicit ``credentials_file:`` the path SHOULD
-    NOT be one concurrently atomic-renamed by host-side
-    ``sac accounts``/watch-live tooling — it is the agent's private,
-    operator-rotated credentials file.
+    Master-host single-refresher model (operator 2026-07-08, cred-churn
+    root-cause fix): the agent is a READ-ONLY CONSUMER. Previously this
+    file was bound ``:rw`` so the in-container CLI refreshed the OAuth
+    ``accessToken`` in place — but a refresh CONSUMES the single-use
+    OAuth refresh_token, so a running agent would eat the refresh_token
+    of a freshly-logged-in account (the churn). Now the host-side
+    ``sac-accounts-refresh`` timer is the SOLE refresher: it rotates the
+    account snapshot's access_token on a fixed cadence and writes it
+    back to the SAME snapshot file this bind sources, so a ``:ro`` agent
+    always reads a timer-kept-fresh token without ever writing one.
+
+    The fail-loud expiry gate (``_assert_credential_unexpired`` for the
+    explicit-file branch, ``resolve_cred_file`` → ``PinnedAccountError``
+    for the account branch) is unchanged and still load-bearing: a
+    ``:ro`` agent bound to an already-expired token cannot work, so an
+    expired credential is refused at launch (an operator/timer problem
+    to fix first, not one the read-only agent can rescue).
+
+    Caveat: a single-file ``:ro`` bind is on the file's inode. A
+    host-side tmp+rename refresh (the timer's atomic-replace) orphans
+    the bind — the container keeps reading the pre-rename inode until it
+    restarts. For a ``:ro`` agent this is a staleness (not a corruption)
+    concern: the token is valid until its natural expiry, and the timer
+    keeps the snapshot fresh so a restart re-binds the current inode.
+    The account-pinned SDK path additionally gets the DIRECTORY bind at
+    ``/tmp/sac-claude`` (:func:`auth_argv`), which resolves the child
+    file by name on every open and so DOES reflect atomic-replace
+    refreshes without a restart.
     """
     if provider_active(config):
         return []
@@ -339,7 +377,10 @@ def credentials_file_bind(
 
     container_home = resolve_container_home(config).rstrip("/")
     dest = f"{container_home}/.claude/.credentials.json"
-    return ["--bind", f"{src}:{dest}:rw"]
+    # READ-ONLY: the agent consumes the credential but never refreshes
+    # it (master-host single-refresher model — see the docstring). The
+    # host-side ``sac-accounts-refresh`` timer is the sole refresher.
+    return ["--bind", f"{src}:{dest}:ro"]
 
 
 def ensure_credentials_bind_target(
@@ -365,7 +406,7 @@ def ensure_credentials_bind_target(
     :func:`_apptainer_build_argv.build_run_argv`), else the workspace-home
     dir (``<state>/home``, bound at ``/home/agent``). This ensures an empty
     0-byte ``.claude/.credentials.json`` exists at that host path so the
-    ``:rw`` bind lands; the bind then SHADOWS this placeholder with the real
+    ``:ro`` bind lands; the bind then SHADOWS this placeholder with the real
     operator credential — the placeholder's contents never matter.
 
     CRITICAL — placement: the placeholder is written into the overlay
@@ -396,7 +437,7 @@ def ensure_credentials_bind_target(
     flags = bind_flags if bind_flags is not None else credentials_file_bind(config)
     if not flags:
         return None
-    # flags == ["--bind", "<src>:<container_home>/.claude/.credentials.json:rw"]
+    # flags == ["--bind", "<src>:<container_home>/.claude/.credentials.json:ro"]
     from ._to_home_overlay import resolve_container_home
 
     container_home = resolve_container_home(config).rstrip("/")
