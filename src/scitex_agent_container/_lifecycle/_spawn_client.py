@@ -245,6 +245,7 @@ def request_spawn(
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -295,6 +296,21 @@ def request_spawn(
         the capsule runs one SDK turn (its ``startup_prompts``) and
         exits. Pairs naturally with ``foreground=True`` for the
         cohort capsule shape.
+    assume_yes
+        Forwarded as ``assume_yes: true`` in the POST body when set.
+        Bug fix (2026-07-05, reported by paper-scitex-clew): the host's
+        ``/agents`` handler shells a fresh ``sac agents start <name>``
+        subprocess, which re-runs the SAME interactive
+        refuse-without-``--yes`` gate (``cli_pkg/lifecycle/
+        _start_single.py::should_preview_and_require_yes``) that the
+        ORIGINAL in-SIF caller's own ``-y`` already satisfied. Before
+        this field existed there was no way for that consent to reach
+        the host subprocess, so a brokered ``sac agents start <name>
+        -y`` run from inside a container ALWAYS hit "refusing to start
+        ... without --yes/-y" even though ``-y`` was explicitly passed
+        at the top of the call chain. This does NOT weaken the
+        human-at-a-TTY default-refuse safety net — it only lets the
+        brokered/automated path assert consent that was already given.
 
     Returns
     -------
@@ -332,6 +348,11 @@ def request_spawn(
         body["foreground"] = True
     if one_shot:
         body["one_shot"] = True
+    # Consent-propagation fix (2026-07-05, paper-scitex-clew report): only
+    # emit the key when truthy, same back-compat rationale as foreground/
+    # one_shot above — pre-fix brokers simply ignore an absent field.
+    if assume_yes:
+        body["assume_yes"] = True
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"

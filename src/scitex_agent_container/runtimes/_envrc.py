@@ -38,6 +38,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from ._to_home_text import _is_legacy_identity_var
+
 logger = logging.getLogger(__name__)
 
 # Shell-internal vars that legitimately differ between two otherwise-identical
@@ -121,14 +123,41 @@ def eval_envrc(envrc: Path, *, base_env: Path | None = None) -> dict[str, str]:
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
-    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
-    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
-    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
-    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
+    return _folded_env(loaded, baseline)
+
+
+def _folded_env(
+    loaded: dict[str, str], baseline: dict[str, str]
+) -> dict[str, str]:
+    """Filter a captured ``loaded`` env down to the net ``.env`` contribution.
+
+    Applied identically by :func:`eval_envrc` and :func:`eval_envrc_cascade`.
+    A key is kept only when it is NOT shell noise, was ADDED or CHANGED vs the
+    ``baseline`` shell, has a non-empty value, and is NOT a deprecated identity
+    alias.
+
+    * **Empty values** are dropped: a secret line
+      (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``) folds to ``CCT_BOT_TOKEN=``
+      when its source is unset at fold time, which then SHADOWS the real value
+      a later layer supplies — an empty short-form made the telegram bridge
+      read "" and 404 (dead poller).
+    * **Legacy identity aliases** (:func:`_is_legacy_identity_var`) are dropped
+      so a stale ``SCITEX_TODO_AGENT`` that once landed in ``dest/.env`` cannot
+      SELF-PERPETUATE: the fold sources ``dest/.env`` as its base, so any such
+      orphan var (set by no cascade ``.envrc``) re-enters the diff and is
+      re-baked every deploy — and scitex-todo's MCP now HARD-REJECTS any call
+      when ``SCITEX_TODO_AGENT`` is present (INCIDENT 2026-07-05/06 write-
+      outage). The current ``_ID`` identity vars are deliberately NOT dropped:
+      the ``.env`` is the container ``--env-file`` and the materialized
+      ``.mcp.json`` expands ``${SCITEX_TODO_AGENT_ID}`` from it.
+    """
     return {
         key: val
         for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
+        if key not in _SHELL_NOISE
+        and baseline.get(key) != val
+        and val != ""
+        and not _is_legacy_identity_var(key)
     }
 
 
@@ -198,15 +227,7 @@ def eval_envrc_cascade(
     lines.append("set +a")
     lines.append("env -0")
     loaded = _capture_env("\n".join(lines), cwd)
-    # Drop EMPTY values: a secret line (``export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_X"``)
-    # folds to ``CCT_BOT_TOKEN=`` when its source is unset at fold time, which then
-    # SHADOWS the real value a later layer supplies (the .mcp.json's legacy-spelled
-    # bot token) — an empty short-form made the bridge read "" and 404 (dead poller).
-    return {
-        key: val
-        for key, val in loaded.items()
-        if key not in _SHELL_NOISE and baseline.get(key) != val and val != ""
-    }
+    return _folded_env(loaded, baseline)
 
 
 def fold_envrc_cascade_into_env(dest: Path, envrcs: "list[Path | None]") -> None:

@@ -16,18 +16,34 @@ Fail-loud contract (no silent fallbacks): an EXPIRED or ABSENT live
 credential is a hard error (:class:`LiveCredInvalidError`), never a
 silent save of a stale token.
 
-Pure stdlib. No network call. The store-name is the account email
-slugified (``wyusuuke@gmail.com`` → ``wyusuuke-gmail-com``), matching
-the layout the rest of sac already uses on disk.
+The store-name is the account email slugified (``wyusuuke@gmail.com`` →
+``wyusuuke-gmail-com``), matching the layout the rest of sac already uses
+on disk.
+
+Identity guard (2026-07)
+------------------------
+The TARGET store is derived from the LIVE TOKEN's ACTUAL identity — a
+best-effort OAuth "whoami" (:func:`_account.account_identity.fetch_account_email`)
+— NOT from ``~/.claude.json``'s ``oauthAccount.emailAddress`` metadata,
+which drifts out of sync with the token across logins/switches. That drift
+caused ``sync_live`` to snapshot one account's token into ANOTHER account's
+store (clobbering it) on 2026-07. A single best-effort network call is made
+per sync; when it FAILS (offline), the code falls back to the metadata email
+BUT refuses any write that would change a store's recorded identity. A
+store's credential must always authenticate as that store's own account.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class LiveCredInvalidError(RuntimeError):
@@ -36,6 +52,19 @@ class LiveCredInvalidError(RuntimeError):
     The message names the live path and tells the operator how to fix
     it (``claude /login``). Surfaced as a non-zero CLI exit so the
     operator never mistakes a stale token for a successful sync.
+    """
+
+
+class AccountIdentityError(LiveCredInvalidError):
+    """Raised when a sync would change a store's recorded account identity.
+
+    Subclasses :class:`LiveCredInvalidError` so the ``watch-live`` loop and
+    the ``sync-live`` CLI already treat it as a soft, LOGGED failure — the
+    write is refused (never corrupt a store on identity uncertainty), never
+    crashed. This is the offline-path safety net for the 2026-07
+    credential-clobber bug: when the live token's identity cannot be
+    verified (whoami offline) AND the target store already records a
+    different account, we abort rather than overwrite.
     """
 
 
@@ -105,6 +134,30 @@ def _read_oauth_expiry_seconds(path: Path) -> float | None:
     return val / 1000.0 if val > 1e12 else val
 
 
+def _read_access_token_fingerprint(path: Path) -> str | None:
+    """Best-effort OPAQUE ``sha256:<hex>`` fingerprint of a snapshot's access token.
+
+    Reads ``claudeAiOauth.accessToken`` from ``path`` and returns its
+    one-way fingerprint (NEVER the token). ``None`` on any missing/corrupt
+    file. Used only to make a token FROM→TO rotation visible in the audit
+    record. Never raises.
+    """
+    # stx-allow: fallback (reason: fingerprint is a cosmetic audit field; a
+    # missing/corrupt snapshot must degrade to None, never break the sync.)
+    try:
+        from ._rotation_audit import fingerprint_token
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        oauth = data.get("claudeAiOauth")
+        if not isinstance(oauth, dict):
+            return None
+        return fingerprint_token(oauth.get("accessToken"))
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
 def _read_active_email(home: Path) -> str | None:
     """Return the active-account email from ``~/.claude.json``, or None.
 
@@ -138,21 +191,66 @@ def _atomic_copy(src: Path, dst: Path) -> None:
     tmp.replace(dst)
 
 
+def _read_store_email(account_dir: Path) -> str | None:
+    """Return the ``email_address`` recorded in a store's ``account.json``.
+
+    ``None`` when the metadata file is missing, unparseable, or lacks a
+    non-empty ``email_address``. Never raises. Used by the offline safety
+    guard to detect that a target store already belongs to a different
+    account before overwriting its credential.
+    """
+    # stx-allow: fallback (reason: a store's account.json may be absent or
+    # mid-rewrite; a missing/corrupt identity reads as None so the offline
+    # guard treats it as "no recorded identity" rather than crashing.)
+    try:
+        data = json.loads((account_dir / "account.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    email = data.get("email_address")
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+    return None
+
+
+def _default_identity_fn(live_path: Path) -> str | None:
+    """Best-effort whoami for the live credential (lazy import, offline-safe).
+
+    Imported lazily so importing this module never triggers the network
+    dependency, and so ``sync_live`` makes the OAuth call only when actually
+    run. Returns ``None`` on any failure — the caller falls back to the
+    metadata email under the offline guard.
+    """
+    from .account_identity import fetch_account_email
+
+    return fetch_account_email(live_path)
+
+
 def sync_live(
     home: Path | None = None,
     store_dir: Path | None = None,
     *,
     now: float | None = None,
+    identity_fn: Callable[[Path], str | None] | None = None,
 ) -> SyncResult:
     """Mirror the live credential into its matching store when warranted.
 
-    Reads the live ``~/.claude/.credentials.json`` and the active email
-    from ``~/.claude.json``. The live cred must be VALID (``expiresAt``
-    strictly in the future) — otherwise :class:`LiveCredInvalidError`.
-    Derives the store-name from the email; if the store is ABSENT, OR
-    its snapshot is OLDER (earlier ``expiresAt``) than the live cred,
-    OR the store snapshot is itself expired, the live cred is
-    atomically snapshotted in and the account metadata refreshed.
+    Reads the live ``~/.claude/.credentials.json``. The live cred must be
+    VALID (``expiresAt`` strictly in the future) — otherwise
+    :class:`LiveCredInvalidError`.
+
+    Derives the target store from the live TOKEN's ACTUAL identity via a
+    best-effort whoami (``identity_fn``), NOT from the possibly-stale
+    ``~/.claude.json`` metadata email — this is the fix for the 2026-07
+    wrong-store clobber. When the whoami is offline it falls back to the
+    metadata email but refuses any write that would change a store's
+    recorded identity (:class:`AccountIdentityError`).
+
+    If the target store is ABSENT, OR its snapshot is OLDER (earlier
+    ``expiresAt``) than the live cred, OR the store snapshot is itself
+    expired, the live cred is atomically snapshotted in and the account
+    metadata refreshed.
 
     Idempotent: when the store snapshot already has an ``expiresAt`` >=
     the live cred's, returns ``action="up-to-date"`` without writing.
@@ -168,6 +266,11 @@ def sync_live(
     now
         Override for the wall clock (unix seconds). Defaults to
         ``time.time()``.
+    identity_fn
+        Best-effort whoami: ``live_path -> account_email | None``. Injected
+        in tests; defaults to :func:`_default_identity_fn` (an OAuth profile
+        call). Returns ``None`` when the identity cannot be verified
+        (offline), triggering the metadata-based fallback + safety guard.
 
     Returns
     -------
@@ -180,9 +283,15 @@ def sync_live(
         When the live credential is absent, malformed, expired, or the
         active email cannot be determined. The message tells the
         operator to ``claude /login``.
+    AccountIdentityError
+        (Subclass of ``LiveCredInvalidError``.) When the live token's
+        identity could not be verified (offline) AND the target store
+        already records a DIFFERENT account — the write is refused rather
+        than clobber that store's credential.
     """
     _home = home or Path.home()
     now_ts = now if now is not None else time.time()
+    _identity_fn = identity_fn if identity_fn is not None else _default_identity_fn
 
     live_path = _home / ".claude" / ".credentials.json"
     if not live_path.is_file():
@@ -204,20 +313,49 @@ def sync_live(
             "refusing to sync a stale token. Run `claude /login` to refresh."
         )
 
-    email = _read_active_email(_home)
-    if email is None:
-        raise LiveCredInvalidError(
-            f"cannot determine the active account email from "
-            f"{(_home / '.claude.json')!s} (missing "
-            "`oauthAccount.emailAddress`). Run `claude /login`."
-        )
+    metadata_email = _read_active_email(_home)
 
-    store_name = slugify_email(email)
+    # --- Identity guard: derive the target store from the TOKEN, not the
+    #     (possibly stale) ~/.claude.json metadata. ------------------------
+    # stx-allow: fallback (reason: whoami is best-effort; a None return means
+    # the token identity is unverifiable (offline) and we drop to the guarded
+    # metadata fallback below — never crash the sync on a network hiccup.)
+    token_email = _identity_fn(live_path)
+
+    if token_email is not None:
+        # Trust the live token's actual identity. If the metadata disagrees,
+        # it is stale — warn and write to the TOKEN-identity store anyway
+        # (this is the fix for the 2026-07 wrong-store clobber).
+        if metadata_email and metadata_email.lower() != token_email.lower():
+            logger.warning(
+                "sync-live: ~/.claude.json email %r disagrees with the live "
+                "token's actual account %r; trusting the token and syncing "
+                "into its store (metadata is stale).",
+                metadata_email,
+                token_email,
+            )
+        target_email = token_email
+        identity_verified = True
+    else:
+        # Offline / whoami failed — fall back to metadata selection under the
+        # safety guard below.
+        if metadata_email is None:
+            raise LiveCredInvalidError(
+                f"cannot determine the active account email from "
+                f"{(_home / '.claude.json')!s} (missing "
+                "`oauthAccount.emailAddress`) and the live token's identity "
+                "could not be verified. Run `claude /login`."
+            )
+        target_email = metadata_email
+        identity_verified = False
+
+    store_name = slugify_email(target_email)
 
     from .._state.account_store import _store_path, save_account
 
     store = _store_path(store_dir, _home)
-    snapshot = store / store_name / ".credentials.json"
+    account_dir = store / store_name
+    snapshot = account_dir / ".credentials.json"
     store_expiry = _read_oauth_expiry_seconds(snapshot) if snapshot.is_file() else None
 
     # Idempotent: store already matches or is fresher than live → no-op.
@@ -225,20 +363,59 @@ def sync_live(
         return SyncResult(
             action="up-to-date",
             store_name=store_name,
-            email=email,
+            email=target_email,
             live_expires_at=live_expiry,
             store_expires_at=store_expiry,
         )
 
+    # Offline safety guard: when the token identity is UNVERIFIED, never
+    # overwrite a store whose recorded account differs from where the
+    # metadata points — that is the exact shape of the 2026-07 clobber.
+    if not identity_verified:
+        recorded = _read_store_email(account_dir)
+        if recorded is not None and recorded.lower() != target_email.lower():
+            raise AccountIdentityError(
+                f"refusing to sync into store {store_name!r}: it already "
+                f"records account {recorded!r}, which differs from the "
+                f"metadata email {target_email!r}, and the live token's "
+                "identity could not be verified (offline). Refusing to change "
+                "a store's identity. Run `claude /login` or restore network "
+                "so the token can be verified."
+            )
+
+    # Capture the OUTGOING store fingerprint BEFORE we overwrite it, so the
+    # audit shows the token FROM→TO change without exposing the secret.
+    from_token_fp = _read_access_token_fingerprint(snapshot)
+
     _atomic_copy(live_path, snapshot)
     # Refresh the safe metadata (email label) so `account list` resolves
     # the email even for a store created purely by auto-sync.
-    save_account(store_name, {"email_address": email}, store_dir=store_dir, home=_home)
+    save_account(
+        store_name, {"email_address": target_email}, store_dir=store_dir, home=_home
+    )
+
+    # --- Rotation audit (best-effort, never breaks the sync) ---------------
+    # stx-allow: fallback (reason: the audit record is a durable side-effect;
+    # a failure to write it must never fail the credential snapshot itself.)
+    try:
+        from ._rotation_audit import log_rotation_event
+
+        log_rotation_event(
+            store=store,
+            event="sync-live",
+            from_account=store_name,
+            to_account=store_name,
+            reason="login-capture (live credential snapshotted into store)",
+            from_token_fp=from_token_fp,
+            to_token_fp=_read_access_token_fingerprint(snapshot),
+        )
+    except Exception:  # stx-allow: fallback (reason: audit is best-effort; never fail the sync on it)
+        pass
 
     return SyncResult(
         action="saved",
         store_name=store_name,
-        email=email,
+        email=target_email,
         live_expires_at=live_expiry,
         store_expires_at=store_expiry,
     )
@@ -296,6 +473,7 @@ def account_freshness(
 
 
 __all__ = [
+    "AccountIdentityError",
     "Freshness",
     "LiveCredInvalidError",
     "SyncResult",

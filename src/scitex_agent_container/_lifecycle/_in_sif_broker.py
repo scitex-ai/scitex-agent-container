@@ -126,6 +126,7 @@ def broker_start_to_host(
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
 ) -> dict:
     """POST a spawn request to the host-side ``sac listen``; FAIL LOUD on error.
 
@@ -170,6 +171,16 @@ def broker_start_to_host(
         Optional ``urllib.request.urlopen``-shaped callable. The
         in-SIF integration tests pass a fake opener so the wire shape
         is exercised without an actual network round-trip.
+    assume_yes
+        Forwarded to :func:`_lifecycle._spawn_client.request_spawn` as
+        ``assume_yes`` (wire field ``assume_yes: true``). Bug fix
+        (2026-07-05, paper-scitex-clew report): the host's ``/agents``
+        handler re-runs the same interactive refuse-without-``--yes``
+        gate the ORIGINAL in-SIF caller's ``-y`` already satisfied —
+        without threading this through, that consent never reached the
+        host subprocess and every brokered start refused itself. See
+        :func:`_lifecycle._spawn_client.request_spawn`'s docstring for
+        the full contract.
 
     Returns
     -------
@@ -204,6 +215,7 @@ def broker_start_to_host(
             opener=opener,
             foreground=foreground,
             one_shot=one_shot,
+            assume_yes=assume_yes,
         )
     except SpawnRequestError as exc:
         # Re-throw under the broker's own error type so the integration
@@ -227,6 +239,7 @@ def maybe_broker_in_sif_spawn(
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
 ) -> bool:
     """Single-call broker chokepoint for the in-SIF redirect in agent_start.
 
@@ -268,6 +281,18 @@ def maybe_broker_in_sif_spawn(
     + return rc=0 immediately) and the post-ack liveness probe sees a
     still-alive Popen pid, returning SUCC while the capsule dies
     silently later.
+
+    ``assume_yes``: propagate the caller's own ``-y``/``--yes`` consent
+    through to the host's ``/agents`` handler (bug fix 2026-07-05,
+    paper-scitex-clew report). The host handler shells a fresh
+    ``sac agents start <name>`` subprocess that re-runs the SAME
+    interactive refuse-without-``--yes`` gate the caller already
+    satisfied at the top of this call chain; without this field that
+    consent never reached the host subprocess and the brokered start
+    ALWAYS refused itself with "refusing to start ... without
+    --yes/-y", even when ``-y`` was explicitly given. See
+    :func:`broker_start_to_host` / :func:`_lifecycle._spawn_client.
+    request_spawn` for the full wire contract.
     """
     if dry_run or not is_in_sif():
         return False
@@ -277,6 +302,7 @@ def maybe_broker_in_sif_spawn(
         opener=opener,
         foreground=foreground,
         one_shot=one_shot,
+        assume_yes=assume_yes,
     )
     rc = result.get("returncode") if isinstance(result, dict) else None
     if rc != 0:

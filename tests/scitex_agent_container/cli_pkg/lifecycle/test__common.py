@@ -21,11 +21,13 @@ from scitex_agent_container.cli_pkg.lifecycle._common import (
     _bound_host,
     _discover_all_agents,
     _iter_agent_yamls,
+    _local_host_names,
     _multiplex_foreground_tails,
     _registry_active_on,
     _resolve_dispatch_peer,
     _resolve_singleton_skip,
     _singleton_skip_reason,
+    classify_dispatch_host,
 )
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import HostsSpec, SchedulingSpec
@@ -786,3 +788,151 @@ class TestResolveDispatchPeer:
         out = _resolve_dispatch_peer(" spartan-bm152 ", "ywata-note-win", peers)
         # Assert
         assert out is None
+
+    def test_alias_of_self_that_is_also_a_peer_stays_local(self):
+        # Arrange — the current machine is ALSO registered as a peer (so
+        # remote hosts can ssh to it); an alias spelling must resolve LOCAL,
+        # never ssh-to-self, even though it is a peer key.
+        peers = {
+            "ywata-note-win": PeerSpec(name="ywata-note-win", ssh="localhost"),
+        }
+        # Act
+        out = _resolve_dispatch_peer(
+            "ywata-note-win",
+            "some-raw-hostname",
+            peers,
+            local_names={"ywata-note-win", "some-raw-hostname"},
+        )
+        # Assert
+        assert out is None
+
+
+# ---------------------------------------------------------------------------
+# classify_dispatch_host — the operator's concrete-hostname resolution layer:
+# concrete host -> local | remote:<peer> | unknown. Pure; never reads files.
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyDispatchHost:
+    def test_absent_host_classifies_local(self):
+        # Arrange — host: local / absent normalizes to None upstream.
+        peers = _peers_with_spartan()
+        # Act
+        kind, peer = classify_dispatch_host(None, "ywata-note-win", peers)
+        # Assert
+        assert (kind, peer) == ("local", None)
+
+    def test_canonical_name_of_current_host_classifies_local(self):
+        # Arrange — host: <this-canonical> equals current_host.
+        peers = _peers_with_spartan()
+        # Act
+        kind, peer = classify_dispatch_host(
+            "ywata-note-win", "ywata-note-win", peers
+        )
+        # Assert
+        assert (kind, peer) == ("local", None)
+
+    def test_alias_of_current_host_classifies_local(self):
+        # Arrange — target differs from current_host but is a known local
+        # alias (host_config canonical/aliases denote THIS machine).
+        peers = _peers_with_spartan()
+        # Act
+        kind, peer = classify_dispatch_host(
+            "ywata-note-win",
+            "raw-short-name",
+            peers,
+            local_names={"raw-short-name", "ywata-note-win"},
+        )
+        # Assert
+        assert (kind, peer) == ("local", None)
+
+    def test_local_wins_over_peer_table_no_ssh_to_self(self):
+        # Arrange — the machine is registered as a peer too; local must win.
+        peers = {"ywata-note-win": PeerSpec(name="ywata-note-win", ssh="localhost")}
+        # Act
+        kind, peer = classify_dispatch_host(
+            "ywata-note-win",
+            "ywata-note-win",
+            peers,
+            local_names={"ywata-note-win"},
+        )
+        # Assert
+        assert (kind, peer) == ("local", None)
+
+    def test_known_peer_classifies_remote(self):
+        # Arrange
+        peers = _peers_with_spartan()
+        # Act
+        kind, peer = classify_dispatch_host(
+            "spartan-bm152", "ywata-note-win", peers
+        )
+        # Assert
+        assert (kind, peer) == ("remote", "spartan-bm152")
+
+    def test_unknown_host_classifies_unknown(self):
+        # Arrange — neither local nor a peer key.
+        peers = _peers_with_spartan()
+        # Act
+        kind, peer = classify_dispatch_host("typo-host", "ywata-note-win", peers)
+        # Assert
+        assert (kind, peer) == ("unknown", None)
+
+    def test_glob_peer_key_classifies_remote(self):
+        # Arrange — PeersMap resolves spartan-* patterns on lookup.
+        from scitex_agent_container._state.host_config import PeersMap
+
+        peers = PeersMap()
+        peers["spartan-*"] = PeerSpec(name="spartan-*", ssh="")
+        # Act
+        kind, peer = classify_dispatch_host(
+            "spartan-bm999", "ywata-note-win", peers
+        )
+        # Assert
+        assert (kind, peer) == ("remote", "spartan-bm999")
+
+
+# ---------------------------------------------------------------------------
+# _local_host_names — impure adapter unioning the two hostname authorities.
+# No-mocks: a real config.yaml fixture via $SCITEX_AGENT_CONTAINER_CONFIG.
+# ---------------------------------------------------------------------------
+
+
+class TestLocalHostNames:
+    def test_includes_current_host_argument(self):
+        # Arrange
+        current = "passed-in-host"
+        # Act
+        names = _local_host_names(current)
+        # Assert
+        assert "passed-in-host" in names
+
+    def test_includes_config_canonical_and_alias(
+        self, tmp_path: Path, env_save_restore
+    ):
+        # Arrange — real config.yaml: canonical name + an alias for the short
+        # hostname this test process actually reports.
+        import socket
+
+        short = socket.gethostname().split(".")[0]
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "host:\n"
+            "  canonical: box-canonical\n"
+            "  aliases:\n"
+            f"    {short}: box-alias\n"
+        )
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+        # Act
+        names = _local_host_names()
+        # Assert — $SAC_HOST unset, so canonical_host() returns host.canonical.
+        assert "box-canonical" in names
+
+    def test_never_raises_without_config(self, tmp_path: Path, env_save_restore):
+        # Arrange — point at a nonexistent config; must degrade, not raise.
+        env_save_restore.set(
+            "SCITEX_AGENT_CONTAINER_CONFIG", str(tmp_path / "missing.yaml")
+        )
+        # Act
+        names = _local_host_names("host-x")
+        # Assert — still returns the short hostname + the passed current_host.
+        assert "host-x" in names and names

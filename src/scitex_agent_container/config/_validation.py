@@ -8,54 +8,24 @@ Communication with the agent uses the HTTP A2A surface, never panes.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
 
 from ._acl_validation import validate_phase3_acl
-from ._provider_validation import provider_is_active, validate_provider
 
-# Accepted shapes for ``spec.model`` (F-CS7).
-#
-# claude-agent-sdk silently rejects unknown aliases — the runner stays
-# alive, the heartbeat is fresh, but every turn returns 0 input tokens
-# and 0 output tokens because the SDK never makes the API call. Pin
-# the validation here so the failure surfaces at yaml-validate time
-# instead of as a hung-looking agent.
-#
-# Two acceptable shapes:
-#   1. Bare alias: ``opus`` / ``sonnet`` / ``haiku`` / ``inherit`` /
-#      ``default``, optionally with a context-suffix (``[1m]``).
-#   2. Full versioned form: ``claude-<family>-N-M`` with optional date
-#      tail (``-20251001``) and optional context-suffix.
-#
-# Reproduction (2026-05-05): ``claude-opus[1m]`` (abbreviated, missing
-# the version digits) was accepted by the YAML loader but silently
-# rejected by the SDK — every turn returned ``input_tokens=0``,
-# ``output_tokens=0``, ``iterations=[]``. Other peers using
-# ``claude-opus-4-7[1m]`` worked fine.
-_VALID_MODEL_RE = re.compile(
-    r"""
-    ^(?:
-        (?:opus|sonnet|haiku|fable|inherit|default)
-        |
-        # opus/sonnet/haiku ship as ``family-N-M`` (e.g. ``claude-opus-4-7``).
-        # Fable is published as a single-digit family version
-        # (``claude-fable-5``); see lead-confirmed 2026-06-12 (msg
-        # 6172e53d ruling 1). The ``[1m]`` context-suffix is CLI-native
-        # (proven empirically — msg 6f7e2f56) and bolted on below.
-        claude-(?:
-            (?:opus|sonnet|haiku)-\d+-\d+
-            |
-            fable-\d+
-        )(?:-[a-z0-9]+)*
-    )
-    (?:\[[a-zA-Z0-9_]+\])?
-    $
-    """,
-    re.VERBOSE,
-)
+# Cohesive validation blocks extracted into sibling modules to keep this
+# orchestrator under the 512-line cap (same pattern as _acl_validation /
+# _provider_validation). ``_VALID_MODEL_RE`` is re-exported here for
+# back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
+from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
+from ._claude_validation import validate_claude
+from ._placement_validation import validate_placement
+from ._shape_validation import validate_autonomous, validate_proxy_coupling
+
+# ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
+# ``_claude_validation`` alongside the rest of the claude-block checks;
+# re-exported at the top of this module for back-compat.
 
 _VALID_API_VERSIONS = ("scitex-agent-container/v3",)
 
@@ -378,53 +348,10 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 f"spec.dockerfile must be a string, got {type(dockerfile).__name__}"
             )
 
-        # spec.claude.model — F-CS7 (v3: moved from top-level spec.model).
-        # Validate against accepted SDK aliases / versioned forms. The
-        # SDK silently rejects unknown values (heartbeat fresh, every
-        # turn returns 0 tokens), so we surface bad strings at yaml-
-        # validate time. Empty / missing is allowed — runtime falls back
-        # to its default.
-        claude_block = spec.get("claude", {}) or {}
-        if not isinstance(claude_block, dict):
-            claude_block = {}
-        # spec.claude.provider — vendor-agnostic backend override
-        # (ProviderSpec). When present, the SDK session runs against an
-        # Anthropic-SDK-compatible backend on an API key, so the model id
-        # is the provider's own (e.g. 'deepseek-chat') and the claude-*
-        # regex below is skipped. Absent → behaviour unchanged.
-        provider_block = claude_block.get("provider")
-        has_provider = provider_is_active(provider_block)
-        errors.extend(validate_provider(provider_block))
-        model = claude_block.get("model")
-        if model is not None:
-            if not isinstance(model, str):
-                errors.append(
-                    f"spec.claude.model must be a string, got {type(model).__name__}"
-                )
-            elif model and not has_provider and not _VALID_MODEL_RE.match(model):
-                errors.append(
-                    f"spec.claude.model '{model}' is not an accepted alias. "
-                    "Use a bare alias ('opus', 'sonnet', 'haiku', 'inherit', "
-                    "'default'), optionally with a context suffix like "
-                    "'opus[1m]'; OR the full versioned form "
-                    "'claude-<family>-N-M[-<tail>]' (e.g. 'claude-opus-4-7', "
-                    "'claude-opus-4-7[1m]', 'claude-haiku-4-5-20251001'). "
-                    "Abbreviated forms like 'claude-opus[1m]' are rejected "
-                    "by the SDK without raising — every turn returns 0 "
-                    "tokens. (When spec.claude.provider is set, the model "
-                    "field accepts the provider's own model id instead.)"
-                )
-
-        # spec.claude.provider + spec.claude.account are mutually
-        # exclusive — an API-key backend needs no OAuth. Declaring both
-        # is a config error (the runtime would otherwise have to guess
-        # which auth path wins). Reject loudly at validate time.
-        if has_provider and (claude_block.get("account") or ""):
-            errors.append(
-                "spec.claude.provider and spec.claude.account are mutually "
-                "exclusive — a provider backend uses an API key, not "
-                "Anthropic OAuth. Set exactly one."
-            )
+        # spec.claude block (model alias / provider / account exclusivity /
+        # resume_id UUID) — validated in the sibling ``_claude_validation``
+        # module (keeps this orchestrator under the per-file cap).
+        errors.extend(validate_claude(spec))
 
         # container.runtime
         container = spec.get("container", {}) or {}
@@ -485,121 +412,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"got '{user_val}'"
                 )
 
-        # host / hosts — placement. Exactly one is REQUIRED (no hidden
-        # 'local' default; operator directive 2026-06-23) AND they are
-        # mutually exclusive. ``host: local`` is the explicit local-singleton
-        # spelling (parser normalizes it to "").
-        has_host = "host" in spec
-        has_hosts = "hosts" in spec
-        if not has_host and not has_hosts:
-            errors.append(
-                "spec.host or spec.hosts is REQUIRED — declare placement "
-                "explicitly (no hidden 'local' default; operator directive "
-                "2026-06-23). Use ONE of:\n"
-                "  host: local              # this (the invoking) host\n"
-                "  host: <peer>             # pinned to a single peer\n"
-                "  hosts: [<peer>, ...]     # one instance per host (or 'all')"
-            )
-        if has_host and has_hosts:
-            errors.append(
-                "spec.host and spec.hosts are mutually exclusive — set "
-                "exactly one (host: singleton, hosts: multi-instance)"
-            )
-        if has_host:
-            host_val = spec.get("host")
-            if host_val is not None and not isinstance(host_val, (str, list)):
-                errors.append(
-                    f"spec.host must be a string, list of strings, or empty; "
-                    f"got {type(host_val).__name__}"
-                )
-            elif isinstance(host_val, list) and not all(
-                isinstance(h, str) for h in host_val
-            ):
-                errors.append("spec.host list must contain only strings")
-        if has_hosts:
-            hosts_val = spec.get("hosts")
-            if hosts_val is None:
-                errors.append(
-                    "spec.hosts cannot be empty — use 'all' (every fleet "
-                    "host) or a list of host names"
-                )
-            elif isinstance(hosts_val, str) and hosts_val != "all":
-                errors.append(f"spec.hosts string must be 'all', got '{hosts_val}'")
-            elif isinstance(hosts_val, list) and not all(
-                isinstance(h, str) for h in hosts_val
-            ):
-                errors.append("spec.hosts list must contain only strings")
-            elif not isinstance(hosts_val, (str, list)):
-                errors.append(
-                    f"spec.hosts must be 'all' or a list of strings; "
-                    f"got {type(hosts_val).__name__}"
-                )
+        # host / hosts — placement. Exactly one is REQUIRED and they are
+        # mutually exclusive (sibling ``_placement_validation`` module).
+        errors.extend(validate_placement(spec))
 
-        # spec.autonomous (F-CS3 phase 1) — drive-until-done.
-        autonomous = spec.get("autonomous")
-        if autonomous is not None:
-            if not isinstance(autonomous, dict):
-                errors.append(
-                    "spec.autonomous must be a mapping; got "
-                    f"{type(autonomous).__name__}"
-                )
-            else:
-                drive_until = autonomous.get("drive_until")
-                if drive_until is not None and not isinstance(drive_until, str):
-                    errors.append("spec.autonomous.drive_until must be a string")
-                elif drive_until == "":
-                    errors.append("spec.autonomous.drive_until must be non-empty")
-                for fld in ("max_turns", "idle_kick_after_s"):
-                    val = autonomous.get(fld)
-                    if val is not None:
-                        if not isinstance(val, int) or isinstance(val, bool):
-                            errors.append(f"spec.autonomous.{fld} must be an integer")
-                        elif val <= 0:
-                            errors.append(f"spec.autonomous.{fld} must be > 0")
-                kick = autonomous.get("kick_text")
-                if kick is not None and not isinstance(kick, str):
-                    errors.append("spec.autonomous.kick_text must be a string")
-                enabled = autonomous.get("enabled")
-                if enabled is not None and not isinstance(enabled, bool):
-                    errors.append("spec.autonomous.enabled must be a boolean")
-
-        # kind: AgentProxy coupling rules.
-        #
-        # AgentProxy has NO SDK — it's a thin HTTP forwarder. So:
-        #   * spec.proxy is REQUIRED (no upstream → nothing to forward to)
-        #   * spec.claude is IGNORED (no SDK to configure); operator
-        #     authoring it is a category error we surface loudly.
-        #   * spec.startup_prompts / spec.startup_commands are IGNORED
-        #     for the same reason — no SDK to prompt.
-        #
-        # The mirror also holds for kind: Agent — spec.proxy is rejected
-        # there because the SDK runner doesn't read it.
-        if kind == "AgentProxy":
-            proxy_block = spec.get("proxy")
-            if proxy_block is None:
-                errors.append(
-                    "spec.proxy is required when kind: AgentProxy "
-                    "(no upstream to forward to)."
-                )
-            elif not (isinstance(proxy_block, dict) and proxy_block.get("upstream")):
-                errors.append(
-                    "spec.proxy.upstream is REQUIRED when kind: AgentProxy — "
-                    "declare the forwarding target explicitly:\n"
-                    "  proxy:\n    upstream: http://127.0.0.1:9000"
-                )
-            for forbidden in ("claude", "startup_prompts", "startup_commands"):
-                val = spec.get(forbidden)
-                if val:
-                    errors.append(
-                        f"spec.{forbidden} is not allowed when kind: AgentProxy "
-                        "(proxy has no SDK to configure / prompt). Remove the field."
-                    )
-        elif kind == "Agent":
-            if "proxy" in spec:
-                errors.append(
-                    "spec.proxy is only meaningful when kind: AgentProxy; "
-                    "remove it for kind: Agent."
-                )
+        # spec.autonomous (F-CS3 drive-until-done) + kind:AgentProxy
+        # coupling rules — sibling ``_shape_validation`` module.
+        errors.extend(validate_autonomous(spec))
+        errors.extend(validate_proxy_coupling(spec, kind))
 
         # Phase-3 capsule-isolation: type-check ``spec.comms`` +
         # ``spec.lineage`` shapes. Detailed rules live in the

@@ -103,6 +103,28 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "'one_shot' must be a boolean if present"},
             status_code=400,
         )
+    # Consent-propagation bug fix (2026-07-05, reported by
+    # paper-scitex-clew): the ``sac agents start <name>`` subprocess this
+    # handler shells below re-runs the SAME interactive
+    # refuse-without-``--yes`` gate (``cli_pkg/lifecycle/_start_single.py::
+    # should_preview_and_require_yes``) that the ORIGINAL in-SIF caller's
+    # own ``-y`` already satisfied. Without this field, that consent never
+    # reached this subprocess and every brokered start refused itself with
+    # "refusing to start ... without --yes/-y" even though ``-y`` was
+    # explicitly passed at the top of the call chain. Threaded through to
+    # the inner argv (``--yes``) AND the child env
+    # (``SAC_ASSUME_YES=1`` below) — belt-and-suspenders, since the env
+    # var is also the documented escape valve for callers that can't
+    # thread ``assume_yes`` through every layer. FAIL-LOUD invariant
+    # preserved: an ABSENT field means no consent was given, so the
+    # subprocess still hits the human-at-a-TTY default-refuse gate
+    # exactly as before this fix.
+    assume_yes = body.get("assume_yes", False)
+    if not isinstance(assume_yes, bool):
+        return JSONResponse(
+            {"error": "'assume_yes' must be a boolean if present"},
+            status_code=400,
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -167,6 +189,15 @@ async def agents_start(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
+    # Consent-propagation fix (2026-07-05, paper-scitex-clew report): set
+    # the env-var escape valve in ADDITION to the --yes flag below so the
+    # inner subprocess's refuse-without-``--yes`` gate
+    # (``should_preview_and_require_yes`` in cli_pkg/lifecycle/
+    # _start_single.py) sees consent even if some intermediate wrapper
+    # strips CLI flags. Absent when assume_yes is False — the default
+    # refuse-without-consent behaviour is completely unchanged.
+    if assume_yes:
+        child_env["SAC_ASSUME_YES"] = "1"
     # PR-α: propagate --foreground / --one-shot to the inner argv per the
     # body fields validated above. Order matches the click signature on
     # `sac agents start` (flags before/after positional name are
@@ -176,6 +207,8 @@ async def agents_start(request: Request) -> JSONResponse:
         inner_argv.append("--foreground")
     if one_shot:
         inner_argv.append("--one-shot")
+    if assume_yes:
+        inner_argv.append("--yes")
     inner_argv.append(name)
     # Single-flight the OAuth-refresh boot window (card
     # sac-multi-start-queue-oauth): concurrent brokered background spawns share

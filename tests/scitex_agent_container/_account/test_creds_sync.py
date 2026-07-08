@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._account.creds_sync import (
+    AccountIdentityError,
     Freshness,
     LiveCredInvalidError,
     account_freshness,
@@ -257,6 +258,131 @@ def test_sync_live_raises_when_email_missing(_isolate_home: Path) -> None:
     # Assert
     with ctx:
         sync_live(home=home)
+
+
+# ---------------------------------------------------------------------------
+# sync_live — identity guard (regression for the 2026-07 wrong-store clobber)
+# ---------------------------------------------------------------------------
+
+
+def _write_store_account_json(home: Path, slug: str, email: str) -> None:
+    """Write a store's ``account.json`` recording its owning account email."""
+    acct = home / ".scitex" / "agent-container" / "accounts" / slug
+    acct.mkdir(parents=True, exist_ok=True)
+    (acct / "account.json").write_text(
+        json.dumps({"name": slug, "email_address": email})
+    )
+
+
+def test_sync_live_matched_identity_writes_correct_store(_isolate_home: Path) -> None:
+    # Arrange — token identity agrees with the metadata email.
+    home = _isolate_home
+    future_ms = int((time.time() + 3_600) * 1_000)
+    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    # Act
+    result = sync_live(home=home, identity_fn=lambda _p: "wyusuuke@gmail.com")
+    # Assert
+    assert result.store_name == "wyusuuke-gmail-com"
+
+
+def test_sync_live_mismatched_identity_writes_token_store_not_metadata(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — stale metadata says wyusuuke, but the live token is ywatanabe.
+    home = _isolate_home
+    future_ms = int((time.time() + 3_600) * 1_000)
+    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    # Act
+    result = sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
+    # Assert — the token's identity wins, not the stale metadata email.
+    assert result.store_name == "ywatanabe-scitex-ai"
+
+
+def test_sync_live_mismatched_identity_does_not_corrupt_wrong_store(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — a healthy wyusuuke store already exists; metadata is stale
+    # (says wyusuuke) but the live token authenticates as ywatanabe.
+    home = _isolate_home
+    wyusuuke_ms = int((time.time() + 5_000) * 1_000)
+    live_ms = int((time.time() + 3_600) * 1_000)
+    wyusuuke_snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    wyusuuke_snap.parent.mkdir(parents=True, exist_ok=True)
+    wyusuuke_snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": wyusuuke_ms}}))
+    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    # Act
+    sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
+    # Assert — the wyusuuke store's credential is untouched (not clobbered).
+    assert (
+        json.loads(wyusuuke_snap.read_text())["claudeAiOauth"]["expiresAt"]
+        == wyusuuke_ms
+    )
+
+
+def test_sync_live_mismatched_identity_writes_token_store_snapshot(
+    _isolate_home: Path,
+) -> None:
+    # Arrange
+    home = _isolate_home
+    live_ms = int((time.time() + 3_600) * 1_000)
+    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    # Act
+    sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
+    # Assert — the token-identity store received the live credential.
+    token_snap = _store_snapshot_path(home, "ywatanabe-scitex-ai")
+    assert json.loads(token_snap.read_text())["claudeAiOauth"]["expiresAt"] == live_ms
+
+
+def test_sync_live_offline_aborts_when_store_identity_differs(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — whoami offline (None); metadata points at the wyusuuke store,
+    # but that store already records a DIFFERENT account (ywatanabe).
+    home = _isolate_home
+    live_ms = int((time.time() + 3_600) * 1_000)
+    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    _write_store_account_json(home, "wyusuuke-gmail-com", "ywatanabe@scitex.ai")
+    # Act
+    ctx = pytest.raises(AccountIdentityError)
+    # Assert
+    with ctx:
+        sync_live(home=home, identity_fn=lambda _p: None)
+
+
+def test_sync_live_offline_abort_does_not_overwrite_snapshot(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — same offline mismatch, plus a pre-existing snapshot to protect.
+    home = _isolate_home
+    guarded_ms = int((time.time() + 5_000) * 1_000)
+    live_ms = int((time.time() + 3_600) * 1_000)
+    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap.parent.mkdir(parents=True, exist_ok=True)
+    snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": guarded_ms}}))
+    _write_store_account_json(home, "wyusuuke-gmail-com", "ywatanabe@scitex.ai")
+    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    # Act
+    try:
+        sync_live(home=home, identity_fn=lambda _p: None)
+    except AccountIdentityError:
+        pass
+    # Assert — the guarded snapshot survived the aborted sync.
+    assert json.loads(snap.read_text())["claudeAiOauth"]["expiresAt"] == guarded_ms
+
+
+def test_sync_live_offline_saves_when_store_identity_matches(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — whoami offline, but the target store records the SAME account,
+    # so the metadata fallback may safely save.
+    home = _isolate_home
+    live_ms = int((time.time() + 3_600) * 1_000)
+    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    _write_store_account_json(home, "wyusuuke-gmail-com", "wyusuuke@gmail.com")
+    # Act
+    result = sync_live(home=home, identity_fn=lambda _p: None)
+    # Assert
+    assert result.action == "saved"
 
 
 # ---------------------------------------------------------------------------

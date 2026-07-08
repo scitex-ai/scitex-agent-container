@@ -37,6 +37,7 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from pathlib import Path
@@ -49,6 +50,8 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -169,13 +172,13 @@ def record_lineage(
     parent: str,
     db_path: Path | None = None,
 ) -> None:
-    """Record ``parent`` as the parent of ``child``.
+    """Record ``parent`` as ``child``'s parent (keep-first-parent).
 
-    Idempotent — a second call with the same child+parent leaves the
-    row untouched. A different parent for an existing child raises
-    ``ValueError`` (re-parenting is not a quiet operation; a child
-    that "switches groups" is exactly the kind of identity drift the
-    ACL is meant to prevent).
+    Idempotent; a child's parent is set once and immutable. A DIFFERENT
+    parent KEEPS the existing one (logged, not raised) so a restart by a
+    non-original-parent caller works in-place without re-parenting;
+    identity drift stays impossible. Permission is gated upstream by
+    ``check_spawn``.
     """
     if not child or not parent:
         raise ValueError("record_lineage: child and parent must be non-empty")
@@ -188,11 +191,11 @@ def record_lineage(
         if existing is not None:
             if existing["parent_name"] == parent:
                 return  # idempotent no-op
-            raise ValueError(
-                f"record_lineage: child {child!r} already has parent "
-                f"{existing['parent_name']!r}; refusing to re-parent to "
-                f"{parent!r}"
+            _logger.warning(
+                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
+                child, existing["parent_name"], parent,
             )
+            return
         conn.execute(
             "INSERT INTO lineage (child_name, parent_name, created_at) "
             "VALUES (?, ?, ?)",
@@ -367,121 +370,42 @@ def spawn_allowed(
         ).fetchone()
     if parent_row is None:
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+    # Child node: denied by default, EXCEPT a developer- or research-group
+    # member may spawn / restart a peer regardless of parent/child lineage
+    # (operator 2026-07-06 ACL incident — a research child such as neurovista
+    # must be able to self-heal a DOWN peer like scitex-clew without waiting
+    # on the operator). The per-spec may_spawn gate still layers on top,
+    # exactly like the root path above.
+    from ..config._group_resolver import is_developer_group, is_research_group
+
+    group = resolve_group_name(name=caller, db_path=db_path)
+    if is_developer_group(group) or is_research_group(group):
+        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     return (
         False,
         (
             f"spawn denied: caller {caller!r} is a child of "
-            f"{parent_row['parent_name']!r}. Current policy allows only "
-            "root nodes to spawn (handoff §4 'lift-able policy' — change "
-            "is a single edit to spawn_allowed())."
+            f"{parent_row['parent_name']!r} and is in neither the developer "
+            "nor research group. Current policy: only root nodes, or "
+            "developer/research group members, may spawn (handoff §4 "
+            "'lift-able policy' — a single edit to spawn_allowed())."
         ),
     )
 
 
 # ---------------------------------------------------------------------------
-# comms_grants — explicit cross-group send permissions
+# comms_grants — explicit cross-group send permissions. CRUD primitives live
+# in a sibling module (state_db_grants) under the per-file line cap; re-exported
+# here so the natural import path
+# ``from ..._state.state_db_nodes import grant_send`` keeps working.
 # ---------------------------------------------------------------------------
 
-
-def grant_send(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-    note: str | None = None,
-) -> None:
-    """Insert (or refresh) a cross-group grant ``sender → target``.
-
-    Idempotent — re-granting the same pair leaves the row untouched
-    (timestamp not bumped). The ``sender`` identity is authenticated
-    by :class:`_listen._acl.NodeAuthMiddleware` resolving the bearer;
-    the optional ``note`` is a free-form audit annotation (e.g. the
-    ticket / handoff that authorised the grant).
-    """
-    if not sender or not target:
-        raise ValueError("grant_send: sender and target must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT 1 FROM comms_grants WHERE sender_name = ? AND target_name = ?",
-            (sender, target),
-        ).fetchone()
-        if existing is not None:
-            return
-        conn.execute(
-            "INSERT INTO comms_grants "
-            "(sender_name, target_name, created_at, note) "
-            "VALUES (?, ?, ?, ?)",
-            (sender, target, time.time(), note),
-        )
-
-
-def revoke_send(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Remove a ``sender → target`` grant. Returns ``True`` iff a row
-    was removed."""
-    if not sender or not target:
-        return False
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        cur = conn.execute(
-            "DELETE FROM comms_grants WHERE sender_name = ? AND target_name = ?",
-            (sender, target),
-        )
-    return cur.rowcount > 0
-
-
-def has_grant(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff a ``sender → target`` cross-group grant
-    exists."""
-    if not sender or not target:
-        return False
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM comms_grants WHERE sender_name = ? AND target_name = ?",
-            (sender, target),
-        ).fetchone()
-    return row is not None
-
-
-def list_comms_grants(
-    db_path: Path | None = None,
-) -> list[dict[str, Any]]:
-    """Return every grant row in insertion order.
-
-    Observability surface for the host operator. Each row carries the
-    audit ``note`` (default: the deferred-identity caveat).
-    """
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        cur = conn.execute(
-            "SELECT sender_name, target_name, created_at, note "
-            "FROM comms_grants "
-            "ORDER BY created_at ASC, sender_name ASC, target_name ASC"
-        )
-        return [
-            {
-                "sender": str(r["sender_name"]),
-                "target": str(r["target_name"]),
-                "created_at": float(r["created_at"]),
-                "note": (r["note"] if r["note"] is not None else None),
-            }
-            for r in cur.fetchall()
-        ]
+from .state_db_grants import (  # noqa: E402, F401
+    grant_send,
+    has_grant,
+    list_comms_grants,
+    revoke_send,
+)
 
 
 # ---------------------------------------------------------------------------

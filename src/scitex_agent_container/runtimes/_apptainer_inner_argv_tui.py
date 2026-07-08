@@ -130,8 +130,9 @@ def _tui_runner_argv(
     # by the loader/CLI before this builder runs — we only translate it to the
     # flag here. Experiment capsules (no coordinator role → ``fresh``) run
     # hermetic; coordinator roles keep continuity.
-    from ..config._session_continuity import wants_continue
+    from ..config._session_continuity import SESSION_RESUME, wants_continue
 
+    session_mode = str(getattr(claude_spec, "session", "") or "").strip().lower()
     if wants_continue(getattr(claude_spec, "session", None)):
         has_history, home = _home_has_resumable_conversation(config)
         if has_history:
@@ -152,6 +153,16 @@ def _tui_runner_argv(
                 getattr(config, "name", "?"),
                 home,
             )
+    elif session_mode == SESSION_RESUME:
+        # Id-addressed resume: ``spec.claude.session: resume`` +
+        # ``spec.claude.resume_id`` → ``claude --resume <id>`` (mirrors the
+        # legacy tmux runner). Unlike bare ``-c`` (latest-for-home), this
+        # resumes a SPECIFIC transcript uuid. With no resume_id set we fall
+        # through to fresh (no flag) — the validator already rejects a
+        # malformed id, and an empty one means "not pinned".
+        resume_id = str(getattr(claude_spec, "resume_id", "") or "").strip()
+        if resume_id:
+            argv += ["--resume", resume_id]
     # One ``--mcp-config`` per value (P0 fix 2026-06-15, operator-reported):
     # ``claude --help`` documents ``--mcp-config <configs...>`` as accepting
     # multiple space-separated values after a single flag, but the real

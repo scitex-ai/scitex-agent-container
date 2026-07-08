@@ -1,0 +1,17 @@
+{
+  "_comment_cla_author_hook": "PreToolUse Bash-matcher wiring for enforce_commit_author_allowlist.sh. APPEND the single hook entry below into the EXISTING `PreToolUse` `Bash` matcher's `hooks` list in the baseline <agents_dir>/_shared/to_home/.claude/settings.json (next to deny_commit_push_on_main_develop.sh) -- do NOT add a second Bash matcher block. Script body lives next to this fragment (src/scitex_agent_container/_baseline_assets/git_identity_hooks/) and must be deployed to $HOME/.claude/hooks/pre-tool-use/enforce_commit_author_allowlist.sh via to_home materialization. Rationale + incident (scitex-hpc 2026-07-05, CLAssistant blocked a green PR authored agent@scitex-hpc) are documented in the sibling README.md. The hook is a plain bash script (matches the other pre-tool-use git guards); it is NOT pinned to a venv interpreter -- it shells out to `python3` on PATH internally, consistent with enforce_git_dash_C.sh / deny_commit_push_on_main_develop.sh.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-tool-use/enforce_commit_author_allowlist.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

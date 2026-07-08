@@ -572,6 +572,123 @@ def test_agents_start_no_flags_back_compat_inner_argv_unchanged(
     assert recorded == ["agents", "start", "back-compat-child"]
 
 
+# ---------------------------------------------------------------------------
+# Consent-propagation fix (2026-07-05, reported by paper-scitex-clew): the
+# ``assume_yes`` body field lets the in-SIF caller's own ``-y`` reach the
+# subprocess this handler shells, so the inner ``sac agents start <name>``
+# does not hit the refuse-without-``--yes`` gate a second time. Mirrors the
+# foreground/one_shot argv-propagation tests above exactly.
+# ---------------------------------------------------------------------------
+
+
+def test_agents_start_propagates_assume_yes_to_inner_argv(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``assume_yes: true`` body field → inner argv carries ``--yes``."""
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_bin_yes_argv"
+    bin_dir.mkdir()
+    argv_log = _install_argv_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "cohort-child", "assume_yes": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(argv_log.read_text().splitlines()[-1])
+    # Assert
+    assert "--yes" in recorded
+
+
+def test_agents_start_sets_sac_assume_yes_env_for_child(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``assume_yes: true`` ALSO sets ``SAC_ASSUME_YES=1`` on the child env.
+
+    Belt-and-suspenders escape valve (requirement 5 of the bug fix):
+    even if some intermediate wrapper strips the ``--yes`` CLI flag,
+    the env var still lets the inner refuse-without-``--yes`` gate see
+    consent.
+    """
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_env_yes_shim_bin"
+    bin_dir.mkdir()
+    env_log = bin_dir / "sac.assume_yes_env.jsonl"
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!{__import__('sys').executable}\n"
+        "import json, os\n"
+        f"with open({json.dumps(str(env_log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps({'SAC_ASSUME_YES': os.environ.get('SAC_ASSUME_YES')}) + '\\n')\n"
+        "import sys; sys.exit(0)\n"
+    )
+    script.chmod(0o755)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child", "assume_yes": True},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+    # Assert
+    assert recorded["SAC_ASSUME_YES"] == "1"
+
+
+def test_agents_start_no_assume_yes_back_compat_inner_argv_unchanged(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """Body without ``assume_yes`` → inner argv keeps the pre-fix shape."""
+    # Arrange
+    import json
+
+    bin_dir = tmp_path / "sac_bin_no_yes_argv"
+    bin_dir.mkdir()
+    argv_log = _install_argv_recording_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "back-compat-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(argv_log.read_text().splitlines()[-1])
+    # Assert
+    assert recorded == ["agents", "start", "back-compat-child"]
+
+
+def test_agents_start_rejects_non_bool_assume_yes(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    """``assume_yes: "yes"`` → 400, never silently coerced."""
+    # Arrange
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        resp = client.post(
+            "/agents",
+            json={"name": "x", "assume_yes": "yes"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    # Assert
+    assert resp.status_code == 400
+
+
 def test_agents_start_rejects_non_bool_foreground(
     isolated_listen_env, env_save_restore, tmp_path: Path
 ) -> None:

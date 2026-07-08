@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -1082,15 +1083,17 @@ def test_argv_mounts_credentials_dir_when_present(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/).
-    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:ro" for a in argv)
 
 
-def test_argv_credentials_bind_is_read_write(
+def test_argv_credentials_bind_is_read_only(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — RW lets the in-container CLI refresh the OAuth
-    # accessToken in place when it expires (~1h cadence), avoiding the
-    # manual scp-from-lead dance to re-seed expired peers.
+    # Arrange — master-host single-refresher model (operator 2026-07-08):
+    # the credential bind is READ-ONLY so the in-container CLI can never
+    # refresh/rotate the OAuth token (that consumed the single-use
+    # refresh_token = the "cred churn"). The host-side timer is the sole
+    # refresher; the DIRECTORY bind still surfaces its refreshes.
     creds = home_redirect / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
@@ -1100,7 +1103,7 @@ def test_argv_credentials_bind_is_read_write(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if ":/tmp/sac-claude:" in a)
     # Assert
-    assert ":ro" not in creds_arg
+    assert creds_arg.endswith(":ro")
 
 
 def test_argv_sets_claude_config_dir_when_credentials_present(
@@ -1179,9 +1182,9 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     # atomic-replace writers in creds_sync / account_store /
     # claude_usage, regressing into the per-copy collision-401 disease
     # the snapshot model was meant to fix). The bound dir's child
-    # ``.credentials.json`` remains the snapshot itself; refresh
-    # writeback by the in-container CLI lands in the same on-disk file
-    # every same-account agent reads from.
+    # ``.credentials.json`` remains the snapshot itself, bound :ro; the
+    # host-side sac-accounts-refresh timer refreshes it and every
+    # same-account agent reads the timer-kept-fresh token.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
@@ -1195,7 +1198,7 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     creds_arg = next(
         a
         for a in argv
-        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:rw")
+        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:ro")
     )
     # Assert — the bound host-side source IS the account directory
     # (snapshot.parent), neither the snapshot file alone, a per-agent
@@ -1222,7 +1225,7 @@ def test_argv_pins_account_does_not_create_state_dir_copy(
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     legacy_copy = state_dir / "claude" / ".credentials.json"
     # Assert — no per-agent copy materialised; the snapshot is the
-    # only place the in-container CLI's :rw refresh writeback lands.
+    # single source the :ro agents read and the host timer refreshes.
     assert not legacy_copy.exists()
 
 
@@ -1242,7 +1245,7 @@ def test_argv_no_account_dir_binds_host_claude(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/);
     # bind dest is the DIRECTORY /tmp/sac-claude, not the file inside it.
-    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:rw" for a in argv)
+    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:ro" for a in argv)
 
 
 def test_argv_pinned_account_missing_snapshot_raises_pinned_account_error(
@@ -1428,6 +1431,151 @@ def test_start_dry_run_argv_file_begins_with_apptainer(
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
     assert argv_file.read_text().splitlines()[0] == "apptainer"
+
+
+def test_start_dry_run_argv_file_omits_the_raw_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — security regression test for card
+    # ``sac-argv-token-plaintext`` (found 2026-05-24): the dry-run argv
+    # file used to embed ``SAC_ANTHROPIC_API_KEY`` in PLAINTEXT because
+    # the write bypassed the console-preview's redaction. A fake token
+    # in the host env must never appear verbatim in the on-disk file.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert — the raw secret never hits disk.
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "sk-ant-oat01-supersecrettoken" not in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_carries_the_redacted_marker(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — same incident as above: the redacted placeholder (the
+    # same shape ``sac agents explain`` prints to the console) must
+    # replace the raw value rather than the key vanishing entirely.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "SAC_ANTHROPIC_API_KEY=<redacted:" in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_is_owner_only_readable(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — belt-and-suspenders: even a redacted-at-rest file should
+    # not be group/world readable (card ``sac-argv-token-plaintext``
+    # follow-up on runtime-dir permissions).
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert stat.S_IMODE(argv_file.stat().st_mode) == 0o600
+
+
+def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+) -> None:
+    # Arrange — the redaction must be scoped to secret-named keys; an
+    # ordinary env entry (e.g. the always-emitted state-db path) must
+    # still be readable verbatim for debugging.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv_file.read_text()
+
+
+def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
+    state_root: Path,
+    tmp_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — the fix must ONLY touch the on-disk dry-run record; the
+    # real argv the runtime hands to the actual ``apptainer exec``
+    # subprocess must still carry the real secret value, or the SDK
+    # inside the container would never authenticate. Exercises the
+    # real (unmocked) ``build_run_argv`` the runtime launches with.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=rt._state_dir(cfg), sif_path=sif)
+
+    # Assert
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in argv
+
+
+def test_start_background_apptainer_subprocess_receives_the_real_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    subprocess_shim,
+    env_save_restore,
+) -> None:
+    # Arrange — end-to-end confirmation (real subprocess, no Popen
+    # mocking): a real launch's ``apptainer exec`` child process must
+    # still receive the real secret in its argv, even though the
+    # on-disk dry-run record never would. ``apptainer_on_path`` installs
+    # a fake ``apptainer`` binary that logs its own received argv.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg)
+    for _ in range(50):
+        if subprocess_shim.call_count("apptainer") > 0:
+            break
+        time.sleep(0.1)
+
+    # Assert
+    received = subprocess_shim.argv_for("apptainer") or []
+    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in received
 
 
 def test_start_background_returns_true(

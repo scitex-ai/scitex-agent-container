@@ -164,9 +164,112 @@ def enrich_row_with_endpoint(row: dict) -> dict:
     return out
 
 
+def _load_spec_dict(agent_name: str) -> dict | None:
+    """Return the raw v3 spec dict for ``agent_name``, or ``None``.
+
+    Best-effort: resolves the agent's ``spec.yaml`` via the same
+    :func:`config._resolve.resolve_config` the status route uses, then
+    parses it. Every failure (unknown name, unreadable / malformed YAML,
+    ambiguous registry) degrades to ``None`` so a peers row is NEVER
+    blocked — the registry list is a discovery surface, not a gate.
+    """
+    try:
+        import yaml
+
+        from ..config._resolve import resolve_config
+
+        path = resolve_config(agent_name)
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:  # stx-allow: fallback (reason: best-effort role/owner enrichment — a missing/unreadable spec surfaces as absent fields)
+        return None
+
+
+def resolve_agent_identity(agent_name: str) -> dict:
+    """Return the spec-authored identity for ``agent_name``, best-effort.
+
+    Operator directive 2026-07-06: an agent's ROLE (headline) +
+    RESPONSIBILITIES (bullets), plus its groups / purpose / owned repo,
+    must be discoverable fleet-wide via ``a2a peers`` so a peer sees who
+    does what without asking.
+
+    Field extraction is delegated to
+    :func:`a2a._card_identity.spec_identity` — the SAME projection the
+    AgentCard uses — so the two a2a surfaces (peer rows + AgentCard)
+    never drift. Returns only the keys the spec declares
+    (omit-if-missing); ``{}`` on any failure.
+    """
+    v3 = _load_spec_dict(agent_name)
+    if v3 is None:
+        return {}
+    try:
+        from ..a2a._card_identity import spec_identity
+
+        return spec_identity(v3)
+    except Exception:  # stx-allow: fallback (reason: best-effort — an identity-projection failure surfaces as absent fields)
+        return {}
+
+
+# Optional identity fields carried on a peers row IN ADDITION to the
+# always-present ``role`` headline. Each is added only when the spec
+# actually declares it (omit-if-missing), so a row never advertises a
+# blank.
+_OPTIONAL_IDENTITY_KEYS = ("responsibilities", "groups", "purpose", "project")
+
+
+def enrich_row_with_role_owner(row: dict, *, resolver=resolve_agent_identity) -> dict:
+    """Add the spec-authored identity fields to ``row`` (idempotent, best-effort).
+
+    Mirrors :func:`enrich_row_with_endpoint`: a row that already carries a
+    NON-NONE value for a field keeps its own (a self-peer / registry row
+    is the authoritative source for what it already knows). ``resolver``
+    is injectable so the pure enrichment logic is testable without an
+    on-disk spec.
+
+    ``role`` is ALWAYS emitted (``None`` when the agent has no resolvable
+    role) so the ``GET /agents`` response shape stays uniform — ``role``
+    is THE discovery headline. The remaining identity fields
+    (``responsibilities`` / ``groups`` / ``purpose`` / ``project``) are
+    added ONLY when the spec declares them (omit-if-missing).
+    """
+    if not isinstance(row, dict):
+        return row
+    out = dict(row)
+    name = row.get("name")
+    identity: dict = {}
+    if isinstance(name, str) and name:
+        identity = resolver(name) or {}
+    # role — the headline; always present, pre-existing non-None wins.
+    if out.get("role") is None:
+        out["role"] = identity.get("role")
+    # optional identity fields — omit-if-missing, pre-existing wins.
+    for key in _OPTIONAL_IDENTITY_KEYS:
+        if out.get(key) is None and key in identity:
+            out[key] = identity[key]
+    return out
+
+
+def enrich_row(row: dict) -> dict:
+    """Apply BOTH registry enrichments to ``row`` — the composed shape every
+    registry surface ships.
+
+    Layers the endpoint fields (``a2a_port`` / ``turn_url``) and the
+    spec-authored identity (``role`` + ``responsibilities`` / ``groups`` /
+    ``purpose`` / ``project``) in one call so the ``GET /agents`` list and
+    ``GET /agents/<name>/status`` bodies carry an identical, uniform shape.
+    Both layers are idempotent + best-effort, so this is safe to apply to
+    rows that already carry some of the fields.
+    """
+    return enrich_row_with_role_owner(enrich_row_with_endpoint(row))
+
+
 __all__ = [
     "derive_turn_url",
+    "enrich_row",
     "enrich_row_with_endpoint",
+    "enrich_row_with_role_owner",
     "resolve_a2a_host",
     "resolve_a2a_port",
+    "resolve_agent_identity",
 ]

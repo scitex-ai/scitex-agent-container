@@ -130,6 +130,19 @@ def test_should_emit_reaction_ack_false_on_system_sender():
     assert decision is False
 
 
+def test_should_emit_reaction_ack_false_on_daemon_sender():
+    # Arrange — the canonical daemon sender (operator directive
+    # 2026-07-05, bracket form) must be treated exactly like the bare
+    # 'system' sender: no reaction back to a non-agent sender.
+    from scitex_agent_container.a2a._inbox_bus import DAEMON_SENDER
+
+    event = {"from_agent": DAEMON_SENDER, "kind": "acl_deny_notify"}
+    # Act
+    decision = should_emit_reaction_ack(event)
+    # Assert
+    assert decision is False
+
+
 # ---------------------------------------------------------------------------
 # (2) Env-driven config
 # ---------------------------------------------------------------------------

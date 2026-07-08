@@ -54,6 +54,7 @@ __all__ = [
     "groups_mesh",
     "is_developer_group",
     "is_mesh_group",
+    "is_research_group",
     "resolve_group",
 ]
 
@@ -229,6 +230,21 @@ def is_developer_group(group: str | None) -> bool:
     if not group:
         return False
     return str(group).strip().lower() == DEVELOPER_GROUP
+
+
+def is_research_group(group: str | None) -> bool:
+    """Return True iff ``group`` is the researcher group.
+
+    Case-insensitive on the resolved group name. ``None`` / empty →
+    False. Mirrors :func:`is_developer_group` on the same group-name
+    source of truth (:data:`RESEARCHER_GROUP`). Used by the spawn ACL
+    gate (operator 2026-07-06 ACL incident) so a research-group child
+    may spawn / restart a DOWN peer to self-heal, on par with the
+    developer group — without waiting on the operator.
+    """
+    if not group:
+        return False
+    return str(group).strip().lower() == RESEARCHER_GROUP
 
 
 def is_mesh_group(group: str | None) -> bool:

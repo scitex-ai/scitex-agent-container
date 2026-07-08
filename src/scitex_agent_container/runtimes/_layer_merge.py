@@ -14,6 +14,8 @@ Merge rules (one model for every mergeable config file):
   * the ``hooks`` block        → per-event concatenate + dedupe (additive;
                                  delegates to ``settings_json._merge_hooks_blocks``)
   * ``list`` + ``list``        → append uniques, order-preserving (additive)
+  * ``_comment`` / ``_comment_*`` key → keep first layer's (self-describing
+                                 documentation, not config; never a conflict)
   * scalar == scalar           → keep (idempotent; first layer owns it)
   * scalar != scalar           → raise :class:`LayerMergeConflict`
 
@@ -99,6 +101,14 @@ def _merge_into(
             continue
 
         cur = acc[key]
+        # Documentation keys (``_comment``, ``_comment_*``) are self-describing
+        # prose, not config. Two layers each carrying their own ``_comment``
+        # must NOT hard-fail the cascade — keep the first (lowest) layer's value
+        # (layer-local; same ownership rule as an idempotent scalar), regardless
+        # of value type, so a doc key never routes into the conflict raise
+        # below. (paper-scitex-clew 2026-07-06)
+        if isinstance(key, str) and key.startswith("_comment"):
+            continue
         if isinstance(cur, dict) and isinstance(val, dict):
             _merge_into(cur, prov, val, layer, path)
         elif isinstance(cur, list) and isinstance(val, list):
