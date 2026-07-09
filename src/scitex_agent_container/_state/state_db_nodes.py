@@ -39,7 +39,6 @@ All times stored as ``REAL`` unix-seconds (float).
 from __future__ import annotations
 
 import logging
-import secrets
 import time
 from pathlib import Path
 from typing import Any
