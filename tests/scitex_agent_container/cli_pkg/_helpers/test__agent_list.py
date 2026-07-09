@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterator
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
     _extract_damaged_fields,
+    _is_self_peer_marker,
     _probe_local,
     get_agent_list_data,
     print_agent_list,
@@ -572,6 +573,98 @@ def test_discover_defined_agents_skips_dirs_without_spec_yaml(tmp_path):
         pairs = _al._discover_defined_agents()
     # Assert
     assert "no-spec" not in [n for n, _ in pairs]
+
+
+# ---------------------------------------------------------------------------
+# _is_self_peer_marker / self-peer exclusion from the defined-agent walk.
+#
+# ``agents/self/spec.yaml`` (see ``_listen/_self_peers.py``) deliberately
+# omits apiVersion/kind/spec — its own header says "DO NOT add" them —
+# because their ABSENCE is what makes it recognizable as a self-peer
+# registration marker rather than a launchable Agent. Running the generic
+# Agent validator against it always reported "invalid", even though it
+# was working exactly as designed. These tests pin the fix: such markers
+# are excluded from ``_discover_defined_agents`` at the source, so they
+# never reach validation as a spurious agent in the first place.
+# ---------------------------------------------------------------------------
+
+
+def _write_self_peer_marker(dir_: Path) -> Path:
+    """Write a real self-peer marker spec (the ``agents/self/`` shape)."""
+    dir_.mkdir(parents=True, exist_ok=True)
+    spec = dir_ / "spec.yaml"
+    spec.write_text(
+        'listen_url: "http://127.0.0.1:7878"\n'
+        'description: "self-registered listen session"\n'
+    )
+    return spec
+
+
+def test_is_self_peer_marker_true_for_real_self_peer_spec(tmp_path):
+    # Arrange
+    spec = _write_self_peer_marker(tmp_path / "self")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is True
+
+
+def test_is_self_peer_marker_false_for_real_agent_spec(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "an-agent")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_is_self_peer_marker_false_for_malformed_yaml(tmp_path):
+    # Arrange — tolerant: a read/parse failure is NOT a self-peer marker.
+    dir_ = tmp_path / "broken"
+    dir_.mkdir()
+    spec = dir_ / "spec.yaml"
+    spec.write_text("{not: valid: yaml: [")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_is_self_peer_marker_false_for_missing_file(tmp_path):
+    # Arrange — tolerant: an absent file is NOT a self-peer marker.
+    spec = tmp_path / "gone" / "spec.yaml"
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_discover_defined_agents_excludes_self_peer_marker(tmp_path):
+    # Arrange — the literal ``agents/self/`` shape sac ships in production.
+    home = tmp_path / "home"
+    home.mkdir()
+    _seed_home_with_agents(home)
+    agents = home / ".scitex" / "agent-container" / "agents"
+    _write_self_peer_marker(agents / "self")
+    # Act
+    with _home_set_to(home):
+        pairs = _al._discover_defined_agents()
+    # Assert
+    assert "self" not in [n for n, _ in pairs]
+
+
+def test_discover_defined_agents_still_finds_sibling_agent_next_to_self(tmp_path):
+    # Arrange — the self-marker exclusion must not swallow real siblings.
+    home = tmp_path / "home"
+    home.mkdir()
+    _seed_home_with_agents(home)
+    agents = home / ".scitex" / "agent-container" / "agents"
+    _write_self_peer_marker(agents / "self")
+    # Act
+    with _home_set_to(home):
+        pairs = _al._discover_defined_agents()
+    # Assert
+    assert "a1" in [n for n, _ in pairs]
 
 
 # ---------------------------------------------------------------------------

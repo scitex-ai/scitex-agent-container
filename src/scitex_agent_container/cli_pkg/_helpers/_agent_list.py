@@ -400,11 +400,44 @@ def get_agent_list_data(
     return results
 
 
+def _is_self_peer_marker(spec_path: "Path") -> bool:  # noqa: F821
+    """Return True iff ``spec_path`` is a self-peer registration marker.
+
+    ``agents/self/spec.yaml`` (see ``_listen/_self_peers.py``) is a
+    DELIBERATELY schema-incompatible file — it registers the running
+    listen's own runtime identity, not a launchable Agent, and its own
+    header says ``DO NOT add apiVersion or spec:``. Running the generic
+    Agent validator against it always reports it "invalid" (missing
+    apiVersion/kind/spec, unknown top-level fields) even though it is
+    working exactly as designed. Reuses the SAME predicate the listen
+    merge already uses to recognize this file, so there is one place
+    that knows what a self-peer marker looks like.
+
+    Tolerant: any read/parse failure returns False (falls through to
+    normal defined-agent handling) rather than raising — matches this
+    module's existing crash-tolerance convention.
+    """
+    # stx-allow: fallback (reason: classification hiccup must not hide or
+    # misclassify a spec; falling through to normal validation is safe)
+    try:
+        import yaml
+
+        from ..._listen._self_peers import is_self_peer_spec
+
+        blob = yaml.safe_load(spec_path.read_text())
+        return is_self_peer_spec(blob)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return False
+
+
 def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
     """Walk the user-scope (and project-scope, when in a git repo)
     ``agents/`` tree and return ``(name, spec.yaml path)`` pairs for
     every agent declared on disk. Tolerant of partial state — a
-    directory without a ``spec.yaml`` is skipped silently.
+    directory without a ``spec.yaml`` is skipped silently. Self-peer
+    registration markers (see :func:`_is_self_peer_marker`) are NOT
+    agents and are excluded here at the source, rather than surfacing
+    as a spuriously "invalid" agent downstream.
     """
     from pathlib import Path as _Path
 
@@ -431,6 +464,8 @@ def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
                 continue
             spec = child / "spec.yaml"
             if not spec.is_file():
+                continue
+            if _is_self_peer_marker(spec):
                 continue
             pairs.append((child.name, spec))
             seen.add(child.name)
