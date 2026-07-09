@@ -563,3 +563,149 @@ class TestPostMergePullScript:
         _result, _before, _after, log = dirty_develop_run
         # Assert
         assert "uncommitted changes" in log
+
+
+def _local_commit(clone: Path) -> None:
+    """Add an unpushed local commit so the checkout is *ahead* of upstream."""
+    (clone / "unpushed.txt").write_text("local work")
+    _git(clone, "add", "unpushed.txt")
+    _git(clone, "commit", "-m", "local unpushed")
+
+
+def _break_remote(clone: Path, dead_path: Path) -> None:
+    """Point origin at a nonexistent path so ``git fetch`` fails hard."""
+    _git(clone, "remote", "set-url", "origin", str(dead_path))
+
+
+@pytest.mark.integration
+class TestPostMergePullDiscoveryAndResilience:
+    """Regression coverage for the auto-pull incident (card
+    sac-auto-pull-broken-manual-pulls-20260630): repo discovery must not be a
+    hand-maintained allowlist, and one broken repo must not silently abort or
+    corrupt the sweep. Real bash + real git — no mocks anywhere.
+    """
+
+    # -- discovery is glob-based, not a hand-maintained allowlist ----------
+    # The incident's smoking gun: scitex-dev went stale because it was absent
+    # from the old hardcoded REPOS list. Any ~/proj/scitex-* develop checkout
+    # must now be discovered and fast-forwarded.
+
+    @pytest.fixture
+    def offlist_repo_run(self, tmp_path, post_merge_pull_script):
+        # "scitex-dev" was NOT in the legacy hardcoded allowlist.
+        clone = _make_repo(tmp_path, "scitex-dev")
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        _advance_upstream(tmp_path, "scitex-dev")
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after
+
+    def test_offlist_repo_is_discovered_and_fast_forwarded(self, offlist_repo_run):
+        # Arrange
+        # Act
+        _result, before, after = offlist_repo_run
+        # Assert — the whole point of the fix: no allowlist gap.
+        assert after != before
+
+    def test_offlist_repo_run_returns_zero(self, offlist_repo_run):
+        # Arrange
+        # Act
+        result, _before, _after = offlist_repo_run
+        # Assert
+        assert result.returncode == 0
+
+    # -- ahead checkout: unpushed local commits are never clobbered --------
+
+    @pytest.fixture
+    def ahead_develop_run(self, tmp_path, post_merge_pull_script):
+        clone = _make_repo(tmp_path, "scitex-ahead")
+        _local_commit(clone)  # local is now ahead of origin/develop
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after, _log_text(tmp_path)
+
+    def test_ahead_checkout_head_unchanged(self, ahead_develop_run):
+        # Arrange
+        # Act
+        _result, before, after, _log = ahead_develop_run
+        # Assert
+        assert after == before
+
+    def test_ahead_checkout_logs_ahead_skip(self, ahead_develop_run):
+        # Arrange
+        # Act
+        _result, _before, _after, log = ahead_develop_run
+        # Assert
+        assert "ahead" in log
+
+    def test_ahead_checkout_run_returns_zero(self, ahead_develop_run):
+        # Arrange — ahead is an expected state, not a run failure.
+        # Act
+        result, _before, _after, _log = ahead_develop_run
+        # Assert
+        assert result.returncode == 0
+
+    # -- behind checkout with unreachable upstream: fail loud --------------
+
+    @pytest.fixture
+    def unreachable_upstream_run(self, tmp_path, post_merge_pull_script):
+        clone = _make_repo(tmp_path, "scitex-broken")
+        before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        _advance_upstream(tmp_path, "scitex-broken")  # now behind
+        _break_remote(clone, tmp_path / "does-not-exist")
+        result = _run_script(post_merge_pull_script, tmp_path)
+        after = _git(clone, "rev-parse", "HEAD").stdout.strip()
+        return result, before, after, _log_text(tmp_path)
+
+    def test_unreachable_upstream_exits_nonzero(self, unreachable_upstream_run):
+        # Arrange — a repo that can't be pulled must fail loud, not vanish.
+        # Act
+        result, _before, _after, _log = unreachable_upstream_run
+        # Assert
+        assert result.returncode != 0
+
+    def test_unreachable_upstream_logs_fail(self, unreachable_upstream_run):
+        # Arrange
+        # Act
+        _result, _before, _after, log = unreachable_upstream_run
+        # Assert
+        assert "FAIL" in log
+
+    def test_unreachable_upstream_head_unchanged(self, unreachable_upstream_run):
+        # Arrange — a failed fetch must never move HEAD.
+        # Act
+        _result, before, after, _log = unreachable_upstream_run
+        # Assert
+        assert after == before
+
+    # -- one broken repo must not abort the rest of the sweep --------------
+
+    @pytest.fixture
+    def mixed_sweep_run(self, tmp_path, post_merge_pull_script):
+        good = _make_repo(tmp_path, "scitex-good")
+        good_before = _git(good, "rev-parse", "HEAD").stdout.strip()
+        _advance_upstream(tmp_path, "scitex-good")  # good is behind -> should FF
+
+        bad = _make_repo(tmp_path, "scitex-bad")
+        _advance_upstream(tmp_path, "scitex-bad")  # bad is behind
+        _break_remote(bad, tmp_path / "nowhere")  # ...but can't fetch
+
+        result = _run_script(post_merge_pull_script, tmp_path)
+        good_after = _git(good, "rev-parse", "HEAD").stdout.strip()
+        return result, good_before, good_after
+
+    def test_sweep_fast_forwards_good_repo_despite_bad_one(self, mixed_sweep_run):
+        # Arrange — the healthy repo must still be pulled even though another
+        # repo in the same sweep failed.
+        # Act
+        _result, good_before, good_after = mixed_sweep_run
+        # Assert
+        assert good_after != good_before
+
+    def test_sweep_still_reports_failure_exit_code(self, mixed_sweep_run):
+        # Arrange — the failure of the bad repo is still surfaced overall.
+        # Act
+        result, _good_before, _good_after = mixed_sweep_run
+        # Assert
+        assert result.returncode != 0

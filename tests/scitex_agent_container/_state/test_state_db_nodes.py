@@ -126,14 +126,25 @@ def test_record_lineage_idempotent_no_duplicate_rows(db_path: Path) -> None:
     assert len(rows) == 1
 
 
-def test_record_lineage_re_parent_raises(db_path: Path) -> None:
-    """A child cannot silently switch parents."""
+def test_record_lineage_re_parent_keeps_existing_parent(db_path: Path) -> None:
+    """A re-parent attempt keeps the original parent (no raise, no switch).
+
+    A restart of an existing agent by a different-lineage caller must not
+    be blocked and must not re-parent — the original parent is kept, so
+    identity drift stays impossible while restarts succeed. (No raise is
+    implicit: a raising record_lineage would error this test.)
+    """
     # Arrange
     record_lineage(child="bob", parent="alice", db_path=db_path)
-    # Act
-    # Assert
-    with pytest.raises(ValueError, match="refusing to re-parent"):
-        record_lineage(child="bob", parent="other-root", db_path=db_path)
+    # Act — a different parent must NOT raise; it keeps "alice"
+    record_lineage(child="bob", parent="other-root", db_path=db_path)
+    # Assert — original parent kept, not switched to the new caller
+    conn_ctx = state_db.open_db(db_path)
+    with conn_ctx as conn:
+        row = conn.execute(
+            "SELECT parent_name FROM lineage WHERE child_name='bob'"
+        ).fetchone()
+    assert row["parent_name"] == "alice"
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +371,75 @@ def test_spawn_allowed_may_spawn_false_reason_for_researcher_child(
     _allowed, reason = spawn_allowed(caller="neurovista", db_path=db_path)
     # Assert
     assert reason is not None and "may_spawn=false" in reason
+
+
+# ---------------------------------------------------------------------------
+# spawn_allowed — group-scoped child allowance (operator 2026-07-06 ACL
+# incident): a developer- OR research-group child may spawn / restart a peer
+# to self-heal a DOWN agent, without waiting on the operator.
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_allowed_allows_developer_group_child(db_path: Path) -> None:
+    """A child in the developer group may spawn (group short-circuit)."""
+    # Arrange
+    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-dev", group_name="developer", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-dev", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_allows_research_group_child(db_path: Path) -> None:
+    """A child in the researcher group may spawn (the incident's case)."""
+    # Arrange
+    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
+def test_spawn_allowed_denies_child_in_neither_group(db_path: Path) -> None:
+    """A child in NEITHER the developer nor research group stays denied."""
+    # Arrange
+    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-gen", db_path=db_path)
+    # Assert
+    assert allowed is False
+
+
+def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
+    """The neither-group deny reason states the new group-scoped policy."""
+    # Arrange
+    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
+    # Assert
+    assert reason is not None and "developer/research group members, may spawn" in reason
+
+
+def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
+    db_path: Path,
+) -> None:
+    """The per-spec may_spawn=false deny survives the group short-circuit."""
+    # Arrange
+    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_comms_policy(
+        name="worker-dev",
+        group_name="developer",
+        may_spawn=False,
+        db_path=db_path,
+    )
+    # Act
+    allowed, _reason = spawn_allowed(caller="worker-dev", db_path=db_path)
+    # Assert
+    assert allowed is False
 
 
 # ---------------------------------------------------------------------------

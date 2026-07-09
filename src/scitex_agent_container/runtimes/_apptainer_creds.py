@@ -9,14 +9,16 @@ host-side ``.credentials.json`` gets bound into an agent container:
 
 * ``spec.claude.account`` empty → the host's live
   ``~/.claude/.credentials.json`` (shared OAuth — current default).
-  Bound ``:rw`` by the caller so the in-container Claude CLI's ~1h
-  OAuth refresh writes back to the host live file.
+  Bound ``:ro`` by the caller (master-host single-refresher model): the
+  agent READS the host live file but never refreshes it.
 
 * ``spec.claude.account`` set → the saved account's snapshot itself at
   ``~/.scitex/agent-container/accounts/<acct>/.credentials.json``,
-  bound ``:rw`` by the caller. Refresh writes by the in-container
-  Claude CLI land on the snapshot **directly** so the snapshot is
-  self-healing and never expires while the agent keeps running.
+  bound ``:ro`` by the caller. The agent reads the snapshot but never
+  writes it; the host-side ``sac-accounts-refresh`` timer is the SOLE
+  refresher and keeps the snapshot fresh (a DIRECTORY bind on the
+  snapshot's parent makes the timer's atomic-replace refreshes visible
+  to the container without a restart — see ``_apptainer_auth``).
 
 Fix for the 2026-06-01 fleet-wide silent outage (operator task #15):
 the prior implementation COPIED the snapshot into a per-agent state-dir
@@ -24,10 +26,15 @@ the prior implementation COPIED the snapshot into a per-agent state-dir
 snapshot drifted stale. After ~8h, every SDK turn 401'd silently (the
 telegram bridge still marked inbound 👀, but the agent could not
 complete a turn). The fix is structural — bind the snapshot itself.
-With the ``:rw`` bind the in-container CLI keeps the snapshot fresh
-for ALL agents pinned to that account, and an agent crash/restart
-cycle no longer loses the freshly-refreshed token (it was always
-written to the snapshot, not a per-agent copy).
+The snapshot is the single source of truth for ALL agents pinned to
+that account; under the master-host single-refresher model the
+host-side ``sac-accounts-refresh`` timer keeps that one snapshot fresh
+and the ``:ro`` agents read it. (Before 2026-07-08 the bind was ``:rw``
+and the in-container CLI refreshed the snapshot itself — that kept it
+fresh but made every agent a refresher, and an agent refresh consumes
+the single-use OAuth refresh_token, churning any freshly-logged-in
+account. The ``:ro`` flip moves refresh responsibility to the sole
+host-side timer.)
 
 Fail-loud (no silent fallbacks): when ``spec.claude.account`` is set
 but the pinned snapshot is ABSENT, has no numeric ``expiresAt``, or is
@@ -37,17 +44,15 @@ back to the host live file (a different account) or run with a stale
 token — that would defeat the whole point of account pinning and hand
 the agent the wrong identity.
 
-Sharing semantics with the :rw bind:
+Sharing semantics with the :ro bind:
 
 * Different accounts → different snapshot files → no conflict.
-* Same account, multiple agents → all share the SAME snapshot mount.
-  The in-container Claude CLI uses an atomic write (tmp + rename) for
-  refresh writeback, so concurrent refreshes converge on whichever
-  finishes last — the token is fungible across agents pinned to the
-  same account by definition, so a refresh by agent A is also fresh
-  for agent B. The shared-mount footgun the prior copy avoided does
-  not apply here: same-account agents share an IDENTITY, sharing the
-  file matches the model.
+* Same account, multiple agents → all share the SAME snapshot mount,
+  READ-ONLY. None of them refresh it; the host-side timer does. The
+  token is fungible across agents pinned to the same account by
+  definition, so the timer's single refresh serves every pinned agent
+  at once. Same-account agents share an IDENTITY, so sharing the file
+  matches the model.
 """
 
 from __future__ import annotations
@@ -81,10 +86,11 @@ def resolve_cred_file(
     (``None`` only when it does not exist — caller skips the bind).
 
     With ``spec.claude.account`` set, returns the per-account SNAPSHOT
-    file directly (no per-agent copy). The caller binds it ``:rw`` so
-    the in-container Claude CLI's ~1h OAuth refresh writes back to the
-    snapshot itself — the snapshot is the single source of truth for
-    every agent pinned to this account.
+    file directly (no per-agent copy). The caller binds it ``:ro`` — the
+    agent reads the snapshot but never refreshes it. The snapshot is the
+    single source of truth for every agent pinned to this account, kept
+    fresh by the host-side ``sac-accounts-refresh`` timer (the sole
+    refresher under the master-host single-refresher model).
 
     Raises :class:`PinnedAccountError` when the snapshot is absent, has
     no numeric ``expiresAt``, or is already expired — NEVER falls back
@@ -134,9 +140,9 @@ def resolve_cred_file(
             f"`sac accounts sync-live`, and restart this agent."
         )
 
-    # Return the SNAPSHOT itself — the caller binds it ``:rw``, so the
-    # in-container Claude CLI's refresh writes land on this file
-    # directly. No per-agent copy, no stale-copy clobber risk, no
+    # Return the SNAPSHOT itself — the caller binds it ``:ro``. The
+    # agent reads this file directly; the host-side timer refreshes it.
+    # No per-agent copy, no stale-copy clobber risk, no
     # auth-dies-after-8h failure mode (operator task #15).
     return snapshot
 

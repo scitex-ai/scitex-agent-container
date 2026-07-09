@@ -1,31 +1,17 @@
 """Host-side A2A ``/v1/turn`` → tmux bridge for ``runtime: tui`` agents.
 
-Closes the wake-on-push gap that left interactive TUI agents reachable on
-the ``sac listen`` bus (via the ``sac mcp channel`` subscriber) but unable
-to ACT on a pushed message while idle.
+Closes the wake-on-push gap for interactive TUI agents. The SDK runtime
+serves ``/v1/turn`` from its in-SIF runner so the ``sac mcp channel``
+subscriber's wake POST (``_mcp/_channel_wake._wake_turn``) DRIVES an idle
+agent to act; the TUI runtime runs ``claude`` in tmux with no in-process
+HTTP server, so that POST hit a dead port and the message never woke it.
+This module gives TUI agents the SAME endpoint host-side (the in-SIF
+subscriber POSTs to ``127.0.0.1:<port>`` — apptainer shares the host net
+namespace): on ``POST /v1/turn`` it injects ``text`` into the tmux session
+via :meth:`TuiSessionRuntime.send_turn` and returns ``200`` once delivered.
 
-Background (2026-06-17). The SDK runtime serves a ``/v1/turn`` HTTP
-endpoint from its in-SIF runner (``_runners/_session_http.py``); the
-channel subscriber's wake primitive (``_mcp/_channel_wake._wake_turn``)
-POSTs each qualifying bus event there so an IDLE agent is DRIVEN to
-process it immediately. The TUI runtime runs interactive ``claude`` in
-tmux — no in-process HTTP server — so that wake POST hit a dead port
-(``[Errno 110] Connection timed out``) and the message only landed as a
-``notifications/claude/channel`` MCP notification, which (per channel.py)
-"cannot wake an idle session". Net effect: a TUI agent received nothing
-actionable until some unrelated next turn.
-
-This module gives TUI agents the SAME turn endpoint, host-side (where the
-tmux PTY lives — the in-SIF subscriber POSTs to ``127.0.0.1:<port>`` and
-apptainer shares the host net namespace). On ``POST /v1/turn`` it injects
-the ``text`` into the agent's tmux session via
-:meth:`TuiSessionRuntime.send_turn` — the exact delivery path an operator
-``sac agents send`` uses — and returns ``200`` as soon as the keystrokes
-are delivered (the driven turn runs asynchronously in the TUI; its own
-Stop hook PUSHes any completion report back, same as the SDK path).
-
-Wire format mirrors ``_session_http`` so ``_wake_turn`` and A2A clients
-work unchanged:
+Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
+unchanged:
 
     POST /v1/turn                      (bare — the port identifies the agent)
     POST /agents/<name>/turn           (canonical sac namespace)
@@ -39,12 +25,12 @@ work unchanged:
     502 {"error": "tui inject failed: ..."}               # session gone / input wedged
 
 Lifecycle mirrors :mod:`a2a_sidecar`: :func:`start_turn_bridge` spawns the
-server as a detached subprocess (so it outlives the ``sac agents start``
-process, like the tmux session it serves), writing a PID file + log under
-the agent's per-host state dir; :func:`stop_turn_bridge` SIGTERMs it.
-Both are best-effort — a failed bridge must never block agent start/stop.
-Bound to ``127.0.0.1`` (the wake POST is loopback; the bind is the
-security boundary, matching the SDK runner which does not auth /v1/turn).
+server as a detached subprocess writing a PID file + log under the agent's
+per-host state dir; :func:`stop_turn_bridge` SIGTERMs it AND waits for the
+port to release (see :mod:`_tui_turn_bridge_port` — the restart
+port-collision fix). Both are best-effort — a failed bridge must never
+block agent start/stop. Bound to ``127.0.0.1`` (loopback wake POST; the
+bind is the security boundary, matching the SDK runner's unauthed endpoint).
 """
 
 from __future__ import annotations
@@ -56,11 +42,21 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
+from ._tui_turn_bridge_port import (
+    _PORT_FREE_TIMEOUT_S,
+    _STOP_SIGTERM_GRACE_S,
+    TurnBridgePortBusyError,
+    await_bridge_release,
+    ensure_port_free_or_raise,
+    port_busy_error,
+    port_is_free,
+)
 
 log = logging.getLogger(__name__)
 
@@ -212,8 +208,16 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
 def build_server(
     *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
 ) -> _TurnBridgeServer:
-    """Construct (but do not run) the bridge server. Test seam."""
-    return _TurnBridgeServer((host, port), on_turn, agent_name)
+    """Construct (but do not run) the bridge server. Test seam.
+
+    A bind refusal (port still held by a lingering old bridge) is re-raised
+    as a :class:`TurnBridgePortBusyError` naming the port + holder +
+    remediation, not a bare ``OSError [Errno 98] Address already in use``.
+    """
+    try:
+        return _TurnBridgeServer((host, port), on_turn, agent_name)
+    except OSError as exc:
+        raise port_busy_error(host, port, agent_name, cause=exc) from exc
 
 
 def serve(  # pragma: no cover - integration entry: installs main-thread-only signal handlers + blocks in serve_forever; the server logic is unit-tested via build_server, the full serve path is exercised end-to-end
@@ -246,20 +250,14 @@ def _build_on_turn(
 ) -> Callable[..., None]:
     """Inject callback that drives one TUI turn via the tmux PTY.
 
-    Calls :meth:`TuiSessionRuntime.send_turn` with ``wait_ready=False``
-    (see the inline note). Raises when the session is gone so the handler
-    answers 502 (the channel subscriber's ``raise_for_status`` then
-    surfaces it loud rather than pretending the wake landed). ``runtime``
-    is a test seam — production constructs the real
-    :class:`TuiSessionRuntime`.
-
-    When the wake carries a ``from_agent`` (the dispatching peer), the
-    inbound is RECORDED into the DB-backed inbound ledger BEFORE the
-    inject, so the agent's ``Stop`` hook can push a dispatch-correlated
-    completion report back to that requester (SDK-parity outbound — see
-    :mod:`_tui_outbound`). Recording is best-effort: a ledger-write
-    failure logs but never blocks delivering the turn (the agent still
-    wakes; only the auto-report is lost).
+    Calls :meth:`TuiSessionRuntime.send_turn` with ``wait_ready=False`` (see
+    the inline note); raises when the session is gone so the handler answers
+    502 (the subscriber's ``raise_for_status`` surfaces it loud). ``runtime``
+    is a test seam. When the wake carries a ``from_agent``, the inbound is
+    RECORDED into the DB-backed ledger BEFORE the inject so the ``Stop`` hook
+    can push a dispatch-correlated report back (SDK-parity outbound — see
+    :mod:`_tui_outbound`); best-effort — a ledger failure never blocks the
+    turn (only the auto-report is lost).
     """
     if (
         runtime is None
@@ -292,15 +290,11 @@ def _build_on_turn(
                     exc,
                 )
         # ``wait_ready=False`` → the bare send_text_and_submit primitive
-        # (text + Enter), the operator-confirmed delivery path
-        # (``send_turn`` itself defaults to it for that reason). The full
-        # ``wait_until_input_ready`` drain blocks up to 60s polling for a
-        # "? for shortcuts" marker that an autonomous agent's idle pane may
-        # never render — fatal for a wake POST. First-launch modals are
-        # already drained by ``start()._drain_at_boot``; a live wake into
-        # an idle ❯ needs no drain. claude queues keystrokes typed mid-turn
-        # and submits them when the input rebinds, so a wake during an
-        # active turn is not dropped.
+        # (text + Enter). The full ``wait_until_input_ready`` drain blocks up
+        # to 60s on a "? for shortcuts" marker an idle autonomous pane may
+        # never render — fatal for a wake POST; boot modals are already
+        # drained by ``start()._drain_at_boot`` and claude queues keystrokes
+        # typed mid-turn, so a live wake needs no drain and is never dropped.
         delivered = runtime.send_turn(config, text, wait_ready=False)
         if not delivered:
             raise RuntimeError(
@@ -350,33 +344,49 @@ def start_turn_bridge(
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
     host: str = DEFAULT_HOST,
+    port_free_timeout_s: float = _PORT_FREE_TIMEOUT_S,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    now_fn: Callable[[], float] = time.monotonic,
+    port_free_fn: Callable[[str, int], bool] = port_is_free,
 ) -> int | None:
     """Spawn the detached turn bridge for ``config``; return its PID or None.
 
-    No-op (returns None) when the agent declares no resolved ``a2a.port``
-    — without an a2a port the channel subscriber has no ``--turn-url`` to
-    POST to, so there is nothing to serve. Best-effort: a spawn failure is
-    logged and swallowed (a dead bridge must not block agent start). The
-    ``spawn`` seam lets tests assert the argv without a real subprocess.
+    No-op (returns None) without a resolved ``a2a.port`` (nothing to serve).
+    Best-effort spawn: a failure is logged + swallowed (a dead bridge must
+    not block agent start); the ``spawn`` seam lets tests assert the argv.
 
-    Pre-existing-bridge teardown (2026-06-19 a2a mis-route fix): a restart
-    that does NOT route through :meth:`TuiSessionRuntime.stop` (e.g. the
-    supervisor's stale-lease path, or a flip that changes ``a2a.port``)
-    can leave the agent's PREVIOUS bridge process alive on the old port.
-    Writing the new PID over the pidfile would orphan it permanently — the
-    stale bridge keeps its old port bound, and a later fresh agent that
-    inherits that port collides and mis-routes traffic into the stale
-    bridge's tmux. So we ALWAYS :func:`stop_turn_bridge` first, making the
-    one-bridge-per-agent invariant hold regardless of how we got here.
+    We ALWAYS :func:`stop_turn_bridge` first (one-bridge-per-agent invariant)
+    AND then POLL until the a2a port is bindable before spawning. On the
+    2026-07-09 restart port-collision incident the old holder still owned the
+    port when the new child bound it → ``EADDRINUSE`` crash → agent stranded.
+    If the port cannot be freed within ``port_free_timeout_s`` we FAIL LOUD
+    (:class:`TurnBridgePortBusyError`, naming port + holder + remediation)
+    instead of spawning into that crash. ``*_fn`` seams are injected by tests.
     """
     port = resolved_a2a_port(config)
     if port is None:
         return None
-    # Deterministically tear down any prior bridge for THIS agent before we
-    # spawn (and overwrite the pidfile). The pidfile is keyed by the agent's
-    # per-host state dir, so this reliably kills the agent's own previous
-    # bridge — even one left on a now-stale port by a port-changing restart.
-    stop_turn_bridge(config)
+    # Tear down any prior bridge for THIS agent, now also WAITING for it to
+    # release the port.
+    stop_turn_bridge(
+        config,
+        host=host,
+        sleep_fn=sleep_fn,
+        now_fn=now_fn,
+        port_free_fn=port_free_fn,
+    )
+    # Bounded wait for the port to be bindable BEFORE we spawn — covers the
+    # async shutdown tail AND an untracked/orphaned holder. Fails loud instead
+    # of spawning a child into an EADDRINUSE crash.
+    ensure_port_free_or_raise(
+        host=host,
+        port=port,
+        agent_name=str(getattr(config, "name", "?")),
+        timeout_s=port_free_timeout_s,
+        sleep_fn=sleep_fn,
+        now_fn=now_fn,
+        port_free_fn=port_free_fn,
+    )
     config_path = str(getattr(config, "config_path", "") or "")
     if not config_path:
         log.warning(
@@ -422,12 +432,27 @@ def start_turn_bridge(
     return pid
 
 
-def stop_turn_bridge(config: AgentConfig) -> bool:
-    """SIGTERM the bridge recorded in the PID file; return True if one was.
+def stop_turn_bridge(
+    config: AgentConfig,
+    *,
+    host: str = DEFAULT_HOST,
+    grace_s: float = _STOP_SIGTERM_GRACE_S,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    now_fn: Callable[[], float] = time.monotonic,
+    port_free_fn: Callable[[str, int], bool] = port_is_free,
+) -> bool:
+    """SIGTERM the recorded bridge, WAIT for it to RELEASE THE PORT (SIGKILL
+    if it overstays ``grace_s``), then drop the PID file; return True iff a
+    live PID was signalled. No-op (returns False) when no PID file exists.
 
-    No-op (returns False) when no PID file exists. The PID file is the
-    source of truth and is removed regardless of whether the process was
-    still alive, so a stop()->start() cycle never reuses a stale PID.
+    Incident fix (2026-07-09): the old code SIGTERMed and returned
+    IMMEDIATELY — the port stayed held during the async ``serve_forever``
+    shutdown, so a fast ``restart`` rebound straight into ``EADDRINUSE`` and
+    stranded the agent. Now :func:`await_bridge_release` blocks until the
+    port is bindable again (accurate even for a not-yet-reaped zombie, which
+    holds no socket; falls back to PID liveness when the agent has no a2a
+    port). The PID file is removed regardless, so a stop()->start() cycle
+    never reuses a stale PID. ``*_fn`` seams are injected for tests.
     """
     pid_path = _pid_path(config)
     if not pid_path.is_file():
@@ -440,6 +465,7 @@ def stop_turn_bridge(config: AgentConfig) -> bool:
         ValueError,
     ):  # stx-allow: fallback (reason: an unreadable/corrupt PID file is treated as "already stopped"; we still unlink it below so the next start is clean)
         pid = -1
+    port = resolved_a2a_port(config)
     if pid > 0:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -448,6 +474,18 @@ def stop_turn_bridge(config: AgentConfig) -> bool:
             stopped = False
         except OSError as exc:  # stx-allow: fallback (reason: a permission/ESRCH error still means "not our live process"; log + treat as stopped so cleanup proceeds)
             log.warning("tui-turn-bridge: SIGTERM pid %d failed: %s", pid, exc)
+        if stopped:
+            # Block until the port is released (SIGKILL if SIGTERM ignored),
+            # so a fast restart never rebinds into a still-held port.
+            await_bridge_release(
+                pid,
+                port,
+                host=host,
+                grace_s=grace_s,
+                sleep_fn=sleep_fn,
+                now_fn=now_fn,
+                port_free_fn=port_free_fn,
+            )
     try:
         pid_path.unlink()
     except OSError:  # stx-allow: fallback (reason: unlink race is harmless — the file is gone either way)
@@ -467,4 +505,5 @@ __all__ = [
     "main",
     "start_turn_bridge",
     "stop_turn_bridge",
+    "TurnBridgePortBusyError",
 ]

@@ -98,6 +98,34 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
             pass
 
     save_account(name, meta, home=home)
+
+    # Rotation audit: `save` snapshots a live login into the store — record
+    # it (best-effort, never fails the save). Only an opaque fingerprint of
+    # the snapshotted access token is recorded, never the token itself.
+    if ".credentials.json" in copied:
+        # stx-allow: fallback (reason: audit is a durable side-record; a
+        # failure to write it must never fail the account save.)
+        try:
+            from .._account._rotation_audit import (
+                fingerprint_token,
+                log_rotation_event,
+            )
+            from .._account.claude_usage import _read_tokens_at
+
+            access, _refresh, _cid, _exp = _read_tokens_at(
+                cred_dir / ".credentials.json"
+            )
+            log_rotation_event(
+                store=store,
+                event="save",
+                from_account=meta.get("email_address") or name,
+                to_account=name,
+                reason="account save (manual snapshot of live login into store)",
+                to_token_fp=fingerprint_token(access),
+            )
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            pass
+
     click.echo(
         f"Saved account '{name}' to {cred_dir} (files: {copied or 'none found'})"
     )
@@ -127,6 +155,22 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
 def account_list(as_json: bool, refresh: bool) -> None:
     """List stored accounts and show the currently active one.
 
+    Below the table the human view prints (a) a monospace usage-bars
+    block — a fixed-width ASCII bar per account for the 5h and 7d
+    windows so utilisation is scannable at a glance — and (b) a single
+    fleet effective-utilization line.
+
+    \b
+    Fleet effective utilization
+      A reset-horizon-weighted fleet figure. Per account, over a 7-day
+      planning window W: frac_before_reset = clamp(reset_horizon, 0, W)/W
+      and effective% = frac_before_reset * used_pct_7d. So an account at
+      100% that resets in 1 day (eff ~14%) contributes far more usable
+      weekly capacity than one at 100% resetting in 6 days (eff ~86%).
+      The reset horizon is the true 7d-window reset (reset_at_7d); when
+      absent it defaults to the full window (eff = used_pct_7d). The
+      fleet figure is the mean over accounts with cached usage.
+
     \b
     Example:
       $ sac account list
@@ -144,6 +188,7 @@ def account_list(as_json: bool, refresh: bool) -> None:
         render_stored_table,
         rolling_legend_line,
     )
+    from ._account_usage_bars import fleet_effective_line, render_usage_bars_block
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
@@ -192,6 +237,16 @@ def account_list(as_json: bool, refresh: bool) -> None:
     # still sees the rolling-window contract instead of guessing.
     if needs_rolling_legend(rows):
         console.print(rolling_legend_line())
+    # Operator readability ask (2026-07-09): a monospace usage-bars
+    # block + a single reset-horizon-weighted fleet figure below the
+    # table. Emitted via click.echo (NOT console.print) so the `[..]`
+    # bar brackets render literally instead of being parsed as rich
+    # markup.
+    bars_block = render_usage_bars_block(rows)
+    if bars_block:
+        click.echo("")
+        click.echo(bars_block)
+    click.echo(fleet_effective_line(rows))
 
 
 @account.command("delete")
@@ -255,76 +310,23 @@ def account_switch(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# quota-watch — exposed both at top-level (legacy) and under ``account``.
+# mint-token — master-side ACCESS-ONLY credential minting. Lives in its own
+# module (like refresh / sync-live) to keep this file under the per-file
+# line cap; attached onto the group at import time.
 # ---------------------------------------------------------------------------
+from ._account_mint_token import register_mint_token_command
+
+register_mint_token_command(account)
 
 
-@account.command("watch-quota")
-@click.option(
-    "--threshold",
-    default=80.0,
-    show_default=True,
-    help="Rotate when usage exceeds this %.",
-)
-@click.option(
-    "--interval",
-    default=300,
-    show_default=True,
-    help="Check interval in seconds.",
-)
-@click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
-@click.option("--once", is_flag=True, help="Run once instead of looping.")
-@click.option(
-    "--daemon",
-    is_flag=True,
-    help="Double-fork into background (UNIX only). Logs to --log-file.",
-)
-@click.option(
-    "--log-file",
-    default=None,
-    show_default=False,
-    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
-)
-def account_watch_quota(
-    threshold: float,
-    interval: int,
-    dry_run: bool,
-    once: bool,
-    daemon: bool,
-    log_file: str | None,
-) -> None:
-    """Monitor quota and auto-rotate credentials when threshold exceeded.
+# ---------------------------------------------------------------------------
+# quota-watch — exposed both at top-level (legacy `quota_watch`, re-exported
+# below) and under ``account``. Bodies extracted to ``_account_quota_watch``
+# to keep this file under the per-file line cap.
+# ---------------------------------------------------------------------------
+from ._account_quota_watch import quota_watch, register_quota_watch_commands
 
-    \b
-    Examples:
-      $ sac account watch-quota --once
-      $ sac account watch-quota
-      $ sac account watch-quota --daemon
-    """
-    from pathlib import Path
-
-    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
-
-    if once or dry_run:
-        result = check_and_rotate(threshold=threshold, dry_run=dry_run)
-        click.echo(f"[{result['action']}] {result['message']}")
-        sv = survival_mode_check()
-        if sv["survival_mode"]:
-            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
-        return
-
-    log_path = Path(log_file) if log_file else None
-    if daemon:
-        click.echo(
-            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
-            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
-        )
-    run_loop(
-        threshold=threshold,
-        interval=interval,
-        daemon=daemon,
-        log_path=log_path,
-    )
+register_quota_watch_commands(account)
 
 
 # ---------------------------------------------------------------------------
@@ -382,78 +384,6 @@ def account_status(host: str | None, as_json: bool) -> None:
         click.echo(format_status_prose(snapshot))
 
 
-@click.command("watch-quota")
-@click.option(
-    "--threshold",
-    default=80.0,
-    show_default=True,
-    help="Rotate when usage exceeds this %.",
-)
-@click.option(
-    "--interval",
-    default=300,
-    show_default=True,
-    help="Check interval in seconds.",
-)
-@click.option("--dry-run", is_flag=True, help="Check but do not actually rotate.")
-@click.option("--once", is_flag=True, help="Run once instead of looping.")
-@click.option(
-    "--daemon",
-    is_flag=True,
-    help="Double-fork into background (UNIX only). Logs to --log-file.",
-)
-@click.option(
-    "--log-file",
-    default=None,
-    show_default=False,
-    help="Log file path when running as daemon (default: ~/.scitex/logs/quota-watch.log).",
-)
-def quota_watch(
-    threshold: float,
-    interval: int,
-    dry_run: bool,
-    once: bool,
-    daemon: bool,
-    log_file: str | None,
-) -> None:
-    """Monitor quota and auto-rotate credentials when threshold exceeded.
-
-    \b
-    Examples:
-      # single check
-      scitex-agent-container watch-quota --once
-      # foreground loop every 5 min
-      scitex-agent-container watch-quota
-      # background daemon
-      scitex-agent-container watch-quota --daemon
-    """
-    from pathlib import Path
-
-    from .._account.quota_watch import check_and_rotate, run_loop, survival_mode_check
-
-    if once or dry_run:
-        result = check_and_rotate(threshold=threshold, dry_run=dry_run)
-        click.echo(f"[{result['action']}] {result['message']}")
-        # Also report survival mode in single-check mode
-        sv = survival_mode_check()
-        if sv["survival_mode"]:
-            click.echo(f"[SURVIVAL] {sv['message']}", err=True)
-        return
-
-    log_path = Path(log_file) if log_file else None
-    if daemon:
-        click.echo(
-            f"Forking quota-watch daemon (interval={interval}s, threshold={threshold}%). "
-            f"Log: {log_path or '~/.scitex/logs/quota-watch.log'}"
-        )
-    run_loop(
-        threshold=threshold,
-        interval=interval,
-        daemon=daemon,
-        log_path=log_path,
-    )
-
-
 # ---------------------------------------------------------------------------
 # refresh — headless OAuth access-token rotation (no `claude /login` prompt).
 # Lives in its own module to keep this file under the per-file line cap;
@@ -462,6 +392,18 @@ def quota_watch(
 from ._account_refresh import register_refresh_command
 
 register_refresh_command(account)
+
+
+# ---------------------------------------------------------------------------
+# refresh-quota-cache — the PRODUCER for the aggregate quota-cache.json that
+# the quota-aware boot picker (_creds/_pick_healthy) + a2a metadata enricher
+# read. Without a periodic run of this, that file never exists and the picker
+# degrades to freshness-only. Lives in its own module (per-file line cap);
+# attached at import time like refresh / sync-live. A host cron runs it.
+# ---------------------------------------------------------------------------
+from ._account_refresh_quota_cache import register_refresh_quota_cache_command
+
+register_refresh_quota_cache_command(account)
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +491,10 @@ def account_quota(json_out: bool, strict: bool) -> None:
             f"7d={round(meta['used_pct_7d'])} percent "
             f"ttl={meta['token_ttl_hours']:.2f}h"
         )
+
+
+# ``quota_watch`` is re-exported (defined in ``_account_quota_watch``) so the
+# lazy entry-point path ``account_group:quota_watch`` in ``_main.py`` keeps
+# resolving after the body was extracted. Named in ``__all__`` so linters do
+# not flag the re-export as an unused import.
+__all__ = ["account", "quota_watch"]

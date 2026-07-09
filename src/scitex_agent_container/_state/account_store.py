@@ -262,10 +262,39 @@ def delete_account(
     return True
 
 
+def _read_access_token_fingerprint(creds_path: Path) -> str | None:
+    """Best-effort OPAQUE fingerprint of a ``.credentials.json`` access token.
+
+    Reads ``claudeAiOauth.accessToken`` and returns its one-way
+    ``sha256:<hex>`` fingerprint (never the token itself). ``None`` on any
+    missing/corrupt file. Used only to make a token FROM→TO rotation
+    visible in the audit record. Never raises.
+    """
+    # stx-allow: fallback (reason: fingerprint is a cosmetic audit field;
+    # a missing/corrupt live-or-store credential must degrade to None, never
+    # break the switch the caller is performing.)
+    try:
+        from .._account._rotation_audit import fingerprint_token
+
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        oauth = data.get("claudeAiOauth")
+        if not isinstance(oauth, dict):
+            return None
+        return fingerprint_token(oauth.get("accessToken"))
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
 def switch_account(
     name: str,
     store_dir: Path | None = None,
     home: Path | None = None,
+    *,
+    event: str = "switch",
+    reason: str = "manual switch",
+    from_account: str | None = None,
 ) -> dict[str, Any]:
     """Switch the active Claude Code account to the named stored account.
 
@@ -273,10 +302,20 @@ def switch_account(
     ``~/.claude/``.  The snapshot must have been created by ``sac account
     save <name>``.
 
+    On success a structured rotation-audit record is appended (see
+    :mod:`.._account._rotation_audit`) capturing WHAT rotated FROM→TO and
+    WHY, with opaque token fingerprints (never the tokens themselves).
+
     Args:
         name: Account name as used in ``save_account``.
         store_dir: Override for the store directory.
         home: Override for the home directory.
+        event: Audit event kind — ``"switch"`` (manual) or
+            ``"auto-rotate"`` (quota-watch). Callers that rotate for a
+            different reason pass their own event/reason.
+        reason: Human/trigger string recorded as the audit ``reason``.
+        from_account: The account rotating away from (recorded in the
+            audit). ``None`` → best-effort resolution from the live login.
 
     Returns:
         Dict with ``success`` (bool), ``name`` (str), ``message`` (str).
@@ -295,6 +334,9 @@ def switch_account(
         }
 
     claude_dir = _home / ".claude"
+    live_creds = claude_dir / ".credentials.json"
+    # Capture the OUTGOING (live) token fingerprint BEFORE we overwrite it.
+    from_token_fp = _read_access_token_fingerprint(live_creds)
     # stx-allow: fallback (reason: ~/.claude/ may be on a read-only filesystem or a tmp copy may fail mid-flight; returning a failure dict is preferable to an unhandled exception)
     try:
         claude_dir.mkdir(parents=True, exist_ok=True)
@@ -312,8 +354,58 @@ def switch_account(
             "message": f"Failed to copy credential files: {exc}",
         }
 
+    # --- Rotation audit (best-effort, never breaks the switch) -------------
+    # stx-allow: fallback (reason: the audit record is a durable side-effect;
+    # a failure to write it must never fail the credential switch itself.)
+    try:
+        from .._account._rotation_audit import log_rotation_event
+
+        resolved_from = from_account
+        if resolved_from is None:
+            # Best-effort: label the outgoing account from the live login.
+            resolved_from = _read_active_account_email(_home)
+        to_token_fp = _read_access_token_fingerprint(
+            account_dir / ".credentials.json"
+        )
+        log_rotation_event(
+            store=store,
+            event=event,
+            from_account=resolved_from,
+            to_account=name,
+            reason=reason,
+            from_token_fp=from_token_fp,
+            to_token_fp=to_token_fp,
+        )
+    except Exception:  # stx-allow: fallback (reason: audit is best-effort; never fail the switch on it)
+        pass
+
     return {
         "success": True,
         "name": name,
         "message": f"Switched to account '{name}'",
     }
+
+
+def _read_active_account_email(home: Path) -> str | None:
+    """Return the active-login email from ``~/.claude.json``, best-effort.
+
+    Reads ``oauthAccount.emailAddress`` — the same field the rest of sac
+    keys the active account off. ``None`` on any missing/corrupt file.
+    Used only to label the ``from_account`` on a manual switch. Never
+    raises.
+    """
+    # stx-allow: fallback (reason: active-email is a cosmetic audit label;
+    # a missing/mid-rewrite ~/.claude.json degrades to None, never crashes.)
+    try:
+        data = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        oauth = data.get("oauthAccount")
+        if not isinstance(oauth, dict):
+            return None
+        email = oauth.get("emailAddress")
+        if isinstance(email, str) and email.strip():
+            return email.strip()
+        return None
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None

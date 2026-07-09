@@ -137,6 +137,16 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     help="Fleet view: filter by machine label.",
 )
 @click.option(
+    "--tags",
+    "-t",
+    default=None,
+    help="Fleet view: filter by tags label (comma-separated in YAML; "
+    "matches if the agent carries ANY of the given comma-separated "
+    "values). A free-form lifecycle/status marker, e.g. "
+    "'active-development' -- separate from --capability (what an agent "
+    "can do) and from the ACL group label (metadata.labels.groups).",
+)
+@click.option(
     "--verbose",
     "-v",
     "verbose",
@@ -187,6 +197,7 @@ def status(
     terse: bool,
     capability: str | None,
     machine: str | None,
+    tags: str | None,
     verbose: bool,
     show_all: bool,
     with_snapshot: bool,
@@ -196,17 +207,18 @@ def status(
     """Show agent status.
 
     Without ``NAME``: fleet view — every registered agent in a table,
-    optionally filtered by ``--capability`` / ``--machine``.
+    optionally filtered by ``--capability`` / ``--machine`` / ``--tags``.
 
     With ``NAME``: rich per-agent payload (registry entry + config-derived
     fields + resource snapshot).
 
     \b
     Example:
-      $ sac agent status                      # fleet view
-      $ sac agent status orchestrator         # rich per-agent
-      $ sac agent status --json               # fleet view, JSON
-      $ sac agent status --capability HPC     # fleet view, filtered
+      $ sac agent status                            # fleet view
+      $ sac agent status orchestrator               # rich per-agent
+      $ sac agent status --json                     # fleet view, JSON
+      $ sac agent status --capability HPC           # fleet view, filtered
+      $ sac agent status --tags active-development  # fleet view, by tag
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -333,7 +345,10 @@ def status(
                 json_mod.dumps(
                     {
                         "agents": get_agent_list_data(
-                            registry, capability=capability, machine=machine
+                            registry,
+                            capability=capability,
+                            machine=machine,
+                            tags=tags,
                         ),
                     },
                     indent=2,
@@ -344,6 +359,7 @@ def status(
                 registry,
                 capability=capability,
                 machine=machine,
+                tags=tags,
                 verbose=verbose,
                 show_all=show_all,
             )

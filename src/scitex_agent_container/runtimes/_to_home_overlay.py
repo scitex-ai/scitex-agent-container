@@ -148,6 +148,16 @@ def deploy_to_home_overlay(config: AgentConfig) -> Path | None:
     dest.mkdir(parents=True, exist_ok=True)
     deploy_to_home(config, str(dest))
     logger.info("to_home: mirrored into overlay upper home %s", dest)
+    # Record the overlay's scitex-* package delta as a version manifest so a
+    # later ``sac versions`` reads it cheaply (source="manifest") instead of
+    # re-scanning the overlay venv. Best-effort provenance side-effect — a
+    # failure here must never affect the launch.
+    try:
+        from .._drift.versions import record_overlay_manifest
+
+        record_overlay_manifest(config)
+    except Exception:  # stx-allow: fallback (reason: version-manifest recording is best-effort; never break a launch)
+        logger.debug("to_home: overlay version-manifest recording skipped", exc_info=True)
     return dest
 
 

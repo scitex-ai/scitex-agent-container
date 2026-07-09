@@ -60,6 +60,12 @@ def _setup_mcp_from_servers(
             ]
         mcp_servers[name] = resolved
 
+    # Cold-start race fix (fleet incident 2026-07-06): force blocking startup for
+    # the critical stdio MCP servers (see ``_mcp_reliability``). Idempotent.
+    from ._mcp_reliability import inject_always_load
+
+    inject_always_load(existing)
+
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
 

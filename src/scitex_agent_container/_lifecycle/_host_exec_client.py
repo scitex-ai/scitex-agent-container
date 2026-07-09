@@ -13,16 +13,79 @@ tests inject a hand-rolled fake so there is no monkeypatching of the transport.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 from ._spawn_client import _parse_body, _resolve_base_url, _resolve_bearer
 
-# ``sac image build`` can take many minutes; keep this comfortably above the
-# server-side per-command default (300s) so the http layer never chops off a
-# long-but-progressing exec before the server's own timeout fires.
-_DEFAULT_HTTP_TIMEOUT_S: float = 3700.0
+logger = logging.getLogger(__name__)
+
+# Server-side per-command timeout CONTRACT (mirrors the listen ``/v1/host_exec``
+# handler): when the caller omits ``timeout_s`` the server uses 300 s, and any
+# ``timeout_s`` it accepts is clamped to ``(0, 3600]``. The client-side HTTP wait
+# is DERIVED from this contract (effective server timeout + a margin) so the two
+# stay consistent — see :func:`_resolve_http_timeout`.
+_SERVER_DEFAULT_TIMEOUT_S: float = 300.0
+_SERVER_MAX_TIMEOUT_S: float = 3600.0
+
+# Margin added on top of the server-side deadline so the HTTP layer never chops
+# off a long-but-progressing exec BEFORE the server's own timeout fires — while
+# staying BOUNDED.
+#
+# Load-resilience fix (incident 2026-07-09): the pre-fix value was a FIXED
+# 3700 s regardless of the requested ``timeout_s``. A jammed ``:7878`` listen
+# (host load spike, load ~27 on 16 cores) then blocked this MCP tool handler for
+# up to ~62 min on a single ``host_exec`` call. That long block timed out the
+# stdio MCP client (Claude Code), which DROPPED the stdio connection — and Claude
+# Code does not auto-reconnect a stdio MCP mid-session (only HTTP/SSE), so the
+# host_exec/agent_* tools vanished for the rest of the session even though the
+# server process stayed alive. Deriving the wait from the server contract keeps a
+# blocked handler bounded (~330 s for the default) so the client never times the
+# whole server out. See ``docs/mcp-load-resilience.md``.
+_HTTP_TIMEOUT_MARGIN_S: float = 30.0
+
+# Optional hard override of the derived client-side HTTP timeout (seconds).
+_HTTP_TIMEOUT_ENV_VAR = "SAC_MCP_HOST_EXEC_HTTP_TIMEOUT_S"
+
+
+def _resolve_http_timeout(
+    timeout_s: float | None, explicit_http_timeout_s: float | None
+) -> float:
+    """Bound the client-side HTTP wait to the server-side deadline + margin.
+
+    Resolution order:
+
+    1. ``explicit_http_timeout_s`` — an explicit per-call override (a caller /
+       test that knows better) wins verbatim.
+    2. ``SAC_MCP_HOST_EXEC_HTTP_TIMEOUT_S`` env — a deployment-wide hard override.
+    3. Derived: the *effective* server-side timeout (``timeout_s`` when given,
+       else the 300 s server default), clamped to ``(0, 3600]``, plus
+       :data:`_HTTP_TIMEOUT_MARGIN_S`.
+
+    The derived path is the load-incident fix: it keeps the client wait just
+    above what the server itself will honour (~330 s for the default, ~1830 s for
+    ``timeout_s=1800``) instead of a fixed ~62 min, so a handler blocked on a
+    jammed listen fails fast enough that the stdio MCP client never times the
+    whole server out and drops it.
+    """
+    if explicit_http_timeout_s is not None:
+        return explicit_http_timeout_s
+    env_raw = os.environ.get(_HTTP_TIMEOUT_ENV_VAR, "").strip()
+    if env_raw:
+        try:
+            return float(env_raw)
+        except ValueError:
+            logger.warning(
+                "host_exec: ignoring invalid %s=%r (not a float seconds value)",
+                _HTTP_TIMEOUT_ENV_VAR,
+                env_raw,
+            )
+    effective = _SERVER_DEFAULT_TIMEOUT_S if timeout_s is None else float(timeout_s)
+    effective = max(0.0, min(effective, _SERVER_MAX_TIMEOUT_S))
+    return effective + _HTTP_TIMEOUT_MARGIN_S
 
 
 class HostExecRequestError(Exception):
@@ -55,7 +118,7 @@ def request_host_exec(
     caller: str | None = None,
     base_url: str | None = None,
     bearer: str | None = None,
-    http_timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S,
+    http_timeout_s: float | None = None,
     opener: Callable | None = None,
 ) -> dict[str, Any]:
     """POST ``argv`` (+ optional ``cwd``/``timeout_s``/``env``/``caller``) to
@@ -64,7 +127,15 @@ def request_host_exec(
     Raises :class:`HostExecRequestError` on any non-2xx response or transport
     failure — never returns a fake success. On a 2xx the body is the endpoint's
     contract (``{"exit_code", "stdout", "stderr", "duration_s", "timed_out"}``).
+
+    ``http_timeout_s`` bounds the client-side wait. When ``None`` (the default) it
+    is DERIVED from the server-side timeout contract via :func:`_resolve_http_timeout`
+    (effective ``timeout_s`` clamped to ``(0, 3600]`` + margin, ~330 s for the
+    default) rather than a fixed multi-minute wait — so a jammed listen cannot
+    block this handler long enough for the stdio MCP client to drop the whole
+    server (incident 2026-07-09, ``docs/mcp-load-resilience.md``).
     """
+    resolved_http_timeout = _resolve_http_timeout(timeout_s, http_timeout_s)
     base = _resolve_base_url(base_url)
     tok = _resolve_bearer(bearer)
 
@@ -88,7 +159,7 @@ def request_host_exec(
     opener_fn = opener if opener is not None else urlrequest.urlopen
 
     try:
-        with opener_fn(req, timeout=http_timeout_s) as resp:
+        with opener_fn(req, timeout=resolved_http_timeout) as resp:
             raw = resp.read()
     except urlerror.HTTPError as exc:
         raw_body = b""

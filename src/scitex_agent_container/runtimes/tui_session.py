@@ -9,16 +9,14 @@ tmux is a PTY holder only (it never runs ``claude`` on the host); it lets the
 agent survive operator detach and gives the inner TUI a PTY.
 
 This module is a thin adapter — it owns the session-name convention and the
-``RuntimeBase`` surface, and delegates:
+``RuntimeBase`` surface, and delegates: tmux mechanics → ``_runners/_tmux/``;
+$HOME materialisation → :mod:`_tui_workspace`; modal drain → :mod:`_tui_drain`;
+compose-buffer clear / submit-verify → :mod:`_tui_compose`; startup-prompt
+injection → :mod:`_tui_inject`; liveness decisions → :mod:`_tui_liveness`.
 
-  * tmux mechanics → ``_runners/_tmux/`` (multiplexer / tmux / pane_capture);
-  * $HOME materialisation → :mod:`_tui_workspace`;
-  * modal drain → :mod:`_tui_drain` (pure, injectable);
-  * compose-buffer clear / submit-verify → :mod:`_tui_compose` (pure);
-  * startup-prompt injection → :mod:`_tui_inject`.
-
-``is_running`` is a responsiveness probe (tmux ``session_activity`` freshness),
-so the supervisor's RestartPolicy catches an inner-hang, not just a dead session.
+``is_running`` is a LIVENESS probe (session exists AND its pane process is
+alive); ``is_responsive`` is the separate ``session_activity``-freshness signal
+for hang-detection (see :mod:`_tui_liveness`).
 """
 
 from __future__ import annotations
@@ -46,6 +44,7 @@ from ._tui_drain import (
 from ._tui_auth_stage import TuiAuthStageError
 from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_inject import StartupPromptInjectorMixin
+from ._tui_liveness import is_responsive_from_activity, pane_process_alive
 from ._tui_workspace import materialize_workspace as _materialize_workspace
 from .base import RuntimeBase
 
@@ -65,13 +64,10 @@ __all__ = [
 
 _CLAUDE_BIN_DEFAULT = "claude"
 
-# Default max-idle window for the tui-alive probe (see
-# ``TuiSessionRuntime.is_running``). 300s mirrors the SDK runtime's
-# health.interval default and gives a quiet but healthy TUI a
-# generous grace window before the supervisor's restart policy
-# fires on it. Overridable per-call via the ``max_idle_s`` kwarg
-# so a custom health policy in spec.health can tune it without a
-# code change.
+# Default max-idle window for the RESPONSIVENESS probe
+# (``TuiSessionRuntime.is_responsive``; liveness/``is_running`` no longer
+# uses it). 300s mirrors the SDK ``health.interval`` default so a
+# quiet-but-healthy TUI has grace. Overridable per-call via ``max_idle_s``.
 _DEFAULT_MAX_IDLE_S = 300.0
 
 # Boot-drain window when ``spec.startup_commands`` delay ``exec claude``
@@ -275,9 +271,11 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             return False
 
         if dry_run:
+            from ._apptainer_argv_record import write_redacted_argv
+
             state_dir = state_dir_for_config(config)
             state_dir.mkdir(parents=True, exist_ok=True)
-            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
+            write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
@@ -378,25 +376,29 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
     def is_running(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
     ) -> bool:
-        """True iff sac's tmux session for this agent is **responsive**.
+        """LIVENESS: ``tui-<name>`` exists AND its pane process is alive
+        (``os.kill(pane_pid, 0)``; NO activity gate — an idle agent is
+        still running). ``max_idle_s`` ignored. See :mod:`_tui_liveness`."""
+        del max_idle_s
+        return pane_process_alive(
+            session_name_for(config),
+            exists_fn=self._mux.exists,
+            pane_dead_fn=getattr(self._mux, "pane_dead", None),
+            pane_pid_fn=getattr(self._mux, "pane_pid", None),
+        )
 
-        Not just "session exists": requires pane activity within the last
-        ``max_idle_s`` seconds (``tmux display -p '#{session_activity}'``
-        advances on every pane read OR write), so the supervisor's RestartPolicy
-        also catches an inner-hang (a claude that neither exits nor reads stdin),
-        not only a dead session. ``max_idle_s`` defaults to 300s (the SDK
-        ``health.interval`` default) so a quiet-but-healthy TUI has grace.
-
-        Returns ``False`` when the session is absent, when ``session_activity``
-        is unavailable (``None``), or when the stamp is older than ``max_idle_s``.
-        """
+    def is_responsive(
+        self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
+    ) -> bool:
+        """RESPONSIVENESS: alive AND pane activity within ``max_idle_s``
+        (the OLD is_running rule, for hang-detection). See
+        :mod:`_tui_liveness`."""
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
-        activity = self._mux.session_activity(name)
-        if activity is None:
-            return False
-        return (time.time() - float(activity)) <= max_idle_s
+        return is_responsive_from_activity(
+            self._mux.session_activity(name), time.time(), max_idle_s
+        )
 
     def send_turn(
         self,

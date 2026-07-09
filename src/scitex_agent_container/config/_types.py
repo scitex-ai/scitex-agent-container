@@ -111,6 +111,22 @@ class ClaudeSpec:
     # in-place is safe; designate a path NOT concurrently atomic-renamed
     # by host-side ``sac accounts``/watch-live tooling.
     credentials_file: str = ""
+    # Account POOL: a list of host paths to ``.credentials.json`` files
+    # (one per saved account). When non-empty, the start pre-flight picks
+    # ONE of them QUOTA-AWARE — the token-fresh account with the most 7d
+    # weekly-cap headroom (see ``_creds.pick_healthy_account`` +
+    # ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and
+    # binds the PICKED file exactly as if it had been named in the singular
+    # ``credentials_file`` field. Each entry's ACCOUNT SLUG is its parent
+    # directory name (the fleet layout is
+    # ``~/.scitex/agent-container/accounts/<slug>/.credentials.json``), and
+    # that slug is the account name the quota-aware picker keys off. The
+    # singular ``credentials_file`` remains supported and is treated as a
+    # 1-element pool (pick returns it) for back-compat. Fail-loud: when NO
+    # listed entry has a usable (non-expired) snapshot the start aborts with
+    # ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``
+    # (an API-key backend needs no OAuth).
+    credentials_files: list[str] = field(default_factory=list)
     # Vendor-agnostic backend override (see :class:`ProviderSpec`).
     # When set, the SDK session runs against an Anthropic-SDK-compatible
     # backend (DeepSeek, a gateway, ...) on an API key instead of

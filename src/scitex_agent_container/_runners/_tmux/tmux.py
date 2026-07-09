@@ -189,54 +189,31 @@ class TmuxManager:
 
     @staticmethod
     def session_activity(session_name: str) -> int | None:
-        """Return the unix-epoch timestamp of the session's last pane
-        activity, or ``None`` if no such session exists.
-
-        Backed by ``tmux display -p '#{session_activity}'``, which
-        tmux advances every time a pane writes output OR receives
-        input. Used by ``TuiSessionRuntime.is_running`` as the tui-
-        alive probe (step 4/4 of the TUI hedge, lead a2a
-        ``d383f5389dc548a49a293bffe390d619``) — a "session exists"
-        check alone cannot detect a hung-but-alive ``claude`` process,
-        so the runtime additionally requires the activity timestamp
-        to be within a max-idle window of wall clock.
-
-        Returns ``None`` rather than raising on a missing session so
-        callers can branch on "no session" vs. "stale session" with
-        a single ``is None`` check.
+        """Unix-epoch stamp of the session's last pane activity, or
+        ``None`` when absent. RESPONSIVENESS signal (advances only on
+        pane I/O) — NOT liveness. See :func:`_tmux_probe.session_activity`.
         """
-        if not TmuxManager.exists(session_name):
-            return None
-        # The remainder shells out to `tmux display -p '#{session_activity}'`
-        # and parses its int output. Exercised end-to-end by the slow
-        # real-binary suite (test_tui_session_real_smoke.py) and the
-        # session-activity probe test (test_tmux_session_activity.py),
-        # both gated on `tmux` being on PATH. CI runners do not have tmux
-        # installed, so the lines below are unreachable in the standard
-        # pytest matrix. The honest marker — requires live tmux, not
-        # available on CI runner — is a pragma rather than a band-aid
-        # coverage-ignore of the whole module.
-        result = subprocess.run(  # pragma: no cover  -- requires live tmux, not available on CI runner
-            [
-                "tmux",
-                "display",
-                "-p",
-                "-t",
-                session_name,
-                "#{session_activity}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:  # pragma: no cover  -- requires live tmux
-            return None
-        raw = result.stdout.strip()  # pragma: no cover  -- requires live tmux
-        if not raw:  # pragma: no cover  -- requires live tmux
-            return None
-        try:  # pragma: no cover  -- requires live tmux
-            return int(raw)
-        except ValueError:  # pragma: no cover  -- requires live tmux
-            return None
+        from ._tmux_probe import session_activity as _sa
+
+        return _sa(session_name)
+
+    @staticmethod
+    def pane_pid(session_name: str) -> int | None:
+        """PID of the process in the session's active pane (identity
+        liveness signal), or ``None`` when absent. See
+        :func:`_tmux_probe.pane_pid`."""
+        from ._tmux_probe import pane_pid as _pane_pid
+
+        return _pane_pid(session_name)
+
+    @staticmethod
+    def pane_dead(session_name: str) -> bool | None:
+        """Whether the active pane's process exited but the pane is
+        retained, or ``None`` when absent. See
+        :func:`_tmux_probe.pane_dead`."""
+        from ._tmux_probe import pane_dead as _pane_dead
+
+        return _pane_dead(session_name)
 
     @staticmethod
     def capture_content(session_name: str) -> str:

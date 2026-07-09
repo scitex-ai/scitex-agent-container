@@ -360,9 +360,26 @@ def agent_restart(
     from ._session_reset import _clear_persisted_session_id
 
     _clear_persisted_session_id(name)
+    # ``assume_yes=True`` — a restart is an ALREADY-authorized action: the
+    # ``sac agents restart`` CLI refuses without ``-y`` (see
+    # ``cli_pkg/lifecycle/_restart.py``) and the MCP / public-API restart
+    # paths carry the same intent, so consent is given by the time control
+    # reaches here. It must be threaded into the start leg because, when
+    # this runs INSIDE an apptainer SIF, ``agent_start`` brokers the start
+    # to the host's ``sac listen`` ``POST /agents`` handler, which shells a
+    # FRESH ``sac agents start <name>`` subprocess that re-runs the SAME
+    # interactive refuse-without-``--yes`` gate
+    # (``cli_pkg/lifecycle/_start_single.py::should_preview_and_require_yes``).
+    # Without this, an in-SIF restart brokered through ``/agents`` refused
+    # itself with "refusing to start <name> without --yes/-y" → HTTP 502,
+    # even though the restart was explicitly authorized (repro 2026-07-09).
+    # This does NOT weaken the human-at-a-TTY guard: a bare ``sac agents
+    # start``/``restart`` with no consent still refuses — only the
+    # pre-authorized restart's own start leg asserts the consent already given.
     return agent_start(
         config_path,
         registry,
+        assume_yes=True,
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,

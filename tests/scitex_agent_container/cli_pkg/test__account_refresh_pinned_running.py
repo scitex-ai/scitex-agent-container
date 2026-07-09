@@ -29,7 +29,7 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._state.account_store import save_account
-from scitex_agent_container.cli_pkg._account_refresh import (
+from scitex_agent_container.cli_pkg._account_refresh_skip import (
     _collect_pinned_running_accounts,
     _resolve_registry_dir,
 )

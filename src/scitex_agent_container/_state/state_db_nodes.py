@@ -38,6 +38,8 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
+import logging
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -49,17 +51,13 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
-from .state_db_comms_grants import (
-    grant_send,
-    has_grant,
-    list_comms_grants,
-    revoke_send,
-)
 from .state_db_node_tokens import (
     list_node_tokens,
     mint_node_token,
     resolve_node_token,
 )
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -102,13 +100,13 @@ def record_lineage(
     parent: str,
     db_path: Path | None = None,
 ) -> None:
-    """Record ``parent`` as the parent of ``child``.
+    """Record ``parent`` as ``child``'s parent (keep-first-parent).
 
-    Idempotent — a second call with the same child+parent leaves the
-    row untouched. A different parent for an existing child raises
-    ``ValueError`` (re-parenting is not a quiet operation; a child
-    that "switches groups" is exactly the kind of identity drift the
-    ACL is meant to prevent).
+    Idempotent; a child's parent is set once and immutable. A DIFFERENT
+    parent KEEPS the existing one (logged, not raised) so a restart by a
+    non-original-parent caller works in-place without re-parenting;
+    identity drift stays impossible. Permission is gated upstream by
+    ``check_spawn``.
     """
     if not child or not parent:
         raise ValueError("record_lineage: child and parent must be non-empty")
@@ -121,11 +119,11 @@ def record_lineage(
         if existing is not None:
             if existing["parent_name"] == parent:
                 return  # idempotent no-op
-            raise ValueError(
-                f"record_lineage: child {child!r} already has parent "
-                f"{existing['parent_name']!r}; refusing to re-parent to "
-                f"{parent!r}"
+            _logger.warning(
+                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
+                child, existing["parent_name"], parent,
             )
+            return
         conn.execute(
             "INSERT INTO lineage (child_name, parent_name, created_at) "
             "VALUES (?, ?, ?)",
@@ -334,16 +332,42 @@ def spawn_allowed(
         ).fetchone()
     if parent_row is None:
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+    # Child node: denied by default, EXCEPT a developer- or research-group
+    # member may spawn / restart a peer regardless of parent/child lineage
+    # (operator 2026-07-06 ACL incident — a research child such as neurovista
+    # must be able to self-heal a DOWN peer like scitex-clew without waiting
+    # on the operator). The per-spec may_spawn gate still layers on top,
+    # exactly like the root path above.
+    from ..config._group_resolver import is_developer_group, is_research_group
+
+    group = resolve_group_name(name=caller, db_path=db_path)
+    if is_developer_group(group) or is_research_group(group):
+        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     return (
         False,
         (
             f"spawn denied: caller {caller!r} is a child of "
-            f"{parent_row['parent_name']!r} and its resolved role/group "
-            "is not one of the roles permitted to spawn (root nodes, "
-            "plus the 'developer' / 'researcher' named groups per "
-            "operator ruling 2026-07-05)."
+            f"{parent_row['parent_name']!r} and is in neither the developer "
+            "nor research group. Current policy: only root nodes, or "
+            "developer/research group members, may spawn (handoff §4 "
+            "'lift-able policy' — a single edit to spawn_allowed())."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# comms_grants — explicit cross-group send permissions. CRUD primitives live
+# in a sibling module (state_db_grants) under the per-file line cap; re-exported
+# here so the natural import path
+# ``from ..._state.state_db_nodes import grant_send`` keeps working.
+# ---------------------------------------------------------------------------
+
+from .state_db_grants import (  # noqa: E402, F401
+    grant_send,
+    has_grant,
+    list_comms_grants,
+    revoke_send,
+)
 
 
 # ---------------------------------------------------------------------------

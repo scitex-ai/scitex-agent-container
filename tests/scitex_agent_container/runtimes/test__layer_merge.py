@@ -81,6 +81,36 @@ def test_lists_union_preserving_order() -> None:
     assert merged["xs"] == [1, 2, 3]
 
 
+def test_comment_key_conflict_is_exempt_and_keeps_first() -> None:
+    # Arrange — two layers each document themselves via ``_comment``.
+    layers = [("user", {"_comment": "user layer"}), ("agent", {"_comment": "agent layer"})]
+    # Act
+    merged, _ = deep_merge_layers(layers)
+    # Assert
+    assert merged["_comment"] == "user layer"
+
+
+def test_comment_prefixed_key_conflict_is_exempt() -> None:
+    # Arrange — ``_comment_*`` documentation keys are also exempt.
+    layers = [("user", {"_comment_note": "a"}), ("agent", {"_comment_note": "b"})]
+    # Act
+    merged, _ = deep_merge_layers(layers)
+    # Assert
+    assert merged["_comment_note"] == "a"
+
+
+def test_comment_conflict_does_not_hard_fail_the_cascade() -> None:
+    # Arrange — a doc-key clash must not abort the surrounding real merge.
+    layers = [
+        ("user", {"_comment": "x", "k": 1}),
+        ("agent", {"_comment": "y", "j": 2}),
+    ]
+    # Act
+    merged, _ = deep_merge_layers(layers)
+    # Assert
+    assert merged == {"_comment": "x", "k": 1, "j": 2}
+
+
 def test_hooks_block_is_additive_per_event() -> None:
     # Arrange
     grp_a = {"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]}

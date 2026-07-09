@@ -26,6 +26,7 @@ from scitex_agent_container.config._group_resolver import (
     groups_mesh,
     is_developer_group,
     is_mesh_group,
+    is_research_group,
     resolve_group,
 )
 
@@ -259,6 +260,33 @@ def test_is_developer_group_false_for_empty() -> None:
     group = ""
     # Act
     result = is_developer_group(group)
+    # Assert
+    assert result is False
+
+
+def test_is_research_group_true_for_researcher() -> None:
+    # Arrange
+    group = "researcher"
+    # Act
+    result = is_research_group(group)
+    # Assert
+    assert result is True
+
+
+def test_is_research_group_false_for_other_group() -> None:
+    # Arrange
+    group = "analysts"
+    # Act
+    result = is_research_group(group)
+    # Assert
+    assert result is False
+
+
+def test_is_research_group_false_for_empty() -> None:
+    # Arrange
+    group = ""
+    # Act
+    result = is_research_group(group)
     # Assert
     assert result is False
 

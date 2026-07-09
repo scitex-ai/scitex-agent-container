@@ -17,9 +17,56 @@ import path.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 __all__ = ["_should_wake_turn", "_wake_text", "_wake_turn"]
+
+# Bounded client-side wait for the wake POST.
+#
+# Load-resilience fix (incident 2026-07-09): the pre-fix value was
+# ``timeout=None`` (INFINITE). Under a host load spike the colocated runner's
+# ``/v1/turn`` was wedged and never returned, so the wake POST blocked the SSE
+# consumer FOREVER — a slow/hung upstream must never let an MCP-side handler hang
+# without bound. The runner answers within its own bounded per-turn deadline
+# (``_runners/_session_http.DEFAULT_TURN_TIMEOUT_S`` = 120 s) and a 504, so we
+# wait that plus a margin. Env-overridable for deployments that raise the runner
+# turn timeout via ``SAC_A2A_TURN_TIMEOUT_S``. See ``docs/mcp-load-resilience.md``.
+_WAKE_TIMEOUT_DEFAULT_S: float = 180.0
+_WAKE_TIMEOUT_ENV_VAR = "SAC_MCP_WAKE_TIMEOUT_S"
+
+
+def _resolve_wake_timeout() -> float:
+    """Return the bounded client-side wait (seconds) for the wake POST.
+
+    ``SAC_MCP_WAKE_TIMEOUT_S`` overrides :data:`_WAKE_TIMEOUT_DEFAULT_S`; an
+    unparseable value is ignored (logged) and the default stands. Always a
+    FINITE, positive bound — never ``None`` — so a wedged ``/v1/turn`` cannot
+    block the SSE consumer indefinitely.
+    """
+    raw = os.environ.get(_WAKE_TIMEOUT_ENV_VAR, "").strip()
+    if raw:
+        try:
+            val = float(raw)
+        except ValueError:
+            log.warning(
+                "wake: ignoring invalid %s=%r (not a float seconds value)",
+                _WAKE_TIMEOUT_ENV_VAR,
+                raw,
+            )
+        else:
+            if val > 0:
+                return val
+            log.warning(
+                "wake: ignoring non-positive %s=%r; using default %.0fs",
+                _WAKE_TIMEOUT_ENV_VAR,
+                raw,
+                _WAKE_TIMEOUT_DEFAULT_S,
+            )
+    return _WAKE_TIMEOUT_DEFAULT_S
 
 
 def _should_wake_turn(event: dict[str, Any]) -> bool:
@@ -74,6 +121,7 @@ async def _wake_turn(
     *,
     turn_url: str,
     bearer: str | None,
+    timeout: float | None = None,
 ) -> None:
     """POST ``event`` to the agent's own ``/v1/turn`` to DRIVE a turn now.
 
@@ -82,7 +130,8 @@ async def _wake_turn(
     drives a turn immediately, so a push to an IDLE agent is processed at
     once rather than buffered until some unrelated next turn. Raises on any
     transport/HTTP failure so the caller can decide whether to surface or
-    contain it (WI-2 fail-loud).
+    contain it (WI-2 fail-loud) — the SSE consumer's ``on_event`` wrapper
+    catches it, logs loudly, and keeps the long-lived stream alive.
 
     Requester identity rides into the body so the woken turn's
     ``TurnEnvelope`` carries it through to the Stop hook, which PUSHes a
@@ -91,6 +140,14 @@ async def _wake_turn(
     special-cased); ``dispatch_id`` is the sender-minted ledger id when the
     sender minted one. Both are tolerated-absent: an event with no sender /
     no ledger id simply drives a turn the Stop hook cannot address.
+
+    ``timeout`` bounds the client-side wait (seconds). ``None`` (the default)
+    resolves via :func:`_resolve_wake_timeout` to a FINITE bound just above the
+    runner's own per-turn deadline — never ``None``/infinite (incident
+    2026-07-09: a wedged ``/v1/turn`` under load hung the unbounded POST forever,
+    stalling the SSE consumer). A generous-but-finite bound still lets a
+    legitimately long turn complete while guaranteeing recovery from a wedged
+    runner.
     """
     import httpx
 
@@ -108,10 +165,7 @@ async def _wake_turn(
     dispatch_id = event.get("dispatch_id")
     if isinstance(dispatch_id, str) and dispatch_id:
         payload["dispatch_id"] = dispatch_id
-    # The wake POST returns only after the driven turn completes (the runner
-    # awaits the SDK reply before responding). Use no client-side deadline —
-    # a short client timeout would abort a legitimately long turn; the runner
-    # imposes its own bounded per-turn timeout and answers with a 504.
-    async with httpx.AsyncClient(timeout=None) as client:
+    effective_timeout = _resolve_wake_timeout() if timeout is None else timeout
+    async with httpx.AsyncClient(timeout=effective_timeout) as client:
         resp = await client.post(turn_url, json=payload, headers=headers)
         resp.raise_for_status()

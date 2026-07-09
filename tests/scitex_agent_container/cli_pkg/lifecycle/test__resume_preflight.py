@@ -162,6 +162,40 @@ class TestPreflightResumeId:
         # Assert
         assert result is None
 
+    def test_error_lists_trailing_message_not_opening_prompt(
+        self, runtime_root: Path
+    ) -> None:
+        # Arrange — a transcript whose LAST message differs from the
+        # opening one; the informative listing should show the tail
+        # (sac-session-candidates-tail-preview), not "prior work".
+        cfg = _FakeConfig("clew", "/home/agent/work")
+        p = _seed_conversation(runtime_root, "clew", "/home/agent/work", "uuid-live")
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {"type": "assistant", "message": {"content": "final reply"}}
+                )
+                + "\n"
+            )
+        # Act
+        ctx = pytest.raises(ResumePreflightError, match="final reply")
+        # Assert
+        with ctx:
+            preflight_resume_id(cfg, "uuid-gone")
+
+    def test_tail_lines_zero_falls_back_to_first_message(
+        self, runtime_root: Path
+    ) -> None:
+        # Arrange — with tail_lines=0 no trailing preview is captured, so
+        # the listing falls back to the first-message snippet.
+        cfg = _FakeConfig("clew", "/home/agent/work")
+        _seed_conversation(runtime_root, "clew", "/home/agent/work", "uuid-live")
+        # Act
+        ctx = pytest.raises(ResumePreflightError, match="prior work")
+        # Assert
+        with ctx:
+            preflight_resume_id(cfg, "uuid-gone", tail_lines=0)
+
     def test_full_access_keys_store_on_canonical_workdir_not_alias(
         self, runtime_root: Path
     ) -> None:
