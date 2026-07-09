@@ -283,7 +283,7 @@ def account_refresh(
     def _iso_ms(expires_ms: int | None) -> str | None:
         if not isinstance(expires_ms, int):
             return None
-        return _dt.fromtimestamp(expires_ms / 1000, tz=_tz).isoformat()
+        return _dt.fromtimestamp(expires_ms / 1000, tz=_tz.utc).isoformat()
 
     results: list[dict] = []
     sync_failed = False
