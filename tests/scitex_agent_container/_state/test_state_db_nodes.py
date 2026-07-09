@@ -246,7 +246,7 @@ def test_spawn_allowed_deny_reason_explains_role_policy(
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "not one of the roles permitted to spawn" in reason
+    assert reason is not None and "neither the developer nor research group" in reason
 
 
 def test_spawn_allowed_returns_true_for_developer_group_child(
@@ -298,7 +298,7 @@ def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "not one of the roles permitted to spawn" in reason
+    assert reason is not None and "neither the developer nor research group" in reason
 
 
 def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
