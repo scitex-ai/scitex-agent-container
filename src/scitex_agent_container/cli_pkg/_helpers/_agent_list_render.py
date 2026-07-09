@@ -29,11 +29,14 @@ def print_agent_list_json(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
+    tags: str | None = None,
 ) -> None:
     """Print agent list as JSON."""
     from ._agent_list import get_agent_list_data
 
-    data = get_agent_list_data(registry, capability=capability, machine=machine)
+    data = get_agent_list_data(
+        registry, capability=capability, machine=machine, tags=tags
+    )
     click.echo(json_mod.dumps(data, indent=2))
 
 
@@ -64,6 +67,7 @@ def print_agent_list(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
+    tags: str | None = None,
     *,
     verbose: bool = False,
     show_all: bool = False,
@@ -77,7 +81,9 @@ def print_agent_list(
     """
     from ._agent_list import get_agent_list_data
 
-    data = get_agent_list_data(registry, capability=capability, machine=machine)
+    data = get_agent_list_data(
+        registry, capability=capability, machine=machine, tags=tags
+    )
     if not data:
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
         return

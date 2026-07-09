@@ -106,7 +106,11 @@ def _no_discover() -> list[tuple[str, Path]]:
 
 
 def _write_valid_spec(
-    dir_: Path, *, capabilities: str | None = None, machine: str | None = None
+    dir_: Path,
+    *,
+    capabilities: str | None = None,
+    machine: str | None = None,
+    tags: str | None = None,
 ) -> Path:
     """Write a minimal real v3 spec.yaml; optionally with labels."""
     dir_.mkdir(parents=True, exist_ok=True)
@@ -117,6 +121,8 @@ def _write_valid_spec(
         label_lines.append(f'    capabilities: "{capabilities}"')
     if machine is not None:
         label_lines.append(f'    machine: "{machine}"')
+    if tags is not None:
+        label_lines.append(f'    tags: "{tags}"')
     if label_lines:
         # ``cfg.labels`` is sourced from ``metadata.labels`` by the v3 loader.
         lines.append("metadata:")
@@ -364,6 +370,107 @@ def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
         out = get_agent_list_data(registry, machine="m1")
+    # Assert
+    assert out == []
+
+
+# ---------------------------------------------------------------------------
+# tags filter — a free-form, multi-value lifecycle/status label (e.g.
+# "active-development"), deliberately separate from the ACL-gated `groups`
+# label (config._group_resolver) and from `capabilities` (what an agent can
+# do, not its current work status). Mirrors the capability-filter tests.
+# ---------------------------------------------------------------------------
+
+
+def test_get_data_with_tags_filter_includes_matching_agent(tmp_path):
+    # Arrange — real spec with labels.tags="active-development, researcher".
+    spec = _write_valid_spec(tmp_path / "x", tags="active-development, researcher")
+    entries = [
+        {"name": "x", "screen": "s", "started_at": "ts", "config": str(spec)},
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_excludes_non_matching_agent(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert out == []
+
+
+def test_get_data_with_tags_filter_matches_any_of_multiple_wanted_values(tmp_path):
+    # Arrange — caller passes two comma-separated wanted tags; agent has one.
+    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development,researcher")
+    # Assert — OR-match: any overlap between wanted and carried tags is a hit.
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_untagged_agent_is_excluded(tmp_path):
+    # Arrange — agent has no tags label at all.
+    spec = _write_valid_spec(tmp_path / "x")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert out == []
+
+
+def test_get_data_without_tags_filter_includes_untagged_agent(tmp_path):
+    # Arrange — no --tags passed at all: the filter must be a pure no-op.
+    spec = _write_valid_spec(tmp_path / "x")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_includes_matching_defined_agent(tmp_path):
+    # Arrange — defined-on-disk (not registered) agent; the second filter
+    # site (the disk-merge loop) must apply the SAME tags matching.
+    spec = _write_valid_spec(tmp_path / "ondisk", tags="active-development")
+    registry = _FakeRegistry([])
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("ondisk", spec)]
+
+    # Act
+    with _swap_discover(_discover):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert any(r["name"] == "ondisk" for r in out)
+
+
+def test_get_data_with_tags_filter_excludes_non_matching_defined_agent(tmp_path):
+    # Arrange — same disk-merge loop, non-matching tag this time.
+    spec = _write_valid_spec(tmp_path / "ondisk", tags="researcher")
+    registry = _FakeRegistry([])
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("ondisk", spec)]
+
+    # Act
+    with _swap_discover(_discover):
+        out = get_agent_list_data(registry, tags="active-development")
     # Assert
     assert out == []
 
