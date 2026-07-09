@@ -19,10 +19,23 @@ Scope (Phase 1, deliberately small)
 * Health is *snapshot freshness*: a non-expired ``claudeAiOauth.
   expiresAt`` (the same field :mod:`_account.creds_sync` already
   reads) → ``VALID``. EXPIRED / ABSENT → unhealthy.
-* No 5h/7d cap probe — that requires a live Claude API call, is
-  not "cheaply detectable", and would itself burn one of the three
-  accounts' quota. Cap-induced 429s still surface from claude
-  in-turn; the picker only avoids *known-stale* auth at boot.
+* Account-pool Phase 1 — *quota-aware* pick: among the token-fresh
+  candidates, prefer the one with the most 7d headroom (lowest 7d
+  utilisation %), read from the cached ``quota-cache.json`` the
+  apptainer runtime already binds (see :mod:`_account.quota_cache`).
+  This is a cheap, *cache-only* read — NO live Claude API call, so it
+  never burns account quota at boot. The ``preferred`` account is kept
+  when it is fresh and not near-capped (< 90% 7d), to minimise churn;
+  otherwise the fresh candidate with the lowest 7d% wins. Accounts at
+  or above ~90% 7d are avoided *unless* nothing else is fresh
+  (headroom is a preference, not a hard gate). Cap-induced 429s still
+  surface from claude in-turn (runtime failover is Phase 2); the
+  picker only steers away from *known-stale* auth and *known-capped*
+  accounts at boot.
+* GRACEFUL DEGRADATION: the quota cache is best-effort. When it is
+  absent / stale / unreadable for an account (or entirely — e.g. a
+  host whose cron has not populated it yet), that account degrades to
+  the freshness-only behavior — never a crash, never a blocked boot.
 * Read-only: this module NEVER writes a snapshot. The existing
   per-agent writable boot-copy in
   :func:`runtimes._apptainer_creds.resolve_cred_file` and its
@@ -44,8 +57,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from .._account.creds_sync import _read_oauth_expiry_seconds
+from .._account.quota_cache import read_quota_entry
 from .._state.account_store import _store_path
 
 # Health states for one account's snapshot. Mirrors
@@ -54,6 +69,16 @@ from .._state.account_store import _store_path
 _VALID = "VALID"
 _EXPIRED = "EXPIRED"
 _ABSENT = "ABSENT"
+
+# Account-pool Phase 1: 7d-utilisation threshold above which an account
+# is treated as "near-capped — avoid unless no fresh alternative". The
+# incident that drove this (2026-07): 2/3 accounts sat at 96-99% weekly
+# cap while a 3rd had ~12% headroom, yet agents kept booting onto the
+# capped ones. 90% leaves a working margin before the hard weekly wall.
+# Headroom is a *preference*, not a hard gate — see
+# :func:`pick_healthy_account` (an all-near-capped fleet still boots on
+# the least-used fresh account rather than failing).
+_NEAR_CAP_PCT = 90.0
 
 
 class NoHealthyAccountError(RuntimeError):
@@ -165,6 +190,93 @@ def _format_states(healths: list[AccountHealth]) -> str:
     return ", ".join(parts) if parts else "(no candidates)"
 
 
+def _coerce_pct(value: object) -> float | None:
+    """Return *value* as a float utilisation %, or ``None`` if not numeric.
+
+    ``bool`` is explicitly rejected (a ``bool`` is an ``int`` in Python)
+    so ``True`` never surfaces as ``1.0%`` — mirrors
+    :func:`_account.quota_cache._is_number`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def account_7d_usage(
+    name: str,
+    *,
+    usage_7d: Mapping[str, float] | None = None,
+    quota_cache_path: Path | str | None = None,
+) -> float | None:
+    """Return one account's cached 7d utilisation %, or ``None``.
+
+    Reads the ``d7`` field of the account's entry in the bound
+    ``quota-cache.json`` via :func:`_account.quota_cache.read_quota_entry`
+    (which never raises — a missing / stale / unreadable cache, or no
+    matching entry, all collapse to ``None``). ``None`` is the caller's
+    signal to degrade to freshness-only for *that* account.
+
+    Parameters
+    ----------
+    name
+        The stored-account dirname (e.g. ``ywatanabe-scitex-ai``). The
+        cache is keyed on the first dash-segment, so the dirname resolves
+        the same entry the a2a-metadata path uses.
+    usage_7d
+        Test-injectable override: a mapping of account-name → 7d %.
+        When provided, it is consulted INSTEAD of the on-disk cache (a
+        missing key reads as ``None`` — degrade for that account). This
+        mirrors the module's ``store_dir`` / ``home`` / ``now`` override
+        idiom so tests need no real ``quota-cache.json`` and no network.
+    quota_cache_path
+        Override the cache file path passed to
+        :func:`read_quota_entry`. Ignored when ``usage_7d`` is given.
+    """
+    if usage_7d is not None:
+        return _coerce_pct(usage_7d.get(name))
+    entry = read_quota_entry(account=name, cache_path=quota_cache_path)
+    if entry is None:
+        return None
+    return _coerce_pct(entry.get("d7"))
+
+
+def _pick_most_headroom(
+    fresh: list[AccountHealth],
+    usage: dict[str, float | None],
+) -> str:
+    """Return the fresh account name with the MOST 7d headroom.
+
+    ``fresh`` is the token-fresh shortlist in candidate order (already
+    filtered to :attr:`AccountHealth.is_healthy`); ``usage`` maps each
+    name to its 7d % or ``None`` (unknown).
+
+    Rule (graceful degradation):
+
+    * Among fresh accounts whose 7d % is *known*, pick the LOWEST
+      (most headroom); ties break by candidate order — deterministic so
+      two simultaneous boots agree.
+    * If NO fresh account has a known usage (cache absent / empty for
+      the whole fleet), fall back to the legacy freshness-only behavior:
+      the first fresh account in candidate order.
+
+    Accounts with unknown usage therefore never displace a known-headroom
+    account, and never crash the pick — they simply degrade to
+    freshness-only ordering. Headroom is a *preference*: even when every
+    known account is near-capped, this returns the least-used fresh one
+    (never raises here — the fail-loud path is "nothing fresh", handled
+    by the caller).
+    """
+    known = [
+        (usage[h.name], idx, h.name)
+        for idx, h in enumerate(fresh)
+        if usage.get(h.name) is not None
+    ]
+    if known:
+        known.sort()
+        return known[0][2]
+    return fresh[0].name
+
+
 def pick_healthy_account(
     preferred: str | None,
     *,
@@ -172,23 +284,37 @@ def pick_healthy_account(
     store_dir: Path | None = None,
     home: Path | None = None,
     now: float | None = None,
+    usage_7d: Mapping[str, float] | None = None,
+    quota_cache_path: Path | str | None = None,
+    near_cap_pct: float = _NEAR_CAP_PCT,
 ) -> str:
     """Return the stored-account name an agent should run on right now.
 
-    Preference order
-    ----------------
+    Preference order (account-pool Phase 1 — quota-aware)
+    -----------------------------------------------------
     1. ``preferred`` (typically ``spec.claude.account``) when its
-       snapshot is :attr:`AccountHealth.is_healthy`.
-    2. First healthy candidate, in the order given (when ``candidates``
-       is explicit) or sorted alphabetically (when auto-discovered) —
-       deterministic so two simultaneous starts pick the same account.
+       snapshot is :attr:`AccountHealth.is_healthy` AND it is NOT
+       near-capped — i.e. its cached 7d utilisation is below
+       ``near_cap_pct``, OR is unknown (cache absent/stale for it, so we
+       degrade to freshness-only and keep it). This minimises churn.
+    2. Otherwise, the token-fresh candidate with the MOST 7d headroom
+       (lowest cached 7d %). Accounts with an unknown 7d % degrade to
+       freshness-only ordering (candidate order) and never displace a
+       known-headroom account. Ties break by candidate order (when
+       ``candidates`` is explicit) or alphabetically (auto-discovered)
+       — deterministic so two simultaneous starts pick the same account.
+
+    Headroom is a *preference*, not a hard gate: when every fresh
+    candidate is near-capped, the least-used fresh one is still returned
+    (a boot is never blocked on quota — only on there being NOTHING
+    token-fresh, which stays fail-loud).
 
     Parameters
     ----------
     preferred
         The agent's pinned account (``spec.claude.account``). ``None``
-        / empty means "no preference" — the picker hands back the first
-        healthy candidate instead of raising.
+        / empty means "no preference" — the picker hands back the
+        highest-headroom fresh candidate instead of raising.
     candidates
         Optional explicit candidate shortlist. ``None`` (default) walks
         every stored account directory on disk. An EMPTY list is
@@ -199,6 +325,19 @@ def pick_healthy_account(
         cascade (see :func:`_account.account_store._store_path`);
         ``home=None`` uses ``Path.home()``; ``now=None`` uses
         ``time.time()``.
+    usage_7d
+        Test-injectable per-account 7d utilisation % (name → pct). When
+        ``None`` (default, the boot path), each candidate's 7d % is read
+        from the bound ``quota-cache.json`` via
+        :func:`account_7d_usage`. A missing key / missing cache reads as
+        "unknown" → freshness-only degradation for that account.
+    quota_cache_path
+        Override the quota-cache path (passed through to
+        :func:`read_quota_entry`). Ignored when ``usage_7d`` is given.
+    near_cap_pct
+        The 7d % at/above which an account is "near-capped — avoid
+        unless no fresh alternative". Defaults to :data:`_NEAR_CAP_PCT`
+        (90). Exposed for tests.
 
     Returns
     -------
@@ -210,7 +349,8 @@ def pick_healthy_account(
     NoHealthyAccountError
         When no candidate is :attr:`AccountHealth.is_healthy`. The
         message names every candidate's state. NEVER falls back to
-        a stale snapshot.
+        a stale snapshot, and NEVER raised merely because accounts are
+        near-capped (quota is a preference, freshness is the gate).
     """
     _home = home if home is not None else Path.home()
 
@@ -239,28 +379,48 @@ def pick_healthy_account(
     ]
     by_name = {h.name: h for h in healths}
 
-    # 1. Preferred wins when healthy.
+    fresh = [h for h in healths if h.is_healthy]
+
+    # 3. Nothing token-fresh — fail loud BEFORE any quota logic (a stale
+    #    snapshot must never boot, regardless of headroom).
+    if not fresh:
+        raise NoHealthyAccountError(
+            "no healthy stored account: "
+            f"{_format_states(healths)}. Fix: `claude /login` to one of "
+            "them, then `sac accounts sync-live`, then restart the agent."
+        )
+
+    # Per-account 7d utilisation for the fresh shortlist. Best-effort:
+    # an unknown value (cache absent/stale) degrades to freshness-only
+    # for that account (never blocks a boot).
+    usage: dict[str, float | None] = {
+        h.name: account_7d_usage(
+            h.name, usage_7d=usage_7d, quota_cache_path=quota_cache_path
+        )
+        for h in fresh
+    }
+
+    # 1. Preferred wins when it is fresh AND has headroom (or its usage
+    #    is unknown → degrade to freshness-only, keep it). Minimises
+    #    churn: only rotate off `preferred` when we KNOW it is near-capped.
     if pref:
         h = by_name.get(pref)
         if h is not None and h.is_healthy:
-            return pref
+            pref_usage = usage.get(pref)
+            if pref_usage is None or pref_usage < near_cap_pct:
+                return pref
 
-    # 2. First healthy in candidate order.
-    for h in healths:
-        if h.is_healthy:
-            return h.name
-
-    # 3. Nothing healthy — fail loud with full diagnostic.
-    raise NoHealthyAccountError(
-        "no healthy stored account: "
-        f"{_format_states(healths)}. Fix: `claude /login` to one of "
-        "them, then `sac accounts sync-live`, then restart the agent."
-    )
+    # 2. Otherwise pick the fresh candidate with the most 7d headroom
+    #    (lowest known usage), degrading to freshness-only order when the
+    #    cache is unavailable. Headroom is a preference, not a hard gate:
+    #    an all-near-capped fleet still returns the least-used fresh one.
+    return _pick_most_headroom(fresh, usage)
 
 
 __all__ = [
     "AccountHealth",
     "NoHealthyAccountError",
+    "account_7d_usage",
     "account_health",
     "pick_healthy_account",
 ]

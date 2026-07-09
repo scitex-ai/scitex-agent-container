@@ -133,8 +133,9 @@ def _rotate_to_healthy_account(
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (pinned snapshot unhealthy; "
-        f"rotated to the first healthy stored account)",
+        f"{pinned!r} -> {picked!r} (pinned account unhealthy or "
+        f"near weekly cap; rotated to the fresh account with the most "
+        f"7d headroom)",
         file=stream,
     )
 

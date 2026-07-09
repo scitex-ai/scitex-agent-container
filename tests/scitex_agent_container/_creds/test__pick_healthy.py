@@ -282,3 +282,167 @@ def test_account_health_dataclass_carries_name_state_and_hours(
     h = account_health("wyusuuke-gmail-com", home=home)
     # Assert
     assert isinstance(h, AccountHealth) and h.name == "wyusuuke-gmail-com"
+
+
+# ---------------------------------------------------------------------------
+# pick_healthy_account — account-pool Phase 1: quota-aware headroom pick
+#
+# 7d utilisation is injected via the ``usage_7d`` override (name -> pct) so
+# these tests need no real quota-cache.json and no network — mirroring the
+# module's existing ``store_dir`` / ``home`` / ``now`` override idiom.
+# ---------------------------------------------------------------------------
+
+
+def test_pick_prefers_fresh_candidate_with_most_headroom(_isolate_home: Path) -> None:
+    # Arrange — three fresh accounts; the middle one has the most 7d
+    # headroom (lowest usage). No pinned preference.
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    # Act
+    picked = pick_healthy_account(
+        None,
+        candidates=[
+            "ywatanabe-scitex-ai",
+            "wyusuuke-gmail-com",
+            "ywata1989-gmail-com",
+        ],
+        home=home,
+        usage_7d={
+            "ywatanabe-scitex-ai": 50.0,
+            "wyusuuke-gmail-com": 10.0,
+            "ywata1989-gmail-com": 80.0,
+        },
+    )
+    # Assert
+    assert picked == "wyusuuke-gmail-com"
+
+
+def test_pick_avoids_near_capped_preferred_for_fresh_low_usage(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — preferred is fresh but 95% capped; a fresh low-usage
+    # alternative exists.
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    # Act
+    picked = pick_healthy_account(
+        "ywatanabe-scitex-ai",
+        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        home=home,
+        usage_7d={"ywatanabe-scitex-ai": 95.0, "wyusuuke-gmail-com": 12.0},
+    )
+    # Assert
+    assert picked == "wyusuuke-gmail-com"
+
+
+def test_pick_keeps_preferred_when_fresh_and_has_headroom(_isolate_home: Path) -> None:
+    # Arrange — preferred is fresh with headroom (40% < 90%). Even though
+    # another fresh account has LOWER usage, churn is minimised: keep pref.
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    # Act
+    picked = pick_healthy_account(
+        "ywatanabe-scitex-ai",
+        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        home=home,
+        usage_7d={"ywatanabe-scitex-ai": 40.0, "wyusuuke-gmail-com": 10.0},
+    )
+    # Assert
+    assert picked == "ywatanabe-scitex-ai"
+
+
+def test_pick_falls_back_to_freshness_only_when_quota_cache_absent(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — no injected usage AND a non-existent cache path: every
+    # account's 7d% reads as unknown, so the pick degrades to the legacy
+    # freshness-only behavior (first fresh candidate in order).
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    missing_cache = home / "no-such-quota-cache.json"
+    # Act
+    picked = pick_healthy_account(
+        None,
+        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        home=home,
+        usage_7d=None,
+        quota_cache_path=missing_cache,
+    )
+    # Assert
+    assert picked == "ywatanabe-scitex-ai"
+
+
+def test_pick_keeps_preferred_when_its_usage_unknown_despite_known_alt(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — preferred is fresh but has NO cache entry (unknown 7d%);
+    # a fresh alternative has a known low usage. Graceful degradation
+    # keeps the preferred (freshness-only for that account), minimising
+    # churn rather than rotating on incomplete data.
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    # Act
+    picked = pick_healthy_account(
+        "ywatanabe-scitex-ai",
+        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        home=home,
+        usage_7d={"wyusuuke-gmail-com": 10.0},  # preferred deliberately absent
+    )
+    # Assert
+    assert picked == "ywatanabe-scitex-ai"
+
+
+def test_pick_returns_least_used_fresh_when_all_near_capped(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — every fresh account is >= 90% (all near-capped). Headroom
+    # is a PREFERENCE, not a hard gate: the picker returns the least-used
+    # fresh account rather than raising (fail-loud is reserved for the
+    # nothing-fresh case).
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    # Act
+    picked = pick_healthy_account(
+        None,
+        candidates=[
+            "ywatanabe-scitex-ai",
+            "wyusuuke-gmail-com",
+            "ywata1989-gmail-com",
+        ],
+        home=home,
+        usage_7d={
+            "ywatanabe-scitex-ai": 99.0,
+            "wyusuuke-gmail-com": 96.0,
+            "ywata1989-gmail-com": 91.0,
+        },
+    )
+    # Assert
+    assert picked == "ywata1989-gmail-com"
+
+
+def test_pick_ignores_quota_when_only_capped_account_is_fresh(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — preferred is fresh but 98% capped; the ONLY alternative is
+    # EXPIRED. A near-capped-but-fresh account must still win over a stale
+    # token (freshness is the gate; quota only orders the fresh set).
+    home = _isolate_home
+    _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
+    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(120))
+    # Act
+    picked = pick_healthy_account(
+        "ywatanabe-scitex-ai",
+        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        home=home,
+        usage_7d={"ywatanabe-scitex-ai": 98.0, "wyusuuke-gmail-com": 5.0},
+    )
+    # Assert
+    assert picked == "ywatanabe-scitex-ai"
