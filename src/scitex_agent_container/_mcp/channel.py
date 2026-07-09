@@ -50,6 +50,13 @@ log = logging.getLogger(__name__)
 _INBOX_CAP = 200
 _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 
+# Bound the SSE CONNECT phase; read stays unbounded (the event stream is
+# legitimately long-lived). Load-resilience fix (2026-07-09): ``timeout=None``
+# left CONNECT unbounded too, so a hung connect to ``:7878`` under load blocked
+# inside ``client.stream(...)`` forever and the reconnect-with-backoff loop never
+# retried. See ``docs/mcp-load-resilience.md``.
+_SSE_CONNECT_TIMEOUT_S: float = 30.0
+
 
 # WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
 # this receive-side adapter under the module size budget). Re-exported here
@@ -111,9 +118,10 @@ async def _consume_sse(
         headers["Authorization"] = f"Bearer {bearer}"
 
     backoff = 0.5
+    sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=None)
     while True:
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
+            async with httpx.AsyncClient(timeout=sse_timeout) as client:
                 async with client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()

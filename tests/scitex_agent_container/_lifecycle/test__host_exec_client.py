@@ -10,10 +10,30 @@ no monkeypatching of the transport.
 from __future__ import annotations
 
 import json
+import os
+from contextlib import contextmanager
 from typing import Any
 from urllib import error as urlerror
 
 import pytest
+
+
+@contextmanager
+def _env(name: str, value: str):
+    """Set a REAL env var for the block, restoring the prior value on exit.
+
+    No ``monkeypatch`` (STX-NM002): the production resolver reads
+    ``os.environ`` directly, so the test sets the real variable and pops it.
+    """
+    prev = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = prev
 
 from scitex_agent_container._lifecycle._host_exec_client import (
     HostExecRequestError,
@@ -260,3 +280,103 @@ def test_request_host_exec_raises_on_transport_error():
     # Assert
     with pytest.raises(HostExecRequestError):
         _call()
+
+
+# --------------------------------------------------------------------------
+# Load-resilience: the client-side HTTP wait is BOUNDED to the server contract
+# (incident 2026-07-09 — a fixed ~62 min wait let a jammed listen block the MCP
+# handler long enough for the stdio client to drop the whole server).
+# --------------------------------------------------------------------------
+
+
+def _opener_recording_timeout(body: dict[str, Any] | None = None):
+    """Opener that records the ``timeout`` it was called with onto
+    ``.last_timeout`` (and yields ``body`` as JSON)."""
+    payload = json.dumps(body or {"exit_code": 0}).encode("utf-8")
+
+    def _opener(req, timeout=None):  # noqa: ANN001
+        _opener.last_timeout = timeout
+        return _FakeResponse(payload)
+
+    _opener.last_timeout = None  # type: ignore[attr-defined]
+    return _opener
+
+
+def test_default_http_timeout_tracks_server_default_not_62_minutes():
+    # Arrange — no timeout_s → server default 300s → client waits 330s (NOT 3700).
+    opener = _opener_recording_timeout()
+    # Act
+    request_host_exec(
+        ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
+    )
+    # Assert
+    assert opener.last_timeout == pytest.approx(330.0)
+
+
+def test_http_timeout_tracks_requested_timeout_s():
+    # Arrange — an explicit long build timeout is honoured (bounded to it + margin).
+    opener = _opener_recording_timeout()
+    # Act
+    request_host_exec(
+        ["true"],
+        timeout_s=1800.0,
+        base_url="http://127.0.0.1:7878",
+        bearer="tok",
+        opener=opener,
+    )
+    # Assert
+    assert opener.last_timeout == pytest.approx(1830.0)
+
+
+def test_http_timeout_capped_at_server_max():
+    # Arrange — an over-max timeout_s is clamped to the server ceiling (3600) + margin.
+    opener = _opener_recording_timeout()
+    # Act
+    request_host_exec(
+        ["true"],
+        timeout_s=99_999.0,
+        base_url="http://127.0.0.1:7878",
+        bearer="tok",
+        opener=opener,
+    )
+    # Assert
+    assert opener.last_timeout == pytest.approx(3630.0)
+
+
+def test_explicit_http_timeout_wins_verbatim():
+    # Arrange — an explicit per-call override is used as-is.
+    opener = _opener_recording_timeout()
+    # Act
+    request_host_exec(
+        ["true"],
+        base_url="http://127.0.0.1:7878",
+        bearer="tok",
+        http_timeout_s=7.5,
+        opener=opener,
+    )
+    # Assert
+    assert opener.last_timeout == pytest.approx(7.5)
+
+
+def test_env_override_sets_http_timeout():
+    # Arrange — deployment-wide hard override via a REAL env var.
+    opener = _opener_recording_timeout()
+    # Act
+    with _env("SAC_MCP_HOST_EXEC_HTTP_TIMEOUT_S", "12"):
+        request_host_exec(
+            ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
+        )
+    # Assert
+    assert opener.last_timeout == pytest.approx(12.0)
+
+
+def test_invalid_env_override_falls_back_to_derived():
+    # Arrange — a garbage env value is ignored; the derived default stands.
+    opener = _opener_recording_timeout()
+    # Act
+    with _env("SAC_MCP_HOST_EXEC_HTTP_TIMEOUT_S", "not-a-number"):
+        request_host_exec(
+            ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
+        )
+    # Assert
+    assert opener.last_timeout == pytest.approx(330.0)
