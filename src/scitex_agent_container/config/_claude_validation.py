@@ -115,6 +115,33 @@ def validate_claude(spec: dict) -> list[str]:
             "Anthropic OAuth. Set exactly one."
         )
 
+    # spec.claude.credentials_files — the account POOL (plural). Must be a
+    # list of non-empty strings (host paths to ``.credentials.json``). The
+    # start pre-flight picks ONE quota-aware; a malformed value would
+    # silently degrade the pool to empty, so we fail loud here.
+    cred_files = claude_block.get("credentials_files")
+    if cred_files is not None:
+        if not isinstance(cred_files, list):
+            errors.append(
+                "spec.claude.credentials_files must be a list of host paths "
+                f"to .credentials.json files, got {type(cred_files).__name__}"
+            )
+        else:
+            for i, entry in enumerate(cred_files):
+                if not isinstance(entry, str) or not entry.strip():
+                    errors.append(
+                        "spec.claude.credentials_files[%d] must be a "
+                        "non-empty string path, got %r" % (i, entry)
+                    )
+        # Mirror the account/provider exclusivity — a provider backend uses
+        # an API key, not an OAuth credentials pool.
+        if has_provider and cred_files:
+            errors.append(
+                "spec.claude.provider and spec.claude.credentials_files are "
+                "mutually exclusive — a provider backend uses an API key, "
+                "not an Anthropic OAuth credentials pool. Set exactly one."
+            )
+
     # spec.claude.resume_id — the explicit session id passed to
     # ``claude --resume <id>`` (TUI) / ``ClaudeAgentOptions(resume=<id>)``
     # (SDK) when ``spec.claude.session: resume``. When set it MUST be a
