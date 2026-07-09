@@ -155,6 +155,22 @@ def account_save(name: str, email: str | None, dry_run: bool, yes: bool) -> None
 def account_list(as_json: bool, refresh: bool) -> None:
     """List stored accounts and show the currently active one.
 
+    Below the table the human view prints (a) a monospace usage-bars
+    block — a fixed-width ASCII bar per account for the 5h and 7d
+    windows so utilisation is scannable at a glance — and (b) a single
+    fleet effective-utilization line.
+
+    \b
+    Fleet effective utilization
+      A reset-horizon-weighted fleet figure. Per account, over a 7-day
+      planning window W: frac_before_reset = clamp(reset_horizon, 0, W)/W
+      and effective% = frac_before_reset * used_pct_7d. So an account at
+      100% that resets in 1 day (eff ~14%) contributes far more usable
+      weekly capacity than one at 100% resetting in 6 days (eff ~86%).
+      The reset horizon is the true 7d-window reset (reset_at_7d); when
+      absent it defaults to the full window (eff = used_pct_7d). The
+      fleet figure is the mean over accounts with cached usage.
+
     \b
     Example:
       $ sac account list
@@ -172,6 +188,7 @@ def account_list(as_json: bool, refresh: bool) -> None:
         render_stored_table,
         rolling_legend_line,
     )
+    from ._account_usage_bars import fleet_effective_line, render_usage_bars_block
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
@@ -220,6 +237,16 @@ def account_list(as_json: bool, refresh: bool) -> None:
     # still sees the rolling-window contract instead of guessing.
     if needs_rolling_legend(rows):
         console.print(rolling_legend_line())
+    # Operator readability ask (2026-07-09): a monospace usage-bars
+    # block + a single reset-horizon-weighted fleet figure below the
+    # table. Emitted via click.echo (NOT console.print) so the `[..]`
+    # bar brackets render literally instead of being parsed as rich
+    # markup.
+    bars_block = render_usage_bars_block(rows)
+    if bars_block:
+        click.echo("")
+        click.echo(bars_block)
+    click.echo(fleet_effective_line(rows))
 
 
 @account.command("delete")
