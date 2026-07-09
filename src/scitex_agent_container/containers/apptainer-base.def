@@ -71,6 +71,20 @@ From: ubuntu:24.04
     # Added on the lib row because it's a runtime system library (no
     # -dev companion needed for the consumers that hit the silent-
     # fallback path). Supersedes the standalone PR #322.
+    #
+    # The "playwright/headless-chromium runtime libs" group at the tail
+    # of the apt list is the shared-object set a headless Chromium needs
+    # to LAUNCH (equivalent to `npx playwright install-deps chromium`).
+    # Baked at :base — NOT via scitex_dev.system_deps — on purpose: the
+    # system-deps SSoT only runs at the :scitex layer (scitex-dev isn't
+    # installed here), but the operator wants ANY agent to screenshot /
+    # run browser e2e regardless of which scitex packages its overlay
+    # carries. Two consumers ALREADY baked into :base need exactly these
+    # libs — `@mermaid-js/mermaid-cli` (section 3) and puppeteer's
+    # `chrome-headless-shell` (section 3a) both drive a headless Chromium
+    # — so this also fixes their latent "libnspr4.so: cannot open shared
+    # object file" breakage, not just Playwright's. libglib2.0-0 is
+    # already on the lib row above; libcairo2/libpango pull it transitively.
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
@@ -86,7 +100,15 @@ From: ubuntu:24.04
         git-delta \
         direnv \
         tmux ncurses-term \
-        tini
+        tini \
+        libnss3 libnspr4 \
+        libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+        libcups2 libdrm2 libgbm1 libxshmfence1 \
+        libxkbcommon0 libasound2 \
+        libcairo2 libpango-1.0-0 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libxext6 libxrender1 \
+        fonts-liberation
     locale-gen en_US.UTF-8
 
     # ---- 1a. Canonical container user `agent` (UID 1000) --------------
