@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -178,8 +179,85 @@ def build_a2a_metadata() -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Writer side — the POPULATOR that produces the aggregate quota-cache.json
+# the reader above consumes. The reader's DEFAULT_QUOTA_CACHE_PATH
+# (/var/sac/quota-cache.json) is the *in-container* bind target; the writer
+# runs on the HOST (via `sac accounts refresh-quota-cache`, typically a cron)
+# and writes the canonical host file ``~/.scitex/quota-cache.json`` that the
+# apptainer runtime binds into each agent at the in-container path. Both ends
+# honour the ``SAC_QUOTA_CACHE_PATH`` override so host-side readers/writers and
+# tests can co-locate on one path.
+DEFAULT_HOST_QUOTA_CACHE_SUBPATH = Path(".scitex") / "quota-cache.json"
+
+
+def default_host_cache_path(home: Path | None = None) -> Path:
+    """Canonical HOST path the populator writes (``~/.scitex/quota-cache.json``)."""
+    _home = home if home is not None else Path.home()
+    return _home / DEFAULT_HOST_QUOTA_CACHE_SUBPATH
+
+
+def _resolve_write_cache_path(
+    override: Path | str | None,
+    home: Path | None,
+) -> Path:
+    """Resolve where the populator writes: explicit → env → host default.
+
+    Deliberately distinct from :func:`_resolve_cache_path` (the reader): the
+    reader's no-env default is the in-container bind path, but the writer's
+    no-env default is the host canonical file. ``SAC_QUOTA_CACHE_PATH`` is the
+    shared override so a host that reads AND writes (or a test) lines both up.
+    """
+    if override is not None:
+        return Path(override)
+    env_path = os.environ.get(ENV_QUOTA_CACHE_PATH, "").strip()
+    if env_path:
+        return Path(env_path)
+    return default_host_cache_path(home)
+
+
+def write_quota_cache(
+    accounts: dict[str, Any],
+    *,
+    cache_path: Path | str | None = None,
+    home: Path | None = None,
+    written_at: float | None = None,
+) -> Path:
+    """Atomically write the aggregate quota cache and return the path written.
+
+    ``accounts`` is the ``{"<key>": {"short", "h5", "d7", "ttl_h"}}`` mapping
+    the reader's :func:`read_quota_entry` iterates. The file is wrapped as
+    ``{"written_at": <epoch>, "accounts": {...}}`` — the exact shape the
+    reader (and the TS bridge) expect. Write is tmp+rename atomic and the file
+    is chmod 0o600 (conservative: it holds only percentages + TTL hours, no
+    token material, but it lives under the operator's home so we match the
+    credential store's private-by-default posture).
+    """
+    path = _resolve_write_cache_path(cache_path, home)
+    payload = {
+        "written_at": written_at if written_at is not None else time.time(),
+        "accounts": dict(accounts),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    # stx-allow: fallback (reason: chmod is a best-effort hardening step; on a
+    # filesystem that doesn't support POSIX modes the atomic rename below still
+    # publishes the cache, which holds no secrets.)
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    tmp.rename(path)
+    return path
+
+
 __all__ = [
     "DEFAULT_QUOTA_CACHE_PATH",
+    "DEFAULT_HOST_QUOTA_CACHE_SUBPATH",
     "ENV_QUOTA_CACHE_PATH",
     "ENV_ACCOUNT",
     "META_KEY_ACCOUNT",
@@ -188,4 +266,6 @@ __all__ = [
     "META_KEY_TTL_H",
     "read_quota_entry",
     "build_a2a_metadata",
+    "default_host_cache_path",
+    "write_quota_cache",
 ]
