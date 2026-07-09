@@ -23,11 +23,12 @@ the prior limited scope had deferred):
     path, which honours ``metadata.from_agent`` verbatim). See
     :func:`grant_send`.
 
-  * **Spawn permission** — root-only by current policy (a node with
-    no parent may call ``sac agents start``; a child may not). The
-    policy is **lift-able**: lifting it later is a single-callsite
-    edit to :func:`spawn_allowed` with zero schema change (handoff
-    §2 D5 "Depth limit is a POLICY, not a structural ceiling").
+  * **Spawn permission** — a node with no parent may call
+    ``sac agents start``; so may a child whose resolved NAMED group
+    is ``developer`` or ``researcher`` (operator ruling 2026-07-05:
+    "dev agents and research agents MUST have full permissions —
+    including the ability to start/stop peer agents"). Any other
+    child is denied. See :func:`spawn_allowed`.
 
 The N-level structural capability of ``lineage`` is preserved —
 nothing here hard-codes "2" or assumes fixed depth.
@@ -38,7 +39,6 @@ All times stored as ``REAL`` unix-seconds (float).
 from __future__ import annotations
 
 import logging
-import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,11 @@ from .state_db_acl_policy import (
     read_comms_policy,
     record_comms_policy,
     sender_target_relationship,
+)
+from .state_db_node_tokens import (
+    list_node_tokens,
+    mint_node_token,
+    resolve_node_token,
 )
 
 _logger = logging.getLogger(__name__)
@@ -62,6 +67,7 @@ __all__ = [
     "has_grant",
     "is_developer",
     "is_local_node",
+    "is_researcher",
     "list_comms_grants",
     "list_comms_nodes",
     "list_node_tokens",
@@ -80,85 +86,6 @@ __all__ = [
     "spawn_allowed",
     "unregister_comms_node",
 ]
-
-
-# ---------------------------------------------------------------------------
-# node_tokens — authenticated identity (handoff §4 acceptance: "identity
-# cannot be spoofed via a metadata field")
-# ---------------------------------------------------------------------------
-
-# 256 bits of entropy. URL-safe base64 → ~43 chars.
-_TOKEN_BYTES = 32
-
-
-def mint_node_token(*, name: str, db_path: Path | None = None) -> str:
-    """Return the bearer token for ``name``, minting one if absent.
-
-    Idempotent: re-registration returns the existing token rather
-    than rotating, so an active agent's ``Authorization: Bearer ...``
-    header keeps working across a re-register. Rotation, when needed,
-    is a separate operation (not implemented here).
-
-    Raises ``ValueError`` if ``name`` is empty.
-    """
-    if not name:
-        raise ValueError("mint_node_token: name must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT token FROM node_tokens WHERE name = ?", (name,)
-        ).fetchone()
-        if existing is not None:
-            return str(existing["token"])
-        token = secrets.token_urlsafe(_TOKEN_BYTES)
-        now = time.time()
-        conn.execute(
-            "INSERT INTO node_tokens (name, token, created_at) VALUES (?, ?, ?)",
-            (name, token, now),
-        )
-    return token
-
-
-def resolve_node_token(
-    *,
-    token: str,
-    db_path: Path | None = None,
-) -> str | None:
-    """Map a bearer token back to a node name; ``None`` if unknown.
-
-    Returns ``None`` for an empty token (defence-in-depth — the
-    middleware already rejects requests with no Authorization
-    header, but we never resolve ``""`` to a real identity).
-    """
-    if not token:
-        return None
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT name FROM node_tokens WHERE token = ?", (token,)
-        ).fetchone()
-    if row is None:
-        return None
-    return str(row["name"])
-
-
-def list_node_tokens(db_path: Path | None = None) -> list[dict[str, Any]]:
-    """Return ``[{name, created_at}, ...]`` over every minted token.
-
-    Observability surface for the host operator. The token value
-    itself is deliberately NOT returned — that would defeat the
-    purpose of storing it as a secret.
-    """
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        cur = conn.execute("SELECT name, created_at FROM node_tokens ORDER BY name ASC")
-        return [
-            {"name": str(r["name"]), "created_at": float(r["created_at"])}
-            for r in cur.fetchall()
-        ]
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +260,31 @@ def is_developer(
     return is_developer_group(resolve_group_name(name=name, db_path=db_path))
 
 
+def is_researcher(
+    *,
+    name: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return ``True`` iff ``name``'s resolved NAMED group is ``researcher``.
+
+    Mirrors :func:`is_developer` for the research-role group
+    (:data:`scitex_agent_container.config._group_resolver.RESEARCHER_GROUP`).
+    Per the operator's 2026-07-05 ruling ("dev agents and research
+    agents MUST have full permissions — including the ability to
+    start/stop peer agents"), a researcher-group member gets the same
+    spawn authority as a developer-group member; see
+    :func:`spawn_allowed`.
+    """
+    from ..config._group_resolver import RESEARCHER_GROUP
+
+    group = resolve_group_name(name=name, db_path=db_path)
+    if not group:
+        return False
+    return group.strip().lower() == RESEARCHER_GROUP.lower()
+
+
 # ---------------------------------------------------------------------------
-# spawn permission — current policy: root-only spawn
+# spawn permission — root nodes, plus dev/research-role children
 # ---------------------------------------------------------------------------
 
 
@@ -345,22 +295,33 @@ def spawn_allowed(
 ) -> tuple[bool, str | None]:
     """Decide whether ``caller`` is allowed to call ``sac agents start``.
 
-    Current policy (handoff §4 / WI-2): a *root* node (no parent) is
-    allowed to spawn; a child is not. ``caller=None`` means the
-    administrative / human-operator path (e.g., a shell invocation
-    from outside any sac-managed agent) — allowed.
+    Current policy (handoff §4 / WI-2, relaxed per operator ruling
+    2026-07-05): a *root* node (no parent) is allowed to spawn.
+    A *child* is ALSO allowed when its resolved NAMED group is
+    ``developer`` or ``researcher`` (:func:`is_developer` /
+    :func:`is_researcher`) — the operator's exact words: "Dev agents
+    and research agents MUST have full permissions — including the
+    ability to start/stop peer agents." Any other child is denied.
+    ``caller=None`` means the administrative / human-operator path
+    (e.g., a shell invocation from outside any sac-managed agent) —
+    allowed.
 
     Returns ``(True, None)`` on allow or ``(False, reason)`` on
     deny. The reason is suitable for inclusion in a 403 body and a
     host log line.
 
-    **Lift-able policy**: when N-level spawning becomes acceptable
-    (handoff §2 D5), this function shrinks to ``return (True, None)``
-    — zero schema change, zero data migration.
+    **Per-spec override still applies**: every allow path here flows
+    through :func:`apply_may_spawn_gate`, so ``spec.lineage.may_spawn
+    = false`` still denies the caller even when its root/dev/research
+    status would otherwise allow the spawn.
     """
     if caller is None or caller == "":
         # Admin / human operator. Skips the global root-only check;
         # per-spec may_spawn (Phase-3 Gap-5) layers on top.
+        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+    if is_developer(name=caller, db_path=db_path) or is_researcher(
+        name=caller, db_path=db_path
+    ):
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     from .state_db import open_db
 
