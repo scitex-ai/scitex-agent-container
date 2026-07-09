@@ -134,10 +134,26 @@ def _probe_local(cfg) -> bool | None:
         return None
 
 
+def _label_list_contains(labels: dict, label_key: str, wanted: str) -> bool:
+    """True iff any comma-separated ``wanted`` token is in ``labels[label_key]``.
+
+    Mirrors the existing ``capabilities`` matching (comma-separated in YAML,
+    ``value in list`` membership), generalised so both ``--capability`` and
+    ``--tags`` share one comparison instead of two near-identical copies.
+    Also OR-matches when the CALLER passes multiple comma-separated wanted
+    values (``--tags active-development,researcher``): true if the agent
+    carries ANY of them.
+    """
+    have = {c.strip() for c in labels.get(label_key, "").split(",") if c.strip()}
+    want = {w.strip() for w in wanted.split(",") if w.strip()}
+    return bool(have & want)
+
+
 def get_agent_list_data(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
+    tags: str | None = None,
     remote_probe_timeout_s: float = 2.0,
     max_parallel_probes: int = 8,
 ) -> list[dict]:
@@ -148,6 +164,13 @@ def get_agent_list_data(
         capability: If set, only include agents whose ``capabilities`` label
             contains this value (comma-separated matching).
         machine: If set, only include agents whose ``machine`` label matches.
+        tags: If set, only include agents whose ``tags`` label (comma-
+            separated in YAML, e.g. ``tags: "active-development"``) contains
+            ANY of the given comma-separated values — a free-form, multi-
+            value lifecycle/status marker, deliberately separate from
+            ``groups`` (which is ACL-gated and singular-effective; see
+            ``config._group_resolver``) and from ``capabilities`` (what an
+            agent can do, not its current work status).
         remote_probe_timeout_s: Per-agent SSH probe timeout for the
             ``is_running`` check. Short by default (2s) so the list
             command doesn't block indefinitely when the remote host is
@@ -200,6 +223,8 @@ def get_agent_list_data(
             ]
             if capability not in caps:
                 continue
+        if tags and not _label_list_contains(labels, "tags", tags):
+            continue
 
         prep = {
             "idx": idx,
@@ -373,6 +398,8 @@ def get_agent_list_data(
             ]
             if capability not in caps:
                 continue
+        if tags and not _label_list_contains(labels, "tags", tags):
+            continue
         # stx-allow: fallback (validator may raise on unparseable yaml;
         # treat as "invalid" with the exception text as the only error)
         try:
@@ -400,11 +427,44 @@ def get_agent_list_data(
     return results
 
 
+def _is_self_peer_marker(spec_path: "Path") -> bool:  # noqa: F821
+    """Return True iff ``spec_path`` is a self-peer registration marker.
+
+    ``agents/self/spec.yaml`` (see ``_listen/_self_peers.py``) is a
+    DELIBERATELY schema-incompatible file — it registers the running
+    listen's own runtime identity, not a launchable Agent, and its own
+    header says ``DO NOT add apiVersion or spec:``. Running the generic
+    Agent validator against it always reports it "invalid" (missing
+    apiVersion/kind/spec, unknown top-level fields) even though it is
+    working exactly as designed. Reuses the SAME predicate the listen
+    merge already uses to recognize this file, so there is one place
+    that knows what a self-peer marker looks like.
+
+    Tolerant: any read/parse failure returns False (falls through to
+    normal defined-agent handling) rather than raising — matches this
+    module's existing crash-tolerance convention.
+    """
+    # stx-allow: fallback (reason: classification hiccup must not hide or
+    # misclassify a spec; falling through to normal validation is safe)
+    try:
+        import yaml
+
+        from ..._listen._self_peers import is_self_peer_spec
+
+        blob = yaml.safe_load(spec_path.read_text())
+        return is_self_peer_spec(blob)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return False
+
+
 def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
     """Walk the user-scope (and project-scope, when in a git repo)
     ``agents/`` tree and return ``(name, spec.yaml path)`` pairs for
     every agent declared on disk. Tolerant of partial state — a
-    directory without a ``spec.yaml`` is skipped silently.
+    directory without a ``spec.yaml`` is skipped silently. Self-peer
+    registration markers (see :func:`_is_self_peer_marker`) are NOT
+    agents and are excluded here at the source, rather than surfacing
+    as a spuriously "invalid" agent downstream.
     """
     from pathlib import Path as _Path
 
@@ -431,6 +491,8 @@ def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
                 continue
             spec = child / "spec.yaml"
             if not spec.is_file():
+                continue
+            if _is_self_peer_marker(spec):
                 continue
             pairs.append((child.name, spec))
             seen.add(child.name)

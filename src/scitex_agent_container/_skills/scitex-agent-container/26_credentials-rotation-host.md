@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] scitex-agent-container — host-side credential refresh ops + the one-refresher-per-account invariant.
-  [DETAILS] The bundled `claude` CLI's in-container access-token rotation + 30-min keepalive cron pattern; the one-account-one-refresher invariant that makes server-side refresh-token rotation safe; the `sac.accounts-refresh` host systemd-user timer with `--skip-active`; the `sac accounts watch-live` daemon that mirrors host re-logins into the sac store; `scitex-dev creds rotate-all` multi-account CI rotation. The on-disk model + auth mechanics live in [26_credentials-rotation.md](26_credentials-rotation.md).
+  [DETAILS] The bundled `claude` CLI's in-container access-token rotation + 30-min keepalive cron pattern; the one-account-one-refresher invariant that makes server-side refresh-token rotation safe; the `sac.accounts-refresh` host systemd-user timer with `--include-active --sync-active-login` (the sole refresher under the master-host model); the `sac accounts watch-live` daemon that mirrors host re-logins into the sac store; `scitex-dev creds rotate-all` multi-account CI rotation. The on-disk model + auth mechanics live in [26_credentials-rotation.md](26_credentials-rotation.md).
 tags: [scitex-agent-container-credentials-rotation-host]
 ---
 
@@ -48,33 +48,52 @@ OAuth refresh-tokens **rotate server-side on every use**: each call to
 `/oauth/token` returns a new refresh-token AND invalidates the previous
 one with no grace window. Combined with the in-memory cache (§1), this
 means **at most one process can be the live refresher for any given
-account at any given time**:
+account at any given time**.
 
-* **Pinned-and-running**: the in-container `claude` CLI inside the
-  pinned agent is the sole refresher. The host cron MUST skip the
-  account.
+**Pre-2026-07-08 (two-refresher model, historical):** the credential
+file was bound `:rw` into the container, so the in-container `claude`
+CLI was itself a refresher. That meant:
+
+* **Pinned-and-running**: the in-container CLI was the sole refresher;
+  the host cron had to skip the account.
 * **Host's interactive login**: the operator's interactive `claude`
-  session is the sole refresher. The host cron MUST skip it (the
-  pre-existing `--skip-active` behaviour).
+  session was the sole refresher; the host cron had to skip it too
+  (`--skip-active`).
 * **Parked** (no pinned agent, no interactive session): the host cron
-  is the sole refresher. Safe to rotate; no in-memory cache to race.
+  was the sole refresher.
 
-If two refreshers ever touch the same account concurrently, the loser's
-refresh-token is dead the moment the winner's `/oauth/token` returns.
-The loser then 401s on its next turn — even though the snapshot file
-on disk looks brand-new (the winner wrote it).
+If two refreshers ever touched the same account concurrently, the
+loser's refresh-token died the moment the winner's `/oauth/token`
+returned — the loser then 401'd on its next turn even though the
+snapshot file on disk looked brand-new (the winner wrote it). This was
+the 2026-06-03 ~hourly 401 storm that PR #299 closed structurally, via
+a `--skip-active` skip-set that was the union of the host-active
+account and every account currently pinned by a running local agent.
 
-**The host refresher cron** (`sac.accounts-refresh.service`, see §4)
-implements this invariant via `--skip-active`: the skip-set is the union
-of the host-active account and every account currently pinned by a
-running local agent (PR #299, commit `dea298d`). Stale-registry
-tolerance: a dead agent's leftover JSON over-skips its account
-(under-refresh — safe direction; recover with manual
-`sac accounts refresh <name>`). The opposite direction (over-refresh
-racing a live agent) was the 2026-06-03 ~hourly 401 storm that
-PR #299 closes structurally. See
+**Since 2026-07-08 (master-host single-refresher model, current):**
+the credential file is bound `:ro` into every container (both
+pinned-and-running and interactively-logged-in cases go through the
+same `<container_home>/.claude/.credentials.json:ro` bind — see
+`runtimes/_apptainer_auth.py::credentials_file_bind`). No in-container
+`claude` can refresh anything anymore, pinned or not. **The host cron
+is now the SOLE refresher for every account, full stop** — so it MUST
+run `--include-active --sync-active-login`, not `--skip-active`.
+Running `--skip-active` under this model doesn't guard a race (there
+is no other refresher left to race); it just starves the active
+account's access_token until it expires and 401s the whole fleet
+(the 2026-07-09/10 total-fleet stall — `_jobs_plugin.py`'s JobSpec
+still said `--skip-active` for a full day after the bind flipped to
+`:ro`, exactly this kind of SSOT drift).
+
+The historical `--skip-active` skip-set logic
+(`_collect_pinned_running_accounts`, PR #299, commit `dea298d`) is
+preserved as an explicit opt-in escape hatch (`sac accounts refresh
+--all --skip-active`) — it is simply no longer the timer's default.
+See
 [ADR-0017](../../../../docs/adr/0017-credential-rotation-and-refresh-race.md)
-§ "Failure mode 2" + § "Why a symlink doesn't solve this".
+§ "Failure mode 2" + § "Why a symlink doesn't solve this" for the
+historical race, and the `credentials_file_bind` docstring for the
+current `:ro` model.
 
 ## 3. Multi-account CI rotation
 
@@ -87,14 +106,15 @@ Non-negotiables:
 
 ## 4. The host refresher cron — `sac.accounts-refresh`
 
-A federated systemd-user timer fires `sac accounts refresh --all --skip-active` every 2h (`OnUnitActiveSec=2h`). It iterates the account store and rotates each unpinned account's tokens against `/oauth/token`. Registered as the `sac.accounts-refresh` JobSpec via `_jobs_plugin.py`; install with `sac dev systemd install --yes`.
+A federated systemd-user timer fires `sac accounts refresh --all --include-active --sync-active-login` every 2h (`OnUnitActiveSec=2h`). It iterates the account store and rotates EVERY account's tokens against `/oauth/token`, mirroring the active account's rotation back into the live `~/.claude/.credentials.json` login. Registered as the `sac.accounts-refresh` JobSpec via `_jobs_plugin.py`; install with `sac dev systemd install --yes`.
 
-The `--skip-active` skip-set is the union of:
+`--include-active` skips nothing — under the current `:ro`-everywhere model (§2) there is no other refresher left to race, so every stored account (including the host-active login and any pinned-running account) is a valid rotation target. Diagnostic stderr announces the intent:
 
-1. **The host's interactive login** (`~/.claude/.credentials.json` resolved to a stored account name via `_resolve_active_account_name`).
-2. **Every account currently pinned by a running local agent** (`_collect_pinned_running_accounts`, post-PR #299, commit `dea298d`).
+```
+[include-active] refreshing ALL accounts including the active + pinned-running ones (single-refresher model).
+```
 
-Both subsets enforce the one-account-one-refresher invariant from §2. Diagnostic stderr lines name each excluded account with the reason so the operator can see what got skipped:
+The historical `--skip-active` skip-set (union of the host-active login via `_resolve_active_account_name` and every account pinned by a running local agent via `_collect_pinned_running_accounts`, post-PR #299, commit `dea298d`) still exists and is still tested, but is now an explicit opt-in rather than the timer's default:
 
 ```
 [skip-active] excluding active account 'ywatanabe-gmail-com'.
@@ -102,7 +122,7 @@ Both subsets enforce the one-account-one-refresher invariant from §2. Diagnosti
 [skip-active] excluding pinned-running account 'ywatanabe-scitex-ai' (refresh-token rotation race guard).
 ```
 
-Implementation: `cli_pkg/_account_refresh.py::account_refresh` (CLI wiring), `_collect_pinned_running_accounts(home)` (reads `~/.scitex/agent-container/runtime/registry/*.json` directly to avoid the `Registry` class's import-time `REGISTRY_DIR` freeze under pytest fixtures).
+Implementation: `cli_pkg/_account_refresh.py::account_refresh` (CLI wiring — `--include-active`/`--skip-active`/`--sync-active-login` are mutually-exclusive-gated), `_collect_pinned_running_accounts(home)` (reads `~/.scitex/agent-container/runtime/registry/*.json` directly to avoid the `Registry` class's import-time `REGISTRY_DIR` freeze under pytest fixtures).
 
 ## 5. The watch-live daemon — keeps the sac store fresh
 
