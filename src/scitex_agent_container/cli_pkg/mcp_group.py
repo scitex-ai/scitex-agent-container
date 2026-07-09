@@ -216,13 +216,26 @@ def mcp_healthcheck(as_json: bool) -> None:
     else:
         action = result.get("action", "ok")
         failed = result.get("failed") or []
+        unknown = result.get("unknown") or []
         if failed:
             click.secho(
                 f"MCP healthcheck: {', '.join(failed)} FAILED — action={action}",
                 fg="red",
             )
+        elif action == "unknown" or unknown:
+            # HONEST: connectivity could NOT be verified — never render green/OK.
+            target = ", ".join(unknown) or "critical MCPs"
+            click.secho(
+                f"MCP healthcheck: could NOT verify {target} "
+                f"(`claude mcp list` unreadable) — action={action}",
+                fg="yellow",
+            )
+        elif action == "ok":
+            click.secho("MCP healthcheck: all critical MCPs OK (action=ok)", fg="green")
         else:
-            click.secho(f"MCP healthcheck: all critical MCPs OK (action={action})", fg="green")
+            # disabled / error and any future non-ok verdict: state it plainly,
+            # never dressed up as OK.
+            click.secho(f"MCP healthcheck: action={action}", fg="yellow")
     # Fail-open: NEVER non-zero. A boot hook must not block the session.
     raise SystemExit(0)
 

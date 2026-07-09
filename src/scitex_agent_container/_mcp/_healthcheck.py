@@ -28,6 +28,15 @@ FAIL-OPEN THROUGHOUT: every step is defensive. A healthcheck that itself errors
 (no ``claude`` binary, unparseable output, restart broker unreachable, …) must
 NEVER block the agent's boot — it logs and returns. The worst case degrades to
 today's behaviour (tools missing), never worse.
+
+HONEST-UNKNOWN (coordinator dogfood 2026-07-09): when connectivity cannot be
+verified — ``claude mcp list`` is unreadable/empty, or a critical server is absent
+from its output — the result is ``action="unknown"``, NEVER ``"ok"``. A live
+server PROCESS does not prove the stdio CLIENT is still connected: a mid-session
+load-spike drop leaves the process up but the tools gone, and Claude Code does not
+reconnect a stdio MCP mid-session (only a full session restart revives it). A
+false-OK would mask exactly that drop, so it is categorically refused — a false-OK
+health check is worse than none. See ``docs/mcp-load-resilience.md``.
 """
 
 from __future__ import annotations
@@ -260,10 +269,38 @@ def run_healthcheck(
         log_capability_surface(statuses)
 
         failed = [s for s, st in statuses.items() if st == FAILED]
+        unknown = [s for s, st in statuses.items() if st == UNKNOWN]
         if not failed:
+            if unknown:
+                # HONEST-UNKNOWN (coordinator dogfood 2026-07-09): we could NOT
+                # read client-side connectivity — ``claude mcp list`` was
+                # unreadable/empty, or a critical server was absent from its
+                # output. A live server PROCESS does not prove the stdio CLIENT is
+                # still connected: a mid-session load-spike drop leaves the process
+                # up but the tools gone (Claude Code does not reconnect a stdio MCP
+                # mid-session). So a "no FAILED lines" reading must NEVER be
+                # reported as OK — that false-OK masks exactly the drop we care
+                # about. A false-OK health check is worse than none: report
+                # UNKNOWN and alarm.
+                log.warning(
+                    "mcp healthcheck: could NOT verify MCP connectivity for %s "
+                    "(`claude mcp list` unreadable/empty) — reporting UNKNOWN, NOT "
+                    "ok. A live server process does not prove the stdio client is "
+                    "still connected; a dropped stdio MCP is only revived by a full "
+                    "session restart.",
+                    ", ".join(unknown),
+                )
+                return {
+                    "statuses": statuses,
+                    "failed": [],
+                    "unknown": unknown,
+                    "healed": False,
+                    "action": "unknown",
+                }
             return {
                 "statuses": statuses,
                 "failed": [],
+                "unknown": [],
                 "healed": False,
                 "action": "ok",
             }

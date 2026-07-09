@@ -62,3 +62,11 @@ not). The servers start healthy and write nothing to stdout; the failure is a
 The ecosystem-wide `fastmcp` version pin is scitex-dev's domain. sac's
 `pyproject.toml` carries an unpinned `fastmcp>=2.0`; `sac versions --json --live
 --base-only` reports the fastmcp version across SIFs.
+
+## See also
+
+[`mcp-load-resilience.md`](./mcp-load-resilience.md) — the sibling **mid-session**
+failure: a connected stdio MCP that gets **dropped under host load** (a handler
+blocking on a jammed upstream → the client times out and drops the stdio server,
+which it never reconnects). The fix there is prevention — bounded upstream
+timeouts on every handler — plus the honest-UNKNOWN healthcheck referenced above.

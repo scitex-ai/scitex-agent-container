@@ -245,3 +245,56 @@ def test_run_healthcheck_fail_open_when_runner_raises(tmp_path):
     )
     # Assert
     assert result["action"] == "error"
+
+
+# --------------------------------------------------------------------------
+# Honest-UNKNOWN (coordinator dogfood 2026-07-09): when connectivity could NOT be
+# verified (``claude mcp list`` unreadable/empty), the check must NEVER claim OK.
+# A false-OK masks a client-side mid-session drop — worse than no check at all.
+# --------------------------------------------------------------------------
+
+
+def test_run_healthcheck_unreadable_list_is_unknown_not_ok(tmp_path):
+    # Arrange — the runner returns "" (e.g. no `claude` binary in the container).
+    recorder = _RestartRecorder()
+    # Act
+    result = run_healthcheck(
+        mcp_list_runner=lambda: "",
+        restart_fn=recorder,
+        agent_name="agent-x",
+        now_fn=lambda: 100.0,
+        state_dir=tmp_path,
+    )
+    # Assert — honest UNKNOWN, categorically NOT "ok".
+    assert result["action"] == "unknown"
+
+
+def test_run_healthcheck_unreadable_list_does_not_restart(tmp_path):
+    # Arrange — UNKNOWN is not a confirmed failure, so it must not force a restart.
+    recorder = _RestartRecorder(accept=True)
+    # Act
+    run_healthcheck(
+        mcp_list_runner=lambda: "",
+        restart_fn=recorder,
+        agent_name="agent-x",
+        now_fn=lambda: 100.0,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert recorder.calls == []
+
+
+def test_run_healthcheck_partial_unknown_is_not_ok(tmp_path):
+    # Arrange — one server confirmed connected, the other absent from the output.
+    one_connected = "scitex-agent-container: sac mcp start - Connected\n"
+    recorder = _RestartRecorder()
+    # Act
+    result = run_healthcheck(
+        mcp_list_runner=lambda: one_connected,
+        restart_fn=recorder,
+        agent_name="agent-x",
+        now_fn=lambda: 100.0,
+        state_dir=tmp_path,
+    )
+    # Assert — an unverified critical server means the whole reading is UNKNOWN.
+    assert result["action"] == "unknown"
