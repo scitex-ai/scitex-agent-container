@@ -368,6 +368,18 @@ register_refresh_command(account)
 
 
 # ---------------------------------------------------------------------------
+# refresh-quota-cache — the PRODUCER for the aggregate quota-cache.json that
+# the quota-aware boot picker (_creds/_pick_healthy) + a2a metadata enricher
+# read. Without a periodic run of this, that file never exists and the picker
+# degrades to freshness-only. Lives in its own module (per-file line cap);
+# attached at import time like refresh / sync-live. A host cron runs it.
+# ---------------------------------------------------------------------------
+from ._account_refresh_quota_cache import register_refresh_quota_cache_command
+
+register_refresh_quota_cache_command(account)
+
+
+# ---------------------------------------------------------------------------
 # quota — agent self-awareness: read THIS agent's own account quota from
 # the bound quota-cache.json (#16 PART 4). Reads $CLAUDE_AGENT_ACCOUNT
 # (injected by SAC at launch; see config/_loaders.py) and looks up the
