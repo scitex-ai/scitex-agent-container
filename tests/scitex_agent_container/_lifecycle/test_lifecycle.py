@@ -29,7 +29,7 @@ import pytest
 
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config import AgentConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, real YAML on disk
@@ -820,9 +820,7 @@ def test_agent_start_runtime_failure_raises_runtime_error(
         call()
 
 
-def _start_with_failing_runtime(
-    spec: Path, registry: Registry, config: AgentConfig
-) -> None:
+def _start_with_failing_runtime(spec: Path, registry: Registry) -> None:
     """Drive a real ``agent_start`` failure, swallowing the expected
     ``RuntimeError`` -- the raise itself is covered by
     ``test_agent_start_runtime_failure_raises_runtime_error``; these
@@ -851,9 +849,9 @@ def test_agent_start_runtime_failure_persists_diag_file(
     from scitex_agent_container.runtimes.tui_session import state_dir_for_config
 
     spec = _write_spec(tmp_path)
-    config = lc.load_config(str(spec))
+    config = load_config(str(spec))
     # Act
-    _start_with_failing_runtime(spec, registry, config)
+    _start_with_failing_runtime(spec, registry)
     # Assert
     assert (state_dir_for_config(config) / "start_failure_diag.log").is_file()
 
@@ -865,9 +863,9 @@ def test_agent_start_runtime_failure_diag_names_the_reason(
     from scitex_agent_container.runtimes.tui_session import state_dir_for_config
 
     spec = _write_spec(tmp_path)
-    config = lc.load_config(str(spec))
+    config = load_config(str(spec))
     # Act
-    _start_with_failing_runtime(spec, registry, config)
+    _start_with_failing_runtime(spec, registry)
     # Assert
     diag_log = state_dir_for_config(config) / "start_failure_diag.log"
     assert "runtime.start() returned False" in diag_log.read_text()
