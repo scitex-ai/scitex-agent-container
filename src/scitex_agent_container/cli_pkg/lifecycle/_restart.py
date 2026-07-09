@@ -2,10 +2,13 @@
 # -*- coding: utf-8 -*-
 """``sac agents restart`` — node-aware stop-then-start of agent(s).
 
-Accepts ONE OR MORE agent names (mirroring ``sac agents start``) plus an
-``--all`` flag that restarts every agent ``sac agents list`` shows. Each
-name is restarted independently: one agent failing does not abort the
-rest, and the command exits non-zero if ANY restart failed.
+Accepts ONE OR MORE agent names (mirroring ``sac agents start``) plus a
+selection flag: ``--all-running`` restarts only currently-running agents
+(the live fleet; least-surprising), ``--all-registry`` restarts every
+agent ``sac agents list`` shows (including stopped ones), and ``--all``
+is a backward-compat alias for ``--all-registry``. Each name is restarted
+independently: one agent failing does not abort the rest, and the command
+exits non-zero if ANY restart failed.
 
 Cross-host dispatch: when an agent's active ``state.db.instances`` row
 records ``host != current_host``, ``restart`` ssh's into that peer and
@@ -157,13 +160,13 @@ def _bypass_base_url_available() -> bool:
 
 
 def _enumerate_fleet() -> list[str]:
-    """Return every agent name ``sac agents list`` shows (the ``--all`` set).
+    """Return every agent name ``sac agents list`` shows (the ``--all-registry`` set).
 
     Reuses the SAME data function the ``list`` command uses
-    (:func:`cli_pkg._helpers.get_agent_list_data`) so ``--all`` is exactly
-    "everything ``sac agents list`` shows" — registered/running agents plus
-    on-disk-defined ones — with no separate enumeration path to drift.
-    Order-preserving de-dup by name.
+    (:func:`cli_pkg._helpers.get_agent_list_data`) so ``--all-registry`` is
+    exactly "everything ``sac agents list`` shows" — registered/running
+    agents plus on-disk-defined ones — with no separate enumeration path to
+    drift. Order-preserving de-dup by name.
     """
     from .._helpers import get_agent_list_data
     from ..._state.registry import Registry
@@ -171,6 +174,34 @@ def _enumerate_fleet() -> list[str]:
     seen: set[str] = set()
     names: list[str] = []
     for row in get_agent_list_data(Registry()):
+        name = row.get("name")
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _enumerate_running() -> list[str]:
+    """Return only the agents that are currently RUNNING (the ``--all-running`` set).
+
+    Reuses the SAME data function — and therefore the SAME liveness — the
+    ``list`` / ``status`` commands use
+    (:func:`cli_pkg._helpers.get_agent_list_data`), keeping only rows whose
+    ``status`` probe read ``"running"`` (identity-based liveness: the
+    session exists AND its pane process is alive — see
+    ``_agent_list._probe_local``). Rows that are ``stopped`` / ``unknown`` /
+    ``defined`` / ``invalid`` are excluded, so a plain ``restart --all-running``
+    never wakes an agent the operator had deliberately stopped. No separate
+    liveness rule is invented here. Order-preserving de-dup by name.
+    """
+    from .._helpers import get_agent_list_data
+    from ..._state.registry import Registry
+
+    seen: set[str] = set()
+    names: list[str] = []
+    for row in get_agent_list_data(Registry()):
+        if row.get("status") != "running":
+            continue
         name = row.get("name")
         if name and name not in seen:
             seen.add(name)
@@ -293,13 +324,38 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
     shell_complete=agent_name_complete,
 )
 @click.option(
-    "--all",
-    "all_agents",
+    "--all-running",
+    "all_running",
     is_flag=True,
     default=False,
     help=(
-        "Restart EVERY agent 'sac agents list' shows. Mutually exclusive "
-        "with explicit NAME arguments. Still requires -y/--yes."
+        "Restart ONLY the agents that are currently RUNNING (live session). "
+        "The least-surprising choice for 'restart the live fleet' — a "
+        "deliberately-stopped agent stays stopped. Mutually exclusive with "
+        "explicit NAME arguments and with --all-registry. Still requires "
+        "-y/--yes."
+    ),
+)
+@click.option(
+    "--all-registry",
+    "all_registry",
+    is_flag=True,
+    default=False,
+    help=(
+        "Restart EVERY agent 'sac agents list' shows — INCLUDING stopped "
+        "ones. Mutually exclusive with explicit NAME arguments and with "
+        "--all-running. Still requires -y/--yes."
+    ),
+)
+@click.option(
+    "--all",
+    "all_alias",
+    is_flag=True,
+    default=False,
+    help=(
+        "Backward-compat alias for --all-registry (restarts stopped agents "
+        "too). Prefer the explicit flags: --all-running restarts only the "
+        "live fleet; --all-registry restarts every registered agent."
     ),
 )
 @click.option(
@@ -342,7 +398,9 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
 )
 def restart(
     names: tuple[str, ...],
-    all_agents: bool,
+    all_running: bool,
+    all_registry: bool,
+    all_alias: bool,
     dry_run: bool,
     yes: bool,
     as_json: bool,
@@ -350,28 +408,48 @@ def restart(
 ) -> None:
     """Restart one or more agents.
 
-    Pass one or more NAMEs, or ``--all`` to restart every agent
-    ``sac agents list`` shows. For each name, the agent's recorded host is
-    resolved first: a row on a remote peer is restarted over ssh on that
-    peer (node-aware); otherwise the restart runs locally. Agents are
-    restarted independently — one failing does not abort the rest, and the
-    command exits non-zero if ANY restart failed.
+    Pass one or more NAMEs, or a selection flag:
+
+    \b
+      --all-running   restart ONLY currently-running agents (live fleet)
+      --all-registry  restart EVERY registered agent (INCLUDING stopped)
+      --all           backward-compat alias for --all-registry
+
+    For each name, the agent's recorded host is resolved first: a row on a
+    remote peer is restarted over ssh on that peer (node-aware); otherwise
+    the restart runs locally. Agents are restarted independently — one
+    failing does not abort the rest, and the command exits non-zero if ANY
+    restart failed.
 
     \b
     Example:
       $ sac agents restart foo -y
-      $ sac agents restart foo bar baz -y     # several in one call
-      $ sac agents restart --all -y           # every registered agent
+      $ sac agents restart foo bar baz -y      # several in one call
+      $ sac agents restart --all-running -y    # only the live fleet
+      $ sac agents restart --all-registry -y   # every registered agent
       $ sac agents restart foo --dry-run
       $ sac agents restart foo --json
     """
-    if all_agents and names:
+    # ``--all`` is a backward-compat alias for ``--all-registry`` (do not
+    # break cron/callers that still pass the old flag). The remaining
+    # selection modes are mutually exclusive with each other.
+    registry_mode = all_registry or all_alias
+    running_mode = all_running
+    if registry_mode and running_mode:
         raise click.UsageError(
-            "--all cannot be combined with explicit agent NAME arguments."
+            "--all-running and --all-registry (--all) are mutually exclusive; "
+            "pass exactly one selection flag."
+        )
+    batch_mode = registry_mode or running_mode
+
+    if batch_mode and names:
+        raise click.UsageError(
+            "A selection flag (--all-running / --all-registry / --all) cannot "
+            "be combined with explicit agent NAME arguments."
         )
 
-    if all_agents:
-        targets = _enumerate_fleet()
+    if batch_mode:
+        targets = _enumerate_running() if running_mode else _enumerate_fleet()
         if not targets:
             if as_json:
                 click.echo(_json.dumps([]))
@@ -383,7 +461,8 @@ def restart(
 
     if not targets:
         raise click.UsageError(
-            "Missing argument 'NAME...'. Pass one or more agent names, or --all."
+            "Missing argument 'NAME...'. Pass one or more agent names, or a "
+            "selection flag (--all-running / --all-registry / --all)."
         )
 
     if dry_run:
@@ -414,8 +493,9 @@ def restart(
 
     if as_json:
         # Backward-compat: a SINGLE explicit name emits a bare object;
-        # multiple names or --all emit a JSON array of per-agent envelopes.
-        if len(results) == 1 and not all_agents:
+        # multiple names or a batch selection flag emit a JSON array of
+        # per-agent envelopes.
+        if len(results) == 1 and not batch_mode:
             click.echo(_json.dumps(results[0]))
         else:
             click.echo(_json.dumps(results))
