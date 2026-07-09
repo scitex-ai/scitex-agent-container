@@ -37,18 +37,26 @@ _BASE_DEF = (
 
 # The launch-critical subset of `npx playwright install-deps chromium`. Every
 # one of these was reported "not found" by `ldd` on the current SIF's chromium.
+#
+# Ubuntu 24.04 noble t64 transition: five of these libs are only installable
+# under their `t64`-suffixed names on noble. The 64-bit `time_t` ABI break
+# left the OLD (jammy/Debian) names as virtual packages with "no installation
+# candidate", so `apt-get install libasound2` FAILS while `libasound2t64`
+# succeeds — and apt aborts at the first unresolvable name, so every t64 lib
+# must carry the suffix. These are exactly the names Playwright's own
+# `install-deps` uses on noble; the remaining libs kept their pre-t64 names.
 _REQUIRED_LIBS = (
     "libnss3",
     "libnspr4",
-    "libatk1.0-0",
-    "libatk-bridge2.0-0",
-    "libatspi2.0-0",
-    "libcups2",
+    "libatk1.0-0t64",
+    "libatk-bridge2.0-0t64",
+    "libatspi2.0-0t64",
+    "libcups2t64",
     "libdrm2",
     "libgbm1",
     "libxshmfence1",
     "libxkbcommon0",
-    "libasound2",
+    "libasound2t64",
     "libcairo2",
     "libpango-1.0-0",
     "libxcomposite1",

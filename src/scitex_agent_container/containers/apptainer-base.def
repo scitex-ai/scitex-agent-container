@@ -102,9 +102,9 @@ From: ubuntu:24.04
         tmux ncurses-term \
         tini \
         libnss3 libnspr4 \
-        libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
-        libcups2 libdrm2 libgbm1 libxshmfence1 \
-        libxkbcommon0 libasound2 \
+        libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
+        libcups2t64 libdrm2 libgbm1 libxshmfence1 \
+        libxkbcommon0 libasound2t64 \
         libcairo2 libpango-1.0-0 \
         libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libxext6 libxrender1 \
@@ -195,20 +195,23 @@ From: ubuntu:24.04
         @typescript-eslint/eslint-plugin \
         jsonlint \
         @mermaid-js/mermaid-cli \
-        @anthropic-ai/claude-code@2.1.205
+        @anthropic-ai/claude-code@latest
 
     # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
-    # 2026-07-02: the SDK-bundled CLI is stuck at 2.1.191 even on the
-    # latest claude-agent-sdk (0.2.114), and the operator needs 2.1.205
-    # to unlock the `fable[1m]` model. So the PATH `claude` binary is now
-    # DECOUPLED from the SDK: we install the standalone
-    # `@anthropic-ai/claude-code@2.1.205` npm package (added to the
+    # 2026-07-02: the SDK-bundled CLI (`_bundled/claude`) lags the
+    # standalone npm claude-code release even on the latest
+    # claude-agent-sdk, and the operator wants the LATEST claude-code
+    # (e.g. to unlock the `fable[1m]` model). So the PATH `claude` binary
+    # is DECOUPLED from the SDK: we install the standalone
+    # `@anthropic-ai/claude-code@latest` npm package (added to the
     # `npm install -g` list above; npm prefix is /opt/npm-global, so it
     # lands at /opt/npm-global/bin/claude) and repoint /usr/local/bin/claude
-    # at THAT in section 6b — the SDK stays pinned at 0.2.114 purely for
-    # the Python runtime. NOTE: this is a deliberate CLI/SDK version
-    # mismatch (2.1.205 CLI vs the SDK's own 2.1.191 bundle); see section
-    # 6b for the caveat about SDK/claude-session agents.
+    # at THAT in section 6b. Per the operator directive to "carry the
+    # LATEST of ALL ecosystem packages", BOTH the npm claude-code (here)
+    # and the Python claude-agent-sdk (section 6b) now float to latest —
+    # the decoupling is STRUCTURAL (standalone npm CLI vs the SDK's
+    # internal bundle), not a frozen version mismatch; see section 6b for
+    # the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
@@ -320,18 +323,19 @@ From: ubuntu:24.04
     # just these two into a dedicated venv so /usr/bin/python3 stays
     # untouched and per-agent overlays own their own scientific stack.
     #
-    # claude-agent-sdk PINNED to 0.2.87 — bundles claude CLI 2.1.150
-    # (verified in-apptainer 2026-06-05, including Bash
-    # run_in_background). The old 0.1.72 pin was a workaround for a
-    # since-fixed 2.1.139 startup hang on `GET /v1/mcp_servers`; the
-    # SDK has rolled forward across the affected window and the
-    # currently shipping pair is the one the lead's hand-built SIF
-    # uses today. The SDK bundles its CLI under `_bundled/claude`, but
-    # as of 2026-07-02 that bundle is STALE at 2.1.191 even on 0.2.114,
-    # so we no longer surface it on PATH — the PATH `claude` binary is
-    # the standalone npm `@anthropic-ai/claude-code@2.1.205` install
-    # instead (see section 3a and the repoint below in this section).
-    # The SDK pin (0.2.114) is kept ONLY for the Python runtime that
+    # claude-agent-sdk is FLOORED TO LATEST (installed bare, no `==`
+    # pin) per the operator directive to "install the LATEST
+    # claude-agent-sdk" / "carry the LATEST of ALL ecosystem packages".
+    # History: it was previously pinned (0.1.72 → 0.2.87 → 0.2.114); the
+    # 0.1.72 pin was a workaround for a since-fixed 2.1.139 startup hang
+    # on `GET /v1/mcp_servers`, and the SDK has long since rolled forward
+    # past that window, so a floating latest is safe and is what the
+    # operator wants. The SDK bundles its OWN CLI under `_bundled/claude`,
+    # but that bundle lags the standalone npm release — so we no longer
+    # surface it on PATH; the PATH `claude` binary is the standalone npm
+    # `@anthropic-ai/claude-code@latest` install instead (see section 3a
+    # and the repoint below in this section). The SDK (floated to latest)
+    # is installed ONLY for the Python runtime that
     # scitex-agent-container's runner imports.
     #
     # sac itself is installed from /opt/scitex-agent-container-src/ —
@@ -357,20 +361,20 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     uv pip install --python /opt/venv-sac/bin/python \
-        "claude-agent-sdk==0.2.114" \
+        "claude-agent-sdk" \
         "scitex-todo[mcp]>=0.3.0" \
         /opt/scitex-agent-container-src
 
-    # Surface the standalone npm-installed claude CLI (2.1.205) on PATH,
-    # DECOUPLED from the SDK's stale 2.1.191 bundle (2026-07-02). This is
-    # what humans get on `apptainer shell` and what TUI agents
-    # (runtime: tui) invoke via `command -v claude` — so they get
-    # 2.1.205 and the `fable[1m]` model. CAVEAT: this is a CLI/SDK
-    # version mismatch. SDK/claude-session agents may still invoke the
-    # SDK's OWN bundled binary (2.1.191) depending on how
-    # subprocess_cli resolves the executable, rather than this PATH
-    # symlink — that path is NOT yet validated on a rebuilt SIF and
-    # needs a smoke-test before fleet-wide rollout.
+    # Surface the standalone npm-installed claude CLI (latest) on PATH,
+    # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
+    # npm release). This is what humans get on `apptainer shell` and what
+    # TUI agents (runtime: tui) invoke via `command -v claude` — so they
+    # get the latest claude-code and the `fable[1m]` model. CAVEAT: the
+    # SDK ships its own bundled CLI, so SDK/claude-session agents may
+    # still invoke that bundled binary (not this PATH symlink) depending
+    # on how subprocess_cli resolves the executable — that path is NOT
+    # yet validated on a rebuilt SIF and needs a smoke-test before
+    # fleet-wide rollout.
     if [ -x /opt/npm-global/bin/claude ]; then
         ln -sf /opt/npm-global/bin/claude /usr/local/bin/claude
     fi
@@ -415,11 +419,11 @@ From: ubuntu:24.04
     # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
     # (with scitex-agent-container + claude-agent-sdk preinstalled).
     # The PATH `claude` resolves to /usr/local/bin/claude, which section
-    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@2.1.205`
-    # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's stale
-    # 2.1.191 bundle (2026-07-02, for `fable[1m]`). No `claude` lands in
+    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@latest`
+    # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's OWN
+    # bundled CLI (for `fable[1m]`). No `claude` lands in
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
-    # those earlier entries do NOT shadow the 2.1.205 symlink.
+    # those earlier entries do NOT shadow the npm claude symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
