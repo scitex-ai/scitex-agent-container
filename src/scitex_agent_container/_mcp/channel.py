@@ -50,6 +50,13 @@ log = logging.getLogger(__name__)
 _INBOX_CAP = 200
 _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 
+# Operator directive (2026-07-09): rendered <channel source="..."> must be
+# the fixed SYSTEM identity ("sac"), not a raw agent name -- matches cct's
+# source="cct" / scitex-todo's source="stodo". Sender identity moves to a
+# separate from_agent meta key. Env-overridable (SAC_MCP_* convention, #591).
+_CHANNEL_SOURCE_ENV_VAR = "SAC_MCP_CHANNEL_SOURCE"
+_CHANNEL_SOURCE_DEFAULT = "sac"
+
 # Bound the SSE CONNECT phase; read stays unbounded (the event stream is
 # legitimately long-lived). Load-resilience fix (2026-07-09): ``timeout=None``
 # left CONNECT unbounded too, so a hung connect to ``:7878`` under load blocked
@@ -180,7 +187,12 @@ def _meta_str(value: Any) -> str:
 
 def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     """Project a bus event onto the Claude Code channel notification
-    shape: ``{content, meta: {source, chat_id, ts, ...}}``.
+    shape: ``{content, meta: {source, from_agent, chat_id, ts, ...}}``.
+
+    ``meta.source`` is the fixed system identity ("sac", overridable via
+    :data:`_CHANNEL_SOURCE_ENV_VAR`) — the sender's own identity lives in
+    ``meta.from_agent`` instead, so the two never collide in the rendered
+    ``<channel source="..." from_agent="..." ...>`` tag.
 
     Every ``meta`` value is stringified via :func:`_meta_str` — the
     client schema rejects non-string values (see that helper).
@@ -193,8 +205,10 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     """
     from .._state.state_db_channel import format_ts_iso
 
+    source = os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
     meta: dict[str, Any] = {
-        "source": _meta_str(event.get("from_agent", "unknown")),
+        "source": source,
+        "from_agent": _meta_str(event.get("from_agent", "unknown")),
         "ts": format_ts_iso(event.get("ts", "")),
         "msg_id": _meta_str(event.get("msg_id", "")),
     }
