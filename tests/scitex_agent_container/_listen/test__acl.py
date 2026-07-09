@@ -279,7 +279,7 @@ def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
     # Act
     _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "not one of the roles permitted to spawn" in reason
+    assert reason is not None and "neither the developer nor research group" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +519,7 @@ def test_http_agents_start_403_carries_role_policy_text(
         )
     body_json = r.json()
     # Assert
-    assert "not one of the roles permitted to spawn" in body_json.get("reason", "")
+    assert "neither the developer nor research group" in body_json.get("reason", "")
 
 
 # ---------------------------------------------------------------------------
