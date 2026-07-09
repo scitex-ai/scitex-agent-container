@@ -173,19 +173,19 @@ From: ubuntu:24.04
         @typescript-eslint/eslint-plugin \
         jsonlint \
         @mermaid-js/mermaid-cli \
-        @anthropic-ai/claude-code@2.1.198
+        @anthropic-ai/claude-code@2.1.205
 
     # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
     # 2026-07-02: the SDK-bundled CLI is stuck at 2.1.191 even on the
-    # latest claude-agent-sdk (0.2.110), and the operator needs 2.1.198
+    # latest claude-agent-sdk (0.2.114), and the operator needs 2.1.205
     # to unlock the `fable[1m]` model. So the PATH `claude` binary is now
     # DECOUPLED from the SDK: we install the standalone
-    # `@anthropic-ai/claude-code@2.1.198` npm package (added to the
+    # `@anthropic-ai/claude-code@2.1.205` npm package (added to the
     # `npm install -g` list above; npm prefix is /opt/npm-global, so it
     # lands at /opt/npm-global/bin/claude) and repoint /usr/local/bin/claude
-    # at THAT in section 6b — the SDK stays pinned at 0.2.110 purely for
+    # at THAT in section 6b — the SDK stays pinned at 0.2.114 purely for
     # the Python runtime. NOTE: this is a deliberate CLI/SDK version
-    # mismatch (2.1.198 CLI vs the SDK's own 2.1.191 bundle); see section
+    # mismatch (2.1.205 CLI vs the SDK's own 2.1.191 bundle); see section
     # 6b for the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
@@ -305,11 +305,11 @@ From: ubuntu:24.04
     # SDK has rolled forward across the affected window and the
     # currently shipping pair is the one the lead's hand-built SIF
     # uses today. The SDK bundles its CLI under `_bundled/claude`, but
-    # as of 2026-07-02 that bundle is STALE at 2.1.191 even on 0.2.110,
+    # as of 2026-07-02 that bundle is STALE at 2.1.191 even on 0.2.114,
     # so we no longer surface it on PATH — the PATH `claude` binary is
-    # the standalone npm `@anthropic-ai/claude-code@2.1.198` install
+    # the standalone npm `@anthropic-ai/claude-code@2.1.205` install
     # instead (see section 3a and the repoint below in this section).
-    # The SDK pin (0.2.110) is kept ONLY for the Python runtime that
+    # The SDK pin (0.2.114) is kept ONLY for the Python runtime that
     # scitex-agent-container's runner imports.
     #
     # sac itself is installed from /opt/scitex-agent-container-src/ —
@@ -335,15 +335,15 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     uv pip install --python /opt/venv-sac/bin/python \
-        "claude-agent-sdk==0.2.110" \
+        "claude-agent-sdk==0.2.114" \
         "scitex-todo[mcp]>=0.3.0" \
         /opt/scitex-agent-container-src
 
-    # Surface the standalone npm-installed claude CLI (2.1.198) on PATH,
+    # Surface the standalone npm-installed claude CLI (2.1.205) on PATH,
     # DECOUPLED from the SDK's stale 2.1.191 bundle (2026-07-02). This is
     # what humans get on `apptainer shell` and what TUI agents
     # (runtime: tui) invoke via `command -v claude` — so they get
-    # 2.1.198 and the `fable[1m]` model. CAVEAT: this is a CLI/SDK
+    # 2.1.205 and the `fable[1m]` model. CAVEAT: this is a CLI/SDK
     # version mismatch. SDK/claude-session agents may still invoke the
     # SDK's OWN bundled binary (2.1.191) depending on how
     # subprocess_cli resolves the executable, rather than this PATH
@@ -393,11 +393,11 @@ From: ubuntu:24.04
     # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
     # (with scitex-agent-container + claude-agent-sdk preinstalled).
     # The PATH `claude` resolves to /usr/local/bin/claude, which section
-    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@2.1.198`
+    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@2.1.205`
     # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's stale
     # 2.1.191 bundle (2026-07-02, for `fable[1m]`). No `claude` lands in
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
-    # those earlier entries do NOT shadow the 2.1.198 symlink.
+    # those earlier entries do NOT shadow the 2.1.205 symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
