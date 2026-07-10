@@ -8,9 +8,9 @@ auth branch pushed it over; mirrors the existing helper-module split:
 resolving unchanged.
 
 This module owns ONE concern: rendering (and pre-creating the target
-for) the READ-ONLY ``.credentials.json`` file-bind at the container
-``$HOME/.claude/.credentials.json``. The per-launch backend env argv
-(``auth_argv``) stays in ``_apptainer_auth``.
+for) the shared WRITABLE ``.credentials.json`` file-bind at the
+container ``$HOME/.claude/.credentials.json``. The per-launch backend
+env argv (``auth_argv``) stays in ``_apptainer_auth``.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def _assert_credential_unexpired(
 def credentials_file_bind(
     config: AgentConfig, *, now: float | None = None
 ) -> list[str]:
-    """Render the READ-ONLY file-bind for the agent's credentials file.
+    """Render the WRITABLE file-bind for the agent's credentials file.
 
     Emitted LAST in :func:`_apptainer_build_argv.build_run_argv` (after
     the overlay-upper-home bind) so a relaxed ``--home`` tmpfs or
@@ -111,42 +111,48 @@ def credentials_file_bind(
          or the launch resolves to the ``openai`` agent-SDK family
          (openai-compat-3 — no Anthropic backend to auth to) → no bind.
 
-    Binds the resolved host file READ-ONLY (``:ro``) at
+    Binds the resolved host file WRITABLE (``:rw``) at
     ``<container_home>/.claude/.credentials.json`` so the in-container
-    ``claude`` (both SDK and TUI variants) READS that single file
-    directly but NEVER refreshes or rotates it. The SAME path the
-    interactive ``claude`` auto-discovers when no ``$CLAUDE_CONFIG_DIR``
-    redirect is set — operator-confirmed working shape (figrecipe +
-    scitex-todo manual test 2026-06-15).
+    ``claude`` (both SDK and TUI variants) shares that single file — the
+    SAME path the interactive ``claude`` auto-discovers when no
+    ``$CLAUDE_CONFIG_DIR`` redirect is set — operator-confirmed working
+    shape (figrecipe + scitex-todo manual test 2026-06-15).
 
-    Master-host single-refresher model (operator 2026-07-08, cred-churn
-    root-cause fix): the agent is a READ-ONLY CONSUMER. Previously this
-    file was bound ``:rw`` so the in-container CLI refreshed the OAuth
-    ``accessToken`` in place — but a refresh CONSUMES the single-use
-    OAuth refresh_token, so a running agent would eat the refresh_token
-    of a freshly-logged-in account (the churn). Now the host-side
-    ``sac-accounts-refresh`` timer is the SOLE refresher: it rotates the
-    account snapshot's access_token on a fixed cadence and writes it
-    back to the SAME snapshot file this bind sources, so a ``:ro`` agent
-    always reads a timer-kept-fresh token without ever writing one.
+    Why ``:rw`` (INCIDENT 2026-07-10 follow-up, operator 2026-07-11,
+    reversing the 2026-07-08 ``:ro`` flip): a read-only bind CANNOT
+    prevent the in-container ``claude`` from POSTing a token refresh —
+    the server rotates and invalidates the old refresh_token chain
+    regardless — it can only prevent the rotation from being RECORDED,
+    leaving the host snapshot holding a dead refresh_token (worst of
+    both worlds). A shared writable credentials file is the NORMAL,
+    supported Claude configuration (any workstation runs several
+    ``claude`` processes against one ``~/.claude/.credentials.json``):
+    whoever refreshes writes the rotated pair back, and every other
+    consumer re-reads it. sac's own refresher takes ``flock`` + atomic
+    write (:mod:`.._account.token_refresh`), and
+    ``refresh_account_credentials`` re-reads-and-retries once on
+    ``invalid_grant`` so a concurrently-rotated token is picked up
+    instead of being declared dead. Cross-HOST sharing remains unsolved
+    by design — that is the ``sac-host-token-broker-single-writer``
+    follow-up, not this bind.
 
     The fail-loud expiry gate (``_assert_credential_unexpired`` for the
     explicit-file branch, ``resolve_cred_file`` → ``PinnedAccountError``
-    for the account branch) is unchanged and still load-bearing: a
-    ``:ro`` agent bound to an already-expired token cannot work, so an
-    expired credential is refused at launch (an operator/timer problem
-    to fix first, not one the read-only agent can rescue).
+    for the account branch) is unchanged and still load-bearing: an
+    agent bound to an already-expired token cannot work, so an expired
+    credential is refused at launch (an operator/timer problem to fix
+    first, not one the agent can rescue).
 
-    Caveat: a single-file ``:ro`` bind is on the file's inode. A
-    host-side tmp+rename refresh (the timer's atomic-replace) orphans
-    the bind — the container keeps reading the pre-rename inode until it
-    restarts. For a ``:ro`` agent this is a staleness (not a corruption)
-    concern: the token is valid until its natural expiry, and the timer
-    keeps the snapshot fresh so a restart re-binds the current inode.
-    The account-pinned SDK path additionally gets the DIRECTORY bind at
-    ``/tmp/sac-claude`` (:func:`_apptainer_auth.auth_argv`), which
-    resolves the child file by name on every open and so DOES reflect
-    atomic-replace refreshes without a restart.
+    Caveat: a single-file bind is on the file's inode. A host-side
+    tmp+rename refresh (the timer's atomic-replace) orphans the bind —
+    the container keeps reading the pre-rename inode until it restarts.
+    This is a staleness (not a corruption) concern: the token is valid
+    until its natural expiry, and the timer keeps the snapshot fresh so
+    a restart re-binds the current inode. The account-pinned SDK path
+    additionally gets the DIRECTORY bind at ``/tmp/sac-claude``
+    (:func:`_apptainer_auth.auth_argv`), which resolves the child file
+    by name on every open and so DOES reflect atomic-replace refreshes
+    without a restart.
     """
     if provider_active(config) or openai_provider_active(config):
         return []
@@ -203,10 +209,12 @@ def credentials_file_bind(
 
     container_home = resolve_container_home(config).rstrip("/")
     dest = f"{container_home}/.claude/.credentials.json"
-    # READ-ONLY: the agent consumes the credential but never refreshes
-    # it (master-host single-refresher model — see the docstring). The
-    # host-side ``sac-accounts-refresh`` timer is the sole refresher.
-    return ["--bind", f"{src}:{dest}:ro"]
+    # WRITABLE: the in-container claude shares the credential file like
+    # any co-resident claude process would — whoever refreshes writes
+    # the rotated token pair back so no consumer is left holding a
+    # server-invalidated refresh_token (see the docstring's 2026-07-11
+    # rationale; ``:ro`` could not stop the rotation, only its recording).
+    return ["--bind", f"{src}:{dest}:rw"]
 
 
 def ensure_credentials_bind_target(
@@ -232,7 +240,7 @@ def ensure_credentials_bind_target(
     :func:`_apptainer_build_argv.build_run_argv`), else the workspace-home
     dir (``<state>/home``, bound at ``/home/agent``). This ensures an empty
     0-byte ``.claude/.credentials.json`` exists at that host path so the
-    ``:ro`` bind lands; the bind then SHADOWS this placeholder with the real
+    credentials bind lands; the bind then SHADOWS this placeholder with the real
     operator credential — the placeholder's contents never matter.
 
     CRITICAL — placement: the placeholder is written into the overlay
@@ -263,7 +271,7 @@ def ensure_credentials_bind_target(
     flags = bind_flags if bind_flags is not None else credentials_file_bind(config)
     if not flags:
         return None
-    # flags == ["--bind", "<src>:<container_home>/.claude/.credentials.json:ro"]
+    # flags == ["--bind", "<src>:<container_home>/.claude/.credentials.json:rw"]
     from ._to_home_overlay import resolve_container_home
 
     container_home = resolve_container_home(config).rstrip("/")
