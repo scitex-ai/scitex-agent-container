@@ -114,29 +114,37 @@ def _call(
 
 
 def test_no_signal_is_not_handled(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(tmp_path, enriched="connection reset by peer")
+    # Arrange
+    enriched = "connection reset by peer"
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert outcome.handled is False
 
 
 def test_no_signal_emits_no_session_events(tmp_path):
-    # Arrange / Act
-    _outcome, events, _db = _call(tmp_path, enriched="connection reset by peer")
+    # Arrange
+    enriched = "connection reset by peer"
+    # Act
+    _outcome, events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert events == []
 
 
 def test_no_signal_reports_no_db_errors(tmp_path):
-    # Arrange / Act
-    _outcome, _events, db_calls = _call(tmp_path, enriched="connection reset by peer")
+    # Arrange
+    enriched = "connection reset by peer"
+    # Act
+    _outcome, _events, db_calls = _call(tmp_path, enriched=enriched)
     # Assert
     assert db_calls == []
 
 
 def test_no_signal_returns_reactive_outcome_instance(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(tmp_path, enriched="connection reset by peer")
+    # Arrange
+    enriched = "connection reset by peer"
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert isinstance(outcome, ReactiveOutcome)
 
@@ -146,67 +154,68 @@ def test_no_signal_returns_reactive_outcome_instance(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+_OVERLOADED_529_TEXT = '{"error":{"type":"overloaded_error"}}'
+
+
 def test_529_is_handled(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert outcome.handled is True
 
 
 def test_529_does_not_reset_attempt(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert outcome.reset_attempt is False
 
 
 def test_529_delay_is_at_least_the_backoff_floor(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert outcome.delay_s >= DEFAULT_MIN_BACKOFF_S
 
 
 def test_529_emits_account_backoff_supervisor_event(tmp_path):
-    # Arrange / Act
-    _outcome, events, _db = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    _outcome, events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert any(e.get("event") == "account_backoff" for e in events)
 
 
 def test_529_emits_error_kind_event(tmp_path):
-    # Arrange / Act
-    _outcome, events, _db = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    _outcome, events, _db = _call(tmp_path, enriched=enriched)
     # Assert
     assert any(e.get("kind") == "rate_limited" for e in events)
 
 
 def test_529_reports_rate_limited_cause_to_db(tmp_path):
-    # Arrange / Act
-    _outcome, _events, db_calls = _call(
-        tmp_path, enriched='{"error":{"type":"overloaded_error"}}'
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    _outcome, _events, db_calls = _call(tmp_path, enriched=enriched)
     # Assert
     assert any(c["cause"] == RATE_LIMITED_CAUSE for c in db_calls)
 
 
 def test_529_consecutive_hits_increments_from_prior(tmp_path):
-    # Arrange / Act
-    outcome, _events, _db = _call(
-        tmp_path,
-        enriched='{"error":{"type":"overloaded_error"}}',
-        consecutive_hits=2,
-    )
+    # Arrange
+    enriched = _OVERLOADED_529_TEXT
+    # Act
+    outcome, _events, _db = _call(tmp_path, enriched=enriched, consecutive_hits=2)
     # Assert
     assert outcome.consecutive_hits == 3
 
@@ -222,7 +231,7 @@ def test_529_escalates_to_rotate_after_five_consecutive_hits(tmp_path):
     # Act
     outcome, _events, _db = _call(
         tmp_path,
-        enriched='{"error":{"type":"overloaded_error"}}',
+        enriched=_OVERLOADED_529_TEXT,
         consecutive_hits=4,
         home=home,
         store_dir=store,
