@@ -64,6 +64,36 @@ apptainer build sac-scitex.sif sac-scitex.def   # uses sac-base.sif as bootstrap
 apt deps — budget several minutes. Restart agents after a rebuild so they pick up
 the new `.sif`.
 
+### Low-priority default (incident-local-heavy-build)
+
+`sac image build` **self-demotes by default** — the whole bake (staging copy,
+`apptainer build`, `%post` apt/pip, mksquashfs) runs at CPU `nice 19` + IO
+best-effort lowest (`ionice -c 2 -n 7`) so a ~40-min build can't starve an
+interactive host (2026-07-10: load 27 → 50+ during a normal-priority bake).
+A one-line notice is printed when demotion is active:
+
+```
+building at low priority (nice 19 + ionice best-effort low); pass --no-nice for full speed
+```
+
+**Why best-effort-low and NOT the idle IO class (`-c 3`)**: field-tested the
+same night — a host SIF build at `ionice -c 3` died silently at the
+"Creating SIF file..." (mksquashfs) stage on the loaded host: process
+vanished, no error in the build log, no OOM trace, the publish symlink never
+swapped. Idle-class IO is only serviced when the disk is otherwise idle, so
+under sustained load it can starve indefinitely (and appears to have gotten
+the squash stage killed or wedged-then-reaped). `-c 2 -n 7` still yields to
+all interactive IO but is guaranteed forward progress. If you ever *want*
+harder demotion, run the build under `ionice -c 3` yourself and accept the
+starvation risk.
+
+Opt out on dedicated build machines / CI with `sac image build ... --no-nice`,
+or fleet-wide via `SAC_BUILD_NO_NICE=1`. When `ionice` is missing the build
+degrades gracefully to nice-only (warning line, no crash). Agent-start lazy SIF
+builds (`resolve_sif` → `apptainer build` for a cold `docker://` image or
+`def_file`) are prefixed with `nice -n 19 ionice -c 2 -n 7` the same way; the
+same env var opts out.
+
 ## Pinning a stable version (vs tracking @develop)
 
 `@develop` means every rebuild tracks the tip of develop. For a reproducible
