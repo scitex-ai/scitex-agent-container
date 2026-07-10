@@ -659,7 +659,7 @@ def _loaded_config_with_image(tmp_path):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "host": "local",
+                    "host": "${HOSTNAME}",
                     "workdir": "/home/agent/work",
                     "apptainer": {
                         "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
@@ -697,7 +697,8 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
 # ---------------------------------------------------------------------------
 # Required author fields — NO HIDDEN DEFAULTS (operator directive 2026-06-23).
 # Every APPLICABLE field must be declared; the validator errors roundly when
-# one is absent. ``host: local`` is the explicit local-singleton spelling.
+# one is absent. ``host: ${HOSTNAME}`` resolves to the loading machine
+# (``host: local`` is BANNED; operator directive 2026-07-10).
 # ---------------------------------------------------------------------------
 
 _COMPLETE_SPEC = {
@@ -705,7 +706,7 @@ _COMPLETE_SPEC = {
     "kind": "Agent",
     "spec": {
         "runtime": "tui",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/home/agent/work",
         "apptainer": {"image": "/x.sif", "binds": []},
         "claude": {"model": "opus"},
@@ -820,7 +821,7 @@ def test_agentproxy_missing_upstream_is_rejected():
         "kind": "AgentProxy",
         "spec": {
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/work",
             "apptainer": {"image": "/x.sif", "binds": []},
             "health": {"enabled": True, "interval": 60},

@@ -40,19 +40,20 @@ time.
 
 ## How `spec.host` resolves — concrete hostname → local or remote
 
-`spec.host` is a CONCRETE hostname; `sac agents start` resolves *where it is*:
+`spec.host` is a CONCRETE hostname (`host: local`/`localhost` are BANNED —
+write `hostname -s` output, a peer name, or `${HOSTNAME}`, resolved at load
+time). The lifecycle verbs resolve *where it is*:
 
-| `spec.host` | Launch path |
+| `spec.host` | Route |
 |---|---|
-| `local` / absent, or this machine's canonical name / alias | local `agent_start` (identical to `host: local`) |
-| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch (`_dispatch_remote_start`) |
-| unregistered / typo | never ssh; defers to the liveness-gated singleton-skip |
+| empty/absent, `${HOSTNAME}`, or this machine's canonical name / alias | local `agent_start` |
+| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch; stop/restart fall back to the spec pin when no instances row exists (`_host_routing`) |
+| unregistered / typo | FAIL LOUD with the registered-peer list (`sac host list`); never ssh. `--no-redispatch` forces local; a chain tail naming this machine runs local |
 
 Identity is `config.yaml::host:` (canonical + aliases); peers are
 `config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias). The local check
-precedes the peer table, so a self-registered peer (`ywata-note-win: {ssh:
-localhost}`) is never ssh'd to itself. Resolver:
-`_common.classify_dispatch_host` (`try_dispatch` dispatches only `remote`).
+precedes the peer table, so a self-registered peer (`ssh: localhost`) is never
+ssh'd to itself. Resolver: `_host_routing.classify_spec_host_route`.
 
 ## YAML — multi-instance, one per peer
 

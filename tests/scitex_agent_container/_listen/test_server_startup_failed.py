@@ -99,7 +99,7 @@ def _write_spec(home: Path, name: str) -> Path:
         "kind": "Agent",
         "spec": {
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/tmp",
             "apptainer": {"image": "/x.sif", "binds": []},
             "claude": {"model": "claude-sonnet-4-5"},

@@ -47,7 +47,7 @@ def classify_dispatch_host(
     Returns a ``(kind, peer)`` tuple:
 
     * ``("local", None)``  — run on the caller. Fires when ``target_host``
-      is unset (``host: local`` / absent, normalized to ``""`` → ``None``),
+      is unset (empty ``host:`` / absent, normalized to ``""`` → ``None``),
       equals ``current_host``, or is any spelling in ``local_names``
       (the canonical name + aliases that denote THIS machine per
       ``host_config``). LOCAL is checked BEFORE the peer table so a machine
@@ -55,15 +55,15 @@ def classify_dispatch_host(
       localhost}`` so remote hosts can reach it) is never ssh-dispatched
       to itself.
     * ``("remote", <peer>)`` — dispatch to that peer over ssh. Fires when
-      ``target_host`` is a known peer key distinct from the local machine.
+      ``target_host`` is a known peer key distinct from the local machine
+      (glob peer entries like ``spartan-*`` match here via ``PeersMap``).
     * ``("unknown", None)`` — ``target_host`` names neither the local
-      machine nor a peer. :func:`try_dispatch` treats this exactly like
-      ``local`` (returns ``False`` → proceed with the local path), so it
-      falls through to the liveness-gated singleton-skip which either
-      defers to the pinned host or (the bm025 stale-binding fix) starts
-      locally. The classification is kept DISTINCT from ``local`` so a
-      caller that wants to fail loud on an unregistered host can, but the
-      default never routes an unknown host to ssh.
+      machine nor a peer. This classifier stays a PURE resolver and never
+      raises; the REACTION is the caller's. Since operator directive
+      2026-07-10 the lifecycle dispatchers fail LOUD on it
+      (``_host_routing.format_unknown_host_error`` — peer list + fixes)
+      instead of silently falling through to a local start; either way an
+      unknown host is never routed to ssh.
     """
     if target_host is None:
         return ("local", None)

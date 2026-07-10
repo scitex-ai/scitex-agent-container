@@ -373,7 +373,7 @@ def _v3_minimal_cfg(tmp_path: Path):
         "kind": "Agent",
         "spec": {
             "runtime": "apptainer",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/home/agent/work",
             "apptainer": {"image": "x.sif", "binds": []},
             "claude": {"model": "sonnet"},
@@ -456,7 +456,7 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
 def _v3_yaml(tmp_path: Path, name: str, spec_extra: dict) -> Path:
     spec = {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": str(tmp_path / "wd"),
         "apptainer": {"image": "x.sif", "binds": []},
         "health": {"enabled": True, "interval": 60},
@@ -672,7 +672,7 @@ def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> N
         "metadata": {"labels": {"sac-builtin": "off"}},
         "spec": {
             "runtime": "apptainer",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": str(tmp_path / "wd"),
             "apptainer": {"image": "x.sif", "binds": []},
             "claude": {"model": "sonnet"},
@@ -753,3 +753,49 @@ def test_load_config_provider_threads_through_when_declared_anthropic(
     cfg = load_config(p)
     # Assert
     assert cfg.provider == "anthropic"
+
+
+# ---------------------------------------------------------------------------
+# Singleton placement — ${HOSTNAME} resolution + the host: local ban
+# (operator directive 2026-07-10, card sac-host-field-transparent-remote-routing).
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_resolves_hostname_placeholder_in_singleton_host(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — both env forms set so the override never conflicts with a
+    # pre-set SAC_HOSTNAME in the runner environment.
+    env_save_restore.set("SAC_HOSTNAME", "resolved-box")
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "resolved-box")
+    p = _v3_yaml(tmp_path, "hostname-token", {"host": "${HOSTNAME}"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.hosts_spec.host == "resolved-box"
+
+
+def test_load_config_keeps_concrete_singleton_host_verbatim(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a concrete resolved hostname must pass through untouched.
+    p = _v3_yaml(tmp_path, "concrete-host", {"host": "spartan-gpgpu106"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.hosts_spec.host == "spartan-gpgpu106"
+
+
+def test_load_config_rejects_banned_local_host_at_load_time(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the ban gates EVERY load path, not just explicit validation.
+    p = _v3_yaml(tmp_path, "banned-local", {"host": "local"})
+
+    # Act
+    def _do() -> None:
+        load_config(p)
+
+    # Assert
+    with pytest.raises(ValueError, match="BANNED"):
+        _do()

@@ -90,7 +90,7 @@ def _write_spec(home: Path, name: str, workdir: str = "/tmp") -> Path:
         "kind": "Agent",
         "spec": {
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": workdir,
             "apptainer": {"image": "/x.sif", "binds": []},
             "claude": {"model": "claude-sonnet-4-5"},

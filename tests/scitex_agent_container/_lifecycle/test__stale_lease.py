@@ -374,7 +374,7 @@ def _write_zombie_spec(tmp_path: Path) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {tmp_path / 'work'}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"

@@ -167,7 +167,7 @@ metadata:
     role: project-maintainer
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: /x.sif
@@ -190,7 +190,7 @@ metadata:
     project: cohort
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: /x.sif
@@ -213,7 +213,7 @@ metadata:
     role: lead
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: /x.sif
@@ -237,7 +237,7 @@ metadata:
     project: x
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: /x.sif
