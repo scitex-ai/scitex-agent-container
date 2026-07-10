@@ -82,8 +82,13 @@ def _ensure_audit_logger() -> None:
     logger._sac_audit_configured = True  # type: ignore[attr-defined]
 
 #: The closed set of rotation events. See module docstring / task spec.
+#: ``reactive-rotate`` (task #13, op-2026-06-12-13) is the REACTIVE
+#: sibling of ``auto-rotate``: a live 429/403/textual/auth signal —
+#: classified via ``_account.rate_limit_classifier`` — forced the
+#: rotation, as opposed to ``auto-rotate``'s periodic threshold poll.
+#: See ``_account.rotate_account.ROTATE_EVENT``.
 _KNOWN_EVENTS = frozenset(
-    {"refresh", "switch", "auto-rotate", "save", "sync-live"}
+    {"refresh", "switch", "auto-rotate", "reactive-rotate", "save", "sync-live"}
 )
 
 
