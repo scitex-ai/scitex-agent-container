@@ -55,6 +55,30 @@ def _status_via_host_listen(name: str) -> None:
     sys.exit(outcome.exit_code)
 
 
+def _encode_safe_cell(value: object, encoding: str) -> str:
+    """Stringify ``value`` for a rich table cell, coerced to round-trip
+    through ``encoding``.
+
+    ``agent_status()`` surfaces free-form runtime content verbatim
+    (``extensions``, tmux ``pane_text``, ``CLAUDE.md`` snippets, tool-input
+    previews, ...) that can carry non-ASCII characters -- including the
+    Claude Code TUI's own prompt glyph, which shows up in almost every
+    live agent's captured pane text. When the process's stdout encoding
+    is not UTF-8 (locale-stripped containers, cron, some SSH sessions --
+    exactly this project's own apptainer SIF deployments), rendering that
+    text raises ``UnicodeEncodeError`` partway through ``console.print``.
+    Replacing unencodable characters here -- before the cell is ever
+    added to the table -- prevents the crash instead of masking it with
+    a broad try/except around the print call.
+    """
+    text = str(value)
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(encoding, errors="replace").decode(encoding)
+    return text
+
+
 def _format_claude_account_block(meta: dict) -> list[str]:
     """Render the ``Claude Code account`` section as a list of text lines.
 
@@ -327,11 +351,17 @@ def status(
 
         table = Table(title=f"Agent: {name}")
         table.add_column("Field", style="bold")
-        table.add_column("Value")
+        # overflow="fold" (not the default "ellipsis"): a too-wide cell
+        # (e.g. a long config path) is hard-wrapped instead of truncated
+        # with Rich's own "…" marker, which is itself non-ASCII and would
+        # defeat the encode-safety below.
+        table.add_column("Value", overflow="fold")
+        cell_encoding = getattr(console.file, "encoding", None) or "utf-8"
         for key, value in info.items():
             style = "green" if key == "status" and value == "running" else ""
             style = "red" if key == "status" and value == "stopped" else style
-            table.add_row(key, str(value), style=style)
+            cell = _encode_safe_cell(value, cell_encoding)
+            table.add_row(key, cell, style=style)
         console.print(table)
     else:
         # `agents status` only shows agents now. Claude-account info
