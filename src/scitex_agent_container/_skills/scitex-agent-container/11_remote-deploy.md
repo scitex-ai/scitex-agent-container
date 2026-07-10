@@ -40,13 +40,16 @@ time.
 
 ## How `spec.host` resolves — concrete hostname → local or remote
 
-`spec.host` is a CONCRETE hostname; `sac agents start` resolves *where it is*:
+`spec.host` is a CONCRETE hostname (`host: local`/`localhost` are BANNED at
+validation — operator directive 2026-07-10; write `hostname -s` output, a
+peer name, or `${HOSTNAME}` which resolves at load time). The lifecycle
+verbs resolve *where it is*:
 
-| `spec.host` | Launch path |
+| `spec.host` | Route |
 |---|---|
-| `local` / absent, or this machine's canonical name / alias | local `agent_start` (identical to `host: local`) |
-| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch (`_dispatch_remote_start`) |
-| unregistered / typo | never ssh; defers to the liveness-gated singleton-skip |
+| empty/absent, `${HOSTNAME}`, or this machine's canonical name / alias | local `agent_start` |
+| a `peers:` key not this machine (incl. `spartan-*` globs) | ssh dispatch (`_dispatch_remote_start`; stop/restart fall back to the spec pin when no instances row exists — `_host_routing`) |
+| unregistered / typo | FAIL LOUD with the registered-peer list (`sac host list`); never ssh. `--no-redispatch` forces a local start; a fallback-chain tail naming this machine still runs local |
 
 Identity is `config.yaml::host:` (canonical + aliases); peers are
 `config.yaml::peers:` (`ssh:` may be a `~/.ssh/config` alias). The local check

@@ -88,9 +88,11 @@ kind: Agent
 
 spec:
   runtime: apptainer
-  # Placement: `local` = the invoking host (edit to a peer name to pin it
-  # elsewhere, or use `hosts:` for one instance per host).
-  host: local
+  # Placement: the RESOLVED hostname of the machine this agent runs on
+  # (filled with the creating host at render time; `host: local` is
+  # banned). Edit to a `sac host list` peer name to pin it elsewhere,
+  # or use `hosts:` for one instance per host.
+  host: {host}
   workdir: ~/proj/{name}
 
   apptainer:
@@ -148,7 +150,8 @@ metadata:
 
 spec:
   runtime: tui
-  host: local
+  # RESOLVED placement (creating host at render time; `local` is banned).
+  host: {host}
 
   # The in-container --pwd. The repo is bound at this SAME absolute path
   # below, so host and container agree (editable install, git, tooling).
@@ -478,9 +481,15 @@ def create(
     # ``{home}`` is filled from the operator's home so the full template's
     # whole-home bind + workdir are ABSOLUTE (apptainer bind targets can't
     # be ``~``/``$VAR``) yet still operator-agnostic — mirrors sac's own
-    # "full host reach" hint (`- {home}:{home}:rw`). The minimal template
-    # has no ``{home}`` token; the surplus kwarg is harmless.
-    body = template.format(name=name, home=str(Path.home()))
+    # "full host reach" hint (`- {home}:{home}:rw`). ``{host}`` is the
+    # creating machine's RESOLVED hostname — created specs carry concrete
+    # placement (``host: local`` is banned; operator directive 2026-07-10).
+    # Surplus kwargs for tokens a template lacks are harmless.
+    from ..config._host import resolve_hostname
+
+    body = template.format(
+        name=name, home=str(Path.home()), host=resolve_hostname()
+    )
 
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(body)

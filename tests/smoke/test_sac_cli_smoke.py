@@ -141,7 +141,7 @@ _MINIMAL_V3_SPEC = """apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif

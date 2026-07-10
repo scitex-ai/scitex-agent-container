@@ -346,9 +346,17 @@ spec:
   # ----------------------------------------------------------------------
   # host vs hosts — REQUIRED, mutually exclusive (no hidden 'local'
   # default; operator directive 2026-06-23). Declare exactly one.
+  # Placement carries a RESOLVED hostname (`host: local`/`localhost` are
+  # BANNED; operator directive 2026-07-10): write this machine's
+  # `hostname -s` (e.g. `host: ywata-note-win`) or a `sac host list` peer
+  # name — lifecycle verbs (start/stop/restart) then route to that host
+  # transparently over the host registry's ssh rails. ${HOSTNAME} resolves
+  # to the loading machine at load time (portable example/fixture specs).
   # ----------------------------------------------------------------------
-  host: local                     # the invoking host (explicit local singleton)
-  # host: gpu-box                 # pin to a single named peer
+  host: ${HOSTNAME}               # this machine, resolved at load time
+  # host: gpu-box                 # pin to a single peer (ssh-dispatched)
+  # host: spartan-gpgpu106        # glob peer (spartan-*) — rides the
+  #                               # via: [spartan] login-node ProxyJump
   # hosts: [laptop, gpu-box, nas] # multi-instance, one per peer
   #                               # — agent name becomes <name>@<host>
 

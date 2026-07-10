@@ -816,11 +816,58 @@ class TestTryDispatchClassification:
         # Assert
         assert out is False and _ssh_invocations(shim_bin) == []
 
-    def test_unknown_host_falls_through_to_local_returning_false(self, capsys):
+    def test_unknown_host_raises_naming_the_registered_peers(self, capsys):
         # Arrange — host is a typo: neither this machine nor a peer key. It
-        # must NOT dispatch; try_dispatch returns False so the caller runs the
-        # unchanged singleton-skip logic (skip-if-live-elsewhere, else local).
+        # must FAIL LOUD with the registered-peer list (operator directive
+        # 2026-07-10), never silently start on the wrong machine.
         cfg = _cfg_host("alpha", "spartn-gpgpu")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+
+        # Act
+        def _do() -> None:
+            try_dispatch(
+                cfg,
+                "ywata-note-win",
+                peers,
+                dry_run=False,
+                force=False,
+                local_names={"ywata-note-win"},
+            )
+
+        # Assert
+        with pytest.raises(RuntimeError, match="peer-host"):
+            _do()
+
+    def test_unknown_host_never_dispatches_ssh(self, shim_bin, capsys):
+        # Arrange — an ssh shim is present; the unknown path must not touch
+        # it (negative-safety: an unknown host raises BEFORE any ssh; the
+        # raise itself is asserted by the sibling test and only absorbed
+        # here so this test's single assert stays the ssh log).
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", "spartn-gpgpu")
+        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
+        # Act
+        try:
+            try_dispatch(
+                cfg,
+                "ywata-note-win",
+                peers,
+                dry_run=False,
+                force=False,
+                local_names={"ywata-note-win"},
+            )
+        except RuntimeError:
+            pass
+        # Assert
+        assert _ssh_invocations(shim_bin) == []
+
+    def test_unknown_head_with_local_chain_tail_stays_local(self, shim_bin, capsys):
+        # Arrange — fallback CHAIN whose tail names THIS machine: the
+        # documented fallback-hosts semantics (singleton-skip accepts the
+        # current host anywhere in the chain) must keep the local path
+        # instead of failing loud on the dead head.
+        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
+        cfg = _cfg_host("alpha", ["dead-host", "ywata-note-win"])
         peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
         # Act
         out = try_dispatch(
@@ -833,24 +880,6 @@ class TestTryDispatchClassification:
         )
         # Assert
         assert out is False
-
-    def test_unknown_host_never_dispatches_ssh(self, shim_bin, capsys):
-        # Arrange — an ssh shim is present; the unknown path must not touch it
-        # (negative-safety: an unknown host is never routed to ssh).
-        _install_ssh_shim(shim_bin, stdout=_OK_JSON, exit=0)
-        cfg = _cfg_host("alpha", "spartn-gpgpu")
-        peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
-        # Act
-        try_dispatch(
-            cfg,
-            "ywata-note-win",
-            peers,
-            dry_run=False,
-            force=False,
-            local_names={"ywata-note-win"},
-        )
-        # Assert
-        assert _ssh_invocations(shim_bin) == []
 
     def test_known_peer_dispatches_remote_with_expected_ssh_argv(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys

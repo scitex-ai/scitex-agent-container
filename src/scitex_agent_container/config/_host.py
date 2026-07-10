@@ -125,6 +125,24 @@ def _substitute_string(value: str, hostname: str) -> str:
     return _PLACEHOLDER_RE.sub(_repl, value)
 
 
+def contains_hostname_placeholder(value: object) -> bool:
+    """True when a placement value (str or list of str) carries a hostname token.
+
+    Used by the loader to decide whether a SINGLETON ``spec.host`` needs
+    ``${HOSTNAME}`` / ``${SCITEX_AGENT_CONTAINER_HOSTNAME}`` resolution —
+    the portable "this machine, stated concretely at load time" spelling
+    that replaced the banned ``host: local`` (operator directive
+    2026-07-10). Non-string/list values return False.
+    """
+    if isinstance(value, str):
+        return bool(_PLACEHOLDER_RE.search(value))
+    if isinstance(value, list):
+        return any(
+            isinstance(item, str) and _PLACEHOLDER_RE.search(item) for item in value
+        )
+    return False
+
+
 def substitute_hostnames(obj: Any, hostname: str | None = None) -> Any:
     """Recursively walk a dict/list/str and substitute hostname placeholders.
 

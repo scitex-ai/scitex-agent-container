@@ -116,7 +116,7 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
-  host: local
+  host: ${{HOSTNAME}}
   workdir: /tmp/agt-work
   apptainer:
     image: /x.sif
@@ -499,7 +499,7 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
-  host: local
+  host: ${HOSTNAME}
   apptainer:
     image: /x.sif
     binds: []
@@ -525,7 +525,7 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
-  host: local
+  host: ${HOSTNAME}
   apptainer:
     image: /x.sif
     binds: []
@@ -916,7 +916,7 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/tester/proj/figrecipe
   apptainer:
     image: /x.sif

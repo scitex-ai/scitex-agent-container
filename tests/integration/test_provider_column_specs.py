@@ -47,7 +47,7 @@ metadata:
     sac-builtin: "off"
 spec:
 {provider_line}  runtime: claude-agent-sdk
-  host: local
+  host: ${{HOSTNAME}}
   workdir: /tmp/column-wd
   apptainer:
     image: /x.sif

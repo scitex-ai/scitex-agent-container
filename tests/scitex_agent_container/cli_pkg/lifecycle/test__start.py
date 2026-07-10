@@ -380,15 +380,15 @@ class TestSingletonHostSkip:
         # Assert
         assert '"status": "skipped"' in result.output
 
-    def test_single_target_singleton_dead_binding_releases_and_starts_local(
+    def test_single_target_dead_binding_on_unknown_host_fails_loud(
         self, tmp_path, env_save_restore
     ):
         # Arrange — singleton pinned to nowhere-host, NO live row recorded.
-        # The new liveness gate must release the stale binding and fall
-        # through to a real start path. We can't run apptainer in tests,
-        # so we just verify the skip JSON was NOT emitted (i.e. the gate
-        # did NOT short-circuit). Real start fails downstream, that's fine
-        # — what we're pinning is that the skip path didn't fire.
+        # The liveness gate releases the stale skip; the routing layer then
+        # FAILS LOUD on the unregistered pin (operator directive
+        # 2026-07-10) instead of the historical silent wrong-host local
+        # start, naming --no-redispatch as the deliberate force-local
+        # escape (the bm025 recovery, now explicit).
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
@@ -405,9 +405,8 @@ class TestSingletonHostSkip:
         runner = CliRunner()
         # Act
         result = runner.invoke(start, [str(yaml_path), "--json"])
-        # Assert — no "skipped" status; the start path proceeded past
-        # the skip gate (whether it then errored is independent).
-        assert '"status": "skipped"' not in result.output
+        # Assert — the unregistered-host error names the force-local escape.
+        assert "--no-redispatch" in result.output
 
     def test_bulk_directory_singleton_skip_renders_skip_line(
         self, tmp_path, env_save_restore
@@ -759,7 +758,7 @@ def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
         "metadata: {}\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"

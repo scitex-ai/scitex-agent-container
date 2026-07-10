@@ -66,7 +66,7 @@ def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
 kind: Agent
 spec:
   runtime: apptainer
-  host: local
+  host: ${{HOSTNAME}}
   workdir: {tmp_path / "workdir"}
   apptainer:
     image: /x.sif
