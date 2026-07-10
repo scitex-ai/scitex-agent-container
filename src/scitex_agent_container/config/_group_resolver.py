@@ -50,6 +50,7 @@ __all__ = [
     "MESH_GROUPS",
     "PRIVILEGED_GROUP",
     "RESEARCHER_GROUP",
+    "all_named_groups",
     "group_from_labels",
     "groups_mesh",
     "is_developer_group",
@@ -270,3 +271,49 @@ def groups_mesh(group_a: str | None, group_b: str | None) -> bool:
     send then falls through to the explicit-grant ACL.
     """
     return is_mesh_group(group_a) and is_mesh_group(group_b)
+
+
+def all_named_groups(labels: dict | None) -> frozenset[str]:
+    """Return EVERY named group ``labels`` lists — MULTI-value.
+
+    Deliberately the opposite cut from :func:`group_from_labels` /
+    :func:`resolve_group`, which reduce an agent to ONE effective group
+    (first non-empty element wins) because the a2a ACL mesh needs a
+    single unambiguous permission bucket per agent. Bulk LIFECYCLE
+    selection (``sac agents start/stop/restart --group NAME``) asks a
+    different question — "does this agent's spec name NAME anywhere"
+    — where an agent legitimately belonging to several groups at once
+    (e.g. ``groups: [generalist, privileged, developer, researcher]``)
+    should be reachable by ANY of them, not just the ACL-effective
+    first. This function is the SSOT for that multi-value read; the ACL
+    functions above are UNCHANGED and remain the SSOT for permission
+    resolution — the two must stay free to answer different questions
+    from the same field.
+
+    Honours both authored forms: the singular ``labels["group"]``
+    string AND every non-empty element of the plural ``labels["groups"]``
+    list (or, defensively, a bare string). Whitespace-trimmed; a
+    missing/``None``/malformed labels dict yields an empty set rather
+    than raising.
+    """
+    if not labels:
+        return frozenset()
+    out: set[str] = set()
+    singular = labels.get("group")
+    if singular is not None:
+        trimmed = str(singular).strip()
+        if trimmed:
+            out.add(trimmed)
+    plural = labels.get("groups")
+    if isinstance(plural, (list, tuple)):
+        for item in plural:
+            if item is None:
+                continue
+            trimmed = str(item).strip()
+            if trimmed:
+                out.add(trimmed)
+    elif isinstance(plural, str):
+        trimmed = plural.strip()
+        if trimmed:
+            out.add(trimmed)
+    return frozenset(out)

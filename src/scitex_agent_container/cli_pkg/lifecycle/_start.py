@@ -16,6 +16,7 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
+from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
 
 
@@ -24,9 +25,10 @@ from ._start_preflight_gate import make_preflight_runner
     "targets",
     type=str,
     nargs=-1,
-    required=True,
+    required=False,  # --group NAME alone is valid (apply_group_targets below)
     shell_complete=agent_name_complete,
 )
+@group_option
 @click.option(
     "--no-preflight",
     is_flag=True,
@@ -133,26 +135,22 @@ from ._start_preflight_gate import make_preflight_runner
     "foreground",
     is_flag=True,
     default=False,
-    help=(
-        "Run the agent attached to this terminal (no detach) and stream "
-        "assistant output to stdout. Only meaningful for the "
-        "claude-session runtime; ignored elsewhere. Single-target only — "
-        "passing --foreground with multiple targets or a directory is an "
-        "error."
-    ),
+    help="Run the agent attached to this terminal (no detach) and stream "
+    "assistant output to stdout. Only meaningful for the "
+    "claude-session runtime; ignored elsewhere. Single-target only — "
+    "passing --foreground with multiple targets or a directory is an "
+    "error.",
 )
 @click.option(
     "--one-shot",
     "one_shot",
     is_flag=True,
     default=False,
-    help=(
-        "Run the agent for ONE SDK turn (its startup_prompts), stream the "
-        "reply, then exit. Requires spec.startup_prompts to be non-empty. "
-        "Without this flag, the runner stays attached after the first "
-        "turn so subsequent ``sac agents send`` calls reach the same "
-        "session."
-    ),
+    help="Run the agent for ONE SDK turn (its startup_prompts), stream the "
+    "reply, then exit. Requires spec.startup_prompts to be non-empty. "
+    "Without this flag, the runner stays attached after the first "
+    "turn so subsequent ``sac agents send`` calls reach the same "
+    "session.",
 )
 @click.option(
     "--params-file",
@@ -242,6 +240,7 @@ from ._start_preflight_gate import make_preflight_runner
 )
 def start(
     targets: tuple[str, ...],
+    groups: tuple[str, ...],
     no_preflight: bool,
     force: bool,
     resume_id: str | None,
@@ -302,6 +301,7 @@ def start(
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
 
+    targets = apply_group_targets(targets, groups)  # --group -> TARGETS merge
     # Session-continuity shorthand flags (--continue/-c, --fresh) fold into
     # session_mode. Validation + precedence live in ``_start_params`` to
     # keep this click entry under the per-file line cap.
