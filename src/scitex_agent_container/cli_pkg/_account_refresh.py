@@ -380,6 +380,16 @@ def account_refresh(
             else:
                 click.echo(f"  {r['name']:20s}  FAILED — {r['error']}", err=True)
 
+    # LOUD failure alerting (INCIDENT 2026-07-10): a failed refresh —
+    # most importantly a rejected/unreachable refresh grant — pushes an
+    # immediate typed ``blocker`` to the lead via the existing ADR-0013
+    # rail, deduped per account until that account refreshes OK again.
+    # Runs for EVERY invocation shape (timer --all, manual single name).
+    # Never raises; alert lines go to stderr under the results table.
+    from .._account.refresh_alarm import alert_failed_refreshes
+
+    alert_failed_refreshes(results)
+
     # Exit non-zero when EVERY *attempted* account failed (skipped-fresh
     # accounts don't count), OR when an active-login sync failed loud.
     # --all with mixed results is still a useful partial success.

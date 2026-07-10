@@ -62,10 +62,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-from .._account.creds_sync import _read_oauth_expiry_seconds
+from .._account.creds_sync import (
+    _oauth_expiry_to_seconds,
+    _read_oauth_expiry_raw,
+)
 from .._state.account_store import _store_path
 from ._quota_rank import (
     BLOCKED_5H_PCT,
@@ -114,11 +118,22 @@ class AccountHealth:
     hours_remaining
         Signed hours to expiry (positive = remaining, negative =
         past) for VALID/EXPIRED; ``None`` for ABSENT.
+    snapshot_path
+        The EXACT file this probe read (or looked for). INCIDENT
+        2026-07-10: the "EXPIRED (-5.8h)" boot error hid which file it
+        had evaluated, so a snapshot repaired minutes later looked like
+        a false read and cost the investigation hours. Every health
+        record now carries its evidence.
+    expires_at_raw
+        The literal ``claudeAiOauth.expiresAt`` value found in the file
+        (claude-code writes unix milliseconds); ``None`` for ABSENT.
     """
 
     name: str
     state: str
     hours_remaining: float | None
+    snapshot_path: str | None = None
+    expires_at_raw: float | None = None
 
     @property
     def is_healthy(self) -> bool:
@@ -147,12 +162,28 @@ def account_health(
 
     store = _store_path(store_dir, _home)
     snapshot = store / name / ".credentials.json"
-    expiry = _read_oauth_expiry_seconds(snapshot) if snapshot.is_file() else None
-    if expiry is None:
-        return AccountHealth(name=name, state=_ABSENT, hours_remaining=None)
+    # ONE read supplies BOTH the raw evidence value and the normalised
+    # expiry, so the record can never quote a different file state than
+    # the one it judged (a mid-probe rewrite yields a coherent record).
+    raw = _read_oauth_expiry_raw(snapshot) if snapshot.is_file() else None
+    if raw is None:
+        return AccountHealth(
+            name=name,
+            state=_ABSENT,
+            hours_remaining=None,
+            snapshot_path=str(snapshot),
+            expires_at_raw=None,
+        )
+    expiry = _oauth_expiry_to_seconds(raw)
     hours = (expiry - now_ts) / 3600.0
     state = _VALID if expiry > now_ts else _EXPIRED
-    return AccountHealth(name=name, state=state, hours_remaining=hours)
+    return AccountHealth(
+        name=name,
+        state=state,
+        hours_remaining=hours,
+        snapshot_path=str(snapshot),
+        expires_at_raw=raw,
+    )
 
 
 def _discover_candidates(
@@ -186,14 +217,36 @@ def _discover_candidates(
     return out
 
 
+def _iso_utc(seconds: float) -> str:
+    """Render a unix-seconds timestamp as a compact ISO-8601 UTC string."""
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat(
+        timespec="seconds"
+    )
+
+
 def _format_states(healths: list[AccountHealth]) -> str:
-    """Render an operator-facing "name=STATE (+/-Xh)" list for the error."""
+    """Render the operator-facing per-account evidence list for the error.
+
+    Self-diagnosing (INCIDENT 2026-07-10): each entry names the file
+    that was read, the RAW ``expiresAt`` value found in it, and its UTC
+    rendering — so a "this account was fine minutes later!" report can
+    be adjudicated from the error line alone (the snapshot may simply
+    have been rewritten between the probe and the re-check).
+    """
     parts: list[str] = []
     for h in healths:
-        if h.hours_remaining is None:
-            parts.append(f"{h.name}={h.state}")
+        if h.hours_remaining is None or h.expires_at_raw is None:
+            parts.append(
+                f"{h.name}={h.state} (no numeric claudeAiOauth.expiresAt; "
+                f"file={h.snapshot_path})"
+            )
         else:
-            parts.append(f"{h.name}={h.state} ({h.hours_remaining:+.1f}h)")
+            expiry_s = _oauth_expiry_to_seconds(h.expires_at_raw)
+            parts.append(
+                f"{h.name}={h.state} ({h.hours_remaining:+.1f}h; "
+                f"expiresAt={h.expires_at_raw:.0f} = {_iso_utc(expiry_s)}; "
+                f"file={h.snapshot_path})"
+            )
     return ", ".join(parts) if parts else "(no candidates)"
 
 
@@ -322,10 +375,15 @@ def pick_healthy_account(
     fresh = [h for h in healths if h.is_healthy]
 
     # 3. Nothing token-fresh — fail loud BEFORE any quota logic (a stale
-    #    snapshot must never boot, regardless of headroom).
+    #    snapshot must never boot, regardless of headroom). The message
+    #    pins the probe time and quotes each snapshot's path + raw
+    #    expiresAt (INCIDENT 2026-07-10: without this evidence a snapshot
+    #    repaired minutes after the probe looked like a false-expired
+    #    read and cost the investigation hours).
     if not fresh:
+        probe_ts = now if now is not None else time.time()
         raise NoHealthyAccountError(
-            "no healthy stored account: "
+            f"no healthy stored account (probed at {_iso_utc(probe_ts)}): "
             f"{_format_states(healths)}. Fix: `claude /login` to one of "
             "them, then `sac accounts sync-live`, then restart the agent."
         )

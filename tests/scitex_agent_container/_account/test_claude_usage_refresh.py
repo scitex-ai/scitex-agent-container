@@ -146,17 +146,20 @@ def test_refresh_account_credentials_uses_default_client_id_when_missing(
     assert result["success"] is True
 
 
-def test_refresh_account_credentials_returns_error_when_endpoint_rejects(
+def test_refresh_account_credentials_reports_unusable_response_body(
     tmp_path: Path,
 ) -> None:
     # Arrange — refresh endpoint returns junk (no access_token field).
+    # INCIDENT 2026-07-10: this used to be labelled "refresh endpoint
+    # rejected the refresh_token — needs `claude /login`", conflating a
+    # server-side response problem with a dead token.
     creds = tmp_path / "acct" / ".credentials.json"
     _seed_creds(creds)
     opener = _opener_returning({"not_access_token": "x"})
     # Act
     result = cu.refresh_account_credentials(creds, opener=opener)
     # Assert
-    assert "refresh endpoint rejected" in (result["error"] or "")
+    assert "without an access_token" in (result["error"] or "")
 
 
 def test_refresh_account_credentials_returns_error_when_creds_file_missing(
@@ -170,18 +173,20 @@ def test_refresh_account_credentials_returns_error_when_creds_file_missing(
     assert "not found" in (result["error"] or "")
 
 
-def test_refresh_account_credentials_returns_error_when_endpoint_network_error(
+def test_refresh_account_credentials_classifies_network_error_as_transport(
     tmp_path: Path,
 ) -> None:
     # Arrange — opener raises OSError to simulate a network failure.
+    # INCIDENT 2026-07-10 regression lock: a transport failure must NEVER
+    # be labelled a token rejection (the old message told the operator to
+    # `claude /login` for a dead URL/network).
     creds = tmp_path / "acct" / ".credentials.json"
     _seed_creds(creds)
     opener = _opener_raising(OSError("boom"))
     # Act
     result = cu.refresh_account_credentials(creds, opener=opener)
-    # Assert — the inner refresh helper returns None on network error and the
-    # CLI helper reports endpoint rejection (no new token minted).
-    assert "refresh endpoint rejected" in (result["error"] or "")
+    # Assert — transport class, explicitly disclaiming a token problem.
+    assert "NOT a token problem" in (result["error"] or "")
 
 
 # ---------------------------------------------------------------------------
@@ -264,16 +269,17 @@ def _capturing_opener() -> tuple[dict, "callable"]:
     return state, opener
 
 
-def test_refresh_request_uses_console_anthropic_endpoint(tmp_path: Path) -> None:
-    # Arrange
+def test_refresh_request_uses_platform_claude_endpoint(tmp_path: Path) -> None:
+    # Arrange — INCIDENT 2026-07-10: the old console.anthropic.com host
+    # now 404s every refresh_token grant (endpoint MOVED); verified live
+    # 2026-07-11 that platform.claude.com answers the grant properly.
     creds = tmp_path / "acct" / ".credentials.json"
     _seed_creds(creds)
     state, opener = _capturing_opener()
     # Act
     cu.refresh_account_credentials(creds, opener=opener)
-    # Assert — claude.ai endpoint is Cloudflare-gated; the real endpoint
-    # lives on the Anthropic console.
-    assert state["url"] == "https://console.anthropic.com/v1/oauth/token"
+    # Assert — the moved endpoint, never the dead console host.
+    assert state["url"] == "https://platform.claude.com/v1/oauth/token"
 
 
 def test_refresh_request_sends_required_cloudflare_user_agent(

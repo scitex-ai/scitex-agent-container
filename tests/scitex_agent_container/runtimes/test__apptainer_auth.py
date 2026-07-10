@@ -131,8 +131,9 @@ def test_oauth_argv_binds_credentials_when_present(tmp_path: Path, home_redirect
     # Act
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
     # Assert — dir-bind at /tmp/sac-claude (NOT /tmp/sac-claude/.credentials.json),
-    # READ-ONLY (master-host single-refresher model: agents never refresh).
-    assert any(a == f"{creds.parent}:/tmp/sac-claude:ro" for a in argv)
+    # WRITABLE (shared-credential model, operator 2026-07-11: a rotation
+    # performed in-container must be recorded, not silently dropped).
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 def test_oauth_argv_does_not_emit_legacy_file_bind(tmp_path: Path, home_redirect: Path):

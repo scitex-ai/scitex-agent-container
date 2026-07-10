@@ -120,23 +120,25 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # CLAUDE_CONFIG_DIR points the SDK at this dir so it finds the
     # credentials file without needing $HOME pollution.
     #
-    # Mounted READ-ONLY (``:ro``) — master-host single-refresher model
-    # (operator 2026-07-08, credential-churn root-cause fix). The agent
-    # is a READ-ONLY CONSUMER of the credential: it NEVER refreshes or
-    # rotates the OAuth token. Previously this dir was bound ``:rw`` so
-    # the in-container Claude CLI could refresh the ``accessToken`` in
-    # place — but that made every running agent a refresher, and an
-    # agent refresh CONSUMES the single-use OAuth refresh_token: the
-    # instant an operator logged a fresh account in, a running agent ate
-    # its refresh_token (the "cred churn" disease). Now the host-side
-    # ``sac-accounts-refresh`` timer is the SOLE refresher; it rotates
-    # every account's snapshot on a fixed cadence, and the DIRECTORY
-    # bind (below) makes the timer's atomic-replace refreshes visible to
-    # the container on the next open — so a ``:ro`` agent still tracks
-    # the freshest token without ever writing one. The fail-loud expiry
-    # checks still apply: a ``:ro`` agent bound to an already-expired
-    # token cannot work, so an expired snapshot is an operator/timer
-    # problem to fix before launch, not something the agent can rescue.
+    # Mounted WRITABLE (``:rw``) — shared-credential model (operator
+    # 2026-07-11, reversing the 2026-07-08 ``:ro`` flip after INCIDENT
+    # 2026-07-10). A ``:ro`` bind cannot stop the in-container claude
+    # from POSTing a refresh — the server rotates and invalidates the
+    # old refresh_token chain regardless — it can only stop the rotation
+    # from being RECORDED, stranding the host snapshot on a dead
+    # refresh_token (worst of both worlds). A shared writable
+    # credentials file is the normal, supported Claude shape (several
+    # ``claude`` processes share one ``~/.claude/.credentials.json`` on
+    # any workstation): whoever refreshes writes the rotated pair back
+    # and every other consumer re-reads it. The host-side
+    # ``sac-accounts-refresh`` timer keeps refreshing on cadence with
+    # flock + atomic write (``_account.token_refresh``), and its
+    # ``refresh_account_credentials`` re-reads-and-retries once on
+    # ``invalid_grant`` so a concurrently-rotated token is recovered
+    # rather than declared dead. The fail-loud expiry checks still
+    # apply: an agent bound to an already-expired token cannot work, so
+    # an expired snapshot is an operator/timer problem to fix before
+    # launch, not something the agent can rescue.
     #
     # OAuth credentials bind shape: DIRECTORY bind, unconditionally
     # (operator task #11 + task #13).
@@ -145,7 +147,7 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # both rewritten by host-side atomic-replace paths —
     # ``_account.creds_sync._atomic_copy`` (sync-live + watch-live),
     # ``_state.account_store.switch_account``,
-    # ``_account.claude_usage._refresh_access_token_at`` — all using
+    # ``_account.token_refresh._refresh_access_token_at`` — all using
     # ``tmp + os.replace``. A single-file bind mount is on the file's
     # dentry/inode; an atomic-replace orphans that inode (the bind
     # surfaces as ``...credentials.json//deleted`` in
@@ -154,13 +156,12 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # collision-401 disease the snapshot model was meant to fix.
     # A DIRECTORY bind resolves child files by name through the
     # underlying filesystem on every open, so a host-side tmp+rename
-    # inside the dir is visible to the container immediately. Under the
-    # ``:ro`` single-refresher model this matters in ONE direction that
-    # counts: the host-side ``sac-accounts-refresh`` timer's atomic
-    # replace of ``.credentials.json`` is picked up by the container on
-    # the next open, so a read-only agent tracks the freshest token
-    # without a restart. The container no longer writes back (``:ro``),
-    # which is the whole point — no agent-side refresh, no churn.
+    # inside the dir is visible to the container immediately — the
+    # host-side ``sac-accounts-refresh`` timer's atomic replace of
+    # ``.credentials.json`` is picked up by the container on the next
+    # open, and (since the 2026-07-11 ``:rw`` restore) a rotation the
+    # container performs is likewise visible to the host and to every
+    # co-bound agent.
     #
     # PR #262 (task #11) made the PINNED branch dir-bind; this module
     # (task #13) makes the UNPINNED/host-live branch dir-bind too. The
@@ -219,11 +220,11 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
 
     argv += [
         "--bind",
-        # READ-ONLY: the agent consumes the credential but never
-        # refreshes it (master-host single-refresher model). See the
-        # "Mounted READ-ONLY" rationale above. The host-side timer is
-        # the sole refresher; the dir bind surfaces its refreshes.
-        f"{bind_src}:{bind_dest}:ro",
+        # WRITABLE: the in-container claude shares the credential file
+        # like any co-resident claude process — a rotation it performs
+        # is written back instead of silently invalidating the stored
+        # refresh_token (see the "Mounted WRITABLE" rationale above).
+        f"{bind_src}:{bind_dest}:rw",
         "--env",
         "CLAUDE_CONFIG_DIR=/tmp/sac-claude",
     ]
