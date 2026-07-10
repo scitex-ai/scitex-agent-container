@@ -715,3 +715,44 @@ def test_load_config_without_access_field_loads(tmp_path: Path) -> None:
     cfg = load_config(p)
     # Assert — loads cleanly; host access is whatever apptainer.binds declares.
     assert cfg.name == "acc-absent"
+
+
+# ---------------------------------------------------------------------------
+# spec.provider — agent SDK family selector (openai-compat-1 foundation).
+# TOP-LEVEL field, sibling of spec.runtime; distinct from the pre-existing
+# spec.claude.provider (vendor backend override — see the naming-collision
+# note in config._provider_types.AgentProvider).
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_provider_defaults_to_anthropic_when_omitted(
+    tmp_path: Path,
+) -> None:
+    # Arrange — no-op guarantee: every existing spec omits spec.provider.
+    p = _v3_yaml(tmp_path, "provider-default", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.provider == "anthropic"
+
+
+def test_load_config_provider_threads_through_when_declared_openai(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    p = _v3_yaml(tmp_path, "provider-openai", {"provider": "openai"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.provider == "openai"
+
+
+def test_load_config_provider_threads_through_when_declared_anthropic(
+    tmp_path: Path,
+) -> None:
+    # Arrange — explicit "anthropic" (spelled out, not relying on default).
+    p = _v3_yaml(tmp_path, "provider-explicit-anthropic", {"provider": "anthropic"})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert cfg.provider == "anthropic"
