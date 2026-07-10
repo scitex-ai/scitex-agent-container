@@ -1,11 +1,15 @@
 """Pluggable A2A ``tasks/send`` handlers for sac.
 
-Four built-ins:
+Five built-ins:
 
 * :func:`handle_echo` — canned reply, zero deps. The default.
 * :func:`handle_claude_session` — drives Claude via Anthropic's
   official ``claude-agent-sdk`` (structured streaming, no ``--print``).
   **Recommended** for new agents — survives ``--print`` deprecation.
+* :func:`handle_openai_session` — drives an OpenAI model via the
+  ``openai-agents`` SDK (``spec.provider: openai`` family; optional
+  ``[openai]`` extra). Stateful: turns share the agent's
+  ``SQLiteSession`` conversation state.
 * :func:`handle_claude_cli` — *(legacy)* runs ``claude --print`` with
   the user text and forwards stdout. Kept for back-compat; will be
   removed once ``claude --print`` itself is removed upstream. Migrate
@@ -29,6 +33,7 @@ from typing import Callable
 from scitex_agent_container._env import getenv as _sac_env
 
 CLAUDE_TIMEOUT_S = float(_sac_env("A2A_CLAUDE_TIMEOUT_S", "25"))
+OPENAI_TIMEOUT_S = float(_sac_env("A2A_OPENAI_TIMEOUT_S", "25"))
 EXEC_TIMEOUT_S = float(_sac_env("A2A_EXEC_TIMEOUT_S", "25"))
 
 # sac does NOT inject a default system prompt. The agent's persona +
@@ -205,6 +210,86 @@ def handle_claude_session(
     return "\n".join(chunks).strip() or "(empty response)"
 
 
+def handle_openai_session(agent_name: str, user_text: str) -> str:
+    """Drive an OpenAI model via the ``openai-agents`` SDK.
+
+    Same sync wire contract as :func:`handle_claude_session`
+    (``(name, text) -> str``), backed by
+    :class:`scitex_agent_container._runners.openai_session.OpenAISession`
+    (the concrete ``ProviderSession`` — see openai-compat-2). Unlike the
+    Claude handler this one is STATEFUL: the session persists turns in
+    the agent's ``SQLiteSession`` db (see
+    ``runtimes._openai_sdk_common.resolve_state_db_path``), so repeated
+    A2A sends continue one conversation.
+
+    Env knobs (mirroring the Claude handler's):
+
+    * ``SAC_A2A_OPENAI_MODEL`` — model id (default: ``SAC_OPENAI_MODEL``
+      → the SDK default).
+    * ``SAC_A2A_OPENAI_SYSTEM`` — optional system prompt override.
+    * ``SAC_A2A_OPENAI_TIMEOUT_S`` — per-call timeout (default 25).
+
+    Auth: ``SAC_OPENAI_API_KEY`` (preferred) → ``OPENAI_API_KEY`` — see
+    ``runtimes._openai_sdk_common.provision_openai_auth`` for the
+    contract (and its documented asymmetry with the Anthropic path).
+    """
+    import asyncio
+
+    try:
+        import agents  # noqa: F401 — availability probe only
+    except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
+        raise HandlerError(
+            "openai_session handler requires `openai-agents` "
+            "(`pip install scitex-agent-container[openai]`)."
+        ) from exc
+
+    from scitex_agent_container._runners._provider_session import Message
+    from scitex_agent_container._runners.openai_session import (
+        OpenAISession,
+        OpenAISessionError,
+    )
+    from scitex_agent_container.runtimes._openai_sdk_common import (
+        OpenAISDKCommonError,
+    )
+
+    system = _sac_env("A2A_OPENAI_SYSTEM", "").strip() or None
+    model = _sac_env("A2A_OPENAI_MODEL") or None
+
+    async def _drive() -> str:
+        session = OpenAISession(agent_name, model=model, instructions=system)
+        await session.start()
+        try:
+            reply = ""
+            deltas: list[str] = []
+            message = Message(role="user", content=user_text)
+            async for event in session.send(message):
+                if event.kind == "text_delta":
+                    deltas.append(event.text)
+                elif event.kind == "result" and event.result is not None:
+                    reply = event.result.text
+                elif event.kind == "error":
+                    raise HandlerError(f"openai_session failed: {event.error}")
+            return reply or "".join(deltas)
+        finally:
+            await session.close()
+
+    try:
+        return (
+            asyncio.run(asyncio.wait_for(_drive(), timeout=OPENAI_TIMEOUT_S)).strip()
+            or "(empty response)"
+        )
+    except HandlerError:
+        raise
+    except (OpenAISessionError, OpenAISDKCommonError) as exc:
+        raise HandlerError(str(exc)) from exc
+    except asyncio.TimeoutError as exc:
+        raise HandlerError(
+            f"openai_session timeout after {OPENAI_TIMEOUT_S:.0f}s"
+        ) from exc
+    except Exception as exc:  # stx-allow: fallback (reason: SDK surface is broad)
+        raise HandlerError(f"openai_session failed: {exc}") from exc
+
+
 def handle_exec(agent_name: str, user_text: str) -> str:
     """Run ``$SAC_A2A_EXEC_COMMAND``, piping user_text on stdin."""
     raw = _sac_env("A2A_EXEC_COMMAND", "")
@@ -247,6 +332,7 @@ def handle_exec(agent_name: str, user_text: str) -> str:
 HANDLERS: dict[str, Callable[[str, str], str]] = {
     "echo": handle_echo,
     "claude_session": handle_claude_session,  # recommended (SDK-backed)
+    "openai_session": handle_openai_session,  # openai-agents SDK ([openai] extra)
     "claude_cli": handle_claude_cli,  # legacy (--print, deprecating upstream)
     "exec": handle_exec,
 }
