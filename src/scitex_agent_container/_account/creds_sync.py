@@ -106,14 +106,15 @@ def slugify_email(email: str) -> str:
     return email.strip().lower().replace("@", "-").replace(".", "-")
 
 
-def _read_oauth_expiry_seconds(path: Path) -> float | None:
-    """Return the OAuth ``expiresAt`` of ``path`` in unix seconds, or None.
+def _read_oauth_expiry_raw(path: Path) -> float | None:
+    """Return the RAW ``claudeAiOauth.expiresAt`` value stored in ``path``.
 
-    ``None`` when the file is missing, unparseable, or lacks a numeric
-    ``claudeAiOauth.expiresAt``. claude-code writes ``expiresAt`` as a
-    unix-MILLISECOND integer; any value above ``1e12`` is treated as
-    milliseconds and divided by 1000 (matching ``_preflight_creds``).
-    Never raises.
+    The value EXACTLY as found on disk (claude-code writes unix
+    MILLISECONDS) — no normalisation, so diagnostics can quote the
+    file's literal content (INCIDENT 2026-07-10: the boot picker's
+    "EXPIRED (-5.8h)" hid which file and which raw value it read, which
+    cost the investigation hours). ``None`` when the file is missing,
+    unparseable, or the field is not numeric. Never raises.
     """
     # stx-allow: fallback (reason: store-snapshot freshness probe is
     # best-effort; a missing/corrupt snapshot must read as "no expiry"
@@ -130,8 +131,30 @@ def _read_oauth_expiry_seconds(path: Path) -> float | None:
     raw = oauth.get("expiresAt")
     if not isinstance(raw, (int, float)) or isinstance(raw, bool):
         return None
-    val = float(raw)
-    return val / 1000.0 if val > 1e12 else val
+    return float(raw)
+
+
+def _oauth_expiry_to_seconds(raw: float) -> float:
+    """Normalise a raw ``expiresAt`` to unix SECONDS.
+
+    Any value above ``1e12`` is treated as milliseconds and divided by
+    1000 (matching ``_preflight_creds``). Single normalisation rule for
+    every freshness reader in the codebase.
+    """
+    return raw / 1000.0 if raw > 1e12 else raw
+
+
+def _read_oauth_expiry_seconds(path: Path) -> float | None:
+    """Return the OAuth ``expiresAt`` of ``path`` in unix seconds, or None.
+
+    ``None`` when the file is missing, unparseable, or lacks a numeric
+    ``claudeAiOauth.expiresAt``. One parse (:func:`_read_oauth_expiry_raw`)
+    + one normalisation (:func:`_oauth_expiry_to_seconds`). Never raises.
+    """
+    raw = _read_oauth_expiry_raw(path)
+    if raw is None:
+        return None
+    return _oauth_expiry_to_seconds(raw)
 
 
 def _read_access_token_fingerprint(path: Path) -> str | None:

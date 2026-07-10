@@ -44,6 +44,29 @@ def _isolate_home(tmp_path: Path):
             os.environ["HOME"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _isolate_quota_cache(tmp_path: Path):
+    """Point the quota-cache reader at a nonexistent tmp file.
+
+    Hermeticity fix (found during INCIDENT 2026-07-10 follow-up): agent
+    containers bind the LIVE fleet ``/var/sac/quota-cache.json`` — the
+    reader's DEFAULT path — so unpatched quota-aware pick tests read
+    real production utilisation and flip winners depending on the
+    fleet's current load. An explicitly-absent path degrades every
+    lookup to ``None`` (freshness-only), the documented no-cache
+    behavior the affected tests assume.
+    """
+    saved = os.environ.get("SAC_QUOTA_CACHE_PATH")
+    os.environ["SAC_QUOTA_CACHE_PATH"] = str(tmp_path / "absent-quota-cache.json")
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_QUOTA_CACHE_PATH", None)
+        else:
+            os.environ["SAC_QUOTA_CACHE_PATH"] = saved
+
+
 def _store_root(home: Path) -> Path:
     return home / ".scitex" / "agent-container" / "accounts"
 
