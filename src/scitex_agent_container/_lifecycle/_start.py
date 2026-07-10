@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -419,6 +420,19 @@ def agent_start(
                 f" (tmux session_exists={TmuxManager.exists(_sess)})\n"
                 f"{_format_boot_stderr_section(_boot_log)}"
                 f"  pane tail:\n{_pane or '<empty>'}"
+            )
+            # Persist so this evidence outlives the tmux session. A
+            # false-negative start leaves no registry row (raised below,
+            # before registry.add()), so killing the session by hand is
+            # often the only way to stop the agent -- which destroys the
+            # live pane capture forever unless it's written to disk now.
+            # boot.stderr.log already survives pane death (see
+            # _format_boot_stderr_section); the pane tail did not until
+            # this. See sac-agent-start-false-negative-tui-registry-row.
+            _diag_log = state_dir_for_config(config) / "start_failure_diag.log"
+            _diag_log.write_text(
+                f"{datetime.now(timezone.utc).isoformat()} start failed for "
+                f"{config.name!r}: runtime.start() returned False.{diag}\n"
             )
         except Exception:  # stx-allow: fallback (reason: diagnostics must never mask the real start failure — degrade to no pane)
             diag = " (no pane diagnostics available)"

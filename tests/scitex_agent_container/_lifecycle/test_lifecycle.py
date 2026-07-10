@@ -29,7 +29,7 @@ import pytest
 
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config import AgentConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, real YAML on disk
@@ -818,6 +818,57 @@ def test_agent_start_runtime_failure_raises_runtime_error(
     # Assert
     with pytest.raises(RuntimeError, match="Failed to start"):
         call()
+
+
+def _start_with_failing_runtime(spec: Path, registry: Registry) -> None:
+    """Drive a real ``agent_start`` failure, swallowing the expected
+    ``RuntimeError`` -- the raise itself is covered by
+    ``test_agent_start_runtime_failure_raises_runtime_error``; these
+    helpers only care about what got written to disk before it fired."""
+    runtime = FakeRuntime(running=False, start_result=False)
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            runtime_factory=lambda _c: runtime,
+            handover_mod=FakeHandover(),
+            sleep_fn=_no_sleep,
+        )
+    except RuntimeError:
+        pass
+
+
+def test_agent_start_runtime_failure_persists_diag_file(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange -- a false-negative start whose only evidence must survive
+    # past the raised exception (sac-agent-start-false-negative-tui-
+    # registry-row-20260710): killing the tmux session is often the only
+    # way to stop an agent with no registry row, which destroys a
+    # not-yet-persisted pane capture forever.
+    from scitex_agent_container.runtimes.tui_session import state_dir_for_config
+
+    spec = _write_spec(tmp_path)
+    config = load_config(str(spec))
+    # Act
+    _start_with_failing_runtime(spec, registry)
+    # Assert
+    assert (state_dir_for_config(config) / "start_failure_diag.log").is_file()
+
+
+def test_agent_start_runtime_failure_diag_names_the_reason(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    from scitex_agent_container.runtimes.tui_session import state_dir_for_config
+
+    spec = _write_spec(tmp_path)
+    config = load_config(str(spec))
+    # Act
+    _start_with_failing_runtime(spec, registry)
+    # Assert
+    diag_log = state_dir_for_config(config) / "start_failure_diag.log"
+    assert "runtime.start() returned False" in diag_log.read_text()
 
 
 def test_agent_start_dry_run_does_not_register(
