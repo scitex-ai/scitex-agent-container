@@ -6,6 +6,34 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **refactor(accounts): `sac accounts list` — dedupe table vs usage
+  bars** (operator directive 2026-07-11: "Stored accounts と Usage
+  bars で duplicated info を出すな / Usage bars で書けないものだけ
+  Stored Accounts に書け / ID <-> Email 対応は要らない；Plan も
+  いらない"). Presentation-layer only; the `--json` schema is
+  untouched (still carries `email_address`, `plan_label`, raw usage):
+  - Stored-accounts table is now exactly
+    `Account | Status | Last Update` — the Email column (IDs are
+    email-derived slugs), the Plan column and the 5h%/7d% columns
+    (which duplicated the bars and wrapped the table at normal
+    terminal widths) are gone. Status keeps the live token TTL
+    (`VALID +2h26m`).
+  - The usage-bars block owns the percentages AND gains the compact
+    per-window reset hints that used to clutter the table cells:
+    `5h [██████░░░░░░░░░░░░░░]  29% (→09:19)   7d [...]  66% (→Sun 21h)`.
+    Missing 5h hints are space-padded so the 7d bars stay vertically
+    aligned. The `(in Xh Ym)` countdown qualifier was dropped with
+    the table cells it annotated (the bars stay compact per the
+    operator's verbatim example).
+  - The rolling-window legend now prints below the bars (the surface
+    it explains); the fleet effective-utilization footer and the
+    single-account "Claude Code account" header block are unchanged.
+  - `account_group.py` extraction: the `list` command body moved to
+    `cli_pkg/_account_list_cmd.py` (`register_list_command`), the
+    same pattern as `_account_refresh.py`, keeping the group
+    orchestrator under the per-file line cap.
+
 ## [0.21.11] — 2026-06-09
 
 PATCH release. Re-cut of v0.21.10's accounts-list redesign after the
