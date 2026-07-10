@@ -9,11 +9,11 @@ from typing import Any, Dict
 # Phase-3 ACL dataclasses (kept in a sibling module under the per-file
 # line cap; re-exported here for the :class:`AgentConfig` field defaults).
 from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
-from ._provider_types import AgentProvider, DEFAULT_AGENT_PROVIDER, ProviderSpec
 
 # ApptainerSpec extracted to a sibling module (per-file line cap);
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
+from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
 
 
 @dataclass
@@ -113,8 +113,9 @@ class ClaudeSpec:
     credentials_file: str = ""
     # Account POOL: a list of host paths to ``.credentials.json`` files
     # (one per saved account). When non-empty, the start pre-flight picks
-    # ONE of them QUOTA-AWARE — the token-fresh account with the most 7d
-    # weekly-cap headroom (see ``_creds.pick_healthy_account`` +
+    # ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked
+    # and 7d-near-capped accounts, load-balanced across the fleet per
+    # agent name (see ``_creds.pick_healthy_account`` +
     # ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and
     # binds the PICKED file exactly as if it had been named in the singular
     # ``credentials_file`` field. Each entry's ACCOUNT SLUG is its parent

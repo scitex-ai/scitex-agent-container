@@ -105,6 +105,7 @@ def _rotate_among_credentials_files(
     *,
     log_stream: Any = None,
     now: float | None = None,
+    usage_5h: Mapping[str, float] | None = None,
     usage_7d: Mapping[str, float] | None = None,
     quota_cache_path: Path | str | None = None,
 ) -> None:
@@ -114,13 +115,25 @@ def _rotate_among_credentials_files(
     the singular ``spec.claude.credentials_file`` treated as a 1-element
     pool). Each entry's account SLUG is its parent-dir name. We hand the
     slug list to :func:`_creds.pick_healthy_account` so the SAME
-    quota-aware pick used for named accounts (PR #583 — prefer the
-    token-fresh account with the most 7d weekly-cap headroom) chooses
-    among exactly the listed accounts, then collapse the pool down to the
-    picked entry by writing it into ``config.claude.credentials_file`` —
-    the field every downstream auth path (``runtimes._apptainer_auth.
-    auth_argv`` / ``credentials_file_bind``) already resolves. Downstream
-    binding is therefore UNCHANGED; this only decides WHICH file it binds.
+    quota-conditional pick used for named accounts chooses among exactly
+    the listed accounts — token freshness as the hard gate, then avoid
+    5h-blocked and 7d-near-capped accounts, then LOAD-BALANCE the
+    winning tier across the fleet (``spread_key=config.name`` →
+    7d-headroom-weighted rendezvous hash, so a bulk restart spreads
+    agents over the healthy accounts instead of stacking them all onto
+    one; see :mod:`_creds._quota_rank`). The pool is then collapsed down
+    to the picked entry by writing it into
+    ``config.claude.credentials_file`` — the field every downstream auth
+    path (``runtimes._apptainer_auth.auth_argv`` /
+    ``credentials_file_bind``) already resolves. Downstream binding is
+    therefore UNCHANGED; this only decides WHICH file it binds.
+
+    ``preferred`` (churn minimisation) is ONLY a genuine pin: the spec's
+    ``claude.account`` when it is one of the listed slugs, else the slug
+    of the currently-effective ``credentials_file`` when it is listed.
+    The first listed entry is deliberately NOT treated as preferred —
+    that made every fleet agent "prefer" the same account and defeated
+    the spread (2026-07 ``sac-restart --all-running`` incident).
 
     Health probing reads each slug's snapshot from the pool's common
     parent-of-parent directory (``store_dir``) so the freshness/quota
@@ -153,33 +166,52 @@ def _rotate_among_credentials_files(
     )
 
     claude = config.claude
-    # Preferred = the currently-effective account when it is one of the
-    # listed slugs (minimise churn); else the first listed entry.
+    # Preferred = a GENUINE pin only: the spec's named account when it is
+    # one of the listed slugs, else the currently-effective
+    # credentials_file's slug when it is listed. NOT the first listed
+    # entry — see the docstring (fleet-stacking incident).
     account = str(getattr(claude, "account", "") or "").strip()
-    preferred = account if account in slugs else slugs[0]
+    prior = str(getattr(claude, "credentials_file", "") or "").strip()
+    prior_slug = _slug_of_credentials_file(Path(prior)) if prior else ""
+    if account in slugs:
+        preferred: str | None = account
+    elif prior_slug in slugs:
+        preferred = prior_slug
+    else:
+        preferred = None
 
     picked = pick_healthy_account(
         preferred,
         candidates=slugs,
         store_dir=store_dir,
         now=now,
+        usage_5h=usage_5h,
         usage_7d=usage_7d,
         quota_cache_path=quota_cache_path,
+        spread_key=config.name,
     )
 
     picked_path = next(p for slug, p in entries if slug == picked)
-    prior = str(getattr(claude, "credentials_file", "") or "").strip()
     claude.credentials_file = str(picked_path)
 
     if str(picked_path) == prior:
         return  # 1-element / already-selected pool — no change, no log.
 
+    from .._creds import account_5h_usage, account_7d_usage
+
+    h5 = account_5h_usage(picked, usage_5h=usage_5h, quota_cache_path=quota_cache_path)
+    d7 = account_7d_usage(picked, usage_7d=usage_7d, quota_cache_path=quota_cache_path)
+
+    def fmt(v: float | None) -> str:
+        return "?" if v is None else f"{v:.0f}%"
+
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' selected credentials_files pool "
         f"entry: account {picked!r} ({picked_path}) among {len(slugs)} listed "
-        f"credentials_files (quota-aware pick — token-fresh account with the "
-        f"most 7d headroom)",
+        f"credentials_files (quota-conditional pick — token-fresh, avoids "
+        f"5h-blocked and 7d-near-capped accounts, load-balanced per agent; "
+        f"picked usage 5h={fmt(h5)} 7d={fmt(d7)})",
         file=stream,
     )
 
@@ -189,6 +221,7 @@ def _rotate_to_healthy_account(
     *,
     log_stream: Any = None,
     now: float | None = None,
+    usage_5h: Mapping[str, float] | None = None,
     usage_7d: Mapping[str, float] | None = None,
     quota_cache_path: Path | str | None = None,
 ) -> None:
@@ -208,19 +241,21 @@ def _rotate_to_healthy_account(
        pinned fleet agents — previously such agents bypassed the pick
        entirely (this function returned early on empty ``account``).
 
-    2. **Named account** — ``spec.claude.account`` non-empty. Existing
-       behaviour, unchanged: keep the pinned account when its snapshot is
-       healthy; rotate ``config.claude.account`` to the fresh account with
-       the most 7d headroom otherwise. For an unpinned agent (no pool, no
-       account) the runtime continues to bind the host's live
-       ``.credentials.json`` untouched.
+    2. **Named account** — ``spec.claude.account`` non-empty. Keep the
+       pinned account when its snapshot is healthy AND its quota is not
+       known-bad (5h-blocked / 7d-near-capped); otherwise rotate
+       ``config.claude.account`` to the ranked fresh account
+       (load-balanced per agent — ``spread_key=config.name``). For an
+       unpinned agent (no pool, no account) the runtime continues to
+       bind the host's live ``.credentials.json`` untouched.
 
     In every case a total absence of a usable (non-expired) snapshot
     raises :class:`_creds.NoHealthyAccountError` (fail loud, no silent
     stale-token launch). See :mod:`scitex_agent_container._creds.
-    _pick_healthy` for the health model. The ``now`` / ``usage_7d`` /
-    ``quota_cache_path`` params are the same test-injection seams
-    ``pick_healthy_account`` exposes; production passes ``None``.
+    _pick_healthy` for the health model. The ``now`` / ``usage_5h`` /
+    ``usage_7d`` / ``quota_cache_path`` params are the same
+    test-injection seams ``pick_healthy_account`` exposes; production
+    passes ``None``.
     """
     claude = getattr(config, "claude", None)
 
@@ -234,12 +269,13 @@ def _rotate_to_healthy_account(
             pool,
             log_stream=log_stream,
             now=now,
+            usage_5h=usage_5h,
             usage_7d=usage_7d,
             quota_cache_path=quota_cache_path,
         )
         return
 
-    # 2. Named account (legacy CREDS-PHASE1 path — unchanged).
+    # 2. Named account (legacy CREDS-PHASE1 path).
     pinned = getattr(claude, "account", "") or ""
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
@@ -247,7 +283,12 @@ def _rotate_to_healthy_account(
     from .._creds import pick_healthy_account
 
     picked = pick_healthy_account(
-        pinned, now=now, usage_7d=usage_7d, quota_cache_path=quota_cache_path
+        pinned,
+        now=now,
+        usage_5h=usage_5h,
+        usage_7d=usage_7d,
+        quota_cache_path=quota_cache_path,
+        spread_key=config.name,
     )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.
@@ -256,9 +297,9 @@ def _rotate_to_healthy_account(
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (pinned account unhealthy or "
-        f"near weekly cap; rotated to the fresh account with the most "
-        f"7d headroom)",
+        f"{pinned!r} -> {picked!r} (pinned account stale, 5h-blocked, or "
+        f"near its weekly cap; rotated to a fresh account with headroom, "
+        f"load-balanced per agent)",
         file=stream,
     )
 
