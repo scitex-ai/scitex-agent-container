@@ -10,6 +10,15 @@ the production fallback order.
 
 No-mocks (PA-306): real store, real CLI, real scitex-todo store file.
 AAA marker comments; one assertion per test.
+
+The whole module requires the OPTIONAL ``scitex_todo`` peer (the
+fallback delivery leg under test) — leaf CI does not install it, so we
+skip there, exactly like ``tests/integration/test_cross_package_imports``
+does for peer modules; the fleet hosts and the umbrella CI (every peer
+installed) run it. Without the peer, the chain ends in the documented
+"ALERT DELIVERY FAILED — every alert rail failed" stderr path (verified
+in CI run 29106433698) instead of a delivered card, so the
+delivered-path assertions below cannot hold there.
 """
 
 from __future__ import annotations
@@ -20,6 +29,8 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+pytest.importorskip("scitex_todo", reason="alarm fallback leg needs scitex-todo")
 
 from scitex_agent_container._state.account_store import save_account
 from scitex_agent_container.cli_pkg.account_group import account
