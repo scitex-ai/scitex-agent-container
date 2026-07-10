@@ -391,6 +391,18 @@ def agent_start(
 
     seed_pinned_session_id(config, runtime)
 
+    # Twin context-inheritance (``sac agents twin``). When this spec carries
+    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # CURRENT session uuid, pin this twin's resume to it, and copy the
+    # parent's transcript into the twin's container-home projects store so
+    # the resume finds it. Host-side (paths always resolve on the bare host)
+    # and a strict no-op for every non-twin start. Fail-loud (TwinSeedError)
+    # when the parent has no resolvable live session — a twin with no context
+    # to inherit is pointless. See ``_twin.seed_twin_from_parent``.
+    from ._twin import seed_twin_from_parent
+
+    seed_twin_from_parent(config, runtime)
+
     # Start — ``force`` is propagated to the runtime. The legacy
     # ``config.remote.no_preflight`` override was retired with
     # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the

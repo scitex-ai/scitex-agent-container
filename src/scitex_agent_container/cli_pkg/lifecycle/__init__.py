@@ -18,5 +18,15 @@ from ._forget import forget
 from ._restart import restart
 from ._start import start
 from ._stop import stop
+from ._twin import twin
 
-__all__ = ["start", "stop", "restart", "delete", "forget", "cleanup", "attach"]
+__all__ = [
+    "start",
+    "stop",
+    "restart",
+    "delete",
+    "forget",
+    "cleanup",
+    "attach",
+    "twin",
+]
