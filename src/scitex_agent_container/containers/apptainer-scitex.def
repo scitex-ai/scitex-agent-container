@@ -125,12 +125,21 @@ From: ./sac-base.sif
     # shorthand (narrower blast radius) and would also work; we use the
     # portable ``--force-reinstall --no-deps`` form so the pip-fallback
     # branch below uses the same flags.
+    # ``openai-agents`` is listed EXPLICITLY (not via sac's ``[openai]``
+    # extra) because step 2 below installs sac with ``--no-deps`` — an
+    # extra can never ride that install — and step 1's transitive sac
+    # wheel from ``scitex[all]`` may predate the extra entirely. Baked
+    # UNCONDITIONALLY: one image serves every agent; per-spec
+    # conditionality is a RUNTIME concern (`spec.provider: openai` env
+    # injection + `openai_session` executor routing — openai-compat-3).
+    # Floor mirrors pyproject.toml's ``[openai]`` extra; keep in lockstep.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
             "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         uv pip install --python /opt/venv-sac/bin/python \
@@ -173,11 +182,14 @@ From: ./sac-base.sif
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
+        # openai-agents: explicit for the same --no-deps reason as the
+        # uv branch above; floor mirrors pyproject.toml's [openai] extra.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
             "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         /opt/venv-sac/bin/pip install --no-cache-dir \
