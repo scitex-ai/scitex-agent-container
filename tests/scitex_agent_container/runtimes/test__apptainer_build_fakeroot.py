@@ -213,13 +213,63 @@ def _current_username() -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_build_argv_prefix_starts_with_apptainer_build() -> None:
-    # Arrange — fakeroot probe forced off so the head is the minimum.
+def test_build_argv_prefix_starts_with_apptainer_build(env_save_restore) -> None:
+    # Arrange — fakeroot probe forced off + low-priority demotion
+    # opted out (explicitly, not just via the suite-wide conftest env)
+    # so the head is the minimum.
+    env_save_restore.set("SAC_BUILD_NO_NICE", "1")
     # Act
     with _swap_module_attr("_should_use_fakeroot_for_build", lambda: False):
         argv = _build_argv_prefix()
     # Assert
     assert argv[:2] == ["apptainer", "build"]
+
+
+def test_build_argv_prefix_demotes_spawned_build_when_tools_present(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — incident-local-heavy-build: builds sac spawns itself run
+    # under `nice -n 19 ionice -c 2 -n 7` BY DEFAULT so a SIF bake can't
+    # starve the interactive host (best-effort lowest, NOT idle class —
+    # idle IO starved/killed a real mksquashfs stage under load).
+    # Deterministic PATH (fake nice + ionice only); the suite-wide
+    # opt-out env cleared.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("nice", "ionice"):
+        script = bin_dir / tool
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+    env_save_restore.delete("SAC_BUILD_NO_NICE")
+    env_save_restore.set("PATH", str(bin_dir))
+    # Act
+    with _swap_module_attr("_should_use_fakeroot_for_build", lambda: False):
+        argv = _build_argv_prefix()
+    # Assert
+    assert argv == [
+        "nice",
+        "-n",
+        "19",
+        "ionice",
+        "-c",
+        "2",
+        "-n",
+        "7",
+        "apptainer",
+        "build",
+    ]
+
+
+def test_build_argv_prefix_plain_under_no_nice_env_opt_out(
+    env_save_restore,
+) -> None:
+    # Arrange — SAC_BUILD_NO_NICE=1 restores the undemoted argv head.
+    env_save_restore.set("SAC_BUILD_NO_NICE", "1")
+    # Act
+    with _swap_module_attr("_should_use_fakeroot_for_build", lambda: False):
+        argv = _build_argv_prefix()
+    # Assert
+    assert argv == ["apptainer", "build"]
 
 
 def test_build_argv_prefix_includes_fakeroot_when_probe_true() -> None:
@@ -243,6 +293,39 @@ def test_build_argv_prefix_omits_fakeroot_when_probe_false() -> None:
 # ---------------------------------------------------------------------------
 # _build_sif_from_def — end-to-end argv shape
 # ---------------------------------------------------------------------------
+
+
+def test_build_sif_from_def_spawns_build_under_nice_ionice(
+    tmp_path: Path, env_save_restore, subprocess_shim
+) -> None:
+    # Arrange — REAL subprocess path: with demotion on (env opt-out
+    # cleared) the first binary subprocess.run execs must be `nice`,
+    # carrying the full demoted apptainer argv behind it. Recording
+    # `nice` + `ionice` shims sit first on PATH; `nice` exits 0 without
+    # exec'ing onward, which the production code reads as build success.
+    subprocess_shim.install("nice")
+    subprocess_shim.install("ionice")
+    env_save_restore.delete("SAC_BUILD_NO_NICE")
+    def_file = tmp_path / "x.def"
+    def_file.write_text("Bootstrap: docker\n")
+    sif_path = tmp_path / "out.sif"
+    # Act
+    with _swap_module_attr("_should_use_fakeroot_for_build", lambda: False):
+        _build_sif_from_def(sif_path, def_file)
+    # Assert
+    assert subprocess_shim.argv_for("nice") == [
+        "-n",
+        "19",
+        "ionice",
+        "-c",
+        "2",
+        "-n",
+        "7",
+        "apptainer",
+        "build",
+        str(sif_path),
+        str(def_file),
+    ]
 
 
 def test_build_sif_from_def_passes_fakeroot_when_probe_true(

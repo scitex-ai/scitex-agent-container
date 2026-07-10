@@ -29,6 +29,15 @@ _COVERAGE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["COVERAGE_PROCESS_START"] = str(_PROJECT_ROOT / "pyproject.toml")
 os.environ["COVERAGE_FILE"] = str(_COVERAGE_DIR / ".coverage")
 
+# incident-local-heavy-build: `sac image build` self-demotes its own
+# process (CPU nice 19 + IO best-effort lowest) by default, and demotion
+# is ONE-WAY for unprivileged processes. Tests drive the real CLI
+# in-process via CliRunner, so without this opt-out the first build test
+# would demote the entire remaining pytest run. The real demotion
+# behavior is exercised in CHILD interpreters with a curated env — see
+# tests/scitex_agent_container/test__build_priority.py.
+os.environ.setdefault("SAC_BUILD_NO_NICE", "1")
+
 
 def _ensure_subprocess_coverage_shim() -> None:
     """Drop an idempotent ``.pth`` shim in site-packages so every child

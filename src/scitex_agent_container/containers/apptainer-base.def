@@ -360,10 +360,19 @@ From: ubuntu:24.04
     # `scitex_todo._mcp_server:mcp`. scitex-todo's hard deps (click,
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
+    # sac's [openai] extra (openai-agents — the `spec.provider: openai`
+    # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
+    # image serves EVERY agent, so a per-spec conditional install is
+    # impossible at image-build time. Per-spec conditionality is a
+    # RUNTIME concern instead — only `provider: openai` launches get the
+    # OPENAI_* env injection + `openai_session` executor routing (see
+    # runtimes/_apptainer_provider.py). The extra's version floor lives
+    # in pyproject.toml (SSoT); the bracket syntax on the local source
+    # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
         "scitex-todo[mcp]>=0.3.0" \
-        /opt/scitex-agent-container-src
+        "/opt/scitex-agent-container-src[openai]"
 
     # Surface the standalone npm-installed claude CLI (latest) on PATH,
     # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
