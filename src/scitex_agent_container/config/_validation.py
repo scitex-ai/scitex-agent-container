@@ -21,6 +21,12 @@ from ._acl_validation import validate_phase3_acl
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
 from ._placement_validation import validate_placement
+
+# spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1
+# foundation) — distinct from spec.claude.provider (validated inside
+# validate_claude via _provider_validation). See the naming-collision
+# note in config._provider_types.AgentProvider.
+from ._provider_registry import is_known_agent_provider, list_agent_providers
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 
 # ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
@@ -53,6 +59,9 @@ _SDK_IMAGE = "scitex-agent-container:scitex"
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
+        "provider",  # agent SDK family: anthropic (default) | openai — see
+        # config._provider_types.AgentProvider for the naming-collision
+        # note against the unrelated, nested spec.claude.provider.
         "access",  # host-access posture: full (default) | capsule
         "workdir",
         "python-venv",
@@ -295,6 +304,24 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "= headless SDK runner; 'apptainer' = back-compat for the "
                 "pre-2026-06-13 container-engine field, mapped to "
                 "'claude-agent-sdk' at dispatch."
+            )
+
+        # spec.provider — AGENT SDK FAMILY selector (openai-compat-1
+        # foundation). Distinct from spec.claude.provider (ProviderSpec,
+        # validated inside validate_claude) — see the naming-collision
+        # note in config._provider_types.AgentProvider. Optional and
+        # NOT in _REQUIRED_FIELDS_BOTH_KINDS on purpose: the whole point
+        # of this field is a safe, backward-compatible default so no
+        # existing spec needs to change while openai-compat-2/3 land the
+        # actual "openai" runner + entrypoint wiring.
+        provider = spec.get("provider")
+        if provider and not is_known_agent_provider(str(provider)):
+            errors.append(
+                f"spec.provider must be one of {list_agent_providers()} "
+                f"(got '{provider}'). 'anthropic' (default) = "
+                "claude-agent-sdk, the only implemented family today; "
+                "'openai' is accepted by the schema but has no runner yet "
+                "(openai-compat-2)."
             )
 
         # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
