@@ -320,6 +320,17 @@ register_mint_token_command(account)
 
 
 # ---------------------------------------------------------------------------
+# login — semi-automated `claude /login` re-auth. Drives claude in a tmux
+# pane, extracts + delivers the OAuth URL to the operator, awaits the
+# browser/code step, then reuses `account save`. Lives in its own module
+# (per-file line cap); attached at import time like refresh / mint-token.
+# ---------------------------------------------------------------------------
+from ._account_login import register_login_command
+
+register_login_command(account)
+
+
+# ---------------------------------------------------------------------------
 # quota-watch — exposed both at top-level (legacy `quota_watch`, re-exported
 # below) and under ``account``. Bodies extracted to ``_account_quota_watch``
 # to keep this file under the per-file line cap.
