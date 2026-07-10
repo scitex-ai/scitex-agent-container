@@ -352,6 +352,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
+        # Agent SDK family (top-level; NOT spec.claude.provider — see the
+        # naming-collision note in config._provider_types.AgentProvider).
+        # Default mirrors the dataclass default; openai-compat-1 foundation.
+        provider=str(spec.get("provider") or "anthropic"),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.
