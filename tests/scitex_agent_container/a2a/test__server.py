@@ -41,6 +41,9 @@ from scitex_agent_container.a2a.executors import (
 from scitex_agent_container.a2a.executors._claude_session import (
     ClaudeSessionExecutor,
 )
+from scitex_agent_container.a2a.executors._openai_session import (
+    OpenAISessionExecutor,
+)
 
 # ---------------------------------------------------------------------
 # Fixtures
@@ -85,6 +88,7 @@ _REGISTRY_EXPECTED = {
     "claude_cli": ClaudeCliExecutor,
     "exec": ExecExecutor,
     "claude_session": ClaudeSessionExecutor,
+    "openai_session": OpenAISessionExecutor,
 }
 
 

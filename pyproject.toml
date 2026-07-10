@@ -107,6 +107,16 @@ slurm = [
     # Optional: sac's SlurmRuntime works without it (best-effort import).
     "scitex-hpc>=0.6.2",
 ]
+openai = [
+    # openai-compat-2: the `openai` agent-SDK family (spec.provider:
+    # openai). Backs `_runners/openai_session.py` (OpenAISession — the
+    # concrete ProviderSession over Runner.run_streamed + SQLiteSession)
+    # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
+    # Claude-only deployments must not pull it — every import is lazy and
+    # the handler raises a clear HandlerError when absent. 0.17.4 floor
+    # per the card spec (SQLiteSession + FunctionTool surface stable).
+    "openai-agents>=0.17.4",
+]
 dev = [
     # 0.17.12 floor: scitex-dev 0.16.0 introduced a TypeError in
     # `_check_bridge_pattern` that fires through `ecosystem audit-all`
@@ -153,6 +163,9 @@ all = [
     "scitex-agent-container[mcp]",
     "scitex-agent-container[telegram]",
     "scitex-agent-container[slurm]",
+    # `openai` is in [all] so CI (`pip install -e ".[all,dev]"`) exercises
+    # the real openai-agents SDK paths; the bare install stays Claude-only.
+    "scitex-agent-container[openai]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]
