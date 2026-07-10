@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import scitex_logging
 import yaml
 
 from scitex_agent_container.config import load_config
@@ -442,7 +443,13 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# spec.claude.account soft-WARN (missing snapshot warns, never fails)
+# spec.claude.account soft-WARN (missing snapshot warns, never fails).
+# Load-time advisories are scitex-logging WARN lines (operator directive
+# 2026-07-10, consistent colour coding) — captured here via ``caplog``
+# through standard logging propagation, not ``pytest.warns``. The
+# module-top ``import scitex_logging`` guarantees its one-time root-handler
+# configure() ran at collection time, i.e. BEFORE caplog attaches its
+# per-test root handler (configure() would strip that handler mid-test).
 # ---------------------------------------------------------------------------
 
 
@@ -470,62 +477,60 @@ def _v3_yaml(tmp_path: Path, name: str, spec_extra: dict) -> Path:
     return p
 
 
-def test_load_config_warns_when_pinned_account_snapshot_absent(tmp_path: Path):
+def test_load_config_warns_when_pinned_account_snapshot_absent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     # Arrange — pin an account with no saved snapshot anywhere.
     p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
     # Act
-    ctx = pytest.warns(UserWarning, match="ghost")
-    # Assert
-    with ctx:
+    with caplog.at_level(scitex_logging.WARNING):
         load_config(p)
+    # Assert
+    assert "ghost" in caplog.text
 
 
 def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
     tmp_path: Path,
 ):
     # Arrange — the soft-WARN must NOT escalate to a load failure. The
-    # warning itself is asserted by the sibling test; here we suppress
-    # it (catch_warnings, not pytest.warns) so the single assertion is
-    # purely "the config loaded with the pin intact".
-    import warnings
-
+    # WARN line itself is asserted by the sibling test; the single
+    # assertion here is purely "the config loaded with the pin intact".
     p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
     # Act
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cfg = load_config(p)
+    cfg = load_config(p)
     # Assert
     assert cfg.claude.account == "ghost"
 
 
-def test_load_config_warns_when_startup_prompt_is_long(tmp_path: Path):
+def test_load_config_warns_when_startup_prompt_is_long(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     # Arrange — a long role/rules PROSE startup_prompt (belongs in CLAUDE.md +
     # skills, not a per-boot turn).
     p = _v3_yaml(
         tmp_path, "verbose", {"startup_prompts": ["You are X. " + "rule. " * 120]}
     )
     # Act
-    ctx = pytest.warns(UserWarning, match="startup_prompts")
-    # Assert
-    with ctx:
+    with caplog.at_level(scitex_logging.WARNING):
         load_config(p)
+    # Assert
+    assert "startup_prompts" in caplog.text
 
 
-def test_load_config_no_warn_for_short_startup_kick(tmp_path: Path):
+def test_load_config_no_warn_for_short_startup_kick(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     # Arrange — a short boot-KICK must NOT trip the long-prompt warning.
-    import warnings
-
     p = _v3_yaml(
         tmp_path,
         "kick",
         {"startup_prompts": ["You restarted — check inbox + todo; report readiness."]},
     )
     # Act
-    with warnings.catch_warnings(record=True) as rec:
-        warnings.simplefilter("always")
+    with caplog.at_level(scitex_logging.WARNING):
         load_config(p)
     # Assert
-    assert not any("startup_prompts" in str(w.message) for w in rec)
+    assert "startup_prompts" not in caplog.text
 
 
 def test_load_config_defaults_startup_prompt_when_omitted(tmp_path: Path):
@@ -563,13 +568,9 @@ def test_load_config_injects_claude_agent_account_when_spec_pins_account(
     tmp_path: Path,
 ):
     # Arrange
-    import warnings
-
     p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "wyusuuke-gmail-com"}})
     # Act
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cfg = load_config(p)
+    cfg = load_config(p)
     # Assert
     assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "wyusuuke-gmail-com"
 
@@ -590,15 +591,11 @@ def test_load_config_strips_whitespace_from_account_before_injection(
     # Arrange — defensive trim so a spec with a stray newline / space
     # does not leak into the quota-cache lookup (which uses a strict
     # ``split('-')[0] == short`` match — a leading space would break it).
-    import warnings
-
     p = _v3_yaml(
         tmp_path, "trimmed", {"claude": {"account": "  ywata1989-gmail-com  "}}
     )
     # Act
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cfg = load_config(p)
+    cfg = load_config(p)
     # Assert
     assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "ywata1989-gmail-com"
 

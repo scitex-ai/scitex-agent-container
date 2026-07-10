@@ -76,9 +76,12 @@ def _make_pool_config(name: str, paths: list[Path]) -> AgentConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_pool_picks_most_headroom_fresh_entry(_isolate_home: Path) -> None:
-    # Arrange — 3 fresh accounts; the FIRST (preferred) is near-capped so
-    # the pick must rotate off it to the lowest-7d fresh sibling.
+def test_pool_rotates_off_near_capped_entry_to_a_healthy_sibling(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — 3 fresh accounts; the first is near-capped so the pick
+    # must land on one of the two healthy siblings (WHICH one is the
+    # per-agent load-balancing hash's choice, so assert the set).
     home = _isolate_home
     p_a = _write_snapshot(home, "acct-a", _future_ms())
     p_b = _write_snapshot(home, "acct-b", _future_ms())
@@ -90,8 +93,8 @@ def test_pool_picks_most_headroom_fresh_entry(_isolate_home: Path) -> None:
         log_stream=io.StringIO(),
         usage_7d={"acct-a": 95.0, "acct-b": 10.0, "acct-c": 40.0},
     )
-    # Assert — acct-b has the most 7d headroom → its file is bound.
-    assert cfg.claude.credentials_file == str(p_b)
+    # Assert — the near-capped acct-a is avoided.
+    assert cfg.claude.credentials_file in {str(p_b), str(p_c)}
 
 
 def test_pool_selection_emits_a_one_line_notice(_isolate_home: Path) -> None:
@@ -195,3 +198,127 @@ def test_no_pool_no_pin_leaves_credentials_file_empty(_isolate_home: Path) -> No
     _rotate_to_healthy_account(cfg, log_stream=log)
     # Assert — host live OAuth path untouched.
     assert cfg.claude.credentials_file == "" and cfg.claude.account == ""
+
+
+# ---------------------------------------------------------------------------
+# 5h axis — a pool entry at its 5h wall cannot run NOW and must be avoided
+# (2026-07 `sac-restart --all-running` incident: 100%-5h account picked
+# because its 7d % looked fine).
+# ---------------------------------------------------------------------------
+
+
+def test_pool_avoids_entry_at_its_5h_cap_despite_7d_headroom(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — the first entry is fresh with 7d headroom but at 100% of
+    # its 5h window; the two others are idle.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    p_c = _write_snapshot(home, "acct-c", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b, p_c])
+    # Act
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=io.StringIO(),
+        usage_5h={"acct-a": 100.0, "acct-b": 0.0, "acct-c": 0.0},
+        usage_7d={"acct-a": 60.0, "acct-b": 25.0, "acct-c": 2.0},
+    )
+    # Assert — the blocked-now entry is never bound while others are idle.
+    assert cfg.claude.credentials_file in {str(p_b), str(p_c)}
+
+
+def test_pool_still_boots_when_every_entry_is_5h_blocked(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — the whole pool is at its 5h wall. Quota is a preference:
+    # the boot must still bind SOME fresh entry rather than fail.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    # Act
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=io.StringIO(),
+        usage_5h={"acct-a": 100.0, "acct-b": 98.0},
+        usage_7d={"acct-a": 60.0, "acct-b": 25.0},
+    )
+    # Assert
+    assert cfg.claude.credentials_file in {str(p_a), str(p_b)}
+
+
+# ---------------------------------------------------------------------------
+# Fleet load-balancing — a bulk restart must SPREAD agents across the
+# healthy entries instead of stacking every agent onto the same one.
+# ---------------------------------------------------------------------------
+
+
+def test_pool_spreads_a_fleet_of_agents_across_healthy_entries(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — two healthy entries with comparable headroom and a
+    # 12-agent fleet listing the SAME pool (the incident shape).
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    # Act
+    picks = set()
+    for i in range(12):
+        cfg = _make_pool_config(f"agent-{i}", [p_a, p_b])
+        _rotate_to_healthy_account(
+            cfg,
+            log_stream=io.StringIO(),
+            usage_5h={"acct-a": 0.0, "acct-b": 0.0},
+            usage_7d={"acct-a": 25.0, "acct-b": 2.0},
+        )
+        picks.add(cfg.claude.credentials_file)
+    # Assert — both accounts serve part of the fleet.
+    assert picks == {str(p_a), str(p_b)}
+
+
+def test_pool_keeps_currently_effective_entry_when_it_is_healthy(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — the agent's credentials_file already points at a listed,
+    # healthy, un-capped entry: churn minimisation must keep it even if
+    # a sibling has more headroom.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    cfg.claude.credentials_file = str(p_a)
+    # Act
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=io.StringIO(),
+        usage_5h={"acct-a": 10.0, "acct-b": 0.0},
+        usage_7d={"acct-a": 40.0, "acct-b": 2.0},
+    )
+    # Assert — no rotation off a healthy current entry.
+    assert cfg.claude.credentials_file == str(p_a)
+
+
+def test_pool_first_listed_entry_is_not_implicitly_preferred(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — no pin, no current file. Pre-fix, slugs[0] was treated as
+    # "preferred" and kept whenever below the 7d near-cap — which stacked
+    # every fleet agent onto the first listed account. With both entries
+    # equally idle, a 12-agent fleet must now spread instead.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    # Act
+    picks = set()
+    for i in range(12):
+        cfg = _make_pool_config(f"agent-{i}", [p_a, p_b])
+        _rotate_to_healthy_account(
+            cfg,
+            log_stream=io.StringIO(),
+            usage_5h={"acct-a": 0.0, "acct-b": 0.0},
+            usage_7d={"acct-a": 30.0, "acct-b": 30.0},
+        )
+        picks.add(cfg.claude.credentials_file)
+    # Assert
+    assert picks == {str(p_a), str(p_b)}
