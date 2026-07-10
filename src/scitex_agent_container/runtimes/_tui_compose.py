@@ -7,7 +7,7 @@ cohesive place. The :class:`TuiSessionRuntime` wires the real tmux callables
 into these functions (``_verify_submitted`` → :func:`verify_submit_by_advancement`,
 ``_clear_compose_buffer`` → :func:`clear_compose_buffer`).
 
-Two boot fixes live here:
+Boot fixes live here:
 
   * :func:`verify_submit_by_advancement` — the boot Enter-drop fix
     (sac-tui-enter-drop-on-boot): wait-for-idle + verify-by-advancement so the
@@ -19,6 +19,15 @@ Two boot fixes live here:
     the pane was busy) ACROSS an agent restart; the boot Enter would otherwise
     submit that whole stale stack. Clearing the compose buffer at the TOP of
     startup-prompt injection drops the stale text before the boot submit.
+  * :func:`is_fresh_boot_welcome_screen` (+ its
+    :func:`_wait_for_welcome_screen_to_clear` helper) — a second fix under the
+    SAME card: on a FRESH (no ``--continue``) boot the first-launch
+    welcome/model-info/promo screen can still be up, with the Ink TUI's input
+    not yet bound, when :func:`clear_compose_buffer` runs — Escape sent into
+    that window is not reliably delivered, so the clear would exhaust its
+    resend budget against a screen it can never actually clear. Waiting for
+    that screen to clear FIRST fixes the false "did NOT clear" failure without
+    touching the already-working resumed-session path.
 """
 
 from __future__ import annotations
@@ -29,6 +38,7 @@ from typing import Callable
 
 __all__ = [
     "clear_compose_buffer",
+    "is_fresh_boot_welcome_screen",
     "verify_submit_by_advancement",
 ]
 
@@ -105,6 +115,57 @@ def _pane_is_input_idle(pane: str) -> bool:
     return _prompts.is_ready(pane) or _compose_pending_live(pane)
 
 
+def is_fresh_boot_welcome_screen(pane: str) -> bool:
+    """True iff a first-launch welcome/model-info/promo screen is on screen.
+
+    Distinguishes a FRESH boot's ``Welcome to Claude Code!`` header box from
+    a RESUMED session's ``Welcome back <name>!`` variant — both render the
+    same boxed ``Claude Code v<version>`` banner (real capture:
+    ``_V2_READY_PANE``, ``test_tui_session_v2_ready_marker.py``), differing
+    only in the greeting.
+
+    Card ``sac-tui-clear-compose-buffer-on-boot``: on a FRESH boot (no prior
+    session, ``--continue`` omitted) this banner — plus any promo line under
+    it, e.g. "Fable 5 is included in your weekly limit" — can still be up,
+    with the Ink TUI's input not yet bound, when :func:`clear_compose_buffer`
+    runs. Escape sent into that window does not reliably reach (or clear)
+    the real compose box, so its "did NOT clear after N attempts" failure
+    fires even though there is nothing genuine to clear yet. RESUMED
+    sessions say "Welcome back" instead and never match here — the
+    already-working resumed boot path is untouched.
+
+    Scoped to :func:`_pane_tail` (the LIVE region), mirroring why
+    ``prompts.detect`` scopes to its own tail (card
+    ``sac-tui-stray-1-submitted-on-boot`, PR #598): once this banner has
+    scrolled out of the live viewport it must stop matching.
+    """
+    tail = _pane_tail(pane)
+    return "Claude Code v" in tail and "Welcome back" not in tail
+
+
+def _wait_for_welcome_screen_to_clear(
+    name: str,
+    *,
+    capture_fn: Callable[[str], str],
+    max_wait_s: float,
+    poll_s: float,
+    sleep_fn: Callable[[float], None],
+    time_fn: Callable[[], float],
+) -> str:
+    """Poll until :func:`is_fresh_boot_welcome_screen` is False, bounded by
+    ``max_wait_s``. Returns the last captured pane either way — fail-soft,
+    mirroring :func:`_tui_drain.wait_for_settle`: the caller acts on
+    whatever the pane shows once the bound is hit, it never blocks forever.
+    """
+    deadline = time_fn() + max_wait_s
+    pane = capture_fn(name)
+    while is_fresh_boot_welcome_screen(pane) and time_fn() < deadline:
+        if poll_s > 0:
+            sleep_fn(poll_s)
+        pane = capture_fn(name)
+    return pane
+
+
 def clear_compose_buffer(
     name: str,
     *,
@@ -112,6 +173,7 @@ def clear_compose_buffer(
     send_keys_fn: Callable[[str], None],
     max_attempts: int = 5,
     poll_s: float = 0.4,
+    welcome_wait_s: float = 2.5,
     sleep_fn: Callable[[float], None] = time.sleep,
     time_fn: Callable[[], float] = time.monotonic,
 ) -> bool:
@@ -156,6 +218,22 @@ def clear_compose_buffer(
     is present we REFUSE to Esc (log LOUD, return ``False``): the dev-channels
     modal must be dismissed by the modal drainer (Enter to confirm option 1)
     FIRST; the compose clear runs only once no cancelable modal remains.
+
+    **BUG 3 guard (fresh-boot welcome screen):** on a FRESH boot (no prior
+    session, ``--continue`` omitted) the first-launch welcome/model-info
+    screen — see :func:`is_fresh_boot_welcome_screen` — can still be up, with
+    the Ink TUI's input not yet bound, when this runs. ``Escape`` sent into
+    that window is not reliably delivered to (or cleared from) the real
+    compose box, so the resend loop below would exhaust ``max_attempts``
+    against a screen it can never actually clear (card
+    ``sac-tui-clear-compose-buffer-on-boot``, reproduced live 2026-07-05 /
+    2026-07-08: "did NOT clear after 5 attempts" against a pane showing the
+    welcome banner + a "Fable 5 is included in your weekly limit" promo
+    line). So BEFORE the pending check — on the initial capture AND before
+    every resend — we wait (bounded by ``welcome_wait_s``) for that screen to
+    clear via :func:`_wait_for_welcome_screen_to_clear`, then re-evaluate the
+    ACTUAL live box once it is gone. RESUMED sessions never show this banner
+    (they render "Welcome back" instead), so this adds no latency there.
     """
     import logging
 
@@ -180,6 +258,18 @@ def clear_compose_buffer(
             _pane_tail(pane),
         )
         return False
+    if is_fresh_boot_welcome_screen(pane):
+        # BUG 3 — the fresh-boot welcome/model-info/promo screen is up and
+        # the Ink TUI's input is not reliably bound yet; wait it out before
+        # trusting any read of the live compose box.
+        pane = _wait_for_welcome_screen_to_clear(
+            name,
+            capture_fn=capture_fn,
+            max_wait_s=welcome_wait_s,
+            poll_s=poll_s,
+            sleep_fn=sleep_fn,
+            time_fn=time_fn,
+        )
     if not _compose_pending_live(pane):
         # Common case: nothing stale in the live box — no-op.
         return True
@@ -198,6 +288,15 @@ def clear_compose_buffer(
                 _pane_tail(current),
             )
             return False
+        if is_fresh_boot_welcome_screen(current):
+            # BUG 3 — (re)appeared mid-loop (a slow mount can outlast the
+            # pre-loop wait). Skip this attempt WITHOUT sending Escape — it
+            # cannot land on this screen — and let the next iteration's
+            # capture see whether it has cleared by then.
+            last_pane = current
+            if poll_s > 0:
+                sleep_fn(poll_s)
+            continue
         for key in _COMPOSE_CLEAR_KEYS:
             send_keys_fn(key)
         # Let the clear render, then re-capture and verify the live box is empty.
@@ -206,6 +305,25 @@ def clear_compose_buffer(
         last_pane = capture_fn(name)
         if not _compose_pending_live(last_pane):
             return True
+
+    if is_fresh_boot_welcome_screen(last_pane):
+        # Distinct from the generic exhaustion message below: we withheld
+        # every Escape send (BUG 3 guard), so it would be misleading to blame
+        # "the Ink TUI kept dropping the clear keystroke" — no keystroke was
+        # ever sent. The welcome screen itself never released within budget.
+        log.error(
+            "TuiSessionRuntime: compose-buffer clear for %s gave up after "
+            "%d attempts — the fresh-boot welcome/model-info screen never "
+            "cleared within the wait budget, so no Escape was sent at all "
+            "(sending it would not have landed). Boot will proceed "
+            "(verify_submit_by_advancement is the next net). Attach to "
+            "inspect: `tmux attach -t %s`. Pane tail:\n%s",
+            name,
+            max_attempts,
+            name,
+            _pane_tail(last_pane),
+        )
+        return False
 
     log.error(
         "TuiSessionRuntime: stale compose buffer for %s did NOT clear after "
