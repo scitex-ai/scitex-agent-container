@@ -446,6 +446,52 @@ def test_status_per_agent_table_includes_stopped_status(tmp_path, tmp_registry):
     assert "stopped" in result.output
 
 
+def test_status_per_agent_table_survives_non_ascii_extensions_on_ascii_stdout(
+    tmp_path, tmp_registry
+):
+    """Bug 2 (sac-fleet-ux-misc-2026-06-24): ``spec.extensions`` is an
+    opaque pass-through echoed verbatim into the status table -- real
+    agents commonly carry non-ASCII content there (and in pane_text /
+    CLAUDE.md snippets, which are harder to control deterministically in
+    a test). ``CliRunner(charset="ascii")`` gives ``sys.stdout`` a real
+    strict-ASCII ``TextIOWrapper`` -- the same shape a locale-stripped
+    container/cron invocation produces -- so ``console.print(table)``
+    used to raise ``UnicodeEncodeError`` partway through rendering."""
+    # Arrange
+    spec = _write_spec(
+        tmp_path,
+        "unicode-agent",
+        body=(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata: {}\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: local\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: true\n"
+            "    interval: 60\n"
+            "  restart:\n"
+            "    policy: on-failure\n"
+            "    max_retries: 3\n"
+            "  extensions:\n"
+            "    note: \"❯ ready\"\n"
+        ),
+    )
+    _register(tmp_registry, "unicode-agent", spec)
+    runner = CliRunner(charset="ascii")
+    # Act
+    result = runner.invoke(status, ["unicode-agent"])
+    # Assert
+    assert result.exit_code == 0, repr(result.exception)
+
+
 def test_status_per_agent_not_in_registry_json_exits_one(tmp_registry):
     # Arrange -- empty registry; real ``agent_status`` raises
     # ``RuntimeError("Agent 'ghost' not found in registry")``.

@@ -1027,6 +1027,32 @@ async def test_push_channel_event_still_injects_notification(fake_listen):
     assert len(session.sent) == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank_content", ["", "   ", "\n\t"])
+async def test_push_channel_event_skips_notification_for_blank_content(
+    fake_listen, blank_content
+):
+    """Bug 1 (sac-fleet-ux-misc-2026-06-24): an empty/whitespace-only
+    content must not push a notification -- it used to render as a bare
+    "<- sac:" line with nothing after it. Distinct from the wake-loop /
+    auto-ack logic covered elsewhere in this module."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": blank_content, "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — no notification was pushed for blank content.
+    assert session.sent == []
+
+
 def _contentless_ack_posts(fake_listen) -> list:
     """Filter the fake listen's posts down to contentless legacy acks.
 

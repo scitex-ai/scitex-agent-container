@@ -305,14 +305,16 @@ async def _push_channel_event(
         # Notification-only delivery (no colocated runner to wake, or an
         # ack/empty event that does not warrant a driven turn).
         params = _build_notification(event)
-        msg = JSONRPCMessage(
-            JSONRPCNotification(
-                jsonrpc="2.0",
-                method="notifications/claude/channel",
-                params=params,
+        content = params.get("content", "")
+        if isinstance(content, str) and content.strip():
+            msg = JSONRPCMessage(
+                JSONRPCNotification(
+                    jsonrpc="2.0",
+                    method="notifications/claude/channel",
+                    params=params,
+                )
             )
-        )
-        await session.send_message(SessionMessage(msg))
+            await session.send_message(SessionMessage(msg))
 
     # Post-delivery receipts: contentless auto-ack (legacy noise-filtered
     # path) + structural reaction-ack (the comm-miss-detectable signal,
