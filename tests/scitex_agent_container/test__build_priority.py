@@ -244,3 +244,77 @@ def test_prefix_env_value_zero_means_no_opt_out(
     prefix = low_priority_build_prefix()
     # Assert
     assert prefix == ["nice", "-n", "19", "ionice", "-c", "2", "-n", "7"]
+
+
+# ---------------------------------------------------------------------------
+# remote_build_advisory — remote-first warning on an already-loaded host
+# ---------------------------------------------------------------------------
+
+
+def test_advisory_silent_when_load_below_threshold() -> None:
+    # Arrange — 8 cores, factor 1.5 -> threshold 12; load 10 is fine.
+    load1, ncpu = 10.0, 8
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu)
+    # Assert
+    assert advisory is None
+
+
+def test_advisory_silent_at_exactly_the_threshold() -> None:
+    # Arrange — boundary is inclusive-allow: load == factor x cores.
+    load1, ncpu = 12.0, 8
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu)
+    # Assert
+    assert advisory is None
+
+
+def test_advisory_fires_in_the_incident_precondition_regime() -> None:
+    # Arrange — the calibration point: the incident host sat at load
+    # ~27 on 16 cores (~1.7x) BEFORE the bake started; the advisory
+    # must already be loud there.
+    load1, ncpu = 27.0, 16
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu)
+    # Assert
+    assert advisory is not None
+
+
+def test_advisory_names_remote_first_route_and_demoted_proceed() -> None:
+    # Arrange — the warning must advise the remote/dedicated host
+    # (Spartan) AND state the build proceeds demoted, so nobody reads
+    # it as a refusal.
+    load1, ncpu = 50.0, 12
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu)
+    # Assert
+    assert "Spartan" in advisory and "DEMOTED" in advisory
+
+
+def test_advisory_honours_custom_factor_parameter() -> None:
+    # Arrange — factor 4.0 raises the bar: load 3x cores stays silent.
+    load1, ncpu = 24.0, 8
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu, factor=4.0)
+    # Assert
+    assert advisory is None
+
+
+def test_advisory_guards_against_nonpositive_core_count() -> None:
+    # Arrange — a bogus ncpu must clamp to 1, not turn the decision
+    # into nonsense (threshold 2.0; load 5 fires).
+    load1, ncpu = 5.0, 0
+    # Act
+    advisory = bp.remote_build_advisory(load1=load1, ncpu=ncpu)
+    # Assert
+    assert advisory is not None
+
+
+def test_advisory_live_introspection_returns_str_or_none() -> None:
+    # Arrange — no seams: exercise the real os.getloadavg/os.cpu_count
+    # path; on any host the contract is "a string or None", never a
+    # raise (advisory-only code must not crash a build).
+    # Act
+    advisory = bp.remote_build_advisory()
+    # Assert
+    assert advisory is None or isinstance(advisory, str)

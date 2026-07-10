@@ -27,6 +27,7 @@ import click
 from .. import _build_priority
 from . import _image_inventory_cmds, _image_source_build
 from ._helpers import HelpRecursiveGroup, console
+from ._helpers._console import logger
 
 # Module-level overridable reference for the source-bundled build path.
 # Tests reassign this to a real recording callable (same swap-and-restore
@@ -38,6 +39,11 @@ _build_layer_from_source = _image_source_build.build_layer_from_source
 # (incident-local-heavy-build) — tests swap in a recording fake so the
 # pytest process itself never gets demoted (demotion is one-way).
 _demote_build_priority = _build_priority.demote_current_process_to_low_priority
+
+# Same seam pattern for the remote-first load advisory — tests swap in a
+# canned-string fake so the decision doesn't depend on the CI host's
+# live loadavg.
+_remote_build_advisory = _build_priority.remote_build_advisory
 
 # Recipes ship inside the wheel (read-only, package-relative).
 _RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
@@ -249,6 +255,16 @@ def image_build(
     except _image_source_build.BootstrapSifMissing as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
+
+    # incident-local-heavy-build closure #3 (remote-first): when this
+    # host is already busy (loadavg above LOAD_ADVISORY_FACTOR x cores),
+    # say LOUDLY that a remote / dedicated build host (Spartan) is the
+    # right place for the bake — then still proceed, demoted.
+    # scitex-logging WARNING so it is colour-coded and unmissable
+    # (PR #607 convention).
+    advisory = _remote_build_advisory()
+    if advisory:
+        logger.warning(advisory)
 
     # incident-local-heavy-build: self-demote NOW — after every cheap
     # validation/refusal path, right before the heavy work — so the whole
