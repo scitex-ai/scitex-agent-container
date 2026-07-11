@@ -13,6 +13,15 @@ from __future__ import annotations
 from ..._state.registry import Registry
 from ...config import load_config
 
+# Account-column resolvers live in the sibling ``_agent_list_account``
+# (512-line cap split). Re-imported here so the bare-name call sites in
+# ``get_agent_list_data`` — and the test seams that rebind
+# ``_al._safe_account_for`` / ``_al._runtime_account_for`` — keep working.
+from ._agent_list_account import (  # noqa: F401
+    _runtime_account_for,
+    _safe_account_for,
+)
+
 
 def _safe_port_for(name: str) -> int | None:
     """Return the agent's claimed a2a port, or None on any failure.
@@ -31,35 +40,6 @@ def _safe_port_for(name: str) -> int | None:
         return port_allocator.get_port(name)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return None
-
-
-def _safe_account_for(cfg) -> str:
-    """Resolve the agent's effective Anthropic-account label.
-
-    Surfaces which account the agent authenticates as (operator request
-    4581) so the operator can spot agents sharing one account — and thus
-    one server-side rate limit. Resolution mirrors the runtime auth
-    precedence: agent ``spec.env`` override → host shared OAuth identity
-    → ``default``/``unknown`` fallback. See
-    ``_account.agent_account.resolve_agent_account_label`` for the rule.
-
-    Tolerant: a missing config or any resolver hiccup maps to
-    ``"unknown"`` so the list command never crashes on account lookup.
-    """
-    # stx-allow: fallback (reason: list output must never crash on an
-    # account-resolution hiccup; ``"unknown"`` cell is the right UX.)
-    try:
-        from ..._account.agent_account import resolve_agent_account_label
-
-        env = getattr(cfg, "env", None) if cfg is not None else None
-        assigned = (
-            getattr(getattr(cfg, "claude", None), "account", "") or None
-            if cfg is not None
-            else None
-        )
-        return resolve_agent_account_label(env, assigned_account=assigned)
-    except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return "unknown"
 
 
 def _movement_fields(name: str) -> dict:
@@ -335,6 +315,18 @@ def get_agent_list_data(
         # state.db by hand. ``None`` when no claim exists (agent never
         # started under the allocator, or sidecar-disabled spec).
         a2a_port = _safe_port_for(name)
+        # Which Anthropic account this agent authenticates as. Agents
+        # sharing one label share one server-side rate limit. For a RUNNING
+        # agent prefer the ACTUAL runtime account (read from its per-agent
+        # ``<runtime>/home/.claude.json``) over the spec-derived label —
+        # pool-based agents all resolve to the same host-OAuth spec label
+        # otherwise, hiding the load-balanced per-agent pick. Called as a
+        # bare name so a test can rebind ``_al._runtime_account_for``.
+        account_label = _safe_account_for(cfg)
+        if status_val == "running":
+            runtime_label = _runtime_account_for(name)
+            if runtime_label:
+                account_label = runtime_label
         row: dict = {
             "name": name,
             "status": status_val,
@@ -344,9 +336,7 @@ def get_agent_list_data(
             "host": host_label,
             "path": spec_path,
             "a2a_port": a2a_port,
-            # Which Anthropic account this agent authenticates as.
-            # Agents sharing one label share one server-side rate limit.
-            "account": _safe_account_for(cfg),
+            "account": account_label,
         }
         # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
         # session.jsonl movement + last heartbeat at the per-row level

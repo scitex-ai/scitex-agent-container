@@ -374,12 +374,14 @@ def test_status_fleet_table_exits_zero(tmp_registry):
 
 
 def test_status_fleet_table_includes_registered_agent(tmp_path, tmp_registry):
-    # Arrange
+    # Arrange — a registered agent that is NOT running in the test env
+    # (no tmux/container). The DEFAULT view shows only running agents
+    # (operator TG 1490-1495), so the full roster is behind ``-v``.
     spec = _write_spec(tmp_path, "table-agent")
     _register(tmp_registry, "table-agent", spec)
     runner = CliRunner()
     # Act
-    result = runner.invoke(status, [])
+    result = runner.invoke(status, ["-v"])
     # Assert
     assert "table-agent" in result.output
 
