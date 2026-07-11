@@ -6,33 +6,55 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.13] — 2026-07-11
+
+First PyPI release since 0.21.11. v0.21.12 is a ghost tag (like v0.21.10
+before it): its self-hosted release pipeline failed on a since-fixed
+audit finding and nothing was published; its content (explicit spec
+fields, no hidden defaults) ships here. This release also carries the
+2026-07-10/11 incident-response wave.
+
+### Fixed
+- **Account-pool outage root cause** (#610): the OAuth token-refresh
+  endpoint moved (`console.anthropic.com` → `platform.claude.com`);
+  every refresh 404'd and was misreported as "refresh token rejected".
+  Correct URL + `$SAC_ANTHROPIC_OAUTH_TOKEN_URL` override, honest
+  transport-vs-rejected failure classes, loud per-account refresh
+  alarms on every timer run, self-diagnosing picker errors, and the
+  credential bind flipped `:ro` → `:rw`.
+- **Quota-aware account pick** (#611): avoid 5h-blocked and
+  7d-near-capped accounts; load-balance the fleet per agent.
+- **`sac accounts list` dedupe** (#614): usage bars own the
+  percentages (now with compact reset hints); the table slims to
+  Account | Status | Last Update; Email/Plan columns removed.
+
+### Added
+- **`sac accounts login <name>`** (#608): semi-automated `claude /login`
+  re-auth — only the browser-authorize step stays human.
+- **Host-field routing** (#609): `host: local` banned with migration
+  hints; `${HOSTNAME}` load-time resolution; transparent remote
+  dispatch for lifecycle verbs when `spec.host` names a registered
+  peer; fail-loud on unknown hosts.
+- **Heavy-job demotion guard** (#612, P1 incident closure): baseline
+  hook blocking undemoted image builds/mksquashfs/mass compression
+  with the corrected `nice -n 19 ionice -c 2 -n 7` education; builds
+  self-demote by default (#605) and warn remote-first under load.
+- **Twin spawning** (#613): context-inheriting fork of a running agent
+  (CLI verb + MCP tool + skill + ADR) — ephemeral cleaners or
+  persistent companions; twins write under their own name.
+- **Deterministic CCT bot-token pool injection** (#615): agent start
+  resolves the Telegram bot token from the pool into `$HOME/.env`
+  (0600, never argv, never logged); loud error naming the pool source
+  when a channel-requesting spec has no token. Root `.envrc` untracked
+  from the public repo (`.envrc.example` ships instead).
+
 ### Changed
-- **refactor(accounts): `sac accounts list` — dedupe table vs usage
-  bars** (operator directive 2026-07-11: "Stored accounts と Usage
-  bars で duplicated info を出すな / Usage bars で書けないものだけ
-  Stored Accounts に書け / ID <-> Email 対応は要らない；Plan も
-  いらない"). Presentation-layer only; the `--json` schema is
-  untouched (still carries `email_address`, `plan_label`, raw usage):
-  - Stored-accounts table is now exactly
-    `Account | Status | Last Update` — the Email column (IDs are
-    email-derived slugs), the Plan column and the 5h%/7d% columns
-    (which duplicated the bars and wrapped the table at normal
-    terminal widths) are gone. Status keeps the live token TTL
-    (`VALID +2h26m`).
-  - The usage-bars block owns the percentages AND gains the compact
-    per-window reset hints that used to clutter the table cells:
-    `5h [██████░░░░░░░░░░░░░░]  29% (→09:19)   7d [...]  66% (→Sun 21h)`.
-    Missing 5h hints are space-padded so the 7d bars stay vertically
-    aligned. The `(in Xh Ym)` countdown qualifier was dropped with
-    the table cells it annotated (the bars stay compact per the
-    operator's verbatim example).
-  - The rolling-window legend now prints below the bars (the surface
-    it explains); the fleet effective-utilization footer and the
-    single-account "Claude Code account" header block are unchanged.
-  - `account_group.py` extraction: the `list` command body moved to
-    `cli_pkg/_account_list_cmd.py` (`register_list_command`), the
-    same pattern as `_account_refresh.py`, keeping the group
-    orchestrator under the per-file line cap.
+- **Release pipeline moved to GitHub-hosted runners** (#616): the
+  Spartan self-hosted SIF pipeline was a fail-quiet dependency;
+  publishing now uses standard PyPI OIDC trusted publishing
+  (org-transfer publisher config fixed 2026-07-11).
+- **Load-time advisories route through scitex-logging** (#607) for
+  consistent fleet-wide warning/error color coding.
 
 ## [0.21.11] — 2026-06-09
 
