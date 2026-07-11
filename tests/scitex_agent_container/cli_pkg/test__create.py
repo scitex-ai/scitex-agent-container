@@ -740,10 +740,16 @@ def test_create_help_omits_dir_template_absent_from_root(tmp_path: Path) -> None
     # Arrange — an EMPTY agents root: no _template_* dirs exist.
     runner = CliRunner()
     base = tmp_path / "agents"
-    # Act
+    # Act — collapse ALL whitespace so the check is terminal-width-independent.
+    # click's HelpFormatter wraps the epilog to the detected terminal width
+    # (which varies under `apptainer exec` / CI, where COLUMNS may not
+    # propagate into the pytest subprocess), and a narrow width can split
+    # "none found" across a line break — the historical SIF failure. Matching
+    # on the normalized stream asserts the message, not the wrap column.
     result = runner.invoke(create_cmd, ["--base-dir", str(base), "--help"])
+    normalized = " ".join(result.output.split())
     # Assert — nothing invented; the live scan reports none found.
-    assert "none found" in result.output
+    assert "none found" in normalized
 
 
 def test_create_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> None:

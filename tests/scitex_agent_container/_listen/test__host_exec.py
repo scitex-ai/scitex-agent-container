@@ -328,20 +328,41 @@ def test_host_exec_audit_entry_records_argv():
 
 
 def test_host_exec_does_not_block_the_event_loop():
-    # Arrange — two ~0.3s execs; off-loop dispatch lets them overlap, while
-    # a subprocess.run on the event loop would serialize them to ~0.6s.
-    req_a = _FakeRequest({"argv": ["sleep", "0.3"]}, authenticated_node="dev")
-    req_b = _FakeRequest({"argv": ["sleep", "0.3"]}, authenticated_node="dev")
-
-    async def _both() -> float:
-        start = time.monotonic()
-        await asyncio.gather(
-            host_exec(req_a, group_resolver=_dev_resolver, audit_writer=_noop_audit),
-            host_exec(req_b, group_resolver=_dev_resolver, audit_writer=_noop_audit),
+    # Arrange — the invariant is "host_exec dispatches its blocking
+    # subprocess.run OFF the event loop", i.e. two concurrent execs OVERLAP
+    # rather than serialize. A hard wall-clock ceiling (the old `< 0.5s`)
+    # flakes under shared-runner load, where subprocess spawn + scheduler
+    # overhead is unbounded (observed 0.54s on the CI SIF). So measure a
+    # RELATIVE invariant instead: run the same two ~0.3s execs serially, then
+    # concurrently. If the loop is NOT blocked, the concurrent run overlaps to
+    # ~half the serial time; if host_exec ran subprocess.run ON the loop, the
+    # two runs are ~equal. Both measurements absorb the same per-exec
+    # overhead, so their RATIO is load-independent where an absolute wall
+    # threshold is not.
+    def _mk():
+        return host_exec(
+            _FakeRequest({"argv": ["sleep", "0.3"]}, authenticated_node="dev"),
+            group_resolver=_dev_resolver,
+            audit_writer=_noop_audit,
         )
+
+    async def _serial() -> float:
+        start = time.monotonic()
+        await _mk()
+        await _mk()
+        return time.monotonic() - start
+
+    async def _concurrent() -> float:
+        start = time.monotonic()
+        await asyncio.gather(_mk(), _mk())
         return time.monotonic() - start
 
     # Act
-    elapsed = _run(_both())
-    # Assert
-    assert elapsed < 0.5
+    serial = _run(_serial())
+    concurrent = _run(_concurrent())
+
+    # Assert — concurrent dispatch is clearly less than serial (they overlap).
+    # The 0.75 factor sits well below the ~1.0 ratio a loop-blocking
+    # implementation would produce, yet far enough above the ~0.5 ideal to
+    # absorb scheduler jitter.
+    assert concurrent < serial * 0.75
