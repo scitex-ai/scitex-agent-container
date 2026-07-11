@@ -176,16 +176,19 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     "verbose",
     is_flag=True,
     default=False,
-    help="Fleet view: add the full spec.yaml Path column (off by default — "
-    "it folds every row to 10+ lines).",
+    help="Fleet view: show the FULL list — every status "
+    "(running/stopped/invalid/definition) WITH per-agent validation-error "
+    "detail and the spec.yaml Path column. The default view shows only "
+    "running agents (the full roster is an unusable wall on a real fleet).",
 )
 @click.option(
     "--all",
     "show_all",
     is_flag=True,
     default=False,
-    help="Fleet view: include stale/ghost agents (dead registry entries whose "
-    "spec file is gone). Hidden by default.",
+    help="Fleet view: like -v (full roster + validation detail) AND "
+    "additionally include stale/ghost agents (dead registry entries whose "
+    "spec file is gone). Both are hidden by default.",
 )
 @click.option(
     "--snapshot",
