@@ -16,11 +16,11 @@ import path keeps working unchanged.
 from __future__ import annotations
 
 import os
-import shutil
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_spawn, deny_response
 from ._agent_exec_liveness import _probe_post_ack_liveness
 from ._agent_exec_send import _find_claude_binary, agent_send
@@ -158,7 +158,18 @@ async def agents_start(request: Request) -> JSONResponse:
             # to a different caller is loudly rejected.
             return JSONResponse({"error": str(exc)}, status_code=409)
 
-    sac_bin = shutil.which("sac") or "sac"
+    try:
+        sac_bin = sac_binary()
+    except SacBinaryNotFoundError as exc:
+        # Resolution-time failure (bug root cause, see _sac_binary.py):
+        # surface a structured, diagnosable error instead of building an
+        # unresolvable argv that would later die deep inside a subprocess
+        # call as an opaque FileNotFoundError / 500. Shape mirrors
+        # ``host_exec``'s error responses (``_host_exec.py``).
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     # ``agents`` (plural) is the canonical command group; the singular
     # ``agent`` form was removed in the F-CS13 rename and the host CLI
     # no longer exposes it (verified 2026-06-01 by the SAC-from-SAC
@@ -220,12 +231,23 @@ async def agents_start(request: Request) -> JSONResponse:
     # would serialize everything for no safety gain).
     from ._credential_refresh_lock import run_brokered_launch
 
-    proc = await run_brokered_launch(
-        inner_argv,
-        child_env,
-        foreground=bool(foreground),
-        one_shot=bool(one_shot),
-    )
+    try:
+        proc = await run_brokered_launch(
+            inner_argv,
+            child_env,
+            foreground=bool(foreground),
+            one_shot=bool(one_shot),
+        )
+    except OSError as exc:
+        # Launch-time failure (e.g. the resolved sac_bin vanished between
+        # resolution and exec, or any other subprocess-creation error).
+        # Never let this propagate as an unhandled exception → opaque
+        # framework 500; surface it structured, same shape as the
+        # resolution-failure branch above / host_exec's error responses.
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     if proc.returncode != 0:
         # PR-1 — stillborn agent observability. The subprocess can exit
         # non-zero for many reasons, including apptainer FATAL on a bind
