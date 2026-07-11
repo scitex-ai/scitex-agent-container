@@ -19,13 +19,19 @@ Pure formatting helpers (``local_timezone``, ``format_dt_local``,
 :mod:`._account_list_format` so existing callers (and the historical
 test surface) keep importing them from this module without churn.
 
-Header note (2026-06-09 task): the human renderer's last column was
-renamed ``As-of`` → ``Last Update`` because the operator could not
-parse the abbreviation. The 5h%/7d% cells now carry an inline reset
-hint (``→HH:MM`` for 5h, ``→Day HHh`` for 7d) computed from the
-Anthropic OAuth usage API's ``resets_at`` field. The JSON output path
-(``sac accounts list --json``) is NOT touched — its schema stays the
-machine-readable contract downstream consumers parse.
+Layout note (operator directive 2026-07-11): the Stored-accounts table
+and the usage-bars block below it used to DUPLICATE the 5h%/7d%
+numbers. The rule now is "the bars own the percentages; the table
+holds only what the bars cannot express" — so the table is exactly
+``Account | Status | Last Update`` (the ID column was renamed
+``Account``; the Email column was dropped because IDs are
+email-derived slugs, and the Plan column was dropped outright), while
+the per-window reset hints (``→HH:MM`` / ``→Day HHh``, 2026-06-09
+gripe #2) moved from the removed 5h%/7d% cells onto the usage-bars
+lines (see :mod:`._account_usage_bars`). The JSON output path
+(``sac accounts list --json``) is NOT touched — its schema (including
+``email_address`` and ``plan_label``) stays the machine-readable
+contract downstream consumers parse.
 """
 
 from __future__ import annotations
@@ -58,38 +64,37 @@ class AccountRow:
 
     The dataclass keeps the renderer pure (no I/O, no time calls), so a
     test can hand-roll a row and assert the exact cells without
-    monkeypatching the clock.
+    monkeypatching the clock. It feeds BOTH human surfaces of
+    ``sac accounts list``: the Stored-accounts table (name + status +
+    last update) and the usage-bars block (percentages + reset hints).
+    The former ``email`` / ``plan_label`` / ``tier`` fields were
+    dropped with the 2026-07-11 dedupe directive — neither surface
+    renders them any more (the JSON path keeps them via
+    :func:`build_stored_json`).
 
     Attributes
     ----------
     name
-        Account ID (stored slug, e.g. ``ywatanabe-scitex-ai``).
-    email
-        Display email or ``(no email)`` placeholder.
-    plan_label
-        Human plan label (``Pro`` / ``Max 5x`` / ``Max 20x`` / ``?``).
-    tier
-        Rate-limit tier slug.
+        Account ID (stored slug, e.g. ``ywatanabe-scitex-ai``; the
+        slugs are email-derived, which is why the table needs no
+        separate Email column).
     freshness_state
         ``"VALID"`` / ``"EXPIRED"`` / ``"ABSENT"``.
     freshness_hours
         Signed hours to expiry, or ``None`` for ABSENT.
     used_pct_5h, used_pct_7d
-        Float percentages or ``None``.
+        Float percentages or ``None`` (rendered by the bars block).
     snapshot_as_of
         ISO-8601 string from the usage cache, or ``None``.
     reset_at_5h, reset_at_7d
         ISO-8601 reset timestamps from the Anthropic OAuth usage API
         (``resets_at`` field, parsed by :mod:`._account.claude_usage`).
         ``None`` when the API did not return them (older caches /
-        outages); the renderer falls back to the bare percentage cell
-        in that case rather than fabricating a value.
+        outages); the bars block then omits the reset hint for that
+        window rather than fabricating a value.
     """
 
     name: str
-    email: str
-    plan_label: str
-    tier: str
     freshness_state: str
     freshness_hours: float | None
     used_pct_5h: float | None
@@ -102,28 +107,6 @@ class AccountRow:
 # ---------------------------------------------------------------------------
 # Table renderer
 # ---------------------------------------------------------------------------
-
-
-def _fmt_pct(value: float | None) -> str:
-    """Render a percentage as ``42%``; ``None`` → ``-``."""
-    return "-" if value is None else f"{float(value):.0f}%"
-
-
-def _fmt_pct_with_reset(value: float | None, hint: str) -> str:
-    """Combine percentage + reset hint: ``42% (→21:05)`` / ``-`` / ``42%``.
-
-    ``hint`` is the output of :func:`format_reset_hhmm` or
-    :func:`format_reset_day_hour` — empty string when the API didn't
-    return a reset timestamp, in which case the cell is just ``42%``
-    (and the column header carries the ``(rolling)`` qualifier so the
-    operator still knows it's a rolling window).
-    """
-    if value is None:
-        return "-"
-    pct = f"{float(value):.0f}%"
-    if not hint:
-        return pct
-    return f"{pct} ({hint})"
 
 
 def _fmt_status(state: str, hours: float | None) -> str:
@@ -149,38 +132,28 @@ def render_stored_table(
     """Build a ``rich.table.Table`` for the Stored-accounts block.
 
     Columns (left-to-right):
-      ID | Email | Plan | Status(+TTL) | 5h% | 7d% | Last Update
+      Account | Status | Last Update
 
-    The 5h% / 7d% cells carry an inline reset hint when the upstream
-    Anthropic usage API returned one for that row (operator gripe #2
-    of 2026-06-09: "いつ区切りが戻るのか分からない"). When the API
-    did NOT return any reset timestamps, the operator still needs to
-    know the windows are ROLLING (not calendar-day) — for that case
-    the CLI prints a one-line legend below the table; see
-    :func:`needs_rolling_legend` / :func:`rolling_legend_line`. The
-    column header stays compact (``5h%`` / ``7d%``) so the table fits
-    in a typical operator terminal.
+    Operator directive 2026-07-11: the table holds ONLY what the
+    usage-bars block below it cannot express — the account slug, the
+    credential status with its live token TTL (``VALID +2h26m``), and
+    the usage-snapshot freshness. The 5h%/7d% columns (duplicating the
+    bars), the Email column (IDs are email-derived slugs) and the Plan
+    column were removed; the per-window reset hints moved onto the
+    bars lines (:mod:`._account_usage_bars`).
 
     ``now`` is an injection seam so the snapshot-age tests can drive
     the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
-    table.add_column("ID", style="bold")
-    table.add_column("Email")
-    table.add_column("Plan")
-    table.add_column("Status(+TTL)")
-    table.add_column("5h%", justify="right")
-    table.add_column("7d%", justify="right")
+    table.add_column("Account", style="bold")
+    table.add_column("Status")
     table.add_column("Last Update")
     for r in rows:
         table.add_row(
             r.name,
-            r.email,
-            f"{r.plan_label} [{r.tier}]",
             _fmt_status(r.freshness_state, r.freshness_hours),
-            _fmt_pct_with_reset(r.used_pct_5h, format_reset_hhmm(r.reset_at_5h)),
-            _fmt_pct_with_reset(r.used_pct_7d, format_reset_day_hour(r.reset_at_7d)),
             _fmt_last_update_cell(r.snapshot_as_of, now=now),
         )
     return table
@@ -190,9 +163,9 @@ def needs_rolling_legend(rows: list[AccountRow]) -> bool:
     """Return True iff at least one row lacks BOTH reset_at fields.
 
     Used by the CLI to decide whether to print the explanatory legend
-    below the table. When EVERY row has a per-row reset hint, the
-    legend would be redundant — the cells already carry the
-    information.
+    below the usage-bars block. When EVERY row has a per-line reset
+    hint, the legend would be redundant — the bars lines already carry
+    the information.
     """
     if not rows:
         return False
@@ -204,7 +177,8 @@ def rolling_legend_line() -> str:
 
     Per the 2026-06-09 task contract: "リセットのアンカーが取れない
     場合は列凡例/ヘッダで5h=直近5時間ローリング, 7d=直近7日ローリン
-    グと明示". English wording matches the rest of the table.
+    グと明示". Printed below the usage-bars block (which owns the
+    percentages and their ``(→...)`` reset hints since 2026-07-11).
     """
     return (
         "Legend: 5h = rolling 5-hour window; 7d = rolling 7-day window. "
@@ -297,29 +271,27 @@ def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
 def build_stored_rows(
     accounts: list[dict], *, refresh: bool = False
 ) -> list[AccountRow]:
-    """Convert stored-account dicts into :class:`AccountRow` for the table.
+    """Convert stored-account dicts into :class:`AccountRow` for rendering.
 
-    Pure orchestration: pulls plan/tier (offline), credential freshness
-    (live recompute from ``expiresAt`` on every call), and usage% (cached
-    or re-fetched depending on ``refresh``). Also carries through the
-    per-window ``reset_at_5h`` / ``reset_at_7d`` so the cells can render
-    the inline reset hint (gripe #2 of 2026-06-09).
+    Pure orchestration: pulls credential freshness (live recompute from
+    ``expiresAt`` on every call) and usage% (cached or re-fetched
+    depending on ``refresh``). Also carries through the per-window
+    ``reset_at_5h`` / ``reset_at_7d`` so the usage-bars block can render
+    the inline reset hint (gripe #2 of 2026-06-09; moved from the table
+    cells onto the bars by the 2026-07-11 dedupe directive). Plan/tier
+    are no longer resolved here — no human surface renders them (the
+    JSON path keeps them via :func:`build_stored_json`).
     """
     from .._account.creds_sync import account_freshness
-    from .._state.account_store import read_account_plan
 
     rows: list[AccountRow] = []
     for acct in accounts:
         name = acct["name"]
-        plan = read_account_plan(name)
         fresh = account_freshness(name)
         usage = usage_for_account(acct, refresh=refresh) or {}
         rows.append(
             AccountRow(
                 name=name,
-                email=acct.get("email_address") or "(no email)",
-                plan_label=plan.get("plan_label") or "?",
-                tier=plan.get("rate_limit_tier") or "?",
                 freshness_state=fresh.state,
                 freshness_hours=fresh.hours,
                 used_pct_5h=usage.get("used_pct_5h"),

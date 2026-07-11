@@ -8,13 +8,20 @@ BELOW the existing table:
 
 1. A monospace **usage-bars block** — one fixed-width horizontal bar per
    window (5h short window + 7d window) per account, so utilisation is
-   visible at a glance and the bars line up vertically across accounts::
+   visible at a glance and the bars line up vertically across accounts.
+   Since the 2026-07-11 dedupe directive ("the bars own the
+   percentages; the table holds only what the bars cannot express")
+   each percentage also carries the compact per-window reset hint
+   (``→HH:MM`` for 5h, ``→Day HHh`` for 7d — 2026-06-09 gripe #2)
+   that used to clutter the Stored-accounts table cells::
 
-       ywatanabe-scitex-ai   5h [░░░░░░░░░░░░░░░░░░░░]    0%   7d [████████████████████]  100%
-       ywata1989-gmail-com   5h [███░░░░░░░░░░░░░░░░░░]   14%   7d [███░░░░░░░░░░░░░░░░░░]   15%
+       wyusuuke-gmail-com   5h [██████░░░░░░░░░░░░░░]  29% (→09:19)   7d [█████████████░░░░░░░]  66% (→Sun 21h)
+       ywatanabe-scitex-ai  5h [███░░░░░░░░░░░░░░░░░]  14%            7d [███░░░░░░░░░░░░░░░░░]  15% (→Mon 09h)
 
    A bar for an account with no cached usage renders a same-width
-   ``[      no data       ]`` placeholder rather than crashing.
+   ``[      no data       ]`` placeholder rather than crashing; a
+   window with no cached ``reset_at`` renders no hint (the missing
+   5h hint is space-padded so the 7d bars stay vertically aligned).
 
 2. A one-line **fleet effective-utilization** figure that factors each
    account's 7-day-window reset horizon into a single fleet number:
@@ -62,6 +69,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable
+
+from ._account_list_format import format_reset_day_hour, format_reset_hhmm
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ._account_list_render import AccountRow
@@ -118,6 +127,11 @@ def _pct_label(pct: float | None) -> str:
     return f"{int(round(max(0.0, min(100.0, float(pct)))))}%".rjust(4)
 
 
+def _wrap_hint(hint: str) -> str:
+    """Parenthesise a non-empty reset hint: ``→09:19`` → ``(→09:19)``."""
+    return f"({hint})" if hint else ""
+
+
 def render_usage_bar_line(
     label: str,
     pct_5h: float | None,
@@ -125,15 +139,31 @@ def render_usage_bar_line(
     *,
     label_width: int,
     width: int = _DEFAULT_BAR_WIDTH,
+    hint_5h: str = "",
+    hint_7d: str = "",
+    hint_5h_width: int = 0,
 ) -> str:
-    """One aligned account line: ``<label>  5h [..] NN%   7d [..] NN%``."""
+    """One aligned account line, operator-example shape:
+
+    ``<label>  5h [..]  29% (→09:19)   7d [..]  66% (→Sun 21h)``
+
+    ``hint_5h`` / ``hint_7d`` are pre-wrapped display strings (e.g.
+    ``(→09:19)``) or ``""`` when the window has no cached reset.
+    ``hint_5h_width`` is the block-level max width of the 5h hints; a
+    row whose own hint is shorter (or missing) pads with spaces so the
+    ``7d`` bars stay vertically aligned across accounts. The trailing
+    7d hint needs no padding — nothing follows it.
+    """
     bar5 = render_usage_bar(pct_5h, width=width)
     bar7 = render_usage_bar(pct_7d, width=width)
-    return (
-        f"  {label.ljust(label_width)}  "
-        f"5h {bar5} {_pct_label(pct_5h)}   "
-        f"7d {bar7} {_pct_label(pct_7d)}"
-    )
+    seg_5h = f"5h {bar5} {_pct_label(pct_5h)}"
+    pad_5h = max(hint_5h_width, len(hint_5h))
+    if pad_5h:
+        seg_5h += f" {hint_5h.ljust(pad_5h)}"
+    seg_7d = f"7d {bar7} {_pct_label(pct_7d)}"
+    if hint_7d:
+        seg_7d += f" {hint_7d}"
+    return f"  {label.ljust(label_width)}  {seg_5h}   {seg_7d}"
 
 
 def render_usage_bars_block(
@@ -143,6 +173,13 @@ def render_usage_bars_block(
 ) -> str:
     """Render the full usage-bars block (header + one line per account).
 
+    Each line carries the compact per-window reset hints
+    (``(→HH:MM)`` / ``(→Day HHh)``) computed from the row's
+    ``reset_at_5h`` / ``reset_at_7d`` — the 2026-07-11 dedupe
+    directive moved them here from the Stored-accounts table cells.
+    The 5h hints are padded to one block-level width so mixed
+    hint/no-hint rows keep the 7d bars vertically aligned.
+
     Returns ``""`` for an empty ``rows`` iterable so the caller can skip
     printing the section entirely.
     """
@@ -150,8 +187,11 @@ def render_usage_bars_block(
     if not row_list:
         return ""
     label_width = max(len(r.name) for r in row_list)
+    hints_5h = [_wrap_hint(format_reset_hhmm(r.reset_at_5h)) for r in row_list]
+    hints_7d = [_wrap_hint(format_reset_day_hour(r.reset_at_7d)) for r in row_list]
+    hint_5h_width = max(len(h) for h in hints_5h)
     lines = ["Usage bars (5h / 7d out of 100%):"]
-    for r in row_list:
+    for r, hint_5h, hint_7d in zip(row_list, hints_5h, hints_7d):
         lines.append(
             render_usage_bar_line(
                 r.name,
@@ -159,6 +199,9 @@ def render_usage_bars_block(
                 r.used_pct_7d,
                 label_width=label_width,
                 width=width,
+                hint_5h=hint_5h,
+                hint_7d=hint_7d,
+                hint_5h_width=hint_5h_width,
             )
         )
     return "\n".join(lines)

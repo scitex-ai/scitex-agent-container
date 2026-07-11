@@ -61,6 +61,7 @@ import logging
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._cct_token_pool import ensure_cct_bot_token
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
@@ -279,6 +280,17 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         dest / ".envrc",
     ]
     fold_envrc_cascade_into_env(dest, envrc_cascade)
+    # DETERMINISTIC CCT BOT-TOKEN INJECTION (card sac-fleet-ux-misc-2026-06-24,
+    # last item): when the spec requests server:claude-code-telegrammer and the
+    # cascade above did NOT provide CCT_BOT_TOKEN (no per-project .envrc), sac
+    # resolves the agent/project -> CCT_BOT_TOKEN_<SLOT> from the fleet pool
+    # (launching env + SAC_SECRETS_ENVRC secret files) and appends it to
+    # dest/.env itself — per-agent identity must never depend on .envrc
+    # goodwill (SCITEX_TODO_AGENT incident doctrine). Missing token => LOUD
+    # scitex-logging ERROR naming the pool path + fix; never silent, never
+    # fatal, token value never logged. Runs AFTER the fold so an explicit
+    # .envrc mapping stays authoritative.
+    ensure_cct_bot_token(config, dest)
     # settings.json CASCADE (same precedence order as .envrc): deep-merge each
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
