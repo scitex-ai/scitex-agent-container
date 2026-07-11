@@ -52,6 +52,15 @@ Opt-out surfaces: ``--no-nice`` on ``sac image build``, or
 ``SAC_BUILD_NO_NICE=1`` in the environment (covers the agent-start
 build path too, and lets a dedicated build box disable self-demotion
 fleet-wide without touching every invocation).
+
+Remote-first advisory (incident closure #3): demotion protects the
+host, but the better move for a ~40-min bake is to not run it on the
+shared interactive box at all. :func:`remote_build_advisory` inspects
+the 1-min loadavg against ``LOAD_ADVISORY_FACTOR`` x core count and,
+when the host already looks busy, returns a loud warning telling the
+caller to prefer a remote / dedicated build host (Spartan) — the build
+still proceeds (demoted); actually routing the build remotely is a
+separate card (sac-spartan-sif-parity-rebuild-distribute-drift-check).
 """
 
 from __future__ import annotations
@@ -71,6 +80,16 @@ BUILD_IONICE_LEVEL = "7"
 # Environment opt-out — equivalent to ``--no-nice`` everywhere sac
 # demotes a build. Any value other than empty/"0" disables demotion.
 NO_NICE_ENV = "SAC_BUILD_NO_NICE"
+
+# Remote-first advisory threshold: 1-min loadavg above FACTOR x cores
+# means the host is already busy with someone else's work — a long bake
+# belongs on a remote / dedicated build host, not here. Calibrated to
+# the incident precondition, not a round guess: on 2026-07-10 the
+# 16-core interactive host was at load ~27 (~1.7x cores) BEFORE the
+# bake started — that was already the "should have gone remote" regime,
+# so the threshold sits below it at 1.5x. Ordinary bursts on a shared
+# interactive host (~0.5–1x) stay comfortably under it.
+LOAD_ADVISORY_FACTOR = 1.5
 
 # The loud one-line notices ``sac image build`` prints when self-demotion
 # is active, so nobody is surprised by a slower build.
@@ -162,6 +181,51 @@ def demote_current_process_to_low_priority(*, skip: bool = False) -> list[str]:
     return [LOW_PRIORITY_NOTICE]
 
 
+def remote_build_advisory(
+    *,
+    load1: float | None = None,
+    ncpu: int | None = None,
+    factor: float = LOAD_ADVISORY_FACTOR,
+) -> str | None:
+    """Remote-first advisory: warn when THIS host is already loaded.
+
+    Returns a loud multi-line warning when the 1-min loadavg exceeds
+    ``factor`` x logical core count — the signature of a shared
+    interactive host that is already busy — advising a remote /
+    dedicated build host (Spartan) for the bake. Returns ``None`` when
+    the host looks idle enough, or when load introspection fails
+    (advisory-only: it must never block or crash a build).
+
+    ``load1`` / ``ncpu`` default to live ``os.getloadavg()`` /
+    ``os.cpu_count()`` introspection; pass explicit values to exercise
+    the decision deterministically (the no-mocks test seam).
+    """
+    try:
+        if load1 is None:
+            load1 = os.getloadavg()[0]
+        if ncpu is None:
+            ncpu = os.cpu_count() or 1
+    except OSError:
+        return None
+    if ncpu <= 0:
+        ncpu = 1
+    threshold = factor * ncpu
+    if load1 <= threshold:
+        return None
+    return (
+        f"HOST ALREADY LOADED: 1-min loadavg {load1:.1f} exceeds "
+        f"{factor:g}x the {ncpu} cores here ({threshold:.0f}) — this looks "
+        "like a busy shared interactive host.\n"
+        "REMOTE-FIRST: prefer a remote / dedicated build host (e.g. "
+        "Spartan) for a full bake instead of this box (P1 incident "
+        "2026-07-10: an un-niced SIF rebake pushed the interactive host "
+        "past load 50).\n"
+        "Proceeding DEMOTED (nice 19 + ionice best-effort low): "
+        "interactive latency stays protected, but expect this build to "
+        "be slow under contention."
+    )
+
+
 def low_priority_build_prefix() -> list[str]:
     """argv prefix that runs ONE spawned build at low priority.
 
@@ -187,9 +251,11 @@ __all__ = [
     "BUILD_IONICE_CLASS",
     "BUILD_IONICE_LEVEL",
     "BUILD_NICENESS",
+    "LOAD_ADVISORY_FACTOR",
     "LOW_PRIORITY_NOTICE",
     "LOW_PRIORITY_NOTICE_NICE_ONLY",
     "NO_NICE_ENV",
     "demote_current_process_to_low_priority",
     "low_priority_build_prefix",
+    "remote_build_advisory",
 ]

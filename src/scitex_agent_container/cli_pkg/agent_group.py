@@ -26,6 +26,7 @@ from .lifecycle import forget as _forget_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
+from .lifecycle import twin as _twin_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl
@@ -50,7 +51,7 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["create", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            ["create", "start", "twin", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "tail", "recall"]),
@@ -82,6 +83,10 @@ def agent_group() -> None:
 # --project <p>`.
 agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
+# `twin` — spawn a context-inheriting twin of a running agent (forks the
+# parent's live session, then diverges; parent never stops). See the
+# twin-spawning skill + docs/adr/0019.
+agent_group.add_command(_rebind(_twin_impl, "twin"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))

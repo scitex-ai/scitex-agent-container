@@ -58,6 +58,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format + sidecar replacement
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent (vs Task subagent)
 - [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper pattern
+- [33](33_twin-spawning.md) — context-inheriting twin
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
@@ -66,7 +67,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay/`--home`, settings hook
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
-- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron / watch-live / CI rotation
+- [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron rotation
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login (tmux code-paste) + 401-recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; running agents re-read on next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push to lead via a2a_send
