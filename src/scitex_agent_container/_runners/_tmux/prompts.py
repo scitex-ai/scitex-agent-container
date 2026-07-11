@@ -105,7 +105,7 @@ def _detect_press_enter_continue(content: str) -> bool:
     (per pane-state-patterns.md: classify against last 5 visible lines only).
     Excluded: active tool calls and numbered radio selectors.
     """
-    lines = [l for l in content.splitlines() if l.strip()]
+    lines = [ln for ln in content.splitlines() if ln.strip()]
     last = "\n".join(lines[-5:]) if lines else ""
     has_enter_cue = (
         "Press Enter to continue" in last
