@@ -223,6 +223,32 @@ def _detect_compose_pending_unsent(content: str) -> bool:
     return bool(re.search(r"❯[ \t\xa0]+\S", content))
 
 
+# The Claude Code Ink TUI input-prompt marker (U+276F). The gap after it may
+# be an ASCII space, a tab, or a NBSP (U+00A0) — see
+# :func:`_detect_compose_pending_unsent`. Exposed as a named constant so
+# prompt-anchored consumers (e.g. the auth-status matcher) locate the input
+# line the SAME, NBSP-aware way instead of re-deriving the glyph.
+PROMPT_MARKER = "❯"  # ❯
+
+
+def prompt_line_index(content: str) -> int | None:
+    """Return the 0-based line index of the TUI input-prompt line, else ``None``.
+
+    The prompt line is the one whose stripped text STARTS with the Ink prompt
+    marker ``❯`` (:data:`PROMPT_MARKER`). A captured pane can show several — a
+    scrollback echo of an earlier prompt box sits above the live one — so the
+    LAST (bottom-most) match wins: the live input field is always the lowest
+    prompt on screen. Anchoring on the stripped-line START (not a bare
+    substring) means a ``❯`` that appears mid-sentence in agent prose does not
+    masquerade as the prompt.
+    """
+    idx: int | None = None
+    for i, line in enumerate(content.splitlines()):
+        if line.strip().startswith(PROMPT_MARKER):
+            idx = i
+    return idx
+
+
 def _detect_done(content: str) -> bool:
     """Check if claude is at the main input prompt (all TUI prompts done).
 

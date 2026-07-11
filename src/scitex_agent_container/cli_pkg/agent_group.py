@@ -54,7 +54,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             ["create", "start", "twin", "stop", "restart", "delete", "forget", "spawn-from-here"],
         ),
         ("Interact", ["send", "attach"]),
-        ("Inspect", ["list", "status", "health", "tail", "recall"]),
+        ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
@@ -107,6 +107,13 @@ agent_group.add_command(_rebind(_status_impl, "list"))
 agent_group.add_command(_rebind(_status_impl, "status"))
 agent_group.add_command(_rebind(_tail_impl, "tail"))
 agent_group.add_command(_rebind(_health_impl, "health"))
+# `auth-status` — prompt-anchored TUI login-stuck report (near-prompt banner +
+# distance-frozen across two captures). The reliable version of the operator's
+# ad-hoc auth health check; distinct from `health` (per-agent heartbeat/
+# watchdog). See cli_pkg/_auth_status + _runners/_tmux/auth_status.
+from ._auth_status import auth_status as _auth_status_impl  # noqa: E402
+
+agent_group.add_command(_auth_status_impl)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))
