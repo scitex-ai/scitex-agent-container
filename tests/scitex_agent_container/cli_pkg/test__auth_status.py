@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg._auth_status import auth_status, evaluate_agents
+from scitex_agent_container.cli_pkg._auth_status import evaluate_agents
 from scitex_agent_container.cli_pkg.agent_group import agent_group
 
 # Wedged: banner directly above the prompt, identical on both reads → frozen.
