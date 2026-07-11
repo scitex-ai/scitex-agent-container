@@ -28,11 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_lineage_acl, deny_response
 
 __all__ = ["agent_restart"]
@@ -99,7 +99,18 @@ async def agent_restart(request: Request) -> JSONResponse:
     # / falsey) keeps the byte-identical plain-restart argv below.
     fresh = bool(body.get("fresh"))
 
-    sac_bin = shutil.which("sac") or "sac"
+    try:
+        sac_bin = sac_binary()
+    except SacBinaryNotFoundError as exc:
+        # Resolution-time failure (bug root cause, see _sac_binary.py):
+        # surface a structured, diagnosable error instead of building an
+        # unresolvable argv that would later die deep inside a subprocess
+        # call as an opaque FileNotFoundError / 500. Shape mirrors
+        # ``host_exec``'s error responses (``_host_exec.py``).
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     # ``agents`` (plural) is the canonical group; ``--yes`` skips the
     # interactive guard (this POST IS the confirmation) and ``--json``
     # gives a parseable envelope — exactly the argv ``agent_restart`` MCP
@@ -116,12 +127,23 @@ async def agent_restart(request: Request) -> JSONResponse:
     else:
         inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
 
-    proc = await asyncio.create_subprocess_exec(
-        *inner_argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=child_env,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *inner_argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=child_env,
+        )
+    except OSError as exc:
+        # Launch-time failure (e.g. the resolved sac_bin vanished between
+        # resolution and exec, or any other subprocess-creation error).
+        # Never let this propagate as an unhandled exception → opaque
+        # framework 500; surface it structured, same shape as the
+        # resolution-failure branch above / host_exec's error responses.
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     out, err = await proc.communicate()
     stdout = out.decode("utf-8", errors="replace") if out else ""
     stderr = err.decode("utf-8", errors="replace") if err else ""
