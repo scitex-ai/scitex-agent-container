@@ -15,6 +15,7 @@ STX-TQ003 descriptive names.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,6 +27,13 @@ import pytest
 from scitex_agent_container.runtimes import _tui_turn_bridge_port as portmod
 
 _HOST = "127.0.0.1"
+
+# The force-kill sweep resolves the holder PID via lsof/ss/fuser; skip the
+# real-survivor test on a bare host that ships none of them (the parsing +
+# fallback chain is covered by ``tests/.../_listen/test__port_holder.py``).
+_HAS_PORT_DISCOVERY = bool(
+    shutil.which("lsof") or shutil.which("ss") or shutil.which("fuser")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -274,3 +282,110 @@ def test_pid_alive_false_for_reaped_pid() -> None:
     alive = portmod._pid_alive(proc.pid)
     # Assert
     assert alive is False
+
+
+# ---------------------------------------------------------------------------
+# force_free_own_port — the STOP-path ``fuser -k`` for a survivor holder
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def sigterm_immune_listeners() -> Iterator[Callable[[int], subprocess.Popen]]:
+    """Spawn REAL listeners that IGNORE SIGTERM; only SIGKILL frees them.
+
+    Models the 2026-07-12 incident's survivor: a process still bound to the
+    agent's a2a port that a plain SIGTERM (``await_bridge_release``'s first
+    escalation) cannot reap — so ONLY the force-kill sweep frees the port.
+    Torn down via SIGKILL (which cannot be ignored).
+    """
+    procs: list[subprocess.Popen] = []
+
+    def start(port: int) -> subprocess.Popen:
+        code = (
+            "import socket,signal,time;"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+            "s=socket.socket();"
+            "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);"
+            f"s.bind(('{_HOST}',{port}));"
+            "s.listen();"
+            "time.sleep(60)"
+        )
+        proc = subprocess.Popen([sys.executable, "-c", code])
+        procs.append(proc)
+        portmod.poll_until(
+            lambda: not portmod.port_is_free(_HOST, port),
+            timeout_s=5.0,
+            poll_s=0.05,
+            sleep_fn=time.sleep,
+            now_fn=time.monotonic,
+        )
+        return proc
+
+    yield start
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.skipif(
+    not _HAS_PORT_DISCOVERY,
+    reason="needs lsof/ss/fuser to resolve the port holder for the SIGKILL sweep",
+)
+def test_force_free_own_port_sigkills_sigterm_immune_survivor(
+    sigterm_immune_listeners,
+) -> None:
+    # Arrange — a REAL survivor bound to the agent's OWN a2a port that IGNORES
+    # SIGTERM; only the force-kill sweep (SIGKILL via the real port_holder_pids
+    # finder) frees the port. Real time so the kernel reaps the killed holder's
+    # socket before the re-probe.
+    port = _free_port()
+    proc = sigterm_immune_listeners(port)
+    # Act
+    portmod.force_free_own_port(
+        port,
+        host=_HOST,
+        agent_name="figrecipe",
+        grace_s=1.0,
+        sleep_fn=time.sleep,
+        now_fn=time.monotonic,
+    )
+    proc.wait(timeout=5)
+    # Assert — the SIGTERM-immune survivor was SIGKILLed; the port is bindable.
+    assert portmod.port_is_free(_HOST, port) is True
+
+
+def test_force_free_own_port_noop_when_already_free() -> None:
+    # Arrange — a free port; the sweep must return True without killing anything.
+    port = _free_port()
+    clock = _FakeClock()
+    # Act
+    freed = portmod.force_free_own_port(
+        port,
+        host=_HOST,
+        agent_name="figrecipe",
+        grace_s=0.5,
+        sleep_fn=clock.sleep,
+        now_fn=clock.now,
+    )
+    # Assert
+    assert freed is True
+
+
+def test_force_free_own_port_returns_false_when_port_never_frees() -> None:
+    # Arrange — a probe that never reports the port free (a genuinely
+    # unkillable holder) drives the bounded re-poll to time out → False, so the
+    # caller still FAILS LOUD instead of hiding a stuck port. The real port is
+    # free, so the holder sweep finds nothing to kill.
+    port = _free_port()
+    clock = _FakeClock()
+    # Act
+    freed = portmod.force_free_own_port(
+        port,
+        host=_HOST,
+        agent_name="figrecipe",
+        grace_s=0.5,
+        sleep_fn=clock.sleep,
+        now_fn=clock.now,
+        port_free_fn=lambda _h, _p: False,
+    )
+    # Assert
+    assert freed is False
