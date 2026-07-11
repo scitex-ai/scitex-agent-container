@@ -20,9 +20,12 @@ kind: AgentProxy
 spec:
   runtime: apptainer
 
-  # host: local means "the invoking host" — the explicit spelling of the
-  # old empty default (no hidden 'local'; operator directive 2026-06-23).
-  host: local
+  # Placement is a RESOLVED hostname (`host: local` is banned; operator
+  # directive 2026-07-10). ${HOSTNAME} resolves to the loading machine's
+  # canonical hostname at load time — the portable spelling for example/
+  # fixture specs. Real deployments write the concrete name (`hostname -s`,
+  # e.g. `host: ywata-note-win`) or a `sac host list` peer to pin remote.
+  host: ${HOSTNAME}
 
   # workdir — the in-container --pwd. The proxy holds no project tree;
   # point it at the agent's canonical container HOME.

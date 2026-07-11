@@ -381,10 +381,12 @@ def agent_create(
     filled from ``project`` (defaults to ``name``) and ``name``
     respectively. The old auto-detected editable-install toggle is gone —
     the install step is now unconditional in the template (delete it by
-    hand if the target repo ships no Python package); likewise there is no
-    per-agent Telegram bot-token wiring — add
-    ``server:claude-code-telegrammer`` + a per-project ``.envrc`` by hand
-    after creation. ``start=True`` launches the agent afterwards. The
+    hand if the target repo ships no Python package). For Telegram, add
+    ``server:claude-code-telegrammer`` to the spec by hand after creation;
+    the BOT TOKEN itself is then auto-resolved at start from the fleet
+    pool (``CCT_BOT_TOKEN_<SLOT>`` via ``SAC_SECRETS_ENVRC`` — see
+    ``runtimes/_cct_token_pool.py``), so no per-project ``.envrc`` is
+    required anymore. ``start=True`` launches the agent afterwards. The
     developer group is authorized to CRUD agents."""
     argv = [
         "agents",

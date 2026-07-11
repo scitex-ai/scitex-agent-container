@@ -14,9 +14,13 @@ The renderer module is the bullet-1/2/3 fix surface:
   the % so a stale number is obvious.
 * bullet 3 — ``rich.table.Table`` with aligned columns, short
   ``Last Update`` (renamed from ``As-of`` per the 2026-06-09 operator
-  ask). Per-row 5h%/7d% cells carry an inline ``→HH:MM`` /
-  ``→Day HHh`` reset hint when the upstream Anthropic usage API
-  returned a ``resets_at`` timestamp for that window.
+  ask).
+* 2026-07-11 dedupe directive — the table is exactly
+  ``Account | Status | Last Update`` (no Email / Plan / 5h% / 7d%
+  columns); the compact ``→HH:MM`` / ``→Day HHh`` reset hints render
+  in the usage-bars block instead (asserted in
+  ``test__account_usage_bars.py``), and the ``(in Xh Ym)`` countdown
+  qualifier was dropped together with the table cells it annotated.
 
 The ``--refresh`` flag is asserted via the CLI surface (click invocation)
 with a real fake fetcher injected through a temporary monkey of the
@@ -344,35 +348,95 @@ def test_format_as_of_short_under_8_chars(env_save_restore):
     assert len(rendered) <= 8
 
 
+def _table_row(**overrides) -> AccountRow:
+    """Arrange helper: a representative row; kwargs override any field."""
+    base: dict = dict(
+        name="work",
+        freshness_state="VALID",
+        freshness_hours=2.8,
+        used_pct_5h=42.0,
+        used_pct_7d=15.0,
+        snapshot_as_of="2026-05-31T12:11:00+00:00",
+    )
+    base.update(overrides)
+    return AccountRow(**base)
+
+
 def test_render_stored_table_has_column_headers():
+    """The 2026-07-11 contract: exactly Account | Status | Last Update."""
     # Arrange — one row.
+    rows = [_table_row()]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert — every column header is present.
+    for col in ("Account", "Status", "Last Update"):
+        assert col in out, f"missing column header: {col!r}\n---\n{out}"
+
+
+def test_render_stored_table_omits_email_column():
+    """Operator directive 2026-07-11: IDs are email-derived slugs — no Email."""
+    # Arrange
+    rows = [_table_row()]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
+    assert "Email" not in out
+
+
+def test_render_stored_table_omits_plan_column():
+    """Operator directive 2026-07-11: Plan is JSON-only — not in the table."""
+    # Arrange
+    rows = [_table_row()]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
+    assert "Plan" not in out
+
+
+def test_render_stored_table_omits_usage_pct_columns():
+    """The bars own the percentages — no 5h%/7d% duplication in the table."""
+    # Arrange
+    rows = [_table_row()]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
+    assert "5h%" not in out and "7d%" not in out
+
+
+def test_render_stored_table_omits_percentage_cells():
+    """A row WITH cached usage still renders no percentage in the table."""
+    # Arrange
+    rows = [_table_row(used_pct_5h=42.0, used_pct_7d=15.0)]
+    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
+    # Act
+    out = render_stored_table_to_str(rows, now=now)
+    # Assert
+    assert "42%" not in out and "15%" not in out
+
+
+def test_render_stored_table_omits_reset_hints():
+    """Reset hints render on the bars lines now — never in the table."""
+    # Arrange — a row that HAS both reset timestamps cached.
     rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Max 20x",
-            tier="default_claude_max_20x",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
+        _table_row(
+            reset_at_5h="2026-05-31T12:05:00+00:00",
+            reset_at_7d="2026-06-04T08:00:00+00:00",
         ),
     ]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
     out = render_stored_table_to_str(rows, now=now)
-    # Assert — every column header is present.
-    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "Last Update"):
-        assert col in out, f"missing column header: {col!r}\n---\n{out}"
+    # Assert
+    assert "(→" not in out
 
 
 _TWO_ROW_TABLE_ROWS = [
     AccountRow(
         name="aa",
-        email="a@example.com",
-        plan_label="Pro",
-        tier="default_claude_pro",
         freshness_state="VALID",
         freshness_hours=1.0,
         used_pct_5h=10.0,
@@ -381,9 +445,6 @@ _TWO_ROW_TABLE_ROWS = [
     ),
     AccountRow(
         name="bbbb",
-        email="bbbb@example.com",
-        plan_label="Max 20x",
-        tier="default_claude_max_20x",
         freshness_state="EXPIRED",
         freshness_hours=-5.0,
         used_pct_5h=None,
@@ -428,19 +489,7 @@ def test_render_stored_table_columns_are_uniformly_separated():
 
 def _as_of_short_form_table_out() -> str:
     """Render a 1-row table whose As-of carries microseconds for short-form tests."""
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:23.756321+00:00",
-        ),
-    ]
+    rows = [_table_row(snapshot_as_of="2026-05-31T12:11:23.756321+00:00")]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     return render_stored_table_to_str(rows, now=now)
 
@@ -465,22 +514,10 @@ def test_render_stored_table_as_of_strips_microseconds(env_save_restore):
     assert "756321" not in out
 
 
-def test_render_stored_table_shows_age_next_to_pct():
-    """The bullet-2 contract: snapshot age MUST appear next to the %."""
+def test_render_stored_table_shows_snapshot_age_in_last_update():
+    """The bullet-2 contract: snapshot age renders in the Last Update cell."""
     # Arrange
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-        ),
-    ]
+    rows = [_table_row()]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
     out = render_stored_table_to_str(rows, now=now)
@@ -551,190 +588,38 @@ def test_format_reset_day_hour_unparseable_returns_empty():
 
 
 # ---------------------------------------------------------------------------
-# P3 task — countdown delta on the per-window reset hint (op 12866 / lead a2a
-# b1be44d0). The 5h / 7d reset cells now carry an ``(in Xh Ym)`` /
-# ``(in Xd Yh Zm)`` qualifier so the operator sees the wall time AND the
-# time-until-reset in the same cell. ``now`` is injected so tests are
-# deterministic.
+# 2026-07-11 dedupe directive — the reset hint must stay COMPACT (the
+# operator's verbatim bar example is ``29% (→09:19)`` / ``66% (→Sun 21h)``).
+# The former per-cell ``(in Xh Ym)`` countdown qualifier (P3, op 12866) was
+# dropped together with the table cells it annotated, so a FUTURE reset must
+# render exactly like a past one: bare ``→HH:MM`` / ``→Day HHh``.
 # ---------------------------------------------------------------------------
 
 
-def test_format_reset_hhmm_appends_countdown_delta_under_one_hour(env_save_restore):
-    # Arrange — 12:05 UTC = 21:05 JST; now = 10:55 UTC (= 19:55 JST) →
-    # delta = 1h10m → "in 1h 10m".
+def test_format_reset_hhmm_future_reset_stays_compact(env_save_restore):
+    """A reset far in the future renders the bare ``→HH:MM`` — no countdown."""
+    # Arrange — 12:05 UTC = 21:05 JST, a century out from any real clock.
     env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 5, 31, 10, 55, tzinfo=timezone.utc)
     # Act
-    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
-    # Assert
-    assert rendered == "→21:05 (in 1h 10m)"
-
-
-def test_format_reset_hhmm_omits_minute_when_zero(env_save_restore):
-    # Arrange — exactly 2h ahead.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 5, 31, 10, 5, tzinfo=timezone.utc)
-    # Act
-    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
-    # Assert
-    assert rendered == "→21:05 (in 2h)"
-
-
-def test_format_reset_hhmm_uses_in_under_one_min_for_sub_minute_delta(
-    env_save_restore,
-):
-    # Arrange — only 30 seconds out.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 5, 31, 12, 4, 30, tzinfo=timezone.utc)
-    # Act
-    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
-    # Assert
-    assert rendered == "→21:05 (in <1m)"
-
-
-def test_format_reset_hhmm_drops_delta_when_target_already_past(
-    env_save_restore,
-):
-    # Arrange — reset already in the past; cell falls back to bare time.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 5, 31, 13, 0, tzinfo=timezone.utc)
-    # Act
-    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00", now=now)
+    rendered = format_reset_hhmm("2126-05-31T12:05:00+00:00")
     # Assert
     assert rendered == "→21:05"
 
 
-def test_format_reset_day_hour_appends_multi_day_countdown(env_save_restore):
-    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST → Thu 17h.
-    # now = 2026-06-03 03:36 UTC → delta = 1d 4h 24m → "in 1d 4h 24m".
+def test_format_reset_day_hour_future_reset_stays_compact(env_save_restore):
+    """A far-future reset renders the bare ``→Day HHh`` — no countdown."""
+    # Arrange — 08:00 UTC = 17:00 JST, a century out from any real clock.
     env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 6, 3, 3, 36, tzinfo=timezone.utc)
     # Act
-    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
-    # Assert
-    assert rendered == "→Thu 17h (in 1d 4h 24m)"
-
-
-def test_format_reset_day_hour_drops_delta_when_target_already_past(
-    env_save_restore,
-):
-    # Arrange — reset is in the past for this fake now.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    now = datetime(2026, 6, 5, 8, 0, tzinfo=timezone.utc)
-    # Act
-    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
-    # Assert
-    assert rendered == "→Thu 17h"
-
-
-def test_format_reset_day_hour_handles_under_one_day_delta(env_save_restore):
-    # Arrange — same-day reset still uses Day Hh prefix; delta falls in
-    # the ``X h Y m`` branch.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    # 2026-06-04 08:00 UTC = 17:00 JST (Thu 17h); now = 2026-06-04
-    # 05:00 UTC = 14:00 JST → delta = 3h.
-    now = datetime(2026, 6, 4, 5, 0, tzinfo=timezone.utc)
-    # Act
-    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00", now=now)
-    # Assert
-    assert rendered == "→Thu 17h (in 3h)"
-
-
-def test_render_stored_table_5h_cell_carries_reset_hint(env_save_restore):
-    """5h% cell renders ``42% (→HH:MM)`` when ``reset_at_5h`` is present."""
-    # Arrange — 12:05 UTC = 21:05 JST.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-            reset_at_5h="2026-05-31T12:05:00+00:00",
-            reset_at_7d=None,
-        ),
-    ]
-    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
-    # Act
-    out = render_stored_table_to_str(rows, now=now)
-    # Assert — operator example shape from the 2026-06-09 task.
-    assert "42% (→21:05)" in out
-
-
-def test_render_stored_table_7d_cell_carries_reset_hint(env_save_restore):
-    """7d% cell renders ``15% (→Day HHh)`` when ``reset_at_7d`` is present."""
-    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST = Thu 17h.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-            reset_at_5h=None,
-            reset_at_7d="2026-06-04T08:00:00+00:00",
-        ),
-    ]
-    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
-    # Act
-    out = render_stored_table_to_str(rows, now=now)
-    # Assert
-    assert "15% (→Thu 17h)" in out
-
-
-def test_render_stored_table_falls_back_to_bare_pct_when_no_reset_5h():
-    """No ``reset_at_5h`` → cell is just ``42%``; no fabricated reset hint."""
-    # Arrange
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=None,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-            reset_at_5h=None,
-            reset_at_7d=None,
-        ),
-    ]
-    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
-    # Act
-    out = render_stored_table_to_str(rows, now=now)
-    # Assert — bare percentage, no `(→` arrow that would fake a reset.
-    assert "42%" in out and "(→" not in out
+    rendered = format_reset_day_hour("2126-06-04T08:00:00+00:00")
+    # Assert — bare →Day HHh shape; no ``(in ...)`` qualifier appended.
+    assert rendered.startswith("→") and rendered.endswith(" 17h") and "(" not in rendered
 
 
 def test_needs_rolling_legend_true_when_row_lacks_both_resets():
     """When a row carries neither reset_at, the CLI needs the legend line."""
     # Arrange
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-            reset_at_5h=None,
-            reset_at_7d=None,
-        ),
-    ]
+    rows = [_table_row(reset_at_5h=None, reset_at_7d=None)]
     # Act
     need = needs_rolling_legend(rows)
     # Assert
@@ -742,19 +627,10 @@ def test_needs_rolling_legend_true_when_row_lacks_both_resets():
 
 
 def test_needs_rolling_legend_false_when_every_row_has_resets():
-    """Per-row hint already discloses the rolling contract — no legend needed."""
+    """Per-line hint already discloses the rolling contract — no legend needed."""
     # Arrange
     rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
+        _table_row(
             reset_at_5h="2026-05-31T12:05:00+00:00",
             reset_at_7d="2026-06-04T08:00:00+00:00",
         ),
@@ -785,36 +661,6 @@ def test_rolling_legend_line_explains_both_windows():
     assert "5h" in legend and "7d" in legend and "rolling" in legend
 
 
-def test_render_stored_table_header_stays_compact_when_no_reset():
-    """The 5h%/7d% column headers stay compact (no ``(rolling)`` cram).
-
-    Width gripe #3: don't blow up the header. The rolling-contract
-    disclosure now lives in a one-line legend printed by the CLI
-    below the table; the table header is just ``5h%`` / ``7d%``.
-    """
-    # Arrange — neither row has reset_at.
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-            reset_at_5h=None,
-            reset_at_7d=None,
-        ),
-    ]
-    now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
-    # Act
-    out = render_stored_table_to_str(rows, now=now)
-    # Assert — bare headers; no ``(rolling)`` smashed into the column.
-    assert "5h% (rolling)" not in out and "7d% (rolling)" not in out
-
-
 # ---------------------------------------------------------------------------
 # Gripe #1 of the 2026-06-09 operator ask: ``As-of`` was unreadable.
 # Pin the renamed header on both sides — the new name MUST appear and
@@ -826,19 +672,7 @@ def test_render_stored_table_header_stays_compact_when_no_reset():
 
 def _build_last_update_header_inputs() -> tuple[list[AccountRow], datetime]:
     """Arrange helper: build the (rows, now) pair for the header-rename cases."""
-    rows = [
-        AccountRow(
-            name="work",
-            email="w@example.com",
-            plan_label="Pro",
-            tier="default_claude_pro",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
-        ),
-    ]
+    rows = [_table_row()]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     return rows, now
 
@@ -863,38 +697,29 @@ def test_render_stored_table_header_omits_legacy_as_of():
     assert "As-of" not in out
 
 
-def test_render_stored_table_width_fits_120_cols(env_save_restore):
-    """Operator gripe #3: the table must stay readable on ~120 cols.
+def test_render_stored_table_width_fits_80_cols(env_save_restore):
+    """Operator gripe 2026-07-11: the old 7-column table wrapped horribly.
 
-    Renders a representative row with both reset hints + day-hour
-    Last-Update + multi-character TTL. Each line of the rich-drawn
-    table must fit within the explicit 120-column width budget the
-    renderer is asked to honour.
+    The deduped 3-column table (Account | Status | Last Update) must
+    fit a standard 80-column terminal even with a real-length account
+    slug, a multi-character TTL and a day-hour Last-Update cell.
     """
-    # Arrange — JST so the reset hints carry the operator's wall clock.
+    # Arrange — JST so Last-Update carries the operator's wall clock.
     env_save_restore.set("TZ", "Asia/Tokyo")
     rows = [
-        AccountRow(
+        _table_row(
             name="ywatanabe-scitex-ai",
-            email="ywatanabe@scitex.ai",
-            plan_label="Max 20x",
-            tier="default_claude_max_20x",
-            freshness_state="VALID",
-            freshness_hours=2.8,
-            used_pct_5h=42.0,
-            used_pct_7d=15.0,
-            snapshot_as_of="2026-05-31T12:11:00+00:00",
             reset_at_5h="2026-05-31T12:05:00+00:00",
             reset_at_7d="2026-06-04T08:00:00+00:00",
         ),
     ]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
-    out = render_stored_table_to_str(rows, now=now, width=120)
+    out = render_stored_table_to_str(rows, now=now, width=80)
     lines = out.splitlines()
-    # Assert — every rendered line must fit in 120 columns.
-    over = [(i, len(ln)) for i, ln in enumerate(lines) if len(ln) > 120]
-    assert not over, f"lines exceed 120 cols: {over}\n---\n{out}"
+    # Assert — every rendered line must fit in 80 columns.
+    over = [(i, len(ln)) for i, ln in enumerate(lines) if len(ln) > 80]
+    assert not over, f"lines exceed 80 cols: {over}\n---\n{out}"
 
 
 # ---------------------------------------------------------------------------
@@ -1149,8 +974,8 @@ def test_cli_list_human_renders_table_columns(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list"])
-    # Assert — column headers from the rich table.
-    for col in ("ID", "Email", "Plan", "Status(+TTL)", "5h%", "7d%", "Last Update"):
+    # Assert — the 2026-07-11 three-column contract from the rich table.
+    for col in ("Account", "Status", "Last Update"):
         assert col in result.output, f"missing column {col!r}:\n{result.output}"
 
 
@@ -1300,11 +1125,13 @@ def test_cli_list_json_carries_through_reset_at_7d(sandbox_home):
 def test_cli_list_human_shows_reset_hint_when_cache_has_reset_at(sandbox_home):
     """End-to-end: cache → renderer → operator sees ``42% (→...)``.
 
-    The bullet-2 contract of the 2026-06-09 task: when the per-account
-    cache carries ``reset_at_5h``, the human-rendered table cell must
-    show the inline reset hint. We don't pin a specific local time
-    (tests run on hosts in arbitrary timezones) — only the arrow
-    marker, which is the renderer's unambiguous reset signal.
+    Gripe #2 of the 2026-06-09 task, relocated by the 2026-07-11
+    dedupe directive: when the per-account cache carries
+    ``reset_at_5h``, the human output must show the inline reset hint
+    — now on the usage-bars line rather than a table cell. We don't
+    pin a specific local time (tests run on hosts in arbitrary
+    timezones) — only the arrow marker, which is the renderer's
+    unambiguous reset signal.
     """
     # Arrange — full account + a credentials snapshot so the live
     # fetcher path is taken; with no real OAuth token the fetcher
@@ -1321,5 +1148,5 @@ def test_cli_list_human_shows_reset_hint_when_cache_has_reset_at(sandbox_home):
     # operator. The exact local time depends on the host TZ; assert
     # on the marker shape so the test is timezone-independent.
     assert "(→" in result.output, (
-        f"missing inline reset hint in human table:\n{result.output}"
+        f"missing inline reset hint in human output:\n{result.output}"
     )

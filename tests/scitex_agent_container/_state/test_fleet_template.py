@@ -24,7 +24,10 @@ kind: Agent
 metadata: { labels: { project: ${PROJECT}, capsule: ${CAPSULE_ID} } }
 spec:
   runtime: apptainer
-  host: local
+  # Concrete host — not a HOSTNAME placeholder: expand fails loud on any
+  # leftover dollar-brace token (comments included), so fleet templates
+  # carry concrete/CSV-driven placement.
+  host: fleet-host
   workdir: /tmp/${name}-workdir
   apptainer:
     image: /x.sif
@@ -303,7 +306,11 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore):
         "apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n  runtime: apptainer\n"
-        "  host: local\n"
+        # Empty host: (caller's host) — 'local' is banned; a placeholder
+        # would trip expand's leftover check, and a concrete foreign name
+        # would make the post-expand `start --dry-run` fail loud as an
+        # unregistered host.
+        "  host:\n"
         "  workdir: /tmp/${name}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"

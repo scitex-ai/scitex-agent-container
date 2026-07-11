@@ -297,7 +297,7 @@ metadata:
 
 spec:
   runtime: apptainer
-  host: local
+  host: ${HOSTNAME}
   workdir: ~/proj/SAC_PLACEHOLDER_PROJECT/SAC_PLACEHOLDER_AGENT_ID
 
   apptainer:
@@ -550,7 +550,7 @@ metadata:
 
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/ywatanabe/proj/SAC_PLACEHOLDER_PROJECT
 
   apptainer:

@@ -1083,7 +1083,7 @@ def test_argv_mounts_credentials_dir_when_present(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/).
-    assert any(a == f"{creds.parent}:/tmp/sac-claude:ro" for a in argv)
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 def test_argv_credentials_bind_is_read_only(
@@ -1103,7 +1103,7 @@ def test_argv_credentials_bind_is_read_only(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if ":/tmp/sac-claude:" in a)
     # Assert
-    assert creds_arg.endswith(":ro")
+    assert creds_arg.endswith(":rw")
 
 
 def test_argv_sets_claude_config_dir_when_credentials_present(
@@ -1182,7 +1182,7 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     # atomic-replace writers in creds_sync / account_store /
     # claude_usage, regressing into the per-copy collision-401 disease
     # the snapshot model was meant to fix). The bound dir's child
-    # ``.credentials.json`` remains the snapshot itself, bound :ro; the
+    # ``.credentials.json`` remains the snapshot itself, bound :rw; the
     # host-side sac-accounts-refresh timer refreshes it and every
     # same-account agent reads the timer-kept-fresh token.
     host_creds = home_redirect / ".claude" / ".credentials.json"
@@ -1198,7 +1198,7 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     creds_arg = next(
         a
         for a in argv
-        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:ro")
+        if a.startswith(str(snap.parent) + ":") and a.endswith(":/tmp/sac-claude:rw")
     )
     # Assert — the bound host-side source IS the account directory
     # (snapshot.parent), neither the snapshot file alone, a per-agent
@@ -1225,7 +1225,7 @@ def test_argv_pins_account_does_not_create_state_dir_copy(
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     legacy_copy = state_dir / "claude" / ".credentials.json"
     # Assert — no per-agent copy materialised; the snapshot is the
-    # single source the :ro agents read and the host timer refreshes.
+    # single source the agents share and the host timer refreshes.
     assert not legacy_copy.exists()
 
 
@@ -1245,7 +1245,7 @@ def test_argv_no_account_dir_binds_host_claude(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     # Assert — bind source is the credentials file's PARENT (~/.claude/);
     # bind dest is the DIRECTORY /tmp/sac-claude, not the file inside it.
-    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:ro" for a in argv)
+    assert any(a == f"{host_creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 def test_argv_pinned_account_missing_snapshot_raises_pinned_account_error(

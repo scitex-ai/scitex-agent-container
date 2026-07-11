@@ -134,7 +134,7 @@ def _write_valid_spec(
         [
             "spec:",
             "  runtime: apptainer",
-            "  host: local",
+            "  host: ${HOSTNAME}",
             "  workdir: /home/agent/work",
             "  apptainer:",
             "    image: /x.sif",

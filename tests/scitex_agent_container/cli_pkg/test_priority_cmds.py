@@ -79,7 +79,9 @@ def _write_spec(
         lines.append(f"  hosts: {json.dumps(hosts)}")
     else:
         # singleton (explicit host, or the local default) → workdir required.
-        lines.append(f"  host: {json.dumps(host) if host is not None else 'local'}")
+        # 'local' is banned; an EMPTY host: is the caller's-host spelling
+        # for the no-host-declared case.
+        lines.append(f"  host: {json.dumps(host)}" if host is not None else "  host:")
         lines.append("  workdir: /home/agent/work")
     spec.write_text("\n".join(lines) + "\n")
     return spec

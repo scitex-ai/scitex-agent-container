@@ -50,7 +50,7 @@ def db_path(tmp_path: Path):
 
 
 _REQUIRED_SCAFFOLD: dict = {
-    "host": "local",
+    "host": "${HOSTNAME}",
     "runtime": "apptainer",
     "claude": {"model": "claude-opus-4-8[1m]"},
     "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},

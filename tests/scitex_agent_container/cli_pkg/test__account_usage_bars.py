@@ -131,6 +131,71 @@ def test_render_usage_bar_line_shows_7d_window():
     assert "7d [" in line and "99%" in line
 
 
+# ---------------------------------------------------------------------------
+# 2026-07-11 dedupe directive — the bars own the reset hints (moved off the
+# Stored-accounts table). Operator's verbatim example shape:
+#   ... 5h [..]  29% (→09:19)   7d [..]  66% (→Sun 21h)
+# ---------------------------------------------------------------------------
+
+
+def test_render_usage_bar_line_appends_5h_reset_hint():
+    # Arrange — pre-wrapped hints as the block passes them.
+    label = "acct"
+    # Act
+    line = render_usage_bar_line(
+        label,
+        29.0,
+        66.0,
+        label_width=10,
+        width=20,
+        hint_5h="(→09:19)",
+        hint_7d="(→Sun 21h)",
+    )
+    # Assert — operator's verbatim 5h shape.
+    assert "29% (→09:19)" in line
+
+
+def test_render_usage_bar_line_appends_7d_reset_hint():
+    # Arrange
+    label = "acct"
+    # Act
+    line = render_usage_bar_line(
+        label,
+        29.0,
+        66.0,
+        label_width=10,
+        width=20,
+        hint_5h="(→09:19)",
+        hint_7d="(→Sun 21h)",
+    )
+    # Assert — operator's verbatim 7d shape.
+    assert "66% (→Sun 21h)" in line
+
+
+def test_render_usage_bar_line_without_hints_has_no_parens():
+    """No cached reset → no fabricated hint; the line stays hint-free."""
+    # Arrange
+    label = "acct"
+    # Act
+    line = render_usage_bar_line(label, 14.0, 99.0, label_width=10, width=20)
+    # Assert
+    assert "(" not in line
+
+
+def test_render_usage_bar_line_pads_missing_5h_hint_to_block_width():
+    """A hint-less row pads the 5h slot so the 7d bars stay aligned."""
+    # Arrange — a sibling row in the block has an 8-char 5h hint.
+    with_hint = render_usage_bar_line(
+        "aa", 29.0, 66.0, label_width=4, width=20, hint_5h="(→09:19)", hint_5h_width=8
+    )
+    # Act
+    without_hint = render_usage_bar_line(
+        "bbbb", 14.0, 15.0, label_width=4, width=20, hint_5h="", hint_5h_width=8
+    )
+    # Assert — "7d [" starts at the same column in both lines.
+    assert with_hint.index("7d [") == without_hint.index("7d [")
+
+
 def test_render_usage_bars_block_empty_rows_is_empty_string():
     # Arrange
     rows: list[AccountRow] = []
@@ -145,9 +210,6 @@ def _two_bar_rows() -> list[AccountRow]:
     return [
         AccountRow(
             name="wyusuuke-gmail-com",
-            email="w@x",
-            plan_label="Max 20x",
-            tier="t",
             freshness_state="VALID",
             freshness_hours=2.0,
             used_pct_5h=0.0,
@@ -156,9 +218,6 @@ def _two_bar_rows() -> list[AccountRow]:
         ),
         AccountRow(
             name="ywata1989-gmail-com",
-            email="y@x",
-            plan_label="Pro",
-            tier="t",
             freshness_state="VALID",
             freshness_hours=2.0,
             used_pct_5h=14.0,
@@ -183,9 +242,6 @@ def test_render_usage_bars_block_no_data_row_renders_placeholder():
     rows = [
         AccountRow(
             name="cold",
-            email="c@x",
-            plan_label="?",
-            tier="?",
             freshness_state="ABSENT",
             freshness_hours=None,
             used_pct_5h=None,
@@ -197,6 +253,67 @@ def test_render_usage_bars_block_no_data_row_renders_placeholder():
     block = render_usage_bars_block(rows)
     # Assert
     assert "no data" in block
+
+
+def _hinted_bar_rows() -> list[AccountRow]:
+    """One row with both resets cached, one with neither (mixed block)."""
+    return [
+        AccountRow(
+            name="wyusuuke-gmail-com",
+            freshness_state="VALID",
+            freshness_hours=2.4,
+            used_pct_5h=29.0,
+            used_pct_7d=66.0,
+            snapshot_as_of=None,
+            # Sun 2026-07-12 00:19 UTC = 09:19 JST; 12:00 UTC = Sun 21h JST.
+            reset_at_5h="2026-07-12T00:19:00+00:00",
+            reset_at_7d="2026-07-12T12:00:00+00:00",
+        ),
+        AccountRow(
+            name="ywata1989-gmail-com",
+            freshness_state="VALID",
+            freshness_hours=2.0,
+            used_pct_5h=14.0,
+            used_pct_7d=15.0,
+            snapshot_as_of=None,
+        ),
+    ]
+
+
+def test_render_usage_bars_block_carries_5h_reset_hint(env_save_restore):
+    """Block-level: ``reset_at_5h`` renders the operator's ``29% (→09:19)``."""
+    # Arrange
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = _hinted_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=20)
+    # Assert
+    assert "29% (→09:19)" in block
+
+
+def test_render_usage_bars_block_carries_7d_reset_hint(env_save_restore):
+    """Block-level: ``reset_at_7d`` renders the operator's ``66% (→Sun 21h)``."""
+    # Arrange
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = _hinted_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=20)
+    # Assert
+    assert "66% (→Sun 21h)" in block
+
+
+def test_render_usage_bars_block_aligns_7d_bars_across_mixed_hints(
+    env_save_restore,
+):
+    """A hint-less row pads its 5h slot — 7d bars align across the block."""
+    # Arrange
+    env_save_restore.set("TZ", "Asia/Tokyo")
+    rows = _hinted_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=20)
+    starts = {ln.index("7d [") for ln in block.splitlines() if "7d [" in ln}
+    # Assert — one distinct start column means the 7d bars line up.
+    assert len(starts) == 1, f"7d bars misaligned across rows: {starts}\n{block}"
 
 
 # ---------------------------------------------------------------------------
@@ -316,9 +433,6 @@ def test_fleet_effective_all_none_counts_zero():
 def _row(name: str, d7: float | None, reset_at_7d: str | None) -> AccountRow:
     return AccountRow(
         name=name,
-        email=f"{name}@x",
-        plan_label="Pro",
-        tier="t",
         freshness_state="VALID",
         freshness_hours=2.0,
         used_pct_5h=0.0,

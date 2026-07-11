@@ -2,27 +2,23 @@
 # -*- coding: utf-8 -*-
 """``sac agents restart`` — node-aware stop-then-start of agent(s).
 
-Accepts ONE OR MORE agent names (mirroring ``sac agents start``) plus a
-selection flag: ``--all-running`` restarts only currently-running agents
-(the live fleet; least-surprising), ``--all-registry`` restarts every
-agent ``sac agents list`` shows (including stopped ones), and ``--all``
-is a backward-compat alias for ``--all-registry``. Each name is restarted
-independently: one agent failing does not abort the rest, and the command
-exits non-zero if ANY restart failed.
+Accepts ONE OR MORE agent names plus a selection flag: ``--all-running``
+(only the live fleet), ``--all-registry`` (every registered agent), and
+``--all`` (back-compat alias for ``--all-registry``). Each name restarts
+independently; the command exits non-zero if ANY restart failed.
 
-Cross-host dispatch: when an agent's active ``state.db.instances`` row
-records ``host != current_host``, ``restart`` ssh's into that peer and
-runs ``sac agents restart <name> --yes --json`` there — on the node
-where the agent actually runs and where that node's ``sac listen`` bus
-token lives. This is the node-aware automation of the working manual
-recipe (``stop --yes`` then ``start --yes``, run on the agent's node).
-See ``_dispatch.try_dispatch_remote``.
+Cross-host dispatch: an active ``state.db.instances`` row with ``host !=
+current_host`` routes the restart over ssh to that peer (``sac agents
+restart <name> --yes --json`` on the node that runs the agent — see
+``_dispatch.try_dispatch_remote``). When NO row exists at all, the SPEC's
+``host:`` pin routes instead (``_host_routing.spec_host_fallback_peer`` —
+transparent remote routing, operator directive 2026-07-10); a pin naming
+an UNREGISTERED host fails loud with the registered-peer list.
 
-Locally (or when the row lives on the current host), it delegates to
-:func:`._lifecycle.lifecycle.agent_restart`, which resolves the spec
-from the registry row OR — for ad-hoc-launched agents with no row —
-from the standard discovery chain, so a pre-autorecord agent restarts
-instead of hard-failing with "not found in registry".
+Locally (row on this host, or an unpinned spec), it delegates to
+:func:`._lifecycle.lifecycle.agent_restart`, which resolves the spec from
+the registry row OR the standard discovery chain, so a pre-autorecord
+agent restarts instead of hard-failing with "not found in registry".
 """
 
 from __future__ import annotations
@@ -42,6 +38,7 @@ from ...config import load_config
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._dispatch import try_dispatch_remote
+from ._host_routing import spec_host_fallback_peer
 
 
 def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> dict:
@@ -266,6 +263,13 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
             _holder["_peer"] = peer
 
         dispatched = try_dispatch_remote(name, "restart", peers, handler=_handler)
+        if not dispatched:
+            # No instances row → the SPEC's host pin routes (unregistered
+            # pin raises UnknownSpecHostError into the outer except, loud).
+            spec_peer = spec_host_fallback_peer(name, peers, verb="restart")
+            if spec_peer is not None:
+                _handler(spec_peer, {}, peers)
+                dispatched = True
         if dispatched:
             out = {
                 "name": name,

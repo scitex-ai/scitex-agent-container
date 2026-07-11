@@ -95,7 +95,7 @@ def _write_parent_spec(home: Path, name: str, host_root: Path) -> Path:
         "kind": "Agent",
         "spec": {
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/tmp",
             "apptainer": {
                 "image": "/path/to/sac-base.sif",

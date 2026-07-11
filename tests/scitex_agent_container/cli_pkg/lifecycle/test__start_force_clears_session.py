@@ -149,7 +149,7 @@ def _write_spec(workdir_root: Path, *, name: str = "alpha") -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {workdir_root / 'work'}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"

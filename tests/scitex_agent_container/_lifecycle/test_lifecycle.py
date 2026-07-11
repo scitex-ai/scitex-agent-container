@@ -83,7 +83,7 @@ def _write_spec(
         "kind: Agent\n"
         "spec:\n"
         f"  runtime: {runtime}\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {tmp_path / 'work'}\n"
         f"{apptainer_default}"
         "  claude:\n"

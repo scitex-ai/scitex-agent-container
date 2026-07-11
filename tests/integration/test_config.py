@@ -26,7 +26,7 @@ MINIMAL_CONFIG = {
     "metadata": {"name": "test-agent"},
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/tmp/test-agent-workdir",
         "claude": {"model": "claude-opus-4-8[1m]"},
         "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
@@ -44,7 +44,7 @@ FULL_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/tmp/test-workdir",
         "claude": {
             "model": "opus",

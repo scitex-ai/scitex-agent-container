@@ -51,7 +51,7 @@ def _register_agent_with_workdir(name: str, workdir: Path) -> Path:
         "kind": "Agent",
         "spec": {
             "runtime": "apptainer",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": str(workdir),
             "apptainer": {"image": "/x.sif", "binds": []},
             "claude": {"model": "sonnet"},

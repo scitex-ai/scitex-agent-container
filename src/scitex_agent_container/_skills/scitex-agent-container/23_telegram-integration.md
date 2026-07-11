@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Per-agent Telegram bot wake contract — how an idle SDK agent picks up an inbound Telegram message.
-  [DETAILS] Each agent runs its OWN claude-code-telegrammer stdio MCP (declared in to_home/.mcp.json under the key `claude-code-telegrammer`). sac's runner injects `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<a2a_port>/v1/turn` into that MCP's env when `spec.claude.channels` contains `server:claude-code-telegrammer` AND `spec.a2a.port` is set. The standalone telegrammer poller POSTs each inbound to that URL so an IDLE agent wakes (push ≡ in-session channel). The legacy in-sac `_telegram/` bridge was dropped (`refactor(telegram): drop telegram subsystem from sac`) — this skill documents the current per-agent path + the loud diagnostics that fire when any gate fails.
+  [DETAILS] Each agent runs its OWN claude-code-telegrammer stdio MCP (declared in to_home/.mcp.json under the key `claude-code-telegrammer`). sac's runner injects `CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:<a2a_port>/v1/turn` into that MCP's env when `spec.claude.channels` contains `server:claude-code-telegrammer` AND `spec.a2a.port` is set. The standalone telegrammer poller POSTs each inbound to that URL so an IDLE agent wakes (push ≡ in-session channel). The bot TOKEN is auto-resolved at deploy from the fleet pool (`CCT_BOT_TOKEN_<SLOT>` via `SAC_SECRETS_ENVRC`; `runtimes/_cct_token_pool.py`) into `$HOME/.env` — no per-project `.envrc` required, missing slot = loud ERROR. The legacy in-sac `_telegram/` bridge was dropped (`refactor(telegram): drop telegram subsystem from sac`) — this skill documents the current per-agent path + the loud diagnostics that fire when any gate fails.
 tags: [scitex-agent-container-telegram-integration]
 ---
 
@@ -51,6 +51,42 @@ spec:
 The MCP entry key MUST be `claude-code-telegrammer` (literal). Any other
 key — `telegrammer`, `claude-telegrammer`, `tg-bot`, etc. — bypasses the
 env injection and the JS poller has no wake URL.
+
+## Bot-token pool — deterministic injection (card sac-fleet-ux-misc-2026-06-24)
+
+Each project runs its OWN bot (unique token per project ⇒ no Telegram 409
+single-poller combat). The canonical pool is the set of
+`CCT_BOT_TOKEN_<SLOT>` env vars visible to `sac agents start` — its own
+environment plus the secret files listed in `SAC_SECRETS_ENVRC`
+(colon-separated absolute paths; the same preamble `_envrc` sources, so
+daemon-restarted agents resolve identically). On the fleet host that is
+the operator's `~/.bash.d/secrets/010_scitex/01_claude-code-telegrammer.src`,
+wired into `sac-listen.service` via `Environment=SAC_SECRETS_ENVRC=…`.
+
+At deploy (`runtimes/_cct_token_pool.ensure_cct_bot_token`, called from
+`deploy_to_home` AFTER the `.envrc` cascade fold) sac resolves the token
+deterministically — per-agent identity never depends on `.envrc` goodwill
+(SCITEX_TODO_AGENT incident doctrine). Resolution order, first hit wins:
+
+1. A non-empty `CCT_BOT_TOKEN` already folded into `$HOME/.env` (the
+   hand-authored per-project `.envrc` mapping stays authoritative).
+2. `spec.apptainer.env: CCT_BOT_TOKEN_SLOT: <SLOT>` — explicit override
+   for names that don't map mechanically (e.g. `SAC`). Only that slot is
+   tried; a typo fails loud instead of binding another project's bot.
+3. Mechanical candidates: upper-snake of the workdir basename (project
+   first), then the agent name, each also with a leading `scitex-`
+   stripped (`scitex-todo` → `TODO`).
+
+The token lands in `$HOME/.env` (`chmod 0600`, apptainer `--env-file`) —
+never on `--env` argv (visible in `/proc/<pid>/cmdline`) and never in a
+materialized file (`.mcp.json` keeps `${CCT_BOT_TOKEN}` /
+`${CCT_AGENT_ID}` literal for runtime expansion). `CCT_AGENT_ID` defaults
+to the workdir basename when no layer set it. Log lines carry only slot
+NAMES, paths, and the agent name — token VALUES are never logged.
+
+Channel requested but no slot resolves ⇒ a scitex-logging ERROR names the
+pool source, every tried slot, and the three fixes; the start proceeds
+(Telegram is a comms rail, not a boot dependency) but the absence is loud.
 
 ## Failure surface + diagnostics (bug #41 hardening, 2026-06-07)
 

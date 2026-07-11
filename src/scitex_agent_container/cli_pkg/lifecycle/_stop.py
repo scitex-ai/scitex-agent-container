@@ -6,6 +6,13 @@ Cross-host dispatch: when an agent's active ``state.db.instances`` row
 records ``host != current_host``, ``stop`` ssh's into the peer and runs
 ``sac agents stop <name> --json`` there, then updates the lead-side row
 via :func:`record_instance_stop`. See ``_dispatch.try_dispatch_remote``.
+
+When NO active row exists at all (e.g. the agent was started BY the peer
+itself so this caller never recorded one), the SPEC's ``host:`` pin routes
+the stop instead (``_host_routing.spec_host_fallback_peer``) — transparent
+remote routing, operator directive 2026-07-10. A spec pinned to an
+UNREGISTERED host fails loud with the peer list rather than erroring
+locally with a misleading "not running".
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
+from ._host_routing import spec_host_fallback_peer
 
 # Stable exit_reason marker for the release-on-unreachable path so a
 # follow-up audit can grep state.db for stale-binding releases and
@@ -298,6 +306,16 @@ def stop(
                     _release["_underlying_error"] = str(exc)
 
             dispatched = try_dispatch_remote(name, "stop", peers, handler=_handler)
+            if not dispatched:
+                # No instances row anywhere → fall back to the SPEC's host
+                # pin (transparent remote routing). Reuses the exact
+                # row-driven handler with an empty row (no lead-side id to
+                # tombstone). UnknownSpecHostError propagates to the
+                # per-target except below — loud, with the peer list.
+                spec_peer = spec_host_fallback_peer(name, peers, verb="stop")
+                if spec_peer is not None:
+                    _handler(spec_peer, {}, peers)
+                    dispatched = True
             if dispatched:
                 if release_holder:
                     # Force-released path.

@@ -92,7 +92,7 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /tmp/agt-work
   apptainer:
     image: /x.sif

@@ -47,7 +47,7 @@ metadata:
     sac-builtin: "off"
 spec:
 {provider_line}  runtime: claude-agent-sdk
-  host: local
+  host: ${{HOSTNAME}}
   workdir: /tmp/column-wd
   apptainer:
     image: /x.sif
@@ -195,8 +195,9 @@ def test_claude_column_argv_carries_no_openai_wiring(_sandbox_env: Path) -> None
 
 
 def test_claude_column_argv_binds_oauth_credentials(_sandbox_env: Path) -> None:
-    # Arrange — a real host creds file: the Claude column's OAuth
-    # dir-bind must be UNCHANGED by the openai-compat-3 branch.
+    # Arrange — a real host creds file: the Claude column emits the OAuth
+    # dir-bind (:rw since the 2026-07-11 shared-credential model — a
+    # rotation performed in-container must be recorded, not dropped).
     creds = _sandbox_env / "home" / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
@@ -204,7 +205,7 @@ def test_claude_column_argv_binds_oauth_credentials(_sandbox_env: Path) -> None:
     # Act
     argv = _column_argv(cfg, _sandbox_env)
     # Assert
-    assert any(a == f"{creds.parent}:/tmp/sac-claude:ro" for a in argv)
+    assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
 # ---------------------------------------------------------------------------

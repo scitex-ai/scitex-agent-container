@@ -54,7 +54,7 @@ _BASE = {
     "kind": "Agent",
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "~/.scitex/agent-container/runtime/agents/test-agent",
         "claude": {"model": "claude-opus-4-8[1m]"},
         "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
