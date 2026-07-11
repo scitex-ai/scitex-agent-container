@@ -18,6 +18,7 @@ assert + STX-TQ003 descriptive names.
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -32,6 +33,13 @@ from typing import Callable, Iterator
 import pytest
 
 from scitex_agent_container.runtimes import _tui_turn_bridge as bridge
+
+# The STOP-path survivor sweep resolves the holder PID via lsof/ss/fuser; skip
+# the real-survivor test on a bare host that ships none of them (the finder's
+# parsing/fallback is covered by ``tests/.../_listen/test__port_holder.py``).
+_HAS_PORT_DISCOVERY = bool(
+    shutil.which("lsof") or shutil.which("ss") or shutil.which("fuser")
+)
 
 # A realistic resolved a2a port + a fake PID for the bridge tests
 # (PEP 515 separators satisfy STX-NL001).
@@ -551,3 +559,81 @@ def test_stop_turn_bridge_releases_held_a2a_port(
     proc.wait(timeout=5)
     # Assert — the a2a port is bindable again.
     assert bridge.port_is_free("127.0.0.1", port) is True
+
+
+# ---------------------------------------------------------------------------
+# Stop teardown — free the OWN port from a survivor that is NOT the tracked PID
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(
+    not _HAS_PORT_DISCOVERY,
+    reason="needs lsof/ss/fuser to resolve the survivor holder for the sweep",
+)
+def test_stop_turn_bridge_force_frees_survivor_on_own_port(
+    isolated_home: Path,
+) -> None:
+    # Arrange — a REAL survivor bound to the agent's OWN a2a port that is NOT
+    # the tracked bridge PID and IGNORES SIGTERM (the 2026-07-12 incident:
+    # await_bridge_release only reaps the tracked PID, so a survivor kept the
+    # port and the next start failed loud). The tracked PID is already reaped,
+    # so ONLY the force-kill sweep can free the port.
+    port = _free_port()
+    survivor_code = (
+        "import socket,signal,time;"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+        "s=socket.socket();"
+        "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);"
+        f"s.bind(('127.0.0.1',{port}));"
+        "s.listen();"
+        "time.sleep(60)"
+    )
+    survivor = subprocess.Popen([sys.executable, "-c", survivor_code])
+    _wait_until_bound(port)
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait(timeout=5)  # a tracked bridge PID that is already reaped
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=port), name="survivor-agent", config_path=""
+    )
+    pid_path = bridge._pid_path(config)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(dead.pid), encoding="utf-8")
+    # Act
+    try:
+        bridge.stop_turn_bridge(config)
+        survivor.wait(timeout=5)
+        # Assert — the survivor on the OWN port was SIGKILLed; port bindable.
+        assert bridge.port_is_free("127.0.0.1", port) is True
+    finally:
+        if survivor.poll() is None:  # pragma: no cover - defensive cleanup
+            survivor.kill()
+            survivor.wait(timeout=5)
+
+
+def test_stop_turn_bridge_fails_loud_when_own_port_stays_stuck(
+    isolated_home: Path,
+) -> None:
+    # Arrange — a probe that never reports the OWN a2a port free (a genuinely
+    # unkillable holder). Even after the force-kill sweep, stop must FAIL LOUD
+    # (raise the actionable TurnBridgePortBusyError) rather than silently
+    # proceed into an EADDRINUSE crash on the next start. The tracked PID is
+    # already reaped and the real port is free, so the sweep finds nothing to
+    # kill and the injected probe drives the bounded re-poll to time out.
+    port = _free_port()
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait(timeout=5)
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=port), name="stuck-forever", config_path=""
+    )
+    pid_path = bridge._pid_path(config)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(dead.pid), encoding="utf-8")
+    clock = {"t": 0.0}
+    # Act
+    # Assert
+    with pytest.raises(bridge.TurnBridgePortBusyError):
+        bridge.stop_turn_bridge(
+            config,
+            grace_s=0.5,
+            sleep_fn=lambda s: clock.__setitem__("t", clock["t"] + s),
+            now_fn=lambda: clock["t"],
+            port_free_fn=lambda _h, _p: False,
+        )
