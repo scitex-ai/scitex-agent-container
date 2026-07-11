@@ -289,7 +289,10 @@ def _write_parent_spec(agents_dir: Path, name: str) -> None:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        # ${HOSTNAME} is the validator-documented portable-fixture form:
+        # 'host: local' is BANNED (operator directive 2026-07-10) and a
+        # hardcoded hostname would break on any other machine (incl. CI).
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/proj/x\n"
         "  apptainer:\n"
         "    image: /x.sif\n"
