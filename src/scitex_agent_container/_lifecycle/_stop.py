@@ -236,6 +236,7 @@ def agent_restart(
     handover_mod: Any = None,
     config_resolver: Optional[Callable[[str], str]] = None,
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
+    successor_auth_check: Optional[Callable[[str], None]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -328,6 +329,27 @@ def agent_restart(
                 f"resolved by name ({exc}). Pass a spec path, or start the "
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
+
+    # PRE-STOP auth pre-flight (INCIDENT
+    # incident-agent-self-restart-one-way-20260712). Resolve + PROBE the
+    # credential the SUCCESSOR container will launch on BEFORE stopping. A
+    # stale-but-unexpired snapshot (future ``expiresAt`` but a
+    # server-invalidated refresh_token) passes the timestamp-only launch gate,
+    # boots, and 401s "Login expired" — and the stop has ALREADY happened, so
+    # the dead successor cannot even report it (the one-way trip). Probing here
+    # lets a REJECTED grant ABORT the restart via
+    # :class:`_restart_preflight.RestartPreflightAbort` — which propagates out
+    # of ``agent_restart`` so ``agent_stop`` below is NEVER reached and the
+    # running container is LEFT UP. A network/endpoint failure fails OPEN (a
+    # false-negative that blocks a HEALTHY restart is worse than the bug). This
+    # covers the manual ``sac agents restart`` AND the listen-brokered external
+    # restart (both shell ``sac agents restart`` → here); the self-restart
+    # bounce (``sac agents start --force``, PR #628) is covered by the twin
+    # check in ``agent_start``'s force branch. Injectable for tests.
+    from ._restart_preflight import preflight_from_config_path
+
+    _auth_check = successor_auth_check or preflight_from_config_path
+    _auth_check(config_path)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
