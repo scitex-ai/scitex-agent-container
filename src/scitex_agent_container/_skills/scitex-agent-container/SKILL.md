@@ -77,6 +77,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
+- [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md) — TUI auth-banner detection contract + extend-the-matcher runbook (the sole safety net for the login-stuck TUI death)
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
