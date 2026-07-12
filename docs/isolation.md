@@ -151,7 +151,41 @@ leak vector (previous-run state contaminates the next run):
 
 **Declarative auto-create (sac).** sac drives overlay provisioning
 from the spec so new peers don't require a manual
-`apptainer overlay create` setup step:
+`apptainer overlay create` setup step. Two overlay FORMS, each with its
+own provisioning path:
+
+**(a) Directory overlay** — the fleet default (persistent per-agent
+`$HOME`, package installs, caches). Declared either as the modeled field
+or as a raw_arg, in EITHER spelling apptainer accepts:
+
+```yaml
+spec:
+  apptainer:
+    overlay: ~/.scitex/agent-container/containers/overlays/<agent>/
+    # …or, under relaxed mode, via the escape hatch:
+    raw_args:
+      - --overlay=/abs/path/overlays/<agent>/   # =-joined, or
+      - --overlay                               # space-separated
+      - /abs/path/overlays/<agent>/
+```
+
+sac **auto-provisions** it before every launch, idempotently, creating
+`<overlay>/`, `<overlay>/upper/` and `<overlay>/work/` (mode 0755) —
+see `runtimes/_apptainer_overlay.ensure_overlay_dirs`, called from
+`build_run_argv`, the one choke point both the SDK and TUI runtimes pass
+through. This is a hard precondition, not a nicety: apptainer creates
+`upper/` and `work/` itself but **`lstat()`s the overlay root and refuses
+to create it**, so a missing root is a fatal
+`while loading overlay images: failed to open overlay image … no such
+file or directory`. Before this was explicit, the fleet's overlays existed
+only as a side-effect of the `to_home` upper-home materialisation, whose
+resolver read only the space-separated spelling — so a brand-new agent
+scaffolded with the `=`-joined spelling was **stillborn**. If the overlay
+still cannot be created (unwritable parent), sac raises
+`OverlayProvisionError` naming the path and the exact `mkdir -p` fix,
+rather than letting apptainer die with a raw FATAL.
+
+**(b) Sized image overlay** — a loopback ext3 file:
 
 ```yaml
 spec:
@@ -169,7 +203,10 @@ Semantics:
   `FileNotFoundError` (operator must pre-create).
 - `overlay_size` empty + overlay missing → sac raises
   `FileNotFoundError` early with a helpful message instead of letting
-  apptainer fail cryptically at exec time.
+  apptainer fail cryptically at exec time. (Directory overlays never
+  reach this branch — they are auto-provisioned per (a). `overlay_size`,
+  an `.img`/`.ext3`/`.sif` suffix, or an existing non-directory at the
+  path are what mark an overlay as an IMAGE; sac never `mkdir`s one.)
 - K/KB units are explicitly rejected — apptainer's
   `overlay create --size` takes integer MB.
 
