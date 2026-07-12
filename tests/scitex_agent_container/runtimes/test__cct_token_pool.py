@@ -268,7 +268,7 @@ def test_injected_env_file_is_owner_only(
 # ---------------------------------------------------------------------------
 
 
-def test_missing_token_logs_error(
+def test_missing_token_logs_warning(
     tmp_path: Path,
     secrets_envrc: None,
     caplog: pytest.LogCaptureFixture,
@@ -278,13 +278,48 @@ def test_missing_token_logs_error(
     dest = tmp_path / "home"
     dest.mkdir()
     # Act
-    with caplog.at_level(scitex_logging.ERROR):
+    with caplog.at_level(scitex_logging.WARNING):
         ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
-    # Assert — LOUD error names the agent (never silent absence).
+    # Assert — LOUD warning names the agent (never silent absence).
     assert "zz-missing-fixture" in caplog.text
 
 
-def test_missing_token_error_names_pool_source(
+def test_missing_token_never_logs_at_error_level(
+    tmp_path: Path,
+    secrets_envrc: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange — a brand-new agent has no bot yet BY DEFINITION. Logging that
+    # at ERROR made every fresh agent's boot log read like a startup failure
+    # next to the genuinely fatal lines. It is a degraded comms rail, not a
+    # dead boot: WARNING, never ERROR.
+    os.environ.pop(_SECRETS_VAR, None)
+    dest = tmp_path / "home"
+    dest.mkdir()
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
+    # Assert
+    assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_missing_token_warning_says_the_agent_still_starts(
+    tmp_path: Path,
+    secrets_envrc: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange — the message must SAY it is non-fatal, not merely be non-fatal.
+    os.environ.pop(_SECRETS_VAR, None)
+    dest = tmp_path / "home"
+    dest.mkdir()
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
+    # Assert
+    assert "NOT a startup failure" in caplog.text
+
+
+def test_missing_token_warning_names_pool_source(
     tmp_path: Path,
     secrets_envrc: None,
     caplog: pytest.LogCaptureFixture,
@@ -294,7 +329,7 @@ def test_missing_token_error_names_pool_source(
     dest = tmp_path / "home"
     dest.mkdir()
     # Act
-    with caplog.at_level(scitex_logging.ERROR):
+    with caplog.at_level(scitex_logging.WARNING):
         ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
     # Assert — the operator is told WHERE the pool lives.
     assert "SAC_SECRETS_ENVRC" in caplog.text
