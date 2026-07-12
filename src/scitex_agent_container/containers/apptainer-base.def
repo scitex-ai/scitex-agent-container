@@ -360,6 +360,21 @@ From: ubuntu:24.04
     # `scitex_todo._mcp_server:mcp`. scitex-todo's hard deps (click,
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
+    #
+    # scitex-todo floor >=0.9.4 (was >=0.3.0) — incident-fleet-drift-
+    # stale-scitex-todo (2026-07-12). THIS layer is the one that matters:
+    # most agent specs boot sac-base.sif directly, and the :scitex layer
+    # INHERITS this venv, so whatever scitex-todo lands here is what the
+    # whole fleet runs. The ancient >=0.3.0 floor did not FORCE anything
+    # — it just took whatever was newest on the bake day (0.7.50 on
+    # 2026-07-10) and then froze it into every downstream layer. The
+    # floor now names the capability the fleet actually depends on: the
+    # WIP-gate fix (scitex-todo #356, first released in 0.8.0 — the gate
+    # counts `in_progress` ONLY). Below it, every agent's WIP gate counts
+    # DEFERRED + CANCELLED cards as open and refuses legitimate card
+    # creation. Keep this floor at-or-above the version whose symbol the
+    # section-6c gate below asserts; the gate is what makes a violation
+    # LOUD instead of silent.
     # sac's [openai] extra (openai-agents — the `spec.provider: openai`
     # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
     # image serves EVERY agent, so a per-spec conditional install is
@@ -371,8 +386,94 @@ From: ubuntu:24.04
     # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
-        "scitex-todo[mcp]>=0.3.0" \
+        "scitex-todo[mcp]>=0.9.4" \
         "/opt/scitex-agent-container-src[openai]"
+
+    # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
+    # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
+    # silently shipped scitex-todo 0.7.50 — days and two minor releases
+    # behind — and NOTHING failed. The bake was green, `sac versions`
+    # looked plausible, and the fleet quietly ran a scitex-todo whose WIP
+    # gate counted DEFERRED + CANCELLED cards as open (refusing legitimate
+    # card creation) while agents "diagnosed" bugs in peer code that had
+    # shipped fixed releases earlier. Silent staleness is the whole bug;
+    # this gate converts it into a BUILD FAILURE.
+    #
+    # Why a SYMBOL and not the version string: the version string LIES.
+    # An orphaned / duplicate .dist-info freezes what
+    # ``importlib.metadata.version()`` reports while the code actually on
+    # sys.path is a different tree entirely — a live open incident, and
+    # precisely why "the SIF says 0.9.4" would be worthless evidence. The
+    # symbol cannot lie: it is imported from the code this image will run.
+    #
+    # ``scitex_todo._throughput.WIP_STATUSES`` is the WIP gate's status
+    # set (scitex-todo #356, first released in 0.8.0): it must contain
+    # ``in_progress`` and must NOT contain terminal states. A pre-0.8.0
+    # scitex-todo dies on the import; a regressed one dies on the
+    # membership checks. Either way the build stops HERE rather than
+    # shipping a fleet-wide silent regression.
+    #
+    # Explicit ``sys.exit(1)`` rather than ``assert``: a bare ``assert``
+    # is stripped under ``python -O`` / PYTHONOPTIMIZE, which would turn
+    # this very gate into another silent no-op. Fail-loud means the check
+    # cannot be optimised away.
+    cat > /tmp/sac-assert-scitex-todo.py <<'EOF'
+"""Build-time gate: the scitex-todo baked into this image is not stale.
+
+Asserts BY SYMBOL (never by version string — a duplicate/orphaned
+.dist-info makes the reported version meaningless). Exits non-zero and
+prints WHY on any failure; the .def turns that into a fatal build error.
+"""
+
+import importlib.metadata as md
+import sys
+
+# Pre-0.8.0 scitex-todo has no _throughput.WIP_STATUSES at all — this
+# import is itself the primary staleness probe and raises ImportError
+# (unhandled → non-zero exit → dead build) on a stale bake.
+from scitex_todo._throughput import WIP_STATUSES
+
+# Informational ONLY. The version string is NOT the gate — see the .def.
+print("scitex-todo reported version :", md.version("scitex-todo"))
+print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+
+failures = []
+
+# 1. Exactly one installed distribution may claim the name. Two (an
+#    orphaned .dist-info left behind by a partial reinstall) is the
+#    failure mode that lets the reported version diverge from the code.
+dists = [
+    dist
+    for dist in md.distributions()
+    if (dist.metadata["Name"] or "").lower().replace("_", "-") == "scitex-todo"
+]
+if len(dists) != 1:
+    failures.append(
+        f"{len(dists)} scitex-todo distributions installed (expected 1) — a "
+        "duplicate/orphaned .dist-info makes the reported version a lie."
+    )
+
+# 2. The capability itself: the WIP gate counts work IN FLIGHT, and only
+#    that. Terminal/parked states must never occupy a WIP slot.
+if "in_progress" not in WIP_STATUSES:
+    failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
+if terminal:
+    failures.append(
+        f"terminal states {sorted(terminal)} counted as WIP: {sorted(WIP_STATUSES)} "
+        "— this is the pre-0.8.0 bug that jams every agent's WIP gate."
+    )
+
+if failures:
+    print("", file=sys.stderr)
+    for line in failures:
+        print(f"  - {line}", file=sys.stderr)
+    sys.exit(1)
+
+print("OK: scitex-todo WIP-gate symbol present and correct.")
+EOF
+    /opt/venv-sac/bin/python /tmp/sac-assert-scitex-todo.py \
+        || { echo "FATAL: stale or broken scitex-todo baked into this image (see above). Raise the scitex-todo floor in this .def; do NOT weaken this gate." >&2; exit 1; }
 
     # Surface the standalone npm-installed claude CLI (latest) on PATH,
     # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
