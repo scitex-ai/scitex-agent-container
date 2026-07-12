@@ -131,8 +131,15 @@ def print_agent_list(
     """
     from ._agent_list import get_agent_list_data
 
+    # PERF: the default view discards non-running rows, so let the data layer
+    # skip their account/movement enrichment. `-v`/`--all` show every row, so
+    # they must stay fully enriched.
     data = get_agent_list_data(
-        registry, capability=capability, machine=machine, tags=tags
+        registry,
+        capability=capability,
+        machine=machine,
+        tags=tags,
+        running_only=not (verbose or show_all),
     )
     if not data:
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
