@@ -413,56 +413,89 @@ From: ubuntu:24.04
     # membership checks. Either way the build stops HERE rather than
     # shipping a fleet-wide silent regression.
     #
+    # SECOND probe, same standard: the sac in this image must be the
+    # %files-staged SOURCE TREE that shipped this .def — not a transitive
+    # PyPI sac wheel. uv/pip have skipped that local install before (their
+    # version-already-satisfied check) and quietly shipped a SIF built from
+    # the WRONG tree; the source-bundled install exists to stop that, and
+    # until now NOTHING asserted that it worked.
+    #
     # Explicit ``sys.exit(1)`` rather than ``assert``: a bare ``assert``
     # is stripped under ``python -O`` / PYTHONOPTIMIZE, which would turn
     # this very gate into another silent no-op. Fail-loud means the check
     # cannot be optimised away.
-    cat > /tmp/sac-assert-scitex-todo.py <<'EOF'
-"""Build-time gate: the scitex-todo baked into this image is not stale.
+    cat > /tmp/sac-assert-image-fresh.py <<'EOF'
+"""Build-time gate: nothing stale got baked into this image.
 
-Asserts BY SYMBOL (never by version string — a duplicate/orphaned
-.dist-info makes the reported version meaningless). Exits non-zero and
-prints WHY on any failure; the .def turns that into a fatal build error.
+Asserts BY SYMBOL, never by version string. The version string LIES — in
+two different ways, and BOTH of them live in this image:
+
+  * an orphaned / duplicate .dist-info freezes what importlib.metadata
+    reports while the code actually on sys.path is a different tree;
+  * the %files-staged sac reports its last RELEASED version no matter how
+    new the bundled source tree really is.
+
+A symbol cannot lie: it is imported from the code this image will run.
+Exits non-zero and prints WHY on failure; the .def turns that into a
+fatal build error.
 """
 
 import importlib.metadata as md
 import sys
 
-# Pre-0.8.0 scitex-todo has no _throughput.WIP_STATUSES at all — this
-# import is itself the primary staleness probe and raises ImportError
-# (unhandled → non-zero exit → dead build) on a stale bake.
+# Both imports ARE staleness probes: each raises ImportError (unhandled →
+# non-zero exit → dead build) on a stale bake, naming the missing symbol.
+
+# scitex-todo #356 (first released in 0.8.0): the WIP gate must count
+# `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
+# CANCELLED cards as open and refuses legitimate card creation — the
+# 2026-07-12 fleet-drift incident this gate exists to end.
 from scitex_todo._throughput import WIP_STATUSES
 
-# Informational ONLY. The version string is NOT the gate — see the .def.
+# sac #633: auto-provisions a new agent's container overlay root; without
+# it every newly-created agent is stillborn on a raw apptainer FATAL.
+# This symbol is NEWER THAN ANY PUBLISHED sac RELEASE, so it doubles as
+# proof that the %files-staged local source tree won the install and no
+# transitive PyPI sac wheel overwrote it. Raise this floor when a newer
+# must-ship fix lands; never delete the probe.
+from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
+
+# Printed for the BUILD LOG only — these numbers are NOT the gate.
 print("scitex-todo reported version :", md.version("scitex-todo"))
 print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+print("sac reported version         :", md.version("scitex-agent-container"))
+print(
+    "sac overlay auto-provision   :",
+    f"{ensure_overlay_dirs.__module__}.{ensure_overlay_dirs.__name__}",
+)
 
 failures = []
 
-# 1. Exactly one installed distribution may claim the name. Two (an
-#    orphaned .dist-info left behind by a partial reinstall) is the
-#    failure mode that lets the reported version diverge from the code.
-dists = [
-    dist
-    for dist in md.distributions()
-    if (dist.metadata["Name"] or "").lower().replace("_", "-") == "scitex-todo"
-]
-if len(dists) != 1:
-    failures.append(
-        f"{len(dists)} scitex-todo distributions installed (expected 1) — a "
-        "duplicate/orphaned .dist-info makes the reported version a lie."
-    )
-
-# 2. The capability itself: the WIP gate counts work IN FLIGHT, and only
-#    that. Terminal/parked states must never occupy a WIP slot.
+# The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
+# states must never occupy a WIP slot.
 if "in_progress" not in WIP_STATUSES:
     failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
 terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
 if terminal:
     failures.append(
         f"terminal states {sorted(terminal)} counted as WIP: {sorted(WIP_STATUSES)} "
-        "— this is the pre-0.8.0 bug that jams every agent's WIP gate."
+        "— the pre-0.8.0 bug that jams every agent's WIP gate."
     )
+
+# Exactly one installed distribution may claim each name. Two (an
+# orphaned .dist-info left by a partial reinstall) is the failure mode
+# that lets the reported version diverge from the code.
+for name in ("scitex-todo", "scitex-agent-container"):
+    dists = [
+        dist
+        for dist in md.distributions()
+        if (dist.metadata["Name"] or "").lower().replace("_", "-") == name
+    ]
+    if len(dists) != 1:
+        failures.append(
+            f"{len(dists)} {name} distributions installed (expected 1) — a "
+            "duplicate/orphaned .dist-info makes the reported version a lie."
+        )
 
 if failures:
     print("", file=sys.stderr)
@@ -470,10 +503,10 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-todo WIP-gate symbol present and correct.")
+print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
 EOF
-    /opt/venv-sac/bin/python /tmp/sac-assert-scitex-todo.py \
-        || { echo "FATAL: stale or broken scitex-todo baked into this image (see above). Raise the scitex-todo floor in this .def; do NOT weaken this gate." >&2; exit 1; }
+    /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
+        || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
 
     # Surface the standalone npm-installed claude CLI (latest) on PATH,
     # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
