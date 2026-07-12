@@ -110,6 +110,7 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
         "    model: sonnet\n"
         "  health:\n"
         "    enabled: false\n"
+        "    interval: 60\n"
         "  restart:\n"
         "    policy: on-failure\n"
         "    max_retries: 3\n"
