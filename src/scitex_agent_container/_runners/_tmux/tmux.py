@@ -291,45 +291,58 @@ class TmuxManager:
                 sleep_fn(delay)
 
     @staticmethod
+    def send_text_literal(
+        session_name: str,
+        text: str,
+        *,
+        runner: Callable[..., object] = subprocess.run,
+    ) -> None:
+        """Paste ``text`` into the pane LITERALLY (``send-keys -l``), NO submit.
+
+        The ``-l`` (literal) flag is REQUIRED for the containerized Ink/React
+        ``claude`` TUI: without it the TUI silently DROPS the keystrokes (the
+        pane stays byte-identical, nothing lands). Source-verified recovery
+        recipe: ``_skills/scitex-agent-container/45_agent-to-agent-recovery-
+        tmux.md`` — ``-l`` for TEXT, then a SEPARATE named ``Enter`` (never
+        ``-l``) to submit. Submit-free by design so the caller can send that
+        ``Enter`` ONLY once the pane is idle (see
+        :func:`runtimes._tui_compose.verify_submit_by_advancement`), never into
+        the BUSY boot window where the Ink TUI eats it. ``runner`` is an
+        injection seam (tests pass a recording callable — no mocks).
+        """
+        runner(
+            ["tmux", "send-keys", "-t", session_name, "-l", text],
+            check=False,
+            capture_output=True,
+        )
+
+    @staticmethod
     def send_text_and_submit(
         session_name: str,
         text: str,
         *,
         settle_s: float | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
+        runner: Callable[..., object] = subprocess.run,
     ) -> None:
-        """Send message text, let the TUI settle, then press Enter.
+        """Send message text LITERALLY, let the TUI settle, then press Enter.
 
-        Preferred over ``send_keys(session, text + "\\r")`` because
-        tmux treats the trailing ``\\r`` as raw input rather than the
-        ``Enter`` keyword, and Claude Code's TUI occasionally drops it
-        during an active re-render (what the user sees as "text
-        arrived but submit never fired"). This helper sends the text
-        first, waits for the TUI to finish debouncing, then issues a
-        separate ``Enter`` keystroke.
+        Preferred over ``send_keys(session, text + "\\r")``: tmux treats a
+        trailing ``\\r`` as raw input and Claude Code's TUI drops it during an
+        active re-render ("text arrived but submit never fired"). Sends the text
+        first LITERALLY (``-l``, via :meth:`send_text_literal`, so the
+        containerized Ink TUI does not silently drop it), settles, then issues a
+        separate ``Enter`` keystroke (a named key, NEVER ``-l``).
 
-        Parameters
-        ----------
-        session_name:
-            tmux target.
-        text:
-            Message text to type. Do NOT append ``\\r`` / ``\\n``.
-        settle_s:
-            Seconds to wait between the text and the Enter keystroke.
-            ``None`` uses ``_DEFAULT_SUBMIT_SETTLE_S`` (env-overridable
-            via ``SAC_SUBMIT_SETTLE_S``).
-        sleep_fn:
-            Injected sleep — tests pass a stub to avoid real waits.
+        ``settle_s`` (``None`` → ``_DEFAULT_SUBMIT_SETTLE_S``,
+        ``SAC_SUBMIT_SETTLE_S``-overridable) is the text→Enter gap; ``sleep_fn``
+        / ``runner`` are injection seams for tests.
         """
         settle = _DEFAULT_SUBMIT_SETTLE_S if settle_s is None else settle_s
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, text],
-            check=False,
-            capture_output=True,
-        )
+        TmuxManager.send_text_literal(session_name, text, runner=runner)
         if settle > 0:
             sleep_fn(settle)
-        subprocess.run(
+        runner(
             ["tmux", "send-keys", "-t", session_name, "Enter"],
             check=False,
             capture_output=True,

@@ -32,11 +32,24 @@ class StartupPromptInjectorMixin:
     def _inject_startup_prompts(self, config: AgentConfig) -> None:
         """Feed spec.startup_prompts as the first user turn(s).
 
-        Each prompt = a separate turn via ``send_text_and_submit``, gated on
-        ``wait_until_input_ready`` BEFORE the send and followed by a defensive
-        trailing ``Enter``. Empty list → no-op. Per-prompt failure logged and
-        skipped; total failure does NOT raise so the supervisor restart cycle
-        never oscillates.
+        Per prompt: drain to input-ready, PASTE the text LITERALLY (``-l``, via
+        ``send_text_literal``), then SUBMIT under idle-gated control
+        (``_verify_submitted`` → :func:`verify_submit_by_advancement`). Empty
+        list → no-op. Per-prompt failure logged and skipped; total failure does
+        NOT raise so the supervisor restart cycle never oscillates.
+
+        Enter-drop fix (card sac-tui-startup-prompt-enter-drop): the
+        containerized Ink/React ``claude`` TUI silently drops non-literal
+        ``send-keys`` (so the paste MUST be ``-l`` — see
+        :meth:`TmuxManager.send_text_literal`) and drops ``Enter`` fired into
+        its BUSY/initialising window. The OLD path pasted non-literally, then
+        fired a blind fixed-sleep ``Enter`` (inside ``send_text_and_submit``) +
+        a second ungated defensive ``Enter`` BEFORE the idle-gated verify —
+        both landing in that busy window. Now the paste is literal and the
+        ONLY ``Enter`` comes from :func:`verify_submit_by_advancement`, which
+        waits for the pane to be genuinely idle (no spinner), sends one
+        ``Enter``, verifies the buffer advanced (submission landed), retries
+        bounded, then fails LOUD.
 
         BUG 1 reorder (card sac-boot-automation-devchannels-...): the
         compose-buffer clear sends ``Escape`` — which CANCELS a still-open
@@ -49,8 +62,7 @@ class StartupPromptInjectorMixin:
         Stale-compose fix (card sac-tui-clear-compose-buffer-on-boot): a
         persistent tmux pane carries EXTERNAL pasted-but-unsent text across a
         restart (e.g. a burst of stale ``/compact``); clearing before the first
-        submit stops the boot Enter from submitting that stale stack. P0
-        Enter-drop fix: gate each send on readiness + append a defensive Enter.
+        paste stops the boot submit from committing that stale stack.
         """
         from .tui_session import session_name_for
 
@@ -79,16 +91,19 @@ class StartupPromptInjectorMixin:
                 continue
             try:
                 self.wait_until_input_ready(config)
-                self._mux.send_text_and_submit(name, prompt)
-                self._mux.send_keys(name, "Enter")
-                self._verify_submitted(name)
+                # (a) paste LITERALLY (-l) — no submit here.
+                self._mux.send_text_literal(name, prompt)
+                # (b)+(c) submit ONLY when idle, verify advancement, retry
+                # bounded, then fail LOUD. No blind/defensive Enter.
+                submitted = self._verify_submitted(name)
                 log.info(
                     "TuiSessionRuntime: injected startup_prompt %d/%d "
-                    "(%d chars) into %s (with defensive Enter)",
+                    "(%d chars) into %s — idle-gated submit %s",
                     index,
                     len(prompts),
                     len(prompt),
                     name,
+                    "verified" if submitted else "UNVERIFIED (see error above)",
                 )
             except Exception as exc:  # stx-allow: fallback (per-prompt best-effort)
                 log.warning(
