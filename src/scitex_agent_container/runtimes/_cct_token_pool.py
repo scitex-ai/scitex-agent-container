@@ -42,10 +42,14 @@ token deliberately NEVER rides an ``--env`` argv flag (visible in
 ``/proc/<pid>/cmdline``) and its VALUE is never logged — log lines carry
 only the slot NAME, the pool source path(s), and the agent name.
 
-Fail-loud contract: when the channel is requested and NO token resolves,
-a scitex-logging ERROR names the pool source, the tried slot names, and
-the three fixes. The start itself proceeds (Telegram is a comms rail, not
-a boot dependency) — but the absence is loud, never silent.
+Loud-but-honest contract: when the channel is requested and NO token
+resolves, a scitex-logging WARNING names the pool source, the tried slot
+names, and the fixes. The start itself proceeds — Telegram is a comms rail,
+not a boot dependency — so the absence is loud but never silent, and never
+DRESSED UP AS A STARTUP FAILURE. It used to log at ERROR, which made every
+brand-new agent (no bot yet, by definition) look stillborn in its boot log
+next to the genuinely fatal lines; WARNING + an explicit "the agent starts
+normally" sentence keeps the signal without the false alarm.
 """
 
 from __future__ import annotations
@@ -184,9 +188,11 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     Called from :func:`._to_home.deploy_to_home` AFTER the ``.envrc``
     cascade fold, so an explicit hand-authored mapping always wins. No-op
     when the spec does not request ``server:claude-code-telegrammer``.
-    Never raises for a missing token — it ERRORs loudly (scitex-logging)
-    with the pool path and the fix instead. The token VALUE is never
-    logged; only slot names, paths, and the agent name appear.
+    Never raises for a missing token — it WARNs (scitex-logging) with the
+    pool path and the fixes instead, and says in so many words that the
+    agent starts normally: a missing bot token degrades one comms rail, it
+    does not fail a boot. The token VALUE is never logged; only slot names,
+    paths, and the agent name appear.
     """
     claude_spec = getattr(config, "claude", None)
     channels = list(getattr(claude_spec, "channels", None) or [])
@@ -242,15 +248,19 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
             )
             return
 
-    _logger().error(
-        "cct: NO bot token for agent %r although spec.claude.channels "
-        "requests %r. Tried pool slot(s) %s against the pool (%s). The "
-        "telegrammer MCP will start WITHOUT a token — the bot is dead until "
-        "fixed. Fix ONE of: (1) add %s<SLOT>=<token> for slot %r to a "
-        "secrets file listed in %s (canonical pool; restart `sac listen` "
-        "afterwards if it provides the env), (2) set spec.apptainer.env "
-        "%s: <existing-slot> to reuse another project's bot, or (3) export "
-        "%s via the project's .envrc (%s/.envrc).",
+    _logger().warning(
+        "cct: no Telegram bot token for agent %r although spec.claude.channels "
+        "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "
+        "STARTS NORMALLY — this is NOT a startup failure; only the Telegram "
+        "rail is down (the telegrammer MCP comes up without a token, so the "
+        "bot stays silent until a token is provided). Expected for a "
+        "brand-new agent that has no bot yet. To wire one up, do ONE of: "
+        "(1) add %s<SLOT>=<token> for slot %r to a secrets file listed in %s "
+        "(canonical pool; restart `sac listen` afterwards if it provides the "
+        "env), (2) set spec.apptainer.env %s: <existing-slot> to reuse "
+        "another project's bot, or (3) export %s via the project's .envrc "
+        "(%s/.envrc). Or drop %r from spec.claude.channels if this agent "
+        "needs no Telegram rail.",
         agent_name,
         _TELEGRAMMER_CHANNEL,
         ", ".join(f"{_POOL_PREFIX}{c}" for c in candidates) or "(none)",
@@ -261,6 +271,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
         _SLOT_OVERRIDE_VAR,
         _TOKEN_VAR,
         workdir or "<workdir>",
+        _TELEGRAMMER_CHANNEL,
     )
 
 
