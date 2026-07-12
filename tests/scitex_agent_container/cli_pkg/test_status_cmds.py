@@ -226,6 +226,30 @@ def test_format_account_block_renders_subscription_created_at(_full_meta):
     assert "2024-01-01" in joined
 
 
+def test_format_account_block_renders_since_in_jst():
+    # Arrange — the raw ``...T...Z`` API stamp must render as a readable
+    # JST wall clock (operator 2026-07-13), not the unreadable ISO string.
+    meta = {
+        "email_address": "x@y.com",
+        "subscription_created_at": "2025-05-30T19:59:34.010055Z",
+    }
+    # Act
+    lines = _format_claude_account_block(meta)
+    since_line = next(line for line in lines if "Since" in line)
+    # Assert — 19:59 UTC + 9h = 04:59 JST the next day.
+    assert since_line.rstrip().endswith("2025-05-31 04:59 (JST)")
+
+
+def test_format_account_block_since_missing_renders_dash():
+    # Arrange — no subscription_created_at → the Since cell is a bare dash.
+    meta = {"email_address": "x@y.com"}
+    # Act
+    lines = _format_claude_account_block(meta)
+    since_line = next(line for line in lines if "Since" in line)
+    # Assert
+    assert since_line.rstrip().endswith("-")
+
+
 def test_format_account_block_header_present(_full_meta):
     # Arrange
     meta = _full_meta

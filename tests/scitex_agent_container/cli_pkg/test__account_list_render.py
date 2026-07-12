@@ -44,8 +44,6 @@ from scitex_agent_container.cli_pkg._account_list_render import (
     build_stored_rows,
     format_as_of_short,
     format_dt_local,
-    format_reset_day_hour,
-    format_reset_hhmm,
     format_snapshot_age,
     format_ttl_live,
     local_timezone,
@@ -430,8 +428,9 @@ def test_render_stored_table_omits_reset_hints():
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
     out = render_stored_table_to_str(rows, now=now)
-    # Assert
-    assert "(→" not in out
+    # Assert — no reset hint marker (relative ``(in .../now)``) leaks into
+    # the table; the hints live on the usage-bars lines.
+    assert "(in " not in out and "(now)" not in out
 
 
 _TWO_ROW_TABLE_ROWS = [
@@ -523,97 +522,6 @@ def test_render_stored_table_shows_snapshot_age_in_last_update():
     out = render_stored_table_to_str(rows, now=now)
     # Assert — `(3m)` appears in the Last Update column.
     assert "(3m)" in out
-
-
-# ---------------------------------------------------------------------------
-# 2026-06-09 task — per-window reset hint on 5h% / 7d% cells
-# ---------------------------------------------------------------------------
-
-
-def test_format_reset_hhmm_renders_arrow_hhmm(env_save_restore):
-    """``format_reset_hhmm`` emits ``→HH:MM`` in the operator's local tz."""
-    # Arrange — 12:05 UTC = 21:05 JST.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    # Act
-    rendered = format_reset_hhmm("2026-05-31T12:05:00+00:00")
-    # Assert
-    assert rendered == "→21:05"
-
-
-def test_format_reset_hhmm_none_returns_empty():
-    # Arrange
-    value = None
-    # Act
-    rendered = format_reset_hhmm(value)
-    # Assert
-    assert rendered == ""
-
-
-def test_format_reset_hhmm_unparseable_returns_empty():
-    """A malformed reset timestamp must NOT crash the table — empty string."""
-    # Arrange
-    value = "not-a-timestamp"
-    # Act
-    rendered = format_reset_hhmm(value)
-    # Assert
-    assert rendered == ""
-
-
-def test_format_reset_day_hour_renders_arrow_day_hour(env_save_restore):
-    """``format_reset_day_hour`` emits ``→Day HHh`` in the operator's local tz."""
-    # Arrange — 2026-06-04 08:00 UTC = 2026-06-04 17:00 JST → Thu 17h.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    # Act
-    rendered = format_reset_day_hour("2026-06-04T08:00:00+00:00")
-    # Assert
-    assert rendered == "→Thu 17h"
-
-
-def test_format_reset_day_hour_none_returns_empty():
-    # Arrange
-    value = None
-    # Act
-    rendered = format_reset_day_hour(value)
-    # Assert
-    assert rendered == ""
-
-
-def test_format_reset_day_hour_unparseable_returns_empty():
-    # Arrange
-    value = "not-a-timestamp"
-    # Act
-    rendered = format_reset_day_hour(value)
-    # Assert
-    assert rendered == ""
-
-
-# ---------------------------------------------------------------------------
-# 2026-07-11 dedupe directive — the reset hint must stay COMPACT (the
-# operator's verbatim bar example is ``29% (→09:19)`` / ``66% (→Sun 21h)``).
-# The former per-cell ``(in Xh Ym)`` countdown qualifier (P3, op 12866) was
-# dropped together with the table cells it annotated, so a FUTURE reset must
-# render exactly like a past one: bare ``→HH:MM`` / ``→Day HHh``.
-# ---------------------------------------------------------------------------
-
-
-def test_format_reset_hhmm_future_reset_stays_compact(env_save_restore):
-    """A reset far in the future renders the bare ``→HH:MM`` — no countdown."""
-    # Arrange — 12:05 UTC = 21:05 JST, a century out from any real clock.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    # Act
-    rendered = format_reset_hhmm("2126-05-31T12:05:00+00:00")
-    # Assert
-    assert rendered == "→21:05"
-
-
-def test_format_reset_day_hour_future_reset_stays_compact(env_save_restore):
-    """A far-future reset renders the bare ``→Day HHh`` — no countdown."""
-    # Arrange — 08:00 UTC = 17:00 JST, a century out from any real clock.
-    env_save_restore.set("TZ", "Asia/Tokyo")
-    # Act
-    rendered = format_reset_day_hour("2126-06-04T08:00:00+00:00")
-    # Assert — bare →Day HHh shape; no ``(in ...)`` qualifier appended.
-    assert rendered.startswith("→") and rendered.endswith(" 17h") and "(" not in rendered
 
 
 def test_needs_rolling_legend_true_when_row_lacks_both_resets():
@@ -1123,30 +1031,42 @@ def test_cli_list_json_carries_through_reset_at_7d(sandbox_home):
 
 
 def test_cli_list_human_shows_reset_hint_when_cache_has_reset_at(sandbox_home):
-    """End-to-end: cache → renderer → operator sees ``42% (→...)``.
+    """End-to-end: cache → renderer → operator sees ``42% (in ...)``.
 
     Gripe #2 of the 2026-06-09 task, relocated by the 2026-07-11
-    dedupe directive: when the per-account cache carries
+    dedupe directive and switched to a RELATIVE time-until-reset by
+    the 2026-07-13 directive: when the per-account cache carries
     ``reset_at_5h``, the human output must show the inline reset hint
-    — now on the usage-bars line rather than a table cell. We don't
-    pin a specific local time (tests run on hosts in arbitrary
-    timezones) — only the arrow marker, which is the renderer's
-    unambiguous reset signal.
+    on the usage-bars line. We seed a FAR-FUTURE reset so the relative
+    hint is deterministically ``(in ...)`` regardless of when the test
+    runs (a past reset renders ``(now)``); the exact duration is
+    wall-clock-dependent, so we assert only on the ``(in `` marker.
     """
     # Arrange — full account + a credentials snapshot so the live
-    # fetcher path is taken; with no real OAuth token the fetcher
-    # falls back to the cached ``usage.json`` we seed below.
+    # fetcher path is taken; with no real OAuth token the fetcher falls
+    # back to the cached ``usage.json``. Overwrite that cache with a
+    # far-future reset so the relative hint is a stable ``(in ...)``.
     _seed_account_with_full_usage_cache(sandbox_home)
     accts = sandbox_home / ".scitex" / "agent-container" / "accounts" / "work"
     (accts / ".credentials.json").write_text(
         json.dumps({"claudeAiOauth": {"subscriptionType": "pro"}})
     )
+    (accts / "usage.json").write_text(
+        json.dumps(
+            {
+                "used_pct_5h": 42.0,
+                "used_pct_7d": 15.0,
+                "reset_at_5h": "2126-05-31T12:05:00+00:00",
+                "reset_at_7d": "2126-06-04T08:00:00+00:00",
+                "fetched_at": "2126-05-31T12:11:00+00:00",
+                "as_of": "2126-05-31T12:11:00+00:00",
+            }
+        )
+    )
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list"])
-    # Assert — bullet-2 contract: the inline arrow marker reaches the
-    # operator. The exact local time depends on the host TZ; assert
-    # on the marker shape so the test is timezone-independent.
-    assert "(→" in result.output, (
+    # Assert — the inline relative reset hint reaches the operator.
+    assert "(in " in result.output, (
         f"missing inline reset hint in human output:\n{result.output}"
     )
