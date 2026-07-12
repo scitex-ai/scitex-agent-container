@@ -79,6 +79,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
 - [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md) — TUI auth-banner detection contract (§1–4)
 - [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md) — package matcher, auth-heal guards + extend-matcher runbook (§5–6)
+- [44_agent-to-agent-recovery.md](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
+- [45_agent-to-agent-recovery-tmux.md](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
@@ -94,12 +96,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ## 30-second start
 
-```bash
-pip install scitex-agent-container
-# Each agent lives in its own dir; the dir name is the agent name.
-mkdir -p ~/.scitex/agent-container/agents/my-agent
-$EDITOR ~/.scitex/agent-container/agents/my-agent/spec.yaml   # see 01_config-v3.md
-sac agents start my-agent          # daemon by default; --foreground streams stdio
-sac agents list my-agent --json    # status view
-sac agents tail my-agent           # render session.jsonl transcript
-```
+See [02_quick-start.md](02_quick-start.md) — `pip install
+scitex-agent-container`, drop a `spec.yaml` under
+`~/.scitex/agent-container/agents/<name>/`, then `sac agents start
+<name>` / `list` / `tail`.
