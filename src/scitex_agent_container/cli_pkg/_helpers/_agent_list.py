@@ -22,6 +22,9 @@ from ._agent_list_account import (  # noqa: F401
     _safe_account_for,
 )
 
+# Host-DISPLAY resolution (Host column) — sibling module, 512-line cap split.
+from ._agent_list_host import _host_display_for, _resolve_display_host
+
 
 def _safe_port_for(name: str) -> int | None:
     """Return the agent's claimed a2a port, or None on any failure.
@@ -169,6 +172,9 @@ def get_agent_list_data(
     from concurrent.futures import TimeoutError as _FuturesTimeout
 
     entries = registry.list_all()
+
+    # Host DISPLAY column hostname, resolved ONCE (test-swappable seam).
+    display_host = _resolve_display_host()
 
     # First pass: resolve configs + filter.
     # F-CS17 stage 3b: there are no longer "remote" agents from sac's
@@ -334,6 +340,7 @@ def get_agent_list_data(
             "multiplexer": multiplexer,
             "started_at": started,
             "host": host_label,
+            "host_display": _host_display_for(host_label, display_host),
             "path": spec_path,
             "a2a_port": a2a_port,
             "account": account_label,
@@ -404,6 +411,7 @@ def get_agent_list_data(
             "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
             "started_at": "-",
             "host": "local",
+            "host_display": _host_display_for("local", display_host),
             "path": str(spec_path),
             "a2a_port": _safe_port_for(name),
             "account": _safe_account_for(cfg),
