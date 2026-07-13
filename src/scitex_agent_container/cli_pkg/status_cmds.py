@@ -19,6 +19,7 @@ from ._helpers import (
     console,
     print_agent_list,
 )
+from ._timefmt import format_jst
 
 
 def _status_via_host_listen(name: str) -> None:
@@ -116,7 +117,11 @@ def _format_claude_account_block(meta: dict) -> list[str]:
         extra_line = "disabled"
         if extra_reason:
             extra_line += f" (reason: {extra_reason})"
-    since = _fmt(meta.get("subscription_created_at"))
+    # Operator 2026-07-13: the raw ``...T...Z`` ISO stamp is unreadable;
+    # render it as a JST wall clock (``YYYY-MM-DD HH:MM (JST)``) via the
+    # shared _timefmt SSOT. ``format_jst`` already returns ``-`` for a
+    # missing/unparseable value, matching the ``_fmt`` fallback above.
+    since = format_jst(meta.get("subscription_created_at"))
 
     return [
         "Claude Code account",
@@ -176,16 +181,19 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     "verbose",
     is_flag=True,
     default=False,
-    help="Fleet view: add the full spec.yaml Path column (off by default — "
-    "it folds every row to 10+ lines).",
+    help="Fleet view: show the FULL list — every status "
+    "(running/stopped/invalid/definition) WITH per-agent validation-error "
+    "detail and the spec.yaml Path column. The default view shows only "
+    "running agents (the full roster is an unusable wall on a real fleet).",
 )
 @click.option(
     "--all",
     "show_all",
     is_flag=True,
     default=False,
-    help="Fleet view: include stale/ghost agents (dead registry entries whose "
-    "spec file is gone). Hidden by default.",
+    help="Fleet view: like -v (full roster + validation detail) AND "
+    "additionally include stale/ghost agents (dead registry entries whose "
+    "spec file is gone). Both are hidden by default.",
 )
 @click.option(
     "--snapshot",

@@ -24,13 +24,16 @@ unchanged:
     404 {"error": "..."}                                  # unknown route / wrong agent
     502 {"error": "tui inject failed: ..."}               # session gone / input wedged
 
-Lifecycle mirrors :mod:`a2a_sidecar`: :func:`start_turn_bridge` spawns the
-server as a detached subprocess writing a PID file + log under the agent's
-per-host state dir; :func:`stop_turn_bridge` SIGTERMs it AND waits for the
-port to release (see :mod:`_tui_turn_bridge_port` — the restart
-port-collision fix). Both are best-effort — a failed bridge must never
-block agent start/stop. Bound to ``127.0.0.1`` (loopback wake POST; the
-bind is the security boundary, matching the SDK runner's unauthed endpoint).
+Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
+:mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
+the public ``_tui_turn_bridge.start_turn_bridge`` / ``stop_turn_bridge`` /
+``resolved_a2a_port`` surface is unchanged; :func:`start_turn_bridge` spawns
+THIS module as ``python -m`` (see :func:`main`), and :func:`stop_turn_bridge`
+SIGTERMs it, waits for the port to release, and force-kills any own-port
+survivor (the restart port-collision fix). Both are best-effort — a failed
+bridge must never block agent start/stop. Bound to ``127.0.0.1`` (loopback
+wake POST; the bind is the security boundary, matching the SDK runner's
+unauthed endpoint).
 """
 
 from __future__ import annotations
@@ -38,56 +41,34 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import signal
-import subprocess
-import sys
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
+from ._tui_turn_bridge_lifecycle import (
+    DEFAULT_HOST,
+    LOG_FILENAME,
+    MODULE_PATH,
+    PID_FILENAME,
+    _pid_path,
+    _state_dir,
+    resolved_a2a_port,
+    start_turn_bridge,
+    stop_turn_bridge,
+)
 from ._tui_turn_bridge_port import (
-    _PORT_FREE_TIMEOUT_S,
-    _STOP_SIGTERM_GRACE_S,
     TurnBridgePortBusyError,
-    await_bridge_release,
-    ensure_port_free_or_raise,
     port_busy_error,
     port_is_free,
 )
 
 log = logging.getLogger(__name__)
 
-PID_FILENAME = "tui-turn-bridge.pid"
-LOG_FILENAME = "tui-turn-bridge.log"
-MODULE_PATH = "scitex_agent_container.runtimes._tui_turn_bridge"
-DEFAULT_HOST = "127.0.0.1"
-
 
 # ---------------------------------------------------------------------------
-# Port + routing helpers
+# Routing helper
 # ---------------------------------------------------------------------------
-def resolved_a2a_port(config: AgentConfig) -> int | None:
-    """Return the agent's resolved a2a port as a positive int, else None.
-
-    By the time the runtime starts, ``sac agents start`` has resolved a
-    ``spec.a2a.port: auto`` to a concrete int (the SAME value threaded
-    into the channel subscriber's ``--turn-url`` — see
-    ``_apptainer_inner_argv.tui_channel_config``), so the bridge binds the
-    port the subscriber will POST to. Returns None when a2a is unset or
-    still unresolved (caller no-ops — no endpoint to serve).
-    """
-    a2a = getattr(config, "a2a", None)
-    port = getattr(a2a, "port", None) if a2a is not None else None
-    if isinstance(port, bool):  # bool is an int subclass — reject explicitly
-        return None
-    if isinstance(port, int) and port > 0:
-        return port
-    return None
-
-
 def is_turn_route(path: str, agent_name: str) -> bool:
     """True iff ``path`` is a turn-delivery route for ``agent_name``.
 
@@ -326,173 +307,6 @@ def main(
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Launcher / lifecycle (mirrors a2a_sidecar)
-# ---------------------------------------------------------------------------
-def _state_dir(config: AgentConfig) -> Path:
-    from .tui_session import state_dir_for_config
-
-    return state_dir_for_config(config)
-
-
-def _pid_path(config: AgentConfig) -> Path:
-    return _state_dir(config) / PID_FILENAME
-
-
-def start_turn_bridge(
-    config: AgentConfig,
-    *,
-    spawn: Callable[..., Any] = subprocess.Popen,
-    host: str = DEFAULT_HOST,
-    port_free_timeout_s: float = _PORT_FREE_TIMEOUT_S,
-    sleep_fn: Callable[[float], None] = time.sleep,
-    now_fn: Callable[[], float] = time.monotonic,
-    port_free_fn: Callable[[str, int], bool] = port_is_free,
-) -> int | None:
-    """Spawn the detached turn bridge for ``config``; return its PID or None.
-
-    No-op (returns None) without a resolved ``a2a.port`` (nothing to serve).
-    Best-effort spawn: a failure is logged + swallowed (a dead bridge must
-    not block agent start); the ``spawn`` seam lets tests assert the argv.
-
-    We ALWAYS :func:`stop_turn_bridge` first (one-bridge-per-agent invariant)
-    AND then POLL until the a2a port is bindable before spawning. On the
-    2026-07-09 restart port-collision incident the old holder still owned the
-    port when the new child bound it → ``EADDRINUSE`` crash → agent stranded.
-    If the port cannot be freed within ``port_free_timeout_s`` we FAIL LOUD
-    (:class:`TurnBridgePortBusyError`, naming port + holder + remediation)
-    instead of spawning into that crash. ``*_fn`` seams are injected by tests.
-    """
-    port = resolved_a2a_port(config)
-    if port is None:
-        return None
-    # Tear down any prior bridge for THIS agent, now also WAITING for it to
-    # release the port.
-    stop_turn_bridge(
-        config,
-        host=host,
-        sleep_fn=sleep_fn,
-        now_fn=now_fn,
-        port_free_fn=port_free_fn,
-    )
-    # Bounded wait for the port to be bindable BEFORE we spawn — covers the
-    # async shutdown tail AND an untracked/orphaned holder. Fails loud instead
-    # of spawning a child into an EADDRINUSE crash.
-    ensure_port_free_or_raise(
-        host=host,
-        port=port,
-        agent_name=str(getattr(config, "name", "?")),
-        timeout_s=port_free_timeout_s,
-        sleep_fn=sleep_fn,
-        now_fn=now_fn,
-        port_free_fn=port_free_fn,
-    )
-    config_path = str(getattr(config, "config_path", "") or "")
-    if not config_path:
-        log.warning(
-            "tui-turn-bridge: agent %r has no config_path; cannot start bridge",
-            getattr(config, "name", "?"),
-        )
-        return None
-    state_dir = _state_dir(config)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    argv = [
-        sys.executable,
-        "-m",
-        MODULE_PATH,
-        "--config-path",
-        config_path,
-        "--port",
-        str(port),
-        "--host",
-        host,
-    ]
-    try:
-        log_fh = open(state_dir / LOG_FILENAME, "ab")
-        proc = spawn(
-            argv,
-            stdout=log_fh,
-            stderr=log_fh,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged for the operator)
-        log.warning("tui-turn-bridge: failed to spawn for %r: %s", config.name, exc)
-        return None
-    pid = getattr(proc, "pid", None)
-    if isinstance(pid, int):
-        _pid_path(config).write_text(str(pid), encoding="utf-8")
-    log.info(
-        "tui-turn-bridge: started for %s on %s:%d (pid=%s)",
-        config.name,
-        host,
-        port,
-        pid,
-    )
-    return pid
-
-
-def stop_turn_bridge(
-    config: AgentConfig,
-    *,
-    host: str = DEFAULT_HOST,
-    grace_s: float = _STOP_SIGTERM_GRACE_S,
-    sleep_fn: Callable[[float], None] = time.sleep,
-    now_fn: Callable[[], float] = time.monotonic,
-    port_free_fn: Callable[[str, int], bool] = port_is_free,
-) -> bool:
-    """SIGTERM the recorded bridge, WAIT for it to RELEASE THE PORT (SIGKILL
-    if it overstays ``grace_s``), then drop the PID file; return True iff a
-    live PID was signalled. No-op (returns False) when no PID file exists.
-
-    Incident fix (2026-07-09): the old code SIGTERMed and returned
-    IMMEDIATELY — the port stayed held during the async ``serve_forever``
-    shutdown, so a fast ``restart`` rebound straight into ``EADDRINUSE`` and
-    stranded the agent. Now :func:`await_bridge_release` blocks until the
-    port is bindable again (accurate even for a not-yet-reaped zombie, which
-    holds no socket; falls back to PID liveness when the agent has no a2a
-    port). The PID file is removed regardless, so a stop()->start() cycle
-    never reuses a stale PID. ``*_fn`` seams are injected for tests.
-    """
-    pid_path = _pid_path(config)
-    if not pid_path.is_file():
-        return False
-    stopped = False
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-    except (
-        OSError,
-        ValueError,
-    ):  # stx-allow: fallback (reason: an unreadable/corrupt PID file is treated as "already stopped"; we still unlink it below so the next start is clean)
-        pid = -1
-    port = resolved_a2a_port(config)
-    if pid > 0:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            stopped = True
-        except ProcessLookupError:
-            stopped = False
-        except OSError as exc:  # stx-allow: fallback (reason: a permission/ESRCH error still means "not our live process"; log + treat as stopped so cleanup proceeds)
-            log.warning("tui-turn-bridge: SIGTERM pid %d failed: %s", pid, exc)
-        if stopped:
-            # Block until the port is released (SIGKILL if SIGTERM ignored),
-            # so a fast restart never rebinds into a still-held port.
-            await_bridge_release(
-                pid,
-                port,
-                host=host,
-                grace_s=grace_s,
-                sleep_fn=sleep_fn,
-                now_fn=now_fn,
-                port_free_fn=port_free_fn,
-            )
-    try:
-        pid_path.unlink()
-    except OSError:  # stx-allow: fallback (reason: unlink race is harmless — the file is gone either way)
-        pass
-    return stopped
-
-
 if __name__ == "__main__":  # pragma: no cover -- exercised as a subprocess
     raise SystemExit(main())
 
@@ -506,4 +320,12 @@ __all__ = [
     "start_turn_bridge",
     "stop_turn_bridge",
     "TurnBridgePortBusyError",
+    "port_busy_error",
+    "port_is_free",
+    "PID_FILENAME",
+    "LOG_FILENAME",
+    "MODULE_PATH",
+    "DEFAULT_HOST",
+    "_pid_path",
+    "_state_dir",
 ]

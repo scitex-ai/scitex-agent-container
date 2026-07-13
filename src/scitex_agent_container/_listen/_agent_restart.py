@@ -22,20 +22,119 @@ Shape mirrors ``agents_start`` exactly:
     uses for ``sac agents start``) and return its rc + stdout + stderr
     as JSON. A non-zero rc is surfaced as 502 (the gate passed but the
     bare-host restart itself failed), never swallowed.
+
+SELF-RESTART special case (caller IS the target): shelling the restart
+SYNCHRONOUSLY would DEADLOCK — the stop-half cannot complete while the
+CALLING process is still blocked awaiting this HTTP response, so the
+start-half sees "already running -> no-op" and returns a confusing 502
+(incident 2026-07-12). When the resolved ``caller`` equals ``name`` the
+handler instead spawns a fully-detached, deferred bounce (``setsid`` +
+``start_new_session``) that sleeps a few seconds so THIS response flushes
+first, then force-bounces the agent, and returns ``202`` with
+``self_restart="scheduled"`` immediately. An external / admin restart
+(caller is None, or caller != name) keeps the synchronous path unchanged.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
+import shlex
+import subprocess
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_lineage_acl, deny_response
 
 __all__ = ["agent_restart"]
+
+
+# Delay (seconds) before a DETACHED self-restart bounce actually fires.
+# Long enough for THIS handler's 202 to flush over the wire to the caller's
+# MCP client and for that restart tool-call to unwind CLEANLY before the
+# caller's own process is bounced — the self-restart deadlock is precisely
+# that the caller cannot die while it is still awaiting this very response.
+# Short enough that the heal is prompt (the corrected-dependency use case
+# wants the fresh process back quickly). 3s sits comfortably above a
+# localhost/LAN round-trip yet well under any human's patience.
+_SELF_RESTART_DELAY_S = 3
+
+
+def _build_detached_restart_argv(
+    sac_bin: str,
+    name: str,
+    *,
+    fresh: bool,
+    delay_s: int,
+    log_path: str,
+) -> list[str]:
+    """Build the fully-detached, deferred self-restart command (PURE — no I/O).
+
+    Returned as a ``setsid sh -c '<inner>'`` argv so the constructed command
+    is unit-assertable WITHOUT spawning anything. ``<inner>`` is::
+
+        sleep <delay_s>; ( echo <marker>; date -Is; <bounce> ) >> <log> 2>&1
+
+    * ``sleep <delay_s>`` defers the bounce past this handler's 202 flush so
+      the caller's restart tool-call returns cleanly before the caller is
+      bounced (see :data:`_SELF_RESTART_DELAY_S`).
+    * ``<bounce>`` is the FORCED restart. ``sac agents restart`` exposes no
+      ``--force`` flag (confirmed: ``cli_pkg/lifecycle/_restart.py`` defines
+      none) and its start-leg runs without force, so a still-running agent
+      trips "already running -> no-op -> use --force" — the exact confusing
+      502 of the deadlock. The deterministic stop-if-running bounce is
+      instead ``sac agents start <name> --force`` (the mechanism the
+      ``fresh`` path already uses): ``--force`` stops any live instance
+      first, and with NO session flag the session then follows the SPEC
+      policy — byte-identical to what a plain ``sac agents restart``
+      resolves (``_lifecycle/_stop.py::agent_restart`` calls
+      ``agent_start(session_override=None)``) — so a resuming (non-fresh)
+      restart is preserved. ``--fresh`` is appended only for a fresh
+      (no-resume) bounce, mirroring the synchronous fresh path verbatim.
+    * stdout+stderr are appended to ``log_path`` (NEVER ``/dev/null``) so the
+      bounce that necessarily outlives this process is debuggable post-hoc.
+
+    ``setsid`` (util-linux — on every host; the twin TTL-stop relies on it
+    too) starts a new session so the child survives BOTH this handler's
+    return AND the caller's imminent death.
+    """
+    bounce = [sac_bin, "agents", "start", name, "--force"]
+    if fresh:
+        bounce.append("--fresh")
+    bounce.append("--json")
+    bounce_str = " ".join(shlex.quote(tok) for tok in bounce)
+    marker = shlex.quote(
+        f"=== sac self-restart name={name} fresh={fresh} delay={int(delay_s)}s ==="
+    )
+    inner = (
+        f"sleep {int(delay_s)}; "
+        f"( echo {marker}; date -Is; {bounce_str} ) >> {shlex.quote(log_path)} 2>&1"
+    )
+    return ["setsid", "sh", "-c", inner]
+
+
+def _spawn_detached(argv: list[str], *, env: dict[str, str]) -> None:
+    """Fire-and-forget spawn of ``argv``, fully detached from this process.
+
+    ``start_new_session=True`` (belt-and-suspenders with the ``setsid`` in
+    ``argv``) severs the child from this handler's session / process-group so
+    it survives the caller's imminent bounce; stdin is ``/dev/null`` and the
+    child's stdout/stderr are already redirected to the log file inside the
+    shell command, so they are ``DEVNULL`` here. A dedicated module-level
+    seam so tests record the argv WITHOUT forking a real bouncer — the same
+    save/restore-seam idiom ``_listen/_restart.py`` uses for ``_kill`` /
+    ``_run_subprocess``.
+    """
+    subprocess.Popen(
+        argv,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
 
 
 async def agent_restart(request: Request) -> JSONResponse:
@@ -63,6 +162,13 @@ async def agent_restart(request: Request) -> JSONResponse:
 
     On allow, shell ``sac agents restart <name> --yes --json`` on the
     bare host and return its rc + stdout + stderr. rc != 0 → 502.
+
+    Self-restart (resolved ``caller`` == ``name``): the synchronous shell
+    would deadlock (the caller cannot die while awaiting this response), so
+    the bounce is instead handed to a detached, deferred child and the
+    handler returns ``202`` + ``self_restart="scheduled"`` at once. Honours
+    ``fresh``: the detached child force-bounces with ``sac agents start
+    <name> --force`` (resume, spec-policy session) or ``--force --fresh``.
     """
     name = request.path_params["name"]
 
@@ -99,7 +205,18 @@ async def agent_restart(request: Request) -> JSONResponse:
     # / falsey) keeps the byte-identical plain-restart argv below.
     fresh = bool(body.get("fresh"))
 
-    sac_bin = shutil.which("sac") or "sac"
+    try:
+        sac_bin = sac_binary()
+    except SacBinaryNotFoundError as exc:
+        # Resolution-time failure (bug root cause, see _sac_binary.py):
+        # surface a structured, diagnosable error instead of building an
+        # unresolvable argv that would later die deep inside a subprocess
+        # call as an opaque FileNotFoundError / 500. Shape mirrors
+        # ``host_exec``'s error responses (``_host_exec.py``).
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     # ``agents`` (plural) is the canonical group; ``--yes`` skips the
     # interactive guard (this POST IS the confirmation) and ``--json``
     # gives a parseable envelope — exactly the argv ``agent_restart`` MCP
@@ -109,6 +226,60 @@ async def agent_restart(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
+
+    # SELF-RESTART (resolved caller IS the target): a synchronous
+    # ``sac agents restart <self>`` DEADLOCKS — the stop-half cannot complete
+    # while the CALLING process is still blocked awaiting THIS response, so the
+    # start-half sees "already running -> no-op" and returns a confusing 502
+    # (incident 2026-07-12: scitex-dev self-restarting to reload a corrected
+    # dependency). Hand the bounce to a fully-detached, deferred child that
+    # (a) survives the caller's death, (b) sleeps so THIS 202 flushes + the
+    # caller's tool-call unwinds FIRST, then (c) force-bounces — and return 202
+    # immediately. ``caller`` is the already-resolved identity (an unspoofable
+    # per-node bearer, else the body ``caller`` claim); an external / admin
+    # restart (caller is None, OR caller != name) is UNAFFECTED and keeps the
+    # byte-identical synchronous path below.
+    if caller is not None and caller == name:
+        from .._lifecycle._session_reset import _runtime_state_dir
+
+        log_path = _runtime_state_dir(name) / "self-restart.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:  # stx-allow: fallback (reason: the log dir is best-effort — a failed mkdir must not abort the heal; the bounce still fires and its own shell redirect surfaces any write failure)
+            pass
+        detached_argv = _build_detached_restart_argv(
+            sac_bin,
+            name,
+            fresh=fresh,
+            delay_s=_SELF_RESTART_DELAY_S,
+            log_path=str(log_path),
+        )
+        try:
+            _spawn_detached(detached_argv, env=child_env)
+        except OSError as exc:
+            # Launch-time failure of the detached bouncer itself — surface it
+            # structured (never a fake "scheduled"), same shape as the
+            # resolution-/launch-failure branches on the synchronous path.
+            return JSONResponse(
+                {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+                status_code=500,
+            )
+        return JSONResponse(
+            {
+                "name": name,
+                "self_restart": "scheduled",
+                "fresh": fresh,
+                "detail": (
+                    f"self-restart of {name!r} scheduled (detached, "
+                    f"~{_SELF_RESTART_DELAY_S}s); this process will be bounced "
+                    f"shortly. The call returned cleanly; the bounce happens "
+                    f"after."
+                ),
+                "log": str(log_path),
+            },
+            status_code=202,
+        )
+
     if fresh:
         # New session, no resume: stop-then-start fresh. ``start`` accepts
         # --force (stop if running), --fresh (never --continue) and --json.
@@ -116,12 +287,23 @@ async def agent_restart(request: Request) -> JSONResponse:
     else:
         inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
 
-    proc = await asyncio.create_subprocess_exec(
-        *inner_argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=child_env,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *inner_argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=child_env,
+        )
+    except OSError as exc:
+        # Launch-time failure (e.g. the resolved sac_bin vanished between
+        # resolution and exec, or any other subprocess-creation error).
+        # Never let this propagate as an unhandled exception → opaque
+        # framework 500; surface it structured, same shape as the
+        # resolution-failure branch above / host_exec's error responses.
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     out, err = await proc.communicate()
     stdout = out.decode("utf-8", errors="replace") if out else ""
     stderr = err.decode("utf-8", errors="replace") if err else ""

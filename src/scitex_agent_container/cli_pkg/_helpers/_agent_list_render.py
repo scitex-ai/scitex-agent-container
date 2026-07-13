@@ -15,6 +15,7 @@ import click
 from rich.table import Table
 
 from ..._state.registry import Registry
+from .._account_list_format import format_dt_display_tz
 from ._console import console
 
 __all__ = [
@@ -63,6 +64,49 @@ def _is_ghost_row(row: dict) -> bool:
     return any("File not found" in str(e) for e in errors)
 
 
+def _print_hidden_footer(
+    status_hidden: dict[str, int],
+    hidden_ghosts: int,
+    *,
+    none_running: bool,
+) -> None:
+    """Print the default-view footer summarising the hidden non-running rows.
+
+    ``status_hidden`` maps a status word (``stopped`` / ``invalid`` /
+    ``defined`` / ``unknown``) to how many rows of it were hidden;
+    ``hidden_ghosts`` is the count of dead spec-missing registry ghosts.
+    ``defined`` is rendered as ``definitions`` (the template/definition rows
+    the operator called out). Emits nothing when nothing was hidden.
+    """
+    # Canonical order + human labels; any residual status is appended as-is.
+    order = [
+        ("stopped", "stopped"),
+        ("defined", "definitions"),
+        ("invalid", "invalid"),
+        ("unknown", "unknown"),
+    ]
+    known = {key for key, _ in order}
+    parts: list[str] = []
+    for key, word in order:
+        n = status_hidden.get(key, 0)
+        if n:
+            parts.append(f"{n} {word}")
+    for key, n in status_hidden.items():
+        if key not in known and n:
+            parts.append(f"{n} {key}")
+    if hidden_ghosts:
+        parts.append(f"{hidden_ghosts} stale")
+    if not parts:
+        return
+    summary = ", ".join(parts)
+    if none_running:
+        console.print(
+            f"[dim]No running agents ({summary} hidden — -v for all).[/dim]"
+        )
+    else:
+        console.print(f"[dim]({summary} hidden — -v for all)[/dim]")
+
+
 def print_agent_list(
     registry: Registry,
     capability: str | None = None,
@@ -72,31 +116,61 @@ def print_agent_list(
     verbose: bool = False,
     show_all: bool = False,
 ) -> None:
-    """Print a rich table of all registered agents.
+    """Print a rich table of registered agents.
 
-    By default shows only active agents (dead spec-missing registry ghosts
-    are hidden — see :func:`_is_ghost_row`) and omits the full spec ``Path``
-    column (it folds every row to 10+ lines). ``show_all=True`` includes the
-    ghosts; ``verbose=True`` adds the ``Path`` column back.
+    DEFAULT (no flags): show ONLY ``status="running"`` agents with their
+    Account — the stopped / invalid / definition roster and the per-agent
+    validation-error blocks are an unusable wall on a real fleet (operator
+    TG 1490-1495). A one-line footer counts what was hidden.
+
+    ``verbose=True`` (``-v``) restores the FULL list — every status
+    (running/stopped/invalid/definition) PLUS the per-agent validation-error
+    detail — and adds the spec ``Path`` column. ``show_all=True`` (``--all``)
+    also shows the full list AND additionally includes dead spec-missing
+    registry ghosts (see :func:`_is_ghost_row`), which stay hidden otherwise.
     """
     from ._agent_list import get_agent_list_data
 
+    # PERF: the default view discards non-running rows, so let the data layer
+    # skip their account/movement enrichment. `-v`/`--all` show every row, so
+    # they must stay fully enriched.
     data = get_agent_list_data(
-        registry, capability=capability, machine=machine, tags=tags
+        registry,
+        capability=capability,
+        machine=machine,
+        tags=tags,
+        running_only=not (verbose or show_all),
     )
     if not data:
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
         return
 
-    hidden = 0
+    # `--all` reveals dead spec-missing registry ghosts; hidden otherwise.
+    hidden_ghosts = 0
     if not show_all:
         kept = [r for r in data if not _is_ghost_row(r)]
-        hidden = len(data) - len(kept)
+        hidden_ghosts = len(data) - len(kept)
         data = kept
+
+    # DEFAULT view shows ONLY running agents; `-v`/`--all` show the full
+    # roster. Tally the hidden non-running rows by status for the footer.
+    show_full = verbose or show_all
+    status_hidden: dict[str, int] = {}
+    if not show_full:
+        running = [r for r in data if r.get("status") == "running"]
+        for r in data:
+            st = r.get("status") or "unknown"
+            if st != "running":
+                status_hidden[st] = status_hidden.get(st, 0) + 1
+        data = running
+
     if not data:
-        console.print(
-            "[dim]No active agents (all hidden as stale; --all to show).[/dim]"
-        )
+        if show_full:
+            console.print(
+                "[dim]No active agents (all hidden as stale; --all to show).[/dim]"
+            )
+        else:
+            _print_hidden_footer(status_hidden, hidden_ghosts, none_running=True)
         return
 
     table = Table(title="Agents")
@@ -129,15 +203,26 @@ def print_agent_list(
     }
     for row in data:
         col = cmap.get(row["status"], "white")
-        host = row.get("host") or "local"
-        host_cell = host if host in ("local", "") else f"[cyan]{host}[/cyan]"
+        # Host column: show the RESOLVED machine hostname (e.g. ``ywata-note-win``)
+        # from ``host_display`` (set by get_agent_list_data), not the raw
+        # ``"local"`` sentinel. Fall back to the raw host, then the sentinel.
+        host = row.get("host_display") or row.get("host") or "local"
+        host_cell = f"[cyan]{host}[/cyan]"
         errors = row.get("validation_errors") or []
         yaml_cell = (
             f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
             if errors
             else "[green]✓[/green]"
         )
-        started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        # Started column: render the registry's raw ISO-8601 UTC stamp as a
+        # pinned-tz ``YYYY-MM-DD HH:MM (JST)`` for readability (operator TG
+        # 2026-07-13); the ``--json`` path keeps the raw ISO. Sentinels
+        # ("-"/"?") stay an em-dash.
+        raw_started = row["started_at"]
+        if raw_started in ("-", "?"):
+            started = "—"
+        else:
+            started = format_dt_display_tz(raw_started)
         account_cell = row.get("account") or "—"
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.
@@ -156,17 +241,28 @@ def print_agent_list(
         table.add_row(*cells)
 
     console.print(table)
-    if hidden:
+
+    # Footer. DEFAULT view: summarise every hidden non-running row + ghosts.
+    # FULL view (`-v`/`--all`): only note hidden ghosts when `-v` alone.
+    if not show_full:
+        _print_hidden_footer(status_hidden, hidden_ghosts, none_running=False)
+    elif hidden_ghosts:
         console.print(
-            f"[dim]({hidden} stale/ghost agent(s) hidden — --all to show, "
-            "-v for paths)[/dim]"
+            f"[dim]({hidden_ghosts} stale/ghost agent(s) hidden — --all to "
+            "show, -v for paths)[/dim]"
         )
-    # Full error text follows the table so the operator can copy-paste.
-    for row in data:
-        if row.get("validation_errors"):
-            console.print(f"[bold red]✗ {row['name']}[/bold red] validation errors:")
-            for err in row["validation_errors"]:
-                console.print(f"    [red]- {err}[/red]")
+
+    # Full per-agent validation-error text — FULL view only. In the default
+    # view these blocks (repeated dozens of times on a real fleet) are the
+    # wall the operator asked us to remove; they belong behind `-v`/`--all`.
+    if show_full:
+        for row in data:
+            if row.get("validation_errors"):
+                console.print(
+                    f"[bold red]✗ {row['name']}[/bold red] validation errors:"
+                )
+                for err in row["validation_errors"]:
+                    console.print(f"    [red]- {err}[/red]")
 
 
 def _extract_damaged_fields(errors: list[str]) -> list[str]:

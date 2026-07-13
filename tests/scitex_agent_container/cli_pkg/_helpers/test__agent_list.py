@@ -596,12 +596,14 @@ def test_print_agent_list_renders_status_word_for_running_agent(capsys, tmp_path
 
 
 def test_print_agent_list_prints_full_validation_errors_under_table(capsys, tmp_path):
-    # Arrange — invalid spec triggers real validate_config errors mentioning spec.runtime.
+    # Arrange — invalid spec triggers real validate_config errors mentioning
+    # spec.runtime. The per-agent error blocks now live in the FULL (`-v`)
+    # view; the default view hides them (operator TG 1490-1495).
     spec = _write_invalid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        print_agent_list(registry)
+        print_agent_list(registry, verbose=True)
     # Assert
     assert "spec.runtime" in capsys.readouterr().out
 
@@ -1032,3 +1034,225 @@ def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
         print_agent_list(registry)
     # Assert
     assert "Path" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Default view = RUNNING-ONLY (operator TG 1490-1495). The full
+# stopped/invalid/definition roster + the per-agent validation-error blocks
+# are an unusable wall by default; they move behind -v/--all. The default
+# view shows only running agents with their Account, plus a hidden-count
+# footer.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _swap_runtime_account(impl: Callable[[str], str | None]) -> Iterator[None]:
+    """Swap ``_al._runtime_account_for`` for a real callable (not a mock)."""
+    saved = _al._runtime_account_for
+    _al._runtime_account_for = impl  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _al._runtime_account_for = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _state_root_set_to(path: Path) -> Iterator[None]:
+    """Rebind the runner's DEFAULT_STATE_ROOT to a real tmp Path.
+
+    ``resolve_state_dir`` → ``state_dir_for`` reads this module constant at
+    call time, so pointing it at a seeded tmp tree lets us exercise the REAL
+    ``_runtime_account_for`` resolution on real files (no mock).
+    """
+    import scitex_agent_container._runners._session_state as _ss
+
+    saved = _ss.DEFAULT_STATE_ROOT
+    _ss.DEFAULT_STATE_ROOT = path  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _ss.DEFAULT_STATE_ROOT = saved  # type: ignore[assignment]
+
+
+def _running_plus_defined_and_invalid(tmp_path):
+    """One RUNNING registry agent + one defined + one invalid on-disk agent."""
+    good = _write_valid_spec(tmp_path / "runner")
+    registry = _FakeRegistry(
+        [{"name": "runner", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    def_spec = _write_valid_spec(tmp_path / "def1")
+    bad_spec = _write_invalid_spec(tmp_path / "bad1")
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("def1", def_spec), ("bad1", bad_spec)]
+
+    return registry, _discover
+
+
+def test_print_agent_list_default_shows_running_agent(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act — default view.
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "runner" in capsys.readouterr().out
+
+
+def test_print_agent_list_default_hides_definition_and_invalid(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — the definition ("def1") + invalid ("bad1") rows are hidden.
+    out = capsys.readouterr().out
+    assert "def1" not in out and "bad1" not in out
+
+
+def test_print_agent_list_default_footer_counts_hidden(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — footer names both hidden categories.
+    out = capsys.readouterr().out
+    assert "definitions" in out and "invalid" in out and "hidden" in out
+
+
+def test_print_agent_list_default_omits_validation_blocks(capsys, tmp_path):
+    # Arrange — the invalid agent's real spec.runtime error block must NOT
+    # print in the default view (the wall the operator asked us to remove).
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "spec.runtime" not in capsys.readouterr().out
+
+
+def test_print_agent_list_default_hides_stopped_agent(capsys, tmp_path):
+    # Arrange — a single registered-but-stopped agent (probe False).
+    spec = _write_valid_spec(tmp_path / "stopper")
+    registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+        print_agent_list(registry)
+    # Assert — no table (name absent); footer reports the hidden stopped one.
+    out = capsys.readouterr().out
+    assert "stopper" not in out and "stopped" in out and "No running agents" in out
+
+
+def test_print_agent_list_verbose_includes_stopped_agent(capsys, tmp_path):
+    # Arrange — same stopped agent; -v restores the full roster.
+    spec = _write_valid_spec(tmp_path / "stopper")
+    registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+        print_agent_list(registry, verbose=True)
+    # Assert
+    assert "stopper" in capsys.readouterr().out
+
+
+def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act — -v shows every status AND the per-agent validation-error detail.
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, verbose=True)
+    # Assert
+    out = capsys.readouterr().out
+    assert "def1" in out and "spec.runtime" in out
+
+
+# ---------------------------------------------------------------------------
+# Account column = ACTUAL runtime account for running agents (operator TG
+# 1490-1495). Pool-based agents (``credentials_files`` with no ``account``
+# pin) all resolve to the same host-OAuth spec label; the runtime picker
+# binds a different pool account per agent, and its identity is host-readable
+# from ``<runtime>/home/.claude.json``. A running row prefers that; a
+# non-running row (no live auth) keeps the spec label.
+# ---------------------------------------------------------------------------
+
+
+def test_get_data_running_row_prefers_runtime_account(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act — running (probe True): runtime account wins over the spec label.
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "spec-label (host@example.com)"),
+        _swap_runtime_account(lambda name: "runtime-pick@example.com"),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "runtime-pick@example.com"
+
+
+def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act — stopped (probe False): the runtime probe is NOT consulted.
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: False),
+        _swap_account(lambda cfg: "spec-label"),
+        _swap_runtime_account(lambda name: "should-not-be-used@example.com"),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "spec-label"
+
+
+def test_get_data_running_row_falls_back_to_spec_when_runtime_unresolved(tmp_path):
+    # Arrange — runtime resolver returns None (agent auth not written yet).
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "spec-fallback"),
+        _swap_runtime_account(lambda name: None),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "spec-fallback"
+
+
+def test_runtime_account_for_reads_per_agent_oauth_email(tmp_path):
+    # Arrange — a REAL per-agent runtime home with the picked account's
+    # identity written into <runtime>/home/.claude.json (no mock).
+    import json as _json
+
+    root = tmp_path / "runtime"
+    home = root / "myagent" / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / ".credentials.json").write_text(
+        _json.dumps(
+            {"claudeAiOauth": {"accessToken": "sk-ant-x", "expiresAt": 9_999_999_999_000}}
+        )
+    )
+    (home / ".claude.json").write_text(
+        _json.dumps({"oauthAccount": {"emailAddress": "runtime-pick@example.com"}})
+    )
+    # Act — HOME→tmp so the saved-account match reads an empty store (the
+    # email maps to no saved account) → the bare runtime email is returned.
+    with _state_root_set_to(root), _home_set_to(tmp_path):
+        label = _al._runtime_account_for("myagent")
+    # Assert
+    assert label == "runtime-pick@example.com"
+
+
+def test_runtime_account_for_returns_none_without_runtime_dir(tmp_path):
+    # Arrange — no runtime dir seeded → resolver must return None so the
+    # caller falls back to the spec label.
+    # Act
+    with _state_root_set_to(tmp_path / "empty"):
+        result = _al._runtime_account_for("no-such-runtime-agent")
+    # Assert
+    assert result is None

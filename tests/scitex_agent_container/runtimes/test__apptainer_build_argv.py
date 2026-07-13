@@ -245,15 +245,18 @@ def test_build_run_argv_injects_env_file_when_present(tui_config, tmp_path) -> N
     assert "--env-file" in argv and str(state_dir / "home" / ".env") in argv
 
 
-def test_build_run_argv_omits_env_file_when_absent(tui_config, tmp_path) -> None:
+def test_build_run_argv_omits_agent_env_file_when_absent(tui_config, tmp_path) -> None:
     # Arrange — no .env materialised under state_dir/home.
     state_dir = tmp_path / "state"
     # Act
     argv = build_run_argv(
         tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
-    # Assert
-    assert "--env-file" not in argv
+    # Assert — the agent .env --env-file is not emitted when no agent .env
+    # exists. (A separate 0600 secrets --env-file may still be present for
+    # swept auth/listen secrets — see _apptainer_secret_env; that is a
+    # different file, not the agent .env.)
+    assert str(state_dir / "home" / ".env") not in argv
 
 
 def test_build_run_argv_env_file_precedes_curated_env(tui_config, tmp_path) -> None:
@@ -1070,3 +1073,93 @@ def test_build_run_argv_nested_build_masks_subuid(tmp_path) -> None:
     )
     # Assert — the /etc/subuid mask rides through to the full argv.
     assert ":/etc/subuid" in joined
+
+
+# ---------------------------------------------------------------------------
+# Overlay auto-provisioning — a BRAND-NEW agent must not be stillborn
+#
+# `sac agents create <name> --template python_developer --start` wrote a valid
+# spec, then the start FATAL'd in apptainer's container_creation phase:
+#
+#   FATAL: while loading overlay images: failed to open overlay image
+#   <...>/overlays/<name>/: ... no such file or directory
+#
+# The per-agent overlay directory was never created. Nothing in sac created it:
+# the fleet's overlays existed only as an incidental side-effect of
+# deploy_to_home_overlay, whose resolver reads only the SPACE-SEPARATED
+# `--overlay <path>` raw_arg — while the dir-template emits the `=`-JOINED
+# `--overlay=<path>` spelling apptainer accepts equally. build_run_argv now
+# provisions the overlay explicitly (ensure_overlay_dirs), for both spellings.
+# ---------------------------------------------------------------------------
+
+
+def _overlay_spec(overlay_dir: Path) -> str:
+    """The apptainer raw_args shape ``_template_python_developer`` emits.
+
+    Note the ``=``-JOINED ``--overlay=<path>/`` spelling (with the template's
+    trailing slash) — the exact token that used to resolve to "no overlay
+    declared" inside sac while apptainer read it just fine.
+    """
+    return _BASE_SPEC.format(extra="").replace(
+        "    binds: []\n",
+        "    binds: []\n"
+        "    relaxed: true\n"
+        "    raw_args:\n"
+        "      - --userns\n"
+        "      - --containall\n"
+        "      - --home=/home/agent\n"
+        f"      - --overlay={overlay_dir}/\n",
+    )
+
+
+def test_build_run_argv_provisions_overlay_root_for_new_agent(tmp_path) -> None:
+    # Arrange — brand-new agent: the overlay does not exist yet.
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — the root apptainer lstat()s (and refuses to create) now exists.
+    assert overlay.is_dir()
+
+
+def test_build_run_argv_provisions_overlay_upper_for_new_agent(tmp_path) -> None:
+    # Arrange
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — same layout every live fleet overlay carries.
+    assert (overlay / "upper").is_dir()
+
+
+def test_build_run_argv_provisions_overlay_work_for_new_agent(tmp_path) -> None:
+    # Arrange
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert (overlay / "work").is_dir()
+
+
+def test_build_run_argv_passes_raw_args_overlay_through_verbatim(tmp_path) -> None:
+    # Arrange — provisioning must not ALSO emit a curated --overlay flag
+    # (a duplicate would change which layer apptainer stacks).
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — exactly the operator's own `=`-joined token, once.
+    assert argv.count(f"--overlay={overlay}/") == 1

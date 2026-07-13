@@ -364,6 +364,29 @@ class ClaudeSessionRuntime(RuntimeBase):
             return False
         return container_rt.is_running(config)
 
+    def agent_pid(self, config: AgentConfig) -> int | None:
+        """The container process pid (``RuntimeBase`` seam).
+
+        Delegates to the container runtime exactly as :meth:`is_running`
+        above does, so the pid recorded in ``instances.pid`` is the same
+        one this runtime's liveness verdict is keyed on — for apptainer,
+        the long-lived ``apptainer`` process (see
+        :meth:`_apptainer_runtime.ApptainerRuntime.agent_pid`).
+
+        ``None`` when the spec's runtime resolves to no container runtime
+        (unrecognised ``spec.runtime``) or the container runtime cannot
+        name a pid — honestly "unknown", never a fabricated value.
+        """
+        container_rt = self._container_runtime_for(config)
+        if container_rt is None:
+            return None
+        getter = getattr(container_rt, "agent_pid", None)
+        if not callable(getter):
+            # An injected test double / a container runtime predating the
+            # seam: no pid to offer. Say "unknown", do not invent one.
+            return None
+        return getter(config)
+
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Prefer the rendered ``session.jsonl`` tail (host-side via
         /state bind-mount). Fall through to ``docker logs --tail N``

@@ -258,10 +258,76 @@ def await_bridge_release(
     )
 
 
+def force_free_own_port(
+    port: int,
+    *,
+    host: str,
+    agent_name: str,
+    grace_s: float,
+    sleep_fn: Callable[[float], None],
+    now_fn: Callable[[], float],
+    port_free_fn: Callable[[str, int], bool] = port_is_free,
+    poll_s: float = _PORT_POLL_INTERVAL_S,
+) -> bool:
+    """SIGKILL whatever still holds THIS agent's OWN a2a ``port``; confirm free.
+
+    The in-process equivalent of the operator's manual ``fuser -k <port>/tcp``
+    — the STOP-path escalation for a survivor that :func:`await_bridge_release`
+    could NOT reach because it only reaps the ONE bridge PID sac TRACKED. A
+    DIFFERENT holder of the SAME port (an orphaned prior bridge, or a process
+    tied to the ``tui-<name>`` session — the 2026-07-12 incident, survivor PID
+    2170086) keeps the port, so the next start's :func:`ensure_port_free_or_raise`
+    fails loud and the operator had to ``fuser -k`` by hand. This sweeps every
+    holder returned by the tested :func:`.._listen._port_holder.port_holder_pids`
+    finder and force-kills it, then bounded-re-polls until the port is bindable.
+
+    SAFETY INVARIANT — why this is safe HERE but NOT at the start gate: this is
+    only ever called from the STOP teardown with the agent's OWN resolved a2a
+    ``port``. At stop we are intentionally tearing down a KNOWN agent, so
+    force-killing its own port-holder is safe. The START gate
+    (:func:`ensure_port_free_or_raise`) faces an UNKNOWN holder and therefore
+    correctly REFUSES + warns instead of killing a stranger — never call this
+    with a port that is not the agent's own resolved a2a port.
+
+    Returns True iff the port is free (already-free → no-op True). Per-PID
+    SIGKILL is best-effort (a gone / foreign-uid PID is skipped); the bounded
+    re-poll is the real success signal, so a caller can still FAIL LOUD if a
+    genuinely unkillable holder remains — the point is to REDUCE manual
+    intervention, not to hide a stuck port.
+    """
+    if port_free_fn(host, port):
+        return True
+    # ``_safe_port_holder_pids`` already excludes our own PID and never raises
+    # on a missing lsof/ss/fuser — so we never SIGKILL ourselves, and a bare
+    # environment degrades to the re-poll below (which then fails loud).
+    for pid in _safe_port_holder_pids(port):
+        if pid <= 0:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            log.warning(
+                "tui-turn-bridge: SIGKILL survivor pid %d still holding OWN a2a "
+                "port %d for agent %r (stop teardown; `fuser -k` equivalent)",
+                pid,
+                port,
+                agent_name,
+            )
+        except OSError:  # stx-allow: fallback (reason: a survivor PID that is already gone / owned by another uid is a no-op here; the bounded re-poll below is the real free-or-fail check, so a genuinely stuck port is never masked)
+            pass
+    return poll_until(
+        lambda: port_free_fn(host, port),
+        timeout_s=grace_s,
+        poll_s=poll_s,
+        sleep_fn=sleep_fn,
+        now_fn=now_fn,
+    )
+
+
 __all__ = [
     "TurnBridgePortBusyError",
     "await_bridge_release",
     "ensure_port_free_or_raise",
+    "force_free_own_port",
     "poll_until",
     "port_busy_error",
     "port_is_free",

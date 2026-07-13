@@ -60,11 +60,58 @@ META_KEY_PCT_7D = "used_pct_7d"
 META_KEY_TTL_H = "token_ttl_hours"
 
 
+# Host-side quota-cache locations, most-canonical first. sac's quota cache
+# is sac RUNTIME STATE, so its home is under sac's OWN runtime dir
+# (``~/.scitex/agent-container/runtime/``) per the constitution §3
+# per-package runtime convention — NOT the shared ``~/.scitex`` root
+# (operator, 2026-07-11: "sac 管轄で使うランタイム state … .scitex 以下に
+# 直で置くな"). The legacy top-level path is kept as a transitional
+# back-compat read until the populator + apptainer bind are migrated too
+# (tracked separately so the bind move can't strand running containers).
+HOST_RUNTIME_CACHE_SUBPATH = (
+    Path(".scitex") / "agent-container" / "runtime" / "quota-cache.json"
+)
+LEGACY_HOST_CACHE_SUBPATH = Path(".scitex") / "quota-cache.json"
+
+
+def host_cache_candidates(home: Path | None = None) -> tuple[Path, ...]:
+    """Ordered host quota-cache paths, canonical (runtime) first, legacy last."""
+    _home = home if home is not None else Path.home()
+    return (
+        _home / HOST_RUNTIME_CACHE_SUBPATH,
+        _home / LEGACY_HOST_CACHE_SUBPATH,
+    )
+
+
+def _first_existing(paths: tuple[Path, ...]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+
 def _resolve_cache_path(override: Path | str | None) -> Path:
     if override is not None:
         return Path(override)
     env_path = os.environ.get(ENV_QUOTA_CACHE_PATH, "").strip()
-    return Path(env_path) if env_path else Path(DEFAULT_QUOTA_CACHE_PATH)
+    if env_path:
+        return Path(env_path)
+    # No override / env. The reader's historical default is the in-container
+    # bind path (/var/sac/quota-cache.json). But the SAME reader runs HOST-side
+    # for every `sac agents start` / `sac account quota` the operator (or the
+    # listen daemon) invokes — and on the host that bind path does NOT exist,
+    # so without a fallback the picker reads "5h=? 7d=?" for every account and
+    # can no longer avoid a quota-blocked one (2026-07-11 incident: host
+    # `sac-start` landed agents on the 5h-exhausted account). Fail-INFORMED,
+    # not fail-open (constitution §2): container bind first (freshest inside a
+    # capsule), then the host runtime canonical, then the legacy path; only if
+    # none exist return the container default so the caller degrades to an
+    # honest None.
+    container = Path(DEFAULT_QUOTA_CACHE_PATH)
+    if container.exists():
+        return container
+    host = _first_existing(host_cache_candidates())
+    return host if host is not None else container
 
 
 def _resolve_account(override: str | None) -> str:
@@ -267,5 +314,6 @@ __all__ = [
     "read_quota_entry",
     "build_a2a_metadata",
     "default_host_cache_path",
+    "host_cache_candidates",
     "write_quota_cache",
 ]

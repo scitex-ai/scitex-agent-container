@@ -236,6 +236,7 @@ def agent_restart(
     handover_mod: Any = None,
     config_resolver: Optional[Callable[[str], str]] = None,
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
+    successor_auth_check: Optional[Callable[[str], None]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -329,6 +330,27 @@ def agent_restart(
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
+    # PRE-STOP auth pre-flight (INCIDENT
+    # incident-agent-self-restart-one-way-20260712). Resolve + PROBE the
+    # credential the SUCCESSOR container will launch on BEFORE stopping. A
+    # stale-but-unexpired snapshot (future ``expiresAt`` but a
+    # server-invalidated refresh_token) passes the timestamp-only launch gate,
+    # boots, and 401s "Login expired" — and the stop has ALREADY happened, so
+    # the dead successor cannot even report it (the one-way trip). Probing here
+    # lets a REJECTED grant ABORT the restart via
+    # :class:`_restart_preflight.RestartPreflightAbort` — which propagates out
+    # of ``agent_restart`` so ``agent_stop`` below is NEVER reached and the
+    # running container is LEFT UP. A network/endpoint failure fails OPEN (a
+    # false-negative that blocks a HEALTHY restart is worse than the bug). This
+    # covers the manual ``sac agents restart`` AND the listen-brokered external
+    # restart (both shell ``sac agents restart`` → here); the self-restart
+    # bounce (``sac agents start --force``, PR #628) is covered by the twin
+    # check in ``agent_start``'s force branch. Injectable for tests.
+    from ._restart_preflight import preflight_from_config_path
+
+    _auth_check = successor_auth_check or preflight_from_config_path
+    _auth_check(config_path)
+
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
     # ad-hoc-launched agents with no row.
@@ -376,10 +398,31 @@ def agent_restart(
     # This does NOT weaken the human-at-a-TTY guard: a bare ``sac agents
     # start``/``restart`` with no consent still refuses — only the
     # pre-authorized restart's own start leg asserts the consent already given.
+    # ``force=True`` — a RESTART's contract is to REPLACE the process, so its
+    # start leg must be allowed to take over a surviving session.
+    #
+    # Without force, the start leg hits ``tui_session``'s duplicate-session
+    # guard, which is *idempotent for a plain `sac agents start`* (an
+    # already-running agent is "fine, it's up") and therefore RETURNS TRUE. For
+    # a restart that verdict is a LIE: the caller asked for a new process and
+    # got the old one. The failure mode is not theoretical — it happens exactly
+    # when the stop leg above could not kill the old runtime (SIGTERM ignored,
+    # ``_wait_for_previous_runtime_to_exit`` returned False and we proceeded
+    # anyway). Then: stale session survives -> start no-ops -> returns True ->
+    # the CLI prints "Agent '<name>' restarted". The operator hit precisely
+    # this on neurovista: he believed it had relaunched on freshly-picked
+    # credentials, was in fact still talking to the OLD process on its OLD
+    # token, saw "Login expired", and went diagnosing a credential store that
+    # was entirely healthy.
+    #
+    # So a restart FORCES: the force branch tears the stale session down first,
+    # which both makes the restart actually happen and makes a genuine failure
+    # report as a failure.
     return agent_start(
         config_path,
         registry,
         assume_yes=True,
+        force=True,
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,

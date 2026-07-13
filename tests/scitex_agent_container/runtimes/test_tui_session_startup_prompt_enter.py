@@ -1,28 +1,34 @@
-"""Bug regression: startup_prompts must arrive submitted, not pasted.
+"""Bug regression: startup_prompts must arrive SUBMITTED, not pasted.
 
-P0 operator-reported (2026-06-15): figrecipe + todo + neurovista all
-started but stalled at boot because ``_inject_startup_prompts`` pasted
-``spec.claude.startup_prompts`` into the TUI input field *without
-pressing Enter*. The agent looked stopped to ``sac``: the tmux pane was
-alive but the prompt sat unsent on the input line, no SDK turn ever
-fired, no a2a, no telegram reply. Lead recovered each agent by
-attaching tmux and hitting Enter manually.
+P0 operator-reported (2026-06-15 → recurring): figrecipe + todo + neurovista
+all started but stalled at boot because ``_inject_startup_prompts`` left
+``spec.startup_prompts`` pasted into the TUI input field *without pressing
+Enter*. The agent looked stopped to ``sac``: the tmux pane was alive but the
+prompt sat unsent on the input line, no turn ever fired, no a2a, no telegram.
 
-This module pins TWO guarantees on the inject path:
+Root cause (card sac-tui-startup-prompt-enter-drop): the injection did not
+follow the containerized Ink/React ``claude`` TUI's proven keystroke contract
+(``_skills/scitex-agent-container/45_agent-to-agent-recovery-tmux.md``):
 
-  1. The runtime gates the inject on ``wait_until_input_ready`` — the
-     prompt MUST NOT land while claude's input field is still mounting
-     (the Ink-drop window where the first Enter can be silently eaten).
-  2. A defensive trailing ``Enter`` keystroke fires after
-     ``send_text_and_submit`` — belt-and-suspenders against the same
-     Ink-drop race that ``send_text_and_submit_verified`` exists to
-     defeat for ``send_turn``. The startup inject was never wired to the
-     verified primitive, so a separate post-submit Enter is the minimum
-     fix that does not refactor the inject around the verified path.
+  1. the prompt TEXT was pasted with NON-literal ``send-keys`` (no ``-l``), so
+     the Ink TUI could silently drop it; and
+  2. the submit ``Enter`` fired on a blind fixed sleep (inside
+     ``send_text_and_submit``) plus a second ungated defensive ``Enter`` —
+     BOTH landing in the pane's BUSY/initialising window where the Ink TUI
+     eats Enter — BEFORE the idle-gated verify ran.
 
-Tests use a real in-memory ``MultiplexerProtocol`` (no MagicMock,
-no monkeypatch-as-fixture-param) — STX-TQ002 AAA / STX-TQ007 one-assert
-/ PA-306 no-mock-fixtures.
+The fix pins TWO guarantees on the inject path:
+
+  1. the prompt is pasted LITERALLY (``send_text_literal`` → ``send-keys -l``),
+     never non-literally; and
+  2. the ONLY ``Enter`` is the idle-gated one from
+     ``verify_submit_by_advancement`` (wait-for-idle → one Enter → verify the
+     buffer advanced → bounded retry → fail loud). No blind/defensive Enter.
+
+Tests use a real in-memory ``MultiplexerProtocol`` whose pane models the live
+TUI (pending after the literal paste, cleared once an Enter lands) — no
+MagicMock, no monkeypatch-as-fixture-param (STX-TQ002 AAA / STX-TQ007
+one-assert / PA-306 no-mock-fixtures).
 """
 
 from __future__ import annotations
@@ -33,7 +39,21 @@ from typing import Iterator
 
 import pytest
 
+from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+
+# Live-TUI pane snapshots. Both carry the input-ready marker (``? for
+# shortcuts``) + the idle status bar (``bypass permissions``) so the runtime's
+# readiness gate resolves; they differ only in the compose box: PENDING holds
+# ``❯\xa0<text>`` (NBSP gap, as Claude's Ink TUI renders a paste), CLEARED holds
+# an empty ``❯``.
+_STATUS = "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
+_MARKER = "? for shortcuts"
+_CLEARED_PANE = f"❯ \n{_STATUS}\n{_MARKER}"
+
+
+def _pending_pane(text: str) -> str:
+    return f"❯\xa0{text}\n{_STATUS}\n{_MARKER}"
 
 
 @dataclass
@@ -41,18 +61,21 @@ class _MemSession:
     name: str
     command: str = ""
     workdir: str = "/tmp"
-    pane: list[str] = field(default_factory=list)
+    # The unsent compose buffer: set by ``send_text_literal``, cleared when an
+    # ``Enter`` lands — exactly the live TUI's submit semantics.
+    pending: str | None = None
     activity_at: float = 0.0
 
 
 class _RecordingMux:
-    """Records every multiplexer call in arrival order.
+    """Records every multiplexer call in arrival order AND models the pane.
 
-    Each `send_*` / `capture_*` call appends a structured tuple to
-    ``calls``. Tests assert on that list — it lets us pin the EXACT
-    sequence of keystrokes the runtime drives, which is what matters for
-    the unsubmitted-prompt bug (the existence of a trailing ``Enter``
-    AFTER the text+submit primitive is the load-bearing invariant).
+    ``send_text_literal`` sets the pending compose buffer; a subsequent
+    ``send_keys("Enter")`` clears it (submission landed). ``capture_content``
+    renders the pending-vs-cleared pane accordingly, so the runtime's
+    idle-gated ``verify_submit_by_advancement`` is exercised end-to-end: it
+    waits for the paste to render, sends ONE Enter once idle, and observes the
+    buffer advance.
     """
 
     _sessions: dict[str, _MemSession]
@@ -94,10 +117,12 @@ class _RecordingMux:
 
     @classmethod
     def capture_content(cls, name: str) -> str:
-        # Always report input-ready so the wait_until_input_ready gate
-        # in the inject path resolves the same way the running TUI would
-        # once claude has mounted its input field.
-        return "? for shortcuts" if cls._input_ready else "still booting"
+        if not cls._input_ready:
+            return "still booting"
+        sess = cls._sessions.get(name)
+        if sess is not None and sess.pending:
+            return _pending_pane(sess.pending)
+        return _CLEARED_PANE
 
     @classmethod
     def capture_logs(cls, name: str, lines: int = 50) -> str:
@@ -107,22 +132,30 @@ class _RecordingMux:
     def send_keys(cls, name: str, *keys: str) -> None:
         cls._calls.append(("send_keys", name, tuple(keys)))
         sess = cls._sessions.get(name)
+        if sess is not None and "Enter" in keys:
+            # Enter submits the pending compose buffer → it clears.
+            sess.pending = None
+
+    @classmethod
+    def send_text_literal(cls, name: str, text: str) -> None:
+        cls._calls.append(("send_text_literal", name, text))
+        sess = cls._sessions.get(name)
         if sess is not None:
-            sess.pane.extend(keys)
+            sess.pending = text
 
     @classmethod
     def send_text_and_submit(cls, name: str, text: str) -> None:
+        # Present for MultiplexerProtocol parity; the inject path no longer
+        # uses it (it pastes literally + idle-gated submit). Recorded so a
+        # test can assert it is NOT used on the boot inject path.
         cls._calls.append(("send_text_and_submit", name, text))
         sess = cls._sessions.get(name)
         if sess is not None:
-            sess.pane.append(text)
+            sess.pending = None
 
     @classmethod
     def send_text_and_submit_verified(cls, name: str, text: str, **_: object) -> int:
         cls._calls.append(("send_text_and_submit_verified", name, text))
-        sess = cls._sessions.get(name)
-        if sess is not None:
-            sess.pane.append(text)
         return 1
 
     @classmethod
@@ -155,7 +188,15 @@ def mux() -> Iterator[type[_RecordingMux]]:
     yield _PerTestMux
 
 
-def test_startup_prompt_inject_fires_text_submit_primitive(
+def _literal_calls(mux: type[_RecordingMux]) -> list[tuple]:
+    return [c for c in mux._calls if c[0] == "send_text_literal"]
+
+
+def _enter_calls(mux: type[_RecordingMux]) -> list[tuple]:
+    return [c for c in mux._calls if c[0] == "send_keys" and c[2] == ("Enter",)]
+
+
+def test_startup_prompt_inject_pastes_text_literally(
     mux: type[_RecordingMux],
 ) -> None:
     # Arrange — one startup prompt, ready mux.
@@ -163,55 +204,70 @@ def test_startup_prompt_inject_fires_text_submit_primitive(
     config = _Config(name="figrecipe", startup_prompts=["go work"])
     # Act — full start path runs the inject under the runtime's own gate.
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — the prompt text reached the multiplexer's text-submit
-    # primitive (NOT bare ``send_keys`` with a trailing ``\r``).
-    text_calls = [c for c in mux._calls if c[0] == "send_text_and_submit"]
-    assert text_calls == [("send_text_and_submit", "tui-figrecipe", "go work")]
+    # Assert — the prompt reached the LITERAL (``-l``) paste primitive, once.
+    assert _literal_calls(mux) == [("send_text_literal", "tui-figrecipe", "go work")]
 
 
-def test_startup_prompt_inject_appends_defensive_enter_after_submit(
+def test_startup_prompt_inject_never_uses_non_literal_submit(
     mux: type[_RecordingMux],
 ) -> None:
-    # Arrange — the bug: operator saw the prompt pasted but Enter never
-    # arrived. The fix MUST issue an explicit ``Enter`` keystroke AFTER
-    # the text-submit primitive returns, because the Ink TUI can eat the
-    # primitive's own Enter while it's still mounting the input.
+    # Arrange — the old bug pasted via the coupled (blind-Enter)
+    # ``send_text_and_submit``; the fix must NOT use it on the boot inject.
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_builder)
     config = _Config(name="todo", startup_prompts=["start"])
     # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — find the text-submit; the very next call must be an
-    # explicit ``send_keys("Enter")`` against the same session.
-    seq = [
-        (c[0], c[1], c[2])
-        for c in mux._calls
-        if c[0] in ("send_text_and_submit", "send_keys") and c[1] == "tui-todo"
-    ]
-    # Expect the text-submit immediately followed by a bare Enter.
-    submit_idx = next(i for i, c in enumerate(seq) if c[0] == "send_text_and_submit")
-    next_call = seq[submit_idx + 1]
-    assert next_call == ("send_keys", "tui-todo", ("Enter",))
+    # Assert — no coupled text-submit was used on the inject path.
+    non_literal = [c for c in mux._calls if c[0] == "send_text_and_submit"]
+    assert non_literal == []
 
 
-def test_startup_prompt_inject_waits_for_input_ready_before_sending(
+def test_startup_prompt_inject_submits_via_single_idle_gated_enter(
     mux: type[_RecordingMux],
 ) -> None:
-    # Arrange — capture_content returns the not-ready string. The
-    # inject MUST refuse to fire the text-submit while the TUI's input
-    # field has not yet bound (the operator's bug was the prompt landing
-    # on a not-yet-bound field, so the Enter dropped on the floor).
-    mux._input_ready = False
+    # Arrange — the paste renders as pending; the idle-gated verify must send
+    # exactly ONE Enter, which clears the buffer (submission verified).
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_builder)
     config = _Config(name="neurovista", startup_prompts=["mission"])
-    # Act — call start with a tiny boot-drain so the test doesn't hang.
-    # The inject's own readiness gate has a short timeout (per-prompt
-    # best-effort: failure logs + skips rather than raises).
+    # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — text-submit was NOT called because input never became
-    # ready (the runtime's gate raised TuiInputNotReadyError, which the
-    # per-prompt best-effort handler logged + swallowed).
-    text_calls = [c for c in mux._calls if c[0] == "send_text_and_submit"]
-    assert text_calls == []
+    # Assert — exactly one Enter (no blind + no defensive; just the gated one).
+    assert len(_enter_calls(mux)) == 1
+
+
+def test_startup_prompt_inject_pastes_before_it_submits(
+    mux: type[_RecordingMux],
+) -> None:
+    # Arrange — order matters: the literal paste must precede the submit Enter
+    # (submitting first would fire into an empty prompt).
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_builder)
+    config = _Config(name="order", startup_prompts=["do it"])
+    # Act
+    runtime.start(config, boot_drain_timeout_s=0.01)
+    # Assert — first literal paste arrives before the first Enter.
+    kinds = [c[0] for c in mux._calls if c[0] in ("send_text_literal", "send_keys")]
+    first_paste = kinds.index("send_text_literal")
+    first_enter = next(i for i, k in enumerate(kinds) if k == "send_keys")
+    assert first_paste < first_enter
+
+
+def test_startup_prompt_inject_does_not_paste_when_input_never_ready(
+    mux: type[_RecordingMux],
+) -> None:
+    # Arrange — a runtime whose readiness gate NEVER resolves (raises). The
+    # inject MUST refuse to paste onto a not-yet-bound input (the operator's
+    # bug: the prompt landing on an unbound field, Enter dropped). A real
+    # subclass forces the condition deterministically (no mock, no 60s hang).
+    class _NeverReadyRuntime(TuiSessionRuntime):
+        def wait_until_input_ready(self, config, **_kw):  # type: ignore[override]
+            raise TuiInputNotReadyError("input never bound (test)")
+
+    runtime = _NeverReadyRuntime(multiplexer=mux, command_builder=_builder)
+    config = _Config(name="wedged", startup_prompts=["mission"])
+    # Act
+    runtime.start(config, boot_drain_timeout_s=0.01)
+    # Assert — nothing was pasted because the input never became ready.
+    assert _literal_calls(mux) == []
 
 
 def test_startup_prompt_inject_skipped_when_list_empty(
@@ -222,26 +278,19 @@ def test_startup_prompt_inject_skipped_when_list_empty(
     config = _Config(name="quiet", startup_prompts=[])
     # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — no text-submit + no defensive Enter for an empty list.
-    text_calls = [c for c in mux._calls if c[0] == "send_text_and_submit"]
-    enter_calls = [c for c in mux._calls if c[0] == "send_keys" and c[2] == ("Enter",)]
-    assert (text_calls, enter_calls) == ([], [])
+    # Assert — nothing pasted and nothing submitted for an empty list.
+    assert (_literal_calls(mux), _enter_calls(mux)) == ([], [])
 
 
-def test_startup_prompt_inject_each_prompt_gets_defensive_enter(
+def test_startup_prompt_inject_each_prompt_pasted_and_submitted(
     mux: type[_RecordingMux],
 ) -> None:
-    # Arrange — two prompts; BOTH must be submitted AND followed by an
-    # explicit defensive Enter (the second prompt is no less prone to
-    # the Ink-drop race than the first).
+    # Arrange — two prompts; BOTH must be pasted literally AND submitted via
+    # the idle-gated Enter (the second is no less prone to the drop than the
+    # first).
     runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_builder)
-    config = _Config(
-        name="multi",
-        startup_prompts=["first turn", "second turn"],
-    )
+    config = _Config(name="multi", startup_prompts=["first turn", "second turn"])
     # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — exactly 2 text-submits + 2 defensive Enters.
-    text_calls = [c for c in mux._calls if c[0] == "send_text_and_submit"]
-    enter_calls = [c for c in mux._calls if c[0] == "send_keys" and c[2] == ("Enter",)]
-    assert (len(text_calls), len(enter_calls)) == (2, 2)
+    # Assert — exactly 2 literal pastes + 2 idle-gated Enters.
+    assert (len(_literal_calls(mux)), len(_enter_calls(mux))) == (2, 2)
