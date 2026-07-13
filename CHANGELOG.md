@@ -6,6 +6,78 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.14] — 2026-07-13
+
+Incident-response release. The headline fix (#642) closes a fleet-wide
+outage in which **`sac agents restart` itself rotated the shared OAuth
+token**, killing every other agent on that account. Note that the bug
+(#630) and its fix (#642) both land in this cycle, so the rotating
+pre-flight **was never published to PyPI** — only `develop` installs
+carried it.
+
+### Fixed
+- **The auth pre-flight was ROTATING the shared token to "check" it**
+  (#642) — the fleet's "Login expired" outage.
+  `_restart_preflight.probe_credential_usable` verified a credential
+  *by refreshing it*. The OAuth `refresh_token` is **single-use**, so the
+  probe **consumed it and minted a new access token**, leaving every other
+  agent pinned to that account holding the token that had just been
+  replaced. They 401'd, and Claude Code renders a 401 as the misleading
+  **"Login expired · Please run /login"** — while nothing had expired and
+  quota sat at 14%. Because it ran on **every** restart (pre-stop,
+  unconditionally) and in `agent_start`'s force branch, *restarting agents
+  to fix them rotated the token again each time, killing the agents just
+  restarted*. It called `refresh_account_credentials` directly, bypassing
+  the `sac accounts refresh` CLI's `skipped; token still fresh (TTL >= 2h)`
+  guard, so it refreshed even a token with seven hours of life left. Only
+  two real callers of that mutating refresh exist; this was the sole
+  **unguarded** one. Fix: never probe a fresh token — spend the single-use
+  grant only near expiry, the same threshold the host timer uses.
+  *A probe that consumes the thing it probes is not a probe.*
+- **`sac agents restart` reported a FAILED restart as a SUCCESS** (#642).
+  `tui_session`'s duplicate-session guard returns `True` after *refusing*
+  to start (idempotent for a plain `start`, a lie for a `restart`), so
+  `agent_start` reported success, `agent_restart` propagated it, and the
+  CLI printed green `Agent '<name>' restarted` directly beneath
+  `FAIL: duplicate session`. Restart now **forces** its start leg (so it
+  actually replaces the process), the CLI stops discarding the result,
+  cross-host trusts the *peer's own verdict* rather than `ssh exited 0`,
+  and the duplicate-session guard no longer recommends the very command
+  that just failed.
+- **Launcher secrets left argv** (#638, P1 security): `apptainer --env K=V`
+  puts values in argv, which is world-readable at `/proc/<pid>/cmdline`.
+  Secret-shaped vars now travel via a `0600` `--env-file`.
+- **`sac listen` crash-loop on port contention** (#640): hot-standby +
+  failover with `flock` as the sole atomic bind arbiter, so a duplicate
+  daemon stands by instead of `exit 1`-looping under `Restart=always`.
+- **Heartbeat tick blew its 30s budget and was abandoned** (#647): the tick
+  cost **three `tmux` spawns per agent**, run serially. Batched to one
+  `tmux list-sessions` for the whole fleet — **132 spawns / 5.20s → 1 spawn
+  / 0.041s (125x)**, measured on 44 real sessions. An abandoned tick also
+  stacked zombie threads that starved the shared executor `agent_restart`
+  and `host_exec` dispatch through, which is why listen answered
+  `/v1/health` 200 while restarts timed out.
+- **Tests littered the repo root** (#643): the apptainer test shim wrote
+  `sys.argv[2]` on `build`, but production appends an optional
+  `--fakeroot` before the SIF — so it created a 1-byte file *named*
+  `--fakeroot`, which the project audit then correctly failed. Red-lined
+  every PR in the repo.
+- Per-agent directory overlay auto-provisioned (#633); TUI boot prompt
+  submitted via literal paste + idle-gated Enter (#632).
+
+### Added
+- **`sac agents stop --all-running / --all-registry / --all`** (#648) —
+  `restart` had bulk selection and `stop` had none, so there was no way to
+  stop the fleet during an incident. (`examples/07` had been *documenting*
+  `--all` for months without it existing.) Flags, enumeration and
+  mutual-exclusion rules are now **shared** between the two verbs, with a
+  test asserting they cannot drift apart again.
+- `sac agents list`: local-tz `Started`, resolved `Host`, perf fixes (#635).
+- `sac accounts list`: readable JST `Since`, relative reset hints, corrected
+  fleet 7d-capacity semantics (#636).
+- `agent_spawn` / `agent_twin` surfaced to agents, self-serve spawn
+  directive, and a fail-loud broker-unreachable error (#639).
+
 ## [0.21.13] — 2026-07-11
 
 First PyPI release since 0.21.11. v0.21.12 is a ghost tag (like v0.21.10
