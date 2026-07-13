@@ -278,7 +278,11 @@ def request_restart(
         # as 'cannot reach / timed out'.
         logger.warning("restart_client: POST %s transport error: %s", url, exc)
         raise RestartRequestError(
-            f"restart of {name!r} failed: cannot reach listen at {base!r} ({exc})"
+            f"restart of {name!r} failed: cannot reach listen at {base!r} "
+            f"({exc}) — the host listen broker is unreachable; it may be "
+            f"flapping. Restart it on the host with `sac listen restart` (an "
+            f"atomic stop-clean-relaunch) and retry; escalate to the operator "
+            f"only if it stays down."
         ) from exc
 
     parsed = _parse_body(raw)
