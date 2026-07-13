@@ -253,7 +253,7 @@ async def run_conversation(
         # stopped responding after restart) leaves a self-diagnosing
         # trail in stdout.log. The corresponding ``apptainer_restart``
         # mount + lock race that originally caused this is closed in
-        # ``_lifecycle/_stop.py::_wait_for_previous_runtime_to_exit``;
+        # ``_lifecycle/_stop_escalate.py::ensure_previous_runtime_down``;
         # this log is the OBSERVABILITY half so a regression of either
         # the race or the SDK's per-MCP launch is visible without
         # bouncing the agent or attaching to its stderr.
