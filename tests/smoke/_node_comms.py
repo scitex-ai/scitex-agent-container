@@ -24,18 +24,16 @@ import asyncio
 import contextlib
 import json
 import socket
-import threading
-import time
 from pathlib import Path
 
 import httpx
-import uvicorn
 import yaml
 
 from scitex_agent_container._state.state_db_nodes import (
     mint_node_token,
     record_lineage,
 )
+from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
 # ---------------------------------------------------------------------------
 # uvicorn loopback helpers (mirrors tests/.../_listen/test_server.py).
@@ -55,23 +53,13 @@ def _run_loopback(app, port: int):
 
     Teardown sets ``should_exit`` + joins; the ``finally`` fires even
     on test failure so a hung subscriber never strands the server.
+
+    The startup wait lives in the shared helper — the hand-rolled 5s ceiling
+    this used to carry raced the listen lifespan (measured 7.49s under load).
+    See ``_helpers/loopback_server.py``.
     """
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", ws="none"
-    )
-    server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True)
-    t.start()
-    deadline = time.monotonic() + 5.0
-    while not server.started:
-        if time.monotonic() > deadline:
-            raise RuntimeError("uvicorn loopback did not start in 5s")
-        time.sleep(0.05)
-    try:
-        yield port
-    finally:
-        server.should_exit = True
-        t.join(timeout=5.0)
+    with run_loopback(app, port) as p:
+        yield p
 
 
 # ---------------------------------------------------------------------------

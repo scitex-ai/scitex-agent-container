@@ -24,12 +24,10 @@ import contextlib
 import json
 import os
 import socket
-import threading
 from pathlib import Path
 
 import httpx
 import pytest
-import uvicorn
 import yaml
 from starlette.testclient import TestClient
 
@@ -40,6 +38,7 @@ from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
 from scitex_agent_container._state.state_db_nodes import record_lineage
+from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
 TOKEN = "test-token-abc123"
 
@@ -828,30 +827,33 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+# Ceiling for the REAL cross-host I/O below (loopback HTTP + the SSE roundtrip
+# between two live uvicorn servers). Generous ON PURPOSE, and not a magic number:
+# every wait it bounds is event-driven — the httpx read returns the instant the
+# forwarded event lands, the `wait_for`s the instant their event fires — so a
+# large ceiling costs NOTHING on the happy path and only bounds a genuinely
+# broken run. The 5.0s literals that used to be sprinkled here were the second
+# half of the py3.11 CI flake: once the `uvicorn loopback did not start in 5s`
+# ceiling was fixed, a loaded runner simply failed one layer down instead, with
+# `httpx.ReadTimeout` (reproduced: 6 cross-host tests fail under CPU
+# oversubscription purely on these 5s bounds). Bounding real I/O by an arbitrary
+# tight deadline is a race by construction; the fix is to make the bound
+# generous, not to guess a better number.
+LOOPBACK_IO_TIMEOUT_S = 30.0
+
+
 @contextlib.contextmanager
 def _run_loopback(app, port: int):
     """Spin up uvicorn on a loopback port. The app's
     ``local_host`` identity is configured at ``create_app`` time
     (see :func:`scitex_agent_container._listen.server.create_app`).
-    """
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", ws="none"
-    )
-    server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True)
-    t.start()
-    import time as _time
 
-    deadline = _time.monotonic() + 5.0
-    while not server.started:
-        if _time.monotonic() > deadline:
-            raise RuntimeError("uvicorn loopback did not start in 5s")
-        _time.sleep(0.05)
-    try:
-        yield port
-    finally:
-        server.should_exit = True
-        t.join(timeout=5.0)
+    Startup wait lives in the shared helper — the hand-rolled 5s ceiling this
+    used to carry raced the listen lifespan (measured 7.49s under load) and
+    turned the py3.11 leg red. See ``_helpers/loopback_server.py``.
+    """
+    with run_loopback(app, port) as p:
+        yield p
 
 
 def _send_payload(text: str, *, from_agent: str) -> dict:
@@ -904,7 +906,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
             captured: dict = {}
 
             async def consume():
-                async with httpx.AsyncClient(timeout=5.0) as ac:
+                async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                     async with ac.stream(
                         "GET",
                         f"http://127.0.0.1:{host_a_port}/agents/alice/inbox/stream",
@@ -922,11 +924,11 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
 
             sub = asyncio.create_task(consume())
             try:
-                await asyncio.wait_for(ready.wait(), timeout=5.0)
+                await asyncio.wait_for(ready.wait(), timeout=LOOPBACK_IO_TIMEOUT_S)
                 # Now stand up host B and post to it. WI-4 forwarder
                 # on host B should resolve alice→host-a and forward.
                 with _run_loopback(app_b, host_b_port):
-                    async with httpx.AsyncClient(timeout=5.0) as ac:
+                    async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                         resp = await ac.post(
                             f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
                             json=_send_payload(
@@ -938,7 +940,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
                     raise RuntimeError(
                         f"forward returned {resp.status_code}: {resp.text!r}"
                     )
-                await asyncio.wait_for(sub, timeout=5.0)
+                await asyncio.wait_for(sub, timeout=LOOPBACK_IO_TIMEOUT_S)
             finally:
                 if not sub.done():
                     sub.cancel()
@@ -978,7 +980,7 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env) -> Non
             captured: dict = {}
 
             async def consume():
-                async with httpx.AsyncClient(timeout=5.0) as ac:
+                async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                     async with ac.stream(
                         "GET",
                         f"http://127.0.0.1:{host_a_port}/agents/alice/inbox/stream",
@@ -996,15 +998,15 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env) -> Non
 
             sub = asyncio.create_task(consume())
             try:
-                await asyncio.wait_for(ready.wait(), timeout=5.0)
+                await asyncio.wait_for(ready.wait(), timeout=LOOPBACK_IO_TIMEOUT_S)
                 with _run_loopback(app_b, host_b_port):
-                    async with httpx.AsyncClient(timeout=5.0) as ac:
+                    async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                         await ac.post(
                             f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
                             json=_send_payload("x", from_agent="permitted-peer"),
                             headers={"authorization": f"Bearer {SHARED_TOKEN}"},
                         )
-                await asyncio.wait_for(sub, timeout=5.0)
+                await asyncio.wait_for(sub, timeout=LOOPBACK_IO_TIMEOUT_S)
             finally:
                 if not sub.done():
                     sub.cancel()
@@ -1220,7 +1222,7 @@ def _drive_ssh_cross_host_send(
             captured: dict = {}
 
             async def consume():
-                async with httpx.AsyncClient(timeout=5.0) as ac:
+                async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                     async with ac.stream(
                         "GET",
                         f"http://127.0.0.1:{host_a_port}/agents/alice/inbox/stream",
@@ -1238,9 +1240,9 @@ def _drive_ssh_cross_host_send(
 
             sub = asyncio.create_task(consume())
             try:
-                await asyncio.wait_for(ready.wait(), timeout=5.0)
+                await asyncio.wait_for(ready.wait(), timeout=LOOPBACK_IO_TIMEOUT_S)
                 with _run_loopback(app_b, host_b_port):
-                    async with httpx.AsyncClient(timeout=10.0) as ac:
+                    async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                         resp = await ac.post(
                             f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
                             json=_send_payload(text, from_agent=sender),
@@ -1250,7 +1252,7 @@ def _drive_ssh_cross_host_send(
                     raise RuntimeError(
                         f"ssh forward returned {resp.status_code}: {resp.text!r}"
                     )
-                await asyncio.wait_for(sub, timeout=5.0)
+                await asyncio.wait_for(sub, timeout=LOOPBACK_IO_TIMEOUT_S)
             finally:
                 if not sub.done():
                     sub.cancel()
@@ -1351,7 +1353,7 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
 
     async def driver() -> int:
         with _run_loopback(app_a, host_a_port), _run_loopback(app_b, host_b_port):
-            async with httpx.AsyncClient(timeout=10.0) as ac:
+            async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                 resp = await ac.post(
                     f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
                     json=_send_payload("denied", from_agent="outsider"),
@@ -1429,7 +1431,7 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
             captured: dict = {}
 
             async def consume():
-                async with httpx.AsyncClient(timeout=5.0) as ac:
+                async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                     async with ac.stream(
                         "GET",
                         f"http://127.0.0.1:{port}/agents/alice/inbox/stream",
@@ -1447,14 +1449,14 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
 
             sub = asyncio.create_task(consume())
             try:
-                await asyncio.wait_for(ready.wait(), timeout=5.0)
-                async with httpx.AsyncClient(timeout=5.0) as ac:
+                await asyncio.wait_for(ready.wait(), timeout=LOOPBACK_IO_TIMEOUT_S)
+                async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                     await ac.post(
                         f"http://127.0.0.1:{port}/agents/alice/message:send",
                         json=_send_payload_with_meta("ping", metadata=metadata),
                         headers={"authorization": f"Bearer {SHARED_TOKEN}"},
                     )
-                await asyncio.wait_for(sub, timeout=5.0)
+                await asyncio.wait_for(sub, timeout=LOOPBACK_IO_TIMEOUT_S)
             finally:
                 if not sub.done():
                     sub.cancel()

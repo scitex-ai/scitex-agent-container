@@ -18,6 +18,10 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from scitex_agent_container._runners.a2a_proxy import build_app, splice_card
+from tests.scitex_agent_container._helpers.loopback_server import (
+    serve_in_thread,
+    wait_until_serving,
+)
 
 # ---------------------------------------------------------------------------
 # Upstream stubs (in-process ASGI app, accessed via httpx.AsyncClient)
@@ -907,8 +911,6 @@ def real_upstream_server() -> Any:
     Yields ``("http://127.0.0.1:<port>", recorder)`` where recorder is
     a dict the upstream mutates so tests can observe traffic.
     """
-    import threading
-    import time
 
     import uvicorn
 
@@ -935,17 +937,15 @@ def real_upstream_server() -> Any:
     )
     server = uvicorn.Server(config)
 
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    # Wait until the server reports it's actually listening.
-    deadline = time.time() + 5.0
-    while time.time() < deadline and not server.started:
-        time.sleep(0.02)
-    if not server.started:
+    # Shared startup wait — a hand-rolled 5s ceiling on a real server start is
+    # a race by construction (see tests/.../_helpers/loopback_server.py).
+    thread, crash = serve_in_thread(server, port)
+    try:
+        wait_until_serving(server, thread, port=port, crash=crash)
+    except Exception:
         server.should_exit = True
         thread.join(timeout=2.0)
-        raise RuntimeError("upstream uvicorn server failed to start")
+        raise
 
     try:
         yield (f"http://127.0.0.1:{port}", recorder)
@@ -957,8 +957,6 @@ def real_upstream_server() -> Any:
 @pytest.fixture
 def failing_upstream_server() -> Any:
     """Real uvicorn server whose card endpoint returns 500."""
-    import threading
-    import time
 
     import uvicorn
 
@@ -974,16 +972,14 @@ def failing_upstream_server() -> Any:
         app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    deadline = time.time() + 5.0
-    while time.time() < deadline and not server.started:
-        time.sleep(0.02)
-    if not server.started:
+    # Shared startup wait — see tests/.../_helpers/loopback_server.py.
+    thread, crash = serve_in_thread(server, port)
+    try:
+        wait_until_serving(server, thread, port=port, crash=crash)
+    except Exception:
         server.should_exit = True
         thread.join(timeout=2.0)
-        raise RuntimeError("upstream uvicorn server failed to start")
+        raise
 
     try:
         yield f"http://127.0.0.1:{port}"

@@ -34,6 +34,10 @@ import uvicorn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
+from tests.scitex_agent_container._helpers.loopback_server import (
+    serve_in_thread,
+    wait_until_serving,
+)
 
 TOKEN = "test-token-shutdown-sse"
 
@@ -174,13 +178,12 @@ def test_sac_listen_graceful_shutdown_cancels_inflight_sse(shutdown_env) -> None
     # Mirror the boot path (listen_cmds._do_start_listen) so the lifespan
     # shutdown bridge is wired to this server's ``should_exit``.
     app.state.uvicorn_server = server
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5.0
-    while not server.started:
-        if time.monotonic() > deadline:
-            raise RuntimeError("uvicorn loopback did not start in 5s")
-        time.sleep(0.02)
+    # Shared startup wait: the hand-rolled 5s ceiling that used to live here
+    # raced the listen lifespan (measured 7.49s under load). This test keeps
+    # its own server object because it drives `should_exit` as the thing under
+    # test. See tests/.../_helpers/loopback_server.py.
+    thread, crash = serve_in_thread(server, port)
+    wait_until_serving(server, thread, port=port, crash=crash)
 
     # Act
     try:
