@@ -1,8 +1,8 @@
-"""Tests for the ``sac accounts list`` usage-bars + fleet-effective surface.
+"""Tests for the ``sac accounts list`` usage-bars + fleet-capacity surface.
 
 PA-306 no-mocks: every test drives the real pure helpers with known
 inputs and asserts exact strings / computed aggregates. The
-bar-rendering and effective-utilization functions take no I/O and an
+bar-rendering and fleet-capacity functions take no I/O and an
 injectable ``now``, so no monkeypatching of the clock or filesystem is
 needed.
 """
@@ -13,10 +13,8 @@ from datetime import datetime, timezone
 
 from scitex_agent_container.cli_pkg._account_list_render import AccountRow
 from scitex_agent_container.cli_pkg._account_usage_bars import (
-    WEEK_HOURS,
-    effective_utilization_pct,
-    fleet_effective_line,
-    fleet_effective_utilization,
+    fleet_7d_capacity_used,
+    fleet_capacity_used_line,
     render_usage_bar,
     render_usage_bar_line,
     render_usage_bars_block,
@@ -134,7 +132,7 @@ def test_render_usage_bar_line_shows_7d_window():
 # ---------------------------------------------------------------------------
 # 2026-07-11 dedupe directive — the bars own the reset hints (moved off the
 # Stored-accounts table). Operator's verbatim example shape:
-#   ... 5h [..]  29% (→09:19)   7d [..]  66% (→Sun 21h)
+#   ... 5h [..]  29% (in 4h05m)   7d [..]  66% (in 2d 3h)
 # ---------------------------------------------------------------------------
 
 
@@ -148,11 +146,11 @@ def test_render_usage_bar_line_appends_5h_reset_hint():
         66.0,
         label_width=10,
         width=20,
-        hint_5h="(→09:19)",
-        hint_7d="(→Sun 21h)",
+        hint_5h="(in 4h05m)",
+        hint_7d="(in 2d 3h)",
     )
     # Assert — operator's verbatim 5h shape.
-    assert "29% (→09:19)" in line
+    assert "29% (in 4h05m)" in line
 
 
 def test_render_usage_bar_line_appends_7d_reset_hint():
@@ -165,11 +163,11 @@ def test_render_usage_bar_line_appends_7d_reset_hint():
         66.0,
         label_width=10,
         width=20,
-        hint_5h="(→09:19)",
-        hint_7d="(→Sun 21h)",
+        hint_5h="(in 4h05m)",
+        hint_7d="(in 2d 3h)",
     )
     # Assert — operator's verbatim 7d shape.
-    assert "66% (→Sun 21h)" in line
+    assert "66% (in 2d 3h)" in line
 
 
 def test_render_usage_bar_line_without_hints_has_no_parens():
@@ -184,13 +182,13 @@ def test_render_usage_bar_line_without_hints_has_no_parens():
 
 def test_render_usage_bar_line_pads_missing_5h_hint_to_block_width():
     """A hint-less row pads the 5h slot so the 7d bars stay aligned."""
-    # Arrange — a sibling row in the block has an 8-char 5h hint.
+    # Arrange — a sibling row in the block has a 10-char 5h hint.
     with_hint = render_usage_bar_line(
-        "aa", 29.0, 66.0, label_width=4, width=20, hint_5h="(→09:19)", hint_5h_width=8
+        "aa", 29.0, 66.0, label_width=4, width=20, hint_5h="(in 4h05m)", hint_5h_width=10
     )
     # Act
     without_hint = render_usage_bar_line(
-        "bbbb", 14.0, 15.0, label_width=4, width=20, hint_5h="", hint_5h_width=8
+        "bbbb", 14.0, 15.0, label_width=4, width=20, hint_5h="", hint_5h_width=10
     )
     # Assert — "7d [" starts at the same column in both lines.
     assert with_hint.index("7d [") == without_hint.index("7d [")
@@ -255,6 +253,11 @@ def test_render_usage_bars_block_no_data_row_renders_placeholder():
     assert "no data" in block
 
 
+# Fixed clock so the relative reset hints are deterministic (operator
+# 2026-07-13: the hint is the time REMAINING until reset, not a wall-clock).
+_HINT_NOW = datetime(2026, 7, 12, 0, 0, 0, tzinfo=timezone.utc)
+
+
 def _hinted_bar_rows() -> list[AccountRow]:
     """One row with both resets cached, one with neither (mixed block)."""
     return [
@@ -265,9 +268,9 @@ def _hinted_bar_rows() -> list[AccountRow]:
             used_pct_5h=29.0,
             used_pct_7d=66.0,
             snapshot_as_of=None,
-            # Sun 2026-07-12 00:19 UTC = 09:19 JST; 12:00 UTC = Sun 21h JST.
-            reset_at_5h="2026-07-12T00:19:00+00:00",
-            reset_at_7d="2026-07-12T12:00:00+00:00",
+            # From _HINT_NOW: +4h05m → "in 4h05m"; +2d3h → "in 2d 3h".
+            reset_at_5h="2026-07-12T04:05:00+00:00",
+            reset_at_7d="2026-07-14T03:00:00+00:00",
         ),
         AccountRow(
             name="ywata1989-gmail-com",
@@ -280,157 +283,104 @@ def _hinted_bar_rows() -> list[AccountRow]:
     ]
 
 
-def test_render_usage_bars_block_carries_5h_reset_hint(env_save_restore):
-    """Block-level: ``reset_at_5h`` renders the operator's ``29% (→09:19)``."""
+def test_render_usage_bars_block_carries_5h_reset_hint():
+    """Block-level: ``reset_at_5h`` renders the operator's ``29% (in 4h05m)``."""
     # Arrange
-    env_save_restore.set("TZ", "Asia/Tokyo")
     rows = _hinted_bar_rows()
     # Act
-    block = render_usage_bars_block(rows, width=20)
+    block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
     # Assert
-    assert "29% (→09:19)" in block
+    assert "29% (in 4h05m)" in block
 
 
-def test_render_usage_bars_block_carries_7d_reset_hint(env_save_restore):
-    """Block-level: ``reset_at_7d`` renders the operator's ``66% (→Sun 21h)``."""
+def test_render_usage_bars_block_carries_7d_reset_hint():
+    """Block-level: ``reset_at_7d`` renders the operator's ``66% (in 2d 3h)``."""
     # Arrange
-    env_save_restore.set("TZ", "Asia/Tokyo")
     rows = _hinted_bar_rows()
     # Act
-    block = render_usage_bars_block(rows, width=20)
+    block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
     # Assert
-    assert "66% (→Sun 21h)" in block
+    assert "66% (in 2d 3h)" in block
 
 
-def test_render_usage_bars_block_aligns_7d_bars_across_mixed_hints(
-    env_save_restore,
-):
+def test_render_usage_bars_block_aligns_7d_bars_across_mixed_hints():
     """A hint-less row pads its 5h slot — 7d bars align across the block."""
     # Arrange
-    env_save_restore.set("TZ", "Asia/Tokyo")
     rows = _hinted_bar_rows()
     # Act
-    block = render_usage_bars_block(rows, width=20)
+    block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
     starts = {ln.index("7d [") for ln in block.splitlines() if "7d [" in ln}
     # Assert — one distinct start column means the 7d bars line up.
     assert len(starts) == 1, f"7d bars misaligned across rows: {starts}\n{block}"
 
 
 # ---------------------------------------------------------------------------
-# effective_utilization_pct — per-account reset-horizon weighting
+# fleet_7d_capacity_used — plain mean of the accounts' 7d utilisation
+# (operator 2026-07-13: over the trailing 7 days, how much of the fleet's
+# capacity was actually used — NOT reset-horizon-weighted).
 # ---------------------------------------------------------------------------
 
 
-def test_effective_util_none_horizon_returns_raw_pct():
-    # Arrange — no reset horizon → assume no reset within the window.
-    used = 100.0
+def test_fleet_7d_capacity_counts_three_accounts():
+    # Arrange — the operator's worked example: 7d = 17, 88, 88.
+    values = [17.0, 88.0, 88.0]
     # Act
-    eff = effective_utilization_pct(used, None)
-    # Assert
-    assert eff == 100.0
-
-
-def test_effective_util_reset_in_one_day_at_100():
-    # Arrange — 100% resetting in 24h over a 168h window → 24/168*100.
-    used = 100.0
-    # Act
-    eff = effective_utilization_pct(used, 24.0, window_hours=WEEK_HOURS)
-    # Assert
-    assert round(eff, 4) == round(24.0 / 168.0 * 100.0, 4)
-
-
-def test_effective_util_reset_in_six_days_higher_than_one_day():
-    # Arrange — the rationale: later reset ⇒ higher effective util.
-    one_day = effective_utilization_pct(100.0, 24.0)
-    # Act
-    six_days = effective_utilization_pct(100.0, 6 * 24.0)
-    # Assert
-    assert six_days > one_day
-
-
-def test_effective_util_horizon_beyond_window_caps_at_raw():
-    # Arrange — horizon > window clamps frac to 1.0 → raw pct.
-    used = 80.0
-    # Act
-    eff = effective_utilization_pct(used, 1000.0, window_hours=WEEK_HOURS)
-    # Assert
-    assert eff == 80.0
-
-
-def test_effective_util_past_reset_zero_horizon_is_zero():
-    # Arrange — reset already due (horizon 0) → 0% effective utilisation.
-    used = 100.0
-    # Act
-    eff = effective_utilization_pct(used, 0.0)
-    # Assert
-    assert eff == 0.0
-
-
-# ---------------------------------------------------------------------------
-# fleet_effective_utilization — aggregate
-# ---------------------------------------------------------------------------
-
-
-def test_fleet_effective_counts_three_accounts():
-    # Arrange — the operator's real 3-account fleet: d7 = 99, 15, 100.
-    pairs = [(99.0, None), (15.0, None), (100.0, None)]
-    # Act
-    _pct, n = fleet_effective_utilization(pairs)
+    _pct, n = fleet_7d_capacity_used(values)
     # Assert
     assert n == 3
 
 
-def test_fleet_effective_mean_of_three_no_horizon_is_71():
-    # Arrange — mean(99, 15, 100) = 71.33% → "71%".
-    pairs = [(99.0, None), (15.0, None), (100.0, None)]
+def test_fleet_7d_capacity_mean_of_17_88_88_is_64():
+    # Arrange — mean(17, 88, 88) = 64.33% → "64%" (NOT the old 15%).
+    values = [17.0, 88.0, 88.0]
     # Act
-    pct, _n = fleet_effective_utilization(pairs)
+    pct, _n = fleet_7d_capacity_used(values)
     # Assert
-    assert int(round(pct)) == 71
+    assert int(round(pct)) == 64
 
 
-def test_fleet_effective_skips_none_usage_accounts_count():
+def test_fleet_7d_capacity_skips_none_usage_accounts_count():
     # Arrange — an account with no usage data is excluded from the count.
-    pairs = [(100.0, None), (None, None), (50.0, None)]
+    values = [100.0, None, 50.0]
     # Act
-    _pct, n = fleet_effective_utilization(pairs)
+    _pct, n = fleet_7d_capacity_used(values)
     # Assert
     assert n == 2
 
 
-def test_fleet_effective_skips_none_usage_accounts_mean():
+def test_fleet_7d_capacity_skips_none_usage_accounts_mean():
     # Arrange — mean over the two accounts that DO have usage.
-    pairs = [(100.0, None), (None, None), (50.0, None)]
+    values = [100.0, None, 50.0]
     # Act
-    pct, _n = fleet_effective_utilization(pairs)
+    pct, _n = fleet_7d_capacity_used(values)
     # Assert
     assert pct == 75.0
 
 
-def test_fleet_effective_all_none_returns_none():
+def test_fleet_7d_capacity_all_none_returns_none():
     # Arrange
-    pairs = [(None, None), (None, 24.0)]
+    values = [None, None]
     # Act
-    pct, _n = fleet_effective_utilization(pairs)
+    pct, _n = fleet_7d_capacity_used(values)
     # Assert
     assert pct is None
 
 
-def test_fleet_effective_all_none_counts_zero():
+def test_fleet_7d_capacity_all_none_counts_zero():
     # Arrange
-    pairs = [(None, None), (None, 24.0)]
+    values = [None, None]
     # Act
-    _pct, n = fleet_effective_utilization(pairs)
+    _pct, n = fleet_7d_capacity_used(values)
     # Assert
     assert n == 0
 
 
 # ---------------------------------------------------------------------------
-# fleet_effective_line — CLI-facing formatting over AccountRow
+# fleet_capacity_used_line — CLI-facing formatting over AccountRow
 # ---------------------------------------------------------------------------
 
 
-def _row(name: str, d7: float | None, reset_at_7d: str | None) -> AccountRow:
+def _row(name: str, d7: float | None) -> AccountRow:
     return AccountRow(
         name=name,
         freshness_state="VALID",
@@ -438,43 +388,52 @@ def _row(name: str, d7: float | None, reset_at_7d: str | None) -> AccountRow:
         used_pct_5h=0.0,
         used_pct_7d=d7,
         snapshot_as_of=None,
-        reset_at_7d=reset_at_7d,
     )
 
 
-def test_fleet_effective_line_three_accounts_no_reset():
-    # Arrange — matches the operator's fleet; no reset_at → mean of d7.
-    rows = [_row("a", 99.0, None), _row("b", 15.0, None), _row("c", 100.0, None)]
+def test_fleet_capacity_line_operator_example_reads_64():
+    # Arrange — the operator's worked fleet: 7d = 17, 88, 88 → 64% (not 15%).
+    rows = [_row("a", 17.0), _row("b", 88.0), _row("c", 88.0)]
     # Act
-    line = fleet_effective_line(rows)
+    line = fleet_capacity_used_line(rows)
     # Assert
-    assert line == "Fleet effective utilization: 71% (3 accounts)"
+    assert line == "Fleet 7d capacity used: 64% (3 accounts)"
 
 
-def test_fleet_effective_line_singular_account_noun():
+def test_fleet_capacity_line_singular_account_noun():
     # Arrange
-    rows = [_row("solo", 42.0, None)]
+    rows = [_row("solo", 42.0)]
     # Act
-    line = fleet_effective_line(rows)
+    line = fleet_capacity_used_line(rows)
     # Assert — singular "account", not "accounts".
-    assert line == "Fleet effective utilization: 42% (1 account)"
+    assert line == "Fleet 7d capacity used: 42% (1 account)"
 
 
-def test_fleet_effective_line_unavailable_when_no_usage():
+def test_fleet_capacity_line_unavailable_when_no_usage():
     # Arrange
-    rows = [_row("a", None, None), _row("b", None, None)]
+    rows = [_row("a", None), _row("b", None)]
     # Act
-    line = fleet_effective_line(rows)
+    line = fleet_capacity_used_line(rows)
     # Assert
-    assert line == "Fleet effective utilization: unavailable (no usage data)"
+    assert line == "Fleet 7d capacity used: unavailable (no usage data)"
 
 
-def test_fleet_effective_line_weights_by_reset_horizon():
-    # Arrange — one account at 100% resetting in 24h over a 168h window.
-    now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
-    reset_in_24h = datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-    rows = [_row("a", 100.0, reset_in_24h)]
+def test_fleet_capacity_line_ignores_reset_horizon():
+    # Arrange — an account at 100% whose 7d window resets in 24h. The OLD
+    # reset-horizon weighting collapsed this to ~14%; the capacity figure
+    # is the plain 7d% regardless of when the window rolls over.
+    rows = [
+        AccountRow(
+            name="a",
+            freshness_state="VALID",
+            freshness_hours=2.0,
+            used_pct_5h=0.0,
+            used_pct_7d=100.0,
+            snapshot_as_of=None,
+            reset_at_7d="2026-07-10T00:00:00+00:00",
+        )
+    ]
     # Act
-    line = fleet_effective_line(rows, now=now)
-    # Assert — 24/168*100 = 14.28 → "14%".
-    assert line == "Fleet effective utilization: 14% (1 account)"
+    line = fleet_capacity_used_line(rows)
+    # Assert — 100%, not the old horizon-weighted 14%.
+    assert line == "Fleet 7d capacity used: 100% (1 account)"

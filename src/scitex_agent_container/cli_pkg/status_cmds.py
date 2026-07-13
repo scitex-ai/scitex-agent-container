@@ -19,6 +19,7 @@ from ._helpers import (
     console,
     print_agent_list,
 )
+from ._timefmt import format_jst
 
 
 def _status_via_host_listen(name: str) -> None:
@@ -116,7 +117,11 @@ def _format_claude_account_block(meta: dict) -> list[str]:
         extra_line = "disabled"
         if extra_reason:
             extra_line += f" (reason: {extra_reason})"
-    since = _fmt(meta.get("subscription_created_at"))
+    # Operator 2026-07-13: the raw ``...T...Z`` ISO stamp is unreadable;
+    # render it as a JST wall clock (``YYYY-MM-DD HH:MM (JST)``) via the
+    # shared _timefmt SSOT. ``format_jst`` already returns ``-`` for a
+    # missing/unparseable value, matching the ``_fmt`` fallback above.
+    since = format_jst(meta.get("subscription_created_at"))
 
     return [
         "Claude Code account",
