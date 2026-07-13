@@ -193,6 +193,8 @@ def find_stuck_cards(
     liveness: dict[str, AgentLiveness],
     now: float,
     stale_s: float,
+    *,
+    fleet_last_beat_ts: float | None = None,
 ) -> list[StuckCard]:
     """Pure reconcile rule — NO IO. Return the OPEN cards that are stuck.
 
@@ -223,6 +225,31 @@ def find_stuck_cards(
       4. Otherwise the owner is dead on POSITIVE evidence — a channel that
          would have shown life shows none ⇒ ``owner-not-live``.
     """
+    # Is the heartbeat WRITER itself working this tick?
+    #
+    # The beats we read as proof-of-life come from ONE shared writer (sibling
+    # loops inside ``sac listen``), which is known to blow its budget and get
+    # abandoned. When it stops, EVERY agent's beat freezes at once — for the
+    # same reason. That is a fact about the WRITER, not about any agent, so a
+    # frozen beat only convicts a PARTICULAR owner if the writer is still
+    # demonstrably beating for somebody.
+    #
+    # Without this, the fix would merely swap one fleet-wide false-death flood
+    # (a registry that records no pids) for another (a writer that records no
+    # beats) — the same inversion down a different channel.
+    #
+    # ``fleet_last_beat_ts`` is the newest beat ANYWHERE in the fleet, not just
+    # among these owners. That distinction is load-bearing: the owners of stale
+    # cards are a biased sample (skewed toward dead agents), so inferring
+    # "the writer is down" from THEIR silence would let a lone dead owner
+    # suppress its own alarm. ``None`` means "no fleet reading was supplied" —
+    # then we trust the beats rather than invent a suppression.
+    beats_trustworthy = (
+        True
+        if fleet_last_beat_ts is None
+        else _idle_for(fleet_last_beat_ts, now) < stale_s
+    )
+
     out: list[StuckCard] = []
     for task in tasks_doc.get("tasks", []) or []:
         if not isinstance(task, dict):
@@ -280,9 +307,16 @@ def find_stuck_cards(
         if not live.known:
             continue
 
+        # (3b) UNKNOWN, second kind: this owner HAS a beat record, but it is
+        #      frozen at a moment when NOBODY in the fleet is beating. The
+        #      writer stopped — we cannot tell whether this agent did too.
+        #      Withhold the verdict rather than indict every agent at once.
+        if live.last_beat_ts is not None and not beats_trustworthy:
+            continue
+
         # (4) POSITIVE evidence of death: a channel that would have shown
-        #     life (a recorded pid / a heartbeat file) shows none, and the
-        #     owner has no fresh activity record either.
+        #     life (a recorded pid / a heartbeat the writer is still able to
+        #     refresh) shows none, and there is no fresh activity either.
         out.append(
             StuckCard(
                 agent=owner,

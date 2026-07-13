@@ -306,18 +306,57 @@ def resolve_liveness(
     return out
 
 
+def fleet_last_beat_ts() -> float | None:
+    """Newest heartbeat MTIME across the WHOLE fleet, or ``None`` if there is
+    no heartbeat anywhere.
+
+    This answers ONE question the per-owner signals cannot: **is the heartbeat
+    writer itself still working?** The writer is a single shared loop inside
+    ``sac listen`` that is known to blow its budget and get abandoned; when it
+    stops, every agent's beat freezes at once. The rule needs to tell that
+    apart from "the agents died", and it can: if ANY agent in the fleet is
+    still being beaten for, the writer works, and a frozen beat then really
+    does convict the agent it belongs to.
+
+    Deliberately scans the whole runtime root and NOT just the card owners:
+    owners of stale cards are a biased sample (skewed toward dead agents), so
+    inferring writer health from their silence would let a lone dead owner
+    suppress its own alarm.
+
+    Cost is one ``scandir`` + one ``stat`` per agent dir — no file is opened —
+    so it stays O(agents) and cheap enough for every tick."""
+    root = Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "runtime"
+    newest: float | None = None
+    try:
+        entries = list(os.scandir(root))
+    except OSError:  # stx-allow: fallback (no runtime root → no fleet reading)
+        return None
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+            mtime = (Path(entry.path) / _HEARTBEAT_FILENAME).stat().st_mtime
+        except OSError:  # stx-allow: fallback (no heartbeat for this agent)
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
 def _resolve_doc_and_liveness(
     tasks_path: Path,
-) -> tuple[dict, dict[str, AgentLiveness]]:
-    """One blocking unit: load the doc, then resolve liveness for exactly the
-    owners of its OPEN, unblocked cards. Bundled so the loop makes a SINGLE
-    off-loop call per tick."""
+) -> tuple[dict, dict[str, AgentLiveness], float | None]:
+    """One blocking unit: load the doc, resolve liveness for exactly the owners
+    of its OPEN, unblocked cards, and take one fleet-wide reading of the
+    heartbeat writer's health. Bundled so the loop makes a SINGLE off-loop call
+    per tick."""
     doc = _load_tasks_doc(tasks_path)
     owners = open_card_owners(doc)
     liveness = resolve_liveness(owners) if owners else {}
-    return doc, liveness
+    return doc, liveness, fleet_last_beat_ts()
 
 
 __all__ = [
+    "fleet_last_beat_ts",
     "resolve_liveness",
 ]

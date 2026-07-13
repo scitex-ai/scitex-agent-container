@@ -286,6 +286,34 @@ class TestHeartbeatSignals:
         assert signals == (None, None)
 
 
+class TestFleetLastBeatTs:
+    def test_returns_the_newest_beat_across_the_whole_fleet(
+        self, home_at_tmp
+    ) -> None:
+        # Arrange — REAL runtime dirs. The fleet reading must see the agent
+        # that is STILL being beaten for, even though it owns no card: that is
+        # how the rule tells "the writer died" from "the agents died".
+        runtime = home_at_tmp / ".scitex" / "agent-container" / "runtime"
+        for name in ("stale-agent", "beating-agent"):
+            (runtime / name).mkdir(parents=True)
+            (runtime / name / "heartbeat.json").write_text(json.dumps({"ts": 1.0}))
+        fresh = runtime / "beating-agent" / "heartbeat.json"
+        os.utime(fresh, (NOW, NOW))
+        os.utime(runtime / "stale-agent" / "heartbeat.json", (NOW - 99_999, NOW - 99_999))
+        # Act
+        newest = mod.fleet_last_beat_ts()
+        # Assert
+        assert newest == pytest.approx(NOW)
+
+    def test_no_heartbeat_anywhere_is_no_reading(self, home_at_tmp) -> None:
+        # Arrange — an empty runtime root ⇒ no fleet reading available.
+        (home_at_tmp / ".scitex" / "agent-container" / "runtime").mkdir(parents=True)
+        # Act
+        newest = mod.fleet_last_beat_ts()
+        # Assert
+        assert newest is None
+
+
 # ===========================================================================
 # registry availability — UNREADABLE (None) must not look like EMPTY ({})
 # ===========================================================================

@@ -203,6 +203,7 @@ async def liveness_tick_reconciler_loop(
             # stale by `stale_s` to alarm at all.
             await asyncio.sleep(interval_s)
             try:
+                fleet_beat: float | None = None
                 if tasks_doc_source is not None or liveness_source is not None:
                     doc = tasks_doc_source if tasks_doc_source is not None else {}
                     liveness = liveness_source if liveness_source is not None else {}
@@ -215,16 +216,22 @@ async def liveness_tick_reconciler_loop(
                     # uvicorn's bind or the running listen server.
                     from .._lifecycle._off_loop import run_blocking_or
 
-                    doc, liveness = await run_blocking_or(
+                    doc, liveness, fleet_beat = await run_blocking_or(
                         _resolve_doc_and_liveness,
                         tasks_path,
-                        default=({}, {}),
+                        default=({}, {}, None),
                         op="liveness_tick resolve (tasks.yaml + session/registry FS)",
                         timeout_s=max(interval_s, 15.0),
                     )
 
                 now = now_fn()
-                stuck = find_stuck_cards(doc, liveness, now=now, stale_s=stale_s)
+                stuck = find_stuck_cards(
+                    doc,
+                    liveness,
+                    now=now,
+                    stale_s=stale_s,
+                    fleet_last_beat_ts=fleet_beat,
+                )
 
                 if consumers_source is not None:
                     consumers = list(consumers_source)

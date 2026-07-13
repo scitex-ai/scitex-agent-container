@@ -210,6 +210,69 @@ class TestUnknownIsNotDead:
 
 
 # ---------------------------------------------------------------------------
+# The heartbeat WRITER can die too
+#
+# The beats this rule reads as proof-of-life come from ONE shared writer
+# (sibling loops inside ``sac listen``) which is known to blow its budget and
+# get abandoned. When it stops, every beat freezes AT ONCE. Reading that as
+# "the whole fleet died" would just swap the registry flood for a heartbeat
+# flood — the same inversion down a different channel.
+# ---------------------------------------------------------------------------
+
+
+class TestAbandonedHeartbeatWriter:
+    def test_a_dead_writer_indicts_nobody(self) -> None:
+        # Arrange — the owner's beat is frozen AND the newest beat anywhere in
+        # the fleet is frozen too ⇒ the WRITER stopped. Its silence is a fact
+        # about the writer, not about this agent.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=None,
+                known=True,
+                last_beat_ts=NOW - STALE_S * 3,
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(
+            doc,
+            liveness,
+            now=NOW,
+            stale_s=STALE_S,
+            fleet_last_beat_ts=NOW - STALE_S * 3,  # nobody, anywhere, is beating
+        )
+        # Assert — no flood: an abandoned writer must not read as mass death.
+        assert stuck == []
+
+    def test_a_frozen_owner_still_dies_while_the_writer_beats_for_others(
+        self,
+    ) -> None:
+        # Arrange — the fleet reading is FRESH (some other agent, not
+        # necessarily a card owner, is still being beaten for), so the writer
+        # demonstrably WORKS. This owner's silence is therefore its own.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=None,
+                known=True,
+                last_beat_ts=NOW - STALE_S * 3,
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(
+            doc,
+            liveness,
+            now=NOW,
+            stale_s=STALE_S,
+            fleet_last_beat_ts=NOW - 30.0,  # the writer is alive and beating
+        )
+        # Assert — real death is still detected (no gap for a lone dead owner).
+        assert [s.reason for s in stuck] == ["owner-not-live"]
+
+
+# ---------------------------------------------------------------------------
 # progressing → no anomaly
 # ---------------------------------------------------------------------------
 
