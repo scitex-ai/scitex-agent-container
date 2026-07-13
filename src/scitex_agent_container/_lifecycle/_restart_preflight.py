@@ -58,13 +58,21 @@ labels, paths, and the endpoint/status ``reason`` sentence
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 from ..config import AgentConfig
 
 logger = logging.getLogger(__name__)
+
+# Do NOT spend the single-use refresh grant probing a token this fresh.
+# Mirrors the `sac accounts refresh` CLI's own "skipped; token still fresh
+# (TTL >= 2h)" guard — which this module previously bypassed by calling
+# `refresh_account_credentials` directly. See probe_credential_usable().
+_PROBE_MIN_TTL_S = 2 * 3600
 
 __all__ = [
     "RestartPreflightAbort",
@@ -73,6 +81,29 @@ __all__ = [
     "probe_credential_usable",
     "resolve_successor_credential",
 ]
+
+
+def _credential_ttl_seconds(credential_path: Path) -> float | None:
+    """Seconds until ``credential_path``'s access token expires.
+
+    ``None`` when the TTL cannot be determined (missing / unreadable /
+    unparseable file, or no numeric ``expiresAt``) — the caller then falls
+    through to the real probe rather than assuming freshness, so an
+    undetermined TTL never silently skips the check. Never raises, and never
+    reads or returns a token VALUE — only the expiry timestamp.
+    """
+    # stx-allow: fallback (reason: an unreadable/!unparseable credential must
+    # not crash a restart — return None so the caller PROBES rather than
+    # assuming the token is fresh; that is the conservative direction)
+    try:
+        data = json.loads(Path(credential_path).read_text())
+    except Exception:
+        return None
+    oauth = data.get("claudeAiOauth", data) if isinstance(data, dict) else {}
+    expires_at = oauth.get("expiresAt") if isinstance(oauth, dict) else None
+    if not isinstance(expires_at, (int, float)):
+        return None
+    return (float(expires_at) / 1000.0) - time.time()
 
 
 class RestartPreflightAbort(RuntimeError):
@@ -183,11 +214,57 @@ def probe_credential_usable(
     ``opener`` is the urllib injection seam ``refresh_account_credentials``
     exposes — passed through untouched so tests exercise the REAL refresh /
     classification path against an injected transport (no mocks).
+
+    FRESH-TOKEN SHORT-CIRCUIT (INCIDENT 2026-07-13 — the probe WAS the outage)
+    =========================================================================
+    This probe verifies a credential BY REFRESHING IT. The OAuth
+    ``refresh_token`` is **SINGLE-USE**, so the probe CONSUMES it and mints +
+    persists a NEW access_token. That is a MUTATION, not an inspection — and
+    on a shared account it is a fleet-wide one: every OTHER agent pinned to
+    that account is still holding the PREVIOUS token, which the rotation
+    leaves behind. They 401, and Claude Code renders a 401 as the misleading
+    "Login expired · Please run /login" while nothing has expired at all.
+
+    Because this runs on EVERY ``sac agents restart`` (pre-stop) AND in
+    ``agent_start``'s force branch, restarting agents to "fix" them ROTATED
+    the token again on each one, killing the agents just restarted. The
+    operator observed exactly that: even a manual restart came back
+    login-required. He was chasing a tail the tool was wagging for him.
+
+    Note it also called ``refresh_account_credentials`` DIRECTLY, bypassing
+    the ``sac accounts refresh`` CLI's "skipped; token still fresh
+    (TTL >= 2h)" guard — so it refreshed UNCONDITIONALLY, even against a
+    token with seven hours of life left.
+
+    So: DO NOT PROBE A FRESH TOKEN. A credential with hours of TTL will boot
+    fine; refreshing it to "check" is pure cost. We only spend the single-use
+    grant when the token is genuinely near expiry — the same threshold the
+    host timer uses, where a refresh was due anyway.
+
+    Residual risk, accepted deliberately: a stale-but-unexpired snapshot
+    (future ``expiresAt``, server-invalidated grant) now passes the gate and
+    the successor boots and 401s — the original incident this probe was built
+    for. That failure is LOCAL (one agent fails to come up, and the watchdog
+    restarts it) whereas probing is GLOBAL (every restart kills every other
+    agent on the account). Trading a fleet-wide outage for a single-agent
+    retry is the right way round. A truly non-mutating probe (a cheap
+    authenticated read, not a refresh) is the proper fix and is carded.
     """
     from .._account.token_refresh import (
         FAILURE_REJECTED,
         refresh_account_credentials,
     )
+
+    ttl_s = _credential_ttl_seconds(credential_path)
+    if ttl_s is not None and ttl_s >= _PROBE_MIN_TTL_S:
+        return (
+            True,
+            "skipped-token-fresh",
+            f"token TTL {ttl_s / 3600:.1f}h >= {_PROBE_MIN_TTL_S / 3600:g}h — "
+            f"not probing: a probe refresh would consume the SINGLE-USE "
+            f"refresh_token and rotate the shared token, revoking it for "
+            f"every other agent on this account",
+        )
 
     result = refresh_account_credentials(credential_path, opener=opener)
     if result.get("success"):
