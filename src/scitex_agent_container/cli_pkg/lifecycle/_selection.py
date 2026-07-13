@@ -62,25 +62,29 @@ def _enumerate_fleet() -> list[str]:
 
 
 def _enumerate_running() -> list[str]:
-    """Return only the agents that are currently RUNNING (the ``--all-running`` set).
+    """Return the agents that are currently LIVE (the ``--all-running`` set).
 
     Reuses the SAME data function — and therefore the SAME liveness — the
     ``list`` / ``status`` commands use
-    (:func:`cli_pkg._helpers.get_agent_list_data`), keeping only rows whose
-    ``status`` probe read ``"running"`` (identity-based liveness: the
-    session exists AND its pane process is alive — see
-    ``_agent_list._probe_local``). Rows that are ``stopped`` / ``unknown`` /
-    ``defined`` / ``invalid`` are excluded, so a plain ``--all-running``
-    never touches an agent the operator had deliberately stopped. No separate
-    liveness rule is invented here. Order-preserving de-dup by name.
+    (:func:`cli_pkg._helpers.get_agent_list_data`). Rows that are ``stopped`` /
+    ``unknown`` / ``defined`` / ``invalid`` are excluded, so a plain
+    ``--all-running`` never touches an agent the operator had deliberately
+    stopped. No separate liveness rule is invented here. Order-preserving
+    de-dup by name.
+
+    LIVE is :func:`cli_pkg._helpers.is_live_status`, NOT ``== "running"``: an
+    ``auth-failed`` agent IS up (its session exists and its pane process is
+    alive) — it simply cannot call the API. Matching ``"running"`` alone would
+    silently skip exactly the agents that most need acting on, and a RESTART
+    cures the common cause (a token revoked by a sibling's OAuth refresh).
     """
     from ..._state.registry import Registry
-    from .._helpers import get_agent_list_data
+    from .._helpers import get_agent_list_data, is_live_status
 
     seen: set[str] = set()
     names: list[str] = []
     for row in get_agent_list_data(Registry()):
-        if row.get("status") != "running":
+        if not is_live_status(row.get("status")):
             continue
         name = row.get("name")
         if name and name not in seen:

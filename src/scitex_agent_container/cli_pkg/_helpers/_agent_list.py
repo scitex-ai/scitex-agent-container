@@ -22,6 +22,19 @@ from ._agent_list_account import (  # noqa: F401
     _safe_account_for,
 )
 
+# Auth status (``auth-failed`` vs plain green ``running``) — sibling module.
+# tmux-up is NOT operational: an agent whose API calls are all being rejected
+# stays green forever. ``resolve_auth`` reads the WATCHDOG'S CACHED verdict;
+# nothing here ever probes auth inline (that would cost minutes — see
+# ``_agent_list_auth``).
+from ._agent_list_auth import (  # noqa: F401
+    LIVE_STATUSES,
+    STATUS_AUTH_FAILED,
+    all_auth_states,
+    is_live_status,
+    resolve_auth,
+)
+
 # Host-DISPLAY resolution (Host column) — sibling module, 512-line cap split.
 from ._agent_list_host import _host_display_for, _resolve_display_host
 
@@ -197,6 +210,12 @@ def get_agent_list_data(
     # re-opened + re-init-schema'd state.db ~3x each). Looked up per row.
     port_claims = _all_port_claims()
 
+    # Cached AUTH verdicts for ALL agents in ONE db read, same shape as the
+    # port claims above. The watchdog wrote these; we only read them. Never
+    # probe auth per row — the real check captures each pane twice, seconds
+    # apart, and would turn this command into a multi-minute wait.
+    auth_states = all_auth_states()
+
     # First pass: resolve configs + filter.
     # F-CS17 stage 3b: there are no longer "remote" agents from sac's
     # POV. Every agent is a container on this host. Cross-host work
@@ -325,6 +344,13 @@ def get_agent_list_data(
         else:
             status_val = "running" if is_running else "stopped"
 
+        # tmux-up != OPERATIONAL. A liveness probe says only that the session
+        # and its pane process exist — an agent whose every API call is being
+        # rejected satisfies that and is doing NOTHING. Fold the watchdog's
+        # CACHED verdict in, so such a row reads ``auth-failed`` (with the age
+        # of the evidence) instead of a reassuring green ``running``.
+        auth, status_val = resolve_auth(name, auth_states, started, status_val)
+
         # FIX (no double-parse): a config that ``load_config`` ACCEPTED is
         # valid by construction — ``load_config`` runs ``validate_raw`` and
         # RAISES on any error — so cfg-not-None ⇒ zero errors. Only
@@ -345,12 +371,15 @@ def get_agent_list_data(
         # a2a port from the ONE-query claims map. ``None`` when no claim
         # exists (agent never started under the allocator).
         a2a_port = port_claims.get(name)
-        # PERF: the running-only default view discards non-running rows, so
-        # skip their account resolution + movement IO. ``status`` is already
-        # computed, so the hidden-count footer stays correct.
-        deferred = running_only and status_val != "running"
-        # Which Anthropic account this agent authenticates as. For a RUNNING
-        # agent prefer the ACTUAL runtime account (its per-agent
+        # PERF: the running-only default view discards non-LIVE rows, so skip
+        # their account resolution + movement IO. ``status`` is already
+        # computed, so the hidden-count footer stays correct. Gate on
+        # ``is_live_status`` (not ``!= "running"``): a ``login-required`` row is
+        # SHOWN in the default view, so deferring its enrichment would blank out
+        # its Account — and that account is precisely the one that is dead.
+        deferred = running_only and not is_live_status(status_val)
+        # Which Anthropic account this agent authenticates as. For a LIVE agent
+        # prefer the ACTUAL runtime account (its per-agent
         # ``<runtime>/home/.claude.json``) over the spec-derived label — pool
         # agents share one host-OAuth spec label otherwise. Bare names so a
         # test can rebind ``_al._safe_account_for`` / ``_al._runtime_account_for``.
@@ -358,7 +387,7 @@ def get_agent_list_data(
             account_label = ""
         else:
             account_label = _safe_account_for(cfg)
-            if status_val == "running":
+            if is_live_status(status_val):
                 runtime_label = _runtime_account_for(name)
                 if runtime_label:
                     account_label = runtime_label
@@ -388,87 +417,32 @@ def get_agent_list_data(
             row["labels"] = labels
         results.append(row)
 
-    # Merge in agents that are *defined* on disk but absent from the
-    # registry. Filesystem is the canonical "defined" surface; the
-    # registry is a runtime cache of started/stopped state. An agent
-    # that was deleted from the registry (or never started) should
-    # still show up so the operator can spot it.
-    #
-    # While walking, also yaml-validate each spec — broken yamls
-    # surface as status="invalid" rather than silently hiding, so the
-    # operator notices the agent won't actually start before they
-    # discover it via a confusing `sac agent start` traceback.
-    from ...config._validation import validate_config
-
-    registered = {r["name"] for r in results}
-    for name, spec_path in _discover_defined_agents():
-        if name in registered:
-            continue
-        labels: dict[str, str] = {}
-        cfg = None
-        # stx-allow: fallback (defined-row labels are best-effort; a
-        # broken yaml still surfaces with status=invalid + empty labels)
-        try:
-            cfg = load_config(str(spec_path))
-            labels = cfg.labels
-        except Exception:
-            pass
-        if machine and labels.get("machine") != machine:
-            continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
-        if tags and not _label_list_contains(labels, "tags", tags):
-            continue
-        # FIX (no double-parse): a spec that ``load_config`` accepted is
-        # valid ⇒ "defined". Only RE-VALIDATE the ones that FAILED to load,
-        # to split "invalid" from "defined" and recover their error list.
-        errors = []
-        if cfg is None:
-            # stx-allow: fallback (validator may raise on unparseable yaml;
-            # treat as "invalid" with the exception text as the only error)
-            try:
-                errors = validate_config(str(spec_path))
-            except Exception as exc:
-                errors = [str(exc)]
-        status = "invalid" if errors else "defined"
-        # PERF: defined agents are never ``running`` — in the running-only
-        # default view they are all hidden, so skip their account + movement
-        # enrichment (status is enough for the footer count).
-        deferred = running_only
-        row: dict = {
-            "name": name,
-            "status": status,
-            "screen": "-",
-            "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
-            "started_at": "-",
-            "host": "local",
-            "host_display": _host_display_for("local", display_host),
-            "path": str(spec_path),
-            "a2a_port": port_claims.get(name),
-            "account": "" if deferred else _safe_account_for(cfg),
-        }
-        row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
-        if errors:
-            row["validation_errors"] = errors
-        if labels:
-            row["labels"] = labels
-        results.append(row)
+    # Merge in the agents DEFINED on disk but absent from the registry. Their
+    # discovery + row-build live together in the sibling ``_agent_list_discover``
+    # (512-line cap split); this stays the orchestrator that merges the two
+    # sources. They are never live, so they carry the never-checked auth shape.
+    results.extend(
+        defined_agent_rows(
+            registered={r["name"] for r in results},
+            port_claims=port_claims,
+            display_host=display_host,
+            capability=capability,
+            machine=machine,
+            tags=tags,
+            running_only=running_only,
+        )
+    )
     return results
 
 
-# Defined-on-disk discovery lives in the sibling ``_agent_list_discover``
-# module (512-line cap split). Re-imported so the bare-name call site
-# ``_discover_defined_agents()`` above and the test seams
+# Defined-on-disk discovery + row-build live in the sibling
+# ``_agent_list_discover`` module (512-line cap split). Re-imported so the
+# bare-name call sites above and the test seams
 # ``_al._discover_defined_agents`` / ``_al._is_self_peer_marker`` resolve.
 from ._agent_list_discover import (  # noqa: E402,F401
     _discover_defined_agents,
     _is_self_peer_marker,
+    defined_agent_rows,
 )
 
 
