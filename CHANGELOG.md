@@ -62,10 +62,37 @@ carried it.
   `--fakeroot` before the SIF — so it created a 1-byte file *named*
   `--fakeroot`, which the project audit then correctly failed. Red-lined
   every PR in the repo.
+- **The registry could never prove an agent alive** (#649): **0 of 1229
+  instance rows had *ever* carried a pid** — none of the four
+  `record_instance_start()` call sites passed one, and the parameter
+  defaults to `None`. So `_live_agent_pids()` dropped every agent, and
+  `agent_send` refused to reach agents that were demonstrably running
+  (tmux up, a2a port `LISTEN`). Corroboration: **0 `crashed` and 0
+  `stale-cleared`** exit reasons in the whole history — *both* dead-agent
+  reapers skip a NULL pid, so **neither had ever fired**. Now records the
+  runtime's own long-lived pid (TUI → the tmux **pane** pid, since the
+  launcher exits immediately and recording *it* would store a corpse;
+  SDK → the apptainer pid). Remote rows stay NULL deliberately: a peer's
+  pid could collide with an unrelated local process, and a *wrong* pid is
+  worse than an honest unknown.
 - Per-agent directory overlay auto-provisioned (#633); TUI boot prompt
   submitted via literal paste + idle-gated Enter (#632).
 
 ### Added
+- **`sac --version` now reports the identity of the code that is actually
+  LOADED**, not a declared string (#652):
+  `scitex-agent-container, version 0.21.14 (g1513a4da wheel 2026-07-13) from /path/to/loaded/package`.
+  A version string lies in both directions — a stale wheel, an orphaned
+  `.dist-info`, or an image baked months ago all report a version that
+  outlived their code. This release exists *because* of such a bug, and
+  `0.21.13` reported the same number before and after the fix. The commit
+  is read from whichever source is authoritative for the install kind: a
+  **live `.git` read** for a source/editable checkout (a stamp written at
+  install time goes stale on the next commit), and a **build-time bake**
+  for a wheel/SIF (where no `.git` exists). Costs **+1.22 ms**. The heavy
+  checks live in a new **`sac provenance`** (`--json`, `--strict` exits 1)
+  — which also detects the *shadowed-import* trap, where tests silently
+  exercise the installed package instead of your working tree.
 - **`sac agents stop --all-running / --all-registry / --all`** (#648) —
   `restart` had bulk selection and `stop` had none, so there was no way to
   stop the fleet during an incident. (`examples/07` had been *documenting*
