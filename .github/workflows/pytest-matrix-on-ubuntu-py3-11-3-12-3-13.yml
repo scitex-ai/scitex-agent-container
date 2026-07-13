@@ -1,5 +1,40 @@
 name: tests
 
+# The pytest matrix runs on the SELF-HOSTED Spartan CPU runners, inside the
+# reused, pre-built CI SIF — the same recipe the tag-publish workflow's `test`
+# job already uses (and which shipped v0.21.13 green). Measured on this repo's
+# own suite: ~2m40s per matrix leg in the SIF vs ~11m30s on ubuntu-latest.
+#
+# WHY THE SIF AND NOT A BARE SELF-HOSTED INSTALL: the bare Spartan node has no
+# Python tool cache (`actions/setup-python` fails there with "version not found
+# for this OS") and no passwordless apt (`sudo apt-get install fd-find` is not
+# available). The SIF bakes python3.11/3.12/3.13 + `fd` + the heavy shared dep
+# base, so each leg only layers THIS checkout's own thin dep set. It also runs
+# pytest under xdist across every core on the node, which is where most of the
+# speedup comes from. All the HPC/SIF plumbing lives in .github/ci/*.sh.
+#
+# RUNNER SELECTION IS DATA, NOT CODE:
+#   CI_TESTS_RUNS_ON  — this workflow only (unset today)
+#   CI_RUNS_ON        — the repo-wide self-hosted default, already
+#                       ["self-hosted","Linux","X64","spartan-cpu"]
+#   ubuntu-latest     — last resort: a fork, or a clone with no self-hosted
+#                       runners at all.
+#
+# ONE-STEP REVERT — no code change, no PR, effective on the very next run:
+#
+#   gh variable set CI_TESTS_RUNS_ON \
+#     --repo scitex-ai/scitex-agent-container --body '["ubuntu-latest"]'
+#
+# That flips the matrix back onto GitHub-hosted runners, and the github-hosted
+# step path below (the previous, known-green workflow, kept verbatim) takes
+# over. The escape hatch is REAL: flipping the variable leaves CI green, not
+# red. To undo the revert, delete the variable:
+#   gh variable delete CI_TESTS_RUNS_ON --repo scitex-ai/scitex-agent-container
+#
+# FORK PRs stay on GitHub-hosted runners unconditionally — untrusted code must
+# never execute on the shared Spartan HPC infrastructure, regardless of how the
+# variables are set.
+
 on:
   push:
     branches: [main, develop]
@@ -9,44 +44,79 @@ on:
     - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
   workflow_dispatch:
 
+env:
+  SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
+  SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+
 jobs:
   test:
+    # Job name kept VERBATIM. "pytest-matrix-on-ubuntu-py3.11/3.12/3.13" are the
+    # required status checks on BOTH `develop` and `main` branch protection —
+    # renaming them (or moving the job under a reusable workflow, which would
+    # re-render every check as "<caller-job> / <name>") would leave those checks
+    # permanently pending and block every PR in the repo. The now-inaccurate
+    # "-on-ubuntu-" is therefore load-bearing: it stays until someone updates
+    # branch protection on both branches in the same change.
     name: pytest-matrix-on-ubuntu-py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && fromJSON('["ubuntu-latest"]')) || fromJSON(vars.CI_TESTS_RUNS_ON || vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
+    # The guard that was MISSING: with no cap, a hung leg ran for 1h39m42s
+    # (run 29052895608) before an unrelated repository transfer killed it.
+    # A green leg takes ~3 min in the SIF and ~12 min hosted, so 30 is roomy.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # zarr>=3 (transitive via scitex peers) needs Python 3.11+. We
-        # keep 3.10 here only because sac's own surface has no zarr;
-        # drop to 3.11–3.13 once a peer pulls zarr into the install set.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+
+      # ---------------- self-hosted (Spartan) path — the fast one -------------
+      # exec-in-sif.sh resolves the apptainer shim + SIF from the Actions
+      # Variables and apptainer-execs run-in-sif.sh inside the image, which
+      # layers this checkout + [all,dev] into a writable target and runs pytest
+      # under xdist. fail-loud: a missing shim/SIF/interpreter is a HARD error,
+      # never a quiet fallback to a bare-runner install.
+      - name: Run tests in the reused CI SIF (apptainer exec)
+        if: runner.environment == 'self-hosted'
+        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
+
+      # ---------------- github-hosted path — the escape hatch -----------------
+      # Reached only when CI_TESTS_RUNS_ON is flipped to ubuntu-latest, or on a
+      # fork PR. These steps are the PREVIOUS workflow, unchanged, so the revert
+      # lands on a known-green path rather than a hopeful one.
       - name: Set up Python ${{ matrix.python-version }}
+        if: runner.environment == 'github-hosted'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
       - name: Install fd (Rust) for the scitex-dev audit gate
         # `scitex-dev ecosystem audit-project` (run by the mandatory
-        # tests/develop/test_audit.py gate) walks src/ via the Rust `fd`
-        # tool and HARD-CRASHES with FdNotFoundError when it is absent —
-        # ubuntu-latest does not ship it. Debian/Ubuntu installs the
-        # binary as `fdfind`, which the auditor's fd_binary() accepts as
-        # a fallback name, so no symlink is needed.
+        # tests/develop/test_audit.py gate) walks src/ via the Rust `fd` tool and
+        # HARD-CRASHES with FdNotFoundError when it is absent — ubuntu-latest
+        # does not ship it. Debian/Ubuntu installs the binary as `fdfind`, which
+        # the auditor's fd_binary() accepts as a fallback name, so no symlink is
+        # needed. (In the SIF path, fd is baked into the image instead.)
+        if: runner.environment == 'github-hosted'
         run: sudo apt-get update -qq && sudo apt-get install -y fd-find
+
       - name: Install dependencies
+        if: runner.environment == 'github-hosted'
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]" || pip install -e ".[dev]" || pip install -e .
+
       - name: Provision Anthropic credentials (internal PRs only)
         # Materialize ~/.claude/.credentials.json from the repo secret so
-        # creds-gated tests (those skipif'd on _has_anthropic_creds())
-        # actually RUN instead of skipping. The secret is read via `env:`
-        # (NOT inline in `run:`) so its value is never expanded into the
-        # logged command line. Forks cannot read repo secrets → $ANTHROPIC_CREDS
-        # is empty → the step writes nothing → the gated tests skip cleanly.
-        # The content may be raw JSON or base64-encoded; we detect by trying
-        # to json.loads it and fall back to base64 -d.
+        # creds-gated tests actually RUN instead of skipping. Forks cannot read
+        # repo secrets → $ANTHROPIC_CREDS is empty → the step writes nothing →
+        # the gated tests skip cleanly.
+        #
+        # github-hosted ONLY, and deliberately so: a hosted runner is a throwaway
+        # VM, but the self-hosted Spartan runners share the operator's real HOME.
+        # Writing credentials into ~/.claude/ THERE would clobber live agent
+        # credentials on the HPC box. The SIF path leaves HOME alone.
+        if: runner.environment == 'github-hosted'
         env:
           ANTHROPIC_CREDS: ${{ secrets.CLAUDE_CODE_CREDENTIALS_JSON }}
         run: |
@@ -61,17 +131,25 @@ jobs:
             printf '%s' "$ANTHROPIC_CREDS" | base64 -d > ~/.claude/.credentials.json
           fi
           chmod 600 ~/.claude/.credentials.json
-          # Validate it parses as JSON without echoing the content.
           python -c "import json; json.load(open('$HOME/.claude/.credentials.json')); print('credentials.json provisioned and parses as JSON')"
+
       - name: Smoke — templates and examples valid
-        # Fast fail-fast: catches schema / dataclass drift in YAML
-        # templates before paying for the full suite. Mirrors the
-        # rationale in 06_skills_05_quality-checklist.md.
+        # Fast fail-fast: catches schema / dataclass drift in YAML templates
+        # before paying for the full ~11-min hosted suite. Not worth a second
+        # apptainer exec on the SIF path, where the whole suite is ~3 min.
+        if: runner.environment == 'github-hosted'
         run: pytest tests/integration/test_templates_v3_valid.py -q
+
       - name: Run tests
-        if: always()
+        # always() so a failed template smoke still reports the full suite —
+        # preserved from the previous workflow.
+        if: always() && runner.environment == 'github-hosted'
         run: |
           pytest --cov=src/scitex_agent_container --cov-report=xml --cov-report=term tests/
+
+      # ---------------- shared ------------------------------------------------
+      # codecov-action is a JS action and runs fine on the self-hosted runner.
+      # Both paths write coverage.xml into the checkout, so this is path-agnostic.
       - name: Upload coverage to Codecov
         if: always() && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
