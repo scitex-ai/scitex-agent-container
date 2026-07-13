@@ -53,7 +53,21 @@ def registry(tmp_path: Path) -> Registry:
 
 
 class _FakeRuntime:
-    """Recording runtime double (is_running / start / stop)."""
+    """Recording runtime double (is_running / start / stop).
+
+    ``stop`` really stops it — i.e. ``is_running`` reads False afterwards.
+    That is not a convenience: a runtime whose ``is_running`` stays True
+    after a stop and a full SIGTERM grace is a runtime whose stop FAILED,
+    and ``agent_restart``'s teardown gate now (correctly) refuses to start
+    a replacement over such a survivor — it escalates to SIGKILL and, when
+    it still cannot confirm the agent is down, raises (see
+    ``_lifecycle/_stop_escalate.py``; the operator's 2026-07-14
+    "Agent 'neurovista' restarted" over a DOWN agent is what that closes).
+    The cases in this module are about the CREDENTIAL PRE-FLIGHT, so their
+    runtime must model a HEALTHY teardown; a stop that silently does
+    nothing would have them exercising the wedged-teardown path by
+    accident.
+    """
 
     def __init__(self, *, running: bool = False, start_result: bool = True) -> None:
         self.running = running
@@ -66,10 +80,12 @@ class _FakeRuntime:
 
     def start(self, config: Any, **_kw: Any) -> bool:
         self.start_calls.append(config)
+        self.running = True
         return self.start_result
 
     def stop(self, config: Any) -> None:
         self.stop_calls.append(config)
+        self.running = False
 
     def logs(self, config: Any, lines: int) -> str:
         return ""
