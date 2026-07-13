@@ -115,6 +115,49 @@ def format_dt_local(
     return dt.astimezone(tz).isoformat(timespec="seconds")
 
 
+# Display timezone for the ``sac agents list`` Started column. PINNED to
+# Asia/Tokyo (the operator's zone) rather than the host's system-local tz,
+# because the host is WSL and may report UTC — the Started column must show
+# JST regardless of host config (operator TG 2026-07-13). Override with the
+# ``SAC_DISPLAY_TZ`` env var (any IANA zone name, e.g. ``America/New_York``).
+_DEFAULT_DISPLAY_TZ = "Asia/Tokyo"
+_DISPLAY_TZ_ENV = "SAC_DISPLAY_TZ"
+
+
+def format_dt_display_tz(
+    iso_or_dt: str | datetime | None,
+    *,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Render an ISO-8601 UTC timestamp as ``YYYY-MM-DD HH:MM (TZ)`` in the
+    pinned DISPLAY timezone (default ``Asia/Tokyo`` → ``JST``).
+
+    The ``sac agents list`` Started column: a SPACE (not the ISO ``T``)
+    separates date and time, seconds are dropped, and the timezone
+    abbreviation — DERIVED from the tz object, e.g. ``JST`` (never a
+    hardcoded label) — is shown in parentheses in place of the bare ``Z``.
+    Unlike :func:`format_dt_local` (operator-local ``TZ`` precedence) this
+    PINS the zone to ``SAC_DISPLAY_TZ`` / :data:`_DEFAULT_DISPLAY_TZ`, so a
+    UTC-configured WSL host still shows JST (operator TG 2026-07-13). The
+    ``--json`` path keeps the raw ISO ``...Z`` untouched for scripts.
+
+    Returns ``"-"`` for ``None`` / empty / unparseable input. Reuses the
+    same ``_coerce_dt`` (naive → UTC) + ``_resolve_tz`` (stdlib ``zoneinfo``)
+    SSOT the accounts formatters use.
+    """
+    dt = _coerce_dt(iso_or_dt)
+    if dt is None:
+        return "-"
+    src = env if env is not None else os.environ
+    name = (src.get(_DISPLAY_TZ_ENV) or "").strip() or _DEFAULT_DISPLAY_TZ
+    tz = _resolve_tz(name) or _resolve_tz(_DEFAULT_DISPLAY_TZ)
+    # zoneinfo unavailable (no tzdata on the host) → render in UTC so the
+    # column still shows a stable, labelled timestamp rather than crashing.
+    local = dt.astimezone(tz) if tz is not None else dt.astimezone(timezone.utc)
+    abbrev = local.strftime("%Z") or local.strftime("%z") or "UTC"
+    return f"{local.strftime('%Y-%m-%d %H:%M')} ({abbrev})"
+
+
 def _coerce_dt(value: str | datetime | None) -> datetime | None:
     """Coerce ``value`` to an aware datetime; ``None`` on any failure."""
     if value is None:
