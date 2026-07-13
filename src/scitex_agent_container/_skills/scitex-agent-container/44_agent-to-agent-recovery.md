@@ -108,10 +108,26 @@ ACL allows the dev/researcher groups):
   context-inheriting fork of a running agent is `agent_twin`.
 
 Escalate to the operator **only** when the host listen broker itself is
-down — a transport timeout / connection-refused on the spawn, which the
-enriched `cannot reach listen …` error now flags with the fix
-(`sac listen restart`). Anything short of a dead broker is yours to do,
-not the operator's to queue.
+down. Note what that does and does not mean: a **timeout on one route is
+not proof the daemon is down**. Authenticated routes dispatch through
+listen's shared worker pool; the public `/v1/health` path is served on the
+event loop and never touches it — so a starved pool wedges the authed
+routes while `/v1/health` still answers in milliseconds (observed
+2026-07-14: an unauthenticated GET answered in 0.18s while the
+authenticated POST hung for 25s).
+
+You do not have to reason about this: the spawn/restart clients now
+**probe the unauthenticated path before naming a cause** and say which
+case they measured —
+
+- *"the listen daemon is UP and serving … it is the AUTHENTICATED route
+  that did not answer"* → the daemon is alive; `sac listen restart` on the
+  host clears the wedged pool. Not an operator escalation.
+- *"cannot reach listen … nothing is serving HTTP at this URL"* → genuinely
+  down or the wrong URL/port. `sac listen restart`, then escalate only if
+  it stays down.
+
+Anything short of a dead broker is yours to do, not the operator's to queue.
 
 ## Imitate this
 
