@@ -113,6 +113,13 @@ def classify_apptainer_failure(stdout: str, stderr: str) -> tuple[str, str]:
 
       * ``"mount source ... doesn't exist"`` → ``"apptainer_mount_failed"``
         — the historical clew case + most SAC-from-SAC bind-rewrite gaps.
+      * ``"failed to open overlay image"`` → ``"overlay_missing"``
+        — the agent's per-agent directory overlay does not exist on the
+        host. sac now provisions it before every launch
+        (``runtimes/_apptainer_overlay.ensure_overlay_dirs``), so this
+        should be unreachable; if it fires anyway the overlay path is
+        outside sac's control (e.g. a hand-edited raw_arg pointing at an
+        unwritable location) and the hint names the fix.
       * ``"image ... is not a valid SIF image"`` → ``"sif_invalid"``
         — the host SIF path is wrong / partial download / wrong arch.
       * ``"No space left on device"`` → ``"disk_full"``.
@@ -121,6 +128,21 @@ def classify_apptainer_failure(stdout: str, stderr: str) -> tuple[str, str]:
     later only needs a regex + hint pair.
     """
     blob = (stdout or "") + "\n" + (stderr or "")
+    # Checked BEFORE disk_full: an overlay FATAL can mention the overlay
+    # *image* path while the real cause is the missing directory.
+    if "failed to open overlay image" in blob or "while loading overlay images" in blob:
+        return (
+            "overlay_missing",
+            "the agent's apptainer overlay directory does not exist (or is "
+            "not readable) on the host. Apptainer creates <overlay>/upper "
+            "and <overlay>/work itself, but NEVER the overlay root — that "
+            "must exist before `apptainer exec`. sac auto-provisions it at "
+            "launch (runtimes/_apptainer_overlay.ensure_overlay_dirs); if "
+            "you are seeing this, create the path named in the FATAL line by "
+            "hand — `mkdir -p <overlay>/upper <overlay>/work` — or repoint "
+            "spec.apptainer.overlay (or the --overlay raw_arg) at a path "
+            "this user can write.",
+        )
     if "mount source" in blob and "doesn't exist" in blob:
         return (
             "apptainer_mount_failed",

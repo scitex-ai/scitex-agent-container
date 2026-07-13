@@ -13,11 +13,11 @@ percentages; the table holds only what the bars cannot express"):
 2. The Stored-accounts table — exactly ``Account | Status | Last
    Update`` (:func:`._account_list_render.render_stored_table`).
 3. The usage-bars block — per-account 5h/7d bars, each percentage
-   carrying its compact reset hint (``29% (→09:19)`` /
-   ``66% (→Sun 21h)``), plus the rolling-window legend when a row has
+   carrying its compact relative reset hint (``29% (in 4h05m)`` /
+   ``66% (in 2d 3h)``), plus the rolling-window legend when a row has
    no cached reset timestamps
    (:mod:`._account_usage_bars` / :func:`._account_list_render.rolling_legend_line`).
-4. The one-line fleet effective-utilization figure.
+4. The one-line fleet 7-day capacity-used figure.
 
 The JSON path (``sac accounts list --json``) is schema-stable and keeps
 ``email_address`` / ``plan_label`` / the raw usage payload for machine
@@ -58,20 +58,21 @@ def account_list(as_json: bool, refresh: bool) -> None:
     exactly Account | Status | Last Update — the status cell carries
     the live token TTL (``VALID +2h26m``) — while the monospace
     usage-bars block below it owns the 5h/7d percentages, each with
-    its compact per-window reset hint (``29% (→09:19)`` /
-    ``66% (→Sun 21h)``), followed by a single fleet
-    effective-utilization line.
+    its compact relative reset hint (``29% (in 4h05m)`` /
+    ``66% (in 2d 3h)``), followed by a single fleet 7-day
+    capacity-used line.
 
     \b
-    Fleet effective utilization
-      A reset-horizon-weighted fleet figure. Per account, over a 7-day
-      planning window W: frac_before_reset = clamp(reset_horizon, 0, W)/W
-      and effective% = frac_before_reset * used_pct_7d. So an account at
-      100% that resets in 1 day (eff ~14%) contributes far more usable
-      weekly capacity than one at 100% resetting in 6 days (eff ~86%).
-      The reset horizon is the true 7d-window reset (reset_at_7d); when
-      absent it defaults to the full window (eff = used_pct_7d). The
-      fleet figure is the mean over accounts with cached usage.
+    Fleet 7d capacity used
+      How much of the fleet's weekly capacity was actually consumed over
+      the trailing 7 days — a capacity-planning signal: ~100% ⇒ the
+      fleet is saturated (add an account); low ⇒ over-provisioned (drop
+      one). It is the arithmetic mean of the accounts' 7d-window
+      utilisation (the same used_pct_7d the 7d bars show), over the
+      accounts with cached usage. The API exposes utilisation
+      percentages (not absolute quotas), so the mean of the percentages
+      is the aggregate; when quotas match it equals total-used /
+      total-available.
 
     \b
     Example:
@@ -90,7 +91,10 @@ def account_list(as_json: bool, refresh: bool) -> None:
         render_stored_table,
         rolling_legend_line,
     )
-    from ._account_usage_bars import fleet_effective_line, render_usage_bars_block
+    from ._account_usage_bars import (
+        fleet_capacity_used_line,
+        render_usage_bars_block,
+    )
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
@@ -149,7 +153,7 @@ def account_list(as_json: bool, refresh: bool) -> None:
     # guessing.
     if needs_rolling_legend(rows):
         click.echo(rolling_legend_line())
-    click.echo(fleet_effective_line(rows))
+    click.echo(fleet_capacity_used_line(rows))
 
 
 def register_list_command(group: click.Group) -> None:
