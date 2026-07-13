@@ -35,6 +35,12 @@ from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
+from ._selection import (
+    _enumerate_fleet,
+    _enumerate_running,
+    bulk_selection_options,
+    resolve_selection,
+)
 
 # Cross-host dispatch + host-listen bypass live in ``_restart_remote``.
 # Re-exported here so existing imports (tests included) keep resolving.
@@ -45,56 +51,6 @@ from ._restart_remote import (  # noqa: F401
     _should_try_host_bypass,
 )
 
-
-
-def _enumerate_fleet() -> list[str]:
-    """Return every agent name ``sac agents list`` shows (the ``--all-registry`` set).
-
-    Reuses the SAME data function the ``list`` command uses
-    (:func:`cli_pkg._helpers.get_agent_list_data`) so ``--all-registry`` is
-    exactly "everything ``sac agents list`` shows" — registered/running
-    agents plus on-disk-defined ones — with no separate enumeration path to
-    drift. Order-preserving de-dup by name.
-    """
-    from .._helpers import get_agent_list_data
-    from ..._state.registry import Registry
-
-    seen: set[str] = set()
-    names: list[str] = []
-    for row in get_agent_list_data(Registry()):
-        name = row.get("name")
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
-
-
-def _enumerate_running() -> list[str]:
-    """Return only the agents that are currently RUNNING (the ``--all-running`` set).
-
-    Reuses the SAME data function — and therefore the SAME liveness — the
-    ``list`` / ``status`` commands use
-    (:func:`cli_pkg._helpers.get_agent_list_data`), keeping only rows whose
-    ``status`` probe read ``"running"`` (identity-based liveness: the
-    session exists AND its pane process is alive — see
-    ``_agent_list._probe_local``). Rows that are ``stopped`` / ``unknown`` /
-    ``defined`` / ``invalid`` are excluded, so a plain ``restart --all-running``
-    never wakes an agent the operator had deliberately stopped. No separate
-    liveness rule is invented here. Order-preserving de-dup by name.
-    """
-    from .._helpers import get_agent_list_data
-    from ..._state.registry import Registry
-
-    seen: set[str] = set()
-    names: list[str] = []
-    for row in get_agent_list_data(Registry()):
-        if row.get("status") != "running":
-            continue
-        name = row.get("name")
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
 
 
 def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
@@ -271,41 +227,7 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
     required=False,
     shell_complete=agent_name_complete,
 )
-@click.option(
-    "--all-running",
-    "all_running",
-    is_flag=True,
-    default=False,
-    help=(
-        "Restart ONLY the agents that are currently RUNNING (live session). "
-        "The least-surprising choice for 'restart the live fleet' — a "
-        "deliberately-stopped agent stays stopped. Mutually exclusive with "
-        "explicit NAME arguments and with --all-registry. Still requires "
-        "-y/--yes."
-    ),
-)
-@click.option(
-    "--all-registry",
-    "all_registry",
-    is_flag=True,
-    default=False,
-    help=(
-        "Restart EVERY agent 'sac agents list' shows — INCLUDING stopped "
-        "ones. Mutually exclusive with explicit NAME arguments and with "
-        "--all-running. Still requires -y/--yes."
-    ),
-)
-@click.option(
-    "--all",
-    "all_alias",
-    is_flag=True,
-    default=False,
-    help=(
-        "Backward-compat alias for --all-registry (restarts stopped agents "
-        "too). Prefer the explicit flags: --all-running restarts only the "
-        "live fleet; --all-registry restarts every registered agent."
-    ),
-)
+@bulk_selection_options("restart")
 @click.option(
     "--dry-run",
     "dry_run",
@@ -378,40 +300,23 @@ def restart(
       $ sac agents restart foo --dry-run
       $ sac agents restart foo --json
     """
-    # ``--all`` is a backward-compat alias for ``--all-registry`` (do not
-    # break cron/callers that still pass the old flag). The remaining
-    # selection modes are mutually exclusive with each other.
-    registry_mode = all_registry or all_alias
-    running_mode = all_running
-    if registry_mode and running_mode:
-        raise click.UsageError(
-            "--all-running and --all-registry (--all) are mutually exclusive; "
-            "pass exactly one selection flag."
-        )
-    batch_mode = registry_mode or running_mode
-
-    if batch_mode and names:
-        raise click.UsageError(
-            "A selection flag (--all-running / --all-registry / --all) cannot "
-            "be combined with explicit agent NAME arguments."
-        )
-
-    if batch_mode:
-        targets = _enumerate_running() if running_mode else _enumerate_fleet()
-        if not targets:
-            if as_json:
-                click.echo(_json.dumps([]))
-            else:
-                console.print("[dim]No agents found to restart.[/dim]")
-            return
-    else:
-        targets = list(names)
-
-    if not targets:
-        raise click.UsageError(
-            "Missing argument 'NAME...'. Pass one or more agent names, or a "
-            "selection flag (--all-running / --all-registry / --all)."
-        )
+    # Selection semantics (flags, mutual exclusion, enumeration) are SHARED
+    # with ``sac agents stop`` — see ``_selection.resolve_selection``. The
+    # enumerators are passed in so this module keeps its own swappable seam.
+    targets, batch_mode = resolve_selection(
+        names,
+        all_running=all_running,
+        all_registry=all_registry,
+        all_alias=all_alias,
+        enumerate_running=_enumerate_running,
+        enumerate_fleet=_enumerate_fleet,
+    )
+    if batch_mode and not targets:
+        if as_json:
+            click.echo(_json.dumps([]))
+        else:
+            console.print("[dim]No agents found to restart.[/dim]")
+        return
 
     if dry_run:
         for name in targets:

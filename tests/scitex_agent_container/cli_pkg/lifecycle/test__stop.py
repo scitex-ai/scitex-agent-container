@@ -650,3 +650,284 @@ def test_no_force_on_unreachable_peer_message_surfaces_peer_diagnostic(
     result = runner.invoke(stop, ["clew"])
     # Assert
     assert "pam_slurm_adopt" in result.output or "peer-x" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Bulk selection flags (operator incident 2026-07-13). ``sac agents stop
+# --all`` failed with "No such option: --all" and a bare ``sac agents stop``
+# with "Missing argument 'TARGETS...'", so there was NO way to bring the fleet
+# down mid-incident — while ``sac agents restart`` had bulk selection all
+# along. ``stop`` now shares restart's surface (--all-running / --all-registry
+# / --all) through ``_selection``. The enumeration seams are swapped so these
+# tests never read the real registry.
+# ---------------------------------------------------------------------------
+
+
+def _recorder(stopped: list):
+    """Recording stand-in for ``agent_stop`` (a real callable, not a mock)."""
+
+    def _stop(name, force=False):
+        stopped.append(name)
+        return True
+
+    return _stop
+
+
+def test_all_running_stops_only_the_running_agents():
+    # Arrange — --all-running must enumerate via the RUNNING-only seam.
+    stopped: list = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1", "live-2"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "live-2", "stopped-3"]),
+        _swap("agent_stop", _recorder(stopped)),
+    ):
+        runner.invoke(stop, ["--all-running", "-y"])
+    # Assert — the deliberately-stopped agent is never touched.
+    assert stopped == ["live-1", "live-2"]
+
+
+def test_all_registry_stops_every_registered_agent():
+    # Arrange — --all-registry must enumerate via the full-fleet seam.
+    stopped: list = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "stopped-2"]),
+        _swap("agent_stop", _recorder(stopped)),
+    ):
+        runner.invoke(stop, ["--all-registry", "-y"])
+    # Assert — stopped agents are included too.
+    assert stopped == ["live-1", "stopped-2"]
+
+
+def test_all_alias_matches_all_registry_behaviour():
+    # Arrange — --all is the back-compat alias for --all-registry, exactly as
+    # in ``sac agents restart``: it enumerates the FULL fleet.
+    stopped: list = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "stopped-2"]),
+        _swap("agent_stop", _recorder(stopped)),
+    ):
+        runner.invoke(stop, ["--all", "-y"])
+    # Assert — --all == --all-registry.
+    assert stopped == ["live-1", "stopped-2"]
+
+
+def test_all_running_and_all_registry_together_is_usage_error():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["--all-running", "--all-registry", "-y"])
+    # Assert — the two selection modes are mutually exclusive (exit 2).
+    assert result.exit_code == 2 and "mutually exclusive" in result.output
+
+
+def test_all_running_and_all_alias_together_is_usage_error():
+    # Arrange — --all aliases --all-registry, so it conflicts just the same.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, ["--all-running", "--all", "-y"])
+    # Assert
+    assert result.exit_code == 2 and "mutually exclusive" in result.output
+
+
+def test_selection_flag_with_explicit_targets_is_usage_error():
+    # Arrange — "these two AND everything" must never be half-meant.
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: ["live-1"]):
+        result = runner.invoke(stop, ["--all-running", "alpha", "-y"])
+    # Assert
+    assert result.exit_code == 2 and "cannot be combined" in result.output
+
+
+def test_bare_stop_without_targets_or_selection_flag_is_usage_error():
+    # Arrange — the operator's repro: a bare `sac agents stop` must keep
+    # failing LOUD rather than silently stopping the whole fleet.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, [])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_bare_stop_error_names_the_selection_flags():
+    # Arrange — the loud failure should also teach the way out.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(stop, [])
+    # Assert
+    assert "--all-running" in result.output
+
+
+def test_all_running_without_yes_refuses_exit_two():
+    # Arrange — bulk stop stays gated on -y/--yes.
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: ["live-1", "live-2"]):
+        result = runner.invoke(stop, ["--all-running"])
+    # Assert
+    assert result.exit_code == 2 and "Refusing to stop 2 agents" in result.output
+
+
+def test_all_running_without_yes_stops_no_agent():
+    # Arrange — the confirmation guard must actually PREVENT the stops.
+    stopped: list = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1", "live-2"]),
+        _swap("agent_stop", _recorder(stopped)),
+    ):
+        runner.invoke(stop, ["--all-running"])
+    # Assert
+    assert stopped == []
+
+
+def test_all_running_dry_run_exits_zero_without_yes():
+    # Arrange — --dry-run is the safety valve for a fleet-wide op: it must
+    # compose with the selection flags and need no -y.
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: ["live-1", "live-2"]):
+        result = runner.invoke(stop, ["--all-running", "--dry-run"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_all_running_dry_run_lists_every_selected_target():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: ["live-1", "live-2"]):
+        result = runner.invoke(stop, ["--all-running", "--dry-run"])
+    # Assert — the operator sees the full blast radius before committing.
+    assert (
+        "would stop agent 'live-1'" in result.output
+        and "would stop agent 'live-2'" in result.output
+    )
+
+
+def test_all_running_dry_run_stops_no_agent():
+    # Arrange — a preview must not touch the fleet.
+    stopped: list = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1", "live-2"]),
+        _swap("agent_stop", _recorder(stopped)),
+    ):
+        runner.invoke(stop, ["--all-running", "--dry-run"])
+    # Assert
+    assert stopped == []
+
+
+def test_all_registry_dry_run_lists_the_stopped_agents_too():
+    # Arrange — --dry-run must preview the FULL-fleet selection as well.
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_fleet", lambda: ["live-1", "stopped-2"]):
+        result = runner.invoke(stop, ["--all-registry", "--dry-run"])
+    # Assert
+    assert "would stop agent 'stopped-2'" in result.output
+
+
+def test_bulk_one_failure_exits_nonzero():
+    # Arrange — any failed stop must surface as a non-zero exit (as restart does).
+    def _boom(name, force=False):
+        if name == "bad":
+            raise RuntimeError("boom")
+        return True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["ok-1", "bad"]),
+        _swap("agent_stop", _boom),
+    ):
+        result = runner.invoke(stop, ["--all-running", "-y"])
+    # Assert
+    assert result.exit_code == 1
+
+
+def test_bulk_one_failure_still_attempts_the_remaining_agents():
+    # Arrange — a mid-fleet failure must not abort the rest of the shutdown.
+    seen: list = []
+
+    def _flaky(name, force=False):
+        seen.append(name)
+        if name == "bad":
+            raise RuntimeError("boom")
+        return True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["ok-1", "bad", "ok-2"]),
+        _swap("agent_stop", _flaky),
+    ):
+        runner.invoke(stop, ["--all-running", "-y"])
+    # Assert
+    assert seen == ["ok-1", "bad", "ok-2"]
+
+
+def test_selection_matching_nothing_exits_zero():
+    # Arrange — "the live fleet is already down" is not an error.
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: []):
+        result = runner.invoke(stop, ["--all-running", "-y"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_selection_matching_nothing_reports_no_agents_found():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: []):
+        result = runner.invoke(stop, ["--all-running", "-y"])
+    # Assert
+    assert "No agents found to stop" in result.output
+
+
+def test_bulk_json_emits_one_envelope_per_stopped_agent():
+    # Arrange — stop's JSON contract is ONE object per target (not restart's
+    # array): the cross-host dispatcher parses a single object from a peer.
+    import json as _json
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1", "live-2"]),
+        _swap("agent_stop", _recorder([])),
+    ):
+        result = runner.invoke(stop, ["--all-running", "-y", "--json"])
+    payloads = [_json.loads(ln) for ln in result.output.strip().splitlines() if ln]
+    # Assert
+    assert [p["name"] for p in payloads] == ["live-1", "live-2"]
+
+
+def test_stop_exposes_the_same_selection_flags_as_restart():
+    # Arrange — the whole point: the two destructive fleet verbs must not
+    # drift apart again. Adding a selection flag to one verb only fails here.
+    from scitex_agent_container.cli_pkg.lifecycle._restart import restart
+
+    def _selection_flags(command):
+        return sorted(
+            opt
+            for param in command.params
+            for opt in getattr(param, "opts", ())
+            if opt.startswith("--all")
+        )
+
+    # Act
+    stop_flags = _selection_flags(stop)
+    # Assert
+    assert stop_flags == _selection_flags(restart)
