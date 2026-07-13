@@ -96,6 +96,40 @@ def pane_process_alive(
     return pid_alive(pid)
 
 
+def pane_pid_of(
+    session_name: str,
+    *,
+    pane_pid_fn: Optional[Callable[[str], int | None]] = None,
+) -> int | None:
+    """The LONG-LIVED pid backing a TUI session's pane, or ``None``.
+
+    This is the value ``instances.pid`` records for a TUI agent, and it
+    is the SAME signal :func:`pane_process_alive` (hence
+    ``TuiSessionRuntime.is_running``) already keys liveness on — so the
+    registry and ``is_running`` can never disagree about which process
+    represents this agent.
+
+    Why the PANE pid and not the launcher's: the pane's ``bash -c``
+    ``exec``s apptainer, and ``exec`` REPLACES the process image while
+    KEEPING the pid. So ``#{pane_pid}`` is stable from the moment the
+    pane exists and *is* the ``apptainer exec ... claude`` process for
+    the whole session (see :mod:`_runners._tmux._tmux_probe`). The
+    launcher that created the tmux session, by contrast, returns
+    immediately — recording it would store a pid that is dead within
+    seconds.
+
+    ``None`` (honest "unknown") when the session is absent, no pid probe
+    is available (an injected multiplexer fake predating the probe), or
+    the probe fails. Never raises, and never guesses a pid.
+    """
+    if pane_pid_fn is None:
+        return None
+    try:
+        return pane_pid_fn(session_name)
+    except Exception:  # stx-allow: fallback (a pane_pid probe hiccup yields "unknown" — a fabricated pid would be strictly worse than None, since a wrong/reused pid can vouch for a dead agent as alive)
+        return None
+
+
 def is_responsive_from_activity(
     activity: int | float | None,
     now: float,
@@ -111,4 +145,9 @@ def is_responsive_from_activity(
     return (now - float(activity)) <= max_idle_s
 
 
-__all__ = ["pid_alive", "pane_process_alive", "is_responsive_from_activity"]
+__all__ = [
+    "pid_alive",
+    "pane_pid_of",
+    "pane_process_alive",
+    "is_responsive_from_activity",
+]

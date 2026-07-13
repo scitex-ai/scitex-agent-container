@@ -40,6 +40,49 @@ def _spawned_by() -> str:
     return getenv("NAME") or "cli"
 
 
+def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
+    """Resolve the LONG-LIVED pid of the process the runtime just started.
+
+    Asks the runtime itself (:meth:`runtimes.base.RuntimeBase.agent_pid`)
+    rather than guessing, so the pid landing in ``instances.pid`` is the
+    SAME one that runtime's own ``is_running`` probes with
+    ``os.kill(pid, 0)``:
+
+      * TUI (the default runtime)  -> the tmux PANE pid, which IS the
+        long-lived ``apptainer exec ... claude`` process (the pane's
+        ``bash -c`` ``exec``s apptainer, and ``exec`` keeps the pid).
+      * SDK / apptainer            -> the ``apptainer`` process pid that
+        ``ApptainerRuntime.start`` persisted to
+        ``<state_dir>/apptainer_pid``.
+
+    NOT the launching process: for a TUI agent the launcher spawns the
+    tmux session and EXITS within seconds, so recording it would store a
+    pid that is dead almost immediately — reproducing the very bug this
+    fixes, while looking like a fix.
+
+    Returns ``None`` (honestly "unknown") when the runtime cannot name a
+    pid — an older/injected runtime without the seam, a docker/podman
+    container, or a probe that failed. ``None`` is SAFE by construction:
+    every consumer treats a NULL pid as "no verdict"
+    (:func:`_state.state_db_gc.gc_dead_instances` skips it,
+    :func:`_lifecycle._stale_lease.clear_stale_instance_lease` leaves the
+    row alone, :func:`cli_pkg._send_diagnosis._pid_alive` returns
+    ``None``), whereas a WRONG pid is strictly worse — pids get REUSED,
+    so a stale one can be recycled by an unrelated process and would then
+    vouch for a dead agent as alive.
+    """
+    getter = getattr(runtime, "agent_pid", None)
+    if not callable(getter):
+        return None
+    try:
+        pid = getter(config)
+    except Exception:  # stx-allow: fallback (reason: a pid probe hiccup must never block an agent start; NULL is the honest "unknown" and is safe for every consumer — see docstring)
+        return None
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    return pid
+
+
 def _state_dir_for(config: AgentConfig, runtime: Any):
     """Per-agent runtime state dir, via the runtime's own resolver.
 
@@ -90,9 +133,20 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
     # for a bare lead/operator launch. ``remote=False`` — this helper is
     # only reached on the host where the agent actually runs; the
     # cross-host dispatcher records the remote=True lead-side row.
+    #
+    # ``pid`` is the agent's LONG-LIVED process, asked of the runtime that
+    # just started it (see :func:`_runtime_pid`). This is the ONLY one of
+    # ``record_instance_start``'s call sites that can supply a meaningful
+    # pid: the other three write cross-host (``remote=True``) lead-side
+    # rows for agents running on a PEER, where a local pid number would be
+    # meaningless and dangerous (consumers probe pids with a LOCAL
+    # ``os.kill``, so a peer's pid could collide with an unrelated local
+    # process and vouch for a dead agent as alive). Those correctly stay
+    # NULL.
     instance_id = record_instance_start(
         name=config.name,
         host=host,
+        pid=_runtime_pid(config, runtime),
         a2a_port=a2a_port,
         bound_port=a2a_port,
         remote=False,
@@ -153,6 +207,40 @@ def record_local_instance(config: AgentConfig, runtime: Any) -> str | None:
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
     return instance_id
+
+
+def restart_and_record(config: AgentConfig, runtime_factory: Any) -> bool:
+    """Restart ``config`` via its runtime AND refresh its ``instances`` row.
+
+    The health-monitor's restart callback (wired in :mod:`._start`) used to
+    call ``runtime.start(config)`` DIRECTLY, never re-running
+    :func:`agent_start` — so a supervisor-restarted agent came back as a
+    BRAND-NEW process while its ``instances`` row kept pointing at the old
+    one (the split-brain documented in
+    :mod:`cli_pkg._send_resolve`).
+
+    That was survivable while ``pid`` was always NULL. It is NOT survivable
+    now that the row carries a real pid: the restarted agent's old pid is
+    GONE, so ``os.kill(old_pid, 0)`` fails and every consumer
+    (:func:`cli_pkg._send_diagnosis`, :func:`_state.state_db_gc`) would
+    declare a perfectly LIVE agent dead — ``agent_send`` would refuse with
+    "recorded pid is not alive". A stale pid is worse than no pid, so the
+    restart path MUST re-record.
+
+    Re-recording (rather than patching the pid in place) is also the
+    honest lifecycle model: a restart IS a new instance.
+    :func:`record_local_instance` supersedes the previous row and inserts a
+    fresh one carrying the new pid + the still-held port claim — exactly
+    what ``agent_start`` does.
+
+    Returns whatever ``runtime.start`` returned; the row is refreshed only
+    on a successful start (a failed restart must not fabricate a live row).
+    """
+    runtime = runtime_factory(config)
+    started = runtime.start(config)
+    if started:
+        record_local_instance(config, runtime)
+    return started
 
 
 def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
