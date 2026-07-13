@@ -217,12 +217,26 @@ def _flag_value(argv: list[str], flag: str) -> str:
 
 
 def _env_pairs(argv: list[str]) -> dict[str, str]:
-    """Decode every ``--env KEY=VAL`` pair in the argv into a dict."""
+    """Decode the environment the container RECEIVES from the argv.
+
+    Every ``--env KEY=VAL`` pair PLUS the contents of every ``--env-file``.
+    The P1 secret-hardening fix (``_apptainer_secret_env``) moves secret
+    vars OUT of world-readable ``--env`` argv into a 0600 ``--env-file``,
+    so a delivery check must read both transports — the container gets the
+    union.
+    """
     out: dict[str, str] = {}
     for i, a in enumerate(argv):
         if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
             k, _, v = argv[i + 1].partition("=")
             out[k] = v
+        elif a == "--env-file" and i + 1 < len(argv):
+            path = Path(argv[i + 1])
+            if path.is_file():
+                for line in path.read_text().splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        k, _, v = line.partition("=")
+                        out[k] = v
     return out
 
 
@@ -441,8 +455,9 @@ def test_argv_forwards_sac_anthropic_api_key_env(
     cfg = _config(tmp_path)
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    # Assert
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-test" in argv
+    # Assert — forwarded to the container, now via the 0600 --env-file rather
+    # than world-readable --env argv (P1 fix; see _apptainer_secret_env).
+    assert _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY") == "sk-ant-api-test"
 
 
 def test_argv_emits_nv_flag_when_apptainer_nv_true(tmp_path: Path) -> None:
@@ -1531,15 +1546,18 @@ def test_start_dry_run_argv_file_omits_the_raw_secret(
     assert "sk-ant-oat01-supersecrettoken" not in argv_file.read_text()
 
 
-def test_start_dry_run_argv_file_carries_the_redacted_marker(
+def test_start_dry_run_argv_file_references_the_secret_env_file(
     state_root: Path,
     tmp_path: Path,
     apptainer_on_path: Path,
     env_save_restore,
 ) -> None:
-    # Arrange — same incident as above: the redacted placeholder (the
-    # same shape ``sac agents explain`` prints to the console) must
-    # replace the raw value rather than the key vanishing entirely.
+    # Arrange — the P1 fix (_apptainer_secret_env) moves secret --env vars
+    # OUT of the argv into a 0600 --env-file, so the dry-run snapshot no
+    # longer carries an inline (redacted) SAC_ANTHROPIC_API_KEY at all — it
+    # shows the --env-file reference instead. (The raw value's absence from
+    # the snapshot is pinned by
+    # test_start_dry_run_argv_file_omits_the_raw_secret.)
     env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
@@ -1551,7 +1569,7 @@ def test_start_dry_run_argv_file_carries_the_redacted_marker(
 
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
-    assert "SAC_ANTHROPIC_API_KEY=<redacted:" in argv_file.read_text()
+    assert "--env-file" in argv_file.read_text()
 
 
 def test_start_dry_run_argv_file_is_owner_only_readable(
@@ -1617,8 +1635,12 @@ def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=rt._state_dir(cfg), sif_path=sif)
 
-    # Assert
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in argv
+    # Assert — the SDK in the container still authenticates: the secret is
+    # delivered via the 0600 --env-file, not world-readable --env argv.
+    assert (
+        _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
 
 
 def test_start_background_apptainer_subprocess_receives_the_real_secret(
@@ -1646,9 +1668,13 @@ def test_start_background_apptainer_subprocess_receives_the_real_secret(
             break
         time.sleep(0.1)
 
-    # Assert
+    # Assert — the real apptainer child still receives the secret, now via
+    # the 0600 --env-file it is pointed at (not in its world-readable argv).
     received = subprocess_shim.argv_for("apptainer") or []
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in received
+    assert (
+        _env_pairs(received).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
 
 
 def test_start_background_returns_true(

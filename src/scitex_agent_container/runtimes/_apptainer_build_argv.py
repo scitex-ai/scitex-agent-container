@@ -357,6 +357,18 @@ def build_run_argv(
         container_home = resolve_container_home(config)
         argv += ["--bind", f"{upper_home}:{container_home}"]
 
+    # SECURITY (P1 credential fix): lift secret-shaped ``--env KEY=VALUE``
+    # pairs out of the WORLD-READABLE argv (it becomes a tmux ``bash -c``
+    # pane cmd; /proc/<pid>/cmdline leaks it to any local process) into a
+    # per-agent 0600 ``--env-file``. AFTER every ``--env`` source
+    # (auth/provider/listen/spec.env/raw_args) so any secret is caught, but
+    # BEFORE the creds bind below so that bind stays LAST (its last-wins
+    # shadowing invariant). apptainer still delivers every value; see
+    # _apptainer_secret_env.
+    from ._apptainer_secret_env import redact_secret_env_to_file
+
+    argv = redact_secret_env_to_file(argv, state_dir=state_dir)
+
     # Designated credentials file (spec.claude.credentials_file) — bound
     # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
     # binds (after the overlay-upper-home bind) so the relaxed ``--home``
