@@ -24,11 +24,19 @@ from __future__ import annotations
 
 from ._git import head_sha, repo_root_for_package
 from ._hash import code_hash
-from ._identity import DIST_NAME, format_terse, identity, package_dir, short_id
+from ._identity import (
+    DIST_NAME,
+    baked,
+    format_terse,
+    identity,
+    package_dir,
+    short_id,
+)
 
 __all__ = [
     "DIST_NAME",
     "audit",
+    "baked",
     "code_hash",
     "format_terse",
     "head_sha",

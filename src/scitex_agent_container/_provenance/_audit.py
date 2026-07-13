@@ -32,7 +32,7 @@ from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 from ._hash import code_hash
-from ._identity import DIST_NAME, identity, package_dir
+from ._identity import DIST_NAME, baked, identity, package_dir
 
 __all__ = ["audit", "find_dist_infos"]
 
@@ -169,9 +169,7 @@ def _check_version_mismatch(info: dict, anomalies: list) -> None:
 def audit() -> dict:
     """Full provenance report. Costs ~35 ms (it hashes the loaded tree)."""
     info = identity()
-    from ._identity import _baked
-
-    info["baked_version"] = _baked().get("version")
+    info["baked_version"] = baked().get("version")
 
     live_hash = code_hash(package_dir())
     dist_infos = find_dist_infos()

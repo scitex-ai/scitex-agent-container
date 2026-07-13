@@ -39,7 +39,7 @@ from pathlib import Path
 
 from ._git import head_sha, repo_root_for_package
 
-__all__ = ["DIST_NAME", "format_terse", "identity", "package_dir"]
+__all__ = ["DIST_NAME", "baked", "format_terse", "identity", "package_dir"]
 
 DIST_NAME = "scitex-agent-container"
 
@@ -49,8 +49,8 @@ def package_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _baked() -> dict:
-    """Return the build stamp baked in by ``hatch_build.py``, or ``{}``.
+def baked() -> dict:
+    """Return the build stamp baked in by the build hook, or ``{}``.
 
     Absent in a plain git checkout that was never built or installed —
     which is fine, because that case reads its commit live from ``.git``.
@@ -67,7 +67,7 @@ def declared_version() -> str:
     try:
         return _dist_version(DIST_NAME)
     except PackageNotFoundError:  # stx-allow: fallback (reason: running straight off a source tree with nothing installed)
-        return _baked().get("version") or "0.0.0+unknown"
+        return baked().get("version") or "0.0.0+unknown"
 
 
 def identity() -> dict:
@@ -84,7 +84,7 @@ def identity() -> dict:
       existed, or hand-copied. Says so rather than guessing.
     """
     origin = package_dir()
-    baked = _baked()
+    stamp = baked()
     root = repo_root_for_package(origin)
 
     if root is not None:
@@ -101,14 +101,14 @@ def identity() -> dict:
                 "repo_root": str(root),
             }
 
-    commit = baked.get("commit")
+    commit = stamp.get("commit")
     return {
         "version": declared_version(),
         "commit": commit,
-        "commit_source": baked.get("commit_source") if commit else None,
-        "code_hash": baked.get("code_hash"),
-        "built_at": baked.get("built_at"),
-        "install": "wheel" if baked else "unknown",
+        "commit_source": stamp.get("commit_source") if commit else None,
+        "code_hash": stamp.get("code_hash"),
+        "built_at": stamp.get("built_at"),
+        "install": "wheel" if stamp else "unknown",
         "origin": str(origin),
         "repo_root": None,
     }
