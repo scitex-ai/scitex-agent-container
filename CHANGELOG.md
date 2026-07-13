@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`sac ports`** — read-only port-hygiene inventory. One command shows
+  every port sac uses with live status: the `sac listen` control-plane
+  port (default 7878, resolved from `listen.port`) with its pidfile, and
+  every a2a sidecar port CLAIM read in ONE `port_allocator.list_claims()`
+  query (the same one-shot API `sac agents list` uses). Liveness is a
+  bounded TCP-connect probe (`--timeout`, default 0.3s, run
+  concurrently) so the command can never hang. Flags **CONFLICT** (two
+  owners on one port) and **ORPHAN** (a claim with nothing listening),
+  and prints a reference map of the scitex/sac port-assignment scheme
+  (7878 · a2a range · the 3129X GUI/dashboard block). `--json` emits a
+  machine-readable envelope. Mutates nothing — no claim is created,
+  released, or changed.
+
 ## [0.21.13] — 2026-07-11
 
 First PyPI release since 0.21.11. v0.21.12 is a ghost tag (like v0.21.10
