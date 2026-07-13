@@ -37,14 +37,16 @@ from ._tui_compose import (
     clear_compose_buffer,
     verify_submit_by_advancement,
 )
-from ._tui_drain import (
-    drain_modals_until_ready,
-    wait_until_input_ready as _wait_until_input_ready,
-)
+from ._tui_drain import drain_modals_until_ready
 from ._tui_auth_stage import TuiAuthStageError
+from ._tui_boot_drain import TuiBootDrainMixin
 from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_inject import StartupPromptInjectorMixin
-from ._tui_liveness import is_responsive_from_activity, pane_process_alive
+from ._tui_liveness import (
+    is_responsive_from_activity,
+    pane_pid_of,
+    pane_process_alive,
+)
 from ._tui_workspace import materialize_workspace as _materialize_workspace
 from .base import RuntimeBase
 
@@ -147,7 +149,12 @@ def state_dir_for_config(config: AgentConfig) -> Path:
     return _runner.state_dir_for(config.name, root=root)
 
 
-class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, RuntimeBase):
+class TuiSessionRuntime(
+    StartupPromptInjectorMixin,
+    TurnBridgeSeamMixin,
+    TuiBootDrainMixin,
+    RuntimeBase,
+):
     """Interactive tmux-backed Claude TUI runtime (``spec.runtime: tui``).
 
     Delegates multiplexer mechanics to ``TmuxManager``; owns the session-name
@@ -241,7 +248,13 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
                 f"duplicate session '{name}' — agent already running. "
                 f"Attach: `sac agents attach {config.name}` "
                 f"(or `tmux attach -t {name}`). "
-                f"Relaunch: `sac agents restart {config.name}`.",
+                # NOT `sac agents restart` — when this guard fires DURING a
+                # restart (the old session survived SIGTERM), that is the very
+                # command that just failed, so recommending it loops the
+                # operator back into the failure. Give the remedy that
+                # actually works: kill the stale session, then start fresh.
+                f"Force-relaunch: `tmux kill-session -t {name}` then "
+                f"`sac agents start {config.name} -y --fresh`.",
                 style="red",
             )
             if not dry_run:
@@ -387,6 +400,24 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             pane_pid_fn=getattr(self._mux, "pane_pid", None),
         )
 
+    def agent_pid(self, config: AgentConfig) -> int | None:
+        """The pane's long-lived ``apptainer exec ... claude`` pid.
+
+        The ``RuntimeBase`` seam that hands ``instances.pid`` its value.
+        This is the SAME signal :meth:`is_running` above keys its verdict
+        on (both go through the pane pid), so the registry and
+        ``is_running`` cannot disagree about which process is this agent.
+
+        NOT the launcher pid: the launcher spawns the tmux session and
+        returns within seconds. The pane's ``bash -c`` ``exec``s
+        apptainer — ``exec`` keeps the pid — so the pane pid IS the
+        long-lived container process. See :func:`_tui_liveness.pane_pid_of`.
+        """
+        return pane_pid_of(
+            session_name_for(config),
+            pane_pid_fn=getattr(self._mux, "pane_pid", None),
+        )
+
     def is_responsive(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
     ) -> bool:
@@ -428,78 +459,6 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             self.wait_until_input_ready(config)
         self._mux.send_text_and_submit(name, text)
         return True
-
-    def _drain_at_boot(
-        self,
-        config: AgentConfig,
-        *,
-        timeout_s: float,
-        poll_s: float = 0.5,
-    ) -> bool:
-        """Dismiss claude's first-run modals at boot; return as soon as the TUI
-        is up (marker OR :func:`prompts.is_ready`) — not when it goes idle, so
-        an autonomous agent that goes straight to work is not waited out, and a
-        ``startup_commands``-delayed ``exec claude`` is polled through. Thin
-        wrapper over :meth:`_drain_modals_until_ready`. Best-effort: never
-        raises. Returns True iff a ready signal was observed within the window.
-        """
-        name = session_name_for(config)
-        if not self._mux.exists(name):
-            return False
-        return self._drain_modals_until_ready(name, timeout_s=timeout_s, poll_s=poll_s)
-
-    def _drain_modals_until_ready(
-        self,
-        name: str,
-        *,
-        timeout_s: float,
-        poll_s: float = 0.5,
-    ) -> bool:
-        """Verified, retrying, fail-loud modal drain. True iff ready in window.
-
-        Thin wrapper over the pure, unit-testable
-        :func:`_tui_drain.drain_modals_until_ready` (fail-fast-on-session-death,
-        settle-before-send [BUG 2], verified-resend). Dismisses modals by their
-        REGISTERED keys (Enter/digit, never Escape), so a dev-channels
-        "Esc to cancel" modal is CONFIRMED — the session-killing Escape lives
-        only in the guarded compose-buffer clear (BUG 1).
-        """
-        return drain_modals_until_ready(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            exists_fn=self._mux.exists,
-            timeout_s=timeout_s,
-            poll_s=poll_s,
-        )
-
-    def wait_until_input_ready(
-        self,
-        config: AgentConfig,
-        *,
-        timeout_s: float = 60.0,
-        poll_s: float = 0.4,
-        sleep_fn=time.sleep,
-    ) -> bool:
-        """Drain first-launch / mid-session modals, then block until the TUI
-        input field is bound.
-
-        Thin wrapper over the pure, unit-testable
-        :func:`_tui_drain.wait_until_input_ready`: dismisses each modal by its
-        REGISTERED keys (never Escape → dev-channels is CONFIRMED, BUG 1) and
-        SETTLES the pane before sending (BUG 2). Raises
-        :class:`TuiInputNotReadyError` on timeout.
-        """
-        del sleep_fn  # honoured internally by the extracted function's default
-        name = session_name_for(config)
-        return _wait_until_input_ready(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            exists_fn=self._mux.exists,
-            timeout_s=timeout_s,
-            poll_s=poll_s,
-        )
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output; empty string when the

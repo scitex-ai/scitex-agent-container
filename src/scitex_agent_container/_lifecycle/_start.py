@@ -19,6 +19,7 @@ from ._a2a_port import resolve_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import record_local_instance as _record_local_instance
+from ._instances import restart_and_record as _restart_and_record
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
@@ -71,6 +72,7 @@ def agent_start(
     handover_mod: Any = None,
     liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
+    successor_auth_check: Callable[[AgentConfig], None] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -264,6 +266,15 @@ def agent_start(
     )
     if really_running:
         if force:
+            # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
+            # 20260712): probe the already-rotated successor credential; a
+            # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
+            # the live container is LEFT UP. Covers `start --force` (the PR #628
+            # self-restart bounce); `sac agents restart` is covered upstream.
+            from ._restart_preflight import assert_successor_auth_usable
+
+            _auth_check = successor_auth_check or assert_successor_auth_usable
+            _auth_check(config)
             agent_stop(
                 config.name,
                 registry=registry,
@@ -473,7 +484,8 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Start health monitor in background if enabled
+    # Restart callback re-records the row: a restart = a NEW pid. See
+    # ``_instances.restart_and_record`` for why a stale pid is dangerous.
     if config.health.enabled:
         thread = thread_factory(
             target=health_monitor,
@@ -481,7 +493,7 @@ def agent_start(
                 config.name,
                 config,
                 registry,
-                lambda c: runtime_factory(c).start(c),
+                lambda c: _restart_and_record(c, runtime_factory),
             ),
             daemon=True,
         )

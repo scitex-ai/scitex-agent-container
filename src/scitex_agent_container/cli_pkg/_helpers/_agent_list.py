@@ -22,24 +22,38 @@ from ._agent_list_account import (  # noqa: F401
     _safe_account_for,
 )
 
+# Host-DISPLAY resolution (Host column) — sibling module, 512-line cap split.
+from ._agent_list_host import _host_display_for, _resolve_display_host
 
-def _safe_port_for(name: str) -> int | None:
-    """Return the agent's claimed a2a port, or None on any failure.
 
-    Used by Layer-6 of auto-port-allocation to surface the allocated
-    port in ``sac agents list`` output. Tolerant: a missing state.db,
-    schema-not-yet-initialized error, or unknown name all map to
-    ``None`` so the list command never fails because of port lookup.
+def _all_port_claims() -> dict[str, int]:
+    """Return ``{agent_name: a2a_port}`` for every claim, in ONE db read.
+
+    Replaces the former per-agent ``_safe_port_for`` (``get_port`` per row)
+    in ``sac agents list``: each ``get_port`` opened + init-schema'd the
+    state.db ~3x (~62ms/agent on a full host); ``list_claims`` does it once.
+    Callers look the port up per row from the returned dict. Tolerant: any
+    failure maps to an empty map so the list never crashes on a port-lookup
+    hiccup (rows render ``—``).
     """
     # stx-allow: fallback (reason: list output must never crash on a
-    # port-allocator hiccup; ``None`` cell rendered as ``—`` is the
-    # right UX.)
+    # port-allocator hiccup; an empty map rendered as ``—`` is the right UX.)
     try:
         from ..._state import port_allocator
 
-        return port_allocator.get_port(name)
+        return {c["name"]: c["port"] for c in port_allocator.list_claims()}
     except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return None
+        return {}
+
+
+# The always-present movement trio in its empty shape — the tolerant fallback
+# AND what a PERF-deferred (hidden, non-running) row carries in place of the
+# movement IO. One definition so the two paths can never drift.
+_MOVEMENT_DEFAULTS: dict = {
+    "session_jsonl_bytes": 0,
+    "session_jsonl_last_write": "",
+    "heartbeat_at": "",
+}
 
 
 def _movement_fields(name: str) -> dict:
@@ -65,11 +79,7 @@ def _movement_fields(name: str) -> dict:
 
         return status_movement_fields(resolve_state_dir(name))
     except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return {
-            "session_jsonl_bytes": 0,
-            "session_jsonl_last_write": "",
-            "heartbeat_at": "",
-        }
+        return dict(_MOVEMENT_DEFAULTS)
 
 
 def _probe_local(cfg) -> bool | None:
@@ -136,11 +146,21 @@ def get_agent_list_data(
     tags: str | None = None,
     remote_probe_timeout_s: float = 2.0,
     max_parallel_probes: int = 8,
+    running_only: bool = False,
 ) -> list[dict]:
     """Get agent list as plain dicts for JSON or table output.
 
     Args:
         registry: The agent registry to query.
+        running_only: PERF hint from the DEFAULT human view, which discards
+            every non-running row before rendering. When True, the heavy
+            per-row enrichment (account resolution + session-movement IO) is
+            SKIPPED for rows that are not ``running`` — they still get a
+            correct ``status`` (so the hidden-count footer is right) but a
+            blank ``account`` + default movement fields. The ``--json`` and
+            ``-v`` / ``--all`` paths leave this False so every row stays fully
+            enriched (they show non-running rows). Default False preserves the
+            original all-rows-enriched behaviour.
         capability: If set, only include agents whose ``capabilities`` label
             contains this value (comma-separated matching).
         machine: If set, only include agents whose ``machine`` label matches.
@@ -169,6 +189,13 @@ def get_agent_list_data(
     from concurrent.futures import TimeoutError as _FuturesTimeout
 
     entries = registry.list_all()
+
+    # Host DISPLAY column hostname, resolved ONCE (test-swappable seam).
+    display_host = _resolve_display_host()
+
+    # A2A ports for ALL agents in ONE db read (was a per-agent get_port that
+    # re-opened + re-init-schema'd state.db ~3x each). Looked up per row.
+    port_claims = _all_port_claims()
 
     # First pass: resolve configs + filter.
     # F-CS17 stage 3b: there are no longer "remote" agents from sac's
@@ -298,11 +325,16 @@ def get_agent_list_data(
         else:
             status_val = "running" if is_running else "stopped"
 
+        # FIX (no double-parse): a config that ``load_config`` ACCEPTED is
+        # valid by construction — ``load_config`` runs ``validate_raw`` and
+        # RAISES on any error — so cfg-not-None ⇒ zero errors. Only
+        # RE-VALIDATE (a second open+parse of the same file) when the load
+        # FAILED, to recover the error list for the YAML column.
         errors: list[str] = []
-        if config_path:
+        if config_path and cfg is None:
             from ...config._validation import validate_config
 
-            try:  # stx-allow: fallback (validator raise → treat exception as a single error)
+            try:  # stx-allow: fallback (validator raise → single error)
                 errors = validate_config(str(config_path))
             except Exception as exc:
                 errors = [str(exc)]
@@ -310,23 +342,26 @@ def get_agent_list_data(
         # key on the row for backward-compat JSON consumers.
         host_label = "local"
         spec_path = str(config_path) if config_path else ""
-        # Layer-6: surface the auto-allocated a2a port so operators can
-        # see which IPC port the sidecar is bound to without grepping
-        # state.db by hand. ``None`` when no claim exists (agent never
-        # started under the allocator, or sidecar-disabled spec).
-        a2a_port = _safe_port_for(name)
-        # Which Anthropic account this agent authenticates as. Agents
-        # sharing one label share one server-side rate limit. For a RUNNING
-        # agent prefer the ACTUAL runtime account (read from its per-agent
-        # ``<runtime>/home/.claude.json``) over the spec-derived label —
-        # pool-based agents all resolve to the same host-OAuth spec label
-        # otherwise, hiding the load-balanced per-agent pick. Called as a
-        # bare name so a test can rebind ``_al._runtime_account_for``.
-        account_label = _safe_account_for(cfg)
-        if status_val == "running":
-            runtime_label = _runtime_account_for(name)
-            if runtime_label:
-                account_label = runtime_label
+        # a2a port from the ONE-query claims map. ``None`` when no claim
+        # exists (agent never started under the allocator).
+        a2a_port = port_claims.get(name)
+        # PERF: the running-only default view discards non-running rows, so
+        # skip their account resolution + movement IO. ``status`` is already
+        # computed, so the hidden-count footer stays correct.
+        deferred = running_only and status_val != "running"
+        # Which Anthropic account this agent authenticates as. For a RUNNING
+        # agent prefer the ACTUAL runtime account (its per-agent
+        # ``<runtime>/home/.claude.json``) over the spec-derived label — pool
+        # agents share one host-OAuth spec label otherwise. Bare names so a
+        # test can rebind ``_al._safe_account_for`` / ``_al._runtime_account_for``.
+        if deferred:
+            account_label = ""
+        else:
+            account_label = _safe_account_for(cfg)
+            if status_val == "running":
+                runtime_label = _runtime_account_for(name)
+                if runtime_label:
+                    account_label = runtime_label
         row: dict = {
             "name": name,
             "status": status_val,
@@ -334,17 +369,17 @@ def get_agent_list_data(
             "multiplexer": multiplexer,
             "started_at": started,
             "host": host_label,
+            "host_display": _host_display_for(host_label, display_host),
             "path": spec_path,
             "a2a_port": a2a_port,
             "account": account_label,
         }
         # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
-        # session.jsonl movement + last heartbeat at the per-row level
-        # of ``sac agents status --json`` so the kick-cycle reads
-        # MOVEMENT without scraping the SDK heartbeat.json out of band.
-        # All three keys are always present; missing-data renders as
-        # ``0`` / ``""``.
-        row.update(_movement_fields(name))
+        # session.jsonl movement + last heartbeat per row of ``sac agents
+        # status --json``. All three keys are ALWAYS present; a deferred
+        # (hidden, non-running) row gets the default empty shape instead of
+        # the movement IO.
+        row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
         if errors:
             row["validation_errors"] = errors
         if liveness_unknown:
@@ -390,13 +425,22 @@ def get_agent_list_data(
                 continue
         if tags and not _label_list_contains(labels, "tags", tags):
             continue
-        # stx-allow: fallback (validator may raise on unparseable yaml;
-        # treat as "invalid" with the exception text as the only error)
-        try:
-            errors = validate_config(str(spec_path))
-        except Exception as exc:
-            errors = [str(exc)]
+        # FIX (no double-parse): a spec that ``load_config`` accepted is
+        # valid ⇒ "defined". Only RE-VALIDATE the ones that FAILED to load,
+        # to split "invalid" from "defined" and recover their error list.
+        errors = []
+        if cfg is None:
+            # stx-allow: fallback (validator may raise on unparseable yaml;
+            # treat as "invalid" with the exception text as the only error)
+            try:
+                errors = validate_config(str(spec_path))
+            except Exception as exc:
+                errors = [str(exc)]
         status = "invalid" if errors else "defined"
+        # PERF: defined agents are never ``running`` — in the running-only
+        # default view they are all hidden, so skip their account + movement
+        # enrichment (status is enough for the footer count).
+        deferred = running_only
         row: dict = {
             "name": name,
             "status": status,
@@ -404,11 +448,12 @@ def get_agent_list_data(
             "multiplexer": getattr(cfg, "runtime", None) if cfg else None,
             "started_at": "-",
             "host": "local",
+            "host_display": _host_display_for("local", display_host),
             "path": str(spec_path),
-            "a2a_port": _safe_port_for(name),
-            "account": _safe_account_for(cfg),
+            "a2a_port": port_claims.get(name),
+            "account": "" if deferred else _safe_account_for(cfg),
         }
-        row.update(_movement_fields(name))
+        row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
         if errors:
             row["validation_errors"] = errors
         if labels:
@@ -417,76 +462,14 @@ def get_agent_list_data(
     return results
 
 
-def _is_self_peer_marker(spec_path: "Path") -> bool:  # noqa: F821
-    """Return True iff ``spec_path`` is a self-peer registration marker.
-
-    ``agents/self/spec.yaml`` (see ``_listen/_self_peers.py``) is a
-    DELIBERATELY schema-incompatible file — it registers the running
-    listen's own runtime identity, not a launchable Agent, and its own
-    header says ``DO NOT add apiVersion or spec:``. Running the generic
-    Agent validator against it always reports it "invalid" (missing
-    apiVersion/kind/spec, unknown top-level fields) even though it is
-    working exactly as designed. Reuses the SAME predicate the listen
-    merge already uses to recognize this file, so there is one place
-    that knows what a self-peer marker looks like.
-
-    Tolerant: any read/parse failure returns False (falls through to
-    normal defined-agent handling) rather than raising — matches this
-    module's existing crash-tolerance convention.
-    """
-    # stx-allow: fallback (reason: classification hiccup must not hide or
-    # misclassify a spec; falling through to normal validation is safe)
-    try:
-        import yaml
-
-        from ..._listen._self_peers import is_self_peer_spec
-
-        blob = yaml.safe_load(spec_path.read_text())
-        return is_self_peer_spec(blob)
-    except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return False
-
-
-def _discover_defined_agents() -> "list[tuple[str, Path]]":  # noqa: F821
-    """Walk the user-scope (and project-scope, when in a git repo)
-    ``agents/`` tree and return ``(name, spec.yaml path)`` pairs for
-    every agent declared on disk. Tolerant of partial state — a
-    directory without a ``spec.yaml`` is skipped silently. Self-peer
-    registration markers (see :func:`_is_self_peer_marker`) are NOT
-    agents and are excluded here at the source, rather than surfacing
-    as a spuriously "invalid" agent downstream.
-    """
-    from pathlib import Path as _Path
-
-    pairs: list[tuple[str, _Path]] = []
-    seen: set[str] = set()
-
-    roots: list[_Path] = []
-    # stx-allow: fallback (project-scope is optional; absent → skip)
-    try:
-        from scitex_config._ecosystem import local_state as _ls
-
-        project = _ls.find_project_scope("agent-container")
-        if project is not None:
-            roots.append(project / "agents")
-    except Exception:
-        pass
-    roots.append(_Path.home() / ".scitex" / "agent-container" / "agents")
-
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            if not child.is_dir() or child.name in seen:
-                continue
-            spec = child / "spec.yaml"
-            if not spec.is_file():
-                continue
-            if _is_self_peer_marker(spec):
-                continue
-            pairs.append((child.name, spec))
-            seen.add(child.name)
-    return pairs
+# Defined-on-disk discovery lives in the sibling ``_agent_list_discover``
+# module (512-line cap split). Re-imported so the bare-name call site
+# ``_discover_defined_agents()`` above and the test seams
+# ``_al._discover_defined_agents`` / ``_al._is_self_peer_marker`` resolve.
+from ._agent_list_discover import (  # noqa: E402,F401
+    _discover_defined_agents,
+    _is_self_peer_marker,
+)
 
 
 # Presentation layer lives in the sibling ``_agent_list_render`` module

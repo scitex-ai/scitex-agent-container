@@ -161,31 +161,42 @@ def _do_start_listen(
             f"Install with: pip install 'scitex-agent-container[listen]'"
         ) from exc
 
-    # Operator task #26 sub (1) — single-instance guard. A second
-    # ``sac listen`` while one already holds the port used to crash
-    # uvicorn with bare EADDRINUSE + a Python traceback (loud, but the
-    # operator had no diagnostic about which process held the port).
-    # The flock-backed pidfile guard FAILS LOUD with a structured
-    # message naming the holding PID + lock file path so
-    # ``kill <pid>`` is actionable without ``lsof``. The flock is
-    # kernel-released on process exit (even SIGKILL) so a crashed
-    # listen never permanently jams the port. Acquired BEFORE the
-    # comms_nodes / startup-sync hooks so a duplicate launch never
-    # touches the federated registry — a conflicting second start
-    # exits cleanly with no side effects.
+    # Hot-standby + failover (card ``sac-listen-hot-standby-no-crashloop``).
+    # The flock-backed pidfile guard (operator task #26 sub (1)) remains
+    # the ATOMIC bind arbiter — at most one process holds it, so two
+    # instances can never both bind. But a second ``sac listen`` launched
+    # while one already holds the port used to turn that contention into
+    # ``ListenAlreadyRunningError`` → ``click.ClickException`` → exit 1,
+    # which under the unit's ``Restart=always`` was an INFINITE
+    # CRASH-LOOP (NRestarts 11→34+, ~4s CPU/cycle, wedged the systemd
+    # user manager). ``resolve_startup`` fixes the root cause: on
+    # contention it does NOT exit — it STANDS BY as a warm spare
+    # (health-checking the holder) and FAILS OVER the instant the holder
+    # dies or wedges. Runs BEFORE the comms_nodes / startup-sync hooks so
+    # a standing-by duplicate never touches the federated registry. The
+    # signal guard makes a SIGTERM during standby a prompt CLEAN exit
+    # (``systemctl stop`` works) and restores the prior handlers on exit
+    # so uvicorn installs its own graceful-shutdown handlers below.
     from .._listen._single_instance import (
-        ListenAlreadyRunningError,
-        acquire_listen_lock,
         default_lock_dir,
         release_listen_lock,
     )
+    from .._listen._standby import resolve_startup, standby_signal_guard
 
     lock_dir = default_lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        lock_handle = acquire_listen_lock(port=port, lock_dir=lock_dir)
-    except ListenAlreadyRunningError as exc:
-        raise click.ClickException(str(exc)) from exc
+    with standby_signal_guard():
+        lock_handle = resolve_startup(host=host, port=port, lock_dir=lock_dir)
+    if lock_handle is None:
+        # A stop signal (``systemctl stop`` / Ctrl-C) arrived while
+        # standing by. We never acquired the lock — nothing to release;
+        # exit cleanly without binding.
+        click.echo(
+            "# sac listen: received shutdown signal while standing by "
+            "— exiting without binding",
+            err=True,
+        )
+        return
 
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)

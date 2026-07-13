@@ -35,8 +35,14 @@
 #   sac agents stop <name>                    # graceful: SDK quit-turn then SIGTERM
 #   sac agents stop a b c                     # multiple in parallel
 #   sac agents stop <name> --force            # tolerate stale state files
-#   sac agents stop --all                     # every registered, running agent
+#   sac agents stop --all-running -y          # the LIVE fleet (incident panic button)
+#   sac agents stop --all-registry -y         # EVERY registered agent, stopped ones too
+#   sac agents stop --all -y                  # back-compat alias for --all-registry
+#   sac agents stop --all-running --dry-run   # preview the blast radius (no -y needed)
 #   sac agents delete <name> -y               # remove registry entry + state dir
+#
+# The selection flags are the SAME three `sac agents restart` takes, with the
+# same semantics and the same -y gate — the two fleet verbs share one surface.
 #
 # Three-stage shutdown sequence sac follows:
 #   1. POST a "quit" turn to the SDK so any in-flight tool call has a
@@ -59,7 +65,9 @@ echo '  # → quit-turn sent; instance stopped; state files cleaned'
 echo
 echo "── (B) Stop all (panic button) ──"
 echo '$ apptainer instance stop --all'
-echo '$ sac agents stop --all'
+echo '$ sac agents stop --all-running --dry-run   # preview: what WOULD go down'
+echo '$ sac agents stop --all-running -y          # commit: down the live fleet'
+echo '  # → a deliberately-stopped agent stays stopped; --all-registry takes those too'
 
 echo
 echo "── (C) Force-stop a wedged agent ──"
