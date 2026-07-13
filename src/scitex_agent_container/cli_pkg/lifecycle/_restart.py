@@ -179,25 +179,25 @@ def _enumerate_fleet() -> list[str]:
 
 
 def _enumerate_running() -> list[str]:
-    """Return only the agents that are currently RUNNING (the ``--all-running`` set).
+    """Return the agents that are currently LIVE (the ``--all-running`` set).
 
     Reuses the SAME data function — and therefore the SAME liveness — the
-    ``list`` / ``status`` commands use
-    (:func:`cli_pkg._helpers.get_agent_list_data`), keeping only rows whose
-    ``status`` probe read ``"running"`` (identity-based liveness: the
-    session exists AND its pane process is alive — see
-    ``_agent_list._probe_local``). Rows that are ``stopped`` / ``unknown`` /
-    ``defined`` / ``invalid`` are excluded, so a plain ``restart --all-running``
-    never wakes an agent the operator had deliberately stopped. No separate
-    liveness rule is invented here. Order-preserving de-dup by name.
+    ``list`` / ``status`` commands use (:func:`cli_pkg._helpers.get_agent_list_data`).
+    ``stopped`` / ``unknown`` / ``defined`` / ``invalid`` rows are excluded, so
+    ``restart --all-running`` never wakes an agent deliberately stopped.
+
+    LIVE is ``is_live_status``, NOT ``== "running"``: an ``auth-failed`` agent is
+    up but cannot call the API, and a RESTART cures its common cause (a token
+    revoked by a sibling's OAuth refresh). Matching ``"running"`` alone would
+    skip exactly the agents that most need restarting.
     """
-    from .._helpers import get_agent_list_data
+    from .._helpers import get_agent_list_data, is_live_status
     from ..._state.registry import Registry
 
     seen: set[str] = set()
     names: list[str] = []
     for row in get_agent_list_data(Registry()):
-        if row.get("status") != "running":
+        if not is_live_status(row.get("status")):
             continue
         name = row.get("name")
         if name and name not in seen:
