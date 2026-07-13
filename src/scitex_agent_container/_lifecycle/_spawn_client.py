@@ -396,7 +396,11 @@ def request_spawn(
         # never gets misreported as 'cannot reach / timed out'.
         logger.warning("spawn_client: POST %s transport error: %s", url, exc)
         raise SpawnRequestError(
-            f"spawn of {child_name!r} failed: cannot reach listen at {base!r} ({exc})"
+            f"spawn of {child_name!r} failed: cannot reach listen at {base!r} "
+            f"({exc}) — the host listen broker is unreachable; it may be "
+            f"flapping. Restart it on the host with `sac listen restart` (an "
+            f"atomic stop-clean-relaunch) and retry; escalate to the operator "
+            f"only if it stays down."
         ) from exc
 
     parsed = _parse_body(raw)

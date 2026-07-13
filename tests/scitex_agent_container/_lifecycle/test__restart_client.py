@@ -338,6 +338,22 @@ def test_transport_error_keeps_status_none(listen_env) -> None:
     assert captured_status is None
 
 
+def test_transport_error_message_carries_broker_hint(listen_env) -> None:
+    # Arrange — listen unreachable (connection refused etc.).
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener = _opener_raising(urlerror.URLError("connection refused"))
+    message = ""
+    # Act
+    try:
+        request_restart("peer", opener=opener)
+    except RestartRequestError as exc:
+        message = str(exc)
+    # Assert — the enriched message keeps the original 'cannot reach listen'
+    # detail AND appends the cause+fix hint naming `sac listen restart`, so a
+    # broker-down restart is a dead-end no longer.
+    assert "cannot reach listen" in message and "sac listen restart" in message
+
+
 def test_non_dict_2xx_body_raises_restart_request_error(listen_env) -> None:
     # Arrange — server returns a JSON array instead of an object.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
