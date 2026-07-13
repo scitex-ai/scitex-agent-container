@@ -198,6 +198,18 @@ class TmuxManager:
         return _sa(session_name)
 
     @staticmethod
+    def list_sessions_activity() -> dict[str, int] | None:
+        """``{session_name: activity_epoch}`` for EVERY session, in ONE
+        probe — the batched, O(1)-subprocess replacement for calling
+        :meth:`exists` + :meth:`session_activity` per agent (which costs 3
+        ``tmux`` spawns each). ``None`` means the probe FAILED (liveness
+        UNKNOWN — never read it as "no sessions exist"). See
+        :func:`_tmux_probe.list_sessions_activity`."""
+        from ._tmux_probe import list_sessions_activity as _lsa
+
+        return _lsa()
+
+    @staticmethod
     def pane_pid(session_name: str) -> int | None:
         """PID of the process in the session's active pane (identity
         liveness signal), or ``None`` when absent. See

@@ -39,53 +39,12 @@ There are **two** implementations. Do not confuse them.
 | Corroboration | frozen **whole-pane SHA-1 signature** across two runs | frozen **(banner-kind, distance-from-prompt)** across two runs + near-prompt gating |
 | Status | **this is what protects the fleet today** | hardened check + intended future replacement |
 
-## The verdict is PERSISTED — that is what makes `sac agents list` honest
-
-`sac agents auth-status` is not only a report; it **writes**. Every verdict it
-reaches is UPSERTed into the `agent_auth_state` table in `state.db`
-(`_state/auth_state.py`), and `sac agents list` **reads that cache** — it never
-probes auth inline, because detection costs two pane captures seconds apart per
-agent and would undo PR #635's latency work. A failing agent therefore shows in
-the fleet view as its own status, `auth-failed`, instead of a reassuring green
-`running`. **So run `auth-status` on a timer: the freshness of that table is
-exactly the freshness of the fleet view's auth column.**
-
-Three properties keep the cache from lying:
-
-- **Only observed agents are written.** An agent whose pane could not be
-  captured produced no evidence; recording "fine" for it would manufacture the
-  false green this whole system exists to abolish.
-- **Verdicts age.** Each row carries `checked_at`; the list marks anything older
-  than 15 min STALE and says so, rather than presenting it as current truth. If
-  nothing has refreshed the table at all, the list says *that* too — green then
-  means only "tmux is up".
-- **A restart invalidates the past.** A verdict older than the agent's current
-  `started_at` describes a dead incarnation and is discarded, so a just-restarted
-  agent is not still branded broken.
-
-### Say what is VERIFIABLE: `auth-failed`, not "login expired"
-
-Claude Code renders **every** 401 as `Login expired · Please run /login`. On this
-fleet that text is usually **false**, and believing it is why the bug survived
-weeks. The mechanism (proven 2026-07-13, four agents lost at once — accounts were
-valid for another +4h56m..+7h28m and quota was at 14%): a sibling process ran an
-OAuth refresh, consumed the **single-use** `refresh_token`, rotated the access
-token, and thereby **REVOKED** the token every other process still held. Nothing
-expired. sac's own restart pre-flight was one such refresher (fixed in PR #642).
-
-So the status asserts only what the pane proves — *this agent cannot call the
-API* — and the CAUSE is diagnosed separately from `claudeAiOauth.expiresAt`
-(`_account/auth_failure_reason.py`):
-
-| `expiresAt` | reason | what actually fixes it |
-|---|---|---|
-| in the **future** — the on-disk credential is VALID, yet the agent 401s ⇒ its in-memory token was rotated away | `revoked` | **restart** (it re-reads the good file; Claude Code never re-reads it by itself) |
-| in the **past** — nothing on disk can authenticate | `expired` | **login** (new credentials must be minted) |
-| unreadable / no numeric `expiresAt` | `unknown` | restart first — cheap, safe, and cures the common case |
-
-That distinction is the payoff: it separates a 5-second automated restart from
-waking the operator for a re-login. The banner cannot tell you which; `expiresAt`
-can.
+The package matcher does not only report — it **writes**. Its verdict is
+persisted, and `sac agents list` reads that cache, which is what lets the fleet
+view show `auth-failed` instead of a reassuring green `running`. That contract
+(what gets written, how a verdict ages, and why the status says `auth-failed`
+rather than repeating Claude's misleading *"Login expired"*) is in
+[46_agents-list-auth-cache.md](46_agents-list-auth-cache.md).
 
 **They are not wired together yet.** The near-prompt / distance heuristic
 (§5, in [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md)) lives **only** in the package matcher; the LIVE cron watchdog still

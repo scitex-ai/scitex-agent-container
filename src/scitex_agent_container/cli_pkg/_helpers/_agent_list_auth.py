@@ -64,10 +64,10 @@ STATUS_AUTH_FAILED = "auth-failed"
 #   * ``_agent_list_render`` — the DEFAULT view shows only live rows. An
 #     auth-failed row filtered out as "not running" would HIDE the one status the
 #     operator asked to be shown: an absurd own-goal.
-#   * ``lifecycle._restart._enumerate_running`` — ``restart --all-running``
-#     sweeps the live set. A restart is the cure for the common (revoked)
-#     failure, so dropping auth-failed rows would skip exactly the agents that
-#     most need restarting.
+#   * ``lifecycle._selection._enumerate_running`` — the live set swept by BOTH
+#     ``restart --all-running`` and ``stop --all-running``. A restart is the cure
+#     for the common (revoked) failure, so dropping auth-failed rows would skip
+#     exactly the agents that most need restarting.
 #
 # One definition, imported by both, so those rules cannot drift apart.
 LIVE_STATUSES: tuple[str, ...] = ("running", STATUS_AUTH_FAILED)

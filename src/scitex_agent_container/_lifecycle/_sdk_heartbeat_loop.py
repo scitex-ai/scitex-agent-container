@@ -31,6 +31,16 @@ Sibling of :func:`_tui_heartbeat_loop.tui_heartbeat_loop`: same
 create-task → tick → honour-cancellation contract, same per-agent /
 per-tick best-effort resilience, same injection seams so tests drive the
 loop deterministically without a real runtime / registry / state-dir IO.
+
+SCALING + THE UNKNOWN-IS-NOT-DEAD RULE (shared with the TUI loop): the
+per-agent probes run CONCURRENTLY on a bounded pool, each individually
+bounded, so one wedged probe degrades to UNKNOWN for that agent instead
+of holding the tick until it blows its budget and gets ABANDONED. An
+abandoned tick wrote NO beats at all, which let live agents go stale and
+read as "stopped" — and ``agent_send`` then refused to deliver to them.
+This loop only ever WRITES fresh beats: it never records a "dead" verdict
+and never erases an existing beat, so a failed probe or a dropped tick
+leaves the last-known-good heartbeat intact.
 """
 
 from __future__ import annotations
@@ -38,7 +48,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FuturesTimeout
 from pathlib import Path
 from typing import Any, Callable
 
@@ -48,6 +61,17 @@ logger = logging.getLogger(__name__)
 # every ~30s keeps ``heartbeat_at`` comfortably fresh inside that window.
 # Override via ``SAC_SDK_HEARTBEAT_INTERVAL_S`` at the wiring site.
 DEFAULT_SDK_HEARTBEAT_INTERVAL_S = 30.0
+
+# Probe fan-out. Mirrors ``get_agent_list_data``'s bounded pool: enough
+# concurrency that dozens of agents finish in a fraction of the tick
+# budget, small enough to stay well clear of the process/fd walls a wide
+# fan-out hits on a loaded host.
+DEFAULT_MAX_PARALLEL_PROBES = 8
+
+# Per-probe ceiling. A healthy SDK liveness probe is a pidfile read plus
+# ``os.kill(pid, 0)`` — sub-millisecond. This only fires on a genuinely
+# stalled FS read, and yields UNKNOWN (no beat), never "dead".
+DEFAULT_PROBE_TIMEOUT_S = 2.0
 
 # Runtimes handled by the TUI loop, NOT here (avoid double-beating a TUI
 # agent — the TUI loop stamps the pane-activity epoch, this loop would
@@ -174,6 +198,9 @@ async def sdk_heartbeat_loop(
     agent_lister: Any = None,
     is_running_fn: Any = None,
     write_fn: Any = None,
+    max_parallel_probes: int = DEFAULT_MAX_PARALLEL_PROBES,
+    probe_timeout_s: float = DEFAULT_PROBE_TIMEOUT_S,
+    tick_timeout_s: float | None = None,
 ) -> None:
     """Long-running SDK/claude-session heartbeat-writer task for the
     listen lifespan.
@@ -182,6 +209,18 @@ async def sdk_heartbeat_loop(
     :func:`list_sdk_agents`; ``is_running_fn`` → :func:`_default_is_running`
     (declared-runtime probe); ``write_fn`` →
     :func:`_runners._session_state.write_heartbeat`.
+
+    Probes run CONCURRENTLY on a bounded pool (``max_parallel_probes``,
+    each capped at ``probe_timeout_s``), mirroring
+    :func:`cli_pkg._helpers._agent_list.get_agent_list_data`. Serially, one
+    wedged probe (a stalled pidfile read on a loaded host) held the whole
+    tick until it blew its budget and got ABANDONED — writing no beats at
+    all, which is what let live agents go stale and read as "stopped".
+
+    ``tick_timeout_s`` is the ``off_loop`` budget for ONE tick (default
+    ``max(interval_s, 15.0)``). Exceeding it ABANDONS that tick — SAFE by
+    construction: an abandoned tick writes nothing, so the previous
+    heartbeats survive as last-known-good (UNKNOWN, never dead).
     """
     if os.environ.get("SAC_SDK_HEARTBEAT_DISABLED", "") == "1":
         logger.info("sdk_heartbeat_loop: disabled via SAC_SDK_HEARTBEAT_DISABLED")
@@ -199,11 +238,73 @@ async def sdk_heartbeat_loop(
     if write_fn is None:
         from .._runners._session_state import write_heartbeat as write_fn
 
-    def _tick_body() -> None:
-        for agent in list(lister()):
-            _beat_one(agent, is_running_fn=probe, write_fn=write_fn)
+    # OVERLAP GUARD — see the twin comment in ``tui_heartbeat_loop``. An
+    # abandoned tick's thread is never joined, so without this the loop
+    # would stack a fresh probe thread on top of every slow one, saturating
+    # the SHARED default executor that agent_restart / host_exec depend on.
+    tick_lock = threading.Lock()
 
-    logger.info("sdk_heartbeat_loop: starting (interval_s=%.1f)", interval_s)
+    def _tick_body() -> None:
+        if not tick_lock.acquire(blocking=False):
+            logger.warning(
+                "sdk_heartbeat_loop: previous tick still in flight — SKIPPING "
+                "this one (not stacking a second probe thread). Liveness data "
+                "from the last good tick is retained (UNKNOWN, not dead)."
+            )
+            return
+        try:
+            agents = list(lister())
+            if not agents:
+                return
+            # Probe every agent CONCURRENTLY, each bounded. A probe that
+            # times out yields UNKNOWN — we simply write no beat for it,
+            # leaving its previous heartbeat as last-known-good. We never
+            # write a "dead" verdict, so a slow probe can never flip a live
+            # agent to dead.
+            pool = ThreadPoolExecutor(max_workers=max(1, int(max_parallel_probes)))
+            try:
+                future_to_agent = {
+                    pool.submit(probe, agent.get("config")): agent for agent in agents
+                }
+                for future, agent in future_to_agent.items():
+                    try:
+                        alive = future.result(timeout=probe_timeout_s)
+                    except _FuturesTimeout:  # stx-allow: fallback (a wedged probe is UNKNOWN liveness — no beat, previous heartbeat retained; never "dead")
+                        future.cancel()
+                        logger.debug(
+                            "sdk_heartbeat: probe for %r timed out (liveness "
+                            "UNKNOWN; previous heartbeat retained)",
+                            agent.get("name", ""),
+                        )
+                        continue
+                    except Exception as exc:  # stx-allow: fallback (per-agent probe failure is UNKNOWN, not dead — logged, skipped)
+                        logger.debug(
+                            "sdk_heartbeat: probe for %r failed (skipped): %s",
+                            agent.get("name", ""),
+                            exc,
+                        )
+                        continue
+                    if alive:
+                        _beat_one(
+                            agent,
+                            is_running_fn=lambda _cfg: True,
+                            write_fn=write_fn,
+                        )
+            finally:
+                # shutdown(wait=False): never join a wedged probe thread —
+                # that would defeat the per-probe timeout above.
+                pool.shutdown(wait=False)
+        finally:
+            tick_lock.release()
+
+    budget_s = (
+        float(tick_timeout_s) if tick_timeout_s is not None else max(interval_s, 15.0)
+    )
+    logger.info(
+        "sdk_heartbeat_loop: starting (interval_s=%.1f tick_timeout_s=%.1f)",
+        interval_s,
+        budget_s,
+    )
     try:
         while True:
             try:
@@ -211,7 +312,7 @@ async def sdk_heartbeat_loop(
                     _tick_body,
                     default=None,
                     op="sdk_heartbeat_loop tick (runtime probes)",
-                    timeout_s=max(interval_s, 15.0),
+                    timeout_s=budget_s,
                 )
             except asyncio.CancelledError:
                 raise
@@ -226,6 +327,8 @@ async def sdk_heartbeat_loop(
 
 
 __all__ = [
+    "DEFAULT_MAX_PARALLEL_PROBES",
+    "DEFAULT_PROBE_TIMEOUT_S",
     "DEFAULT_SDK_HEARTBEAT_INTERVAL_S",
     "list_sdk_agents",
     "sdk_heartbeat_loop",
