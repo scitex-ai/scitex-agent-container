@@ -6,7 +6,72 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.21.15] — 2026-07-14
+## [0.21.16] — 2026-07-14
+
+**⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and
+that is deliberate.** It shipped #658 (the shared-executor fix) *with a hole*:
+#658 did not introduce the cancellation race below, but it **widened the window
+enormously**, so 0.21.15 would have traded a thread leak for a `sac listen` that
+cannot be stopped. It was held back rather than published. **Install 0.21.16.**
+
+### Fixed
+
+- **`sac listen` could ignore `stop` and `restart` entirely, and never shut down
+  (#663).** On **Python 3.11 — the version the fleet runs** — `asyncio.wait_for`
+  **silently swallows a cancellation** when the inner future resolves in the same
+  instant:
+
+  ```python
+  except exceptions.CancelledError:
+      if fut.done():
+          return fut.result()      # the cancellation is dropped on the floor
+  ```
+
+  Every background loop is `while True: await run_blocking_or(...)`, so one
+  swallowed cancel and **the loop ticks forever**: `task.cancel()` returns,
+  `await task` never does, and the daemon does not die on SIGTERM. `agents stop`
+  and `agents restart` leave it running; a "cancelled" task is still probing.
+  3.12 rebuilt `wait_for` on `asyncio.timeouts` and has no such branch.
+
+  Measured over 120 cancellations of a 20 Hz loop:
+
+  | dispatch | 3.11.15 | 3.12.3 |
+  |---|---|---|
+  | `asyncio.wait_for` | **13 swallowed** | 0 |
+  | bare `await` (the fix) | 0 | 0 |
+
+  Fix: bare `await future` + a `loop.call_later` deadline. No `wait_for`, no
+  swallow branch, on any version. (`asyncio.timeout()` would also work but is
+  3.11+, and `requires-python` is `>=3.10`.) The regression test was confirmed to
+  **fail against the old dispatch** — a test that has never failed proves nothing.
+
+- **A live agent's registry row was buried 64 seconds after it started (#644).**
+  A freshly booted agent has not written a heartbeat yet, and the reaper read
+  *no heartbeat* as *dead* and ended its row — after which `agent_send` refused to
+  deliver to a demonstrably live agent. Measured: `paper-scitex-clew` started
+  18:21:20, row ended 18:22:24, agent alive with a real pid and a real port.
+  **Absence of evidence is not evidence of death.** Liveness now yields UNKNOWN
+  where it cannot measure, and only an *observed* absence may end a row.
+
+- **Tests raced real servers against arbitrary 5-second deadlines (#661).** The
+  loopback server wasn't dead — it was **slow** (`server.started` measured at
+  7.49s, because the listen lifespan does a filesystem walk plus SQLite upserts
+  before reporting ready). The old wait also **swallowed the server's startup
+  exception**, burned its ceiling, and then blamed a timeout — so a *crashed*
+  server and a *slow* one produced the identical error. The idiom was copy-pasted
+  into **eight** places. Replaced with a shared helper that polls the real ready
+  state and distinguishes slow from dead. Verified under 14-way CPU
+  oversubscription: 6 failed → 10 passed.
+
+- **The CI leftover-reap could SIGTERM its own sibling matrix legs (#662).** The
+  reap is legitimate (leaked `sac` processes hold a2a ports until the allocator
+  starves), but it justified itself with *"runs here are serialised (one job at a
+  time)"* — true when there was **one** runner, and silently false once `-02` and
+  `-03` were registered onto the same node. Now scoped by **age**, so the word the
+  comment always used — *leftover* — lives in the mechanism instead of in an
+  assumption the world can quietly invalidate.
+
+## [0.21.15] — 2026-07-14 *(tagged, never published — see 0.21.16)*
 
 Honesty release. Every fix here is the same bug wearing a different face:
 **something reported a state it had not observed.** The headline (#658) is
