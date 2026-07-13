@@ -490,30 +490,6 @@ class TestSkillsSpec:
         finally:
             Path(path).unlink()
 
-    @pytest.mark.skip(
-        reason="v3-realign: spec.skills was removed (skills now live "
-        "under to_home/.claude/skills/ per §3)."
-    )
-    def test_skills_from_yaml_loads_required(self):
-        # Arrange
-        pass
-        # Act
-        pass
-        # Assert
-        pass
-
-    @pytest.mark.skip(
-        reason="v3-realign: spec.skills was removed (skills now live "
-        "under to_home/.claude/skills/ per §3)."
-    )
-    def test_skills_partial_required_only_set(self):
-        # Arrange
-        pass
-        # Act
-        pass
-        # Assert
-        pass
-
 
 @pytest.fixture
 def claude_md_setup_tmpdir():
@@ -764,26 +740,7 @@ class TestCleanupClaudeMd:
 # ``TestAgentConfigRemote`` / ``TestLoginShellDefault`` /
 # ``test_remote_from_yaml_loads_host`` blocks were removed wholesale —
 # they exercised behaviour that no longer exists. Cross-host placement
-# is via ``spec.host`` (see ``HostsSpec`` tests below).
-
-
-@pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
-def test_remote_full_spec_loads_port():
-    """Remote spec with all fields specified (legacy)."""
-    # Arrange
-    pass
-    # Act
-    pass
-    # Assert
-    pass
-
-
-@pytest.mark.skip(reason="v3-realign: spec.remote was removed (§2).")
-def test_login_shell_from_yaml_can_be_false():
-    """login_shell can be set to False in YAML (legacy)."""
-    # Arrange
-    pass
-    # Act
-    pass
-    # Assert
-    pass
+# is via ``spec.host`` (see ``HostsSpec`` tests below). The legacy
+# ``test_remote_full_spec_loads_port`` / ``test_login_shell_from_yaml_can_be_false``
+# skipped stubs were removed too (2026-07-13) — perpetually-skipped
+# placeholders for removed spec.remote fields, flagged by STX-TQ001.
