@@ -241,7 +241,13 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
                 f"duplicate session '{name}' — agent already running. "
                 f"Attach: `sac agents attach {config.name}` "
                 f"(or `tmux attach -t {name}`). "
-                f"Relaunch: `sac agents restart {config.name}`.",
+                # NOT `sac agents restart` — when this guard fires DURING a
+                # restart (the old session survived SIGTERM), that is the very
+                # command that just failed, so recommending it loops the
+                # operator back into the failure. Give the remedy that
+                # actually works: kill the stale session, then start fresh.
+                f"Force-relaunch: `tmux kill-session -t {name}` then "
+                f"`sac agents start {config.name} -y --fresh`.",
                 style="red",
             )
             if not dry_run:

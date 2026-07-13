@@ -2,6 +2,15 @@
 # -*- coding: utf-8 -*-
 """``sac agents stop`` — stop one or more running agents.
 
+Bulk selection: ``--all-running`` (the live fleet — the incident panic
+button), ``--all-registry`` (every registered agent) and ``--all`` (a
+back-compat alias for ``--all-registry``). The flags, their semantics and
+their mutual-exclusion rules are SHARED with ``sac agents restart`` via
+:mod:`._selection`, so the two destructive fleet verbs cannot drift apart
+(before this, ``stop`` had no bulk selection at all and an operator trying
+to bring the fleet down during an incident hit ``Error: No such option:
+--all``). ``--dry-run`` composes with all three and needs no ``-y``.
+
 Cross-host dispatch: when an agent's active ``state.db.instances`` row
 records ``host != current_host``, ``stop`` ssh's into the peer and runs
 ``sac agents stop <name> --json`` there, then updates the lead-side row
@@ -36,6 +45,12 @@ from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
+from ._selection import (
+    _enumerate_fleet,
+    _enumerate_running,
+    bulk_selection_options,
+    resolve_selection,
+)
 
 # Stable exit_reason marker for the release-on-unreachable path so a
 # follow-up audit can grep state.db for stale-binding releases and
@@ -159,11 +174,13 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
 @click.command()
 @click.argument(
     "targets",
+    metavar="TARGETS...",
     type=str,
     nargs=-1,
-    required=True,
+    required=False,
     shell_complete=agent_name_complete,
 )
+@bulk_selection_options("stop", noun="TARGET")
 @click.option(
     "--force",
     "force",
@@ -198,6 +215,9 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
 )
 def stop(
     targets: tuple[str, ...],
+    all_running: bool,
+    all_registry: bool,
+    all_alias: bool,
     force: bool,
     dry_run: bool,
     yes: bool,
@@ -207,26 +227,72 @@ def stop(
 
     Each TARGET is an agent name, a YAML path, or a directory containing
     ``<name>/<name>.yaml`` agent layouts. Multiple targets may be given.
+    Instead of naming targets, pass a selection flag:
+
+    \b
+      --all-running   stop ONLY currently-running agents (the live fleet)
+      --all-registry  stop EVERY registered agent (INCLUDING stopped)
+      --all           backward-compat alias for --all-registry
+
+    The flags mirror ``sac agents restart`` exactly: mutually exclusive with
+    each other and with explicit TARGETs, and still gated on ``-y/--yes``.
+    ``--all-running`` is the incident panic button — it never touches an
+    agent that was already deliberately stopped. Agents are stopped
+    independently: one failing does not abort the rest, and the command
+    exits non-zero if ANY stop failed.
 
     \b
     Example:
-      $ sac agent stop foo
-      $ sac agent stop foo bar baz
-      $ sac agent stop ~/.scitex/agent-container/agents/   # whole dir = bulk
-      $ sac agent stop foo --dry-run
-      $ sac agent stop foo --json
+      $ sac agents stop foo
+      $ sac agents stop foo bar baz
+      $ sac agents stop ~/.scitex/agent-container/agents/   # whole dir = bulk
+      $ sac agents stop --all-running --dry-run   # preview the blast radius
+      $ sac agents stop --all-running -y          # down the live fleet
+      $ sac agents stop --all-registry -y --force # + tolerate stale state
+      $ sac agents stop foo --json
     """
+    # Selection semantics (flag names, mutual exclusion, enumeration) are
+    # SHARED with ``sac agents restart`` — see ``_selection.resolve_selection``.
+    # The enumerators are passed in so this module keeps its own swappable
+    # seam. A bare ``sac agents stop`` (no TARGETs, no flag) raises a
+    # UsageError here rather than silently stopping the fleet.
+    resolved, batch_mode = resolve_selection(
+        targets,
+        all_running=all_running,
+        all_registry=all_registry,
+        all_alias=all_alias,
+        enumerate_running=_enumerate_running,
+        enumerate_fleet=_enumerate_fleet,
+        noun="TARGET",
+        metavar="TARGETS...",
+    )
+    if batch_mode and not resolved:
+        # A selection flag that matched nothing is not an error. Under
+        # --json this emits zero envelopes: stop's JSON contract is ONE
+        # object per target (not an array — ``_dispatch_remote_stop``
+        # parses a single object from a peer's stdout), so zero targets
+        # correctly yields zero objects.
+        if not as_json:
+            console.print("[dim]No agents found to stop.[/dim]")
+        return
+
     # Classify targets: directory targets expand to all <name>/<name>.yaml
     # under them; non-directory targets are agent names or YAML paths.
+    # Batch-selected names come from the registry and are never paths, so
+    # they skip the probe — a cwd directory that happens to share an agent's
+    # name must not hijack a fleet selection.
     single_targets: list[str] = []
     bulk_yamls_from_dirs: list[str] = []
-    for t in targets:
-        p = Path(t).expanduser()
-        if p.is_dir():
-            for _name, yp in _iter_agent_yamls(p):
-                bulk_yamls_from_dirs.append(yp)
-        else:
-            single_targets.append(t)
+    if batch_mode:
+        single_targets = list(resolved)
+    else:
+        for t in resolved:
+            p = Path(t).expanduser()
+            if p.is_dir():
+                for _name, yp in _iter_agent_yamls(p):
+                    bulk_yamls_from_dirs.append(yp)
+            else:
+                single_targets.append(t)
 
     if dry_run:
         for t in single_targets:
@@ -234,6 +300,20 @@ def stop(
         for yp in bulk_yamls_from_dirs:
             click.echo(f"[dry-run] would stop agent at '{yp}'")
         return
+
+    # A fleet-wide selection flag is destructive: still require -y/--yes.
+    if batch_mode and not yes:
+        if len(single_targets) == 1:
+            click.echo(
+                f"Refusing to stop agent '{single_targets[0]}' without --yes/-y.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"Refusing to stop {len(single_targets)} agents without --yes/-y.",
+                err=True,
+            )
+        raise SystemExit(2)
 
     # Refuse bulk stop without --yes/-y when directory targets resolved to ≥2 yamls.
     if len(bulk_yamls_from_dirs) > 1 and not yes:

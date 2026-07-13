@@ -109,11 +109,24 @@ def _openai_column(tmp_path: Path):
 
 
 def _argv_env(argv: list[str]) -> dict[str, str]:
+    """The env the container RECEIVES: ``--env KEY=VAL`` pairs UNION every
+    ``--env-file``'s contents. The P1 secret-hardening fix
+    (``_apptainer_secret_env``) moves secret vars (e.g. OPENAI_API_KEY)
+    out of world-readable ``--env`` argv into a 0600 ``--env-file``, so a
+    delivery check must read both transports.
+    """
     out: dict[str, str] = {}
     for i, a in enumerate(argv):
         if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
             k, _, v = argv[i + 1].partition("=")
             out[k] = v
+        elif a == "--env-file" and i + 1 < len(argv):
+            path = Path(argv[i + 1])
+            if path.is_file():
+                for line in path.read_text().splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        k, _, v = line.partition("=")
+                        out[k] = v
     return out
 
 
