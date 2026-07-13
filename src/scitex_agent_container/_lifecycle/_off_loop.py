@@ -130,14 +130,15 @@ async def run_blocking(
     The call is dispatched to a DEDICATED daemon thread — never the event
     loop's shared default executor — so it neither occupies the loop
     thread nor competes for the pool that ``asyncio.to_thread`` callers
-    depend on. It is bounded by ``timeout_s`` via :func:`asyncio.wait_for`
-    and raises :class:`asyncio.TimeoutError` if the call does not finish
-    in time. The underlying thread is left to finish/abandon — we do NOT
-    join it, so a wedged child can never block the loop; because the
-    thread is private to this call, abandoning it starves nothing (see the
-    module docstring: doing this on the shared executor is what made a
-    wedged probe hang the whole process). Any exception ``fn`` raises
-    propagates unchanged.
+    depend on. It is bounded by ``timeout_s`` (a plain deadline timer, NOT
+    ``asyncio.wait_for`` — see the comment on the await below) and raises
+    :class:`asyncio.TimeoutError` if the call does not finish in time. The
+    underlying thread is left to finish/abandon — we do NOT join it, so a
+    wedged child can never block the loop; because the thread is private to
+    this call, abandoning it starves nothing (see the module docstring:
+    doing this on the shared executor is what made a wedged probe hang the
+    whole process). Any exception ``fn`` raises propagates unchanged, and
+    CANCELLATION IS ALWAYS HONOURED — a cancelled caller never keeps running.
     """
     loop = asyncio.get_running_loop()
     future: asyncio.Future[T] = loop.create_future()
@@ -149,14 +150,19 @@ async def run_blocking(
     abandoned = False
 
     def _deliver(result: Any, exc: BaseException | None) -> None:
-        # On the loop thread. If wait_for already timed out it cancelled the
-        # future and moved on — there is no awaiter left to deliver to.
+        # On the loop thread. If the deadline already fired (or the awaiter was
+        # cancelled) the future is done — there is nobody left to deliver to.
         if future.done():
             return
         if exc is not None:
             future.set_exception(exc)
         else:
             future.set_result(result)
+
+    def _on_deadline() -> None:
+        # On the loop thread, timeout_s after dispatch.
+        if not future.done():
+            future.set_exception(asyncio.TimeoutError())
 
     def _runner() -> None:
         nonlocal finished
@@ -181,16 +187,39 @@ async def run_blocking(
     threading.Thread(
         target=_runner, name=f"sac-off-loop-{op}", daemon=True
     ).start()
+    # A BARE `await future` + a plain deadline timer, NOT `asyncio.wait_for`.
+    # On Python <= 3.11 wait_for SWALLOWS an outer cancellation that lands in
+    # the same instant the inner future resolves:
+    #
+    #     except CancelledError:
+    #         if fut.done():
+    #             return fut.result()   # <- the cancellation is dropped
+    #
+    # A background loop cancelled at that instant therefore keeps ticking, and
+    # `await task` never returns — an infinite, 3.11-only hang (it is what wedged
+    # `test_loop_honours_cancellation_cleanly` and the sdk/tui heartbeat loop
+    # tests in CI). 3.12 rebuilt wait_for on `asyncio.timeouts` and has no such
+    # branch. Measured, 120 cancellations of a 20Hz poll loop:
+    #     3.11.15  wait_for -> 13 swallowed   asyncio.timeout/bare await -> 0
+    #     3.12.3   wait_for ->  0 swallowed   asyncio.timeout/bare await -> 0
+    # `asyncio.timeout()` would fix it too but is 3.11+, and this package still
+    # declares `requires-python = ">=3.10"`. A bare await has no swallow branch
+    # on ANY version: cancellation always propagates.
+    deadline = loop.call_later(timeout_s, _on_deadline)
     try:
-        return await asyncio.wait_for(future, timeout=timeout_s)
+        return await future
     except asyncio.TimeoutError:
         with state_lock:
+            # `finished` disambiguates OUR deadline from an `fn` that itself
+            # raised TimeoutError (that one is a real result, not an abandon).
             newly_abandoned = not finished
             if newly_abandoned:
                 abandoned = True
         if newly_abandoned:
             _mark_abandoned(op)
         raise
+    finally:
+        deadline.cancel()
 
 
 async def run_blocking_or(
