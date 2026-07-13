@@ -6,6 +6,90 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.15] — 2026-07-14
+
+Honesty release. Every fix here is the same bug wearing a different face:
+**something reported a state it had not observed.** The headline (#658) is
+the one that had been doing real damage for weeks while looking like
+"flaky CI".
+
+### Fixed
+- **The shared executor leaked threads until nothing could run (#658).**
+  `_off_loop.run_blocking` dispatched via `loop.run_in_executor(None, …)`
+  — the event loop's **shared default `ThreadPoolExecutor`**. A
+  `concurrent.futures` future that is *already running* **cannot be
+  cancelled**, so when the `wait_for` timed out the worker thread was
+  never stopped: it kept running the wedged call forever, still holding
+  its slot in the pool. Six background loops did this on every
+  overrunning tick.
+  The default pool is only `min(32, cpu_count + 4)` — **6–8 threads** on
+  a small host — and `asyncio.to_thread` uses **that same pool**. So once
+  enough slots were gone, *a task that needs a thread simply never runs*:
+  a trivial `to_thread(lambda: "ok")` never executed. That is why
+  `sac listen` answered `/health` in 0.18s while **every authenticated
+  route hung** (the fast path never touches the executor), why brokered
+  spawns stalled, and — on Python 3.11, which is what the fleet runs —
+  why `sac listen` **could not shut down at all**: pool workers are
+  non-daemon, `shutdown_default_executor()` has no timeout before 3.12,
+  and loop close joined an orphaned thread forever.
+  Fix: a dedicated **daemon** thread per call. An abandoned call now
+  leaks exactly one thread (you cannot kill a running thread in Python)
+  but **starves nothing**, and outside the pool it is never joined at
+  shutdown. Adds an `abandoned_call_count()` gauge, because a silent leak
+  is how this survived. `_off_loop.py` had **zero tests** — that is how it
+  shipped; the new starvation tests were confirmed to *fail* against the
+  old dispatch.
+  This one defect had been misread for weeks as "CI is slow", "the
+  runners are slow", and "cancelled means flaky". It also **ghosted the
+  v0.21.14 release** (the tag pushed; PyPI got nothing).
+- **`agent_send` declared every live peer "stopped" (#657).** In a
+  container `$HOME` is `/home/agent`, so the peer lookup resolved a
+  private, empty state DB and reported `not running` for agents that were
+  answering messages at that moment. It now brokers to the host `sac
+  listen` through the same door `agent_status` and `agent_spawn` already
+  use. Bare-host behaviour unchanged. An unreachable broker, an ACL deny,
+  or a 5xx now yields **UNKNOWN — never "stopped"**: failing to *ask*
+  is not evidence of death.
+- **`restart` reported a restart that never happened (#656).** The stop
+  leg warned "previous runtime still running … proceeding to start
+  anyway", walked into the duplicate-session collision it had just
+  predicted, and printed success over the survivor. It now escalates
+  SIGTERM → SIGKILL against the tmux **pane** pid (the launcher exits
+  immediately; killing it would look like a fix and do nothing) and
+  raises `StopEscalationError` rather than starting on top of a live
+  process.
+- **`listen` asserted a cause nobody measured (#656).** "the broker is
+  unreachable; it may be flapping" was emitted on any transport timeout —
+  while the daemon was up and serving. Both clients now probe the
+  unauthenticated `/v1/health` **before** naming a cause, and say which
+  case they actually observed. The word "flapping" appears nowhere in
+  that path: nothing on it can see a crash loop, so nothing on it may
+  claim one.
+- **A tmux-green agent could hide a dead token (#646).** `sac agents
+  list` now surfaces **auth-failed** as distinct from `running` — a live
+  session wrapper is not evidence the Claude inside it can make an API
+  call. `--all-running` reaches auth-failed agents for `stop` too, not
+  just `restart`.
+- **Tests read and wrote the live fleet registry (#641).** An isolation
+  fixture set `$HOME`, but the DB path is a module-level constant
+  computed at **import** time — an env override cannot redirect it. The
+  fixture only *looked* like isolation while the tests hit the real
+  registry. Both read-paths are now redirected.
+
+### Added
+- **`sac ports`** — read-only port-hygiene inventory. One command shows
+  every port sac uses with live status: the `sac listen` control-plane
+  port (default 7878, resolved from `listen.port`) with its pidfile, and
+  every a2a sidecar port CLAIM read in ONE `port_allocator.list_claims()`
+  query (the same one-shot API `sac agents list` uses). Liveness is a
+  bounded TCP-connect probe (`--timeout`, default 0.3s, run
+  concurrently) so the command can never hang. Flags **CONFLICT** (two
+  owners on one port) and **ORPHAN** (a claim with nothing listening),
+  and prints a reference map of the scitex/sac port-assignment scheme
+  (7878 · a2a range · the 3129X GUI/dashboard block). `--json` emits a
+  machine-readable envelope. Mutates nothing — no claim is created,
+  released, or changed.
+
 ## [0.21.14] — 2026-07-13
 
 Incident-response release. The headline fix (#642) closes a fleet-wide

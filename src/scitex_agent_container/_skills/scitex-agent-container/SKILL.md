@@ -46,8 +46,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [01_config-v3.md](01_config-v3.md) — v3 format; dir-as-SSoT
 - [02_multiplexer.md](02_multiplexer.md) — vestigial; lead-only tmux wrap
 - [03_auto-accept.md](03_auto-accept.md) — modular prompt handlers
-- [04_resource-management.md](04_resource-management.md) — resource management
-- [05_resource-heartbeat.md](05_resource-heartbeat.md) — resource heartbeat
+- [04_resource-management.md](04_resource-management.md)
+- [05_resource-heartbeat.md](05_resource-heartbeat.md)
 - [06_env-injection-ports.md](06_env-injection-ports.md) — four env-injection ports
 - [07_a2a-protocol.md](07_a2a-protocol.md) — native A2A protocol (`sac a2a serve`)
 - [07_a2a-protocol-extension-fields.md](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` AgentCard fields
@@ -77,10 +77,11 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Reference
 - [13_observability.md](13_observability.md) — `sac agents status` JSON contract
-- [42_tui-auth-watchdog.md](42_tui-auth-watchdog.md) — TUI auth-banner detection contract (§1–4)
-- [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md) — package matcher, auth-heal guards + extend-matcher runbook (§5–6)
-- [44_agent-to-agent-recovery.md](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
-- [45_agent-to-agent-recovery-tmux.md](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
+- [42](42_tui-auth-watchdog.md) — TUI auth-banner detection contract (§1–4)
+- [43](43_tui-auth-watchdog-maintenance.md) — package matcher, auth-heal guards + extend-matcher runbook (§5–6)
+- [44](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
+- [45](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
+- [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging

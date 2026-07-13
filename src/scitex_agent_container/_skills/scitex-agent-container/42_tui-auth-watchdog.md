@@ -35,9 +35,16 @@ There are **two** implementations. Do not confuse them.
 | | LIVE watchdog | PACKAGE matcher |
 |---|---|---|
 | File | `~/.scitex/agent-container/bin/tui_auth_detect.py` (dotfiles-tracked) | `src/scitex_agent_container/_runners/_tmux/auth_status.py` (merged PR #627) |
-| Consumed by | `auth-heal.py` **cron** — the actual running safety net | `sac agents auth-status` — **on-demand** CLI check |
+| Consumed by | `auth-heal.py` **cron** — the actual running safety net | `sac agents auth-status` — on-demand check **and the cache WRITER** |
 | Corroboration | frozen **whole-pane SHA-1 signature** across two runs | frozen **(banner-kind, distance-from-prompt)** across two runs + near-prompt gating |
-| Status | **this is what protects the fleet today** | hardened on-demand check + intended future replacement |
+| Status | **this is what protects the fleet today** | hardened check + intended future replacement |
+
+The package matcher does not only report — it **writes**. Its verdict is
+persisted, and `sac agents list` reads that cache, which is what lets the fleet
+view show `auth-failed` instead of a reassuring green `running`. That contract
+(what gets written, how a verdict ages, and why the status says `auth-failed`
+rather than repeating Claude's misleading *"Login expired"*) is in
+[46_agents-list-auth-cache.md](46_agents-list-auth-cache.md).
 
 **They are not wired together yet.** The near-prompt / distance heuristic
 (§5, in [43_tui-auth-watchdog-maintenance.md](43_tui-auth-watchdog-maintenance.md)) lives **only** in the package matcher; the LIVE cron watchdog still

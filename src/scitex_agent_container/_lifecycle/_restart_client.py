@@ -276,13 +276,35 @@ def request_restart(
         # A 401/403 is NOT routed here (HTTPError is caught above first),
         # so an authenticated-but-rejected request never gets misreported
         # as 'cannot reach / timed out'.
-        logger.warning("restart_client: POST %s transport error: %s", url, exc)
+        #
+        # MEASURE before naming the cause. This used to assert "the host
+        # listen broker is unreachable; it may be flapping" — a diagnosis
+        # nobody had measured, and (2026-07-14) a WRONG one: the daemon was
+        # answering an unauthenticated GET in 0.18s while this authenticated
+        # POST hung. Probe the cheap public path and let the EVIDENCE pick
+        # the message. See ._listen_probe.
+        from ._listen_probe import probe_listen_health, transport_failure_message
+
+        probe = probe_listen_health(base, opener=opener)
+        logger.warning(
+            "restart_client: POST %s transport error: %s (probe: listen "
+            "serving=%s status=%s in %.2fs)",
+            url,
+            exc,
+            probe.serving,
+            probe.status,
+            probe.elapsed_s,
+        )
         raise RestartRequestError(
-            f"restart of {name!r} failed: cannot reach listen at {base!r} "
-            f"({exc}) — the host listen broker is unreachable; it may be "
-            f"flapping. Restart it on the host with `sac listen restart` (an "
-            f"atomic stop-clean-relaunch) and retry; escalate to the operator "
-            f"only if it stays down."
+            transport_failure_message(
+                verb="restart",
+                name=name,
+                base=base,
+                route=f"POST /agents/{name}/restart",
+                exc=exc,
+                timeout_s=timeout_s,
+                probe=probe,
+            )
         ) from exc
 
     parsed = _parse_body(raw)

@@ -1,19 +1,23 @@
-"""`sac agents auth-status` command core — the pure `evaluate_agents` mapper
-plus command registration/help.
+"""`sac agents auth-status` — the pure `evaluate_agents` mapper, the PERSIST
+step, plus command registration/help.
 
-`evaluate_agents` turns each agent's two captured panes into an OK /
-LOGIN-REQUIRED verdict via the near-prompt + distance-frozen matcher. These
-tests use compact captured-pane fixtures (the matcher itself is exercised in
-depth in ``_runners/_tmux/test_auth_status.py``); here we confirm the
-command-level real-vs-prose separation and the wiring. No mocks: pure calls +
-a real Click invocation.
+`evaluate_agents` turns each agent's two captured panes into an OK / AUTH-FAILED
+verdict via the near-prompt + distance-frozen matcher (the matcher itself is
+exercised in depth in ``_runners/_tmux/test_auth_status.py``); here we confirm
+the command-level real-vs-prose separation, and the half that makes the whole
+feature work: this command is the WRITER, so its verdicts must actually land in
+state.db for ``sac agents list`` to read back.
+
+No mocks: pure calls, a real Click invocation, and a real state.db in ``tmp_path``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg._auth_status import evaluate_agents
+from scitex_agent_container.cli_pkg._auth_status import evaluate_agents, persist_verdicts
 from scitex_agent_container.cli_pkg.agent_group import agent_group
 
 # Wedged: banner directly above the prompt, identical on both reads → frozen.
@@ -22,13 +26,13 @@ _STUCK = "● Login expired · Please run /login\n────────\n❯\
 _OK = "  continuing the task now\n────────\n❯\n────────\n  ctx:1%\n"
 
 
-def test_evaluate_agents_flags_frozen_banner_as_login_required():
+def test_evaluate_agents_flags_frozen_banner_as_auth_failed():
     # Arrange
     captures = {"scitex-hpc": (_STUCK, _STUCK)}
     # Act
     row = evaluate_agents(captures)[0]
     # Assert
-    assert row["verdict"] == "login_required"
+    assert row["verdict"] == "auth_failed"
 
 
 def test_evaluate_agents_marks_clean_pane_ok():
@@ -74,3 +78,61 @@ def test_auth_status_help_renders_interval_option():
     result = runner.invoke(agent_group, ["auth-status", "--help"])
     # Assert
     assert result.exit_code == 0 and "--interval" in result.output
+
+
+# ---------------------------------------------------------------------------
+# persist_verdicts — the WRITE half: what `sac agents list` reads back
+# ---------------------------------------------------------------------------
+
+
+def test_persisted_failing_verdict_is_readable_by_the_list(tmp_path: Path):
+    # Arrange — the contract that makes the feature work: the watchdog writes,
+    # the list reads. A real sqlite file, a real row, no mocks.
+    from scitex_agent_container._state.auth_state import list_auth_states
+
+    db_path = tmp_path / "state.db"
+    rows = evaluate_agents({"scitex-hpc": (_STUCK, _STUCK)})
+    # Act
+    persist_verdicts(rows, db_path=db_path)
+    # Assert
+    assert list_auth_states(db_path=db_path)["scitex-hpc"]["auth_failed"] is True
+
+
+def test_persisted_healthy_verdict_is_readable_by_the_list(tmp_path: Path):
+    # Arrange
+    from scitex_agent_container._state.auth_state import list_auth_states
+
+    db_path = tmp_path / "state.db"
+    rows = evaluate_agents({"figrecipe": (_OK, _OK)})
+    # Act
+    persist_verdicts(rows, db_path=db_path)
+    # Assert
+    assert list_auth_states(db_path=db_path)["figrecipe"]["auth_failed"] is False
+
+
+def test_uncapturable_agent_is_not_recorded_as_healthy(tmp_path: Path):
+    # Arrange — an agent we could not READ produced NO evidence. Writing
+    # "auth is fine" for it would manufacture exactly the false green this
+    # feature exists to abolish, so it must not be written at all.
+    from scitex_agent_container._state.auth_state import list_auth_states
+
+    db_path = tmp_path / "state.db"
+    rows = evaluate_agents({"gone": (None, None)})
+    # Act
+    persist_verdicts(rows, db_path=db_path)
+    # Assert
+    assert list_auth_states(db_path=db_path) == {}
+
+
+def test_persist_stamps_checked_at_so_staleness_can_be_judged(tmp_path: Path):
+    # Arrange — a verdict with no timestamp could never be aged, and a cache that
+    # cannot be aged gets presented as fresh truth forever.
+    from scitex_agent_container._state.auth_state import list_auth_states
+
+    db_path = tmp_path / "state.db"
+    rows = evaluate_agents({"scitex-hpc": (_STUCK, _STUCK)})
+    persist_verdicts(rows, db_path=db_path)
+    # Act
+    checked_at = list_auth_states(db_path=db_path)["scitex-hpc"]["checked_at"]
+    # Assert
+    assert checked_at.endswith("Z")

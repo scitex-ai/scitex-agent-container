@@ -13,6 +13,20 @@ jobs:
   test:
     name: pytest-matrix-on-ubuntu-py${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    # A hung leg used to run to GitHub's 6-HOUR default. This has bitten
+    # twice, both times invisibly — nothing failed, a job simply never
+    # finished:
+    #   * PR #594 burned 1h39m42s before the platform killed it, and the
+    #     run was then misread for days as "the self-hosted runners are
+    #     slow" (it never touched one — it was cancelled mid-run by a
+    #     repository transfer).
+    #   * A duplicate py3.11 leg hung for 40+ min while its two siblings
+    #     finished in 11, and — because these three are the REQUIRED
+    #     status checks on `main` — it held the v0.21.14 release PR at
+    #     mergeStateStatus=BLOCKED with every check actually passing.
+    # These jobs take ~11-12 min. 30 is ~2.5x headroom: generous for a
+    # slow runner, decisive against a hang.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
