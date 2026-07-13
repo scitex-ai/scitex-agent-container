@@ -390,17 +390,38 @@ def request_spawn(
         ) from exc
     except (urlerror.URLError, OSError, ValueError) as exc:
         # No HTTP exchange happened — connection refused / DNS / timeout.
-        # This (and only this) is a genuine "unreachable" condition. A
-        # 401/403 is NOT routed here: ``HTTPError`` (a URLError subclass)
+        # A 401/403 is NOT routed here: ``HTTPError`` (a URLError subclass)
         # is caught above first, so an authenticated-but-rejected request
         # never gets misreported as 'cannot reach / timed out'.
-        logger.warning("spawn_client: POST %s transport error: %s", url, exc)
+        #
+        # But "no response on THIS route" is NOT yet "the daemon is
+        # unreachable" — the authenticated routes dispatch through listen's
+        # shared worker pool and the public health path does not, so one can
+        # hang while the other answers in 0.18s (observed 2026-07-14). The
+        # old text asserted "unreachable; it may be flapping" and was WRONG.
+        # Probe the cheap public path and let the EVIDENCE pick the message.
+        from ._listen_probe import probe_listen_health, transport_failure_message
+
+        probe = probe_listen_health(base, opener=opener)
+        logger.warning(
+            "spawn_client: POST %s transport error: %s (probe: listen "
+            "serving=%s status=%s in %.2fs)",
+            url,
+            exc,
+            probe.serving,
+            probe.status,
+            probe.elapsed_s,
+        )
         raise SpawnRequestError(
-            f"spawn of {child_name!r} failed: cannot reach listen at {base!r} "
-            f"({exc}) — the host listen broker is unreachable; it may be "
-            f"flapping. Restart it on the host with `sac listen restart` (an "
-            f"atomic stop-clean-relaunch) and retry; escalate to the operator "
-            f"only if it stays down."
+            transport_failure_message(
+                verb="spawn",
+                name=child_name,
+                base=base,
+                route="POST /agents",
+                exc=exc,
+                timeout_s=timeout_s,
+                probe=probe,
+            )
         ) from exc
 
     parsed = _parse_body(raw)
