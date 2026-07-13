@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -101,12 +103,16 @@ def _row_for(name: str) -> dict:
 
 
 def _dead_pid() -> int:
-    """A pid that is genuinely dead: fork a child and reap it."""
-    pid = os.fork()
-    if pid == 0:  # pragma: no cover - child never returns to the test
-        os._exit(0)
-    os.waitpid(pid, 0)
-    return pid
+    """A pid that is genuinely dead: run a trivial child and reap it.
+
+    Uses ``subprocess`` rather than ``os.fork()`` on purpose — pytest runs
+    multi-threaded, and forking a multi-threaded process risks deadlocking
+    the child (CPython raises DeprecationWarning for exactly this). The
+    child is waited on, so its pid is reaped and provably not alive.
+    """
+    proc = subprocess.Popen([sys.executable, "-c", ""])
+    proc.wait()
+    return proc.pid
 
 
 # ---------------------------------------------------------------------------
