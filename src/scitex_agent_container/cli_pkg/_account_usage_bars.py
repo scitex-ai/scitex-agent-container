@@ -1,4 +1,4 @@
-"""ASCII usage bars + fleet "effective utilization" for ``sac accounts list``.
+"""ASCII usage bars + fleet 7-day capacity figure for ``sac accounts list``.
 
 Operator gripe (2026-07-09): "テーブルが見にくい" — the stored-accounts
 rich table packs the 5h%/7d% numbers into terse cells that are hard to
@@ -11,72 +11,63 @@ BELOW the existing table:
    visible at a glance and the bars line up vertically across accounts.
    Since the 2026-07-11 dedupe directive ("the bars own the
    percentages; the table holds only what the bars cannot express")
-   each percentage also carries the compact per-window reset hint
-   (``→HH:MM`` for 5h, ``→Day HHh`` for 7d — 2026-06-09 gripe #2)
-   that used to clutter the Stored-accounts table cells::
+   each percentage also carries a compact per-window reset hint. The
+   operator (2026-07-13) wants that hint to read as the time REMAINING
+   until the window resets — relative, not an absolute wall-clock —
+   ``(in 4h05m)`` for the 5h window, ``(in 2d 3h)`` for the 7d window::
 
-       wyusuuke-gmail-com   5h [██████░░░░░░░░░░░░░░]  29% (→09:19)   7d [█████████████░░░░░░░]  66% (→Sun 21h)
-       ywatanabe-scitex-ai  5h [███░░░░░░░░░░░░░░░░░]  14%            7d [███░░░░░░░░░░░░░░░░░]  15% (→Mon 09h)
+       wyusuuke-gmail-com   5h [██████░░░░░░░░░░░░░░]  29% (in 4h05m)   7d [█████████████░░░░░░░]  66% (in 2d 3h)
+       ywatanabe-scitex-ai  5h [███░░░░░░░░░░░░░░░░░]  14%              7d [███░░░░░░░░░░░░░░░░░]  15% (in 5d 0h)
 
    A bar for an account with no cached usage renders a same-width
    ``[      no data       ]`` placeholder rather than crashing; a
    window with no cached ``reset_at`` renders no hint (the missing
    5h hint is space-padded so the 7d bars stay vertically aligned).
+   The relative hints are rendered by the shared
+   :func:`~._timefmt.format_relative_until` (SSOT with the JST wall-clock
+   helper used by the ``Since`` line).
 
-2. A one-line **fleet effective-utilization** figure that factors each
-   account's 7-day-window reset horizon into a single fleet number:
+2. A one-line **fleet 7-day capacity-used** figure — how much of the
+   fleet's weekly capacity was actually consumed over the trailing 7
+   days, a capacity-planning signal (≈100 % ⇒ saturated ⇒ add an
+   account; low ⇒ over-provisioned ⇒ drop one)::
 
-       Fleet effective utilization: 71% (3 accounts)
+       Fleet 7d capacity used: 64% (3 accounts)
 
-Effective-utilization formula
------------------------------
-For each account, over a planning window ``W`` (default 168 h = 7 days,
-matching the 7-day rolling window):
+Fleet 7d capacity-used formula
+------------------------------
+The figure is the arithmetic **mean of the accounts' ``used_pct_7d``**
+(the same 7-day-window utilisation the 7d bars show), over the accounts
+that have a cached ``used_pct_7d``. Accounts with no usage data are
+excluded from both the mean and the ``(N accounts)`` count; the figure
+is ``None`` (CLI prints ``unavailable``) when no account has data.
 
-    frac_before_reset = clamp(reset_horizon_hours, 0, W) / W
-    effective_util%   = frac_before_reset * used_pct_7d
+Why the mean of the percentages (and not total-used / total-available)?
+The Anthropic OAuth usage API returns a *percentage-utilisation* model
+(``used_pct_7d`` ∈ [0, 100]) with NO absolute token quota — the raw
+``limit_tokens_7d`` is ``None``. So total-used / total-available is not
+computable from the available data, and the mean of the per-account
+percentages is the only well-defined aggregate. When the accounts share
+the same weekly quota (same plan tier) it equals total-used /
+total-available exactly; if quotas differ it is a per-account-weighted
+average, which still tracks the operator's add-/drop-an-account intent.
 
-Rationale: an account currently at ``used_pct_7d`` frees its whole
-weekly allowance again once its 7-day window rolls over. So only the
-portion of the planning window BEFORE that reset is "occupied" at the
-current utilisation; after the reset the account is back near 0 % for
-the rest of the window. An account at 100 % that resets in 1 day
-(``frac ≈ 0.14`` → ``eff ≈ 14 %``) therefore contributes far more usable
-weekly capacity than one at 100 % that resets in 6 days
-(``frac ≈ 0.86`` → ``eff ≈ 86 %``).
-
-The **reset horizon** is the true 7-day-window reset (``reset_at_7d``
-from the Anthropic OAuth usage API, carried on
-:class:`~._account_list_render.AccountRow`). When an account has no
-``reset_at_7d`` cached (older cache / API outage), the horizon is
-treated as the full window (``frac = 1`` → ``eff = used_pct_7d``): a
-conservative "assume no reset within the window" default that never
-understates utilisation.
-
-The **fleet** figure is the arithmetic mean of the per-account
-effective utilisations over the accounts that have a cached
-``used_pct_7d`` (accounts with no usage data are excluded from the mean
-and from the ``(N accounts)`` count). ``None`` when no account has
-usage data — the CLI then prints ``unavailable`` instead of a number.
-
-NB: this deliberately does NOT use the quota-cache ``ttl_h`` field —
-that is the OAuth *access-token* TTL (typically ~2 h), not the 7-day
-usage-window reset, so weighting by it would collapse every account's
-effective utilisation to near-zero regardless of real usage.
+This REPLACES the earlier reset-horizon-weighted "effective utilization"
+figure (removed 2026-07-13): weighting each account's 7d% by how soon
+its window resets collapsed a fleet reading 17/88/88 (mean ≈ 64 %) down
+to ~15 %, which the operator found misleading — a fleet at 88 % is
+saturated regardless of when the window happens to roll over.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Iterable
 
-from ._account_list_format import format_reset_day_hour, format_reset_hhmm
+from ._timefmt import format_relative_until
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ._account_list_render import AccountRow
-
-# Planning window the effective-utilisation formula amortises over.
-WEEK_HOURS: float = 7.0 * 24.0
 
 # Bar glyphs — plain box-drawing blocks that render in any UTF-8 terminal
 # (already used across the codebase's TUI/quota output).
@@ -128,7 +119,7 @@ def _pct_label(pct: float | None) -> str:
 
 
 def _wrap_hint(hint: str) -> str:
-    """Parenthesise a non-empty reset hint: ``→09:19`` → ``(→09:19)``."""
+    """Parenthesise a non-empty reset hint: ``in 4h05m`` → ``(in 4h05m)``."""
     return f"({hint})" if hint else ""
 
 
@@ -145,10 +136,10 @@ def render_usage_bar_line(
 ) -> str:
     """One aligned account line, operator-example shape:
 
-    ``<label>  5h [..]  29% (→09:19)   7d [..]  66% (→Sun 21h)``
+    ``<label>  5h [..]  29% (in 4h05m)   7d [..]  66% (in 2d 3h)``
 
     ``hint_5h`` / ``hint_7d`` are pre-wrapped display strings (e.g.
-    ``(→09:19)``) or ``""`` when the window has no cached reset.
+    ``(in 4h05m)``) or ``""`` when the window has no cached reset.
     ``hint_5h_width`` is the block-level max width of the 5h hints; a
     row whose own hint is shorter (or missing) pads with spaces so the
     ``7d`` bars stay vertically aligned across accounts. The trailing
@@ -170,15 +161,20 @@ def render_usage_bars_block(
     rows: Iterable["AccountRow"],
     *,
     width: int = _DEFAULT_BAR_WIDTH,
+    now: datetime | None = None,
 ) -> str:
     """Render the full usage-bars block (header + one line per account).
 
-    Each line carries the compact per-window reset hints
-    (``(→HH:MM)`` / ``(→Day HHh)``) computed from the row's
-    ``reset_at_5h`` / ``reset_at_7d`` — the 2026-07-11 dedupe
-    directive moved them here from the Stored-accounts table cells.
-    The 5h hints are padded to one block-level width so mixed
-    hint/no-hint rows keep the 7d bars vertically aligned.
+    Each line carries the compact per-window reset hints as the time
+    REMAINING until the window resets (``(in 4h05m)`` for 5h,
+    ``(in 2d 3h)`` for 7d), computed from the row's ``reset_at_5h`` /
+    ``reset_at_7d`` via the shared :func:`~._timefmt.format_relative_until`
+    (operator 2026-07-13: relative time-until-reset, not an absolute
+    wall-clock). The 5h hints are padded to one block-level width so
+    mixed hint/no-hint rows keep the 7d bars vertically aligned.
+
+    ``now`` is an injection seam for the current instant (tests pass a
+    fixed value); it defaults to real wall-clock time.
 
     Returns ``""`` for an empty ``rows`` iterable so the caller can skip
     printing the section entirely.
@@ -187,8 +183,12 @@ def render_usage_bars_block(
     if not row_list:
         return ""
     label_width = max(len(r.name) for r in row_list)
-    hints_5h = [_wrap_hint(format_reset_hhmm(r.reset_at_5h)) for r in row_list]
-    hints_7d = [_wrap_hint(format_reset_day_hour(r.reset_at_7d)) for r in row_list]
+    hints_5h = [
+        _wrap_hint(format_relative_until(r.reset_at_5h, now=now)) for r in row_list
+    ]
+    hints_7d = [
+        _wrap_hint(format_relative_until(r.reset_at_7d, now=now)) for r in row_list
+    ]
     hint_5h_width = max(len(h) for h in hints_5h)
     lines = ["Usage bars (5h / 7d out of 100%):"]
     for r, hint_5h, hint_7d in zip(row_list, hints_5h, hints_7d):
@@ -208,115 +208,48 @@ def render_usage_bars_block(
 
 
 # ---------------------------------------------------------------------------
-# Effective-utilisation formula (pure)
+# Fleet 7-day capacity-used aggregate (pure)
 # ---------------------------------------------------------------------------
 
 
-def effective_utilization_pct(
-    used_pct_7d: float,
-    reset_horizon_hours: float | None,
-    *,
-    window_hours: float = WEEK_HOURS,
-) -> float:
-    """Per-account effective utilisation weighted by the reset horizon.
-
-    ``frac_before_reset = clamp(reset_horizon_hours, 0, window) / window``
-    then ``effective = frac_before_reset * used_pct_7d``.
-
-    ``reset_horizon_hours`` of ``None`` (no cached reset) means "assume
-    no reset inside the window" → ``frac = 1`` → returns ``used_pct_7d``
-    unchanged. See the module docstring for the full rationale.
-    """
-    if window_hours <= 0:
-        return float(used_pct_7d)
-    if reset_horizon_hours is None:
-        frac = 1.0
-    else:
-        frac = max(0.0, min(float(reset_horizon_hours), window_hours)) / window_hours
-    return frac * float(used_pct_7d)
-
-
-def fleet_effective_utilization(
-    pairs: Iterable[tuple[float | None, float | None]],
-    *,
-    window_hours: float = WEEK_HOURS,
+def fleet_7d_capacity_used(
+    values: Iterable[float | None],
 ) -> tuple[float | None, int]:
-    """Aggregate effective utilisation across accounts.
+    """Mean 7-day utilisation across the accounts that have usage data.
 
-    ``pairs`` is an iterable of ``(used_pct_7d, reset_horizon_hours)``.
-    Entries whose ``used_pct_7d`` is ``None`` are excluded (no data).
-    Returns ``(mean_effective_pct, n_accounts_counted)``; the mean is
-    ``None`` (and ``n`` is ``0``) when no entry has usage data.
+    ``values`` is an iterable of per-account ``used_pct_7d`` (0-100) or
+    ``None``. ``None`` entries (no cached usage) are excluded from BOTH
+    the mean and the returned count. Returns ``(mean_pct, n_counted)``;
+    the mean is ``None`` (and ``n`` is ``0``) when no account has data.
+
+    See the module docstring for why the mean of the per-account
+    percentages is the correct aggregate (the API exposes utilisation
+    percentages, not absolute token quotas).
     """
-    effs: list[float] = []
-    for used_pct_7d, horizon in pairs:
-        if used_pct_7d is None:
-            continue
-        effs.append(
-            effective_utilization_pct(
-                used_pct_7d, horizon, window_hours=window_hours
-            )
-        )
-    if not effs:
+    used = [float(v) for v in values if v is not None]
+    if not used:
         return None, 0
-    return sum(effs) / len(effs), len(effs)
+    return sum(used) / len(used), len(used)
 
 
-# ---------------------------------------------------------------------------
-# AccountRow adapters (glue the pure formula to the CLI's row model)
-# ---------------------------------------------------------------------------
+def fleet_capacity_used_line(rows: Iterable["AccountRow"]) -> str:
+    """Format the fleet 7-day capacity-used line for the CLI.
 
-
-def _reset_horizon_hours(
-    reset_at_iso: str | None, *, now: datetime | None = None
-) -> float | None:
-    """Hours from ``now`` until ``reset_at_iso``; ``None`` if unparseable/absent.
-
-    Past resets clamp to ``0.0`` (the window is due to roll over
-    imminently). Naive timestamps are treated as UTC. Never raises.
+    ``Fleet 7d capacity used: 64% (3 accounts)`` — the arithmetic mean
+    of the accounts' 7-day-window utilisation (the same ``used_pct_7d``
+    the 7d bars show) — or ``Fleet 7d capacity used: unavailable (no
+    usage data)`` when no account has a cached 7-day utilisation.
     """
-    if not reset_at_iso:
-        return None
-    # stx-allow: fallback (reason: a malformed cached reset timestamp must
-    # degrade to "no horizon" rather than crash `sac accounts list`.)
-    try:
-        dt = datetime.fromisoformat(reset_at_iso)
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    now_dt = now or datetime.now(timezone.utc)
-    if now_dt.tzinfo is None:
-        now_dt = now_dt.replace(tzinfo=timezone.utc)
-    hours = (dt - now_dt).total_seconds() / 3600.0
-    return max(0.0, hours)
-
-
-def fleet_effective_line(
-    rows: Iterable["AccountRow"], *, now: datetime | None = None
-) -> str:
-    """Format the fleet effective-utilisation line for the CLI.
-
-    ``Fleet effective utilization: 71% (3 accounts)`` — or
-    ``Fleet effective utilization: unavailable (no usage data)`` when
-    no account has a cached 7-day utilisation.
-    """
-    pairs = [
-        (r.used_pct_7d, _reset_horizon_hours(r.reset_at_7d, now=now))
-        for r in rows
-    ]
-    pct, n = fleet_effective_utilization(pairs)
+    pct, n = fleet_7d_capacity_used(r.used_pct_7d for r in rows)
     if pct is None:
-        return "Fleet effective utilization: unavailable (no usage data)"
+        return "Fleet 7d capacity used: unavailable (no usage data)"
     noun = "account" if n == 1 else "accounts"
-    return f"Fleet effective utilization: {int(round(pct))}% ({n} {noun})"
+    return f"Fleet 7d capacity used: {int(round(pct))}% ({n} {noun})"
 
 
 __all__ = [
-    "WEEK_HOURS",
-    "effective_utilization_pct",
-    "fleet_effective_line",
-    "fleet_effective_utilization",
+    "fleet_7d_capacity_used",
+    "fleet_capacity_used_line",
     "render_usage_bar",
     "render_usage_bar_line",
     "render_usage_bars_block",

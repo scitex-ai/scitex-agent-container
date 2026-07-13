@@ -91,6 +91,28 @@ plus format enforcement and drift detection. This is the mechanism a
 recurring failure mode graduates to — once a manual recovery repeats,
 encode it here so no one has to notice next time.
 
+## Bring a peer UP yourself too — spawn / create
+
+The same "don't wait for the operator" norm extends past un-wedging a
+LIVE peer to bringing one **up from stopped, or creating a new one**. If
+you are a **developer- or researcher-group** agent and you need a peer
+started or created, do it yourself — you are **authorized** (the spawn
+ACL allows the dev/researcher groups):
+
+- **Start / spawn** a registered peer: `agent_spawn` (MCP tool) or
+  `sac agents start <name>` (CLI). `agent_spawn` brokers to the host
+  listen, which runs the `check_spawn` ACL gate and records the lineage
+  edge — the sanctioned agent-driven spawn path (ADR-0010 mechanism #3).
+- **Create** a not-yet-registered agent from a template first
+  (`sac agents create <name> --template …`), then start it. A
+  context-inheriting fork of a running agent is `agent_twin`.
+
+Escalate to the operator **only** when the host listen broker itself is
+down — a transport timeout / connection-refused on the spawn, which the
+enriched `cannot reach listen …` error now flags with the fix
+(`sac listen restart`). Anything short of a dead broker is yours to do,
+not the operator's to queue.
+
 ## Imitate this
 
 Every mechanism above is peer-agnostic: any agent can run it on any other

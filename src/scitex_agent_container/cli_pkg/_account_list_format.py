@@ -20,13 +20,13 @@ Concerns covered:
 3. :func:`format_as_of_short` — render an As-of (Last-Update)
    timestamp as ``Sun 21h``.
 
-4. :func:`format_reset_hhmm` / :func:`format_reset_day_hour` —
-   render the per-window reset timestamp the Anthropic OAuth usage
-   API returns (``resets_at`` → ``reset_at_5h`` / ``reset_at_7d``).
-   Consumed by the usage-bars block (operator directive 2026-07-11:
-   the bars own the percentages AND their reset hints; the table
-   holds only what the bars cannot express) to surface ``(→21:05)``
-   and ``(→Sun 17h)`` next to each bar's percentage.
+The per-window reset hints on the usage-bars block used to live here
+(``format_reset_hhmm`` / ``format_reset_day_hour``, absolute
+``→HH:MM`` / ``→Day HHh``). The operator (2026-07-13) switched them to
+the time REMAINING until reset (``in 4h05m`` / ``in 2d 3h``), rendered
+by the shared :func:`~._timefmt.format_relative_until` — see
+:mod:`._timefmt`, the SSOT for the JST wall clock and relative-duration
+formatting that ``sac accounts list`` (and ``sac agents list``) share.
 """
 
 from __future__ import annotations
@@ -113,6 +113,49 @@ def format_dt_local(
         # No env override → system local (astimezone with no arg).
         return dt.astimezone().isoformat(timespec="seconds")
     return dt.astimezone(tz).isoformat(timespec="seconds")
+
+
+# Display timezone for the ``sac agents list`` Started column. PINNED to
+# Asia/Tokyo (the operator's zone) rather than the host's system-local tz,
+# because the host is WSL and may report UTC — the Started column must show
+# JST regardless of host config (operator TG 2026-07-13). Override with the
+# ``SAC_DISPLAY_TZ`` env var (any IANA zone name, e.g. ``America/New_York``).
+_DEFAULT_DISPLAY_TZ = "Asia/Tokyo"
+_DISPLAY_TZ_ENV = "SAC_DISPLAY_TZ"
+
+
+def format_dt_display_tz(
+    iso_or_dt: str | datetime | None,
+    *,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Render an ISO-8601 UTC timestamp as ``YYYY-MM-DD HH:MM (TZ)`` in the
+    pinned DISPLAY timezone (default ``Asia/Tokyo`` → ``JST``).
+
+    The ``sac agents list`` Started column: a SPACE (not the ISO ``T``)
+    separates date and time, seconds are dropped, and the timezone
+    abbreviation — DERIVED from the tz object, e.g. ``JST`` (never a
+    hardcoded label) — is shown in parentheses in place of the bare ``Z``.
+    Unlike :func:`format_dt_local` (operator-local ``TZ`` precedence) this
+    PINS the zone to ``SAC_DISPLAY_TZ`` / :data:`_DEFAULT_DISPLAY_TZ`, so a
+    UTC-configured WSL host still shows JST (operator TG 2026-07-13). The
+    ``--json`` path keeps the raw ISO ``...Z`` untouched for scripts.
+
+    Returns ``"-"`` for ``None`` / empty / unparseable input. Reuses the
+    same ``_coerce_dt`` (naive → UTC) + ``_resolve_tz`` (stdlib ``zoneinfo``)
+    SSOT the accounts formatters use.
+    """
+    dt = _coerce_dt(iso_or_dt)
+    if dt is None:
+        return "-"
+    src = env if env is not None else os.environ
+    name = (src.get(_DISPLAY_TZ_ENV) or "").strip() or _DEFAULT_DISPLAY_TZ
+    tz = _resolve_tz(name) or _resolve_tz(_DEFAULT_DISPLAY_TZ)
+    # zoneinfo unavailable (no tzdata on the host) → render in UTC so the
+    # column still shows a stable, labelled timestamp rather than crashing.
+    local = dt.astimezone(tz) if tz is not None else dt.astimezone(timezone.utc)
+    abbrev = local.strftime("%Z") or local.strftime("%z") or "UTC"
+    return f"{local.strftime('%Y-%m-%d %H:%M')} ({abbrev})"
 
 
 def _coerce_dt(value: str | datetime | None) -> datetime | None:
@@ -217,69 +260,9 @@ def format_as_of_short(
     return local.strftime("%a %Hh")
 
 
-# ---------------------------------------------------------------------------
-# Reset-time hints for the usage-bars lines (operator directives 2026-06-09
-# gripe #2 and 2026-07-11 dedupe: hints live next to the bars' percentages)
-# ---------------------------------------------------------------------------
-
-
-def format_reset_hhmm(
-    reset_iso: str | datetime | None,
-    *,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render a 5h-window reset timestamp as ``→HH:MM`` (local-tz).
-
-    Operator gripe #2 (2026-06-09): ``5h%`` never said WHEN the
-    rolling window resets. Since the 2026-07-11 dedupe directive the
-    hint renders next to the 5h usage BAR (the table no longer
-    carries percentages at all) and must stay COMPACT — the operator's
-    verbatim example is ``29% (→09:19)``, so the old per-cell
-    ``(in Xh Ym)`` countdown qualifier was dropped together with the
-    table cells it annotated.
-
-    Returns ``""`` when the timestamp is missing/unparseable so the
-    caller can fall back to the bare percentage rather than
-    fabricate a value. Never raises.
-    """
-    dt = _coerce_dt(reset_iso)
-    if dt is None:
-        return ""
-    tz = local_timezone(env)
-    local = dt.astimezone(tz) if tz is not None else dt.astimezone()
-    return f"→{local.strftime('%H:%M')}"
-
-
-def format_reset_day_hour(
-    reset_iso: str | datetime | None,
-    *,
-    env: dict[str, str] | None = None,
-) -> str:
-    """Render a 7d-window reset timestamp as ``→Day HHh`` (local-tz).
-
-    Operator gripe #2 (2026-06-09): ``7d%`` never said WHEN the
-    rolling 7-day window resets. Since the 2026-07-11 dedupe
-    directive the hint renders next to the 7d usage BAR and must
-    stay COMPACT — the operator's verbatim example is
-    ``66% (→Sun 21h)``, so the old ``(in Xd Yh Zm)`` countdown
-    qualifier was dropped together with the table cells it
-    annotated.
-
-    Returns ``""`` on missing/unparseable input — never fabricates.
-    """
-    dt = _coerce_dt(reset_iso)
-    if dt is None:
-        return ""
-    tz = local_timezone(env)
-    local = dt.astimezone(tz) if tz is not None else dt.astimezone()
-    return f"→{local.strftime('%a %Hh')}"
-
-
 __all__ = [
     "format_as_of_short",
     "format_dt_local",
-    "format_reset_day_hour",
-    "format_reset_hhmm",
     "format_snapshot_age",
     "format_ttl_live",
     "local_timezone",

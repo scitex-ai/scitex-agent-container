@@ -15,6 +15,7 @@ import click
 from rich.table import Table
 
 from ..._state.registry import Registry
+from .._account_list_format import format_dt_display_tz
 from ._console import console
 
 __all__ = [
@@ -130,8 +131,15 @@ def print_agent_list(
     """
     from ._agent_list import get_agent_list_data
 
+    # PERF: the default view discards non-running rows, so let the data layer
+    # skip their account/movement enrichment. `-v`/`--all` show every row, so
+    # they must stay fully enriched.
     data = get_agent_list_data(
-        registry, capability=capability, machine=machine, tags=tags
+        registry,
+        capability=capability,
+        machine=machine,
+        tags=tags,
+        running_only=not (verbose or show_all),
     )
     if not data:
         console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
@@ -195,15 +203,26 @@ def print_agent_list(
     }
     for row in data:
         col = cmap.get(row["status"], "white")
-        host = row.get("host") or "local"
-        host_cell = host if host in ("local", "") else f"[cyan]{host}[/cyan]"
+        # Host column: show the RESOLVED machine hostname (e.g. ``ywata-note-win``)
+        # from ``host_display`` (set by get_agent_list_data), not the raw
+        # ``"local"`` sentinel. Fall back to the raw host, then the sentinel.
+        host = row.get("host_display") or row.get("host") or "local"
+        host_cell = f"[cyan]{host}[/cyan]"
         errors = row.get("validation_errors") or []
         yaml_cell = (
             f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
             if errors
             else "[green]✓[/green]"
         )
-        started = row["started_at"] if row["started_at"] not in ("-", "?") else "—"
+        # Started column: render the registry's raw ISO-8601 UTC stamp as a
+        # pinned-tz ``YYYY-MM-DD HH:MM (JST)`` for readability (operator TG
+        # 2026-07-13); the ``--json`` path keeps the raw ISO. Sentinels
+        # ("-"/"?") stay an em-dash.
+        raw_started = row["started_at"]
+        if raw_started in ("-", "?"):
+            started = "—"
+        else:
+            started = format_dt_display_tz(raw_started)
         account_cell = row.get("account") or "—"
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.

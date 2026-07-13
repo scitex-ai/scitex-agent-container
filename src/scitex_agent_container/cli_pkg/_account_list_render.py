@@ -14,10 +14,12 @@ This module now holds the THREE pieces that need on-disk state:
    feeds into the renderer or the JSON path.
 
 Pure formatting helpers (``local_timezone``, ``format_dt_local``,
-``format_ttl_live``, ``format_snapshot_age``, ``format_as_of_short``,
-``format_reset_hhmm``, ``format_reset_day_hour``) are re-exported from
-:mod:`._account_list_format` so existing callers (and the historical
-test surface) keep importing them from this module without churn.
+``format_ttl_live``, ``format_snapshot_age``, ``format_as_of_short``)
+are re-exported from :mod:`._account_list_format` so existing callers
+(and the historical test surface) keep importing them from this module
+without churn. The per-window reset hints on the usage-bars block are
+now the shared :func:`~._timefmt.format_relative_until` (relative
+time-until-reset).
 
 Layout note (operator directive 2026-07-11): the Stored-accounts table
 and the usage-bars block below it used to DUPLICATE the 5h%/7d%
@@ -26,9 +28,10 @@ holds only what the bars cannot express" — so the table is exactly
 ``Account | Status | Last Update`` (the ID column was renamed
 ``Account``; the Email column was dropped because IDs are
 email-derived slugs, and the Plan column was dropped outright), while
-the per-window reset hints (``→HH:MM`` / ``→Day HHh``, 2026-06-09
-gripe #2) moved from the removed 5h%/7d% cells onto the usage-bars
-lines (see :mod:`._account_usage_bars`). The JSON output path
+the per-window reset hints (relative ``in Xh Ym`` / ``in Xd Yh``,
+2026-06-09 gripe #2 + 2026-07-13 relative switch) moved from the
+removed 5h%/7d% cells onto the usage-bars lines (see
+:mod:`._account_usage_bars`). The JSON output path
 (``sac accounts list --json``) is NOT touched — its schema (including
 ``email_address`` and ``plan_label``) stays the machine-readable
 contract downstream consumers parse.
@@ -46,8 +49,6 @@ from rich.table import Table
 from ._account_list_format import (
     format_as_of_short,
     format_dt_local,
-    format_reset_day_hour,
-    format_reset_hhmm,
     format_snapshot_age,
     format_ttl_live,
     local_timezone,
@@ -178,11 +179,11 @@ def rolling_legend_line() -> str:
     Per the 2026-06-09 task contract: "リセットのアンカーが取れない
     場合は列凡例/ヘッダで5h=直近5時間ローリング, 7d=直近7日ローリン
     グと明示". Printed below the usage-bars block (which owns the
-    percentages and their ``(→...)`` reset hints since 2026-07-11).
+    percentages and their ``(in ...)`` reset hints since 2026-07-11).
     """
     return (
         "Legend: 5h = rolling 5-hour window; 7d = rolling 7-day window. "
-        "(→HH:MM / →Day HHh next to the % marks the next reset.)"
+        "(in Xh Ym / in Xd Yh next to the % is the time until the next reset.)"
     )
 
 
@@ -335,8 +336,6 @@ __all__ = [
     "build_stored_rows",
     "format_as_of_short",
     "format_dt_local",
-    "format_reset_day_hour",
-    "format_reset_hhmm",
     "format_snapshot_age",
     "format_ttl_live",
     "local_timezone",

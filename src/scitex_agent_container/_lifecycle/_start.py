@@ -71,6 +71,7 @@ def agent_start(
     handover_mod: Any = None,
     liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
+    successor_auth_check: Callable[[AgentConfig], None] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -264,6 +265,15 @@ def agent_start(
     )
     if really_running:
         if force:
+            # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
+            # 20260712): probe the already-rotated successor credential; a
+            # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
+            # the live container is LEFT UP. Covers `start --force` (the PR #628
+            # self-restart bounce); `sac agents restart` is covered upstream.
+            from ._restart_preflight import assert_successor_auth_usable
+
+            _auth_check = successor_auth_check or assert_successor_auth_usable
+            _auth_check(config)
             agent_stop(
                 config.name,
                 registry=registry,
