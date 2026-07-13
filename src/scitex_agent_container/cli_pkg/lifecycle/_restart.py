@@ -24,136 +24,27 @@ agent restarts instead of hard-failing with "not found in registry".
 from __future__ import annotations
 
 import json as _json
-import shlex
-import subprocess
 import sys
 
 import click
 
 from ..._lifecycle.lifecycle import agent_restart
-from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
-from ..._state.state_db import record_instance_start, record_instance_stop
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
 
+# Cross-host dispatch + host-listen bypass live in ``_restart_remote``.
+# Re-exported here so existing imports (tests included) keep resolving.
+from ._restart_remote import (  # noqa: F401
+    _bypass_base_url_available,
+    _dispatch_remote_restart,
+    _restart_via_host_bypass,
+    _should_try_host_bypass,
+)
 
-def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> dict:
-    """SSH into ``peer`` and run ``sac agents restart <name> --yes --json``.
-
-    The remote restart closes the agent's old instance row and opens a
-    fresh one on the peer. Mirror that on the lead side: close the stale
-    lead-side row (``record_instance_stop``) and open a new ``remote``
-    row carrying the peer-reported bound port so cross-host listings and
-    ``resolve_peer_url`` keep pointing at the right node + port.
-
-    Raises ``RuntimeError`` with the full ssh argv + stderr on failure
-    (no-silent-fallback rule). Returns the parsed JSON envelope from the
-    peer's stdout.
-    """
-    ssh_argv = build_ssh_argv(
-        peer,
-        ["sac", "agents", "restart", name, "--yes", "--json"],
-        peers,
-    )
-    result = subprocess.run(
-        ssh_argv,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Remote `sac agents restart {name}` failed on {peer!r} "
-            f"(rc={result.returncode}):\n"
-            f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
-    try:
-        envelope = _json.loads(result.stdout)
-    except _json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Remote `sac agents restart {name}` on {peer!r} returned "
-            f"non-JSON stdout (peer sac may be too old to support "
-            f"--json; pull latest on the peer):\n"
-            f"stdout (first 500 chars):\n{result.stdout[:500]}\n"
-            f"json error: {exc}"
-        ) from exc
-
-    # Close the stale lead-side row, then open a fresh remote row so the
-    # restarted agent stays addressable cross-host.
-    instance_id = row.get("id")
-    if instance_id:
-        record_instance_stop(str(instance_id), exit_reason="restarted")
-    bound = envelope.get("a2a_port") if isinstance(envelope, dict) else None
-    record_instance_start(
-        name=name,
-        host=peer,
-        a2a_port=bound,
-        bound_port=bound,
-        remote=True,
-    )
-    return envelope if isinstance(envelope, dict) else {}
-
-
-def _should_try_host_bypass(exc: Exception) -> bool:
-    """Return True iff a LOCAL restart failure should fall back to the host.
-
-    The fallback fires only when BOTH hold:
-
-      * the failure is the "not found in registry" local-resolution miss
-        (an in-SIF agent cannot see a peer's bare-host registry row), and
-      * ``SAC_LISTEN_BASE_URL`` is set (we are a container with the host
-        listen reachable — the spawn bypass's precondition).
-
-    Any other RuntimeError (a real restart fault on a resolvable agent)
-    propagates unchanged so the bare-host operator path is untouched.
-    """
-    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
-
-    if "not found in registry" not in str(exc):
-        return False
-    try:
-        _resolve_base_url(None)
-    except RestartRequestError:
-        return False
-    return True
-
-
-def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
-    """Broker the restart to the HOST listen and return its JSON envelope.
-
-    Mirrors the spawn bypass (``agent_spawn`` → ``request_spawn``): the
-    in-SIF client POSTs to ``{SAC_LISTEN_BASE_URL}/agents/<name>/restart``
-    and the host runs ``sac agents restart <name> --yes`` (or, when
-    ``fresh``, ``sac agents start <name> --force --fresh``) on the bare host
-    (manage-gated by ``check_lineage_acl``). A :class:`RestartRequestError`
-    (transport / 401 / 403 / 5xx) propagates so the CLI's outer ``except``
-    surfaces it fail-loud.
-    """
-    from ..._lifecycle._restart_client import request_restart
-
-    return request_restart(name, fresh=fresh)
-
-
-def _bypass_base_url_available() -> bool:
-    """True iff a host-listen base URL resolves (we are an in-container agent).
-
-    The fresh-restart path is bypass-only: it has nothing to broker to on a
-    bare host, so the CLI fails loud there rather than silently doing a
-    resuming restart.
-    """
-    from ..._lifecycle._restart_client import RestartRequestError, _resolve_base_url
-
-    try:
-        _resolve_base_url(None)
-    except RestartRequestError:
-        return False
-    return True
 
 
 def _enumerate_fleet() -> list[str]:
@@ -271,19 +162,35 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
                 _handler(spec_peer, {}, peers)
                 dispatched = True
         if dispatched:
+            # Trust the PEER'S OWN verdict, not the mere fact that ssh exited
+            # 0. The peer runs `sac agents restart --json`, whose envelope
+            # carries its `restarted` flag; ssh returning 0 only proves the
+            # command RAN, not that the restart WORKED. Defaulting to True
+            # here would relocate the same false-success one hop away. A peer
+            # too old to report the flag omits it — treat a missing flag as
+            # UNKNOWN-but-not-asserted-true rather than inventing a success.
+            peer_verdict = envelope_holder.get("restarted")
+            remote_ok = peer_verdict is not False
             out = {
                 "name": name,
-                "restarted": True,
+                "restarted": remote_ok,
                 "host": envelope_holder.get("_peer"),
                 "a2a_port": envelope_holder.get("a2a_port"),
                 "dispatched": True,
             }
             if not as_json:
-                console.print(
-                    f"[green]Agent '{name}' restarted on "
-                    f"'{envelope_holder.get('_peer')}'[/green]"
-                )
-            return out, True
+                if remote_ok:
+                    console.print(
+                        f"[green]Agent '{name}' restarted on "
+                        f"'{envelope_holder.get('_peer')}'[/green]"
+                    )
+                else:
+                    console.print(
+                        f"[red]Agent '{name}' NOT restarted on "
+                        f"'{envelope_holder.get('_peer')}' — the peer reported "
+                        f"the start leg failed.[/red]"
+                    )
+            return out, remote_ok
 
         # Local restart (row on this host, or no row — spec fallback).
         # When that LOCAL resolution fails (no registry row AND no
@@ -291,28 +198,65 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
         # listen reachable (SAC_LISTEN_BASE_URL injected), broker the
         # restart to the HOST listen — exactly like the spawn bypass.
         try:
-            agent_restart(name)
+            # ``agent_restart`` returns the START leg's result. DISCARDING it
+            # (as this did) makes a FAILED restart print green "restarted":
+            # stop leaves the old session alive, start hits the
+            # duplicate-session guard and FAILs, and the very next line claims
+            # success. The operator hit exactly this on neurovista — he
+            # believed it had relaunched on freshly-picked credentials, was in
+            # fact still talking to the OLD process holding the OLD token, saw
+            # "Login expired", and went hunting a credential store that was
+            # perfectly healthy. A tool that reports a failure as a pass sends
+            # its user to the wrong subsystem.
+            # `is not False`, NOT bool(): only an EXPLICIT False is a failure.
+            # `agent_start` returns True on its own paths but forwards
+            # `runtime.start(...)` on another, and a runtime that returns None
+            # must NOT be read as "the restart failed" — inventing a false
+            # FAILURE is just the mirror of the false SUCCESS we are fixing,
+            # and would be equally misleading.
+            restarted = agent_restart(name) is not False
         except RuntimeError as exc:
             if not _should_try_host_bypass(exc):
                 raise
             envelope = _restart_via_host_bypass(name)
+            brokered = envelope.get("returncode") == 0
             out = {
                 "name": name,
-                "restarted": envelope.get("returncode") == 0,
+                "restarted": brokered,
                 "dispatched": False,
                 "via": "host-listen",
                 "host_response": envelope,
             }
             if not as_json:
-                console.print(
-                    f"[green]Agent '{name}' restarted via host listen[/green]"
-                )
+                if brokered:
+                    console.print(
+                        f"[green]Agent '{name}' restarted via host listen[/green]"
+                    )
+                else:
+                    console.print(
+                        f"[red]Agent '{name}' NOT restarted via host listen "
+                        f"(returncode={envelope.get('returncode')})[/red]"
+                    )
                 console.print(_json.dumps(envelope))
-            return out, bool(out["restarted"])
-        out = {"name": name, "restarted": True, "dispatched": False}
+            return out, brokered
+        out = {"name": name, "restarted": restarted, "dispatched": False}
         if not as_json:
-            console.print(f"[green]Agent '{name}' restarted[/green]")
-        return out, True
+            if restarted:
+                console.print(f"[green]Agent '{name}' restarted[/green]")
+            else:
+                console.print(
+                    f"[red]Agent '{name}' NOT restarted — the stop ran but the "
+                    f"START leg failed. The agent is either DOWN, or still the "
+                    f"OLD process on its OLD credentials.[/red]"
+                )
+                console.print(
+                    f"[yellow]Most common cause: the previous session ignored "
+                    f"SIGTERM, so start hit the duplicate-session guard.\n"
+                    f"Recover with:\n"
+                    f"  tmux kill-session -t tui-{name}\n"
+                    f"  sac agents start {name} -y --fresh[/yellow]"
+                )
+        return out, restarted
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not as_json:
             console.print(f"[red]Error: {exc}[/red]")
