@@ -208,7 +208,13 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
             # "Login expired", and went hunting a credential store that was
             # perfectly healthy. A tool that reports a failure as a pass sends
             # its user to the wrong subsystem.
-            restarted = bool(agent_restart(name))
+            # `is not False`, NOT bool(): only an EXPLICIT False is a failure.
+            # `agent_start` returns True on its own paths but forwards
+            # `runtime.start(...)` on another, and a runtime that returns None
+            # must NOT be read as "the restart failed" — inventing a false
+            # FAILURE is just the mirror of the false SUCCESS we are fixing,
+            # and would be equally misleading.
+            restarted = agent_restart(name) is not False
         except RuntimeError as exc:
             if not _should_try_host_bypass(exc):
                 raise

@@ -167,19 +167,25 @@ def test_near_expiry_token_is_still_probed(tmp_path: Path) -> None:
     assert opener.calls, "a near-expiry token was NOT probed; guard too broad"
 
 
-def test_unreadable_credential_falls_through_to_probe(tmp_path: Path) -> None:
-    """An undetermined TTL must PROBE, never assume freshness — if we cannot
-    PROVE the token is fresh, we do not silently skip the safety check."""
+def test_unreadable_credential_does_not_take_the_fresh_shortcut(
+    tmp_path: Path,
+) -> None:
+    """An undetermined TTL must NOT be treated as fresh.
+
+    If we cannot PROVE the token is fresh, we must not silently skip the
+    safety check. (We assert on the SHORT-CIRCUIT, not on the opener: an
+    unparseable file fails at the READ, so the real refresh path never reaches
+    the network seam at all — asserting `opener.calls` here would be asserting
+    something the code cannot do.)
+    """
     # Arrange
     cred = tmp_path / ".credentials.json"
     cred.write_text("{ this is not valid json")
-    opener = _RecordingOpener()
 
     # Act
-    try:
-        probe_credential_usable(cred, opener=opener)
-    except AssertionError:
-        pass
+    _usable, kind, _reason = probe_credential_usable(
+        cred, opener=_RecordingOpener()
+    )
 
     # Assert
-    assert opener.calls, "an unparseable credential silently skipped the probe"
+    assert kind != "skipped-token-fresh", "undetermined TTL was assumed fresh"
