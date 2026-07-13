@@ -68,8 +68,11 @@ def _ensure_subprocess_coverage_shim() -> None:
 _ensure_subprocess_coverage_shim()
 
 # Expose shared no-mocks helpers (subprocess_shim, env_save_restore,
-# ssh_http_shim) as session-wide fixtures so any test under tests/
-# can use them by name.
+# ssh_exec_shim, ssh_http_shim) as session-wide fixtures so any test under
+# tests/ can use them by name.
+from tests.scitex_agent_container._helpers.ssh_exec_shim import (  # noqa: E402,F401
+    ssh_exec_shim,
+)
 from tests.scitex_agent_container._helpers.ssh_http_shim import (  # noqa: E402,F401
     ssh_http_shim,
 )
