@@ -234,7 +234,7 @@ def _base_proxy_raw(**overrides) -> dict:
             # claude block (forbidden for kind: AgentProxy); proxy.upstream is
             # its kind-specific required field.
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/home/agent/work",
             "apptainer": {"image": "/x.sif", "binds": []},
             "health": {"enabled": True, "interval": 60},

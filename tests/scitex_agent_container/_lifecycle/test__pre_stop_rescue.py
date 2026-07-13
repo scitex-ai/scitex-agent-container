@@ -87,6 +87,23 @@ def _make_dirty(root: Path) -> None:
     (root / "README.md").write_text("# tmp\n# rescue-target\n")
 
 
+def _git_out(args: list[str], *, cwd: Path) -> str:
+    """Run ``git <args>`` and return stdout (raises on non-zero — fail loud)."""
+    return subprocess.check_output(["git", *args], cwd=str(cwd), text=True)
+
+
+def _init_repo_with_origin(
+    root: Path, remote: Path, *, branch: str = "develop"
+) -> Path:
+    """Create a repo on ``branch`` wired to a bare ``origin`` with ``branch`` pushed."""
+    remote.mkdir(parents=True, exist_ok=True)
+    _git(["init", "--bare", "--quiet"], cwd=remote)
+    _init_repo(root, branch=branch)
+    _git(["remote", "add", "origin", str(remote)], cwd=root)
+    _git(["push", "-u", "origin", branch, "--quiet"], cwd=root)
+    return root
+
+
 # ---------------------------------------------------------------------------
 # is_protected_branch — denylist policy
 # ---------------------------------------------------------------------------
@@ -136,6 +153,16 @@ def test_is_protected_branch_release_notes_is_not_protected():
     result = is_protected_branch(branch)
     # Assert
     assert result is False
+
+
+def test_is_protected_branch_develop_is_protected():
+    # Arrange — develop is the shared work checkout; a rescue commit here
+    # diverges it from origin and breaks ff-only pull (the root-cause bug).
+    branch = "develop"
+    # Act
+    result = is_protected_branch(branch)
+    # Assert
+    assert result is True
 
 
 def test_is_protected_branch_empty_branch_is_protected():
@@ -369,3 +396,256 @@ def test_rescue_for_agent_rescue_dir_named_correctly(
     )
     # Assert
     assert (state_dir / RESCUE_DIR_NAME).is_dir()
+
+
+# ---------------------------------------------------------------------------
+# rescue_worktree on a PROTECTED branch — route to rescue/ side-branch,
+# NEVER leave a local-only commit on develop/main (root-cause fix)
+# ---------------------------------------------------------------------------
+
+
+def test_rescue_protected_develop_no_local_only_commit(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — dirty checkout on develop wired to an origin remote.
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — develop carries NO commit that origin/develop lacks.
+    ahead = _git_out(["rev-list", "origin/develop..develop"], cwd=repo)
+    assert ahead.strip() == ""
+
+
+def test_rescue_protected_develop_pull_ff_only_succeeds(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — the exact operation the bug broke now succeeds (rc 0).
+    rc = subprocess.call(["git", "pull", "--ff-only", "--quiet"], cwd=str(repo))
+    assert rc == 0
+
+
+def test_rescue_protected_develop_worktree_clean_after(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — checkout restored to a clean tree (porcelain empty).
+    porcelain = _git_out(["status", "--porcelain"], cwd=repo)
+    assert porcelain.strip() == ""
+
+
+def test_rescue_protected_develop_still_on_develop_after(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — the checkout ends back on the original protected branch.
+    branch = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)
+    assert branch.strip() == "develop"
+
+
+def test_rescue_protected_develop_work_preserved_on_rescue_branch(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — the rescue branch's tip carries the dirty content.
+    content = _git_out(
+        ["show", f"{result['rescue_branch']}:README.md"], cwd=repo
+    )
+    assert "rescue-target" in content
+
+
+def test_rescue_protected_develop_rescue_branch_named_by_convention(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert
+    assert result["rescue_branch"] == "rescue/agent-x-20260709T000000Z"
+
+
+def test_rescue_protected_develop_pushes_rescue_branch_to_origin(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — the rescue branch actually landed on origin.
+    remote_heads = _git_out(
+        ["ls-remote", "--heads", "origin", str(result["rescue_branch"])],
+        cwd=repo,
+    )
+    assert remote_heads.strip() != ""
+
+
+def test_rescue_protected_develop_no_remote_writes_tarball(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — develop but NO origin: push MUST fail, tarball MUST land,
+    # develop MUST stay pristine (no local-only commit vs its init tip).
+    repo = _init_repo(tmp_path / "repo", branch="develop")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — work still captured on disk despite no remote.
+    assert isinstance(result.get("tarball"), Path) and Path(result["tarball"]).is_file()
+
+
+def test_rescue_protected_develop_no_remote_keeps_develop_clean(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — no remote; capture develop's tip before + after.
+    repo = _init_repo(tmp_path / "repo", branch="develop")
+    tip_before = _git_out(["rev-parse", "develop"], cwd=repo).strip()
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — develop's tip is unchanged (no rescue commit landed on it).
+    tip_after = _git_out(["rev-parse", "develop"], cwd=repo).strip()
+    assert tip_after == tip_before
+
+
+def test_rescue_protected_develop_no_remote_preserves_on_rescue_branch(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — no remote: the local rescue branch is the durable copy.
+    repo = _init_repo(tmp_path / "repo", branch="develop")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — the local rescue branch still carries the dirty content.
+    content = _git_out(
+        ["show", f"{result['rescue_branch']}:README.md"], cwd=repo
+    )
+    assert "rescue-target" in content
+
+
+def test_rescue_nonprotected_topic_branch_commits_in_place(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — a normal topic branch: the rescue commit lands IN PLACE,
+    # existing behavior, no side-branch.
+    repo = _init_repo(tmp_path / "repo", branch="feature/topic")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — no rescue side-branch was created for a topic branch.
+    assert result["rescue_branch"] == ""
+
+
+def test_rescue_nonprotected_topic_branch_leaves_commit_on_that_branch(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    repo = _init_repo(tmp_path / "repo", branch="feature/topic")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — HEAD's newest commit is the rescue autosave on feature/topic.
+    subject = _git_out(["log", "-1", "--pretty=%s"], cwd=repo)
+    assert subject.strip() == "rescue: pre-stop autosave agent-x@20260709T000000Z"

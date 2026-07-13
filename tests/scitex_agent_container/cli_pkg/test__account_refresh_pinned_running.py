@@ -29,7 +29,7 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._state.account_store import save_account
-from scitex_agent_container.cli_pkg._account_refresh import (
+from scitex_agent_container.cli_pkg._account_refresh_skip import (
     _collect_pinned_running_accounts,
     _resolve_registry_dir,
 )
@@ -81,7 +81,7 @@ def _write_pinned_spec(parent: Path, *, name: str, account: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
@@ -102,7 +102,7 @@ def _write_unpinned_spec(parent: Path, *, name: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"

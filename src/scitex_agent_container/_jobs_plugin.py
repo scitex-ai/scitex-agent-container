@@ -23,17 +23,35 @@ def provide_jobs() -> "list[JobSpec]":
 
     Two jobs today:
 
-    * ``sac.accounts-refresh`` — a headless OAuth access-token refresh
-      for every stored Claude account, skipping the active one
-      (``--skip-active``) so the in-use refresh_token is never rotated
-      out from under the live session.
-    * ``sac.listen`` — the host-level HTTP/JSON control plane
-      (``127.0.0.1:7878``: push hub, spawn broker, lead inbox),
-      registered so ``scitex-dev ecosystem systemd install`` can
-      auto-start it on boot and auto-restart it on crash. This
-      replaces the fragile cron-based watchdog
-      (``sac-listen-watch.sh``, ``*/2`` cron) that died twice on
-      2026-07-05 (clew incident ``clew-incident-sac-host-listen-down``).
+    * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
+      access-token refresh for EVERY stored Claude account, including the
+      active one (``--include-active``), mirroring the rotated token back
+      into the live ``~/.claude`` login (``--sync-active-login``).
+    * ``sac.listen`` (``kind="service"``) — the host-level HTTP/JSON
+      control plane (``127.0.0.1:7878``: push hub, spawn broker, lead
+      inbox).
+
+    Why ``sac.accounts-refresh`` is not ``--skip-active``: under the
+    pre-2026-07-08 two-refresher model both the host timer and the
+    in-container CLI redeemed the same single-use refresh_token, so
+    skipping the active account was the race guard (2026-06-04 neurovista
+    401 storm). Since 2026-07-08 agents bind the credential ``:ro`` and
+    never refresh, making this timer the SOLE refresher — so
+    ``--skip-active`` stopped guarding a race and instead starved the one
+    account every agent uses, whose ~8h access_token then expired and
+    401'd the whole fleet (2026-07-09/10 total stall).
+    ``--sync-active-login`` keeps the operator's live session valid across
+    the single-use refresh_token rotation.
+
+    Why ``sac.listen`` is federated here: it had NO SUPERVISOR. Declaring
+    it as a ``kind="service"`` JobSpec hands it to scitex-dev's supervisor
+    (``scitex-dev service ensure sac.listen`` — systemd ``--user`` with
+    ``Restart=`` where a user manager is reachable, else a respawn-loop
+    keep-alive), so it auto-starts on boot and comes back on ANY exit.
+    This replaces the fragile cron-based watchdog (``sac-listen-watch.sh``,
+    ``*/2`` cron) that died twice on 2026-07-05 (clew incident
+    ``clew-incident-sac-host-listen-down``) and left the whole fleet cut
+    off from the host after a CLEAN shutdown that nothing restarted.
     """
     from scitex_dev.jobs import JobSpec
 
@@ -41,11 +59,14 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="sac.accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
-            command="sac accounts refresh --all --skip-active",
+            command=(
+                "sac accounts refresh --all --include-active "
+                "--sync-active-login"
+            ),
             description=(
                 "Headless OAuth access-token refresh for all stored Claude "
-                "accounts, skipping the active one (avoids refresh-token "
-                "rotation race)."
+                "accounts including the active one (sole-refresher model), "
+                "mirroring the rotation into the live ~/.claude login."
             ),
             # 2026-06-11 (lead msg c5212862): scitex_dev.jobs.JobSpec kind
             # taxonomy is {"service","timer","cron"} since scitex-dev #153.

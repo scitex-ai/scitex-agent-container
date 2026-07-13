@@ -266,7 +266,9 @@ def test_account_list_shows_first_account_name(sandbox_home):
     assert "work" in result.output
 
 
-def test_account_list_shows_first_account_email(sandbox_home):
+def test_account_list_omits_stored_email(sandbox_home):
+    """Operator directive 2026-07-11: IDs are email-derived slugs, so the
+    stored-account email renders in ``--json`` only — never in the table."""
     # Arrange
     save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
     save_account("personal", {}, home=sandbox_home)
@@ -274,7 +276,7 @@ def test_account_list_shows_first_account_email(sandbox_home):
     # Act
     result = runner.invoke(account, ["list"])
     # Assert
-    assert "w@example.com" in result.output
+    assert "w@example.com" not in result.output
 
 
 def test_account_list_shows_second_account_name(sandbox_home):
@@ -288,7 +290,8 @@ def test_account_list_shows_second_account_name(sandbox_home):
     assert "personal" in result.output
 
 
-def test_account_list_uses_no_email_placeholder(sandbox_home):
+def test_account_list_omits_no_email_placeholder(sandbox_home):
+    """With the Email column gone (2026-07-11), its placeholder is gone too."""
     # Arrange
     save_account("work", {"email_address": "w@example.com"}, home=sandbox_home)
     save_account("personal", {}, home=sandbox_home)
@@ -296,7 +299,7 @@ def test_account_list_uses_no_email_placeholder(sandbox_home):
     # Act
     result = runner.invoke(account, ["list"])
     # Assert
-    assert "(no email)" in result.output
+    assert "(no email)" not in result.output
 
 
 def test_account_list_json_exits_zero(sandbox_home):
@@ -734,7 +737,9 @@ def _write_plan_snapshot(home: Path, name: str, *, subscription: str, tier: str)
     )
 
 
-def test_account_list_human_shows_offline_plan_label(sandbox_home):
+def test_account_list_human_omits_plan_label(sandbox_home):
+    """Operator directive 2026-07-11: Plan is ``--json``-only — never in
+    the human view (neither table nor bars)."""
     # Arrange
     _write_plan_snapshot(
         sandbox_home, "work", subscription="max", tier="default_claude_max_20x"
@@ -743,7 +748,7 @@ def test_account_list_human_shows_offline_plan_label(sandbox_home):
     # Act
     result = runner.invoke(account, ["list"])
     # Assert
-    assert "Max 20x" in result.output
+    assert "Max 20x" not in result.output
 
 
 def _invoke_account_list_with_no_usage_cache(sandbox_home) -> str:
@@ -755,35 +760,55 @@ def _invoke_account_list_with_no_usage_cache(sandbox_home) -> str:
     return runner.invoke(account, ["list"]).output
 
 
-def test_account_list_human_shows_5h_pct_column_when_no_cache(sandbox_home):
-    """Rich table emits the ``5h%`` column header even when usage is absent."""
+def test_account_list_human_omits_5h_pct_column(sandbox_home):
+    """The table has no ``5h%`` column since 2026-07-11 — bars own the %."""
     # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
     home = sandbox_home
     # Act
     output = _invoke_account_list_with_no_usage_cache(home)
     # Assert
-    assert "5h%" in output
+    assert "5h%" not in output
 
 
-def test_account_list_human_shows_7d_pct_column_when_no_cache(sandbox_home):
-    """Rich table emits the ``7d%`` column header even when usage is absent."""
+def test_account_list_human_shows_5h_bar_when_no_cache(sandbox_home):
+    """The usage-bars block emits a 5h bar even when usage is absent."""
     # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
     home = sandbox_home
     # Act
     output = _invoke_account_list_with_no_usage_cache(home)
     # Assert
-    assert "7d%" in output
+    assert "5h [" in output
 
 
-def test_account_list_human_shows_dash_cells_when_no_cache(sandbox_home):
-    """Empty-data cells render as ``-`` (rich table) when usage is absent."""
+def test_account_list_human_shows_7d_bar_when_no_cache(sandbox_home):
+    """The usage-bars block emits a 7d bar even when usage is absent."""
     # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
     home = sandbox_home
     # Act
     output = _invoke_account_list_with_no_usage_cache(home)
-    # Assert — the prior ``usage: —`` was a flat-line format; the new
-    # renderer emits one cell per metric, with ``-`` for missing values.
+    # Assert
+    assert "7d [" in output
+
+
+def test_account_list_human_shows_dash_last_update_when_no_cache(sandbox_home):
+    """The Last Update cell renders ``-`` (rich table) when usage is absent."""
+    # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
+    home = sandbox_home
+    # Act
+    output = _invoke_account_list_with_no_usage_cache(home)
+    # Assert — no snapshot → the Last Update cell is a bare dash.
     assert " - " in output
+
+
+def test_account_list_human_prints_legend_after_bars_when_no_reset(sandbox_home):
+    """With no cached reset timestamps the rolling-window legend prints
+    BELOW the usage-bars block it explains (2026-07-11 relocation)."""
+    # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
+    home = sandbox_home
+    # Act
+    output = _invoke_account_list_with_no_usage_cache(home)
+    # Assert — bars section first, legend after it.
+    assert output.index("Usage bars") < output.index("Legend:")
 
 
 def test_account_list_json_includes_plan_label(sandbox_home):

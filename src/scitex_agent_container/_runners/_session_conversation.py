@@ -22,16 +22,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
+from ._rate_limit_reactive import handle_rate_limit_failure
 from ._session_dead_recovery import handle_dead_session_resume
 from ._session_state import (
     append_session_message,
-    read_session_id,
-    read_session_id_history,
     report_sdk_error,
+)
+from ._session_supervisor_helpers import (
+    _drain_failed_inbox as _drain_failed_inbox,
+    _maybe_compact as _maybe_compact,
+    _resume_candidate as _resume_candidate,
+    _wake_on_inbound as _wake_on_inbound,
 )
 from ._session_tasks import (
     TaskObservations,
@@ -50,148 +54,6 @@ from ._stderr_capture import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _maybe_compact(client: Any, *, name: str) -> None:
-    """Proactively summarize the conversation when context nears the model
-    window. Provider-backed agents on a small window (e.g. Qwen36 at 128k
-    via the LiteLLM shim) overflow because the CLI's native auto-compaction
-    can't know a PROXIED model's real context size, so it never compacts
-    before the model rejects the prompt (cohort-A Qwen de-risk 2026-06-24:
-    122881 input + 8192 output > 131072 = ContextWindowExceededError).
-
-    Gated by ``SAC_AUTO_COMPACT_TOKENS`` (0/unset = off, so the Anthropic
-    path keeps the CLI's own window-aware auto-compaction). When >0, read
-    the live ``totalTokens`` from ``client.get_context_usage()`` — the
-    ABSOLUTE count, NOT the CLI's ``percentage``/``maxTokens`` which assume
-    the wrong window for a proxied model — and inject ``/compact`` once it
-    crosses the threshold. Best-effort: any failure here must never kill a
-    live solve.
-    """
-    try:
-        threshold = int(os.environ.get("SAC_AUTO_COMPACT_TOKENS", "0") or "0")
-    except ValueError:
-        threshold = 0
-    if threshold <= 0:
-        return
-    try:
-        usage = await client.get_context_usage()
-    except Exception as exc:  # stx-allow: fallback (reason: usage probe is best-effort; never fail a turn on it)
-        logger.debug("auto-compact: get_context_usage failed (skipping): %s", exc)
-        return
-    total = usage.get("totalTokens") if isinstance(usage, dict) else None
-    if not isinstance(total, (int, float)) or total < threshold:
-        return
-    max_tokens = usage.get("maxTokens") if isinstance(usage, dict) else None
-    pct = usage.get("percentage") if isinstance(usage, dict) else None
-    logger.warning(
-        "auto-compact: totalTokens=%d >= %d for %s (maxTokens=%s pct=%s) — injecting /compact",
-        int(total),
-        threshold,
-        name,
-        max_tokens,
-        pct,
-    )
-    try:
-        await client.query("/compact")
-        async for _msg in client.receive_response():
-            pass
-        logger.info("auto-compact: /compact completed for %s", name)
-    except Exception as exc:  # stx-allow: fallback (reason: compaction is best-effort; a failed /compact must not kill the solve)
-        logger.warning("auto-compact: /compact failed for %s: %s", name, exc)
-
-
-def _drain_failed_inbox(inbox: "asyncio.Queue", exc: BaseException) -> None:
-    """Resolve pending turn futures with the failure so producers don't hang."""
-    from ._session_inbox import TurnEnvelope
-
-    while not inbox.empty():
-        try:
-            env = inbox.get_nowait()
-        except asyncio.QueueEmpty:
-            break
-        if isinstance(env, TurnEnvelope) and not env.response.done():
-            env.response.set_exception(exc)
-
-
-async def _wake_on_inbound(inbox, client) -> None:
-    """Watch ``inbox`` while a turn is in flight; interrupt the SDK
-    when the next envelope arrives so the consumer loop can dequeue it.
-
-    Pairs 1:1 with each ``_drive_turn`` invocation (#41, lead a2a
-    ``f39bdcc5`` + ``b4e223e0``). The conversation loop spawns this as
-    a sibling task, lets it await on the inbox's non-destructive
-    "queue is non-empty" event, and cancels it in ``finally`` so it
-    cannot leak across turn boundaries.
-
-    Semantics:
-
-    * ``await inbox.wait_for_item()`` returns when the queue's
-      ``_not_empty`` event fires — i.e. the next envelope has been put
-      AND has not yet been consumed by the conversation loop. Because
-      this loop's ``inbox.get()`` already consumed the CURRENT
-      envelope, the wake fires only on a NEW envelope queued mid-turn.
-    * On wake, ``await client.interrupt()`` asks the SDK to stop the
-      current iterator. The SDK guarantee (verified empirically in
-      :mod:`_session_turn`) is that any in-flight assistant text /
-      tool-result is already captured in ``chunks`` by the time the
-      iterator returns — so the interrupt does NOT corrupt or tear
-      the current turn. The new envelope is then processed as a
-      clean FOLLOW-UP message in the next loop iteration.
-    * Exceptions from ``interrupt`` are swallowed (logged WARNING)
-      because the wake task must NEVER kill the conversation loop;
-      worst case the original turn finishes naturally and the new
-      envelope is processed one turn-cap later.
-
-    The wake task EXITS after one interrupt — there's only ever one
-    in-flight turn, and the consumer loop will spawn a fresh wake
-    task for the next turn.
-    """
-    try:
-        await inbox.wait_for_item()
-    except asyncio.CancelledError:
-        # Normal path when the turn completed before any new envelope
-        # arrived — the consumer cancels us in ``finally``.
-        raise
-    try:
-        await client.interrupt()
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # stx-allow: fallback (reason: wake task is best-effort; never let SDK interrupt failure kill the conversation loop — the original turn will finish naturally instead)
-        logger.warning(
-            "wake-on-inbound: client.interrupt() failed (turn will "
-            "finish naturally before the new envelope is processed): %s",
-            exc,
-        )
-
-
-def _resume_candidate(
-    state_dir: Path,
-    *,
-    attempt: int,
-    fallback: str | None,
-) -> str | None:
-    """Pick the resume session_id for supervisor restart ``attempt``.
-
-    Walks the append-only ``session_id_history`` from latest to oldest:
-    ``attempt`` 0 → latest, 1 → next-older, etc. This lets a supervised
-    restart retry a prior still-on-disk id when the latest one was
-    forked or aged out and its resume is rejected.
-
-    - ``attempt`` within the history range → that id (latest-first).
-    - ``attempt == 0`` with no history yet → ``read_session_id`` if
-      present else ``fallback`` (preserves the pre-history behaviour for
-      the very first start, before any turn has recorded an id).
-    - ``attempt`` beyond the history → ``None`` (history exhausted →
-      fresh start, resume disabled).
-    """
-    history = read_session_id_history(state_dir)
-    candidates = list(reversed(history))  # latest-first
-    if attempt < len(candidates):
-        return candidates[attempt]
-    if attempt == 0:
-        return read_session_id(state_dir) or fallback
-    return None
 
 
 async def run_conversation(
@@ -308,6 +170,11 @@ async def run_conversation(
     # terminates instead of spinning forever. One per distinct dead id is
     # the realistic ceiling — the latest + every forked id in the history.
     dead_session_recoveries = 0
+    # Consecutive REACTIVE rate-limit (Mode A backoff) hits, back-to-back
+    # with no intervening non-rate-limit failure or successful rotation.
+    # Owned by ``handle_rate_limit_failure`` / ``_account.backoff_agent``
+    # (task #13) — see ``_rate_limit_reactive`` module docstring.
+    consecutive_rate_limit_hits = 0
     last_exc: BaseException | None = None
     while True:
         # Resume target, with history fallback. On the first attempt this
@@ -386,7 +253,7 @@ async def run_conversation(
         # stopped responding after restart) leaves a self-diagnosing
         # trail in stdout.log. The corresponding ``apptainer_restart``
         # mount + lock race that originally caused this is closed in
-        # ``_lifecycle/_stop.py::_wait_for_previous_runtime_to_exit``;
+        # ``_lifecycle/_stop_escalate.py::ensure_previous_runtime_down``;
         # this log is the OBSERVABILITY half so a regression of either
         # the race or the SDK's per-MCP launch is visible without
         # bouncing the agent or attaching to its stderr.
@@ -530,6 +397,44 @@ async def run_conversation(
                 dead_session_recoveries += 1
                 attempt = 0
                 resume_session_id = None
+                continue
+
+            # Reactive rate-limit (task #13): detect + Mode A/B dispatch
+            # delegated to ``_rate_limit_reactive``. ``handled=False`` ->
+            # no rate-limit signal -> fall through unchanged below.
+            rl_outcome = handle_rate_limit_failure(
+                enriched=enriched,
+                state_dir=state_dir,
+                name=name,
+                host=host,
+                attempt=attempt,
+                consecutive_hits=consecutive_rate_limit_hits,
+                stderr_event_fields=stderr_event_fields,
+                append_session_message=append_session_message,
+                report_sdk_error=report_sdk_error,
+                db_writer=db_writer,
+            )
+            consecutive_rate_limit_hits = rl_outcome.consecutive_hits
+            if rl_outcome.handled and rl_outcome.reset_attempt:
+                # Mode B rotated onto a fresh account: retry now, same
+                # contract as a handled dead-session recovery.
+                attempt = 0
+                continue
+            if rl_outcome.handled:
+                # Mode A (or Mode B with nowhere to rotate to — "never
+                # park", fall back to same-account backoff). Respects
+                # max_restarts/stop; waits rl_outcome.delay_s instead of
+                # the generic exponential backoff.
+                if attempt >= max_restarts or stop.is_set():
+                    _drain_failed_inbox(inbox, exc)
+                    return
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=rl_outcome.delay_s)
+                    _drain_failed_inbox(inbox, last_exc)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+                attempt += 1
                 continue
 
             auth_detail = classify_auth_failure(enriched)

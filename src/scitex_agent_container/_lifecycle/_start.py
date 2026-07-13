@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -18,6 +19,7 @@ from ._a2a_port import resolve_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import record_local_instance as _record_local_instance
+from ._instances import restart_and_record as _restart_and_record
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
@@ -70,6 +72,7 @@ def agent_start(
     handover_mod: Any = None,
     liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
+    successor_auth_check: Callable[[AgentConfig], None] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -263,6 +266,15 @@ def agent_start(
     )
     if really_running:
         if force:
+            # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
+            # 20260712): probe the already-rotated successor credential; a
+            # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
+            # the live container is LEFT UP. Covers `start --force` (the PR #628
+            # self-restart bounce); `sac agents restart` is covered upstream.
+            from ._restart_preflight import assert_successor_auth_usable
+
+            _auth_check = successor_auth_check or assert_successor_auth_usable
+            _auth_check(config)
             agent_stop(
                 config.name,
                 registry=registry,
@@ -380,6 +392,28 @@ def agent_start(
 
     kill_orphan_mcp_children(config.name)
 
+    # Spec-pinned session resume (``spec.claude.session: resume`` +
+    # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
+    # marker from the pinned uuid — but ONLY when no marker exists yet
+    # (first boot / migration). Must run BEFORE ``runtime.start`` so the
+    # in-container runner sees the seeded id on its first resume attempt.
+    # Seed-if-absent preserves a later SDK fork (see ``_session_seed``).
+    from ._session_seed import seed_pinned_session_id
+
+    seed_pinned_session_id(config, runtime)
+
+    # Twin context-inheritance (``sac agents twin``). When this spec carries
+    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # CURRENT session uuid, pin this twin's resume to it, and copy the
+    # parent's transcript into the twin's container-home projects store so
+    # the resume finds it. Host-side (paths always resolve on the bare host)
+    # and a strict no-op for every non-twin start. Fail-loud (TwinSeedError)
+    # when the parent has no resolvable live session — a twin with no context
+    # to inherit is pointless. See ``_twin.seed_twin_from_parent``.
+    from ._twin import seed_twin_from_parent
+
+    seed_twin_from_parent(config, runtime)
+
     # Start — ``force`` is propagated to the runtime. The legacy
     # ``config.remote.no_preflight`` override was retired with
     # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the
@@ -410,6 +444,19 @@ def agent_start(
                 f"{_format_boot_stderr_section(_boot_log)}"
                 f"  pane tail:\n{_pane or '<empty>'}"
             )
+            # Persist so this evidence outlives the tmux session. A
+            # false-negative start leaves no registry row (raised below,
+            # before registry.add()), so killing the session by hand is
+            # often the only way to stop the agent -- which destroys the
+            # live pane capture forever unless it's written to disk now.
+            # boot.stderr.log already survives pane death (see
+            # _format_boot_stderr_section); the pane tail did not until
+            # this. See sac-agent-start-false-negative-tui-registry-row.
+            _diag_log = state_dir_for_config(config) / "start_failure_diag.log"
+            _diag_log.write_text(
+                f"{datetime.now(timezone.utc).isoformat()} start failed for "
+                f"{config.name!r}: runtime.start() returned False.{diag}\n"
+            )
         except Exception:  # stx-allow: fallback (reason: diagnostics must never mask the real start failure — degrade to no pane)
             diag = " (no pane diagnostics available)"
         raise RuntimeError(
@@ -437,7 +484,8 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Start health monitor in background if enabled
+    # Restart callback re-records the row: a restart = a NEW pid. See
+    # ``_instances.restart_and_record`` for why a stale pid is dangerous.
     if config.health.enabled:
         thread = thread_factory(
             target=health_monitor,
@@ -445,7 +493,7 @@ def agent_start(
                 config.name,
                 config,
                 registry,
-                lambda c: runtime_factory(c).start(c),
+                lambda c: _restart_and_record(c, runtime_factory),
             ),
             daemon=True,
         )

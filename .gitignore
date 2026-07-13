@@ -17,6 +17,11 @@ build/
 .pytest_cache/
 GITIGNORED/
 .env
+# User/project-LOCAL direnv config (agent identity + $-references into the
+# secrets pool) — never tracked in this public repo. Tracked template:
+# .envrc.example. sac auto-resolves CCT_BOT_TOKEN from the pool when this
+# file is absent (runtimes/_cct_token_pool.py).
+.envrc
 
 # cld session artifacts (mirrors of ~/.claude/to_claude/ — canonical source
 # in ~/.dotfiles/src/.claude/to_claude/).
@@ -46,3 +51,11 @@ logs/
 # (CI in docs.yml strips this before committing _sphinx_html/)
 _sphinx_html/.doctrees/
 .worktrees/
+
+# Build stamp written by src/hatch_build.py at build time (commit + code
+# hash of the artifact). Generated, never committed — a checked-in copy
+# would go stale on the next commit and start LYING about which code is
+# loaded, which is the exact failure this stamp exists to prevent. The
+# build force-includes it, so being git-ignored does not keep it out of
+# the wheel; and a source checkout reads its commit live from .git anyway.
+src/scitex_agent_container/_provenance/_build_info.py

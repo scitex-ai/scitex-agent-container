@@ -417,7 +417,16 @@ async def node_inbox_stream(request: Request) -> Response:
             while True:
                 if await request.is_disconnected():
                     return
-                event = await queue.get()
+                # ``get_or_close`` races ``queue.get()`` against the
+                # broker's shutdown Event so a graceful ``sac listen``
+                # SIGTERM cancels this in-flight stream promptly instead
+                # of parking here until restart --force SIGKILLs at 10 s
+                # (card sac-listen-sigterm-sse-shutdown-hang). ``None``
+                # means "broker closing" — return so the StreamingResponse
+                # completes and the daemon exits cleanly.
+                event = await broker.get_or_close(queue)
+                if event is None:
+                    return
                 # The publish path stamps the persisted row id onto
                 # the envelope as ``_row_id`` (see
                 # :func:`node_message_send`). We surface it as the SSE

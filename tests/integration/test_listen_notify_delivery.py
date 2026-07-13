@@ -39,8 +39,6 @@ import contextlib
 import json
 import os
 import socket
-import threading
-import time
 from pathlib import Path
 
 import httpx
@@ -51,6 +49,10 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state import state_db
+from tests.scitex_agent_container._helpers.loopback_server import (
+    serve_in_thread,
+    wait_until_serving,
+)
 
 HOST_TOKEN = "integration-notify-host-token"
 AGENT = "containerized-worker"
@@ -140,13 +142,11 @@ def live_listen(listen_state_db):
         app, host="127.0.0.1", port=port, log_level="warning", ws="none"
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5.0
-    while not server.started:
-        if time.monotonic() > deadline:
-            raise RuntimeError("uvicorn loopback did not start in 5s")
-        time.sleep(0.05)
+    # Shared startup wait: the hand-rolled 5s ceiling that used to live here
+    # raced the listen lifespan (measured 7.49s under load) and turned the
+    # py3.11 leg red. See tests/.../_helpers/loopback_server.py.
+    thread, crash = serve_in_thread(server, port)
+    wait_until_serving(server, thread, port=port, crash=crash)
     try:
         yield f"http://127.0.0.1:{port}"
     finally:

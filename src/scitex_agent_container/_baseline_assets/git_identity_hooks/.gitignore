@@ -1,0 +1,4 @@
+# Runtime block-audit log written by enforce_commit_author_allowlist.sh on
+# each BLOCK (its LOG_PATH = <hook-dir>/.<script>.log). A pure runtime
+# artifact -- never committed; the self-test / pytest suite generates it.
+.enforce_commit_author_allowlist.sh.log

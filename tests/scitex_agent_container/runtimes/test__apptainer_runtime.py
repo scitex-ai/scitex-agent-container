@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -82,25 +83,46 @@ def state_root(tmp_path: Path, env_save_restore, home_redirect: Path) -> Path:
 @pytest.fixture
 def apptainer_on_path(subprocess_shim) -> Path:
     """Install a fake ``apptainer`` binary on ``$PATH`` that, when
-    invoked as ``apptainer build <out.sif> <src>``, creates the output
-    file. Otherwise it's a no-op (exit 0).
+    invoked as ``apptainer build [--fakeroot] <out.sif> <src>``, creates
+    the output file. Otherwise it's a no-op (exit 0).
 
     ``shutil.which("apptainer")`` finds this binary by a real PATH
     lookup — no ``which`` monkeypatching.
+
+    The SIF is located by SCANNING the post-``build`` args for the first
+    ``.sif`` positional — never by a fixed index. Production's build argv
+    carries an OPTIONAL ``--fakeroot``: ``_build_argv_prefix`` appends it
+    whenever the host has ``/etc/sub{u,g}id`` mappings for a non-root
+    user — true on the GitHub runner AND inside the agent container — so
+    ``sys.argv[2]`` is that FLAG, not the SIF. Writing that index blindly
+    made this shim create a 1-NULL-byte file literally named
+    ``--fakeroot`` in the launch cwd, i.e. the REPO ROOT under pytest.
+    The project audit then correctly failed it (PS-103
+    top-level-junk-file) and reddened every PR, while the 9.6k tests
+    themselves stayed green — self-inflicted, self-detected.
+
+    A relative target is refused outright (exit 2) so this class of bug
+    can never silently litter the repo root again: a future drift fails
+    the test loudly instead of dropping junk next to ``pyproject.toml``.
     """
     bin_dir = subprocess_shim._bin
     script = bin_dir / "apptainer"
-    # Argv layout for build: ["build", "<sif>", "<src>"]. The shim
-    # *writes the .sif file* so production's `sif_path.is_file()` check
-    # passes after the call returns — honest end-to-end behaviour.
+    # The shim *writes the .sif file* so production's `sif_path.is_file()`
+    # check passes after the call returns — honest end-to-end behaviour.
     body = (
         f"#!{sys.executable}\n"
         "import json, sys\n"
         "from pathlib import Path\n"
         f"with open({_q(str(bin_dir / 'apptainer.argv.jsonl'))}, 'a') as fh:\n"
         "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "if len(sys.argv) >= 3 and sys.argv[1] == 'build':\n"
-        "    Path(sys.argv[2]).write_bytes(b'\\x00')\n"
+        "args = sys.argv[1:]\n"
+        "if args[:1] == ['build']:\n"
+        "    sif = next((a for a in args[1:] if a.endswith('.sif')), None)\n"
+        "    if sif is not None:\n"
+        "        if not Path(sif).is_absolute():\n"
+        "            sys.stderr.write('shim refuses relative SIF path: ' + sif)\n"
+        "            sys.exit(2)\n"
+        "        Path(sif).write_bytes(b'\\x00')\n"
         "sys.exit(0)\n"
     )
     script.write_text(body)
@@ -195,12 +217,26 @@ def _flag_value(argv: list[str], flag: str) -> str:
 
 
 def _env_pairs(argv: list[str]) -> dict[str, str]:
-    """Decode every ``--env KEY=VAL`` pair in the argv into a dict."""
+    """Decode the environment the container RECEIVES from the argv.
+
+    Every ``--env KEY=VAL`` pair PLUS the contents of every ``--env-file``.
+    The P1 secret-hardening fix (``_apptainer_secret_env``) moves secret
+    vars OUT of world-readable ``--env`` argv into a 0600 ``--env-file``,
+    so a delivery check must read both transports — the container gets the
+    union.
+    """
     out: dict[str, str] = {}
     for i, a in enumerate(argv):
         if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
             k, _, v = argv[i + 1].partition("=")
             out[k] = v
+        elif a == "--env-file" and i + 1 < len(argv):
+            path = Path(argv[i + 1])
+            if path.is_file():
+                for line in path.read_text().splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        k, _, v = line.partition("=")
+                        out[k] = v
     return out
 
 
@@ -419,8 +455,9 @@ def test_argv_forwards_sac_anthropic_api_key_env(
     cfg = _config(tmp_path)
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    # Assert
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-test" in argv
+    # Assert — forwarded to the container, now via the 0600 --env-file rather
+    # than world-readable --env argv (P1 fix; see _apptainer_secret_env).
+    assert _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY") == "sk-ant-api-test"
 
 
 def test_argv_emits_nv_flag_when_apptainer_nv_true(tmp_path: Path) -> None:
@@ -499,6 +536,58 @@ def test_argv_forwards_autonomous_max_turns_value(tmp_path: Path) -> None:
     )
     # Assert
     assert inner[inner.index("--autonomous-max-turns") + 1] == "7"
+
+
+# ---------------------------------------------------------------------------
+# apptainer_on_path shim — must never litter the launch cwd
+#
+# Regression guard for the CI-blocking stray `--fakeroot` file. Production's
+# build argv is `apptainer build [--fakeroot] <sif> <src>`; the shim used to
+# write `sys.argv[2]` blindly, which IS `--fakeroot` whenever the host has
+# /etc/sub{u,g}id mappings. Under pytest the launch cwd is the repo root, so
+# the shim dropped a 1-NULL-byte `--fakeroot` file next to pyproject.toml and
+# the project audit (PS-103 top-level-junk-file) failed every PR.
+# ---------------------------------------------------------------------------
+
+
+def test_build_shim_never_creates_flag_named_file_in_cwd(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — the REAL production build argv shape: --fakeroot sits
+    # where a fixed-index shim would expect the SIF.
+    sif = tmp_path / "out.sif"
+    cwd = tmp_path / "launch"
+    cwd.mkdir()
+    argv = [str(apptainer_on_path), "build", "--fakeroot", str(sif), "docker://x"]
+    # Act — run from a scratch cwd; the old shim littered it here.
+    subprocess.run(argv, cwd=cwd, check=True)
+    # Assert
+    assert not (cwd / "--fakeroot").exists()
+
+
+def test_build_shim_materialises_sif_behind_fakeroot_flag(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — the SIF must still be found (by scan, not by index) so
+    # production's post-build `sif_path.is_file()` check stays honest.
+    sif = tmp_path / "out.sif"
+    argv = [str(apptainer_on_path), "build", "--fakeroot", str(sif), "docker://x"]
+    # Act
+    subprocess.run(argv, cwd=tmp_path, check=True)
+    # Assert
+    assert sif.read_bytes() == b"\x00"
+
+
+def test_build_shim_refuses_relative_sif_target(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — a relative SIF would resolve against the launch cwd (the
+    # repo root under pytest). The shim must refuse it, not write it.
+    argv = [str(apptainer_on_path), "build", "relative.sif", "docker://x"]
+    # Act
+    result = subprocess.run(argv, cwd=tmp_path, capture_output=True)
+    # Assert
+    assert result.returncode == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1085,12 +1174,14 @@ def test_argv_mounts_credentials_dir_when_present(
     assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
-def test_argv_credentials_bind_is_read_write(
+def test_argv_credentials_bind_is_read_only(
     tmp_path: Path, home_redirect: Path
 ) -> None:
-    # Arrange — RW lets the in-container CLI refresh the OAuth
-    # accessToken in place when it expires (~1h cadence), avoiding the
-    # manual scp-from-lead dance to re-seed expired peers.
+    # Arrange — master-host single-refresher model (operator 2026-07-08):
+    # the credential bind is READ-ONLY so the in-container CLI can never
+    # refresh/rotate the OAuth token (that consumed the single-use
+    # refresh_token = the "cred churn"). The host-side timer is the sole
+    # refresher; the DIRECTORY bind still surfaces its refreshes.
     creds = home_redirect / ".claude" / ".credentials.json"
     creds.parent.mkdir(parents=True, exist_ok=True)
     creds.write_text("{}")
@@ -1100,7 +1191,7 @@ def test_argv_credentials_bind_is_read_write(
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
     creds_arg = next(a for a in argv if ":/tmp/sac-claude:" in a)
     # Assert
-    assert ":ro" not in creds_arg
+    assert creds_arg.endswith(":rw")
 
 
 def test_argv_sets_claude_config_dir_when_credentials_present(
@@ -1179,9 +1270,9 @@ def test_argv_pins_account_binds_snapshot_directory_not_host_file(
     # atomic-replace writers in creds_sync / account_store /
     # claude_usage, regressing into the per-copy collision-401 disease
     # the snapshot model was meant to fix). The bound dir's child
-    # ``.credentials.json`` remains the snapshot itself; refresh
-    # writeback by the in-container CLI lands in the same on-disk file
-    # every same-account agent reads from.
+    # ``.credentials.json`` remains the snapshot itself, bound :rw; the
+    # host-side sac-accounts-refresh timer refreshes it and every
+    # same-account agent reads the timer-kept-fresh token.
     host_creds = home_redirect / ".claude" / ".credentials.json"
     host_creds.parent.mkdir(parents=True, exist_ok=True)
     host_creds.write_text('{"host": true}')
@@ -1222,7 +1313,7 @@ def test_argv_pins_account_does_not_create_state_dir_copy(
     rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     legacy_copy = state_dir / "claude" / ".credentials.json"
     # Assert — no per-agent copy materialised; the snapshot is the
-    # only place the in-container CLI's :rw refresh writeback lands.
+    # single source the agents share and the host timer refreshes.
     assert not legacy_copy.exists()
 
 
@@ -1428,6 +1519,162 @@ def test_start_dry_run_argv_file_begins_with_apptainer(
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
     assert argv_file.read_text().splitlines()[0] == "apptainer"
+
+
+def test_start_dry_run_argv_file_omits_the_raw_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — security regression test for card
+    # ``sac-argv-token-plaintext`` (found 2026-05-24): the dry-run argv
+    # file used to embed ``SAC_ANTHROPIC_API_KEY`` in PLAINTEXT because
+    # the write bypassed the console-preview's redaction. A fake token
+    # in the host env must never appear verbatim in the on-disk file.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert — the raw secret never hits disk.
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "sk-ant-oat01-supersecrettoken" not in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_references_the_secret_env_file(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — the P1 fix (_apptainer_secret_env) moves secret --env vars
+    # OUT of the argv into a 0600 --env-file, so the dry-run snapshot no
+    # longer carries an inline (redacted) SAC_ANTHROPIC_API_KEY at all — it
+    # shows the --env-file reference instead. (The raw value's absence from
+    # the snapshot is pinned by
+    # test_start_dry_run_argv_file_omits_the_raw_secret.)
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "--env-file" in argv_file.read_text()
+
+
+def test_start_dry_run_argv_file_is_owner_only_readable(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — belt-and-suspenders: even a redacted-at-rest file should
+    # not be group/world readable (card ``sac-argv-token-plaintext``
+    # follow-up on runtime-dir permissions).
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert stat.S_IMODE(argv_file.stat().st_mode) == 0o600
+
+
+def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+) -> None:
+    # Arrange — the redaction must be scoped to secret-named keys; an
+    # ordinary env entry (e.g. the always-emitted state-db path) must
+    # still be readable verbatim for debugging.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg, dry_run=True)
+
+    # Assert
+    argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
+    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv_file.read_text()
+
+
+def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
+    state_root: Path,
+    tmp_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange — the fix must ONLY touch the on-disk dry-run record; the
+    # real argv the runtime hands to the actual ``apptainer exec``
+    # subprocess must still carry the real secret value, or the SDK
+    # inside the container would never authenticate. Exercises the
+    # real (unmocked) ``build_run_argv`` the runtime launches with.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    argv = rt.build_run_argv(cfg, state_dir=rt._state_dir(cfg), sif_path=sif)
+
+    # Assert — the SDK in the container still authenticates: the secret is
+    # delivered via the 0600 --env-file, not world-readable --env argv.
+    assert (
+        _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
+
+
+def test_start_background_apptainer_subprocess_receives_the_real_secret(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    subprocess_shim,
+    env_save_restore,
+) -> None:
+    # Arrange — end-to-end confirmation (real subprocess, no Popen
+    # mocking): a real launch's ``apptainer exec`` child process must
+    # still receive the real secret in its argv, even though the
+    # on-disk dry-run record never would. ``apptainer_on_path`` installs
+    # a fake ``apptainer`` binary that logs its own received argv.
+    env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+
+    # Act
+    rt.start(cfg)
+    for _ in range(50):
+        if subprocess_shim.call_count("apptainer") > 0:
+            break
+        time.sleep(0.1)
+
+    # Assert — the real apptainer child still receives the secret, now via
+    # the 0600 --env-file it is pointed at (not in its world-readable argv).
+    received = subprocess_shim.argv_for("apptainer") or []
+    assert (
+        _env_pairs(received).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
 
 
 def test_start_background_returns_true(

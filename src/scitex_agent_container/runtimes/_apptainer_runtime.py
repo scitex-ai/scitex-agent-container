@@ -67,6 +67,7 @@ from ._apptainer_build_argv import (  # noqa: F401
 from ._apptainer_build_argv import (
     build_run_argv as _build_run_argv_impl,
 )
+from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 from .base import RuntimeBase
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
@@ -200,7 +201,7 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         argv = self.build_run_argv(config, state_dir=state_dir, sif_path=sif_path)
         if dry_run:
-            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
+            _write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
         # Append the host ``~/.cargo/bin`` to the CONTAINER PATH via
@@ -267,6 +268,20 @@ class ApptainerContainerRuntime(RuntimeBase):
             return True
         except (OSError, ProcessLookupError):
             return False
+
+    def agent_pid(self, config: AgentConfig) -> int | None:
+        """The long-lived ``apptainer`` process pid (``RuntimeBase`` seam).
+
+        This is EXACTLY the pid :meth:`is_running` above probes with
+        ``os.kill(pid, 0)``: the ``apptainer`` process ``start`` launched
+        with ``start_new_session=True`` and persisted to
+        ``<state_dir>/apptainer_pid``. It is the container process
+        itself — it lives for the whole session, so it is the correct
+        value for ``instances.pid``, and reusing ``_read_pid`` here means
+        the registry and ``is_running`` can never disagree about which
+        pid represents this agent.
+        """
+        return self._read_pid(config)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         log_path = self._state_dir(config) / APPTAINER_LOG_FILE

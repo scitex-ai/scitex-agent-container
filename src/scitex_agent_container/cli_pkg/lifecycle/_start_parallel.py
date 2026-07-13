@@ -32,7 +32,6 @@ one-shot / resume / dry-run / params-file) is in play.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 import time
@@ -42,6 +41,7 @@ from typing import Callable
 
 import click
 
+from ..._sac_binary import sac_binary as _sac_binary
 from .._helpers import console
 
 
@@ -53,15 +53,6 @@ class _Result:
     returncode: int
     stdout: str
     stderr: str
-
-
-def _sac_binary() -> str:
-    """Resolve the ``sac`` entry point (PATH, else the literal name).
-
-    Mirrors ``_listen/_agent_exec.py::agents_start`` which uses
-    ``shutil.which("sac") or "sac"`` — the brokered-spawn call site.
-    """
-    return shutil.which("sac") or "sac"
 
 
 def build_child_argv(

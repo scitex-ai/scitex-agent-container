@@ -1,10 +1,16 @@
 """Tests for the centralized TUI heartbeat writer.
 
 Exercises the asyncio task the listen lifespan launches — without real
-tmux / a real registry / state.db — by injecting the ``agent_lister``,
-``session_exists_fn``, ``activity_fn``, ``write_fn`` and ``tmux_check``
-seams. Mirrors test__github_ci_poll_loop.py's create-task → sleep →
-cancel pattern, and writes into real ``tmp_path`` state dirs (no mocks).
+tmux / a real registry — by injecting the ``agent_lister``, ``sessions_fn``,
+``write_fn`` and ``tmux_check`` seams. Mirrors test__github_ci_poll_loop.py's
+create-task → sleep → cancel pattern, and writes into real ``tmp_path`` state
+dirs (no mocks).
+
+``sessions_fn`` is the BATCHED fleet probe (one ``tmux list-sessions`` for
+every session) that replaced the per-agent ``session_exists_fn`` /
+``activity_fn`` pair — those cost 3 ``tmux`` spawns per agent, making the
+tick O(N) subprocesses, which blew its budget at fleet scale and got the
+tick ABANDONED (writing NO liveness data at all).
 
 STX-TQ002 AAA-markers each on its own line + STX-TQ007 one-assert.
 No mocks/monkeypatch — dependency-injection seams + tmp-dir fixtures.
@@ -15,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -34,6 +41,9 @@ from scitex_agent_container._runners._session_state import write_heartbeat
 
 PINNED_ACTIVITY_TS = 1_750_000_000
 
+# The loop looks the agent up under its ``tui-<name>`` session key.
+LIVE_SNAPSHOT = {"tui-tui-demo": PINNED_ACTIVITY_TS}
+
 
 def _one_tui_agent(state_dir: Path):
     """Build an ``agent_lister`` seam yielding a single TUI agent."""
@@ -44,10 +54,33 @@ def _one_tui_agent(state_dir: Path):
     return _lister
 
 
-async def _run_one_tick(**kwargs) -> None:
-    """Start the loop, let exactly one tick run, then cancel cleanly."""
+async def _settle(predicate, timeout_s: float = 5.0) -> None:
+    """Wait until ``predicate()`` holds (or the deadline passes).
+
+    The tick body runs in an EXECUTOR THREAD, so a fixed sleep is a race: on
+    a loaded host the thread has not finished writing when the assertion
+    runs. Poll for the expected end-state instead of guessing a duration.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.02)
+
+
+async def _run_one_tick(settle_for=None, **kwargs) -> None:
+    """Start the loop, let one tick complete, then cancel cleanly.
+
+    ``settle_for`` is a predicate describing the tick's expected end-state
+    (e.g. "the heartbeat file exists"). When omitted — the cases that assert
+    NOTHING was written — a short fixed wait is correct, since there is no
+    positive end-state to poll for.
+    """
     task = asyncio.create_task(tui_heartbeat_loop(interval_s=0.05, **kwargs))
-    await asyncio.sleep(0.12)
+    if settle_for is None:
+        await asyncio.sleep(0.25)
+    else:
+        await _settle(settle_for)
     task.cancel()
     try:
         await task
@@ -67,9 +100,9 @@ async def test_loop_writes_heartbeat_json_for_live_tui_agent(tmp_path: Path):
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -84,9 +117,9 @@ async def test_heartbeat_json_is_valid_json(tmp_path: Path):
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -97,14 +130,14 @@ async def test_heartbeat_json_is_valid_json(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_heartbeat_ts_is_the_pane_activity_epoch(tmp_path: Path):
-    # Arrange — the recorded ts must be the injected pane-activity epoch.
+    # Arrange — the recorded ts must be the snapshot's pane-activity epoch.
     state_dir = tmp_path / "tui-demo"
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -121,9 +154,9 @@ async def test_heartbeat_at_renders_as_iso_8601_for_the_read_side(tmp_path: Path
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -141,9 +174,9 @@ async def test_heartbeat_pid_is_zero_for_tui_agent(tmp_path: Path):
     state_dir.mkdir()
     # Act
     await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -152,21 +185,16 @@ async def test_heartbeat_pid_is_zero_for_tui_agent(tmp_path: Path):
     assert payload["pid"] == 0
 
 
-# ---------------------------------------------------------------------------
-# Skip cases: no session / no activity → no heartbeat written.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_no_heartbeat_when_session_absent(tmp_path: Path):
-    # Arrange — agent is listed but its tmux session does not exist.
+async def test_looks_the_agent_up_under_its_tui_prefixed_session_key(tmp_path: Path):
+    # Arrange — a snapshot keyed WITHOUT the ``tui-`` prefix must not match
+    # (the loop owns the ``tui-<name>`` convention TuiSessionRuntime sets).
     state_dir = tmp_path / "tui-demo"
     state_dir.mkdir()
     # Act
     await _run_one_tick(
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: False,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: {"tui-demo": PINNED_ACTIVITY_TS},
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -174,16 +202,21 @@ async def test_no_heartbeat_when_session_absent(tmp_path: Path):
     assert not (state_dir / "heartbeat.json").exists()
 
 
+# ---------------------------------------------------------------------------
+# Skip cases: session not in the snapshot → no heartbeat written.
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_no_heartbeat_when_activity_is_none(tmp_path: Path):
-    # Arrange — session exists but has no readable activity stamp.
+async def test_no_heartbeat_when_session_absent_from_snapshot(tmp_path: Path):
+    # Arrange — agent is listed but has no live tmux session (probe
+    # SUCCEEDED and returned an empty fleet — a confirmed absence).
     state_dir = tmp_path / "tui-demo"
     state_dir.mkdir()
     # Act
     await _run_one_tick(
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: None,
+        sessions_fn=lambda: {},
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
@@ -191,23 +224,82 @@ async def test_no_heartbeat_when_activity_is_none(tmp_path: Path):
     assert not (state_dir / "heartbeat.json").exists()
 
 
+# ---------------------------------------------------------------------------
+# SCALING: the tick must be O(1) subprocess probes, not O(N).
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_probes_the_tui_prefixed_session_name(tmp_path: Path):
-    # Arrange — capture the session name the loop probes; it must be
-    # ``tui-<name>`` (the convention TuiSessionRuntime owns).
-    state_dir = tmp_path / "tui-demo"
-    state_dir.mkdir()
-    probed: list = []
+async def test_one_batched_probe_serves_the_whole_fleet(tmp_path: Path):
+    # Arrange — 50 agents; the batched probe must be called exactly ONCE
+    # per tick. Serially this cost 3 tmux spawns PER AGENT (150 here),
+    # which is what blew the tick budget and got it abandoned.
+    calls: list[float] = []
+    agents = []
+    for idx in range(50):
+        state_dir = tmp_path / f"agent-{idx}"
+        state_dir.mkdir()
+        agents.append({"name": f"agent-{idx}", "state_dir": state_dir})
+    snapshot = {f"tui-agent-{i}": PINNED_ACTIVITY_TS for i in range(50)}
+
+    def _sessions_fn():
+        calls.append(time.time())
+        return dict(snapshot)
+
+    # Act — one tick (interval 30s, so no second tick can fire).
+    task = asyncio.create_task(
+        tui_heartbeat_loop(
+            interval_s=30.0,
+            agent_lister=lambda: list(agents),
+            sessions_fn=_sessions_fn,
+            write_fn=write_heartbeat,
+            tmux_check=lambda: True,
+        )
+    )
+    await _settle(
+        lambda: all(
+            (Path(a["state_dir"]) / "heartbeat.json").is_file() for a in agents
+        )
+    )
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # Assert — ONE probe served all 50 agents (serially: 150 tmux spawns).
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_batched_probe_beats_every_agent_in_the_fleet(tmp_path: Path):
+    # Arrange — all 50 agents must still get a beat from the ONE probe.
+    agents = []
+    for idx in range(50):
+        state_dir = tmp_path / f"agent-{idx}"
+        state_dir.mkdir()
+        agents.append({"name": f"agent-{idx}", "state_dir": state_dir})
+    snapshot = {f"tui-agent-{i}": PINNED_ACTIVITY_TS for i in range(50)}
     # Act
     await _run_one_tick(
-        agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: probed.append(s) or True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        settle_for=lambda: all(
+            (Path(a["state_dir"]) / "heartbeat.json").is_file() for a in agents
+        ),
+        agent_lister=lambda: list(agents),
+        sessions_fn=lambda: dict(snapshot),
         write_fn=write_heartbeat,
         tmux_check=lambda: True,
     )
+    written = sum(
+        1 for a in agents if (Path(a["state_dir"]) / "heartbeat.json").is_file()
+    )
     # Assert
-    assert "tui-tui-demo" in probed
+    assert written == 50
+
+
+# NOTE: the load-bearing "a failed/abandoned tick is UNKNOWN, never DEAD"
+# rule — and the overlap guard that keeps abandoned ticks from stacking —
+# are covered for BOTH heartbeat loops (plus a real state.db) in the
+# sibling ``test__heartbeat_unknown_is_not_dead.py``.
 
 
 # ---------------------------------------------------------------------------
@@ -234,9 +326,12 @@ async def test_one_agent_failure_does_not_block_a_second_agent(tmp_path: Path):
 
     # Act
     await _run_one_tick(
+        settle_for=lambda: (good_dir / "heartbeat.json").is_file(),
         agent_lister=_lister,
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: {
+            "tui-boom": PINNED_ACTIVITY_TS,
+            "tui-good": PINNED_ACTIVITY_TS,
+        },
         write_fn=_write,
         tmux_check=lambda: True,
     )
@@ -252,8 +347,7 @@ async def test_loop_disabled_when_tmux_missing_writes_nothing(tmp_path: Path):
     # Act — returns at once (no infinite loop), so await directly.
     await tui_heartbeat_loop(
         agent_lister=_one_tui_agent(state_dir),
-        session_exists_fn=lambda s: True,
-        activity_fn=lambda s: PINNED_ACTIVITY_TS,
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
         write_fn=write_heartbeat,
         tmux_check=lambda: False,
     )
@@ -275,8 +369,7 @@ async def test_loop_disabled_via_env_var_writes_nothing(tmp_path: Path):
     try:
         await tui_heartbeat_loop(
             agent_lister=_one_tui_agent(state_dir),
-            session_exists_fn=lambda s: True,
-            activity_fn=lambda s: PINNED_ACTIVITY_TS,
+            sessions_fn=lambda: dict(LIVE_SNAPSHOT),
             write_fn=write_heartbeat,
             tmux_check=lambda: True,
         )
@@ -299,8 +392,7 @@ async def test_loop_survives_a_tick_exception_then_cancels_cleanly(tmp_path: Pat
         tui_heartbeat_loop(
             interval_s=0.05,
             agent_lister=boom,
-            session_exists_fn=lambda s: True,
-            activity_fn=lambda s: PINNED_ACTIVITY_TS,
+            sessions_fn=lambda: dict(LIVE_SNAPSHOT),
             write_fn=write_heartbeat,
             tmux_check=lambda: True,
         )
@@ -321,8 +413,7 @@ async def test_loop_honours_cancellation_cleanly(tmp_path: Path):
         tui_heartbeat_loop(
             interval_s=0.05,
             agent_lister=lambda: [],
-            session_exists_fn=lambda s: True,
-            activity_fn=lambda s: PINNED_ACTIVITY_TS,
+            sessions_fn=lambda: {},
             write_fn=write_heartbeat,
             tmux_check=lambda: True,
         )

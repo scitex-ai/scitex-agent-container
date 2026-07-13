@@ -9,7 +9,8 @@ and the foreground-tail multiplexer.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import socket
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -28,25 +29,121 @@ BoundHostLivenessOracle = Callable[[str, str], bool]
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
 
+def classify_dispatch_host(
+    target_host: str | None,
+    current_host: str,
+    peers: Mapping[str, "PeerSpec"],
+    *,
+    local_names: Collection[str] = (),
+) -> tuple[str, str | None]:
+    """Classify a concrete ``spec.host`` into local / remote / unknown.
+
+    Pure resolver — never raises, never logs, never reads files (the
+    caller supplies ``local_names`` and ``peers``). This is the operator's
+    "resolution layer": a concrete canonical hostname is mapped to WHERE
+    that host is, so ``host: <this-machine>`` launches locally and
+    ``host: <peer>`` dispatches over ssh.
+
+    Returns a ``(kind, peer)`` tuple:
+
+    * ``("local", None)``  — run on the caller. Fires when ``target_host``
+      is unset (empty ``host:`` / absent, normalized to ``""`` → ``None``),
+      equals ``current_host``, or is any spelling in ``local_names``
+      (the canonical name + aliases that denote THIS machine per
+      ``host_config``). LOCAL is checked BEFORE the peer table so a machine
+      that is ALSO registered as a peer (e.g. ``ywata-note-win: {ssh:
+      localhost}`` so remote hosts can reach it) is never ssh-dispatched
+      to itself.
+    * ``("remote", <peer>)`` — dispatch to that peer over ssh. Fires when
+      ``target_host`` is a known peer key distinct from the local machine
+      (glob peer entries like ``spartan-*`` match here via ``PeersMap``).
+    * ``("unknown", None)`` — ``target_host`` names neither the local
+      machine nor a peer. This classifier stays a PURE resolver and never
+      raises; the REACTION is the caller's. Since operator directive
+      2026-07-10 the lifecycle dispatchers fail LOUD on it
+      (``_host_routing.format_unknown_host_error`` — peer list + fixes)
+      instead of silently falling through to a local start; either way an
+      unknown host is never routed to ssh.
+    """
+    if target_host is None:
+        return ("local", None)
+    if target_host == current_host or target_host in local_names:
+        return ("local", None)
+    if target_host in peers:
+        return ("remote", target_host)
+    return ("unknown", None)
+
+
 def _resolve_dispatch_peer(
     target_host: str | None,
     current_host: str,
     peers: Mapping[str, "PeerSpec"],
+    *,
+    local_names: Collection[str] = (),
 ) -> str | None:
     """Return the peer name to dispatch to, or None for local execution.
 
-    Pure resolver — never raises, never logs, never reads files. Returns
-    a peer name only when ``target_host`` names a known peer that is not
-    the current host. An unknown ``target_host`` yields ``None`` so the
-    caller can decide whether to skip locally or escalate the mismatch.
+    Thin wrapper over :func:`classify_dispatch_host` preserving the historic
+    "peer-name-or-None" contract used by :func:`try_dispatch`. Returns a peer
+    name only for a ``remote`` classification; both ``local`` and ``unknown``
+    yield ``None`` (the caller decides what an unknown host means). With the
+    default empty ``local_names`` the behaviour is byte-identical to the
+    pre-hardening resolver — the alias-of-self short-circuit only engages
+    when the caller passes the machine's local spellings.
     """
-    if target_host is None:
-        return None
-    if target_host == current_host:
-        return None
-    if target_host not in peers:
-        return None
-    return target_host
+    _kind, peer = classify_dispatch_host(
+        target_host, current_host, peers, local_names=local_names
+    )
+    return peer
+
+
+def _local_host_names(current_host: str | None = None) -> set[str]:
+    """Return every host spelling that denotes THIS machine.
+
+    Unions the two hostname authorities so ``host: <canonical-or-alias>``
+    resolves to a LOCAL launch regardless of which registry the operator
+    configured, and — critically — regardless of drift between them:
+
+      * ``host_config`` (F-CS12 ``~/.scitex/agent-container/config.yaml``):
+        ``canonical_host()`` plus the ``host.aliases`` entry keyed by this
+        machine's short hostname.
+      * ``config/_host.resolve_hostname()`` (the value dispatch already
+        passes as ``current_host``) and the bare ``socket`` short hostname.
+
+    Only the alias entry for THIS machine's short hostname is included, so a
+    peer machine's alias is never mistaken for local. Best-effort — a
+    missing / broken config degrades to the short hostname (plus
+    ``current_host`` when supplied); it never raises.
+    """
+    names: set[str] = set()
+    if current_host:
+        names.add(current_host)
+    short = socket.gethostname().split(".")[0]
+    if short:
+        names.add(short)
+    # config/_host resolver (env override → spec.hostname_aliases → short).
+    try:
+        from ...config._host import resolve_hostname
+
+        rn = resolve_hostname()
+        if rn:
+            names.add(rn)
+    except Exception:  # stx-allow: fallback (reason: hostname resolution must never block dispatch; short hostname already captured)
+        pass
+    # host_config F-CS12 registry (env override → host.canonical → aliases).
+    try:
+        from ..._state.host_config import load as _load_host_config
+
+        cfg = _load_host_config()
+        canonical = cfg.canonical_host()
+        if canonical:
+            names.add(canonical)
+        alias = cfg.host.aliases.get(short)
+        if alias:
+            names.add(alias)
+    except Exception:  # stx-allow: fallback (reason: absent/malformed config.yaml must not break the local-vs-remote decision; the two hostname sources above suffice)
+        pass
+    return {n for n in names if n}
 
 
 def _bound_host(config: AgentConfig) -> str | None:
@@ -357,6 +454,8 @@ def _multiplex_foreground_tails(names, sleeper=None):
 __all__ = [
     "_SKIP_DIR_NAMES",
     "BoundHostLivenessOracle",
+    "classify_dispatch_host",
+    "_local_host_names",
     "_bound_host",
     "_registry_active_on",
     "_resolve_dispatch_peer",

@@ -163,8 +163,12 @@ def test_pinned_bind_destination_is_directory_not_file_path(
 
 
 def test_pinned_bind_is_rw(tmp_path: Path, home_redirect: Path) -> None:
-    # Arrange — the bind must stay :rw so refresh writeback by the
-    # in-container Claude CLI lands on the shared snapshot.
+    # Arrange — shared-credential model (operator 2026-07-11, reversing
+    # the 2026-07-08 :ro flip): a :ro bind cannot stop the in-container
+    # claude from rotating the token server-side, it only stops the
+    # rotation from being RECORDED — stranding the snapshot on a dead
+    # refresh_token. The bind is therefore :rw so whoever refreshes
+    # writes the rotated pair back for every co-bound consumer.
     now = time.time()
     _write_snapshot(home_redirect, "alpha", now + 3_600)
     cfg = _pinned_config(tmp_path / "wd", account="alpha")

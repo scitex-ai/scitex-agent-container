@@ -9,7 +9,10 @@ lines (TQ002), descriptive name with ≥3 tokens (TQ003).
 from __future__ import annotations
 
 from scitex_agent_container.config._provider_registry import (
+    AGENT_SDK_PROVIDERS,
     PROVIDERS,
+    is_known_agent_provider,
+    list_agent_providers,
     list_providers,
     resolve_provider,
 )
@@ -90,3 +93,62 @@ def test_xiaomi_alias_resolves_to_same_backend_as_mimo():
     xiaomi = resolve_provider("xiaomi")
     # Assert
     assert xiaomi == resolve_provider("mimo")
+
+
+# ---------------------------------------------------------------------------
+# AGENT_SDK_PROVIDERS — spec.provider (TOP-LEVEL agent SDK family selector;
+# openai-compat-1 foundation). A SEPARATE, flat registry from PROVIDERS
+# above — see the naming-collision note in config._provider_types.AgentProvider.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_sdk_providers_is_exactly_anthropic_and_openai():
+    # Arrange
+    expected = {"anthropic", "openai"}
+    # Act
+    names = set(AGENT_SDK_PROVIDERS)
+    # Assert
+    assert names == expected
+
+
+def test_is_known_agent_provider_true_for_anthropic():
+    # Arrange
+    name = "anthropic"
+    # Act
+    known = is_known_agent_provider(name)
+    # Assert
+    assert known is True
+
+
+def test_is_known_agent_provider_true_for_openai():
+    # Arrange
+    name = "openai"
+    # Act
+    known = is_known_agent_provider(name)
+    # Assert
+    assert known is True
+
+
+def test_is_known_agent_provider_false_for_unregistered_name():
+    # Arrange
+    name = "totally-made-up-sdk"
+    # Act
+    known = is_known_agent_provider(name)
+    # Assert
+    assert known is False
+
+
+def test_list_agent_providers_returns_sorted_order():
+    # Arrange
+    # Act
+    names = list_agent_providers()
+    # Assert
+    assert names == sorted(names)
+
+
+def test_list_agent_providers_matches_agent_sdk_providers_set():
+    # Arrange
+    # Act
+    names = set(list_agent_providers())
+    # Assert
+    assert names == set(AGENT_SDK_PROVIDERS)

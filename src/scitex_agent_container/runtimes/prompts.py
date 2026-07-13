@@ -384,6 +384,42 @@ def register_prompt(handler: PromptHandler) -> None:
     PROMPT_HANDLERS.sort(key=lambda h: h.priority)
 
 
+#: How many non-empty rows of a captured pane count as the LIVE region for
+#: modal detection. See :func:`_recent_tail` for the false-positive this
+#: guards against; sized with headroom over the tallest verified real modal
+#: capture (``_LIVE_BYPASS_PANE`` in ``test_prompts.py``, 9 non-empty rows).
+_LIVE_WINDOW_LINES = 15
+
+
+def _recent_tail(content: str, lines: int = _LIVE_WINDOW_LINES) -> str:
+    """Return the last ``lines`` non-empty rows of ``content``.
+
+    Scopes modal detection to the LIVE region of a captured pane instead of
+    the entire accumulated snapshot ``tmux capture-pane -p`` (no ``-S``)
+    returns the whole VISIBLE viewport, not just the freshest output. Once
+    Claude Code's Ink TUI has moved a first-run modal's rendered text
+    further up the screen — dismissed, but not yet scrolled past the
+    viewport — an unscoped substring match can still fire on it long after
+    the modal is gone, sending its registered digit+``Enter`` into what is
+    now the plain, empty compose box: card
+    ``sac-tui-stray-1-submitted-on-boot`` — a spurious ``"1"`` gets typed
+    and submitted as a user message during boot (observed with the
+    ``thinking-effort`` / ``file-trust-radio`` / ``theme-selection``
+    handlers, none of which scoped their match to the live screen).
+
+    ``_LIVE_WINDOW_LINES`` comfortably covers the tallest verified real
+    modal capture with headroom, while still excluding an EARLIER,
+    already-dismissed modal's text once enough new output has rendered
+    below it. Mirrors :func:`_detect_press_enter_continue`'s existing
+    last-N-lines window (same fix shape, wider here because these handlers
+    need a whole title+options+footer block, not one banner line) and
+    :func:`_tui_compose._compose_pending_live`'s bottom-anchored scoping for
+    the analogous Enter-drop bug (``sac-tui-enter-drop-on-boot``).
+    """
+    rows = [row for row in content.splitlines() if row.strip()]
+    return "\n".join(rows[-lines:])
+
+
 def detect_and_respond(
     content: str,
     accepted: set[str],
@@ -399,10 +435,11 @@ def detect_and_respond(
     Returns:
         Name of the matched prompt, or None if no match.
     """
+    tail = _recent_tail(content)
     for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
         if handler.name in accepted:
             continue
-        if handler.detect(content):
+        if handler.detect(tail):
             for key in handler.keys:
                 send_keys_fn(key)
             logger.info("Auto-accepted prompt: %s", handler.name)
@@ -419,9 +456,14 @@ def detect(content: str) -> str | None:
     keystrokes once and assuming success. Claude's Ink TUI drops keys sent
     mid-render, so a fire-and-forget send silently leaves the modal up; the
     detect/respond/verify cycle is the no-silent-fallback fix.
+
+    Matches against :func:`_recent_tail` (the LIVE region), not the raw
+    ``content`` — see its docstring for the stray-boot-submit false
+    positive this prevents.
     """
+    tail = _recent_tail(content)
     for handler in sorted(PROMPT_HANDLERS, key=lambda h: h.priority):
-        if handler.detect(content):
+        if handler.detect(tail):
             return handler.name
     return None
 

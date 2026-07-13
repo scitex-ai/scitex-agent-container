@@ -6,6 +6,304 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.16] — 2026-07-14
+
+**⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and
+that is deliberate.** It shipped #658 (the shared-executor fix) *with a hole*:
+#658 did not introduce the cancellation race below, but it **widened the window
+enormously**, so 0.21.15 would have traded a thread leak for a `sac listen` that
+cannot be stopped. It was held back rather than published. **Install 0.21.16.**
+
+### Fixed
+
+- **`sac listen` could ignore `stop` and `restart` entirely, and never shut down
+  (#663).** On **Python 3.11 — the version the fleet runs** — `asyncio.wait_for`
+  **silently swallows a cancellation** when the inner future resolves in the same
+  instant:
+
+  ```python
+  except exceptions.CancelledError:
+      if fut.done():
+          return fut.result()      # the cancellation is dropped on the floor
+  ```
+
+  Every background loop is `while True: await run_blocking_or(...)`, so one
+  swallowed cancel and **the loop ticks forever**: `task.cancel()` returns,
+  `await task` never does, and the daemon does not die on SIGTERM. `agents stop`
+  and `agents restart` leave it running; a "cancelled" task is still probing.
+  3.12 rebuilt `wait_for` on `asyncio.timeouts` and has no such branch.
+
+  Measured over 120 cancellations of a 20 Hz loop:
+
+  | dispatch | 3.11.15 | 3.12.3 |
+  |---|---|---|
+  | `asyncio.wait_for` | **13 swallowed** | 0 |
+  | bare `await` (the fix) | 0 | 0 |
+
+  Fix: bare `await future` + a `loop.call_later` deadline. No `wait_for`, no
+  swallow branch, on any version. (`asyncio.timeout()` would also work but is
+  3.11+, and `requires-python` is `>=3.10`.) The regression test was confirmed to
+  **fail against the old dispatch** — a test that has never failed proves nothing.
+
+- **A live agent's registry row was buried 64 seconds after it started (#644).**
+  A freshly booted agent has not written a heartbeat yet, and the reaper read
+  *no heartbeat* as *dead* and ended its row — after which `agent_send` refused to
+  deliver to a demonstrably live agent. Measured: `paper-scitex-clew` started
+  18:21:20, row ended 18:22:24, agent alive with a real pid and a real port.
+  **Absence of evidence is not evidence of death.** Liveness now yields UNKNOWN
+  where it cannot measure, and only an *observed* absence may end a row.
+
+- **Tests raced real servers against arbitrary 5-second deadlines (#661).** The
+  loopback server wasn't dead — it was **slow** (`server.started` measured at
+  7.49s, because the listen lifespan does a filesystem walk plus SQLite upserts
+  before reporting ready). The old wait also **swallowed the server's startup
+  exception**, burned its ceiling, and then blamed a timeout — so a *crashed*
+  server and a *slow* one produced the identical error. The idiom was copy-pasted
+  into **eight** places. Replaced with a shared helper that polls the real ready
+  state and distinguishes slow from dead. Verified under 14-way CPU
+  oversubscription: 6 failed → 10 passed.
+
+- **The CI leftover-reap could SIGTERM its own sibling matrix legs (#662).** The
+  reap is legitimate (leaked `sac` processes hold a2a ports until the allocator
+  starves), but it justified itself with *"runs here are serialised (one job at a
+  time)"* — true when there was **one** runner, and silently false once `-02` and
+  `-03` were registered onto the same node. Now scoped by **age**, so the word the
+  comment always used — *leftover* — lives in the mechanism instead of in an
+  assumption the world can quietly invalidate.
+
+## [0.21.15] — 2026-07-14 *(tagged, never published — see 0.21.16)*
+
+Honesty release. Every fix here is the same bug wearing a different face:
+**something reported a state it had not observed.** The headline (#658) is
+the one that had been doing real damage for weeks while looking like
+"flaky CI".
+
+### Fixed
+- **The shared executor leaked threads until nothing could run (#658).**
+  `_off_loop.run_blocking` dispatched via `loop.run_in_executor(None, …)`
+  — the event loop's **shared default `ThreadPoolExecutor`**. A
+  `concurrent.futures` future that is *already running* **cannot be
+  cancelled**, so when the `wait_for` timed out the worker thread was
+  never stopped: it kept running the wedged call forever, still holding
+  its slot in the pool. Six background loops did this on every
+  overrunning tick.
+  The default pool is only `min(32, cpu_count + 4)` — **6–8 threads** on
+  a small host — and `asyncio.to_thread` uses **that same pool**. So once
+  enough slots were gone, *a task that needs a thread simply never runs*:
+  a trivial `to_thread(lambda: "ok")` never executed. That is why
+  `sac listen` answered `/health` in 0.18s while **every authenticated
+  route hung** (the fast path never touches the executor), why brokered
+  spawns stalled, and — on Python 3.11, which is what the fleet runs —
+  why `sac listen` **could not shut down at all**: pool workers are
+  non-daemon, `shutdown_default_executor()` has no timeout before 3.12,
+  and loop close joined an orphaned thread forever.
+  Fix: a dedicated **daemon** thread per call. An abandoned call now
+  leaks exactly one thread (you cannot kill a running thread in Python)
+  but **starves nothing**, and outside the pool it is never joined at
+  shutdown. Adds an `abandoned_call_count()` gauge, because a silent leak
+  is how this survived. `_off_loop.py` had **zero tests** — that is how it
+  shipped; the new starvation tests were confirmed to *fail* against the
+  old dispatch.
+  This one defect had been misread for weeks as "CI is slow", "the
+  runners are slow", and "cancelled means flaky". It also **ghosted the
+  v0.21.14 release** (the tag pushed; PyPI got nothing).
+- **`agent_send` declared every live peer "stopped" (#657).** In a
+  container `$HOME` is `/home/agent`, so the peer lookup resolved a
+  private, empty state DB and reported `not running` for agents that were
+  answering messages at that moment. It now brokers to the host `sac
+  listen` through the same door `agent_status` and `agent_spawn` already
+  use. Bare-host behaviour unchanged. An unreachable broker, an ACL deny,
+  or a 5xx now yields **UNKNOWN — never "stopped"**: failing to *ask*
+  is not evidence of death.
+- **`restart` reported a restart that never happened (#656).** The stop
+  leg warned "previous runtime still running … proceeding to start
+  anyway", walked into the duplicate-session collision it had just
+  predicted, and printed success over the survivor. It now escalates
+  SIGTERM → SIGKILL against the tmux **pane** pid (the launcher exits
+  immediately; killing it would look like a fix and do nothing) and
+  raises `StopEscalationError` rather than starting on top of a live
+  process.
+- **`listen` asserted a cause nobody measured (#656).** "the broker is
+  unreachable; it may be flapping" was emitted on any transport timeout —
+  while the daemon was up and serving. Both clients now probe the
+  unauthenticated `/v1/health` **before** naming a cause, and say which
+  case they actually observed. The word "flapping" appears nowhere in
+  that path: nothing on it can see a crash loop, so nothing on it may
+  claim one.
+- **A tmux-green agent could hide a dead token (#646).** `sac agents
+  list` now surfaces **auth-failed** as distinct from `running` — a live
+  session wrapper is not evidence the Claude inside it can make an API
+  call. `--all-running` reaches auth-failed agents for `stop` too, not
+  just `restart`.
+- **Tests read and wrote the live fleet registry (#641).** An isolation
+  fixture set `$HOME`, but the DB path is a module-level constant
+  computed at **import** time — an env override cannot redirect it. The
+  fixture only *looked* like isolation while the tests hit the real
+  registry. Both read-paths are now redirected.
+
+### Added
+- **`sac ports`** — read-only port-hygiene inventory. One command shows
+  every port sac uses with live status: the `sac listen` control-plane
+  port (default 7878, resolved from `listen.port`) with its pidfile, and
+  every a2a sidecar port CLAIM read in ONE `port_allocator.list_claims()`
+  query (the same one-shot API `sac agents list` uses). Liveness is a
+  bounded TCP-connect probe (`--timeout`, default 0.3s, run
+  concurrently) so the command can never hang. Flags **CONFLICT** (two
+  owners on one port) and **ORPHAN** (a claim with nothing listening),
+  and prints a reference map of the scitex/sac port-assignment scheme
+  (7878 · a2a range · the 3129X GUI/dashboard block). `--json` emits a
+  machine-readable envelope. Mutates nothing — no claim is created,
+  released, or changed.
+
+## [0.21.14] — 2026-07-13
+
+Incident-response release. The headline fix (#642) closes a fleet-wide
+outage in which **`sac agents restart` itself rotated the shared OAuth
+token**, killing every other agent on that account. Note that the bug
+(#630) and its fix (#642) both land in this cycle, so the rotating
+pre-flight **was never published to PyPI** — only `develop` installs
+carried it.
+
+### Fixed
+- **The auth pre-flight was ROTATING the shared token to "check" it**
+  (#642) — the fleet's "Login expired" outage.
+  `_restart_preflight.probe_credential_usable` verified a credential
+  *by refreshing it*. The OAuth `refresh_token` is **single-use**, so the
+  probe **consumed it and minted a new access token**, leaving every other
+  agent pinned to that account holding the token that had just been
+  replaced. They 401'd, and Claude Code renders a 401 as the misleading
+  **"Login expired · Please run /login"** — while nothing had expired and
+  quota sat at 14%. Because it ran on **every** restart (pre-stop,
+  unconditionally) and in `agent_start`'s force branch, *restarting agents
+  to fix them rotated the token again each time, killing the agents just
+  restarted*. It called `refresh_account_credentials` directly, bypassing
+  the `sac accounts refresh` CLI's `skipped; token still fresh (TTL >= 2h)`
+  guard, so it refreshed even a token with seven hours of life left. Only
+  two real callers of that mutating refresh exist; this was the sole
+  **unguarded** one. Fix: never probe a fresh token — spend the single-use
+  grant only near expiry, the same threshold the host timer uses.
+  *A probe that consumes the thing it probes is not a probe.*
+- **`sac agents restart` reported a FAILED restart as a SUCCESS** (#642).
+  `tui_session`'s duplicate-session guard returns `True` after *refusing*
+  to start (idempotent for a plain `start`, a lie for a `restart`), so
+  `agent_start` reported success, `agent_restart` propagated it, and the
+  CLI printed green `Agent '<name>' restarted` directly beneath
+  `FAIL: duplicate session`. Restart now **forces** its start leg (so it
+  actually replaces the process), the CLI stops discarding the result,
+  cross-host trusts the *peer's own verdict* rather than `ssh exited 0`,
+  and the duplicate-session guard no longer recommends the very command
+  that just failed.
+- **Launcher secrets left argv** (#638, P1 security): `apptainer --env K=V`
+  puts values in argv, which is world-readable at `/proc/<pid>/cmdline`.
+  Secret-shaped vars now travel via a `0600` `--env-file`.
+- **`sac listen` crash-loop on port contention** (#640): hot-standby +
+  failover with `flock` as the sole atomic bind arbiter, so a duplicate
+  daemon stands by instead of `exit 1`-looping under `Restart=always`.
+- **Heartbeat tick blew its 30s budget and was abandoned** (#647): the tick
+  cost **three `tmux` spawns per agent**, run serially. Batched to one
+  `tmux list-sessions` for the whole fleet — **132 spawns / 5.20s → 1 spawn
+  / 0.041s (125x)**, measured on 44 real sessions. An abandoned tick also
+  stacked zombie threads that starved the shared executor `agent_restart`
+  and `host_exec` dispatch through, which is why listen answered
+  `/v1/health` 200 while restarts timed out.
+- **Tests littered the repo root** (#643): the apptainer test shim wrote
+  `sys.argv[2]` on `build`, but production appends an optional
+  `--fakeroot` before the SIF — so it created a 1-byte file *named*
+  `--fakeroot`, which the project audit then correctly failed. Red-lined
+  every PR in the repo.
+- **The registry could never prove an agent alive** (#649): **0 of 1229
+  instance rows had *ever* carried a pid** — none of the four
+  `record_instance_start()` call sites passed one, and the parameter
+  defaults to `None`. So `_live_agent_pids()` dropped every agent, and
+  `agent_send` refused to reach agents that were demonstrably running
+  (tmux up, a2a port `LISTEN`). Corroboration: **0 `crashed` and 0
+  `stale-cleared`** exit reasons in the whole history — *both* dead-agent
+  reapers skip a NULL pid, so **neither had ever fired**. Now records the
+  runtime's own long-lived pid (TUI → the tmux **pane** pid, since the
+  launcher exits immediately and recording *it* would store a corpse;
+  SDK → the apptainer pid). Remote rows stay NULL deliberately: a peer's
+  pid could collide with an unrelated local process, and a *wrong* pid is
+  worse than an honest unknown.
+- Per-agent directory overlay auto-provisioned (#633); TUI boot prompt
+  submitted via literal paste + idle-gated Enter (#632).
+
+### Added
+- **`sac --version` now reports the identity of the code that is actually
+  LOADED**, not a declared string (#652):
+  `scitex-agent-container, version 0.21.14 (g1513a4da wheel 2026-07-13) from /path/to/loaded/package`.
+  A version string lies in both directions — a stale wheel, an orphaned
+  `.dist-info`, or an image baked months ago all report a version that
+  outlived their code. This release exists *because* of such a bug, and
+  `0.21.13` reported the same number before and after the fix. The commit
+  is read from whichever source is authoritative for the install kind: a
+  **live `.git` read** for a source/editable checkout (a stamp written at
+  install time goes stale on the next commit), and a **build-time bake**
+  for a wheel/SIF (where no `.git` exists). Costs **+1.22 ms**. The heavy
+  checks live in a new **`sac provenance`** (`--json`, `--strict` exits 1)
+  — which also detects the *shadowed-import* trap, where tests silently
+  exercise the installed package instead of your working tree.
+- **`sac agents stop --all-running / --all-registry / --all`** (#648) —
+  `restart` had bulk selection and `stop` had none, so there was no way to
+  stop the fleet during an incident. (`examples/07` had been *documenting*
+  `--all` for months without it existing.) Flags, enumeration and
+  mutual-exclusion rules are now **shared** between the two verbs, with a
+  test asserting they cannot drift apart again.
+- `sac agents list`: local-tz `Started`, resolved `Host`, perf fixes (#635).
+- `sac accounts list`: readable JST `Since`, relative reset hints, corrected
+  fleet 7d-capacity semantics (#636).
+- `agent_spawn` / `agent_twin` surfaced to agents, self-serve spawn
+  directive, and a fail-loud broker-unreachable error (#639).
+
+## [0.21.13] — 2026-07-11
+
+First PyPI release since 0.21.11. v0.21.12 is a ghost tag (like v0.21.10
+before it): its self-hosted release pipeline failed on a since-fixed
+audit finding and nothing was published; its content (explicit spec
+fields, no hidden defaults) ships here. This release also carries the
+2026-07-10/11 incident-response wave.
+
+### Fixed
+- **Account-pool outage root cause** (#610): the OAuth token-refresh
+  endpoint moved (`console.anthropic.com` → `platform.claude.com`);
+  every refresh 404'd and was misreported as "refresh token rejected".
+  Correct URL + `$SAC_ANTHROPIC_OAUTH_TOKEN_URL` override, honest
+  transport-vs-rejected failure classes, loud per-account refresh
+  alarms on every timer run, self-diagnosing picker errors, and the
+  credential bind flipped `:ro` → `:rw`.
+- **Quota-aware account pick** (#611): avoid 5h-blocked and
+  7d-near-capped accounts; load-balance the fleet per agent.
+- **`sac accounts list` dedupe** (#614): usage bars own the
+  percentages (now with compact reset hints); the table slims to
+  Account | Status | Last Update; Email/Plan columns removed.
+
+### Added
+- **`sac accounts login <name>`** (#608): semi-automated `claude /login`
+  re-auth — only the browser-authorize step stays human.
+- **Host-field routing** (#609): `host: local` banned with migration
+  hints; `${HOSTNAME}` load-time resolution; transparent remote
+  dispatch for lifecycle verbs when `spec.host` names a registered
+  peer; fail-loud on unknown hosts.
+- **Heavy-job demotion guard** (#612, P1 incident closure): baseline
+  hook blocking undemoted image builds/mksquashfs/mass compression
+  with the corrected `nice -n 19 ionice -c 2 -n 7` education; builds
+  self-demote by default (#605) and warn remote-first under load.
+- **Twin spawning** (#613): context-inheriting fork of a running agent
+  (CLI verb + MCP tool + skill + ADR) — ephemeral cleaners or
+  persistent companions; twins write under their own name.
+- **Deterministic CCT bot-token pool injection** (#615): agent start
+  resolves the Telegram bot token from the pool into `$HOME/.env`
+  (0600, never argv, never logged); loud error naming the pool source
+  when a channel-requesting spec has no token. Root `.envrc` untracked
+  from the public repo (`.envrc.example` ships instead).
+
+### Changed
+- **Release pipeline moved to GitHub-hosted runners** (#616): the
+  Spartan self-hosted SIF pipeline was a fail-quiet dependency;
+  publishing now uses standard PyPI OIDC trusted publishing
+  (org-transfer publisher config fixed 2026-07-11).
+- **Load-time advisories route through scitex-logging** (#607) for
+  consistent fleet-wide warning/error color coding.
+
 ## [0.21.11] — 2026-06-09
 
 PATCH release. Re-cut of v0.21.10's accounts-list redesign after the

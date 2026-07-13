@@ -9,11 +9,11 @@ from typing import Any, Dict
 # Phase-3 ACL dataclasses (kept in a sibling module under the per-file
 # line cap; re-exported here for the :class:`AgentConfig` field defaults).
 from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
-from ._provider_types import ProviderSpec
 
 # ApptainerSpec extracted to a sibling module (per-file line cap);
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
+from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
 
 
 @dataclass
@@ -111,6 +111,23 @@ class ClaudeSpec:
     # in-place is safe; designate a path NOT concurrently atomic-renamed
     # by host-side ``sac accounts``/watch-live tooling.
     credentials_file: str = ""
+    # Account POOL: a list of host paths to ``.credentials.json`` files
+    # (one per saved account). When non-empty, the start pre-flight picks
+    # ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked
+    # and 7d-near-capped accounts, load-balanced across the fleet per
+    # agent name (see ``_creds.pick_healthy_account`` +
+    # ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and
+    # binds the PICKED file exactly as if it had been named in the singular
+    # ``credentials_file`` field. Each entry's ACCOUNT SLUG is its parent
+    # directory name (the fleet layout is
+    # ``~/.scitex/agent-container/accounts/<slug>/.credentials.json``), and
+    # that slug is the account name the quota-aware picker keys off. The
+    # singular ``credentials_file`` remains supported and is treated as a
+    # 1-element pool (pick returns it) for back-compat. Fail-loud: when NO
+    # listed entry has a usable (non-expired) snapshot the start aborts with
+    # ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``
+    # (an API-key backend needs no OAuth).
+    credentials_files: list[str] = field(default_factory=list)
     # Vendor-agnostic backend override (see :class:`ProviderSpec`).
     # When set, the SDK session runs against an Anthropic-SDK-compatible
     # backend (DeepSeek, a gateway, ...) on an API key instead of
@@ -350,6 +367,13 @@ class AgentConfig:
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
     runtime: str = "tui"
+    # Agent SDK family selector (top-level, sibling of ``runtime`` — NOT
+    # the same field as ``claude.provider`` below; see the naming-collision
+    # note in ``config._provider_types.AgentProvider``). Default
+    # "anthropic" = claude-agent-sdk, the only implemented family today.
+    # "openai" validates (openai-compat-1 foundation) but has no runner
+    # until openai-compat-2 lands — this field is inert until then.
+    provider: AgentProvider = DEFAULT_AGENT_PROVIDER
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

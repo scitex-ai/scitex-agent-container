@@ -15,10 +15,20 @@ Two templates ship out of the box:
     ``examples/agents/minimal-agent/``. Three blocks: ``apptainer.image``,
     ``claude.model``, ``claude.flags``. Use as the starting point for new
     agents you'll customise yourself.
-  * ``full`` — full-fat spec mirroring
-    ``examples/agents/full-agent/`` (sans the inline tutorial comments).
-    Use when you want every knob present so you can delete what you
-    don't need rather than look up what's available.
+  * ``full`` — the PROVEN developer shape the fleet's live dev agents
+    use (card sac-agents-new-template-stale, operator 2026-06-25:
+    "very general, just developer like existing ones"). NOT a bare
+    knob-tour: it renders a ready-to-run project-maintainer agent —
+    runtime: tui, relaxed + persistent directory overlay,
+    full-home reach at the canonical path, the fleet push channels
+    (``server:sac`` + ``server:scitex-todo`` + telegrammer),
+    ``SCITEX_TODO_AGENT_ID`` wired to the agent, an editable install of
+    the agent's own repo, a generic "Start or continue." kick, opus
+    model, and metadata.labels. Parameterised by ``{name}`` (the agent
+    == project) and ``{home}`` (the operator's home, filled at render
+    time so the whole-home bind + workdir are absolute yet
+    operator-agnostic). Edit the labels + prompt for the real mission;
+    delete blocks you don't need.
 
 The CLI refuses to overwrite an existing ``spec.yaml`` unless ``--force``
 is passed — protects the "60 stale ``*-quality`` specs already pending
@@ -78,9 +88,11 @@ kind: Agent
 
 spec:
   runtime: apptainer
-  # Placement: `local` = the invoking host (edit to a peer name to pin it
-  # elsewhere, or use `hosts:` for one instance per host).
-  host: local
+  # Placement: the RESOLVED hostname of the machine this agent runs on
+  # (filled with the creating host at render time; `host: local` is
+  # banned). Edit to a `sac host list` peer name to pin it elsewhere,
+  # or use `hosts:` for one instance per host.
+  host: {host}
   workdir: ~/proj/{name}
 
   apptainer:
@@ -105,52 +117,120 @@ spec:
 
 
 _FULL_TEMPLATE = """\
-# {name} — fresh v3 spec scaffolded by ``sac agents create --template full``.
+# {name} — fresh v3 DEVELOPER spec scaffolded by ``sac agents create --template full``.
 #
-# Every field below validates against the live v3 schema. Delete blocks
-# you don't need rather than chase the spec reference for what's
-# available.
+# This is the PROVEN developer shape the fleet's live dev agents use
+# (card sac-agents-new-template-stale; operator 2026-06-25: "very
+# general, just developer like existing ones") — a ready-to-run
+# project-maintainer agent, NOT a bare skeleton. It ships:
+#   * runtime: tui                interactive in-apptainer Claude TUI
+#   * relaxed + directory overlay persistent per-agent $HOME / installs
+#   * full host reach at the canonical path (so ~/proj/... paths match)
+#   * fleet push channels         server:sac + server:scitex-todo + telegrammer
+#   * SCITEX_TODO_AGENT_ID        todo-store writes attribute to THIS agent
+#   * editable install of the agent's own repo (live dev loop)
+#   * a generic "Start or continue." kick + metadata.labels + opus model
+# Every field validates against the live v3 schema. Edit the labels + the
+# startup prompt for the agent's real mission; delete blocks you don't need.
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
 
 metadata:
   labels:
-    role: worker
+    role: project-maintainer
     team: scitex
+    project: {name}
+    purpose: {name}-maintainer
     description: |
-      {name} — fresh v3 agent. Replace this description and the
-      startup prompt with your agent's actual mission.
-    function: scaffolded
-    capabilities: scaffolded
-    skills: ""
+      {name} developer agent — maintains the {name} repo. Replace this
+      description and the startup prompt below with the agent's real mission.
+    capabilities: develop, test, review, release
     cardinality: singleton
 
 spec:
-  runtime: apptainer
-  host: local
-  workdir: ~/proj/{name}
+  runtime: tui
+  # RESOLVED placement (creating host at render time; `local` is banned).
+  host: {host}
 
+  # The in-container --pwd. The repo is bound at this SAME absolute path
+  # below, so host and container agree (editable install, git, tooling).
+  workdir: {home}/proj/{name}
+
+  # to_home/ sibling — mirrored into the container $HOME (overlay upper
+  # home under relaxed mode). Put CLAUDE.md / .mcp.json / .claude/ there.
   to_home: ./to_home
 
   python-venv: auto
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-scitex.sif
-    binds: []
-    relaxed: false
+    # sac-base.sif = the minimal layer; the agent editable-installs its
+    # own stack into the overlay below. Swap to sac-scitex.sif to start
+    # from the full pre-baked scitex stack instead.
+    image: ~/.scitex/agent-container/containers/sac-base.sif
+
+    # Relaxed isolation — the dev agent shares the operator's identity and
+    # host tree (the fleet dev default). Pairs with the raw_args below,
+    # which re-declare the namespace + canonical HOME the overlay needs.
+    relaxed: true
+
+    # Persistent per-agent directory overlay: package installs, caches and
+    # $HOME state survive restarts while the base SIF stays immutable. sac
+    # auto-creates the overlay dir and materialises to_home/ into its upper
+    # home on first start.
+    overlay: ~/.scitex/agent-container/containers/overlays/{name}/
+
+    # Full host reach at the CANONICAL path (source ~ is expanded by sac;
+    # the destination must be absolute). Narrow this to specific project
+    # trees for a capsule-style agent.
+    binds:
+      - {home}:{home}:rw
+
+    # Per-agent env. SCITEX_TODO_AGENT_ID makes scitex-todo writes
+    # attribute to THIS agent. (sac AUTO-injects
+    # SCITEX_AGENT_CONTAINER_STATE_DB + binds the per-agent state dir, so
+    # the state DB needs no manual entry here.)
+    env:
+      SCITEX_TODO_AGENT_ID: {name}
+
+    # Relaxed mode skips sac's curated isolation prepend, so re-declare the
+    # user namespace, filesystem isolation, and the canonical container HOME
+    # that the overlay upper home is materialised under.
+    raw_args:
+      - --userns
+      - --containall
+      - --home=/home/agent
 
   claude:
-    model: sonnet
+    model: opus[1m]
     flags:
       - --dangerously-skip-permissions
     session: continue
     auto_accept: true
 
+    # Fleet push channels: sac control bus + shared scitex-todo store + the
+    # Telegram bridge (operator DMs wake the agent). server:sac is also
+    # auto-injected by the loader; listed here for visibility.
+    channels:
+      - server:sac
+      - server:scitex-todo
+      - server:claude-code-telegrammer
+
+    # Pin this agent to a dedicated account by uncommenting and pointing at
+    # that account's LIVE .credentials.json (else the shared host OAuth is
+    # forwarded automatically).
+    # credentials_file: ~/.scitex/agent-container/accounts/<ACCOUNT>/.credentials.json
+
+  # Editable-install the agent's own repo so imports resolve to the live
+  # working tree (edit -> test without reinstall). The `|| true` keeps
+  # startup resilient when the repo has no installable package yet.
+  startup_commands:
+    - command: 'uv pip install -e {home}/proj/{name} --quiet || true'
+
+  # Generic self-resume kick — the agent picks up its board / last state.
+  # Replace with the agent's real first mission.
   startup_prompts:
-    - |
-      You are {name}. Replace this prompt with your agent's actual
-      mission. Reply READY when initialized.
+    - Start or continue.
 
   health:
     enabled: true
@@ -398,7 +478,18 @@ def create(
         )
 
     template = _TEMPLATES[kind]
-    body = template.format(name=name)
+    # ``{home}`` is filled from the operator's home so the full template's
+    # whole-home bind + workdir are ABSOLUTE (apptainer bind targets can't
+    # be ``~``/``$VAR``) yet still operator-agnostic — mirrors sac's own
+    # "full host reach" hint (`- {home}:{home}:rw`). ``{host}`` is the
+    # creating machine's RESOLVED hostname — created specs carry concrete
+    # placement (``host: local`` is banned; operator directive 2026-07-10).
+    # Surplus kwargs for tokens a template lacks are harmless.
+    from ..config._host import resolve_hostname
+
+    body = template.format(
+        name=name, home=str(Path.home()), host=resolve_hostname()
+    )
 
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(body)

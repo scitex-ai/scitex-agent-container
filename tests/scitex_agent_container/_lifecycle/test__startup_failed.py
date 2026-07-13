@@ -68,6 +68,31 @@ def test_classify_disk_full_for_enospc() -> None:
     assert kind == "disk_full"
 
 
+def test_classify_overlay_missing_from_stillborn_agent_trace() -> None:
+    # Arrange — the verbatim FATAL a brand-new agent hit when its per-agent
+    # overlay dir did not exist (2026-07-13). It used to fall through to
+    # container_creation_unknown — a raw apptainer FATAL with no fix.
+    stderr = (
+        "FATAL:   while loading overlay images: failed to open overlay image "
+        "/home/u/.scitex/agent-container/containers/overlays/new-agent/: "
+        "failed to retrieve path for /.../overlays/new-agent/: lstat "
+        "/.../overlays/new-agent: no such file or directory"
+    )
+    # Act
+    kind, _ = classify_apptainer_failure(stdout="", stderr=stderr)
+    # Assert
+    assert kind == "overlay_missing"
+
+
+def test_classify_overlay_missing_hint_names_the_mkdir_fix() -> None:
+    # Arrange
+    stderr = "FATAL:   while loading overlay images: failed to open overlay image /x/"
+    # Act
+    _, hint = classify_apptainer_failure(stdout="", stderr=stderr)
+    # Assert — constitution: never ship a FATAL without an actionable hint.
+    assert "mkdir -p" in hint
+
+
 def test_classify_unknown_kind_for_unrecognised_blob() -> None:
     # Arrange
     stderr = "something we have never seen before, panic"

@@ -9,10 +9,13 @@ silently reverse the win.
 Threshold is a flat 500 ms wall-clock for ``scitex-agent-container
 --help`` in a clean Python subprocess (Python boot + click + LazyGroup
 + ``--help`` render — the package is already installed, so this never
-includes install time). The same ceiling holds on CI: the package's
-``.pth`` shims no longer import ``coverage`` at every interpreter
-startup, so a clean ``--help`` stays well under budget on a shared
-runner. Override explicitly with the ``SAC_STARTUP_BUDGET_S`` env var.
+includes install time) on a BARE runner. Under an apptainer/singularity
+SIF the ceiling is multiplied (see ``_CONTAINER_BUDGET_MULTIPLIER``): a
+reused CI SIF faults libpython + the package tree from a COLD overlay on
+every ``apptainer exec``, so the identical ``--help`` (same import module
+set as older tags — no eager-import regression) runs materially slower
+there than on a warm bare runner. Override explicitly with the
+``SAC_STARTUP_BUDGET_S`` env var (wins over the multiplier too).
 """
 
 from __future__ import annotations
@@ -26,6 +29,24 @@ import sys
 import pytest
 
 _DEFAULT_BUDGET_S = 0.5
+
+# Apptainer / Singularity reuse ONE SIF across the whole CI matrix on a
+# shared self-hosted runner, and every ``apptainer exec`` starts from a COLD
+# overlay filesystem — libpython and the entire package tree are faulted in
+# from the image on each run, not served from a warm page cache like a bare
+# runner. A clean ``sac --help`` therefore runs materially slower under the
+# SIF than on a bare host, doing NO extra work: the ``--help`` import module
+# set is byte-for-byte identical to older tags (0 new eager imports vs
+# v0.21.0), so the SIF cost is environment, not a code regression. Rather
+# than silently inflate the bare-host ceiling — which would let a real eager
+# import creep through on bare runners — we apply a documented multiplier
+# ONLY under a container runtime. ``SAC_STARTUP_BUDGET_S`` still overrides
+# both. (The load-independent regression guard is the import graph itself;
+# this wall-clock ceiling is a coarse backstop for egregious blow-ups.)
+_CONTAINER_BUDGET_MULTIPLIER = 3.0
+
+# apptainer/singularity export exactly one of these into every exec'd process.
+_CONTAINER_ENV_VARS = ("APPTAINER_CONTAINER", "SINGULARITY_CONTAINER")
 
 # Run inside a *lean* Python child: it spawns `sac --help`, times the
 # spawn with perf_counter, and prints a JSON record per run. Timing from
@@ -59,6 +80,17 @@ json.dump(records, sys.stdout)
 """
 
 
+def _under_container_runtime() -> bool:
+    """True when running inside an apptainer/singularity SIF.
+
+    Reads the real environment (no monkeypatch): apptainer and singularity
+    both export ``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER`` (the SIF
+    path) into every process they exec, so their presence is a reliable,
+    runtime-agnostic signal that this ``--help`` pays the cold-overlay tax.
+    """
+    return any(os.environ.get(v) for v in _CONTAINER_ENV_VARS)
+
+
 def _budget_s() -> float:
     raw = os.environ.get("SAC_STARTUP_BUDGET_S")
     if raw:
@@ -66,6 +98,8 @@ def _budget_s() -> float:
             return float(raw)
         except ValueError:
             pass
+    if _under_container_runtime():
+        return _DEFAULT_BUDGET_S * _CONTAINER_BUDGET_MULTIPLIER
     return _DEFAULT_BUDGET_S
 
 
@@ -153,7 +187,9 @@ def test_cli_help_under_budget(
 # ---------------------------------------------------------------------------
 
 
-_BUDGET_ENV_VARS = ("SAC_STARTUP_BUDGET_S",)
+# Strip the container-runtime markers too so these resolution tests give the
+# same answer whether the suite itself runs on a bare host OR inside the SIF.
+_BUDGET_ENV_VARS = ("SAC_STARTUP_BUDGET_S", *_CONTAINER_ENV_VARS)
 
 
 @pytest.fixture
@@ -206,3 +242,23 @@ def test_malformed_env_override_falls_back_not_crashes(budget_env):
     budget = _budget_s()
     # Assert
     assert budget == _DEFAULT_BUDGET_S
+
+
+def test_container_runtime_multiplies_the_flat_ceiling(budget_env):
+    # Arrange — simulate an apptainer SIF exec (cold overlay filesystem).
+    budget_env("APPTAINER_CONTAINER", "/home/ci/.scitex/dev/containers/ci-cpu.sif")
+    # Act
+    budget = _budget_s()
+    # Assert — the cold-start penalty is absorbed by a documented multiplier,
+    # NOT by silently raising the bare-host ceiling.
+    assert budget == _DEFAULT_BUDGET_S * _CONTAINER_BUDGET_MULTIPLIER
+
+
+def test_explicit_override_wins_even_under_container(budget_env):
+    # Arrange — an explicit budget must win over the container multiplier too.
+    budget_env("SINGULARITY_CONTAINER", "/some/image.sif")
+    budget_env("SAC_STARTUP_BUDGET_S", "0.9")
+    # Act
+    budget = _budget_s()
+    # Assert
+    assert budget == 0.9

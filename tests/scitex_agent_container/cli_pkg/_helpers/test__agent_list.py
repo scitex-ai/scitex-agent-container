@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterator
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
     _extract_damaged_fields,
+    _is_self_peer_marker,
     _probe_local,
     get_agent_list_data,
     print_agent_list,
@@ -105,7 +106,11 @@ def _no_discover() -> list[tuple[str, Path]]:
 
 
 def _write_valid_spec(
-    dir_: Path, *, capabilities: str | None = None, machine: str | None = None
+    dir_: Path,
+    *,
+    capabilities: str | None = None,
+    machine: str | None = None,
+    tags: str | None = None,
 ) -> Path:
     """Write a minimal real v3 spec.yaml; optionally with labels."""
     dir_.mkdir(parents=True, exist_ok=True)
@@ -116,6 +121,8 @@ def _write_valid_spec(
         label_lines.append(f'    capabilities: "{capabilities}"')
     if machine is not None:
         label_lines.append(f'    machine: "{machine}"')
+    if tags is not None:
+        label_lines.append(f'    tags: "{tags}"')
     if label_lines:
         # ``cfg.labels`` is sourced from ``metadata.labels`` by the v3 loader.
         lines.append("metadata:")
@@ -127,7 +134,7 @@ def _write_valid_spec(
         [
             "spec:",
             "  runtime: apptainer",
-            "  host: local",
+            "  host: ${HOSTNAME}",
             "  workdir: /home/agent/work",
             "  apptainer:",
             "    image: /x.sif",
@@ -367,6 +374,107 @@ def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
     assert out == []
 
 
+# ---------------------------------------------------------------------------
+# tags filter — a free-form, multi-value lifecycle/status label (e.g.
+# "active-development"), deliberately separate from the ACL-gated `groups`
+# label (config._group_resolver) and from `capabilities` (what an agent can
+# do, not its current work status). Mirrors the capability-filter tests.
+# ---------------------------------------------------------------------------
+
+
+def test_get_data_with_tags_filter_includes_matching_agent(tmp_path):
+    # Arrange — real spec with labels.tags="active-development, researcher".
+    spec = _write_valid_spec(tmp_path / "x", tags="active-development, researcher")
+    entries = [
+        {"name": "x", "screen": "s", "started_at": "ts", "config": str(spec)},
+    ]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_excludes_non_matching_agent(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert out == []
+
+
+def test_get_data_with_tags_filter_matches_any_of_multiple_wanted_values(tmp_path):
+    # Arrange — caller passes two comma-separated wanted tags; agent has one.
+    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development,researcher")
+    # Assert — OR-match: any overlap between wanted and carried tags is a hit.
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_untagged_agent_is_excluded(tmp_path):
+    # Arrange — agent has no tags label at all.
+    spec = _write_valid_spec(tmp_path / "x")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert out == []
+
+
+def test_get_data_without_tags_filter_includes_untagged_agent(tmp_path):
+    # Arrange — no --tags passed at all: the filter must be a pure no-op.
+    spec = _write_valid_spec(tmp_path / "x")
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert len(out) == 1 and out[0]["name"] == "x"
+
+
+def test_get_data_with_tags_filter_includes_matching_defined_agent(tmp_path):
+    # Arrange — defined-on-disk (not registered) agent; the second filter
+    # site (the disk-merge loop) must apply the SAME tags matching.
+    spec = _write_valid_spec(tmp_path / "ondisk", tags="active-development")
+    registry = _FakeRegistry([])
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("ondisk", spec)]
+
+    # Act
+    with _swap_discover(_discover):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert any(r["name"] == "ondisk" for r in out)
+
+
+def test_get_data_with_tags_filter_excludes_non_matching_defined_agent(tmp_path):
+    # Arrange — same disk-merge loop, non-matching tag this time.
+    spec = _write_valid_spec(tmp_path / "ondisk", tags="researcher")
+    registry = _FakeRegistry([])
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("ondisk", spec)]
+
+    # Act
+    with _swap_discover(_discover):
+        out = get_agent_list_data(registry, tags="active-development")
+    # Assert
+    assert out == []
+
+
 def test_get_data_row_status_running_when_probe_returns_true(tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
@@ -488,12 +596,14 @@ def test_print_agent_list_renders_status_word_for_running_agent(capsys, tmp_path
 
 
 def test_print_agent_list_prints_full_validation_errors_under_table(capsys, tmp_path):
-    # Arrange — invalid spec triggers real validate_config errors mentioning spec.runtime.
+    # Arrange — invalid spec triggers real validate_config errors mentioning
+    # spec.runtime. The per-agent error blocks now live in the FULL (`-v`)
+    # view; the default view hides them (operator TG 1490-1495).
     spec = _write_invalid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        print_agent_list(registry)
+        print_agent_list(registry, verbose=True)
     # Assert
     assert "spec.runtime" in capsys.readouterr().out
 
@@ -572,6 +682,98 @@ def test_discover_defined_agents_skips_dirs_without_spec_yaml(tmp_path):
         pairs = _al._discover_defined_agents()
     # Assert
     assert "no-spec" not in [n for n, _ in pairs]
+
+
+# ---------------------------------------------------------------------------
+# _is_self_peer_marker / self-peer exclusion from the defined-agent walk.
+#
+# ``agents/self/spec.yaml`` (see ``_listen/_self_peers.py``) deliberately
+# omits apiVersion/kind/spec — its own header says "DO NOT add" them —
+# because their ABSENCE is what makes it recognizable as a self-peer
+# registration marker rather than a launchable Agent. Running the generic
+# Agent validator against it always reported "invalid", even though it
+# was working exactly as designed. These tests pin the fix: such markers
+# are excluded from ``_discover_defined_agents`` at the source, so they
+# never reach validation as a spurious agent in the first place.
+# ---------------------------------------------------------------------------
+
+
+def _write_self_peer_marker(dir_: Path) -> Path:
+    """Write a real self-peer marker spec (the ``agents/self/`` shape)."""
+    dir_.mkdir(parents=True, exist_ok=True)
+    spec = dir_ / "spec.yaml"
+    spec.write_text(
+        'listen_url: "http://127.0.0.1:7878"\n'
+        'description: "self-registered listen session"\n'
+    )
+    return spec
+
+
+def test_is_self_peer_marker_true_for_real_self_peer_spec(tmp_path):
+    # Arrange
+    spec = _write_self_peer_marker(tmp_path / "self")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is True
+
+
+def test_is_self_peer_marker_false_for_real_agent_spec(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "an-agent")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_is_self_peer_marker_false_for_malformed_yaml(tmp_path):
+    # Arrange — tolerant: a read/parse failure is NOT a self-peer marker.
+    dir_ = tmp_path / "broken"
+    dir_.mkdir()
+    spec = dir_ / "spec.yaml"
+    spec.write_text("{not: valid: yaml: [")
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_is_self_peer_marker_false_for_missing_file(tmp_path):
+    # Arrange — tolerant: an absent file is NOT a self-peer marker.
+    spec = tmp_path / "gone" / "spec.yaml"
+    # Act
+    result = _is_self_peer_marker(spec)
+    # Assert
+    assert result is False
+
+
+def test_discover_defined_agents_excludes_self_peer_marker(tmp_path):
+    # Arrange — the literal ``agents/self/`` shape sac ships in production.
+    home = tmp_path / "home"
+    home.mkdir()
+    _seed_home_with_agents(home)
+    agents = home / ".scitex" / "agent-container" / "agents"
+    _write_self_peer_marker(agents / "self")
+    # Act
+    with _home_set_to(home):
+        pairs = _al._discover_defined_agents()
+    # Assert
+    assert "self" not in [n for n, _ in pairs]
+
+
+def test_discover_defined_agents_still_finds_sibling_agent_next_to_self(tmp_path):
+    # Arrange — the self-marker exclusion must not swallow real siblings.
+    home = tmp_path / "home"
+    home.mkdir()
+    _seed_home_with_agents(home)
+    agents = home / ".scitex" / "agent-container" / "agents"
+    _write_self_peer_marker(agents / "self")
+    # Act
+    with _home_set_to(home):
+        pairs = _al._discover_defined_agents()
+    # Assert
+    assert "a1" in [n for n, _ in pairs]
 
 
 # ---------------------------------------------------------------------------
@@ -832,3 +1034,225 @@ def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
         print_agent_list(registry)
     # Assert
     assert "Path" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Default view = RUNNING-ONLY (operator TG 1490-1495). The full
+# stopped/invalid/definition roster + the per-agent validation-error blocks
+# are an unusable wall by default; they move behind -v/--all. The default
+# view shows only running agents with their Account, plus a hidden-count
+# footer.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _swap_runtime_account(impl: Callable[[str], str | None]) -> Iterator[None]:
+    """Swap ``_al._runtime_account_for`` for a real callable (not a mock)."""
+    saved = _al._runtime_account_for
+    _al._runtime_account_for = impl  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _al._runtime_account_for = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _state_root_set_to(path: Path) -> Iterator[None]:
+    """Rebind the runner's DEFAULT_STATE_ROOT to a real tmp Path.
+
+    ``resolve_state_dir`` → ``state_dir_for`` reads this module constant at
+    call time, so pointing it at a seeded tmp tree lets us exercise the REAL
+    ``_runtime_account_for`` resolution on real files (no mock).
+    """
+    import scitex_agent_container._runners._session_state as _ss
+
+    saved = _ss.DEFAULT_STATE_ROOT
+    _ss.DEFAULT_STATE_ROOT = path  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _ss.DEFAULT_STATE_ROOT = saved  # type: ignore[assignment]
+
+
+def _running_plus_defined_and_invalid(tmp_path):
+    """One RUNNING registry agent + one defined + one invalid on-disk agent."""
+    good = _write_valid_spec(tmp_path / "runner")
+    registry = _FakeRegistry(
+        [{"name": "runner", "config": str(good), "screen": "s", "started_at": "ts"}]
+    )
+    def_spec = _write_valid_spec(tmp_path / "def1")
+    bad_spec = _write_invalid_spec(tmp_path / "bad1")
+
+    def _discover() -> list[tuple[str, Path]]:
+        return [("def1", def_spec), ("bad1", bad_spec)]
+
+    return registry, _discover
+
+
+def test_print_agent_list_default_shows_running_agent(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act — default view.
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "runner" in capsys.readouterr().out
+
+
+def test_print_agent_list_default_hides_definition_and_invalid(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — the definition ("def1") + invalid ("bad1") rows are hidden.
+    out = capsys.readouterr().out
+    assert "def1" not in out and "bad1" not in out
+
+
+def test_print_agent_list_default_footer_counts_hidden(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert — footer names both hidden categories.
+    out = capsys.readouterr().out
+    assert "definitions" in out and "invalid" in out and "hidden" in out
+
+
+def test_print_agent_list_default_omits_validation_blocks(capsys, tmp_path):
+    # Arrange — the invalid agent's real spec.runtime error block must NOT
+    # print in the default view (the wall the operator asked us to remove).
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry)
+    # Assert
+    assert "spec.runtime" not in capsys.readouterr().out
+
+
+def test_print_agent_list_default_hides_stopped_agent(capsys, tmp_path):
+    # Arrange — a single registered-but-stopped agent (probe False).
+    spec = _write_valid_spec(tmp_path / "stopper")
+    registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+        print_agent_list(registry)
+    # Assert — no table (name absent); footer reports the hidden stopped one.
+    out = capsys.readouterr().out
+    assert "stopper" not in out and "stopped" in out and "No running agents" in out
+
+
+def test_print_agent_list_verbose_includes_stopped_agent(capsys, tmp_path):
+    # Arrange — same stopped agent; -v restores the full roster.
+    spec = _write_valid_spec(tmp_path / "stopper")
+    registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+        print_agent_list(registry, verbose=True)
+    # Assert
+    assert "stopper" in capsys.readouterr().out
+
+
+def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp_path):
+    # Arrange
+    registry, discover = _running_plus_defined_and_invalid(tmp_path)
+    # Act — -v shows every status AND the per-agent validation-error detail.
+    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+        print_agent_list(registry, verbose=True)
+    # Assert
+    out = capsys.readouterr().out
+    assert "def1" in out and "spec.runtime" in out
+
+
+# ---------------------------------------------------------------------------
+# Account column = ACTUAL runtime account for running agents (operator TG
+# 1490-1495). Pool-based agents (``credentials_files`` with no ``account``
+# pin) all resolve to the same host-OAuth spec label; the runtime picker
+# binds a different pool account per agent, and its identity is host-readable
+# from ``<runtime>/home/.claude.json``. A running row prefers that; a
+# non-running row (no live auth) keeps the spec label.
+# ---------------------------------------------------------------------------
+
+
+def test_get_data_running_row_prefers_runtime_account(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act — running (probe True): runtime account wins over the spec label.
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "spec-label (host@example.com)"),
+        _swap_runtime_account(lambda name: "runtime-pick@example.com"),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "runtime-pick@example.com"
+
+
+def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act — stopped (probe False): the runtime probe is NOT consulted.
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: False),
+        _swap_account(lambda cfg: "spec-label"),
+        _swap_runtime_account(lambda name: "should-not-be-used@example.com"),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "spec-label"
+
+
+def test_get_data_running_row_falls_back_to_spec_when_runtime_unresolved(tmp_path):
+    # Arrange — runtime resolver returns None (agent auth not written yet).
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(lambda cfg: True),
+        _swap_account(lambda cfg: "spec-fallback"),
+        _swap_runtime_account(lambda name: None),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["account"] == "spec-fallback"
+
+
+def test_runtime_account_for_reads_per_agent_oauth_email(tmp_path):
+    # Arrange — a REAL per-agent runtime home with the picked account's
+    # identity written into <runtime>/home/.claude.json (no mock).
+    import json as _json
+
+    root = tmp_path / "runtime"
+    home = root / "myagent" / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / ".credentials.json").write_text(
+        _json.dumps(
+            {"claudeAiOauth": {"accessToken": "sk-ant-x", "expiresAt": 9_999_999_999_000}}
+        )
+    )
+    (home / ".claude.json").write_text(
+        _json.dumps({"oauthAccount": {"emailAddress": "runtime-pick@example.com"}})
+    )
+    # Act — HOME→tmp so the saved-account match reads an empty store (the
+    # email maps to no saved account) → the bare runtime email is returned.
+    with _state_root_set_to(root), _home_set_to(tmp_path):
+        label = _al._runtime_account_for("myagent")
+    # Assert
+    assert label == "runtime-pick@example.com"
+
+
+def test_runtime_account_for_returns_none_without_runtime_dir(tmp_path):
+    # Arrange — no runtime dir seeded → resolver must return None so the
+    # caller falls back to the spec label.
+    # Act
+    with _state_root_set_to(tmp_path / "empty"):
+        result = _al._runtime_account_for("no-such-runtime-agent")
+    # Assert
+    assert result is None

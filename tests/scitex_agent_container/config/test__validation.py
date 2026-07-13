@@ -246,6 +246,81 @@ def test_validate_raw_accepts_runtime_apptainer_for_backcompat():
 
 
 # ---------------------------------------------------------------------------
+# spec.provider — agent SDK family selector (openai-compat-1 foundation).
+# Distinct from spec.claude.provider (vendor backend override, tested in
+# test__validation_provider.py) — see the naming-collision note in
+# config._provider_types.AgentProvider.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_raw_absent_provider_is_not_an_error():
+    # Arrange — no-op guarantee: omitting spec.provider adds zero errors.
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.provider" in e]
+
+
+def test_validate_raw_accepts_provider_anthropic():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "anthropic"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.provider" in e]
+
+
+def test_validate_raw_accepts_provider_openai():
+    # Arrange — schema-valid even though openai-compat-2 hasn't landed
+    # a runner for it yet (foundation phase).
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "openai"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.provider" in e]
+
+
+def test_validate_raw_rejects_unknown_provider_value():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "bogus-sdk"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.provider" in e]
+
+
+def test_validate_raw_unknown_provider_error_echoes_offending_value():
+    # Arrange
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "bogus-sdk"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    provider_errors = [e for e in errors if "spec.provider" in e]
+    assert "bogus-sdk" in provider_errors[0]
+
+
+# ---------------------------------------------------------------------------
 # F-CS3 — autonomous spec block (phase 1: schema only)
 # ---------------------------------------------------------------------------
 
@@ -584,7 +659,7 @@ def _loaded_config_with_image(tmp_path):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "host": "local",
+                    "host": "${HOSTNAME}",
                     "workdir": "/home/agent/work",
                     "apptainer": {
                         "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
@@ -622,7 +697,8 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
 # ---------------------------------------------------------------------------
 # Required author fields — NO HIDDEN DEFAULTS (operator directive 2026-06-23).
 # Every APPLICABLE field must be declared; the validator errors roundly when
-# one is absent. ``host: local`` is the explicit local-singleton spelling.
+# one is absent. ``host: ${HOSTNAME}`` resolves to the loading machine
+# (``host: local`` is BANNED; operator directive 2026-07-10).
 # ---------------------------------------------------------------------------
 
 _COMPLETE_SPEC = {
@@ -630,7 +706,7 @@ _COMPLETE_SPEC = {
     "kind": "Agent",
     "spec": {
         "runtime": "tui",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/home/agent/work",
         "apptainer": {"image": "/x.sif", "binds": []},
         "claude": {"model": "opus"},
@@ -669,6 +745,19 @@ def test_host_local_passes_validation():
     errors = validate_raw(raw, path="<test>")
     # Assert
     assert not [e for e in errors if "host" in e.lower()]
+
+
+def test_complete_spec_with_explicit_provider_openai_has_no_errors():
+    # Arrange — a fully-valid spec that ALSO opts into the (not-yet-
+    # runnable) openai SDK family must still validate clean.
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"]["provider"] = "openai"
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert errors == []
 
 
 def test_missing_host_and_hosts_is_rejected():
@@ -732,7 +821,7 @@ def test_agentproxy_missing_upstream_is_rejected():
         "kind": "AgentProxy",
         "spec": {
             "runtime": "tui",
-            "host": "local",
+            "host": "${HOSTNAME}",
             "workdir": "/work",
             "apptainer": {"image": "/x.sif", "binds": []},
             "health": {"enabled": True, "interval": 60},

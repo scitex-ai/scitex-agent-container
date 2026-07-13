@@ -26,6 +26,9 @@ import pytest
 from scitex_agent_container.runtimes._apptainer_listen_env import (
     listen_env_flags,
 )
+from scitex_agent_container.runtimes._mcp_reliability import (
+    MCP_STARTUP_TIMEOUT_MS,
+)
 
 
 @pytest.fixture
@@ -64,6 +67,32 @@ def test_listen_env_flags_injects_testmon_cache_root_var(
     assert (
         "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon" in flags
     )
+
+
+def test_listen_env_flags_injects_mcp_timeout(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — fixtures supply an empty-channel config + sandboxed $HOME.
+    _ = sandboxed_home
+    # Act
+    flags = listen_env_flags(no_bus_config)
+    # Assert — the raised MCP startup connect timeout reaches the launch env
+    # (fleet incident 2026-07-06 cold-start race fix).
+    assert f"MCP_TIMEOUT={MCP_STARTUP_TIMEOUT_MS}" in flags
+
+
+def test_listen_env_flags_mcp_timeout_follows_an_env_token(
+    no_bus_config: SimpleNamespace,
+    sandboxed_home: Path,
+) -> None:
+    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
+    _ = sandboxed_home
+    flags = listen_env_flags(no_bus_config)
+    # Act
+    idx = flags.index(f"MCP_TIMEOUT={MCP_STARTUP_TIMEOUT_MS}")
+    # Assert
+    assert flags[idx - 1] == "--env"
 
 
 def test_listen_env_flags_testmon_var_follows_an_env_token(

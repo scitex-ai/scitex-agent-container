@@ -440,7 +440,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {yaml_root / (name + '-work')}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"

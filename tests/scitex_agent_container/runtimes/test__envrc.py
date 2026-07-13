@@ -223,3 +223,61 @@ def test_fold_omits_empty_valued_var(tmp_path: Path) -> None:
     fold_envrc_into_env(tmp_path)
     # Assert — the empty var is not written into the folded .env.
     assert "EMPTY=" not in (tmp_path / ".env").read_text()
+
+
+def test_cascade_drops_legacy_identity_alias_from_base_env(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — a stale legacy alias (SCITEX_TODO_AGENT) already sits in the
+    # base .env (as it does for the affected agents); the .envrc sets only the
+    # current _ID name. This mirrors the self-perpetuating-loop that keeps the
+    # legacy var alive across deploys.
+    os.environ.pop(_SECRETS_VAR, None)
+    base = tmp_path / ".env"
+    base.write_text(
+        "SCITEX_TODO_AGENT=someagent\nSCITEX_TODO_AGENT_ID=someagent\n",
+        encoding="utf-8",
+    )
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export SCITEX_TODO_AGENT_ID="someagent"\n', encoding="utf-8")
+    # Act — the real fold path used in production (base .env sourced as base_env).
+    out = eval_envrc_cascade([envrc], base_env=base)
+    # Assert — the deprecated alias is dropped (scitex-todo MCP hard-rejects it).
+    assert "SCITEX_TODO_AGENT" not in out
+
+
+def test_cascade_keeps_current_id_var_from_base_env(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — same setup as the drop test.
+    os.environ.pop(_SECRETS_VAR, None)
+    base = tmp_path / ".env"
+    base.write_text(
+        "SCITEX_TODO_AGENT=someagent\nSCITEX_TODO_AGENT_ID=someagent\n",
+        encoding="utf-8",
+    )
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export SCITEX_TODO_AGENT_ID="someagent"\n', encoding="utf-8")
+    # Act
+    out = eval_envrc_cascade([envrc], base_env=base)
+    # Assert — the CURRENT identity var survives (container --env-file needs it).
+    assert out.get("SCITEX_TODO_AGENT_ID") == "someagent"
+
+
+def test_fold_cascade_rewrites_env_without_legacy_alias(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — a stale legacy alias in the materialised .env; the real
+    # fold_envrc_cascade_into_env rewrites the file in place.
+    os.environ.pop(_SECRETS_VAR, None)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "SCITEX_TODO_AGENT=someagent\nSCITEX_TODO_AGENT_ID=someagent\n",
+        encoding="utf-8",
+    )
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export SCITEX_TODO_AGENT_ID="someagent"\n', encoding="utf-8")
+    # Act
+    fold_envrc_cascade_into_env(tmp_path, [envrc])
+    # Assert — the rewritten .env no longer carries the fatal legacy alias.
+    assert "SCITEX_TODO_AGENT=" not in env_file.read_text()

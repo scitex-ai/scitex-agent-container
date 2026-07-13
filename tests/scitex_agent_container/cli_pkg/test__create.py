@@ -61,6 +61,130 @@ def test_create_full_template_passes_v3_validator(tmp_path: Path) -> None:
     assert errors == []
 
 
+# ---------------------------------------------------------------------------
+# `full` template = the PROVEN developer shape (card
+# sac-agents-new-template-stale; operator 2026-06-25 "very general, just
+# developer like existing ones"). It must render a READY dev agent, not the
+# stale generic skeleton (runtime apptainer, model sonnet, binds [],
+# placeholder prompt, NO overlay / SCITEX_TODO_AGENT_ID / channels /
+# editable-install / dev labels). These tests pin every load-bearing field
+# the card flagged as missing — they FAIL against the old template.
+# ---------------------------------------------------------------------------
+
+
+def _render_full(tmp_path: Path, name: str = "proj-x") -> dict:
+    """Render the inline ``full`` template for ``name``; return the parsed doc."""
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    runner.invoke(create_cmd, [name, "--base-dir", str(base), "--template", "full"])
+    return yaml.safe_load((base / name / "spec.yaml").read_text())
+
+
+def test_full_template_runtime_is_tui(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    spec = doc["spec"]
+    # Assert — interactive TUI dev agent, not the stale generic apptainer shape.
+    assert spec["runtime"] == "tui"
+
+
+def test_full_template_is_relaxed(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    relaxed = doc["spec"]["apptainer"]["relaxed"]
+    # Assert — relaxed isolation (dev agent shares the operator's host tree).
+    assert relaxed is True
+
+
+def test_full_template_declares_directory_overlay(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    overlay = doc["spec"]["apptainer"]["overlay"]
+    # Assert — persistent per-agent overlay (MISSING on the stale template).
+    assert overlay.endswith("/overlays/proj-x/")
+
+
+def test_full_template_wires_scitex_todo_agent_id(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    env = doc["spec"]["apptainer"]["env"]
+    # Assert — todo-store writes attribute to THIS agent (MISSING before).
+    assert env["SCITEX_TODO_AGENT_ID"] == "proj-x"
+
+
+def test_full_template_lists_the_three_fleet_channels(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    channels = doc["spec"]["claude"]["channels"]
+    # Assert — sac + scitex-todo + telegrammer push channels (all MISSING before).
+    assert channels == [
+        "server:sac",
+        "server:scitex-todo",
+        "server:claude-code-telegrammer",
+    ]
+
+
+def test_full_template_editable_installs_the_repo(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    cmds = " ".join(sc.get("command", "") for sc in doc["spec"]["startup_commands"])
+    # Assert — the dev loop editable-installs the agent's own repo (MISSING before).
+    assert "pip install -e" in cmds
+
+
+def test_full_template_kick_is_start_or_continue(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    prompts = doc["spec"]["startup_prompts"]
+    # Assert — a real self-resume kick, not a "replace this / READY" placeholder.
+    assert prompts == ["Start or continue."]
+
+
+def test_full_template_has_developer_metadata_labels(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    role = doc["metadata"]["labels"]["role"]
+    # Assert — developer role labels present (stale template was a bare 'worker').
+    assert role == "project-maintainer"
+
+
+def test_full_template_full_home_bind_at_canonical_path(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    home = str(Path.home())
+    # Act
+    binds = doc["spec"]["apptainer"]["binds"]
+    # Assert — full host reach at the canonical path (was binds: [] on the stale one).
+    assert f"{home}:{home}:rw" in binds
+
+
+def test_full_template_model_is_opus(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    model = doc["spec"]["claude"]["model"]
+    # Assert — opus (dev workhorse), not the stale 'sonnet'.
+    assert model.startswith("opus")
+
+
+def test_full_template_workdir_under_home_matches_agent(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    home = str(Path.home())
+    # Act
+    workdir = doc["spec"]["workdir"]
+    # Assert — --pwd is the repo path, bound rw above (host==container).
+    assert workdir == f"{home}/proj/proj-x"
+
+
 def test_create_default_template_is_minimal(tmp_path: Path) -> None:
     # Arrange
     runner = CliRunner()
@@ -173,7 +297,7 @@ metadata:
 
 spec:
   runtime: apptainer
-  host: local
+  host: ${HOSTNAME}
   workdir: ~/proj/SAC_PLACEHOLDER_PROJECT/SAC_PLACEHOLDER_AGENT_ID
 
   apptainer:
@@ -426,7 +550,7 @@ metadata:
 
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/ywatanabe/proj/SAC_PLACEHOLDER_PROJECT
 
   apptainer:
@@ -616,10 +740,16 @@ def test_create_help_omits_dir_template_absent_from_root(tmp_path: Path) -> None
     # Arrange — an EMPTY agents root: no _template_* dirs exist.
     runner = CliRunner()
     base = tmp_path / "agents"
-    # Act
+    # Act — collapse ALL whitespace so the check is terminal-width-independent.
+    # click's HelpFormatter wraps the epilog to the detected terminal width
+    # (which varies under `apptainer exec` / CI, where COLUMNS may not
+    # propagate into the pytest subprocess), and a narrow width can split
+    # "none found" across a line break — the historical SIF failure. Matching
+    # on the normalized stream asserts the message, not the wrap column.
     result = runner.invoke(create_cmd, ["--base-dir", str(base), "--help"])
+    normalized = " ".join(result.output.split())
     # Assert — nothing invented; the live scan reports none found.
-    assert "none found" in result.output
+    assert "none found" in normalized
 
 
 def test_create_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> None:

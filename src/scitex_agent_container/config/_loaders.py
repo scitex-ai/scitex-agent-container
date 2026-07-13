@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ._host import resolve_hostname, substitute_hostnames
+from ._host import (
+    contains_hostname_placeholder,
+    resolve_hostname,
+    substitute_hostnames,
+)
 from ._parsers import (
     MODEL_DISPLAY_NAMES,
     interpolate_mcp_servers,
@@ -211,13 +215,27 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     spec = raw.get("spec", {}) or {}
     hosts_spec = parse_hosts_spec(spec)
 
-    # ${HOSTNAME} substitution only meaningful when this is a multi-host
-    # template (``hosts:`` set). Singletons run on the canonical host name.
+    # Whole-document ${HOSTNAME} substitution stays multi-host-only
+    # (``hosts:`` templates) — env values / command strings in singleton
+    # specs may deliberately carry the placeholder for a runtime shell.
+    # SINGLETON PLACEMENT is the one exception: ``host: ${HOSTNAME}`` is
+    # the portable spelling of "this machine, resolved concretely at load
+    # time" (the replacement for the banned ``host: local``; operator
+    # directive 2026-07-10), so the placement field alone is substituted.
     is_multi = hosts_spec.hosts != "" and hosts_spec.hosts != []
-    hostname = resolve_hostname() if is_multi else ""
+    singleton_placement_token = not is_multi and contains_hostname_placeholder(
+        hosts_spec.host
+    )
+    hostname = (
+        resolve_hostname() if (is_multi or singleton_placement_token) else ""
+    )
     if is_multi:
         raw = substitute_hostnames(raw, hostname)
         spec = raw.get("spec", {}) or {}
+    elif singleton_placement_token:
+        hosts_spec = HostsSpec(
+            host=substitute_hostnames(hosts_spec.host, hostname), hosts=""
+        )
 
     metadata = raw.get("metadata", {}) or {}
     raw_name = _name_from_path(path)
@@ -352,6 +370,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
+        # Agent SDK family (top-level; NOT spec.claude.provider — see the
+        # naming-collision note in config._provider_types.AgentProvider).
+        # Default mirrors the dataclass default; openai-compat-1 foundation.
+        provider=str(spec.get("provider") or "anthropic"),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.

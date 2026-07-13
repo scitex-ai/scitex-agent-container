@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._port_holder import (
     PortHealResult,
     clear_wedged_port_holders,
@@ -430,7 +431,10 @@ def restart_listen(
                 took_systemd_path=True,
             )
     else:
-        argv = sac_listen_argv or ["sac", "listen"]
+        try:
+            argv = sac_listen_argv or [sac_binary(), "listen"]
+        except SacBinaryNotFoundError as exc:
+            return _fail(error=f"cannot resolve sac binary: {exc}")
         try:
             _run_subprocess(
                 argv,

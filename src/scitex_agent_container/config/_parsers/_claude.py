@@ -10,6 +10,16 @@ from .._types import ClaudeSpec
 def _parse_provider(raw: dict) -> ProviderSpec | None:
     """Parse ``spec.claude.provider`` into a ``ProviderSpec`` or ``None``.
 
+    NAMING COLLISION NOTE (openai-compat-1): this is the NESTED
+    ``spec.claude.provider`` — a vendor-agnostic Anthropic-COMPATIBLE
+    backend override (DeepSeek, Mimo/Xiaomi, ...) that still runs the
+    Claude Agent SDK. It is unrelated to the TOP-LEVEL ``spec.provider``
+    (``AgentConfig.provider`` / ``config._provider_types.AgentProvider``),
+    which selects WHICH agent SDK family (``anthropic`` vs ``openai``)
+    backs the session at all. The top-level field is parsed directly in
+    ``_loaders.load_v3`` (mirroring ``spec.runtime``), NOT here — this
+    function's scope stays exactly ``spec.claude.provider``.
+
     Accepts two shapes (back-compat — see ADR-0011 extension):
 
     * **string** (new shape, operator directive 2026-05-28 msg 6783):
@@ -98,6 +108,18 @@ def parse_claude(spec: dict) -> ClaudeSpec:
     raw_options = raw.get("raw_options", {}) or {}
     if not isinstance(raw_options, dict):
         raw_options = {}
+    # Account POOL — ``credentials_files`` (plural). A list of host paths
+    # to ``.credentials.json`` files; the start pre-flight picks one
+    # quota-aware. Coerce defensively to ``list[str]`` (the validator is
+    # the SSOT for the "must be a list of strings" diagnostic); a non-list
+    # / non-string entries degrade to an empty pool here so an unvalidated
+    # fixture path never crashes the loader.
+    raw_cred_files = raw.get("credentials_files", []) or []
+    credentials_files: list[str] = []
+    if isinstance(raw_cred_files, list):
+        credentials_files = [
+            str(p) for p in raw_cred_files if isinstance(p, str) and p.strip()
+        ]
     return ClaudeSpec(
         model=str(raw.get("model", "") or ""),
         channels=raw.get("channels", []) or [],
@@ -108,6 +130,7 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         auto_accept=raw.get("auto_accept", True),
         account=str(raw.get("account", "") or ""),
         credentials_file=str(raw.get("credentials_file", "") or ""),
+        credentials_files=credentials_files,
         provider=_parse_provider(raw),
         raw_options=dict(raw_options),
     )

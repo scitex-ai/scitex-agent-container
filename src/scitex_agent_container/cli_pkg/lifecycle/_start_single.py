@@ -73,6 +73,7 @@ def run_single_targets(
     broker_self: bool = False,
     yes: bool = False,
     verbose: bool = False,
+    tail_lines: int | None = None,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -111,6 +112,12 @@ def run_single_targets(
     host side. Does NOT weaken the human-at-a-TTY default-refuse
     safety net — a real interactive operator invocation never has
     this env var set.
+
+    ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
+    ``--resume`` preflight's candidate listing — how many trailing
+    transcript messages to preview per resumable conversation
+    (sac-session-candidates-tail-preview). ``None`` defers to the
+    module default.
     """
     effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
@@ -146,10 +153,26 @@ def run_single_targets(
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
                     current_host = ""
-                # Cross-host dispatch branch (routing only). Skipped when
-                # --no-redispatch is passed (peer-side invocation uses this
-                # to prevent recursion).
-                if not no_redispatch:
+                # Liveness-gated singleton skip FIRST: an agent VERIFIED
+                # LIVE on its pinned host needs no action (idempotent
+                # start) and no ssh — the calm answer whether or not the
+                # pin is a registered peer. Routing below engages only
+                # when nothing live backs the pin. Bug 1 root cause
+                # (PR #252): the skip is a dead-end when
+                # no_redispatch=True (operator explicitly disabled the
+                # redispatch chain, e.g. via ``sac --on <peer>``) —
+                # _resolve_singleton_skip honours that and returns None.
+                skip = _resolve_singleton_skip(
+                    config, current_host, no_redispatch=no_redispatch
+                )
+                # Cross-host dispatch branch (spec.host routing): a
+                # registered-peer pin dispatches remotely; an UNKNOWN pin
+                # fails loud with the registered-peer list (operator
+                # directive 2026-07-10 — see _dispatch.try_dispatch).
+                # Skipped when --no-redispatch is passed (peer-side
+                # invocation uses this to prevent recursion) and when the
+                # liveness skip above already answered.
+                if not skip and not no_redispatch:
                     from ..._state.host_config import load as _load_host_config
 
                     peers = _load_host_config().peers
@@ -161,15 +184,6 @@ def run_single_targets(
                         force=force,
                     ):
                         continue
-                # Bug 1 root cause: a singleton-on-wrong-host skip is a
-                # dead-end when no_redispatch=True (the operator has
-                # explicitly disabled the redispatch chain — e.g. via
-                # ``sac --on <peer>``). _resolve_singleton_skip honours
-                # that and returns None instead of producing a silent no-op
-                # the propagator would then drop on the floor.
-                skip = _resolve_singleton_skip(
-                    config, current_host, no_redispatch=no_redispatch
-                )
                 if skip:
                     if as_json:
                         _emit_json(
@@ -272,7 +286,12 @@ def run_single_targets(
                         else (spec_host or None)
                     )
                     is_remote = bool(target_host) and target_host != current_host
-                    preflight_resume_id(config, resume_id, is_remote=is_remote)
+                    preflight_resume_id(
+                        config,
+                        resume_id,
+                        is_remote=is_remote,
+                        tail_lines=tail_lines,
+                    )
                 agent_start(
                     config_path,
                     no_preflight=no_preflight,

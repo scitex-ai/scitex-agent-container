@@ -34,10 +34,12 @@ metadata:
 
 spec:
   runtime: apptainer
+  host: local
   workdir: /tmp/sac-sdk-test-workspace
 
   apptainer:
     image: scitex-agent-container:sdk-persistent
+    binds: []   # explicit mounts; [] = nothing beyond state
 
   claude:
     model: claude-haiku-4-5
@@ -52,5 +54,6 @@ spec:
 
   restart:
     policy: never
+    max_retries: 0
 
 # EOF

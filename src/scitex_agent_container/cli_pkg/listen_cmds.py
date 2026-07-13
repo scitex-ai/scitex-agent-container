@@ -40,141 +40,16 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-def _register_self_comms_node(*, port: int) -> None:
-    """ADR-0014 — register this listen's operator identity in comms_nodes.
-
-    Best-effort: any failure (no config, no LeadConfig, DB error, name
-    collision) is logged to stderr but does NOT prevent ``sac listen``
-    from binding. A listen that won't start because of a registry-write
-    error is worse than a missing federated row — peers can still
-    cross-host-forward to the listen via the existing ``instances``
-    table for sac-managed agents; only the operator-identity row needs
-    the federated graph.
-
-    Identity source: ``LeadConfig.name`` (e.g. ``lead`` on the lead
-    host). Hosts without a ``lead:`` block emit a LOUD WARNING and
-    skip — those listens serve only sac-managed agents, which
-    register themselves via ``record_instance_start``; operators that
-    EXPECT a lead row (cross-host A2A targeting ``lead``) need to
-    know the listen isn't writing it. The old silent return was the
-    exact bug PR2 (#308) repaired via ``sac registry register``: a
-    missing lead block meant ``resolve_node_host('lead')`` returned
-    ``None`` fleet-wide with no log line pointing at why. The warning
-    + the new repair verb together close the regression door.
-    """
-    try:
-        from .._state.host_config import load
-        from .._state.state_db_nodes import (
-            CommsNodeConflictError,
-            register_comms_node,
-        )
-
-        cfg = load()
-        lead = cfg.lead
-        if lead is None:
-            # Loud-but-non-fatal: the listen MUST still bind (a failed
-            # bind is worse than a missing federated row), but the
-            # operator needs a paper trail when cross-host 'lead'
-            # resolution starts failing. The repair path is documented
-            # inline so the operator can act without spelunking ADR-0014.
-            click.echo(
-                "# WARN: comms_nodes self-register skipped — host_config "
-                "has no `lead:` block, so this listen will NOT advertise "
-                "an operator-identity row. Other hosts' "
-                "`resolve_node_host('lead')` will return None until a row "
-                "exists. Add a `lead:` block to host_config (preferred) "
-                "OR run `sac registry register --name lead --host <h> "
-                "--a2a-port <p>` for an immediate no-restart repair.",
-                err=True,
-            )
-            return
-        local_host = cfg.canonical_host()
-        try:
-            register_comms_node(
-                name=lead.name,
-                host=local_host,
-                a2a_port=port,
-                source_host=None,  # locally-registered
-            )
-        except CommsNodeConflictError as exc:
-            click.echo(
-                f"# WARN: comms_nodes self-register conflict: {exc}",
-                err=True,
-            )
-    except (
-        Exception
-    ) as exc:  # stx-allow: fallback (reason: never block listen on registry write)
-        click.echo(
-            f"# WARN: comms_nodes self-register failed: {exc!r}",
-            err=True,
-        )
-
-
-def _maybe_sync_on_start() -> None:
-    """ADR-0014 — optionally trigger ``sac registry sync --all`` once.
-
-    Opt-out via the ``comms_nodes.sync_on_start: false`` config flag
-    (default True). Best-effort: per-peer failures are logged by the
-    sync command itself; we never raise.
-
-    NOT on the boot path anymore. This synchronous helper used to run
-    BEFORE ``uvicorn.run`` so the listen had the latest peer view before
-    answering inbound A2A POSTs — but an unreachable static peer made its
-    ssh call hang and blocked the bind, with no error logged (INCIDENT
-    2026-06-26). The startup sync now runs best-effort AFTER the bind, off
-    the event loop, as a lifespan task
-    (:func:`_listen._startup_peer_sync.sync_peers_on_listen_startup`). This
-    helper is retained for explicit/legacy callers only and is bounded by
-    an overall budget so even a direct call can never wedge — but
-    ``_do_start_listen`` no longer invokes it.
-    """
-    try:
-        from .._state.host_config import load
-
-        cfg = load()
-        # The config flag is read by hand because LeadConfig is the
-        # only structured block sac currently parses. Look in the raw
-        # config dict if present; default True.
-        raw_path = cfg.source_path
-        sync_on_start = True
-        if raw_path is not None and raw_path.is_file():
-            import yaml
-
-            raw = yaml.safe_load(raw_path.read_text()) or {}
-            comms_nodes_cfg = raw.get("comms_nodes")
-            if isinstance(comms_nodes_cfg, dict):
-                flag = comms_nodes_cfg.get("sync_on_start", True)
-                if isinstance(flag, bool):
-                    sync_on_start = flag
-        if not sync_on_start:
-            return
-        # Only run when there is at least one static peer; skip silently
-        # otherwise so single-host installs don't spam warnings.
-        static_peers = [n for n in cfg.peers.keys() if not any(c in n for c in "*?[")]
-        if not static_peers:
-            return
-        from ._registry_sync import registry_sync_impl
-
-        rc = registry_sync_impl(
-            from_peer=None,
-            to_peer=None,
-            all_peers=True,
-            dry_run=False,
-            as_json=False,
-            # Bound even this legacy/direct path so a re-introduced
-            # pre-bind call can never wedge (defense in depth).
-            overall_budget_s=60.0,
-        )
-        if rc != 0:
-            click.echo(
-                f"# WARN: comms_nodes startup sync had peer failures (rc={rc})",
-                err=True,
-            )
-    except Exception as exc:  # stx-allow: fallback (reason: never block listen on sync)
-        click.echo(
-            f"# WARN: comms_nodes startup sync failed: {exc!r}",
-            err=True,
-        )
+# ADR-0014 comms_nodes registry hooks — extracted to a sibling module to
+# keep this file under the per-file line cap. Re-exported here so the
+# historical import path
+# ``from scitex_agent_container.cli_pkg.listen_cmds import
+# _register_self_comms_node`` (used by tests + the boot path below)
+# keeps working unchanged.
+from ._listen_registry_hooks import (  # noqa: E402
+    _maybe_sync_on_start,  # noqa: F401  (re-exported for tests / legacy callers)
+    _register_self_comms_node,
+)
 
 
 @click.group(name="listen", invoke_without_command=True)
@@ -286,31 +161,42 @@ def _do_start_listen(
             f"Install with: pip install 'scitex-agent-container[listen]'"
         ) from exc
 
-    # Operator task #26 sub (1) — single-instance guard. A second
-    # ``sac listen`` while one already holds the port used to crash
-    # uvicorn with bare EADDRINUSE + a Python traceback (loud, but the
-    # operator had no diagnostic about which process held the port).
-    # The flock-backed pidfile guard FAILS LOUD with a structured
-    # message naming the holding PID + lock file path so
-    # ``kill <pid>`` is actionable without ``lsof``. The flock is
-    # kernel-released on process exit (even SIGKILL) so a crashed
-    # listen never permanently jams the port. Acquired BEFORE the
-    # comms_nodes / startup-sync hooks so a duplicate launch never
-    # touches the federated registry — a conflicting second start
-    # exits cleanly with no side effects.
+    # Hot-standby + failover (card ``sac-listen-hot-standby-no-crashloop``).
+    # The flock-backed pidfile guard (operator task #26 sub (1)) remains
+    # the ATOMIC bind arbiter — at most one process holds it, so two
+    # instances can never both bind. But a second ``sac listen`` launched
+    # while one already holds the port used to turn that contention into
+    # ``ListenAlreadyRunningError`` → ``click.ClickException`` → exit 1,
+    # which under the unit's ``Restart=always`` was an INFINITE
+    # CRASH-LOOP (NRestarts 11→34+, ~4s CPU/cycle, wedged the systemd
+    # user manager). ``resolve_startup`` fixes the root cause: on
+    # contention it does NOT exit — it STANDS BY as a warm spare
+    # (health-checking the holder) and FAILS OVER the instant the holder
+    # dies or wedges. Runs BEFORE the comms_nodes / startup-sync hooks so
+    # a standing-by duplicate never touches the federated registry. The
+    # signal guard makes a SIGTERM during standby a prompt CLEAN exit
+    # (``systemctl stop`` works) and restores the prior handlers on exit
+    # so uvicorn installs its own graceful-shutdown handlers below.
     from .._listen._single_instance import (
-        ListenAlreadyRunningError,
-        acquire_listen_lock,
         default_lock_dir,
         release_listen_lock,
     )
+    from .._listen._standby import resolve_startup, standby_signal_guard
 
     lock_dir = default_lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        lock_handle = acquire_listen_lock(port=port, lock_dir=lock_dir)
-    except ListenAlreadyRunningError as exc:
-        raise click.ClickException(str(exc)) from exc
+    with standby_signal_guard():
+        lock_handle = resolve_startup(host=host, port=port, lock_dir=lock_dir)
+    if lock_handle is None:
+        # A stop signal (``systemctl stop`` / Ctrl-C) arrived while
+        # standing by. We never acquired the lock — nothing to release;
+        # exit cleanly without binding.
+        click.echo(
+            "# sac listen: received shutdown signal while standing by "
+            "— exiting without binding",
+            err=True,
+        )
+        return
 
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
     click.echo(f"# token file: {tok_path}", err=True)
@@ -340,15 +226,46 @@ def _do_start_listen(
     # comes up but never serves (the silent fleet-comms outage this
     # guards against).
     app = create_app(token=token, health_watchdog_port=port)
+    import os
+
     import uvicorn
+
+    # Bounded graceful-shutdown timeout. uvicorn's default is ``None`` →
+    # on SIGTERM it waits FOREVER for in-flight requests to finish, and a
+    # long-lived SSE inbox stream parked on ``queue.get()`` never does,
+    # so the daemon hangs until ``sac listen restart --force`` escalates
+    # to SIGKILL after 10 s (card sac-listen-sigterm-sse-shutdown-hang).
+    # A bounded timeout guarantees uvicorn force-cancels a stuck stream
+    # well within that grace; the lifespan's shutdown bridge (which
+    # closes the inbox broker the instant ``should_exit`` flips) makes
+    # the common case exit promptly, long before this floor is reached.
+    # Override via SAC_LISTEN_SHUTDOWN_GRACE_S.
+    try:
+        _grace_shutdown = float(os.environ.get("SAC_LISTEN_SHUTDOWN_GRACE_S", "5"))
+    except (TypeError, ValueError):
+        _grace_shutdown = 5.0
 
     # ``ws="none"`` skips uvicorn's websockets backend autodetection —
     # we don't serve WS endpoints, and the WS protocol module imports
     # websockets.legacy which has churned across the websockets package
     # major versions (broken in >=14). Disabling it avoids a startup
     # crash that silently kills a detached ``sac listen``.
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        ws="none",
+        timeout_graceful_shutdown=_grace_shutdown,
+    )
+    server = uvicorn.Server(config)
+    # The lifespan's shutdown bridge reads this to detect uvicorn's
+    # ``should_exit`` (set synchronously by its SIGTERM handler) and
+    # close the inbox broker promptly, so in-flight SSE streams return
+    # at once instead of blocking the graceful shutdown.
+    app.state.uvicorn_server = server
     try:
-        uvicorn.run(app, host=host, port=port, log_level="info", ws="none")
+        server.run()
     finally:
         # Best-effort release on clean exit; kernel handles dirty
         # exit (SIGKILL / crash / OOM) by closing fds and releasing

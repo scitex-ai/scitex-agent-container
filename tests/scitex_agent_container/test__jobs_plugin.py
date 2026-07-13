@@ -4,10 +4,11 @@ Verifies the JobSpecs sac registers under the ``scitex_dev.jobs``
 entry-point group match the federated contract:
 
 * ``sac.accounts-refresh`` — a periodic systemd timer job that runs
-  ``--all --skip-active`` every 2h.
+  ``--all --include-active --sync-active-login`` every 2h (the SOLE
+  refresher; see the ``--skip-active`` note below).
 * ``sac.listen`` — a long-running systemd service job (the host
   control-plane daemon), auto-started on boot and auto-restarted on
-  crash (``restart_policy="always"``), registered so the host no
+  ANY exit (``restart_policy="always"``), registered so the host no
   longer needs a cron-based watchdog
   (clew incident ``clew-incident-sac-host-listen-down``, 2026-07-05).
 
@@ -57,12 +58,32 @@ def test_provider_job_name_is_package_prefixed() -> None:
     assert job.name == "sac.accounts-refresh"
 
 
-def test_provider_job_command_skips_active() -> None:
-    # Arrange — call the registered provider.
+def test_provider_job_command_includes_active_account() -> None:
+    # Arrange — call the registered provider. This assertion previously
+    # pinned ``--skip-active``, which was correct only under the
+    # pre-2026-07-08 TWO-refresher model (host timer + in-container CLI
+    # racing on one single-use refresh_token). Agents now bind the
+    # credential ``:ro`` and never refresh, so this timer is the SOLE
+    # refresher: skipping the active account starved the one account the
+    # whole fleet uses until its ~8h access_token expired (2026-07-09/10
+    # total stall). Do NOT revert to --skip-active.
+    # Act — by NAME, not by index: this provider now returns two jobs, so
+    # provide_jobs()[0] would silently start asserting against the wrong
+    # JobSpec the day the list order changes.
+    job = _job("sac.accounts-refresh")
+    # Assert
+    assert job.command == (
+        "sac accounts refresh --all --include-active --sync-active-login"
+    )
+
+
+def test_provider_job_command_never_skips_active() -> None:
+    # Arrange — a belt-and-braces guard: --skip-active must never
+    # reappear in the sole-refresher timer, however the command is spelled.
     # Act
     job = _job("sac.accounts-refresh")
-    # Assert — the federated job uses --skip-active to avoid the rotation race.
-    assert job.command == "sac accounts refresh --all --skip-active"
+    # Assert
+    assert "--skip-active" not in job.command
 
 
 def test_provider_job_kind_is_timer() -> None:

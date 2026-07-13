@@ -46,7 +46,7 @@ MINIMAL_V1_CONFIG = {
     "metadata": {"name": "test-agent"},
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "~/.scitex/agent-container/runtime/agents/test-agent",
         "claude": {"model": "claude-opus-4-8[1m]"},
         "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
@@ -64,7 +64,7 @@ MINIMAL_V2_CONFIG = {
     },
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "~/.scitex/agent-container/runtime/agents/head-test",
         # v3-realign: model moved to spec.claude.model.
         "claude": {"model": "opus[1m]"},
@@ -83,7 +83,7 @@ V2_WITH_MCP = {
     },
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "~/.scitex/agent-container/runtime/agents/head-test",
         # v3-realign: model moved to spec.claude.model.
         "claude": {"model": "sonnet"},
@@ -572,7 +572,7 @@ class TestPythonVenvViaConfigLoad:
             "metadata": {"name": "regression"},
             "spec": {
                 "runtime": "apptainer",
-                "host": "local",
+                "host": "${HOSTNAME}",
                 "workdir": "~/.scitex/agent-container/runtime/agents/regression",
                 "claude": {"model": "claude-opus-4-8[1m]"},
                 "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},

@@ -31,6 +31,7 @@ def test_base_executor_class_loads() -> None:
         "scitex_agent_container.a2a.executors._claude_session",
         "scitex_agent_container.a2a.executors._echo",
         "scitex_agent_container.a2a.executors._exec",
+        "scitex_agent_container.a2a.executors._openai_session",
     ],
 )
 def test_executors_subpackage_exposes_built_ins(mod: str) -> None:

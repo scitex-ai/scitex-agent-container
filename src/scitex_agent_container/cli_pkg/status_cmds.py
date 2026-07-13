@@ -19,6 +19,7 @@ from ._helpers import (
     console,
     print_agent_list,
 )
+from ._timefmt import format_jst
 
 
 def _status_via_host_listen(name: str) -> None:
@@ -53,6 +54,30 @@ def _status_via_host_listen(name: str) -> None:
         outcome = transport_outcome(str(exc), url=exc.url)
     sys.stdout.write(outcome_to_stdout_json(outcome))
     sys.exit(outcome.exit_code)
+
+
+def _encode_safe_cell(value: object, encoding: str) -> str:
+    """Stringify ``value`` for a rich table cell, coerced to round-trip
+    through ``encoding``.
+
+    ``agent_status()`` surfaces free-form runtime content verbatim
+    (``extensions``, tmux ``pane_text``, ``CLAUDE.md`` snippets, tool-input
+    previews, ...) that can carry non-ASCII characters -- including the
+    Claude Code TUI's own prompt glyph, which shows up in almost every
+    live agent's captured pane text. When the process's stdout encoding
+    is not UTF-8 (locale-stripped containers, cron, some SSH sessions --
+    exactly this project's own apptainer SIF deployments), rendering that
+    text raises ``UnicodeEncodeError`` partway through ``console.print``.
+    Replacing unencodable characters here -- before the cell is ever
+    added to the table -- prevents the crash instead of masking it with
+    a broad try/except around the print call.
+    """
+    text = str(value)
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(encoding, errors="replace").decode(encoding)
+    return text
 
 
 def _format_claude_account_block(meta: dict) -> list[str]:
@@ -92,7 +117,11 @@ def _format_claude_account_block(meta: dict) -> list[str]:
         extra_line = "disabled"
         if extra_reason:
             extra_line += f" (reason: {extra_reason})"
-    since = _fmt(meta.get("subscription_created_at"))
+    # Operator 2026-07-13: the raw ``...T...Z`` ISO stamp is unreadable;
+    # render it as a JST wall clock (``YYYY-MM-DD HH:MM (JST)``) via the
+    # shared _timefmt SSOT. ``format_jst`` already returns ``-`` for a
+    # missing/unparseable value, matching the ``_fmt`` fallback above.
+    since = format_jst(meta.get("subscription_created_at"))
 
     return [
         "Claude Code account",
@@ -137,21 +166,34 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     help="Fleet view: filter by machine label.",
 )
 @click.option(
+    "--tags",
+    "-t",
+    default=None,
+    help="Fleet view: filter by tags label (comma-separated in YAML; "
+    "matches if the agent carries ANY of the given comma-separated "
+    "values). A free-form lifecycle/status marker, e.g. "
+    "'active-development' -- separate from --capability (what an agent "
+    "can do) and from the ACL group label (metadata.labels.groups).",
+)
+@click.option(
     "--verbose",
     "-v",
     "verbose",
     is_flag=True,
     default=False,
-    help="Fleet view: add the full spec.yaml Path column (off by default — "
-    "it folds every row to 10+ lines).",
+    help="Fleet view: show the FULL list — every status "
+    "(running/stopped/invalid/definition) WITH per-agent validation-error "
+    "detail and the spec.yaml Path column. The default view shows only "
+    "running agents (the full roster is an unusable wall on a real fleet).",
 )
 @click.option(
     "--all",
     "show_all",
     is_flag=True,
     default=False,
-    help="Fleet view: include stale/ghost agents (dead registry entries whose "
-    "spec file is gone). Hidden by default.",
+    help="Fleet view: like -v (full roster + validation detail) AND "
+    "additionally include stale/ghost agents (dead registry entries whose "
+    "spec file is gone). Both are hidden by default.",
 )
 @click.option(
     "--snapshot",
@@ -187,6 +229,7 @@ def status(
     terse: bool,
     capability: str | None,
     machine: str | None,
+    tags: str | None,
     verbose: bool,
     show_all: bool,
     with_snapshot: bool,
@@ -196,17 +239,18 @@ def status(
     """Show agent status.
 
     Without ``NAME``: fleet view — every registered agent in a table,
-    optionally filtered by ``--capability`` / ``--machine``.
+    optionally filtered by ``--capability`` / ``--machine`` / ``--tags``.
 
     With ``NAME``: rich per-agent payload (registry entry + config-derived
     fields + resource snapshot).
 
     \b
     Example:
-      $ sac agent status                      # fleet view
-      $ sac agent status orchestrator         # rich per-agent
-      $ sac agent status --json               # fleet view, JSON
-      $ sac agent status --capability HPC     # fleet view, filtered
+      $ sac agent status                            # fleet view
+      $ sac agent status orchestrator               # rich per-agent
+      $ sac agent status --json                     # fleet view, JSON
+      $ sac agent status --capability HPC           # fleet view, filtered
+      $ sac agent status --tags active-development  # fleet view, by tag
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -315,11 +359,17 @@ def status(
 
         table = Table(title=f"Agent: {name}")
         table.add_column("Field", style="bold")
-        table.add_column("Value")
+        # overflow="fold" (not the default "ellipsis"): a too-wide cell
+        # (e.g. a long config path) is hard-wrapped instead of truncated
+        # with Rich's own "…" marker, which is itself non-ASCII and would
+        # defeat the encode-safety below.
+        table.add_column("Value", overflow="fold")
+        cell_encoding = getattr(console.file, "encoding", None) or "utf-8"
         for key, value in info.items():
             style = "green" if key == "status" and value == "running" else ""
             style = "red" if key == "status" and value == "stopped" else style
-            table.add_row(key, str(value), style=style)
+            cell = _encode_safe_cell(value, cell_encoding)
+            table.add_row(key, cell, style=style)
         console.print(table)
     else:
         # `agents status` only shows agents now. Claude-account info
@@ -333,7 +383,10 @@ def status(
                 json_mod.dumps(
                     {
                         "agents": get_agent_list_data(
-                            registry, capability=capability, machine=machine
+                            registry,
+                            capability=capability,
+                            machine=machine,
+                            tags=tags,
                         ),
                     },
                     indent=2,
@@ -344,6 +397,7 @@ def status(
                 registry,
                 capability=capability,
                 machine=machine,
+                tags=tags,
                 verbose=verbose,
                 show_all=show_all,
             )

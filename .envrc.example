@@ -1,0 +1,20 @@
+# .envrc.example — variable NAMES only; copy to .envrc (git-ignored) and fill.
+#
+# The real .envrc is user/project-LOCAL config and must never be tracked in
+# this public repo (operator directive 2026-07-11: public source vs local
+# config separation). It is now OPTIONAL for the Telegram bot token: sac
+# deterministically resolves CCT_BOT_TOKEN from the fleet pool
+# (CCT_BOT_TOKEN_<SLOT> vars provided via SAC_SECRETS_ENVRC) at agent start
+# when no .envrc supplies one — see
+# src/scitex_agent_container/runtimes/_cct_token_pool.py. Keep a local
+# .envrc only to OVERRIDE that mapping or to add project-local vars.
+
+source_up
+
+# Per-project Telegram bot identity (claude-code-telegrammer).
+# CCT_BOT_TOKEN must stay a $-REFERENCE into the pool — never a literal.
+export CCT_AGENT_ID=<project-name>
+export CCT_BOT_TOKEN="$CCT_BOT_TOKEN_<SLOT>"
+
+# scitex-todo identity (>= 0.7.30 name).
+export SCITEX_TODO_AGENT_ID=<project-name>

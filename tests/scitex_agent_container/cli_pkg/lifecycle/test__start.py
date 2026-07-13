@@ -26,6 +26,7 @@ smoke tests.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -379,15 +380,15 @@ class TestSingletonHostSkip:
         # Assert
         assert '"status": "skipped"' in result.output
 
-    def test_single_target_singleton_dead_binding_releases_and_starts_local(
+    def test_single_target_dead_binding_on_unknown_host_fails_loud(
         self, tmp_path, env_save_restore
     ):
         # Arrange — singleton pinned to nowhere-host, NO live row recorded.
-        # The new liveness gate must release the stale binding and fall
-        # through to a real start path. We can't run apptainer in tests,
-        # so we just verify the skip JSON was NOT emitted (i.e. the gate
-        # did NOT short-circuit). Real start fails downstream, that's fine
-        # — what we're pinning is that the skip path didn't fire.
+        # The liveness gate releases the stale skip; the routing layer then
+        # FAILS LOUD on the unregistered pin (operator directive
+        # 2026-07-10) instead of the historical silent wrong-host local
+        # start, naming --no-redispatch as the deliberate force-local
+        # escape (the bm025 recovery, now explicit).
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
         env_save_restore.set("HOME", str(tmp_path))
         _install_fresh_creds(tmp_path)
@@ -404,9 +405,8 @@ class TestSingletonHostSkip:
         runner = CliRunner()
         # Act
         result = runner.invoke(start, [str(yaml_path), "--json"])
-        # Assert — no "skipped" status; the start path proceeded past
-        # the skip gate (whether it then errored is independent).
-        assert '"status": "skipped"' not in result.output
+        # Assert — the unregistered-host error names the force-local escape.
+        assert "--no-redispatch" in result.output
 
     def test_bulk_directory_singleton_skip_renders_skip_line(
         self, tmp_path, env_save_restore
@@ -758,7 +758,7 @@ def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
         "metadata: {}\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"
@@ -936,3 +936,176 @@ class TestColdStart:
         result = CliRunner().invoke(start, [arg, "--dry-run"])
         # Assert
         assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# --group NAME (operator ask 2026-07-10: bulk-start by spec labels.groups
+# membership). Resolution/merge logic itself is unit-tested directly in
+# test__start_group_filter.py; these drive the REAL end-to-end CLI surface
+# — click option parsing, the "no TARGETS/--group" and "zero-match --group"
+# refusals, and a real single-target start reaching the (mock-free)
+# singleton-skip short-circuit for a group-resolved name.
+# ---------------------------------------------------------------------------
+
+
+def _write_group_agent_spec(home: Path, name: str, *, host: str, groups_yaml: str) -> Path:
+    """Write a discoverable ``<home>/.scitex/agent-container/agents/<name>/spec.yaml``.
+
+    Unlike ``_write_singleton_yaml`` (a ``<name>/<name>.yaml`` path handed
+    to TARGETS directly), this uses the ``spec.yaml`` dir-as-SSoT layout
+    ``_discover_defined_agents`` (and thus ``--group`` resolution) walks.
+    """
+    d = home / ".scitex" / "agent-container" / "agents" / name
+    d.mkdir(parents=True)
+    y = d / "spec.yaml"
+    y.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "metadata:\n"
+        "  labels:\n"
+        f"    groups: {groups_yaml}\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        f"  host: {host}\n"
+        "  workdir: /home/agent/work\n"
+        "  apptainer:\n"
+        "    image: ~/.scitex/agent-container/containers/sac-base.sif\n"
+        "    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        "  claude:\n    model: haiku\n"
+    )
+    return y
+
+
+@contextmanager
+def _chdir(path: Path) -> Iterator[None]:
+    """Real save/restore chdir (no monkeypatch) — see STX-NM002."""
+    saved = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(saved)
+
+
+class TestGroupOption:
+    def test_group_option_is_documented_in_help(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["--help"])
+        # Assert
+        assert "--group" in result.output
+
+    def test_no_targets_no_group_exits_two(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [])
+        # Assert
+        assert result.exit_code == 2
+
+    def test_no_targets_no_group_explains_why(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, [])
+        # Assert
+        assert "--group" in result.output
+
+    def test_zero_match_group_exits_two(self, tmp_path, env_save_restore):
+        # Arrange
+        env_save_restore.set("HOME", str(tmp_path))
+        runner = CliRunner()
+        # Act
+        with _chdir(tmp_path):
+            result = runner.invoke(start, ["--group", "nonexistent-group"])
+        # Assert
+        assert result.exit_code == 2
+
+    def test_zero_match_group_names_the_group(self, tmp_path, env_save_restore):
+        # Arrange
+        env_save_restore.set("HOME", str(tmp_path))
+        runner = CliRunner()
+        # Act
+        with _chdir(tmp_path):
+            result = runner.invoke(start, ["--group", "nonexistent-group"])
+        # Assert
+        assert "nonexistent-group" in result.output
+
+    def test_matching_group_reaches_singleton_skip(self, tmp_path, env_save_restore):
+        # Arrange — group-resolved agent is a singleton pinned to a host
+        # with a live registry row, so the run short-circuits cleanly
+        # (no real apptainer needed) at the SAME skip gate the plain
+        # by-path tests above exercise.
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
+        _write_group_agent_spec(
+            tmp_path, "mini", host="nowhere-host", groups_yaml="[developer]"
+        )
+        runner = CliRunner()
+        # Act
+        with _chdir(tmp_path):
+            result = runner.invoke(start, ["--group", "developer"])
+        # Assert
+        assert result.exit_code == 0
+
+    def test_matching_group_skip_message_names_resolved_agent(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini", "nowhere-host"
+        )
+        _write_group_agent_spec(
+            tmp_path, "mini", host="nowhere-host", groups_yaml="[developer]"
+        )
+        runner = CliRunner()
+        # Act
+        with _chdir(tmp_path):
+            result = runner.invoke(start, ["--group", "developer"])
+        # Assert
+        assert "Skipping 'mini'" in result.output
+
+    def test_explicit_target_plus_group_both_queued(self, tmp_path, env_save_restore):
+        # Arrange — one explicit-by-path target, one group-resolved target;
+        # a genuine TWO-name invocation routes to the serialized multi-start
+        # queue (_start_parallel.py), which dispatches each target as its
+        # own subprocess -- not itself unit-testable here (no honest seam,
+        # per this file's module docstring), so this only pins the queue
+        # SIZE, which is exactly the union-of-two proof: had the merge
+        # dropped or duplicated a name, this would read "1" (or crash).
+        env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
+        env_save_restore.set("HOME", str(tmp_path))
+        _install_fresh_creds(tmp_path)
+        _record_live_singleton(
+            tmp_path / "state.db", env_save_restore, "mini1", "nowhere-host"
+        )
+        from scitex_agent_container._state.state_db import record_instance_start
+
+        record_instance_start(
+            name="mini2",
+            host="nowhere-host",
+            a2a_port=19202,
+            bound_port=19202,
+            remote=True,
+            spawned_by="cli",
+        )
+        y1 = _write_singleton_yaml(tmp_path, "mini1", "nowhere-host")
+        _write_group_agent_spec(
+            tmp_path, "mini2", host="nowhere-host", groups_yaml="[developer]"
+        )
+        runner = CliRunner()
+        # Act
+        with _chdir(tmp_path):
+            result = runner.invoke(start, [str(y1), "--group", "developer"])
+        # Assert
+        assert "Starting 2 agents" in result.output

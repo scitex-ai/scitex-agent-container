@@ -77,10 +77,13 @@ From: ./sac-base.sif
     # package's OWN source tree, copied in by the %files section above.
     # The SIF's sac version is structurally pinned to the source tree
     # that shipped this .def; no `git+...@main` snapshot drift.
-    # claude-agent-sdk MUST be pinned here too — leaving it unpinned
-    # lets uv/pip drift away from the base layer's 0.2.87 pin (the
-    # version that bundles the working claude CLI 2.1.150). Keep
-    # both branches' version in lockstep with apptainer-base.def.
+    # claude-agent-sdk is FLOORED TO LATEST here too (installed bare, no
+    # `==` pin) — matching the base layer, per the operator directive to
+    # "carry the LATEST of ALL ecosystem packages". Lockstep is preserved
+    # because BOTH layers now float the SDK to latest (nothing to drift
+    # apart), and the runtime `claude` CLI is the decoupled standalone
+    # npm `@anthropic-ai/claude-code@latest` from apptainer-base.def §6b,
+    # not the SDK's bundled binary.
     #
     # ``xarray`` is listed EXPLICITLY here because ``scitex[all]``'s
     # current extras set does not pull it. Without xarray, clew's
@@ -122,12 +125,21 @@ From: ./sac-base.sif
     # shorthand (narrower blast radius) and would also work; we use the
     # portable ``--force-reinstall --no-deps`` form so the pip-fallback
     # branch below uses the same flags.
+    # ``openai-agents`` is listed EXPLICITLY (not via sac's ``[openai]``
+    # extra) because step 2 below installs sac with ``--no-deps`` — an
+    # extra can never ride that install — and step 1's transitive sac
+    # wheel from ``scitex[all]`` may predate the extra entirely. Baked
+    # UNCONDITIONALLY: one image serves every agent; per-spec
+    # conditionality is a RUNTIME concern (`spec.provider: openai` env
+    # injection + `openai_session` executor routing — openai-compat-3).
+    # Floor mirrors pyproject.toml's ``[openai]`` extra; keep in lockstep.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.110" \
+            "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         uv pip install --python /opt/venv-sac/bin/python \
@@ -145,19 +157,39 @@ From: ./sac-base.sif
         #   scitex-writer>=2.22.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
+        # scitex-todo >=0.7.32 (TEMP downgrade from 0.7.38: 0.7.38 is NOT yet on
+        # PyPI — max published is 0.7.32 — so a >=0.7.38 floor makes the build
+        # UNSATISFIABLE (uv/pip resolve exit-255). Path B (the `scitex serve`
+        # aggregator) mounts scitex-todo IN-PROCESS and drops the standalone
+        # `scitex-todo mcp start` server, so the #338 wedge cannot occur under
+        # the aggregator → 0.7.32 is safe. Restore >=0.7.38 when it publishes.)
+        # Historical 0.7.38 rationale (NOT a
+        # system-deps provider): 0.7.38 carries #338 (the store critical-section
+        # to_thread offload). Below 0.7.38 the ``scitex-todo mcp start`` server
+        # wedges on the ~22s synchronous store write during its MCP init
+        # handshake; with .mcp.json ``alwaysLoad: true`` doing a BLOCKING serial
+        # load, that stalled init cascades and starves sibling tool-MCP servers'
+        # registration too → ToolSearch finds zero tools ("dark tool-MCPs"
+        # incident, 2026-07-06, root-caused on scitex-clew). Flooring here
+        # upgrades past whatever scitex[all] pulls — same OVERRIDE pattern as
+        # the providers, decoupled from the umbrella re-pin.
         uv pip install --python /opt/venv-sac/bin/python \
             "scitex-dev>=0.20.1" \
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-todo>=0.7.32"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
+        # openai-agents: explicit for the same --no-deps reason as the
+        # uv branch above; floor mirrors pyproject.toml's [openai] extra.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.110" \
+            "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         /opt/venv-sac/bin/pip install --no-cache-dir \
@@ -169,11 +201,16 @@ From: ./sac-base.sif
         # install in section 3 can discover every leaf's
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
         # above. Matches this branch's plain ``pip install`` style.
+        # scitex-todo >=0.7.32 (TEMP: 0.7.38 unpublished — see uv-branch note;
+        # aggregator moots #338). Historically floored for the store-wedge #338 — see the
+        # uv branch above for the full rationale (MCP-init wedge → alwaysLoad
+        # serial-load cascade → dark tool-MCPs). Same OVERRIDE pattern.
         /opt/venv-sac/bin/pip install --no-cache-dir \
             "scitex-dev>=0.20.1" \
             "scitex-writer>=2.22.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-todo>=0.7.32"
     fi
 
     # ---- 3. Federated system (apt) deps — SSoT install -----------------
@@ -252,6 +289,21 @@ EOF
     # paper venvs depend on (regression neurovista hit when a venv pointed
     # at a removed path). No new python is installed — this is a guard.
     /usr/bin/python3 --version
+
+    # ---- 6. Bake the scitex-* version manifest (`sac versions`) --------
+    # `sac versions --json` reads this baked manifest (source="manifest",
+    # near-zero cost — a `cat`, not a full `pip list`) so scitex-dev's
+    # ecosystem drift aggregator can see the base-image venv layer cheaply.
+    # The verb falls back to a live `apptainer exec <sif> pip list` when
+    # this file is absent (older images), so shipping it is purely additive.
+    # This layer's scitex[all] + scitex-dev/-writer/-audio/-cv make the
+    # manifest much richer than :base. Filtered to scitex-* and written in
+    # pip's `--format=json` shape. Pure pipe + `python -c` (dash-safe — no
+    # bash process substitution under /bin/sh).
+    /opt/venv-sac/bin/pip list --format=json \
+        | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
+        > /opt/scitex-versions.json
+    cat /opt/scitex-versions.json
 
 %environment
     export PATH=/opt/venv-sac/bin:$PATH

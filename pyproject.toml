@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.21.12"
+version = "0.21.16"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -107,6 +107,16 @@ slurm = [
     # Optional: sac's SlurmRuntime works without it (best-effort import).
     "scitex-hpc>=0.6.2",
 ]
+openai = [
+    # openai-compat-2: the `openai` agent-SDK family (spec.provider:
+    # openai). Backs `_runners/openai_session.py` (OpenAISession — the
+    # concrete ProviderSession over Runner.run_streamed + SQLiteSession)
+    # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
+    # Claude-only deployments must not pull it — every import is lazy and
+    # the handler raises a clear HandlerError when absent. 0.17.4 floor
+    # per the card spec (SQLiteSession + FunctionTool surface stable).
+    "openai-agents>=0.17.4",
+]
 dev = [
     # 0.17.12 floor: scitex-dev 0.16.0 introduced a TypeError in
     # `_check_bridge_pattern` that fires through `ecosystem audit-all`
@@ -153,6 +163,9 @@ all = [
     "scitex-agent-container[mcp]",
     "scitex-agent-container[telegram]",
     "scitex-agent-container[slurm]",
+    # `openai` is in [all] so CI (`pip install -e ".[all,dev]"`) exercises
+    # the real openai-agents SDK paths; the bare install stays Claude-only.
+    "scitex-agent-container[openai]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]
@@ -274,6 +287,40 @@ env_allowlist = ["SAC_"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
+
+# Stamp the commit + a content hash of the tree into the artifact, as
+# `_provenance/_build_info.py`. An installed copy has no `.git`, so build
+# time is the only moment the identity of the code can be captured — and
+# without it `--version` can only echo a declared string that reads the
+# same before and after a fix that did not bump the number.
+#
+# Registered on BOTH targets on purpose. `python -m build` (what release CI
+# runs) builds the sdist first, then builds the wheel FROM THE UNPACKED
+# SDIST — a temp dir with no `.git`. The sdist hook bakes the real commit;
+# the wheel hook then finds that stamp already present and inherits it
+# rather than clobbering it with "unknown". Register only the wheel target
+# and every published wheel ships an unknown commit.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "src/hatch_build.py"
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "src/hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+# NEVER ship .git. In a plain clone `.git` is a directory and hatchling
+# already drops it — but in a `git worktree` (how every agent checks this
+# repo out) `.git` is a FILE holding an absolute `gitdir:` pointer, and it
+# sailed straight into the sdist. Verified: a worktree-built sdist
+# contained `scitex_agent_container-0.21.13/.git`.
+#
+# Harmless before this hook existed; a live hazard now. The build stamp
+# resolves the commit by reading `.git`, so a packaged pointer lets a build
+# from an unpacked sdist follow it back to WHATEVER repo happens to sit at
+# that absolute path and bake ITS commit — a wrong-but-confident answer,
+# which is the exact failure mode this whole feature exists to abolish.
+# Dropping it also forces the wheel-from-sdist build down the `inherited`
+# path, which is the one release CI actually takes.
+exclude = [".git"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"

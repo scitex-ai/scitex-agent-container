@@ -116,7 +116,7 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
-  host: local
+  host: ${{HOSTNAME}}
   workdir: /tmp/agt-work
   apptainer:
     image: /x.sif
@@ -245,15 +245,18 @@ def test_build_run_argv_injects_env_file_when_present(tui_config, tmp_path) -> N
     assert "--env-file" in argv and str(state_dir / "home" / ".env") in argv
 
 
-def test_build_run_argv_omits_env_file_when_absent(tui_config, tmp_path) -> None:
+def test_build_run_argv_omits_agent_env_file_when_absent(tui_config, tmp_path) -> None:
     # Arrange — no .env materialised under state_dir/home.
     state_dir = tmp_path / "state"
     # Act
     argv = build_run_argv(
         tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
-    # Assert
-    assert "--env-file" not in argv
+    # Assert — the agent .env --env-file is not emitted when no agent .env
+    # exists. (A separate 0600 secrets --env-file may still be present for
+    # swept auth/listen secrets — see _apptainer_secret_env; that is a
+    # different file, not the agent .env.)
+    assert str(state_dir / "home" / ".env") not in argv
 
 
 def test_build_run_argv_env_file_precedes_curated_env(tui_config, tmp_path) -> None:
@@ -285,7 +288,7 @@ def test_credentials_file_bind_empty_when_unset(tui_config) -> None:
     assert flags == []
 
 
-def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
+def test_credentials_file_bind_mounts_designated_file_ro(tmp_path) -> None:
     # Arrange — a designated credentials file on disk carrying a valid,
     # unexpired OAuth token (the bind now fails loud on a stale or
     # unverifiable pinned credential — see the expiry tests below).
@@ -302,7 +305,8 @@ def test_credentials_file_bind_mounts_designated_file_rw(tmp_path) -> None:
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — writable bind onto the canonical container creds path.
+    # Assert — READ-ONLY bind onto the canonical container creds path
+    # (master-host single-refresher model: the agent never refreshes).
     assert flags == [
         "--bind",
         f"{creds}:/home/agent/.claude/.credentials.json:rw",
@@ -348,8 +352,9 @@ def test_credentials_file_bind_resolves_account_when_no_explicit_file(
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — single-file rw bind onto the canonical container creds path,
+    # Assert — single-file :rw bind onto the canonical container creds path,
     # source = the per-host snapshot. NO copy, NO CLAUDE_CONFIG_DIR redirect.
+    # READ-ONLY: the agent reads the snapshot; the host timer refreshes it.
     assert flags == [
         "--bind",
         f"{snap}:/home/agent/.claude/.credentials.json:rw",
@@ -384,7 +389,7 @@ def test_credentials_file_bind_explicit_file_wins_over_account(
     config = load_config(str(spec))
     # Act
     flags = credentials_file_bind(config)
-    # Assert — explicit file path is the source.
+    # Assert — explicit file path is the source, bound READ-ONLY.
     assert flags == [
         "--bind",
         f"{explicit}:/home/agent/.claude/.credentials.json:rw",
@@ -497,7 +502,7 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
-  host: local
+  host: ${HOSTNAME}
   apptainer:
     image: /x.sif
     binds: []
@@ -523,7 +528,7 @@ metadata:
 spec:
   runtime: tui
   workdir: /tmp/agt-work
-  host: local
+  host: ${HOSTNAME}
   apptainer:
     image: /x.sif
     binds: []
@@ -914,7 +919,7 @@ metadata:
     sac-builtin: "off"
 spec:
   runtime: tui
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/tester/proj/figrecipe
   apptainer:
     image: /x.sif
@@ -1068,3 +1073,93 @@ def test_build_run_argv_nested_build_masks_subuid(tmp_path) -> None:
     )
     # Assert — the /etc/subuid mask rides through to the full argv.
     assert ":/etc/subuid" in joined
+
+
+# ---------------------------------------------------------------------------
+# Overlay auto-provisioning — a BRAND-NEW agent must not be stillborn
+#
+# `sac agents create <name> --template python_developer --start` wrote a valid
+# spec, then the start FATAL'd in apptainer's container_creation phase:
+#
+#   FATAL: while loading overlay images: failed to open overlay image
+#   <...>/overlays/<name>/: ... no such file or directory
+#
+# The per-agent overlay directory was never created. Nothing in sac created it:
+# the fleet's overlays existed only as an incidental side-effect of
+# deploy_to_home_overlay, whose resolver reads only the SPACE-SEPARATED
+# `--overlay <path>` raw_arg — while the dir-template emits the `=`-JOINED
+# `--overlay=<path>` spelling apptainer accepts equally. build_run_argv now
+# provisions the overlay explicitly (ensure_overlay_dirs), for both spellings.
+# ---------------------------------------------------------------------------
+
+
+def _overlay_spec(overlay_dir: Path) -> str:
+    """The apptainer raw_args shape ``_template_python_developer`` emits.
+
+    Note the ``=``-JOINED ``--overlay=<path>/`` spelling (with the template's
+    trailing slash) — the exact token that used to resolve to "no overlay
+    declared" inside sac while apptainer read it just fine.
+    """
+    return _BASE_SPEC.format(extra="").replace(
+        "    binds: []\n",
+        "    binds: []\n"
+        "    relaxed: true\n"
+        "    raw_args:\n"
+        "      - --userns\n"
+        "      - --containall\n"
+        "      - --home=/home/agent\n"
+        f"      - --overlay={overlay_dir}/\n",
+    )
+
+
+def test_build_run_argv_provisions_overlay_root_for_new_agent(tmp_path) -> None:
+    # Arrange — brand-new agent: the overlay does not exist yet.
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — the root apptainer lstat()s (and refuses to create) now exists.
+    assert overlay.is_dir()
+
+
+def test_build_run_argv_provisions_overlay_upper_for_new_agent(tmp_path) -> None:
+    # Arrange
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — same layout every live fleet overlay carries.
+    assert (overlay / "upper").is_dir()
+
+
+def test_build_run_argv_provisions_overlay_work_for_new_agent(tmp_path) -> None:
+    # Arrange
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert (overlay / "work").is_dir()
+
+
+def test_build_run_argv_passes_raw_args_overlay_through_verbatim(tmp_path) -> None:
+    # Arrange — provisioning must not ALSO emit a curated --overlay flag
+    # (a duplicate would change which layer apptainer stacks).
+    overlay = tmp_path / "overlays" / "brand-new"
+    spec = _write_spec(tmp_path, _overlay_spec(overlay))
+    config = load_config(str(spec))
+    # Act
+    argv = build_run_argv(
+        config, state_dir=tmp_path / "state", sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert — exactly the operator's own `=`-joined token, once.
+    assert argv.count(f"--overlay={overlay}/") == 1

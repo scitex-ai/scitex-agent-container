@@ -1,0 +1,4 @@
+# Runtime block-audit log written by enforce_heavy_job_demotion.sh on
+# each BLOCK (its LOG_PATH = <hook-dir>/.<script>.log). A pure runtime
+# artifact -- never committed; the self-test / pytest suite generates it.
+.enforce_heavy_job_demotion.sh.log

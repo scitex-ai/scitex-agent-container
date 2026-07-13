@@ -98,13 +98,26 @@ def _should_use_fakeroot_for_build(
 
 
 def _build_argv_prefix() -> list[str]:
-    """Return ``["apptainer", "build"]`` plus ``--fakeroot`` when needed.
+    """Return the demoted ``apptainer build`` argv head.
+
+    ``nice -n 19 ionice -c 2 -n 7 apptainer build [--fakeroot]`` — the
+    low-priority prefix (incident-local-heavy-build: a full SIF bake at
+    normal priority starved the operator's loaded interactive host)
+    demotes ONLY the spawned build subprocess; the calling process — and
+    the agent container it goes on to launch — keeps normal priority.
+    IO runs at best-effort lowest, NOT the idle class: idle-class IO
+    starved/killed a real mksquashfs stage under sustained load (see
+    :mod:`scitex_agent_container._build_priority`). Degrades to
+    nice-only when ``ionice`` is off PATH, and to no prefix at all
+    under ``SAC_BUILD_NO_NICE=1``.
 
     Used by both :func:`_build_sif_from_def` and
-    :func:`_build_sif_from_uri` so the fakeroot logic stays in one
-    place.
+    :func:`_build_sif_from_uri` so the fakeroot + priority logic stays
+    in one place.
     """
-    argv = ["apptainer", "build"]
+    from .._build_priority import low_priority_build_prefix
+
+    argv = low_priority_build_prefix() + ["apptainer", "build"]
     if _should_use_fakeroot_for_build():
         argv.append("--fakeroot")
     return argv

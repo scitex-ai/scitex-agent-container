@@ -17,6 +17,7 @@ from scitex_agent_container.runtimes.prompts import (
     _detect_skip_permissions_yn,
     _detect_theme_selection,
     _detect_thinking_effort,
+    _recent_tail,
     detect,
     detect_and_respond,
     is_ready,
@@ -687,3 +688,93 @@ def test_resume_session_wins_over_compose_pending():
     name = detect(pane)
     # Assert
     assert name == "resume-session"
+
+
+# ── Stray-boot-submit regression (sac-tui-stray-1-submitted-on-boot) ──────────
+# ``tmux capture-pane -p`` (no ``-S``) returns the whole VISIBLE viewport, not
+# just the freshest output. A dismissed first-run modal's text can therefore
+# still sit in a LATER capture, well above the genuinely live (now empty)
+# compose box. Before the fix, an unscoped substring match kept firing on
+# that stale text and sent its digit + Enter into the live box, typing and
+# submitting a stray "1" during boot. ``_recent_tail`` scopes detection to
+# the live region; these tests pin both the false-positive it removes and
+# the true-positive it must not break.
+
+
+def test_recent_tail_drops_blank_lines_and_keeps_only_last_n():
+    # Arrange
+    content = "\n".join([f"line {i}" for i in range(20)])
+    # Act
+    tail = _recent_tail(content, lines=3)
+    # Assert
+    assert tail == "line 17\nline 18\nline 19"
+
+
+def test_recent_tail_passes_short_content_through_unchanged():
+    # Arrange — fewer non-empty rows than the window: nothing to trim.
+    content = "a\nb\nc"
+    # Act
+    tail = _recent_tail(content, lines=15)
+    # Assert
+    assert tail == "a\nb\nc"
+
+
+# A dismissed thinking-effort modal (content verified to match
+# _detect_thinking_effort in isolation by
+# test_startup_handler_matches_expected_prompt above), followed by enough
+# freshly-rendered boot chatter to push it out of the live window, then the
+# genuinely live, empty compose prompt.
+_STALE_THINKING_EFFORT = "1. * Medium (recommended)\nthinking effort\nEnter to confirm"
+_BOOT_FILLER = "\n".join(f"boot output line {i}" for i in range(20))
+
+
+def test_detect_ignores_stale_modal_scrolled_above_live_prompt():
+    """False-positive repro: a dismissed thinking-effort modal's text is
+    still in the pane capture, but the live compose box (bottom) is a
+    plain empty prompt — must NOT re-fire."""
+    # Arrange
+    pane = f"{_STALE_THINKING_EFFORT}\n{_BOOT_FILLER}\n❯ "
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name is None
+
+
+def test_detect_still_matches_live_thinking_effort_modal():
+    """True-positive companion: the same modal text, genuinely live (no
+    filler pushing it off the live window), must still be auto-accepted."""
+    # Arrange
+    pane = _STALE_THINKING_EFFORT
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name == "thinking-effort"
+
+
+# theme-selection is the loosest of the three handlers the maintainer named
+# as suspects — it doesn't even require "Enter to confirm" — so it is the
+# handler most exposed to firing on leftover on-screen text.
+_STALE_THEME_SELECTION = (
+    "Choose the text style that looks best with your terminal\n"
+    "1. Auto (match terminal)\n"
+    "2. Dark mode\n"
+    "3. Light mode"
+)
+
+
+def test_detect_ignores_stale_theme_modal_scrolled_above_live_prompt():
+    # Arrange
+    pane = f"{_STALE_THEME_SELECTION}\n{_BOOT_FILLER}\n❯ "
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name is None
+
+
+def test_detect_still_matches_live_theme_selection_modal():
+    # Arrange
+    pane = _STALE_THEME_SELECTION
+    # Act
+    name = detect(pane)
+    # Assert
+    assert name == "theme-selection"

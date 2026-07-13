@@ -15,6 +15,7 @@ real attribute lookups.
 from __future__ import annotations
 
 import sys as _sys
+import types as _types
 from contextlib import contextmanager
 
 import click as _click
@@ -60,15 +61,89 @@ def _swap_module(name, fake):
 class _FakeUvicorn:
     """Real callable-bearing stand-in for the ``uvicorn`` module.
 
-    Records the ``host``/``port`` of any ``run()`` call so tests can
-    assert on the production-side bind values without any mocking lib.
+    Records the ``host``/``port`` the production code binds to so tests
+    can assert on it without any mocking lib. ``sac listen`` builds an
+    explicit ``uvicorn.Config`` + ``uvicorn.Server`` and calls
+    ``server.run()`` (so it can stash the server on ``app.state`` for the
+    SIGTERM shutdown bridge — card sac-listen-sigterm-sse-shutdown-hang);
+    the fake mirrors that shape and records the bind on ``Server.run()``.
+    The legacy ``run()`` is kept for any caller that still uses
+    ``uvicorn.run`` directly.
     """
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        _calls = self.calls
+
+        class Config:
+            def __init__(self, app, host, port, **_kw) -> None:
+                self.app = app
+                self.host = host
+                self.port = port
+
+        class Server:
+            def __init__(self, config) -> None:
+                self.config = config
+                # Real ``uvicorn.Server`` exposes these; the bridge reads
+                # ``should_exit`` and the loopback harness reads ``started``.
+                self.should_exit = False
+                self.started = False
+
+            def run(self) -> None:
+                _calls.append(
+                    {"host": self.config.host, "port": self.config.port}
+                )
+
+        self.Config = Config
+        self.Server = Server
 
     def run(self, app, host, port, log_level, **_kw) -> None:
         self.calls.append({"host": host, "port": port})
+
+
+def _fake_app():
+    """Stand-in for the Starlette app ``create_app`` returns.
+
+    Production stashes the uvicorn Server on ``app.state.uvicorn_server``
+    (for the shutdown bridge), so the fake needs a settable ``.state``.
+    """
+    return _types.SimpleNamespace(state=_types.SimpleNamespace())
+
+
+@contextmanager
+def _swap_standby_serves():
+    """Make the hot-standby startup a hermetic no-op that 'acquires' at once.
+
+    ``_do_start_listen`` now routes the lock through
+    ``_standby.resolve_startup`` (hot-standby + failover). Its real path
+    takes the flock at the operator's ``default_lock_dir()`` AND socket-
+    probes the real port — so a CLI start test running on a host with a
+    live ``sac listen`` would otherwise stand by forever or probe 7878.
+    Swapping ``resolve_startup`` to return a throwaway handle (and the
+    signal guard to a no-op) keeps these tests hermetic + fast. The lazy
+    ``from .._listen._standby import ...`` inside the CLI binds these
+    swapped attributes at call time.
+    """
+    from pathlib import Path as _Path
+
+    from scitex_agent_container._listen import _single_instance, _standby
+    from scitex_agent_container._listen._single_instance import LockHandle
+
+    fake_handle = LockHandle(fd=-1, pid_file=_Path("/nonexistent/listen-7878.pid"))
+
+    @contextmanager
+    def _noop_guard():
+        yield
+
+    with (
+        _swap_attr(_standby, "resolve_startup", lambda **_kw: fake_handle),
+        _swap_attr(_standby, "standby_signal_guard", _noop_guard),
+        # The CLI releases the handle in its ``finally``; the throwaway
+        # fd=-1 handle must never reach the real releaser (fcntl rejects a
+        # negative fd with ValueError), so no-op the release too.
+        _swap_attr(_single_instance, "release_listen_lock", lambda _h: None),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +302,10 @@ def test_listen_default_loopback_bind_starts_uvicorn_with_zero_exit(tmp_path):
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
-        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         result = CliRunner().invoke(listen, [])
@@ -245,9 +321,10 @@ def test_listen_default_loopback_bind_passes_default_host_port_to_uvicorn(tmp_pa
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
-        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         CliRunner().invoke(listen, [])
@@ -263,9 +340,10 @@ def test_listen_non_loopback_bind_with_allow_flag_passes_host_to_uvicorn(tmp_pat
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "d.tok"),
-        _swap_attr(_server, "create_app", lambda token, **_kw: object()),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
         _swap_module("uvicorn", fake_uvicorn),
     ):
         CliRunner().invoke(listen, ["--bind", "8.8.8.8:7878", "--allow-non-loopback"])

@@ -85,7 +85,7 @@ def _write_local_spec(home: Path, name: str) -> Path:
         "metadata:\n  labels:\n    sac-builtin: \"off\"\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"

@@ -189,54 +189,43 @@ class TmuxManager:
 
     @staticmethod
     def session_activity(session_name: str) -> int | None:
-        """Return the unix-epoch timestamp of the session's last pane
-        activity, or ``None`` if no such session exists.
-
-        Backed by ``tmux display -p '#{session_activity}'``, which
-        tmux advances every time a pane writes output OR receives
-        input. Used by ``TuiSessionRuntime.is_running`` as the tui-
-        alive probe (step 4/4 of the TUI hedge, lead a2a
-        ``d383f5389dc548a49a293bffe390d619``) — a "session exists"
-        check alone cannot detect a hung-but-alive ``claude`` process,
-        so the runtime additionally requires the activity timestamp
-        to be within a max-idle window of wall clock.
-
-        Returns ``None`` rather than raising on a missing session so
-        callers can branch on "no session" vs. "stale session" with
-        a single ``is None`` check.
+        """Unix-epoch stamp of the session's last pane activity, or
+        ``None`` when absent. RESPONSIVENESS signal (advances only on
+        pane I/O) — NOT liveness. See :func:`_tmux_probe.session_activity`.
         """
-        if not TmuxManager.exists(session_name):
-            return None
-        # The remainder shells out to `tmux display -p '#{session_activity}'`
-        # and parses its int output. Exercised end-to-end by the slow
-        # real-binary suite (test_tui_session_real_smoke.py) and the
-        # session-activity probe test (test_tmux_session_activity.py),
-        # both gated on `tmux` being on PATH. CI runners do not have tmux
-        # installed, so the lines below are unreachable in the standard
-        # pytest matrix. The honest marker — requires live tmux, not
-        # available on CI runner — is a pragma rather than a band-aid
-        # coverage-ignore of the whole module.
-        result = subprocess.run(  # pragma: no cover  -- requires live tmux, not available on CI runner
-            [
-                "tmux",
-                "display",
-                "-p",
-                "-t",
-                session_name,
-                "#{session_activity}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:  # pragma: no cover  -- requires live tmux
-            return None
-        raw = result.stdout.strip()  # pragma: no cover  -- requires live tmux
-        if not raw:  # pragma: no cover  -- requires live tmux
-            return None
-        try:  # pragma: no cover  -- requires live tmux
-            return int(raw)
-        except ValueError:  # pragma: no cover  -- requires live tmux
-            return None
+        from ._tmux_probe import session_activity as _sa
+
+        return _sa(session_name)
+
+    @staticmethod
+    def list_sessions_activity() -> dict[str, int] | None:
+        """``{session_name: activity_epoch}`` for EVERY session, in ONE
+        probe — the batched, O(1)-subprocess replacement for calling
+        :meth:`exists` + :meth:`session_activity` per agent (which costs 3
+        ``tmux`` spawns each). ``None`` means the probe FAILED (liveness
+        UNKNOWN — never read it as "no sessions exist"). See
+        :func:`_tmux_probe.list_sessions_activity`."""
+        from ._tmux_probe import list_sessions_activity as _lsa
+
+        return _lsa()
+
+    @staticmethod
+    def pane_pid(session_name: str) -> int | None:
+        """PID of the process in the session's active pane (identity
+        liveness signal), or ``None`` when absent. See
+        :func:`_tmux_probe.pane_pid`."""
+        from ._tmux_probe import pane_pid as _pane_pid
+
+        return _pane_pid(session_name)
+
+    @staticmethod
+    def pane_dead(session_name: str) -> bool | None:
+        """Whether the active pane's process exited but the pane is
+        retained, or ``None`` when absent. See
+        :func:`_tmux_probe.pane_dead`."""
+        from ._tmux_probe import pane_dead as _pane_dead
+
+        return _pane_dead(session_name)
 
     @staticmethod
     def capture_content(session_name: str) -> str:
@@ -314,45 +303,58 @@ class TmuxManager:
                 sleep_fn(delay)
 
     @staticmethod
+    def send_text_literal(
+        session_name: str,
+        text: str,
+        *,
+        runner: Callable[..., object] = subprocess.run,
+    ) -> None:
+        """Paste ``text`` into the pane LITERALLY (``send-keys -l``), NO submit.
+
+        The ``-l`` (literal) flag is REQUIRED for the containerized Ink/React
+        ``claude`` TUI: without it the TUI silently DROPS the keystrokes (the
+        pane stays byte-identical, nothing lands). Source-verified recovery
+        recipe: ``_skills/scitex-agent-container/45_agent-to-agent-recovery-
+        tmux.md`` — ``-l`` for TEXT, then a SEPARATE named ``Enter`` (never
+        ``-l``) to submit. Submit-free by design so the caller can send that
+        ``Enter`` ONLY once the pane is idle (see
+        :func:`runtimes._tui_compose.verify_submit_by_advancement`), never into
+        the BUSY boot window where the Ink TUI eats it. ``runner`` is an
+        injection seam (tests pass a recording callable — no mocks).
+        """
+        runner(
+            ["tmux", "send-keys", "-t", session_name, "-l", text],
+            check=False,
+            capture_output=True,
+        )
+
+    @staticmethod
     def send_text_and_submit(
         session_name: str,
         text: str,
         *,
         settle_s: float | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
+        runner: Callable[..., object] = subprocess.run,
     ) -> None:
-        """Send message text, let the TUI settle, then press Enter.
+        """Send message text LITERALLY, let the TUI settle, then press Enter.
 
-        Preferred over ``send_keys(session, text + "\\r")`` because
-        tmux treats the trailing ``\\r`` as raw input rather than the
-        ``Enter`` keyword, and Claude Code's TUI occasionally drops it
-        during an active re-render (what the user sees as "text
-        arrived but submit never fired"). This helper sends the text
-        first, waits for the TUI to finish debouncing, then issues a
-        separate ``Enter`` keystroke.
+        Preferred over ``send_keys(session, text + "\\r")``: tmux treats a
+        trailing ``\\r`` as raw input and Claude Code's TUI drops it during an
+        active re-render ("text arrived but submit never fired"). Sends the text
+        first LITERALLY (``-l``, via :meth:`send_text_literal`, so the
+        containerized Ink TUI does not silently drop it), settles, then issues a
+        separate ``Enter`` keystroke (a named key, NEVER ``-l``).
 
-        Parameters
-        ----------
-        session_name:
-            tmux target.
-        text:
-            Message text to type. Do NOT append ``\\r`` / ``\\n``.
-        settle_s:
-            Seconds to wait between the text and the Enter keystroke.
-            ``None`` uses ``_DEFAULT_SUBMIT_SETTLE_S`` (env-overridable
-            via ``SAC_SUBMIT_SETTLE_S``).
-        sleep_fn:
-            Injected sleep — tests pass a stub to avoid real waits.
+        ``settle_s`` (``None`` → ``_DEFAULT_SUBMIT_SETTLE_S``,
+        ``SAC_SUBMIT_SETTLE_S``-overridable) is the text→Enter gap; ``sleep_fn``
+        / ``runner`` are injection seams for tests.
         """
         settle = _DEFAULT_SUBMIT_SETTLE_S if settle_s is None else settle_s
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, text],
-            check=False,
-            capture_output=True,
-        )
+        TmuxManager.send_text_literal(session_name, text, runner=runner)
         if settle > 0:
             sleep_fn(settle)
-        subprocess.run(
+        runner(
             ["tmux", "send-keys", "-t", session_name, "Enter"],
             check=False,
             capture_output=True,
