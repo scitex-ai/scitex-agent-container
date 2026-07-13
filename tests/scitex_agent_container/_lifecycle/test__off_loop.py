@@ -196,3 +196,56 @@ async def test_abandoned_call_count_reports_the_wedged_calls(wedge):
         await run_blocking_or(wedge, default=None, op="wedged probe", timeout_s=0.05)
     # Assert
     assert abandoned_call_count() == before + 3
+
+
+# ---------------------------------------------------------------------------
+# CANCELLATION MUST NEVER BE SWALLOWED (3.11-only infinite hang).
+#
+# `run_blocking` used to await via `asyncio.wait_for`. On Python <= 3.11 that
+# SWALLOWS an outer cancellation which lands in the same instant the inner
+# future resolves:
+#
+#     except CancelledError:
+#         if fut.done():
+#             return fut.result()      # <- cancellation dropped on the floor
+#
+# A background loop (github-CI poll, sdk/tui heartbeat, liveness tick — every
+# one of them is `while True: await run_blocking_or(...)`) then IGNORES
+# `task.cancel()` and keeps ticking forever, so `await task` never returns.
+# That is an infinite hang, and it is 3.11-only: 3.12 rebuilt wait_for on
+# `asyncio.timeouts` and has no such branch. Measured over 120 cancellations of
+# a 20Hz loop: 3.11.15 dropped 13, 3.12.3 dropped 0.
+#
+# It is also a PRODUCTION defect on the fleet's 3.11: a `sac listen` whose
+# loops ignore cancellation cannot shut down cleanly.
+#
+# The loop below cancels repeatedly to make the race bite: a single attempt hits
+# the window only ~10% of the time.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_is_never_swallowed_by_the_deadline_wait():
+    """A cancelled `run_blocking` caller must STOP — not keep looping."""
+    # Arrange — a poll loop shaped exactly like the real background loops:
+    # a fast off-loop call, then a short sleep, forever.
+    async def poll_loop() -> None:
+        while True:
+            await run_blocking(lambda: None, timeout_s=5.0)
+            await asyncio.sleep(0.05)
+
+    survived_cancellation = 0
+    # Act — cancel it many times; each cancel MUST be honoured.
+    for _ in range(40):
+        task = asyncio.create_task(poll_loop())
+        await asyncio.sleep(0.06)
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+        except asyncio.CancelledError:
+            pass  # correct — the loop stopped
+        except asyncio.TimeoutError:
+            survived_cancellation += 1  # the loop IGNORED cancel → would hang
+            task.cancel()
+    # Assert
+    assert survived_cancellation == 0
