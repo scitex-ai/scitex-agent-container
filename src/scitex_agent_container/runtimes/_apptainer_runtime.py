@@ -269,6 +269,20 @@ class ApptainerContainerRuntime(RuntimeBase):
         except (OSError, ProcessLookupError):
             return False
 
+    def agent_pid(self, config: AgentConfig) -> int | None:
+        """The long-lived ``apptainer`` process pid (``RuntimeBase`` seam).
+
+        This is EXACTLY the pid :meth:`is_running` above probes with
+        ``os.kill(pid, 0)``: the ``apptainer`` process ``start`` launched
+        with ``start_new_session=True`` and persisted to
+        ``<state_dir>/apptainer_pid``. It is the container process
+        itself — it lives for the whole session, so it is the correct
+        value for ``instances.pid``, and reusing ``_read_pid`` here means
+        the registry and ``is_running`` can never disagree about which
+        pid represents this agent.
+        """
+        return self._read_pid(config)
+
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         log_path = self._state_dir(config) / APPTAINER_LOG_FILE
         if not log_path.is_file():

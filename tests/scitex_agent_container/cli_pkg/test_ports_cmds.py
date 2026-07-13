@@ -9,9 +9,11 @@ PA-306 no-mocks: every collaborator is real.
 * Liveness is exercised against REAL sockets: a bound-and-listening
   socket (live) and a bound-then-closed free port (dead / orphan). No
   probe is monkeypatched.
-* A yield-based ``home_in_tmp`` fixture overrides ``$HOME`` via
-  ``os.environ`` so the CLI smoke tests read/write an isolated
-  ``~/.scitex`` under ``tmp_path`` (no monkeypatch).
+* A yield-based ``isolated_state`` fixture redirects BOTH state
+  read-paths — ``$HOME`` and the import-time
+  ``state_db.DEFAULT_DB_PATH`` constant — at an isolated ``tmp_path``,
+  so the CLI smoke tests never read or write the live fleet registry
+  (no monkeypatch; these are the codebase's own seams).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._state import port_allocator as pa
+from scitex_agent_container._state import state_db
 from scitex_agent_container.cli_pkg._main import main
 from scitex_agent_container.cli_pkg.ports_cmds import (
     _reference_map,
@@ -58,25 +61,55 @@ def listening_port():
 
 
 @pytest.fixture
-def free_port() -> int:
+def free_port():
     """A port that was bound then released — almost certainly nothing
-    listens on it, so a probe reports it dead (orphan)."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
+    listens on it, so a probe reports it dead (orphan).
+
+    The socket is acquired inside a ``with`` block, so the fd is closed
+    even if ``bind()`` raises, and the fixture ``yield``s (rather than
+    ``return``s) per STX-TQ005: a fixture that acquires an external
+    resource owns its teardown.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    # Closed on block exit — the point of the fixture is a port number
+    # with nothing listening behind it.
+    yield port
 
 
 @pytest.fixture
-def home_in_tmp(tmp_path):
-    """Point Path.home() / expanduser at tmp_path via HOME. No monkeypatch."""
-    prior = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+def isolated_state(tmp_path):
+    """Isolate EVERY read-path the bare CLI consults for state.
+
+    ``sac ports`` takes no ``--db``: it resolves state.db from
+    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed
+    at import time**. So overriding ``$HOME`` alone does NOT redirect it
+    — by the time a fixture runs, the constant already points at the
+    developer's real ``~/.scitex/agent-container/runtime/state.db``, and
+    a CLI test would *read* (and ``claim_port`` would *WRITE*) the live
+    fleet registry. In CI that silently invents a registry; on a real
+    host it pollutes one.
+
+    So touch both read-paths — the env var AND the constant — exactly as
+    ``tests/smoke/conftest.py::comms_env`` does. These are the seams the
+    codebase itself exposes for this: no monkeypatch, no mock.
+    """
+    db = tmp_path / "state.db"
+    prior = {
+        k: os.environ.get(k)
+        for k in ("HOME", "USERPROFILE", "SCITEX_AGENT_CONTAINER_STATE_DB")
+    }
+    prior_db_path = state_db.DEFAULT_DB_PATH
+
     os.environ["HOME"] = str(tmp_path)
     os.environ["USERPROFILE"] = str(tmp_path)
+    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+    state_db.DEFAULT_DB_PATH = db
     try:
         yield tmp_path
     finally:
+        state_db.DEFAULT_DB_PATH = prior_db_path
         for k, v in prior.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -218,7 +251,7 @@ def test_reference_map_includes_a2a_range() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cli_json_output_has_listen_key(home_in_tmp) -> None:
+def test_cli_json_output_has_listen_key(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -228,7 +261,7 @@ def test_cli_json_output_has_listen_key(home_in_tmp) -> None:
     assert "listen" in payload
 
 
-def test_cli_json_output_has_reference_section(home_in_tmp) -> None:
+def test_cli_json_output_has_reference_section(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -238,7 +271,7 @@ def test_cli_json_output_has_reference_section(home_in_tmp) -> None:
     assert isinstance(payload["reference"], list) and payload["reference"]
 
 
-def test_cli_human_render_exits_zero(home_in_tmp) -> None:
+def test_cli_human_render_exits_zero(isolated_state) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -247,7 +280,7 @@ def test_cli_human_render_exits_zero(home_in_tmp) -> None:
     assert result.exit_code == 0
 
 
-def test_cli_json_includes_seeded_a2a_claim(home_in_tmp) -> None:
+def test_cli_json_includes_seeded_a2a_claim(isolated_state) -> None:
     # Arrange — seed a claim in the HOME-isolated default state.db, then
     # invoke the real CLI (which reads that same default db).
     pa.claim_port("cli-agent", range_=(20000, 20050))
