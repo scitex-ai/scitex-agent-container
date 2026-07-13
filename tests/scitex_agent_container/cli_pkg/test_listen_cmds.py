@@ -110,6 +110,42 @@ def _fake_app():
     return _types.SimpleNamespace(state=_types.SimpleNamespace())
 
 
+@contextmanager
+def _swap_standby_serves():
+    """Make the hot-standby startup a hermetic no-op that 'acquires' at once.
+
+    ``_do_start_listen`` now routes the lock through
+    ``_standby.resolve_startup`` (hot-standby + failover). Its real path
+    takes the flock at the operator's ``default_lock_dir()`` AND socket-
+    probes the real port — so a CLI start test running on a host with a
+    live ``sac listen`` would otherwise stand by forever or probe 7878.
+    Swapping ``resolve_startup`` to return a throwaway handle (and the
+    signal guard to a no-op) keeps these tests hermetic + fast. The lazy
+    ``from .._listen._standby import ...`` inside the CLI binds these
+    swapped attributes at call time.
+    """
+    from pathlib import Path as _Path
+
+    from scitex_agent_container._listen import _single_instance, _standby
+    from scitex_agent_container._listen._single_instance import LockHandle
+
+    fake_handle = LockHandle(fd=-1, pid_file=_Path("/nonexistent/listen-7878.pid"))
+
+    @contextmanager
+    def _noop_guard():
+        yield
+
+    with (
+        _swap_attr(_standby, "resolve_startup", lambda **_kw: fake_handle),
+        _swap_attr(_standby, "standby_signal_guard", _noop_guard),
+        # The CLI releases the handle in its ``finally``; the throwaway
+        # fd=-1 handle must never reach the real releaser (fcntl rejects a
+        # negative fd with ValueError), so no-op the release too.
+        _swap_attr(_single_instance, "release_listen_lock", lambda _h: None),
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # _split_bind — pure parsing, no I/O.
 # ---------------------------------------------------------------------------
@@ -266,6 +302,7 @@ def test_listen_default_loopback_bind_starts_uvicorn_with_zero_exit(tmp_path):
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
         _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
@@ -284,6 +321,7 @@ def test_listen_default_loopback_bind_passes_default_host_port_to_uvicorn(tmp_pa
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
         _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
@@ -302,6 +340,7 @@ def test_listen_non_loopback_bind_with_allow_flag_passes_host_to_uvicorn(tmp_pat
     fake_uvicorn = _FakeUvicorn()
     # Act
     with (
+        _swap_standby_serves(),
         _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
         _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "d.tok"),
         _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
