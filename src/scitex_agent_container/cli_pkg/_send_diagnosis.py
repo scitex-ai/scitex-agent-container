@@ -118,6 +118,7 @@ def diagnose_send_failure(
     peer_host: str,
     current_host: str,
     now: float | None = None,
+    brokered: Any = None,
 ) -> dict[str, Any]:
     """Gather state-of-the-agent at the moment a send failed.
 
@@ -125,6 +126,17 @@ def diagnose_send_failure(
     ``error`` payload. Every field is explicit — an un-gatherable value
     becomes ``"unreadable: <reason>"`` / ``"unknown"`` / ``None``, never
     a silent healthy-looking default.
+
+    Inside a container the local ``state.db`` is a private, effectively
+    empty per-agent bridge DB, so EVERY field gathered below would be a
+    fabrication about a peer ("stopped", ``pid: null``, ``boot_complete:
+    false``). On that path the facts are sourced from the HOST fleet
+    registry instead, via the same broker door ``agent_status`` uses — see
+    :mod:`._send_broker` / :mod:`._send_diagnosis_brokered`. ``brokered``
+    lets the caller pass an already-fetched
+    :class:`._send_broker.BrokeredPeer` so one send costs one lookup, not
+    two. On a bare host none of this engages and the local gathering below
+    runs exactly as it always has.
 
     Fields
     ------
@@ -154,7 +166,42 @@ def diagnose_send_failure(
     peer_host: ``row["host"]`` — the host the turn was POSTed to.
     current_host: lead-side resolved host.
     now: wall-clock override for deterministic tests.
+    brokered: a pre-fetched :class:`._send_broker.BrokeredPeer`. When
+        ``None`` and we are in a container, the host is asked here.
     """
+    # --- in-container: source the facts from the HOST fleet registry -------
+    # The local reads below cannot see a single peer from inside a SIF, and
+    # their emptiness renders as death. Ask the host instead.
+    from ._send_broker import PeerLookupUnavailable, should_broker_peer_lookup
+
+    if brokered is None and should_broker_peer_lookup():
+        from ._send_broker import lookup_peer_via_host
+
+        try:
+            brokered = lookup_peer_via_host(name)
+        except PeerLookupUnavailable as exc:
+            # Could not ask → UNKNOWN. Explicitly NOT "stopped": falling back
+            # to the blind local read here would recreate the exact bug.
+            from ._send_diagnosis_brokered import unknown_lookup_diagnosis
+
+            return unknown_lookup_diagnosis(
+                name,
+                current_host=current_host,
+                reason=str(exc),
+                a2a_port=a2a_port,
+            )
+    if brokered is not None:
+        from ._send_diagnosis_brokered import brokered_diagnosis
+
+        return brokered_diagnosis(
+            name,
+            a2a_port=a2a_port,
+            peer_host=peer_host,
+            current_host=current_host,
+            peer=brokered,
+        )
+
+    # --- bare host: unchanged local gathering ------------------------------
     now = time.time() if now is None else now
     is_local = (not peer_host) or peer_host == current_host
 

@@ -150,20 +150,71 @@ def send_to_agent(
 
     from .._network.peer import PeerError
     from .._state.state_db import _resolve_host
+    from ._send_broker import (
+        PeerLookupUnavailable,
+        resolve_send_endpoint_via_host,
+        should_broker_peer_lookup,
+    )
     from ._send_resolve import resolve_send_endpoint
 
     current_host = _resolve_host(None)
-    # Resolve the LIVE endpoint the same way ``a2a_send`` / the listen
-    # forwarder do: active ``instances`` row port first, then the durable
-    # ``port_allocator`` claim that survives a health-monitor restart.
-    # Gating ONLY on the instances row (the old behaviour) caused the
-    # "registry split-brain": a locally-running agent whose row went stale
-    # (supervisor restart via ``runtime.start``, stale-lease clear) showed
-    # ``a2a_port=null`` here even while ``a2a_send`` reached it on the bus.
-    # See :mod:`._send_resolve` for the full root-cause writeup.
-    endpoint = resolve_send_endpoint(name, current_host=current_host)
+
+    # --- Resolve WHERE the peer is ----------------------------------------
+    # IN A CONTAINER the local state.db is a private, effectively empty
+    # per-agent bridge DB that holds no row for ANY other agent, so the local
+    # resolver below reports every peer as "not running" — measured
+    # 2026-07-14: ``scitex-scholar`` came back ``stopped / pid=null /
+    # a2a_port=null`` while the host's registry held ``pid=1777985
+    # a2a_port=19037 ended_at=NULL`` for it and the agent had messaged us 90
+    # seconds earlier. Broker the lookup to the host's ``sac listen`` — the
+    # SAME door ``agent_status`` already goes through — so we read the real
+    # fleet registry. See :mod:`._send_broker`.
+    #
+    # On a BARE HOST this is inert: ``should_broker_peer_lookup()`` is False
+    # and the local resolver runs exactly as before.
+    brokered = None
+    if should_broker_peer_lookup():
+        try:
+            endpoint, brokered = resolve_send_endpoint_via_host(
+                name, current_host=current_host
+            )
+        except PeerLookupUnavailable as exc:
+            # We could not ASK the host. That is UNKNOWN — not dead. We refuse
+            # to fall back to the blind local read, because its empty result
+            # would masquerade as death, which is the bug we are fixing.
+            return _unknown_lookup_payload(name, exc, current_host=current_host)
+    else:
+        # Resolve the LIVE endpoint the same way ``a2a_send`` / the listen
+        # forwarder do: active ``instances`` row port first, then the durable
+        # ``port_allocator`` claim that survives a health-monitor restart.
+        # Gating ONLY on the instances row (the old behaviour) caused the
+        # "registry split-brain": a locally-running agent whose row went stale
+        # (supervisor restart via ``runtime.start``, stale-lease clear) showed
+        # ``a2a_port=null`` here even while ``a2a_send`` reached it on the bus.
+        # See :mod:`._send_resolve` for the full root-cause writeup.
+        endpoint = resolve_send_endpoint(name, current_host=current_host)
+
     a2a_port = endpoint.a2a_port
     peer_host = endpoint.host if endpoint.host != current_host else ""
+
+    if endpoint.source == "host_broker_unknown_agent":
+        # The HOST — which can see the whole fleet — has no agent by this
+        # name. This is the one definitive negative in the brokered path.
+        return {
+            "status": "error",
+            "error": (
+                f"agent {name!r} is not in the host fleet registry "
+                f"(the host's `sac listen` returned 404 for it) — check the "
+                f"name, or the agent was never registered on this host"
+            ),
+            "diagnosis": diagnose_send_failure(
+                name,
+                a2a_port=None,
+                peer_host=current_host,
+                current_host=current_host,
+                brokered=brokered,
+            ),
+        }
     if endpoint.row is None and endpoint.source == "none":
         # No active instances row AND no durable allocator claim → the
         # agent is genuinely not running anywhere this host can see.
@@ -175,24 +226,38 @@ def send_to_agent(
                 a2a_port=None,
                 peer_host=current_host,
                 current_host=current_host,
+                brokered=brokered,
             ),
         }
     if a2a_port is None:
-        # A row exists but neither it nor the allocator carries a usable
-        # port (sidecar-disabled spec, or a row written before the port
-        # was resolved). Loud — there is no /v1/turn to reach.
-        return {
-            "status": "error",
-            "error": (
+        # No usable port. Loud — there is no /v1/turn to reach. The message
+        # names the SOURCE of the verdict, so a reader never has to guess
+        # whether it came from the real fleet registry or a blind local read.
+        if endpoint.source == "host_broker_no_port":
+            error = (
+                f"agent {name!r} is registered on the host, but the host fleet "
+                f"registry holds no a2a port claim for it (a claim is released "
+                f"only at `sac agents stop` / --force); there is no /v1/turn "
+                f"to reach"
+            )
+        else:
+            # A row exists but neither it nor the allocator carries a usable
+            # port (sidecar-disabled spec, or a row written before the port
+            # was resolved).
+            error = (
                 f"agent {name!r} has no a2a_port recorded "
                 f"(no active instances-row port and no port_allocator "
                 f"claim); cannot reach /v1/turn"
-            ),
+            )
+        return {
+            "status": "error",
+            "error": error,
             "diagnosis": diagnose_send_failure(
                 name,
                 a2a_port=None,
                 peer_host=peer_host or current_host,
                 current_host=current_host,
+                brokered=brokered,
             ),
         }
     if peer_host and peer_host != current_host:
@@ -246,6 +311,7 @@ def send_to_agent(
             current_host=current_host,
             url=url,
             metadata_extras=metadata_extras,
+            brokered=brokered,
         )
 
     try:
@@ -266,6 +332,7 @@ def send_to_agent(
             a2a_port=a2a_port,
             peer_host=peer_host,
             current_host=current_host,
+            brokered=brokered,
         )
         if "timeout" in msg.lower():
             return {
@@ -293,6 +360,30 @@ def send_to_agent(
     }
 
 
+def _unknown_lookup_payload(
+    name: str,
+    exc: Exception,
+    *,
+    current_host: str,
+) -> dict[str, Any]:
+    """Payload for "the host broker could not be asked" — UNKNOWN, not dead.
+
+    The one thing this must never do is render an unperformed lookup as a
+    stopped agent. ``registry_status`` comes back ``"unknown: …"``,
+    ``pid_alive`` and ``boot_complete`` stay ``None``, and the message names
+    the broker as the thing that failed — not the agent.
+    """
+    from ._send_diagnosis_brokered import unknown_lookup_diagnosis
+
+    return {
+        "status": "error",
+        "error": str(exc),
+        "diagnosis": unknown_lookup_diagnosis(
+            name, current_host=current_host, reason=str(exc)
+        ),
+    }
+
+
 def _dispatch_nonblocking(
     name: str,
     prompt: str,
@@ -302,6 +393,7 @@ def _dispatch_nonblocking(
     current_host: str,
     url: str,
     metadata_extras: dict[str, Any],
+    brokered: Any = None,
 ) -> dict[str, Any]:
     """Validate reachability, then return a non-blocking dispatch payload.
 
@@ -331,11 +423,20 @@ def _dispatch_nonblocking(
         a2a_port=a2a_port,
         peer_host=peer_host,
         current_host=current_host,
+        brokered=brokered,
     )
 
     # Fail loud on demonstrable unreachability (local probes only — a
     # cross-host port we cannot probe stays None and is NOT treated as
     # unreachable, which would be a false-positive failure).
+    #
+    # Both gates fire ONLY on an explicit ``False`` — never on ``None``.
+    # That is the whole discipline: a probe we could not run leaves ``None``
+    # and must not be read as a failed probe. On the brokered (in-container)
+    # path ``pid_alive`` is deliberately always ``None`` — the host status
+    # route exposes no pid, and importing a STALE one would make
+    # ``os.kill(pid, 0)`` report a healthy, restarted agent as dead. See
+    # :mod:`._send_diagnosis_brokered`.
     if diagnosis.get("pid_alive") is False:
         return {
             "status": "error",
@@ -346,11 +447,24 @@ def _dispatch_nonblocking(
             "diagnosis": diagnosis,
         }
     if diagnosis.get("port_reachable") is False:
+        # An unbound /v1/turn port means THIS TRANSPORT cannot carry the turn.
+        # It does NOT mean the agent is dead, and the old wording here ("it is
+        # not booted or the sidecar crashed") asserted exactly that. Measured
+        # on the live fleet 2026-07-14: only 5 of 47 registered agents had
+        # /v1/turn bound at all — the other 41 held a port claim with nothing
+        # listening, and several of them answered a2a messages that same
+        # minute. Saying "crashed" here would hand the caller a death verdict
+        # whose remedy (`--force --fresh`) destroys a healthy, working agent.
         return {
             "status": "error",
             "error": (
-                f"agent {name!r} sidecar is not listening on port {a2a_port}; "
-                "it is not booted or the sidecar crashed — cannot dispatch"
+                f"agent {name!r}: nothing is listening on a2a port {a2a_port}, "
+                f"so the /v1/turn transport cannot deliver this turn. This is "
+                f"NOT a death verdict — most agents in this fleet never bind "
+                f"/v1/turn and are reached over the a2a subscriber channel "
+                f"instead. Deliver with `sac a2a send {name} ...` (or the "
+                f"a2a_send tool), which does not require this port. Do NOT "
+                f"force-restart the agent on this signal"
             ),
             "diagnosis": diagnosis,
         }
