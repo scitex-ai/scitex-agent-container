@@ -20,6 +20,7 @@ from scitex_agent_container._provenance._stamp import (
     compute_stamp,
     read_existing_stamp,
     render_module,
+    stamp_path,
 )
 
 
@@ -105,15 +106,17 @@ class TestComputeStamp:
 
     def test_inherits_the_commit_when_git_is_absent(self, tmp_path: Path):
         # Arrange — reproduce the sdist->wheel hop exactly: an unpacked
-        # sdist, no .git anywhere, but carrying the stamp the sdist build
-        # already wrote.
+        # sdist, no .git anywhere, carrying the stamp the sdist build wrote
+        # AT THE REAL PATH the build hook writes it to. Writing it anywhere
+        # else is what let this test pass while the actual chain baked
+        # commit=unknown into every wheel.
         root = tmp_path / "unpacked-sdist"
         package = root / "src" / "scitex_agent_container"
         package.mkdir(parents=True)
         (package / "__init__.py").write_text("VALUE = 1\n")
-        (package / "_build_info.py").write_text(
-            "STAMP = {'commit': 'abc123', 'version': '1.2.3'}\n"
-        )
+        stamp_file = stamp_path(package)
+        stamp_file.parent.mkdir(parents=True, exist_ok=True)
+        stamp_file.write_text("STAMP = {'commit': 'abc123', 'version': '1.2.3'}\n")
 
         # Act
         stamp = compute_stamp(root, package, version="1.2.3")
@@ -126,7 +129,9 @@ class TestComputeStamp:
         root = tmp_path / "unpacked-sdist"
         package = root / "src" / "scitex_agent_container"
         package.mkdir(parents=True)
-        (package / "_build_info.py").write_text("STAMP = {'commit': 'abc123'}\n")
+        stamp_file = stamp_path(package)
+        stamp_file.parent.mkdir(parents=True, exist_ok=True)
+        stamp_file.write_text("STAMP = {'commit': 'abc123'}\n")
 
         # Act
         stamp = compute_stamp(root, package, version="1.2.3")
@@ -178,11 +183,32 @@ class TestRenderModule:
         }
 
         # Act
-        (package / "_build_info.py").write_text(render_module(stamp))
+        stamp_file = stamp_path(package)
+        stamp_file.parent.mkdir(parents=True, exist_ok=True)
+        stamp_file.write_text(render_module(stamp))
         found = read_existing_stamp(package)
 
         # Assert
         assert found == stamp
+
+
+class TestStampPath:
+    def test_the_build_hook_writes_where_the_reader_looks(self, tmp_path: Path):
+        # Arrange — the regression that shipped commit=unknown into the
+        # wheel: the hook wrote <pkg>/_provenance/_build_info.py while the
+        # reader looked in <pkg>/_build_info.py, so the sdist->wheel
+        # inherit silently found nothing. Pin the two together.
+        package = tmp_path / "src" / "scitex_agent_container"
+        package.mkdir(parents=True)
+        written = stamp_path(package)
+        written.parent.mkdir(parents=True, exist_ok=True)
+        written.write_text(render_module({"commit": "abc123"}))
+
+        # Act
+        found = read_existing_stamp(package)
+
+        # Assert
+        assert found["commit"] == "abc123"
 
 
 class TestReadExistingStamp:
@@ -201,7 +227,9 @@ class TestReadExistingStamp:
         # Arrange — a half-written generated file must not break the build.
         package = tmp_path / "pkg"
         package.mkdir()
-        (package / "_build_info.py").write_text("STAMP = {'commit': \n")
+        stamp_file = stamp_path(package)
+        stamp_file.parent.mkdir(parents=True, exist_ok=True)
+        stamp_file.write_text("STAMP = {'commit': \n")
 
         # Act
         found = read_existing_stamp(package)

@@ -92,7 +92,9 @@ class BuildStampHook(BuildHookInterface):
             package_dir=_PKG_DIR,
             version=self.metadata.version,
         )
-        target = _PROV_DIR / stamp_mod.BUILD_INFO_NAME
+        # Same SSOT the inherit-from-sdist read uses — see _stamp.stamp_path.
+        target = stamp_mod.stamp_path(_PKG_DIR)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(stamp_mod.render_module(stamp), encoding="utf-8")
 
         self.app.display_info(

@@ -40,10 +40,29 @@ from pathlib import Path
 from ._git import head_sha
 from ._hash import code_hash
 
-__all__ = ["BUILD_INFO_NAME", "compute_stamp", "read_existing_stamp", "render_module"]
+__all__ = [
+    "BUILD_INFO_NAME",
+    "compute_stamp",
+    "read_existing_stamp",
+    "render_module",
+    "stamp_path",
+]
 
 BUILD_INFO_NAME = "_build_info.py"
 COMMIT_ENV_VAR = "SAC_BUILD_COMMIT"
+
+
+def stamp_path(package_dir: Path) -> Path:
+    """The ONE place the stamp lives — SSOT for both the writer and reader.
+
+    The build hook writes here and ``compute_stamp`` inherits from here. A
+    build once silently baked ``commit=unknown`` because those two had
+    drifted onto different paths, and the unit test drifted with the
+    reader, so it stayed green while the real sdist->wheel chain was
+    broken. Deriving both ends from this function makes that divergence
+    unrepresentable.
+    """
+    return Path(package_dir) / "_provenance" / BUILD_INFO_NAME
 
 
 def read_existing_stamp(package_dir: Path) -> dict | None:
@@ -53,7 +72,7 @@ def read_existing_stamp(package_dir: Path) -> dict | None:
     (``ast.literal_eval`` on the ``STAMP`` assignment) rather than
     executed.
     """
-    path = Path(package_dir) / BUILD_INFO_NAME
+    path = stamp_path(package_dir)
     try:
         source = path.read_text(encoding="utf-8")
     except OSError:  # stx-allow: fallback (reason: no stamp yet is the normal first-build case)

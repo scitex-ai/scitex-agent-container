@@ -306,6 +306,22 @@ path = "src/hatch_build.py"
 [tool.hatch.build.targets.sdist.hooks.custom]
 path = "src/hatch_build.py"
 
+[tool.hatch.build.targets.sdist]
+# NEVER ship .git. In a plain clone `.git` is a directory and hatchling
+# already drops it — but in a `git worktree` (how every agent checks this
+# repo out) `.git` is a FILE holding an absolute `gitdir:` pointer, and it
+# sailed straight into the sdist. Verified: a worktree-built sdist
+# contained `scitex_agent_container-0.21.13/.git`.
+#
+# Harmless before this hook existed; a live hazard now. The build stamp
+# resolves the commit by reading `.git`, so a packaged pointer lets a build
+# from an unpacked sdist follow it back to WHATEVER repo happens to sit at
+# that absolute path and bake ITS commit — a wrong-but-confident answer,
+# which is the exact failure mode this whole feature exists to abolish.
+# Dropping it also forces the wheel-from-sdist build down the `inherited`
+# path, which is the one release CI actually takes.
+exclude = [".git"]
+
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
 # Bundle pyproject.toml + README.md inside the wheel so the
