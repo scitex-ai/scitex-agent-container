@@ -245,15 +245,18 @@ def test_build_run_argv_injects_env_file_when_present(tui_config, tmp_path) -> N
     assert "--env-file" in argv and str(state_dir / "home" / ".env") in argv
 
 
-def test_build_run_argv_omits_env_file_when_absent(tui_config, tmp_path) -> None:
+def test_build_run_argv_omits_agent_env_file_when_absent(tui_config, tmp_path) -> None:
     # Arrange — no .env materialised under state_dir/home.
     state_dir = tmp_path / "state"
     # Act
     argv = build_run_argv(
         tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
-    # Assert
-    assert "--env-file" not in argv
+    # Assert — the agent .env --env-file is not emitted when no agent .env
+    # exists. (A separate 0600 secrets --env-file may still be present for
+    # swept auth/listen secrets — see _apptainer_secret_env; that is a
+    # different file, not the agent .env.)
+    assert str(state_dir / "home" / ".env") not in argv
 
 
 def test_build_run_argv_env_file_precedes_curated_env(tui_config, tmp_path) -> None:

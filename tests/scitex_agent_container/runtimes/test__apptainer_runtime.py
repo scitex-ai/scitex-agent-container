@@ -83,25 +83,46 @@ def state_root(tmp_path: Path, env_save_restore, home_redirect: Path) -> Path:
 @pytest.fixture
 def apptainer_on_path(subprocess_shim) -> Path:
     """Install a fake ``apptainer`` binary on ``$PATH`` that, when
-    invoked as ``apptainer build <out.sif> <src>``, creates the output
-    file. Otherwise it's a no-op (exit 0).
+    invoked as ``apptainer build [--fakeroot] <out.sif> <src>``, creates
+    the output file. Otherwise it's a no-op (exit 0).
 
     ``shutil.which("apptainer")`` finds this binary by a real PATH
     lookup — no ``which`` monkeypatching.
+
+    The SIF is located by SCANNING the post-``build`` args for the first
+    ``.sif`` positional — never by a fixed index. Production's build argv
+    carries an OPTIONAL ``--fakeroot``: ``_build_argv_prefix`` appends it
+    whenever the host has ``/etc/sub{u,g}id`` mappings for a non-root
+    user — true on the GitHub runner AND inside the agent container — so
+    ``sys.argv[2]`` is that FLAG, not the SIF. Writing that index blindly
+    made this shim create a 1-NULL-byte file literally named
+    ``--fakeroot`` in the launch cwd, i.e. the REPO ROOT under pytest.
+    The project audit then correctly failed it (PS-103
+    top-level-junk-file) and reddened every PR, while the 9.6k tests
+    themselves stayed green — self-inflicted, self-detected.
+
+    A relative target is refused outright (exit 2) so this class of bug
+    can never silently litter the repo root again: a future drift fails
+    the test loudly instead of dropping junk next to ``pyproject.toml``.
     """
     bin_dir = subprocess_shim._bin
     script = bin_dir / "apptainer"
-    # Argv layout for build: ["build", "<sif>", "<src>"]. The shim
-    # *writes the .sif file* so production's `sif_path.is_file()` check
-    # passes after the call returns — honest end-to-end behaviour.
+    # The shim *writes the .sif file* so production's `sif_path.is_file()`
+    # check passes after the call returns — honest end-to-end behaviour.
     body = (
         f"#!{sys.executable}\n"
         "import json, sys\n"
         "from pathlib import Path\n"
         f"with open({_q(str(bin_dir / 'apptainer.argv.jsonl'))}, 'a') as fh:\n"
         "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "if len(sys.argv) >= 3 and sys.argv[1] == 'build':\n"
-        "    Path(sys.argv[2]).write_bytes(b'\\x00')\n"
+        "args = sys.argv[1:]\n"
+        "if args[:1] == ['build']:\n"
+        "    sif = next((a for a in args[1:] if a.endswith('.sif')), None)\n"
+        "    if sif is not None:\n"
+        "        if not Path(sif).is_absolute():\n"
+        "            sys.stderr.write('shim refuses relative SIF path: ' + sif)\n"
+        "            sys.exit(2)\n"
+        "        Path(sif).write_bytes(b'\\x00')\n"
         "sys.exit(0)\n"
     )
     script.write_text(body)
@@ -196,12 +217,26 @@ def _flag_value(argv: list[str], flag: str) -> str:
 
 
 def _env_pairs(argv: list[str]) -> dict[str, str]:
-    """Decode every ``--env KEY=VAL`` pair in the argv into a dict."""
+    """Decode the environment the container RECEIVES from the argv.
+
+    Every ``--env KEY=VAL`` pair PLUS the contents of every ``--env-file``.
+    The P1 secret-hardening fix (``_apptainer_secret_env``) moves secret
+    vars OUT of world-readable ``--env`` argv into a 0600 ``--env-file``,
+    so a delivery check must read both transports — the container gets the
+    union.
+    """
     out: dict[str, str] = {}
     for i, a in enumerate(argv):
         if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
             k, _, v = argv[i + 1].partition("=")
             out[k] = v
+        elif a == "--env-file" and i + 1 < len(argv):
+            path = Path(argv[i + 1])
+            if path.is_file():
+                for line in path.read_text().splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        k, _, v = line.partition("=")
+                        out[k] = v
     return out
 
 
@@ -420,8 +455,9 @@ def test_argv_forwards_sac_anthropic_api_key_env(
     cfg = _config(tmp_path)
     # Act
     argv = rt.build_run_argv(cfg, state_dir=tmp_path, sif_path=tmp_path / "x.sif")
-    # Assert
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-api-test" in argv
+    # Assert — forwarded to the container, now via the 0600 --env-file rather
+    # than world-readable --env argv (P1 fix; see _apptainer_secret_env).
+    assert _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY") == "sk-ant-api-test"
 
 
 def test_argv_emits_nv_flag_when_apptainer_nv_true(tmp_path: Path) -> None:
@@ -500,6 +536,58 @@ def test_argv_forwards_autonomous_max_turns_value(tmp_path: Path) -> None:
     )
     # Assert
     assert inner[inner.index("--autonomous-max-turns") + 1] == "7"
+
+
+# ---------------------------------------------------------------------------
+# apptainer_on_path shim — must never litter the launch cwd
+#
+# Regression guard for the CI-blocking stray `--fakeroot` file. Production's
+# build argv is `apptainer build [--fakeroot] <sif> <src>`; the shim used to
+# write `sys.argv[2]` blindly, which IS `--fakeroot` whenever the host has
+# /etc/sub{u,g}id mappings. Under pytest the launch cwd is the repo root, so
+# the shim dropped a 1-NULL-byte `--fakeroot` file next to pyproject.toml and
+# the project audit (PS-103 top-level-junk-file) failed every PR.
+# ---------------------------------------------------------------------------
+
+
+def test_build_shim_never_creates_flag_named_file_in_cwd(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — the REAL production build argv shape: --fakeroot sits
+    # where a fixed-index shim would expect the SIF.
+    sif = tmp_path / "out.sif"
+    cwd = tmp_path / "launch"
+    cwd.mkdir()
+    argv = [str(apptainer_on_path), "build", "--fakeroot", str(sif), "docker://x"]
+    # Act — run from a scratch cwd; the old shim littered it here.
+    subprocess.run(argv, cwd=cwd, check=True)
+    # Assert
+    assert not (cwd / "--fakeroot").exists()
+
+
+def test_build_shim_materialises_sif_behind_fakeroot_flag(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — the SIF must still be found (by scan, not by index) so
+    # production's post-build `sif_path.is_file()` check stays honest.
+    sif = tmp_path / "out.sif"
+    argv = [str(apptainer_on_path), "build", "--fakeroot", str(sif), "docker://x"]
+    # Act
+    subprocess.run(argv, cwd=tmp_path, check=True)
+    # Assert
+    assert sif.read_bytes() == b"\x00"
+
+
+def test_build_shim_refuses_relative_sif_target(
+    tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — a relative SIF would resolve against the launch cwd (the
+    # repo root under pytest). The shim must refuse it, not write it.
+    argv = [str(apptainer_on_path), "build", "relative.sif", "docker://x"]
+    # Act
+    result = subprocess.run(argv, cwd=tmp_path, capture_output=True)
+    # Assert
+    assert result.returncode == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1458,15 +1546,18 @@ def test_start_dry_run_argv_file_omits_the_raw_secret(
     assert "sk-ant-oat01-supersecrettoken" not in argv_file.read_text()
 
 
-def test_start_dry_run_argv_file_carries_the_redacted_marker(
+def test_start_dry_run_argv_file_references_the_secret_env_file(
     state_root: Path,
     tmp_path: Path,
     apptainer_on_path: Path,
     env_save_restore,
 ) -> None:
-    # Arrange — same incident as above: the redacted placeholder (the
-    # same shape ``sac agents explain`` prints to the console) must
-    # replace the raw value rather than the key vanishing entirely.
+    # Arrange — the P1 fix (_apptainer_secret_env) moves secret --env vars
+    # OUT of the argv into a 0600 --env-file, so the dry-run snapshot no
+    # longer carries an inline (redacted) SAC_ANTHROPIC_API_KEY at all — it
+    # shows the --env-file reference instead. (The raw value's absence from
+    # the snapshot is pinned by
+    # test_start_dry_run_argv_file_omits_the_raw_secret.)
     env_save_restore.set("SAC_ANTHROPIC_API_KEY", "sk-ant-oat01-supersecrettoken")
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
@@ -1478,7 +1569,7 @@ def test_start_dry_run_argv_file_carries_the_redacted_marker(
 
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
-    assert "SAC_ANTHROPIC_API_KEY=<redacted:" in argv_file.read_text()
+    assert "--env-file" in argv_file.read_text()
 
 
 def test_start_dry_run_argv_file_is_owner_only_readable(
@@ -1544,8 +1635,12 @@ def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
     # Act
     argv = rt.build_run_argv(cfg, state_dir=rt._state_dir(cfg), sif_path=sif)
 
-    # Assert
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in argv
+    # Assert — the SDK in the container still authenticates: the secret is
+    # delivered via the 0600 --env-file, not world-readable --env argv.
+    assert (
+        _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
 
 
 def test_start_background_apptainer_subprocess_receives_the_real_secret(
@@ -1573,9 +1668,13 @@ def test_start_background_apptainer_subprocess_receives_the_real_secret(
             break
         time.sleep(0.1)
 
-    # Assert
+    # Assert — the real apptainer child still receives the secret, now via
+    # the 0600 --env-file it is pointed at (not in its world-readable argv).
     received = subprocess_shim.argv_for("apptainer") or []
-    assert "SAC_ANTHROPIC_API_KEY=sk-ant-oat01-supersecrettoken" in received
+    assert (
+        _env_pairs(received).get("SAC_ANTHROPIC_API_KEY")
+        == "sk-ant-oat01-supersecrettoken"
+    )
 
 
 def test_start_background_returns_true(

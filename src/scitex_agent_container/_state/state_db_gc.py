@@ -91,14 +91,24 @@ def gc_dead_instances(
             pid = row["pid"]
             if pid is None or pid <= 0:
                 continue
-            # stx-allow: fallback (reason: kill -0 errors when pid is dead OR
-            # not ours; both cases mean 'not alive from our POV')
             try:
                 os.kill(pid, 0)
+            except PermissionError:
+                # ALIVE. The process exists but is owned by another uid, so
+                # we may not signal it — that is proof of life, NOT death.
+                # Reaping here would END a live agent's row, and a missing
+                # row is exactly what makes ``send_to_agent`` report "agent
+                # not running" (cli_pkg/_send.py). This branch had never
+                # actually run before pids were recorded (0 'crashed' rows
+                # in 1229), so the hazard was dormant; it is live now.
+                # Matches every other pid probe in the codebase
+                # (_lifecycle/_stale_lease, cli_pkg/_send_diagnosis,
+                # runtimes/_tui_liveness) — all treat EPERM as alive.
+                continue
             except (
                 OSError,
                 ProcessLookupError,
-            ):  # stx-allow: fallback (reason: see inline comment)
+            ):  # stx-allow: fallback (reason: ESRCH/other kernel error — the process is genuinely gone from our POV)
                 if not dry_run:
                     conn.execute(
                         "UPDATE instances SET ended_at=?, exit_reason='crashed' WHERE id=?",
