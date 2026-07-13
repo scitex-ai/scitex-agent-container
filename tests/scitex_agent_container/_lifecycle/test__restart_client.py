@@ -339,7 +339,8 @@ def test_transport_error_keeps_status_none(listen_env) -> None:
 
 
 def test_transport_error_message_carries_broker_hint(listen_env) -> None:
-    # Arrange — listen unreachable (connection refused etc.).
+    # Arrange — listen unreachable (connection refused etc.): the health
+    # probe gets nothing either, so "cannot reach" is the MEASURED verdict.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener = _opener_raising(urlerror.URLError("connection refused"))
     message = ""
@@ -352,6 +353,73 @@ def test_transport_error_message_carries_broker_hint(listen_env) -> None:
     # detail AND appends the cause+fix hint naming `sac listen restart`, so a
     # broker-down restart is a dead-end no longer.
     assert "cannot reach listen" in message and "sac listen restart" in message
+
+
+# ---------------------------------------------------------------------------
+# The authenticated route is wedged while the daemon is UP (2026-07-14).
+#
+# The reporter measured:
+#   GET  /health             (unauthenticated) -> HTTP 401 in 0.18s, twice
+#   POST /agents/<n>/restart (with bearer)     -> no response in 25s
+#
+# The old message asserted "the host listen broker is unreachable; it may be
+# flapping" — a diagnosis nobody had measured, and the wrong one. A timeout on
+# ONE route licenses a claim about THAT ROUTE and nothing more.
+# ---------------------------------------------------------------------------
+
+
+def _opener_wedged_authed_route():
+    """Real opener: the authenticated POST hangs; GET /v1/health answers fast.
+
+    This is the production split — authed routes dispatch through listen's
+    shared worker pool, the public health path is served on the event loop.
+    """
+
+    def opener(req, timeout=None):
+        if req.get_method() == "GET" and req.full_url.endswith("/v1/health"):
+            return _FakeResp(b'{"ok": true}', 200)
+        raise urlerror.URLError(TimeoutError("timed out"))
+
+    return opener
+
+
+def test_wedged_authed_route_reports_daemon_up(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_restart("peer", opener=_opener_wedged_authed_route())
+    except RestartRequestError as exc:
+        message = str(exc)
+    # Assert — the daemon answered the cheap path; say so.
+    assert "the listen daemon is UP and serving" in message
+
+
+def test_wedged_authed_route_never_claims_flapping(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_restart("peer", opener=_opener_wedged_authed_route())
+    except RestartRequestError as exc:
+        message = str(exc)
+    # Assert — nothing here observed a crash loop, so nothing may assert one.
+    assert "flapping" not in message
+
+
+def test_wedged_authed_route_never_claims_unreachable(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_restart("peer", opener=_opener_wedged_authed_route())
+    except RestartRequestError as exc:
+        message = str(exc)
+    # Assert — it was reached; it just did not answer THIS route.
+    assert "cannot reach listen" not in message
 
 
 def test_non_dict_2xx_body_raises_restart_request_error(listen_env) -> None:

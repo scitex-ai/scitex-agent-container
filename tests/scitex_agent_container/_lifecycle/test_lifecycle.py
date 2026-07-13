@@ -1680,18 +1680,38 @@ def test_agent_restart_polls_is_running_until_false(
 # ---------------------------------------------------------------------------
 
 
+# A previous runtime that will NOT die: ``is_running`` stays True forever and
+# ``FakeRuntime`` never overrides ``agent_pid``, so the escalation has nothing
+# to SIGKILL. This is the shape that produced the operator's 2026-07-14
+# terminal:
+#
+#   WARN: previous runtime still running after 15.00s (SIGTERM ignored...);
+#         proceeding to start anyway.
+#   FAIL: duplicate session 'tui-neurovista' — agent already running.
+#   Agent 'neurovista' restarted        <-- IT WAS NOT
+#
+# The gate PREDICTED the collision, proceeded into it, and the restart then
+# reported success over an agent that was left DOWN. These cases used to
+# assert exactly that behaviour ("returns True", "starts anyway"); they now
+# assert its opposite. A stop that could not stop the thing must not report
+# success and must not start a replacement that is guaranteed to collide.
+
+
 def _build_unkillable_setup(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> _StaggeredRuntime:
     """Arrange helper: previous runtime whose ``is_running`` stays True
-    forever; caplog routed to the stop module so WARN records are
-    captured for the warning-content assertion.
+    forever and which cannot name a pid to kill; caplog routed to the
+    escalation module so its WARN records are captured.
     """
     import logging as _logging
 
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
-    caplog.set_level(_logging.WARNING, logger="scitex_agent_container._lifecycle._stop")
+    caplog.set_level(
+        _logging.WARNING,
+        logger="scitex_agent_container._lifecycle._stop_escalate",
+    )
     return _StaggeredRuntime(stages=[True])
 
 
@@ -1711,39 +1731,52 @@ def _restart_alpha_with_short_wait(
     )
 
 
-def test_agent_restart_returns_true_when_previous_runtime_will_not_exit(
+def test_agent_restart_raises_when_previous_runtime_will_not_exit(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    ok = _restart_alpha_with_short_wait(runtime, registry)
-    # Assert
-    assert ok is True
+    call = lambda: _restart_alpha_with_short_wait(runtime, registry)  # noqa: E731
+    # Assert — it used to return True here, and the CLI printed "restarted".
+    with pytest.raises(StopEscalationError):
+        call()
 
 
-def test_agent_restart_starts_new_runtime_when_previous_runtime_will_not_exit(
+def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    _restart_alpha_with_short_wait(runtime, registry)
-    # Assert
-    assert len(runtime.start_calls) == 1
+    try:
+        _restart_alpha_with_short_wait(runtime, registry)
+    except StopEscalationError:
+        pass
+    # Assert — starting here is what caused the duplicate-session collision.
+    assert len(runtime.start_calls) == 0
 
 
 def test_agent_restart_warns_about_still_running_previous_runtime(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    _restart_alpha_with_short_wait(runtime, registry)
+    try:
+        _restart_alpha_with_short_wait(runtime, registry)
+    except StopEscalationError:
+        pass
     messages = " ".join(rec.getMessage() for rec in caplog.records)
-    # Assert — a WARN log mentions the race so a future "telegrammer
-    # dropped after restart" recurrence is self-diagnosing from stdout.log.
-    assert "still running" in messages or "SIGTERM" in messages
+    # Assert — a WARN log still names the SIGTERM-deaf runtime, so a
+    # recurrence stays self-diagnosing from stdout.log.
+    assert "SIGTERM" in messages
 
 
 # ---------------------------------------------------------------------------

@@ -71,7 +71,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Diagnostics", ["doctor", "provenance"]),
+    ("Diagnostics", ["doctor", "ports", "provenance"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -106,6 +106,9 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Read-only port-hygiene inventory: listen 7878 + a2a claims +
+        # the scitex/sac port-assignment reference map.
+        "ports": f"{_PKG}.ports_cmds:ports",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "provenance": f"{_PKG}.provenance_cmds:provenance",
@@ -291,6 +294,7 @@ class _MainGroup(LazyGroup):
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "listen": "Boot the sac listen HTTP/JSON control-plane server.",
+        "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
