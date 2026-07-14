@@ -57,6 +57,28 @@ StandardError=journal
 # restart can't double-bind the port; the kernel releases the flock
 # on every dirty exit, so the next start cleanly takes it.
 Restart=always
+#
+# INTERACTION WITH THE "already serving" 0-EXIT (read before changing this).
+# `sac listen` now EXITS 0 immediately when ANOTHER instance is already
+# VERIFIED SERVING on the port ("already serving: PID N ... nothing to do")
+# instead of standing by in a poll loop forever. Restart=always restarts
+# even on a 0-exit — deliberately, see above — so under this unit that
+# 0-exit IS retried. The churn is BOUNDED and self-limiting, by design:
+#   * RestartSec=5s + StartLimitBurst=5 / StartLimitIntervalSec=60s ⇒ at
+#     most 5 restarts (~25s) and then the unit parks in `failed`, which is
+#     VISIBLE (`systemctl --user status sac-listen`). It is NOT a hot loop.
+#   * The companion sac-listen-health.timer does NOT resurrect that loop:
+#     its probe is PORT-based (`curl http://127.0.0.1:7878/v1/health`), so
+#     while the foreign instance is serving, the probe is GREEN and the
+#     timer neither alarms nor restarts. Fleet comms stay up throughout.
+# In other words: a duplicate `sac listen` is a configuration problem, and
+# the unit surfaces it as `failed` while the port keeps being served. The
+# fix is to stop the foreign instance, not to make this unit spin.
+# If that `failed` state ever becomes a nuisance, the CLEAN remedy is a
+# dedicated exit code for "already serving" plus `RestartPreventExitStatus=`
+# — NOT reverting to Restart=on-failure (which would reopen the silent
+# 0-exit outage of 2026-06-26).
+#
 # Brief debounce: avoid hot-looping a launch that always fails (e.g.
 # uvicorn import error after a bad pip upgrade). 5s is the same
 # value scitex-orochi's persistent-services use.

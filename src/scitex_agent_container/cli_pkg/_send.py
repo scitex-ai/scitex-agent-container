@@ -28,6 +28,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
+from .._listen._local_host import is_local_host
 from ._send_diagnosis import diagnose_send_failure
 from ._send_preflight import SshRunner, preflight_send_creds
 
@@ -195,7 +196,19 @@ def send_to_agent(
         endpoint = resolve_send_endpoint(name, current_host=current_host)
 
     a2a_port = endpoint.a2a_port
-    peer_host = endpoint.host if endpoint.host != current_host else ""
+    # "" means LOCAL (dispatch over loopback); anything else is a genuinely
+    # cross-host peer and goes over ssh below.
+    #
+    # This must be a LOOPBACK-AWARE test, not a string compare against
+    # ``current_host``. The brokered path derives this host by parsing the
+    # registry's ``turn_url`` (``_send_broker._host_from_turn_url``), and that
+    # URL now correctly names ``127.0.0.1`` for a local agent — the address the
+    # a2a sidecar actually binds — instead of the canonical hostname, which on
+    # Debian/Ubuntu/WSL resolves to 127.0.1.1 and is refused. A bare
+    # ``!= current_host`` would read that loopback literal as a REMOTE host and
+    # try to ssh to ``ssh://127.0.0.1:<port>`` — turning a URL fix into a
+    # comms outage. Any name that means THIS machine dispatches locally.
+    peer_host = "" if is_local_host(endpoint.host) else endpoint.host
 
     if endpoint.source == "host_broker_unknown_agent":
         # The HOST — which can see the whole fleet — has no agent by this

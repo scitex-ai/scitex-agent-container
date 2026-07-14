@@ -212,13 +212,19 @@ def test_derive_turn_url_returns_none_when_host_is_empty_string() -> None:
 def test_enrich_row_with_endpoint_adds_both_fields_when_sources_present(
     isolated_host_env: Path,
 ) -> None:
-    # Arrange
+    # Arrange — ``epsilon`` holds a LOCAL port claim, and the fixture's
+    # canonical host (``test-host``) IS this machine's identity. The derived
+    # turn_url must therefore name the address the a2a sidecar actually binds
+    # (127.0.0.1), NOT the canonical hostname: a hostname resolves to
+    # 127.0.1.1 on stock Debian/Ubuntu/WSL and every connection to it is
+    # refused. The old expectation here (``http://test-host:21000/…``) encoded
+    # exactly that unreachable URL. See ``_listen/_local_host.py``.
     _pa.claim_port("epsilon", range_=(21000, 21001), db_path=isolated_host_env)
     row = {"name": "epsilon"}
     # Act
     enriched = _re.enrich_row_with_endpoint(row)
     # Assert
-    assert enriched["turn_url"] == "http://test-host:21000/v1/turn"
+    assert enriched["turn_url"] == "http://127.0.0.1:21000/v1/turn"
 
 
 def test_enrich_row_with_endpoint_carries_resolved_a2a_port(

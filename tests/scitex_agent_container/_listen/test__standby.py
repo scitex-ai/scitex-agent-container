@@ -6,6 +6,11 @@ port used to exit 1, which under systemd ``Restart=always`` was an
 infinite CRASH-LOOP. ``resolve_startup`` turns the second instance into
 a warm STANDBY that fails over instead of crashing.
 
+The health verdict is now THREE-state (``HolderProbe``) rather than a
+bool — see ``test__standby_false_green.py`` for the false-green
+regression suite and ``_holder_health.py`` for why two states could not
+express "I asked and got nothing".
+
 No-mocks (PA-306 / STX-NM001-003): every external effect is a
 module-level seam swapped via a hand-rolled save/restore context
 manager. The health probe runs against a REAL loopback ``http.server``
@@ -24,11 +29,14 @@ from pathlib import Path
 from typing import Iterator
 
 from scitex_agent_container._listen import _standby as std
-from scitex_agent_container._listen._port_holder import PortHealResult
+from scitex_agent_container._listen._holder_health import HolderHealth, HolderProbe
 from scitex_agent_container._listen._single_instance import (
     ListenAlreadyRunningError,
     LockHandle,
 )
+
+SERVING = HolderProbe(health=HolderHealth.SERVING, status=200)
+UNREACHABLE = HolderProbe(health=HolderHealth.UNREACHABLE, status=-1)
 
 
 @contextmanager
@@ -80,15 +88,16 @@ class _StopAfter:
         return self.calls > self._false_calls
 
 
-class _TermRecorder:
-    """Records (pid, force_kill) for each terminate call."""
+class _GracefulRecorder:
+    """Records each graceful-stop call; reports the holder as exited."""
 
-    def __init__(self) -> None:
-        self.calls: list[tuple[int, bool]] = []
+    def __init__(self, *, died: bool = True) -> None:
+        self.calls: list[int] = []
+        self._died = died
 
-    def __call__(self, pid: int, *, grace_secs: float, force_kill: bool) -> bool:
-        self.calls.append((pid, force_kill))
-        return force_kill
+    def __call__(self, pid: int, *, grace_secs: float) -> bool:
+        self.calls.append(pid)
+        return self._died
 
 
 # ---------------------------------------------------------------------------
@@ -116,23 +125,24 @@ def test_port_free_acquires_and_serves() -> None:
 
 
 # ---------------------------------------------------------------------------
-# resolve_startup — healthy holder → STAND BY, then serve when freed
+# resolve_startup — serving holder → STAND DOWN (exit 0). Never spin.
 # ---------------------------------------------------------------------------
 
 
-def test_healthy_holder_stands_by_then_serves_when_freed() -> None:
-    # Arrange — contended once behind a HEALTHY holder, then it frees.
-    sentinel = _sentinel_handle()
-    acquire = _FakeAcquire(raises=1, handle=sentinel)
-    logs: list[str] = []
+def test_serving_holder_stands_down_immediately() -> None:
+    # Arrange — another instance is already serving. That is a SUCCESS: the
+    # goal state ("a listen is serving on this port") is already true, so
+    # there is nothing to do. Returning None tells the caller to exit 0
+    # WITHOUT binding. It must NOT poll the holder forever — that spinner is
+    # what forced the operator to Ctrl-C and `kill` the holder by hand.
+    acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
     # Act
     with (
         _swap("_acquire", acquire),
-        _swap("_probe_health", lambda *_a, **_k: True),
-        _swap("_heal_untracked_port", lambda **_k: ""),
-        _swap("_read_pid", lambda _p: 4242),
+        _swap("_probe_health", lambda *_a, **_k: SERVING),
+        _swap("_read_pid", lambda _p: 745734),
         _swap("_sleep", _no_sleep),
-        _swap("_log", logs.append),
+        _swap("_log", lambda _m: None),
     ):
         result = std.resolve_startup(
             host="127.0.0.1",
@@ -140,12 +150,110 @@ def test_healthy_holder_stands_by_then_serves_when_freed() -> None:
             lock_dir=Path("/tmp"),
             standby_interval=0.01,
         )
-    # Assert — served after standing by behind the healthy holder.
-    assert result is sentinel and any("standing by behind healthy" in m for m in logs)
+    # Assert — stood down rather than binding or spinning.
+    assert result is None
 
 
-def test_healthy_holder_never_takes_over() -> None:
-    # Arrange — a healthy holder must NEVER be killed. Contended once,
+def test_serving_holder_probed_exactly_once() -> None:
+    # Arrange — THE anti-spin assertion. The old loop re-probed a healthy
+    # holder every 4s, without end. One probe is enough to decide.
+    acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
+    probes: list[int] = []
+
+    def _probe(*_a, **_k):
+        probes.append(1)
+        return SERVING
+
+    # Act
+    with (
+        _swap("_acquire", acquire),
+        _swap("_probe_health", _probe),
+        _swap("_read_pid", lambda _p: 745734),
+        _swap("_sleep", _no_sleep),
+        _swap("_log", lambda _m: None),
+    ):
+        std.resolve_startup(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=Path("/tmp"),
+            standby_interval=0.01,
+        )
+    # Assert
+    assert len(probes) == 1
+
+
+def test_serving_holder_never_sleeps() -> None:
+    # Arrange — an interactive `sac listen` behind a healthy holder must
+    # RETURN, not wait. Any sleep at all on this path is a spin.
+    acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
+    sleeps: list[float] = []
+    # Act
+    with (
+        _swap("_acquire", acquire),
+        _swap("_probe_health", lambda *_a, **_k: SERVING),
+        _swap("_read_pid", lambda _p: 745734),
+        _swap("_sleep", sleeps.append),
+        _swap("_log", lambda _m: None),
+    ):
+        std.resolve_startup(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=Path("/tmp"),
+            standby_interval=4.0,
+        )
+    # Assert
+    assert sleeps == []
+
+
+def test_already_serving_log_names_the_pid() -> None:
+    # Arrange — the operator must be told WHO is serving, so he can decide
+    # whether he wanted that process running at all.
+    acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
+    logs: list[str] = []
+    # Act
+    with (
+        _swap("_acquire", acquire),
+        _swap("_probe_health", lambda *_a, **_k: SERVING),
+        _swap("_read_pid", lambda _p: 745734),
+        _swap("_sleep", _no_sleep),
+        _swap("_log", logs.append),
+    ):
+        std.resolve_startup(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=Path("/tmp"),
+            standby_interval=0.01,
+        )
+    # Assert
+    assert any("already serving: PID 745734" in line for line in logs)
+
+
+def test_already_serving_log_states_the_evidence() -> None:
+    # Arrange — the line must report what the holder ACTUALLY did, rather
+    # than claim a bare "healthy holder" conclusion. That wording is the
+    # false-green the operator watched scroll (incident 2026-07-14).
+    acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
+    logs: list[str] = []
+    # Act
+    with (
+        _swap("_acquire", acquire),
+        _swap("_probe_health", lambda *_a, **_k: SERVING),
+        _swap("_read_pid", lambda _p: 745734),
+        _swap("_sleep", _no_sleep),
+        _swap("_log", logs.append),
+    ):
+        std.resolve_startup(
+            host="127.0.0.1",
+            port=7878,
+            lock_dir=Path("/tmp"),
+            standby_interval=0.01,
+        )
+    # Assert
+    assert any("HTTP 200" in line for line in logs)
+
+
+def test_serving_holder_never_takes_over() -> None:
+    # Arrange — a serving holder must NEVER be killed. Contended once,
     # then frees; the take-over seam must remain untouched.
     sentinel = _sentinel_handle()
     acquire = _FakeAcquire(raises=1, handle=sentinel)
@@ -153,7 +261,7 @@ def test_healthy_holder_never_takes_over() -> None:
     # Act
     with (
         _swap("_acquire", acquire),
-        _swap("_probe_health", lambda *_a, **_k: True),
+        _swap("_probe_health", lambda *_a, **_k: SERVING),
         _swap("_take_over", lambda **kw: takeovers.append(kw) or ""),
         _swap("_heal_untracked_port", lambda **_k: ""),
         _swap("_read_pid", lambda _p: 4242),
@@ -168,7 +276,7 @@ def test_healthy_holder_never_takes_over() -> None:
 
 
 # ---------------------------------------------------------------------------
-# resolve_startup — wedged (unhealthy) holder → TAKE OVER after corroboration
+# resolve_startup — wedged holder → TAKE OVER after corroboration
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +290,7 @@ def test_wedged_holder_takes_over_then_serves() -> None:
     # Act
     with (
         _swap("_acquire", acquire),
-        _swap("_probe_health", lambda *_a, **_k: False),
+        _swap("_probe_health", lambda *_a, **_k: UNREACHABLE),
         _swap("_take_over", lambda **kw: takeovers.append(kw) or ""),
         _swap("_heal_untracked_port", lambda **_k: ""),
         _swap("_read_pid", lambda _p: 4242),
@@ -206,12 +314,12 @@ def test_single_unhealthy_miss_does_not_take_over() -> None:
     # flock may not have finished binding). Threshold is 2.
     sentinel = _sentinel_handle()
     acquire = _FakeAcquire(raises=2, handle=sentinel)
-    health = iter([False, True])
+    health = iter([UNREACHABLE, SERVING])
     takeovers: list[dict] = []
     # Act
     with (
         _swap("_acquire", acquire),
-        _swap("_probe_health", lambda *_a, **_k: next(health, True)),
+        _swap("_probe_health", lambda *_a, **_k: next(health, SERVING)),
         _swap("_take_over", lambda **kw: takeovers.append(kw) or ""),
         _swap("_heal_untracked_port", lambda **_k: ""),
         _swap("_read_pid", lambda _p: 4242),
@@ -234,15 +342,18 @@ def test_single_unhealthy_miss_does_not_take_over() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stop_signal_during_standby_exits_without_binding() -> None:
-    # Arrange — perpetually contended behind a healthy holder; a stop is
-    # flagged on the first standby wait. resolve_startup must return None
-    # (the caller then exits WITHOUT binding) rather than loop forever.
+def test_stop_signal_during_recheck_exits_without_binding() -> None:
+    # Arrange — a SUSPECT holder (so we are inside the bounded re-check
+    # window, the only place that waits at all); a stop is flagged on the
+    # first re-check pause. ``systemctl stop`` / Ctrl-C must be a prompt
+    # clean exit that never binds and never takes over.
     acquire = _FakeAcquire(raises=999, handle=_sentinel_handle())
+    takeovers: list[dict] = []
     # Act
     with (
         _swap("_acquire", acquire),
-        _swap("_probe_health", lambda *_a, **_k: True),
+        _swap("_probe_health", lambda *_a, **_k: UNREACHABLE),
+        _swap("_take_over", lambda **kw: takeovers.append(kw) or ""),
         _swap("_read_pid", lambda _p: 4242),
         _swap("_sleep", _no_sleep),
         _swap("_should_stop", _StopAfter(1)),
@@ -254,19 +365,19 @@ def test_stop_signal_during_standby_exits_without_binding() -> None:
             lock_dir=Path("/tmp"),
             standby_interval=0.01,
         )
-    # Assert — clean standby exit signalled by None.
+    # Assert — clean exit signalled by None.
     assert result is None
 
 
 # ---------------------------------------------------------------------------
-# resolve_startup — unkillable port remnant on the serve path → stand by
+# resolve_startup — unkillable port remnant on the serve path
 # ---------------------------------------------------------------------------
 
 
-def test_unkillable_port_remnant_releases_lock_and_stands_by() -> None:
+def test_unkillable_port_remnant_releases_lock_and_retries() -> None:
     # Arrange — the flock acquires but an untracked remnant holds the port
     # and cannot be freed. Rather than crash-loop into EADDRINUSE, the
-    # loop must RELEASE the flock and stand by (here we then stop).
+    # loop must RELEASE the flock and retry (here we then stop).
     sentinel = _sentinel_handle()
     acquire = _FakeAcquire(raises=0, handle=sentinel)
     releases: list[LockHandle] = []
@@ -343,20 +454,19 @@ def test_signal_guard_restores_prior_sigterm_handler() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _default_take_over — kill holder + clear port + drop stale pidfile
+# _default_take_over — ASK the holder to leave; never destroy it
 # ---------------------------------------------------------------------------
 
 
-def test_take_over_terminates_the_tracked_holder_pid(tmp_path: Path) -> None:
+def test_take_over_gracefully_stops_the_tracked_holder(tmp_path: Path) -> None:
     # Arrange — a live tracked holder named by the pidfile.
     port = 7878
     (tmp_path / f"listen-{port}.pid").write_text("4242\n")
-    term = _TermRecorder()
+    graceful = _GracefulRecorder()
     # Act
     with (
         _swap("pid_alive", lambda _p: True),
-        _swap("_terminate", term),
-        _swap("_clear_port", lambda **_k: PortHealResult()),
+        _swap("_terminate_graceful", graceful),
         _swap("_sleep", _no_sleep),
     ):
         std._default_take_over(
@@ -366,20 +476,22 @@ def test_take_over_terminates_the_tracked_holder_pid(tmp_path: Path) -> None:
             holder_pid=4242,
             grace_secs=1.0,
         )
-    # Assert — SIGTERM-first escalation against the holder PID.
-    assert term.calls == [(4242, False)]
+    # Assert — a graceful SIGTERM against the holder PID.
+    assert graceful.calls == [4242]
 
 
-def test_take_over_removes_the_stale_pidfile(tmp_path: Path) -> None:
-    # Arrange — pidfile present; take-over must drop it.
+def test_take_over_keeps_the_pidfile_intact(tmp_path: Path) -> None:
+    # Arrange — the take-over must NOT unlink the pidfile. The flock (not
+    # the file's existence) is the bind arbiter, and unlinking it lets a
+    # racing standby flock the OLD inode while a fresh acquirer creates a
+    # NEW one — both would then "hold the lock" and both would bind.
     port = 7878
     pidfile = tmp_path / f"listen-{port}.pid"
     pidfile.write_text("4242\n")
     # Act
     with (
-        _swap("pid_alive", lambda _p: False),
-        _swap("_terminate", _TermRecorder()),
-        _swap("_clear_port", lambda **_k: PortHealResult()),
+        _swap("pid_alive", lambda _p: True),
+        _swap("_terminate_graceful", _GracefulRecorder()),
         _swap("_sleep", _no_sleep),
     ):
         std._default_take_over(
@@ -390,18 +502,19 @@ def test_take_over_removes_the_stale_pidfile(tmp_path: Path) -> None:
             grace_secs=1.0,
         )
     # Assert
-    assert not pidfile.exists()
+    assert pidfile.exists()
 
 
-def test_take_over_surfaces_unkillable_port_error(tmp_path: Path) -> None:
-    # Arrange — the port stays held after the kill (unkillable remnant).
+def test_take_over_of_dead_holder_is_a_noop(tmp_path: Path) -> None:
+    # Arrange — the holder is already gone; the kernel released its flock,
+    # so there is nothing to stop and no error to report.
     port = 7878
     (tmp_path / f"listen-{port}.pid").write_text("4242\n")
+    graceful = _GracefulRecorder()
     # Act
     with (
         _swap("pid_alive", lambda _p: False),
-        _swap("_terminate", _TermRecorder()),
-        _swap("_clear_port", lambda **_k: PortHealResult(error="still held by PID 9")),
+        _swap("_terminate_graceful", graceful),
         _swap("_sleep", _no_sleep),
     ):
         error = std._default_take_over(
@@ -411,16 +524,38 @@ def test_take_over_surfaces_unkillable_port_error(tmp_path: Path) -> None:
             holder_pid=4242,
             grace_secs=1.0,
         )
-    # Assert — the loud port error is surfaced to the caller.
-    assert "still held by PID 9" in error
+    # Assert — no signal sent, no error.
+    assert error == "" and graceful.calls == []
+
+
+def test_take_over_surfaces_sigterm_refusal(tmp_path: Path) -> None:
+    # Arrange — the holder ignores SIGTERM. We do NOT escalate; we report
+    # a loud, actionable failure and let the human decide.
+    port = 7878
+    (tmp_path / f"listen-{port}.pid").write_text("4242\n")
+    # Act
+    with (
+        _swap("pid_alive", lambda _p: True),
+        _swap("_terminate_graceful", _GracefulRecorder(died=False)),
+        _swap("_sleep", _no_sleep),
+    ):
+        error = std._default_take_over(
+            host="127.0.0.1",
+            port=port,
+            lock_dir=tmp_path,
+            holder_pid=4242,
+            grace_secs=1.0,
+        )
+    # Assert
+    assert "sac listen restart --force" in error
 
 
 # ---------------------------------------------------------------------------
-# _default_probe_health — REAL loopback socket, bounded
+# _default_probe_health — REAL loopback socket, bounded, three-state
 # ---------------------------------------------------------------------------
 
 
-def test_probe_health_true_for_live_loopback_server() -> None:
+def test_probe_health_serving_for_live_loopback_server() -> None:
     # Arrange — a real HTTP server answering any GET (proves "up").
     import http.server
 
@@ -438,17 +573,26 @@ def test_probe_health_true_for_live_loopback_server() -> None:
     thread.start()
     # Act
     try:
-        healthy = std._default_probe_health("127.0.0.1", port, timeout=1.0)
+        probe = std._default_probe_health("127.0.0.1", port, timeout=1.0)
     finally:
         server.shutdown()
         thread.join(timeout=2.0)
     # Assert
-    assert healthy is True
+    assert probe.health is HolderHealth.SERVING
 
 
-def test_probe_health_false_for_closed_port() -> None:
-    # Arrange — port 1 on loopback refuses (transport failure == down).
+def test_probe_health_unreachable_for_closed_port() -> None:
+    # Arrange — port 1 on loopback refuses. "I asked and got nothing" is
+    # its own state; it is emphatically NOT health.
     # Act
-    healthy = std._default_probe_health("127.0.0.1", 1, timeout=0.2)
+    probe = std._default_probe_health("127.0.0.1", 1, timeout=0.2)
     # Assert
-    assert healthy is False
+    assert probe.health is HolderHealth.UNREACHABLE
+
+
+def test_probe_health_closed_port_is_not_serving() -> None:
+    # Arrange — the ``serving`` predicate is what the loop branches on.
+    # Act
+    probe = std._default_probe_health("127.0.0.1", 1, timeout=0.2)
+    # Assert
+    assert probe.serving is False

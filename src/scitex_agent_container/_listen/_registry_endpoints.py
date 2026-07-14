@@ -24,6 +24,14 @@ For the host:
 2. ``host_config.load().canonical_host()`` (local fallback — what every
    other ``state.db`` write uses for self-identity).
 
+…and then, crucially, a host that names THIS MACHINE is normalised to
+``127.0.0.1`` by :func:`derive_turn_url`. Do NOT "simplify" that away:
+the canonical hostname resolves to ``127.0.1.1`` on stock Debian /
+Ubuntu / WSL while the a2a sidecar binds ``127.0.0.1``, so the
+un-normalised URL was refused for EVERY local consumer, deterministically.
+See :mod:`._local_host` for the evidence and for why we normalise the
+address rather than widen the sidecar's bind to ``0.0.0.0``.
+
 This module is pure-logic on purpose: everything that touches state.db
 is wrapped in ``try/except Exception → None`` so an unreadable registry
 NEVER blocks the ``/agents`` response. The whole point of these fields
@@ -32,6 +40,8 @@ turn_url: null`` and the caller branches accordingly.
 """
 
 from __future__ import annotations
+
+from ._local_host import LOOPBACK_HOST, is_local_host
 
 
 def _instance_endpoint(agent_name: str) -> tuple[int | None, str | None]:
@@ -115,17 +125,50 @@ def resolve_a2a_host(agent_name: str) -> str | None:
         return None
 
 
-def derive_turn_url(host: str | None, port: int | None) -> str | None:
-    """Return ``http://<host>:<port>/v1/turn`` iff both inputs are valid.
+def derive_turn_url(
+    host: str | None,
+    port: int | None,
+    *,
+    local_aliases: frozenset[str] | None = None,
+) -> str | None:
+    """Return a REACHABLE ``http://<host>:<port>/v1/turn``, or ``None``.
 
-    Pure — no I/O. ``None`` for any missing / empty input (the
-    receiving caller branches on ``turn_url is None`` to skip
-    dispatch).
+    A LOCAL host is normalised to ``127.0.0.1`` — the address the a2a
+    sidecar actually binds (``a2a/_server.py``: ``host: str =
+    "127.0.0.1"``). This is the fix for a deterministic outage: the
+    derived URL used to name the machine's own canonical hostname, which
+    on stock Debian / Ubuntu / WSL resolves to ``127.0.1.1``::
+
+        $ getent hosts ywata-note-win
+        127.0.1.1   ywata-note-win.localdomain ywata-note-win
+
+        127.0.0.1:19017        -> OPEN
+        ywata-note-win:19017   -> CONNECTION REFUSED
+
+    ``127.0.1.1`` is a loopback address, but it is a DIFFERENT loopback
+    address from the one the sidecar listens on, so EVERY connection to
+    the derived URL was refused — 100% of the time, for every local
+    consumer. See :mod:`._local_host` for why we normalise the address
+    rather than rebind the sidecar to ``0.0.0.0``.
+
+    A genuinely REMOTE host keeps its name: a cross-host peer is not on
+    our loopback, and rewriting its URL would point every cross-host
+    dispatch back at ourselves.
+
+    ``None`` for any missing / empty input (the receiving caller branches
+    on ``turn_url is None`` to skip dispatch). An unresolvable host is
+    NEVER silently promoted to loopback — that would advertise OUR
+    sidecar as somebody else's endpoint.
+
+    ``local_aliases`` is injectable so the derivation can be exercised
+    without depending on the runner's real hostname.
     """
     if not host:
         return None
     if port is None:
         return None
+    if is_local_host(host, aliases=local_aliases):
+        host = LOOPBACK_HOST
     return f"http://{host}:{port}/v1/turn"
 
 

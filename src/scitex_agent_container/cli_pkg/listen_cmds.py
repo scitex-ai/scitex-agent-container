@@ -181,21 +181,37 @@ def _do_start_listen(
         default_lock_dir,
         release_listen_lock,
     )
-    from .._listen._standby import resolve_startup, standby_signal_guard
+    from .._listen._standby import (
+        ListenTakeoverFailed,
+        resolve_startup,
+        standby_signal_guard,
+    )
 
     lock_dir = default_lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with standby_signal_guard():
-        lock_handle = resolve_startup(host=host, port=port, lock_dir=lock_dir)
+    try:
+        with standby_signal_guard():
+            lock_handle = resolve_startup(host=host, port=port, lock_dir=lock_dir)
+    except ListenTakeoverFailed as exc:
+        # The holder FAILED its health check and could not be freed. The
+        # old code stood by against it forever, printing "standing by
+        # behind healthy holder" while the fleet was cut off from the host
+        # (incident 2026-07-14). An unbounded standby loop hides an outage;
+        # exiting non-zero with the PID and the exact remedy surfaces it.
+        # This is NOT the #640 crash-loop: ordinary contention behind a
+        # SERVING holder still stands by and never reaches here.
+        raise click.ClickException(str(exc)) from exc
     if lock_handle is None:
-        # A stop signal (``systemctl stop`` / Ctrl-C) arrived while
-        # standing by. We never acquired the lock — nothing to release;
-        # exit cleanly without binding.
-        click.echo(
-            "# sac listen: received shutdown signal while standing by "
-            "— exiting without binding",
-            err=True,
-        )
+        # Do NOT bind; exit 0. Either another instance is ALREADY SERVING
+        # (nothing to do — the goal state is already true) or a stop signal
+        # arrived. ``resolve_startup`` has already logged which, naming the
+        # holding PID and the health evidence.
+        #
+        # This used to be an unbounded standby loop that polled a healthy
+        # holder every 4s forever, so an interactive `sac listen` never
+        # returned and the operator had to Ctrl-C and `kill` the holder by
+        # hand to escape it. Standing by bought nothing: a standby holds no
+        # lock and serves no request.
         return
 
     click.echo(f"# sac listen v1 → {host}:{port}", err=True)
