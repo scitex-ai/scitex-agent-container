@@ -134,28 +134,186 @@ companion watchdog closes the gap:
   ~30s (`OnBootSec=30s`, `OnUnitActiveSec=30s`).
 * `sac-listen-health.service` (oneshot) runs
   `sac-listen-health-probe.sh`, which HTTP-probes
-  `http://127.0.0.1:7878/v1/health`. "Up" == *any* HTTP response
-  (incl. a 401/403 under bearer auth); only a transport failure
-  (connection refused / timeout) counts as "down" — the same
-  auth-change-proof liveness contract as
-  `_listen/_restart.py::wait_for_health`.
-* On a down probe the script:
-  1. logs a **LOUD ERROR** to the journal (`journalctl --user -u
-     sac-listen-health`) so the restart is VISIBLE, not silent;
-  2. best-effort emits the anomaly on the operator alarm path
-     (`sac fleet notify blocker`) — this may fail (the listen is the
-     transport for that notify), but is tried so a peer/lead listen or
-     a recovered inbox still surfaces it;
-  3. runs `systemctl --user reset-failed && restart sac-listen.service`
-     (the `reset-failed` clears a tripped `StartLimitBurst` so a
-     transient burst self-heals while a genuine hard-down stays
-     visible).
+  `http://127.0.0.1:7878/v1/health`.
 * The watchdog is itself decoupled — it does NOT `Requires=`/`After=`
   the listen (it must run and alarm precisely when the listen is
   down), and the timer is enabled independently.
-* Tunables via env on the probe: `SAC_LISTEN_HEALTH_URL`,
-  `SAC_LISTEN_UNIT`, `SAC_LISTEN_PROBE_TIMEOUT`, `SAC_LISTEN_NOTIFY`.
-  `--check-only` probes without any side effects (used by tests).
+
+## The health watchdog: how it decides
+
+**Incident 2026-07-14 — the watchdog WAS the outage.** The probe used to
+restart `sac-listen.service` after **ONE** failed `curl` with a **5-second**
+deadline. On a box that idles at **load 60-70** that is not a health check,
+it is a coin flip. Measured against a REAL server that answered `HTTP 200`
+in 8s (healthy, merely *busy*):
+
+```
+probe #1 -> "sac-listen DOWN ... (transport failure)" -> RESTART
+probe #2 -> "sac-listen DOWN ... (transport failure)" -> RESTART
+probe #3 -> "sac-listen DOWN ... (transport failure)" -> RESTART
+TOTAL RESTARTS of a HEALTHY daemon: 3 / 3
+```
+
+The daemon **answered every time**. The probe called it a "transport
+failure" every time, because it could not tell SLOW from DOWN.
+
+And the remedy is catastrophic: **every `sac listen` restart tears down the
+in-memory a2a `Broker`, which deafens EVERY agent's inbox at once.** So a
+slow probe did not merely mis-report — **it manufactured the outage it
+claimed to detect**, then re-probed *during its own restart*, saw a
+genuinely-down daemon, and restarted again. Live journal, 26s apart:
+
+```
+10:57:26  health-probe: ERROR ... incident-class=sac-listen-watchdog
+10:57:26  systemd: Stopping sac listen            <- restart #1 (of a HEALTHY daemon)
+10:57:45  Started sac listen
+10:57:52  health-probe: ERROR: sac-listen DOWN    <- probed DURING its own restart
+10:57:52  watchdog is RESTARTING                  <- restart #2, 26s later
+```
+
+**A probe that mutates is not a probe.** That single 5-second fuse plausibly
+explains the listen churn (3 pids in 7 min), the "registered but deaf"
+agents, the duplicate standby loops, and the auth pool appearing to
+"re-wedge within a minute of a drain" (it was not a wedge — it was a restart
+severing in-flight requests).
+
+Both directions are bugs: never acting hides an outage, over-acting
+**creates** one. The false-RED is the worse of the two, because its remedy
+destroys a healthy thing. So **only a corroborated verdict may restart.**
+
+### 1. Three states, never a bool
+
+Two states cannot express *"I asked and got nothing"* — which is precisely
+what a loaded box produces.
+
+| Verdict | Meaning | Weight |
+|---|---|---|
+| **UP** | It **answered** — any HTTP status `< 500` (see §2) | — |
+| **DOWN** | Connection **REFUSED** — the kernel sent RST: *nothing is listening* | **2** (hard) |
+| **DOWN** | **HTTP 5xx** — it answered, but its health route is erroring. Bound and speaking HTTP, yet not healthy | 1 (soft) |
+| **UNKNOWN** | We asked and got **nothing** (timeout / DNS / reset). Under load this is what a HEALTHY-but-busy daemon looks like | 1 |
+
+**Absence of evidence is not evidence of death.** A timeout is UNKNOWN, and
+`curl`'s `%{time_connect}` is used to say *why*: if the TCP handshake
+completed, the port **is** bound and the daemon has not exited — so the
+evidence line reads "no HTTP answer within 20s (but TCP connected — the port
+IS bound)". That is the difference between *busy* and *gone*.
+
+### 2. Any HTTP status < 500 is "UP" (deliberate — keep it)
+
+A `401`/`403` **proves** the daemon is up: bound, speaking HTTP, and
+auth-gating. Card `sac-listen-restart-healthcheck-bearer` (PR #463) exists
+because gating liveness on `status == 200` re-classified a live,
+401-answering daemon as "down" — a false-RED that killed a **healthy**
+process. Only a *server error* (5xx) or *no answer at all* counts against
+the daemon. Matches `_listen/_holder_health.py`.
+
+### 3. Corroboration — and a failure is a FACT
+
+Accumulated failure weight must reach `SAC_LISTEN_FAIL_THRESHOLD` (3):
+
+* **2 consecutive REFUSALS** (2+2) → act fast. **Crash coverage** — a
+  genuinely dead listen still comes back (incident 2026-06-26).
+* **3 consecutive UNKNOWNs** (1+1+1) → act. **Wedge coverage** — a daemon
+  that cannot answer a trivial route within a 20s deadline, three times
+  running, is not "busy". Corroboration is what **promotes** a repeated
+  UNKNOWN into a DOWN verdict.
+
+**A single success does not wipe the ledger.** That bug — `consecutive = 0`
+reset by any one lucky reply — is this class's *other half*, and a peer just
+fixed it in `sac listen`'s own holder check (PR #673,
+`_listen/_standby_ledger.py`), where a flapping holder oscillated
+`1/2` → "healthy" → `1/2` forever and was **never acted on**. Here a success
+builds a **serving streak**, and the ledger clears only after
+`SAC_LISTEN_RECOVERY_STREAK` (2) consecutive UPs — logged **LOUD**, because
+"the thing I said was broken now looks fine" is exactly the transition an
+operator must never have hidden from them.
+
+Blip once and you are not destroyed; keep failing and you are always
+eventually healed.
+
+### 4. Never restart something that is already restarting
+
+Two **independent** guards, so losing one cannot resurrect the 26s
+double-restart:
+
+* **(a) Post-restart backoff** — after issuing a restart the probe does not
+  probe **at all** for `SAC_LISTEN_RESTART_BACKOFF` (90s). Restart #2 above
+  happened *because* it probed during its own restart. You cannot draw a
+  conclusion about a daemon you are in the middle of restarting.
+* **(b) Unit-state guard** — if systemd reports the unit `activating`, it is
+  already coming back (someone else restarted it, or it crashed and
+  `Restart=always` caught it) → stand down. This holds **even if the state
+  file is lost or corrupt.**
+
+### 5. Rate-limit the remedy
+
+At most `SAC_LISTEN_MAX_RESTARTS` (2) per `SAC_LISTEN_RESTART_WINDOW`
+(600s). Beyond that the watchdog **ALARMS LOUDLY and STOPS restarting**
+(`incident-class=sac-listen-watchdog-giving-up`, exit 1). If 2 restarts did
+not fix it, the 3rd will not either — and an unbounded restarter on a bad
+signal is how you take a fleet down at 3am. A human is needed, and it says
+so instead of thrashing.
+
+### On a corroborated down, the script still
+
+1. logs a **LOUD ERROR** to the journal (`journalctl --user -u
+   sac-listen-health`) so the restart is VISIBLE, not silent;
+2. best-effort emits the anomaly on the **one** operator alarm path
+   (`sac fleet notify blocker`) — this may fail (the listen is the transport
+   for that notify), but is tried so a peer/lead listen or a recovered inbox
+   still surfaces it;
+3. runs `systemctl --user reset-failed && restart sac-listen.service` (the
+   `reset-failed` clears a tripped `StartLimitBurst` so a transient burst
+   self-heals while a genuine hard-down stays visible).
+
+### The ledger
+
+The script is invoked **fresh** every ~30s, so an in-memory counter would
+always read zero and "N consecutive failures" could never be observed. State
+persists at
+`~/.scitex/agent-container/runtime/listen-health.state` (override:
+`SAC_LISTEN_HEALTH_STATE`) as plain `key=value`. It is **never `source`d** —
+a corrupt or hostile state file must not become code, and any value that is
+not a plain integer resets that field to `0` (**fail-safe: no history == do
+not restart**).
+
+```bash
+# What is the watchdog thinking right now?
+~/.config/systemd/user/sac-listen-health-probe.sh --status
+# state_file:      /home/you/.scitex/agent-container/runtime/listen-health.state
+# unit:            sac-listen.service (ActiveState=active)
+# probe_timeout:   20s (connect 5s)
+# failure_weight:  0 / 3  (weight required to restart)
+# serving_streak:  0 / 2  (consecutive UPs that clear the ledger)
+# restarts_in_600s: 0 / 2
+# last_restart:    never
+```
+
+### Tunables (env on the probe)
+
+| Var | Default | Meaning |
+|---|---|---|
+| `SAC_LISTEN_HEALTH_URL` | `http://127.0.0.1:7878/v1/health` | what to probe |
+| `SAC_LISTEN_UNIT` | `sac-listen.service` | what to restart |
+| `SAC_LISTEN_PROBE_TIMEOUT` | `20` | total curl deadline, s. **Was 5** — the fuse that caused the incident. The live daemon answers in **~30 ms**, so 20s is ~600× the median and still catches a wedge. |
+| `SAC_LISTEN_CONNECT_TIMEOUT` | `5` | TCP-connect deadline, s |
+| `SAC_LISTEN_FAIL_THRESHOLD` | `3` | failure weight required to act |
+| `SAC_LISTEN_RECOVERY_STREAK` | `2` | consecutive UPs that clear the ledger |
+| `SAC_LISTEN_RESTART_BACKOFF` | `90` | no-probe window after a restart, s |
+| `SAC_LISTEN_MAX_RESTARTS` | `2` | restarts allowed per window |
+| `SAC_LISTEN_RESTART_WINDOW` | `600` | rate-limit window, s |
+| `SAC_LISTEN_NOTIFY` | `1` | `0` skips `sac fleet notify` (tests / non-lead hosts) |
+| `SAC_LISTEN_HEALTH_STATE` | `~/.scitex/agent-container/runtime/listen-health.state` | ledger path |
+
+Modes: `--check-only` (pure observation — **zero** side effects, writes no
+state), `--status` (dump the ledger), `--reset` (clear it).
+
+Behaviour is pinned by
+`tests/integration/test_sac_listen_health_watchdog_decision.py`, which drives
+the **real** script against **real** HTTP servers on real ephemeral sockets
+(slow / refusing / 5xx-ing / 401-ing / dying) and asserts the decision each
+time. No mocks; nothing there ever touches port 7878.
 * The companion `_listen/_single_instance.py` flock guard (task
   #26 sub (1)) ensures `Restart=on-failure` can't double-bind the
   port. The kernel releases the flock on every dirty exit, so the

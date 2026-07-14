@@ -38,6 +38,30 @@ os.environ["COVERAGE_FILE"] = str(_COVERAGE_DIR / ".coverage")
 # tests/scitex_agent_container/test__build_priority.py.
 os.environ.setdefault("SAC_BUILD_NO_NICE", "1")
 
+# --- NEVER let a test drive the LIVE listen watchdog ----------------------
+# `scripts/systemd/sac-listen-health-probe.sh` persists a FAILURE LEDGER at
+#   $HOME/.scitex/agent-container/runtime/listen-health.state
+# because systemd invokes it FRESH every ~30s, so counting CONSECUTIVE
+# failures is only possible across a file.
+#
+# A test that shells the probe without redirecting that path writes to the
+# REAL ledger. On the host that is not a dirty-state annoyance, it is an
+# OUTAGE: a test leaving `failures=2` behind means the next real timer tick
+# can reach the threshold and RESTART the real `sac listen` — which tears
+# down the in-memory a2a Broker and DEAFENS EVERY AGENT'S INBOX AT ONCE. The
+# test suite would cause the exact incident the watchdog exists to prevent
+# (2026-07-14). CI cannot see this — there is no fleet on a runner — which
+# is precisely why the floor belongs here and not in a single test file.
+#
+# Force-set (not setdefault): a hard floor that holds even for code paths
+# that bypass fixtures. Individual probe suites additionally give each test
+# its own ledger so they cannot bleed a failure count into one another.
+_LISTEN_HEALTH_DIR = _PROJECT_ROOT / "tests" / "results" / "listen-health"
+_LISTEN_HEALTH_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["SAC_LISTEN_HEALTH_STATE"] = str(_LISTEN_HEALTH_DIR / "session.state")
+# And a probe run by a test must never page the operator.
+os.environ["SAC_LISTEN_NOTIFY"] = "0"
+
 
 def _ensure_subprocess_coverage_shim() -> None:
     """Drop an idempotent ``.pth`` shim in site-packages so every child
