@@ -94,8 +94,12 @@ def refresh_quota_cache(
 
     Returns:
         ``{"cache_path": str, "written": bool, "ok": int, "failed": int,
-           "results": [{"name", "short", "h5", "d7", "ttl_h", "error"}]}``.
-        ``error`` is ``None`` on success. Never raises.
+           "results": [{"name", "short", "h5", "d7", "ttl_h",
+                        "reset_at_5h", "reset_at_7d", "error"}]}``.
+        ``error`` is ``None`` on success. The two ``reset_at_*`` stamps
+        are ISO-8601 strings (or ``None`` when upstream omits them) and
+        are what lets the picker tell expiring quota from a reserve —
+        see :func:`_creds._quota_rank.is_expiring_7d`. Never raises.
     """
     from .._state.account_store import list_accounts
 
@@ -125,6 +129,17 @@ def refresh_quota_cache(
                 "h5": row["h5"],
                 "d7": row["d7"],
                 "ttl_h": row["ttl_h"],
+                # WHEN each window resets — not just how full it is. The
+                # picker cannot tell "90%, resets in 6 minutes" (spend it,
+                # it is about to be deleted) from "90%, resets in 6 days"
+                # (a reserve, leave it) without this. The usage API has
+                # always returned it; we simply dropped it here, so the
+                # ranker was structurally unable to see it and the fleet
+                # binned the tail of every 7d window. Optional (None when
+                # upstream omits it) — every reader degrades to the
+                # reset-unaware behaviour rather than guess.
+                "reset_at_5h": row["reset_at_5h"],
+                "reset_at_7d": row["reset_at_7d"],
             }
             ok += 1
         else:
@@ -182,6 +197,8 @@ def _refresh_one(
         "h5": None,
         "d7": None,
         "ttl_h": None,
+        "reset_at_5h": None,
+        "reset_at_7d": None,
         "error": None,
     }
     creds_path = store / name / _CREDENTIALS_FILENAME
@@ -219,7 +236,20 @@ def _refresh_one(
     row["h5"] = float(h5)
     row["d7"] = float(d7)
     row["ttl_h"] = ttl_h
+    # Reset stamps are OPTIONAL, unlike h5/d7/ttl_h above: a response that
+    # omits them still yields a usable entry (the picker just degrades to
+    # its reset-unaware ranking for that account). Making them required
+    # would let a single upstream field change blank the whole cache.
+    row["reset_at_5h"] = _iso_or_none(usage.get("reset_at_5h"))
+    row["reset_at_7d"] = _iso_or_none(usage.get("reset_at_7d"))
     return row
+
+
+def _iso_or_none(value: Any) -> str | None:
+    """Pass through a non-empty ISO-8601 string; anything else → ``None``."""
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _is_pct(value: Any) -> bool:
