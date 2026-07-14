@@ -151,6 +151,18 @@ holds no subscriber for it. The beat gives the client bytes; the read deadline
 turns their absence into a reconnect. Reconnecting is cheap and idempotent (the
 stream replays undelivered rows on connect), so err toward re-dialling.
 
+**Deploy order — restart `sac listen` when you ship this.** The two halves are
+independent binaries (the host daemon; the in-SIF adapter), so they can be
+skewed, and only one skew is noisy:
+
+| skew | behaviour |
+|---|---|
+| new listen + **old** adapter | fine. The old adapter ignores `:` comment frames as content; the beat is simply unused. |
+| **new** adapter + old listen | the adapter gets no beats, so it re-dials every `SAC_MCP_SSE_READ_TIMEOUT_S` (~60s). Harmless and self-healing — it re-subscribes each time and undelivered rows are replayed, so **no message is lost** — but it looks like flapping in the logs until the daemon is restarted. |
+
+So restart the daemon (`systemctl --user restart sac-listen.service`) at or
+before the SIF rebuild that carries the new adapter, and the skew never appears.
+
 Fail-loud: when the broker runs in a SIF and ``SAC_LISTEN_BASE_URL`` is
 unset, ``sac agents start`` raises ``InSifBrokerError`` (apptainer
 runtime forgot to inject it). Never silently downgrades to "skip the
