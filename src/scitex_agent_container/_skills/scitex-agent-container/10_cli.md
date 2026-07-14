@@ -16,9 +16,39 @@ sac agents start <name|yaml>            # Launch one (or more) agents (dir-as-SS
 sac agents start <name> --foreground    # Stream stdio + block until the turn finishes
 sac agents stop <name|yaml>             # Stop a running agent (graceful SIGTERM → SIGKILL after 5 s)
 sac agents restart <name>               # Stop then start, preserving session_id resume
+sac agents rename <old> <new> --dry-run # Show every location a rename would touch (exact; changes nothing)
+sac agents rename <old> <new> -y        # Rename EVERYWHERE, atomically (rolls back on any failure)
 sac agents delete <name> -y             # Stop, deregister, and remove the agent's dir
 sac db clean                            # Sweep dead instances from state.db (replaces legacy registry clean)
 ```
+
+### `rename` — why it is a verb and not a `mv`
+
+An agent writes its own name into six places on disk plus the shared task
+board. `rename` moves all of them together, or none:
+
+| # | Location |
+|---|---|
+| 1 | spec dir — `~/.scitex/agent-container/agents/<name>/` |
+| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, `SCITEX_AGENT_CONTAINER_STATE_DB`, and `SCITEX_TODO_AGENT_ID` |
+| 3 | overlay dir — `.../containers/overlays/<name>/` |
+| 4 | runtime + state dir — `.../runtime/<name>/` (bound into the container at `/state/<name>`) |
+| 5 | registry entry — `.../runtime/registry/<name>.json` |
+| 6 | `state.db` — every table that keys on the agent name (identity **and** history) |
+| 7 | **task cards** — reassigned via scitex-todo's own `reassign_task` |
+
+Step 7 is the reason the verb exists. The board knows an agent by
+`SCITEX_TODO_AGENT_ID`. Change it without migrating the cards and every card
+that agent owns is **orphaned** — it can no longer see its own work, and
+nothing tells you.
+
+The agent must be **stopped** (renaming a live agent's workdir and overlay out
+from under it is unsafe); `rename` refuses otherwise and prints the `stop`
+command. Every step records its inverse, so any failure — including a partial
+card migration — rolls the whole rename back.
+
+`$SCITEX_AGENT_CONTAINER_ROOT` overrides the root all seven locations derive
+from.
 
 ## Inspection
 

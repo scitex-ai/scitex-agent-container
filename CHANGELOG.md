@@ -6,6 +6,49 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`sac agents rename <old> <new>` — the rename you cannot do safely by hand.**
+  An agent writes its own name into six places on disk *plus* the shared task
+  board, and the one a human misses is silent. The worst is the board identity:
+  `SCITEX_TODO_AGENT_ID` is how scitex-todo knows the agent, so changing it
+  without migrating the cards **orphans every card that agent owns** — it can no
+  longer see its own work, and nothing tells you. Measured on the live board
+  before this verb existed: `scitex-todo` owned **158 cards** (84 of them scoped
+  `agent:scitex-todo`); a hand rename would have stranded all of them.
+
+  `rename` moves all seven together, or none:
+
+  1. spec dir `agents/<name>/`
+  2. the spec's own self-references — `metadata.labels.project` / `.purpose`,
+     `spec.workdir`, the `--overlay` path, `SCITEX_AGENT_CONTAINER_STATE_DB`,
+     `SCITEX_TODO_AGENT_ID`, and any identity-bearing bind
+  3. overlay dir `containers/overlays/<name>/`
+  4. runtime + state dir `runtime/<name>/` (bound at `/state/<name>`)
+  5. registry entry `runtime/registry/<name>.json`
+  6. `state.db` — 16 name columns + 2 path columns, in one transaction
+  7. **task cards**, via scitex-todo's own `reassign_task`
+
+  Properties: **preflight refuses a running agent** (physical evidence — a live
+  pid, not a row that merely claims to be open — so a stale row cannot wedge a
+  legitimate rename, and a wedged-but-alive agent cannot be renamed out from
+  under itself); **atomic** — every step records its inverse and any failure,
+  including a *partial* card migration, rolls the whole rename back; a
+  postcondition step then proves nothing is left under the old name.
+  `--dry-run` prints every location exactly and touches nothing.
+
+  The spec is edited by **loading it and changing the known fields** (ruamel
+  round-trip, so operator comments and key order survive), never by a regex over
+  the YAML — and the rewrite re-parses its own output and refuses to write a spec
+  whose semantic diff is anything other than the changes it planned.
+
+  sac **calls** scitex-todo's `reassign_task`; it does not reimplement it. The
+  board belongs to scitex-todo, and a forked copy of another package's store
+  logic drifts into a worse version of it.
+
+- `SCITEX_AGENT_CONTAINER_ROOT` — override the sac install root that the rename's
+  seven locations all derive from. Resolved at call time.
+
 ## [0.21.16] — 2026-07-14
 
 **⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and
