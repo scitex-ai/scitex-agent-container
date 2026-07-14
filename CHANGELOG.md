@@ -6,6 +6,61 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The account picker threw away ~10% of a 7-day Max-20x window, every cycle.**
+  `sac accounts list` at the time of the report:
+
+  ```
+  wyusuuke-gmail-com   5h 28%   7d 67%  (resets in 5d 14h)
+  ywata1989-gmail-com  5h  0%   7d 90%  (resets in 9h06m)
+  ywatanabe-scitex-ai  5h  0%   7d 90%  (resets in 6 MINUTES)   <- 10% about to evaporate
+  ```
+
+  The picker sent every agent to `wyusuuke` (67%), so `ywatanabe-scitex-ai`'s
+  remaining **10% of a 7-day window was deleted unused six minutes later**
+  (operator: 「毎回 90%で10%捨ててる」 — we bin it every cycle).
+
+  Root cause: `_creds._quota_rank.pick_ranked` **had no notion of when a window
+  resets.** It scored "90%, resets in 6 minutes" and "90%, resets in 6 days"
+  *identically* and avoided both — but they are opposites. 90% with 6 days left
+  is a genuine reserve (avoiding it is correct); 90% with 6 minutes left is
+  **use-it-or-lose-it**, and avoiding it burns the capacity for nothing.
+
+  The reset time was not merely unused — it was **unreachable**. The usage API
+  returns `resets_at` for both windows and `_account.claude_usage` already parsed
+  it, but `_account.quota_cache_refresh` **dropped it when writing the aggregate
+  `quota-cache.json` the picker reads**, so the ranker was structurally unable to
+  see it. (`sac accounts list` renders "resets in …" from a *different* cache —
+  the per-account `usage.json` — which is why it was visible to the human and
+  invisible to the picker.)
+
+  Fixed in three parts:
+  - `quota_cache_refresh` now persists `reset_at_5h` / `reset_at_7d` into the
+    aggregate cache (additive; entries stay valid when upstream omits them).
+  - `_quota_rank.is_expiring_7d` classifies a near-capped window whose reset is
+    imminent as **expiring, not scarce**: it no longer suffers the `near_capped`
+    demotion, and its rendezvous-hash weight is boosted so the fleet spends
+    vanishing capacity before a reserve that persists.
+  - `_pick_healthy` applies the same rule to the `preferred` account, so an agent
+    is no longer rotated *off* the very account whose quota is about to evaporate.
+
+  On the table above the expiring account goes from **0 of 60 agents to 37 of 60**,
+  while the 9h-away reserve stays correctly avoided (**0 of 60**) and the fleet
+  still spreads (23 of 60 to `wyusuuke`).
+
+  Bounded against a 429 (the risk of routing onto a 90% account): the 5h window
+  remains the supreme, untouched gate; an account with <2% of its weekly window
+  left is never treated as expiring capacity; the horizon is 2h, so worst-case
+  "stuck at the cap" exposure is short; the preference is a spread *weight*, not
+  a hard tier, so a bulk restart cannot stack the whole fleet onto a window with
+  10% left; and a 429 at these usage levels already classifies as `Mode.ROTATE`
+  (`_account.rate_limit_classifier`), which rotates the agent to a *different*
+  healthy account — `rotate_account` excludes the current one, so it cannot
+  thrash back onto the drained account.
+
+  An old cache with no reset stamps degrades to exactly the previous behaviour.
+
 ## [0.21.16] — 2026-07-14
 
 **⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and

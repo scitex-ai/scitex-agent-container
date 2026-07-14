@@ -27,7 +27,10 @@ Scope (Phase 1, deliberately small)
   axes carry different rules (see :mod:`._quota_rank`): an account at
   ≥ ~95% of its **5h** window is *blocked-now* (429s immediately) and
   is avoided while any fresh alternative is unblocked; an account at
-  ≥ ~90% **7d** is *near-capped* (the existing avoidance). The
+  ≥ ~90% **7d** is *near-capped* (the existing avoidance) — UNLESS its
+  7d window resets within the hour(s), in which case the remainder is
+  EXPIRING, not scarce, and we spend it rather than let it be deleted
+  (:func:`._quota_rank.is_expiring_7d`). The
   ``preferred`` account is kept only when it is fresh AND not
   blocked-now AND not near-capped, to minimise churn. Otherwise the
   best tier of fresh candidates competes: with a ``spread_key`` (the
@@ -73,9 +76,12 @@ from .._account.creds_sync import (
 from .._state.account_store import _store_path
 from ._quota_rank import (
     BLOCKED_5H_PCT,
+    EXPIRING_7D_HORIZON_S,
     NEAR_CAP_7D_PCT,
     account_5h_usage,
+    account_7d_reset_at,
     account_7d_usage,
+    is_expiring_7d,
     pick_ranked,
 )
 
@@ -259,9 +265,11 @@ def pick_healthy_account(
     now: float | None = None,
     usage_5h: Mapping[str, float] | None = None,
     usage_7d: Mapping[str, float] | None = None,
+    reset_7d: Mapping[str, object] | None = None,
     quota_cache_path: Path | str | None = None,
     near_cap_pct: float = _NEAR_CAP_PCT,
     blocked_5h_pct: float = _BLOCKED_5H_PCT,
+    expiring_horizon_s: float = EXPIRING_7D_HORIZON_S,
     spread_key: str | None = None,
 ) -> str:
     """Return the stored-account name an agent should run on right now.
@@ -311,10 +319,17 @@ def pick_healthy_account(
         :func:`._quota_rank.account_5h_usage` /
         :func:`._quota_rank.account_7d_usage`. A missing key / missing
         cache reads as "unknown" → per-account degradation.
+    reset_7d
+        Test-injectable per-account 7d-window reset stamp (name → ISO
+        string or epoch seconds). ``None`` (the boot path) reads
+        ``reset_at_7d`` from the same cache. This is what separates
+        "90%, resets in 6 minutes" (expiring — spend it, it is about to
+        be deleted) from "90%, resets in 6 days" (a reserve — leave
+        it). Unknown → the reset-unaware behaviour, unchanged.
     quota_cache_path
         Override the quota-cache path (passed through to
         :func:`_account.quota_cache.read_quota_entry`). Ignored when
-        the corresponding ``usage_*`` override is given.
+        the corresponding ``usage_*`` / ``reset_7d`` override is given.
     near_cap_pct
         The 7d % at/above which an account is "near-capped — avoid
         unless no better fresh alternative". Defaults to
@@ -323,6 +338,12 @@ def pick_healthy_account(
         The 5h % at/above which an account is "blocked-now — cannot
         serve requests until its 5h window resets". Defaults to
         :data:`._quota_rank.BLOCKED_5H_PCT` (95). Exposed for tests.
+    expiring_horizon_s
+        Seconds-to-7d-reset at/below which a near-capped account's
+        remainder counts as EXPIRING rather than scarce. Defaults to
+        :data:`._quota_rank.EXPIRING_7D_HORIZON_S` (2h) — the knob that
+        bounds how long an agent could sit at the cap if it drains the
+        remainder before the reset. Exposed for tests / tuning.
     spread_key
         Fleet load-balancing key — pass the AGENT NAME so concurrent
         boots of *different* agents spread across the eligible accounts
@@ -403,6 +424,17 @@ def pick_healthy_account(
         )
         for h in fresh
     }
+    # WHEN each 7d window resets — the axis that tells quota which is
+    # about to be DELETED from quota which is a reserve. Unknown for a
+    # cache written before the populator persisted it: every consumer
+    # then degrades to the reset-unaware ranking (see is_expiring_7d).
+    r7: dict[str, float | None] = {
+        h.name: account_7d_reset_at(
+            h.name, reset_7d=reset_7d, quota_cache_path=quota_cache_path
+        )
+        for h in fresh
+    }
+    probe_now = now if now is not None else time.time()
 
     # 1. Preferred wins when it is fresh AND not blocked-now (5h) AND
     #    not near-capped (7d); unknown quota keeps it (degrade to
@@ -414,22 +446,40 @@ def pick_healthy_account(
             pref_5h = u5.get(pref)
             pref_7d = u7.get(pref)
             blocked_now = pref_5h is not None and pref_5h >= blocked_5h_pct
-            near_capped = pref_7d is not None and pref_7d >= near_cap_pct
+            # An EXPIRING window is not a scarce one — the same rule the
+            # ranking applies (RULE 1). Without this an agent pinned to
+            # the very account whose quota is about to evaporate would be
+            # rotated OFF it minutes before the reset, which is the waste
+            # this change exists to stop, just via the other code path.
+            near_capped = (
+                pref_7d is not None
+                and pref_7d >= near_cap_pct
+                and not is_expiring_7d(
+                    pref_7d,
+                    r7.get(pref),
+                    probe_now,
+                    horizon_s=expiring_horizon_s,
+                )
+            )
             if not blocked_now and not near_capped:
                 return pref
 
     # 2. Otherwise the conditional ranking picks among the fresh set —
-    #    unblocked beats 5h-blocked, headroom beats near-capped, and a
-    #    spread_key load-balances the winning tier across the fleet.
-    #    Quota is a preference, not a hard gate: an all-blocked fleet
-    #    still returns the least-bad fresh account.
+    #    unblocked beats 5h-blocked, headroom beats near-capped, expiring
+    #    capacity is spent before a persisting reserve, and a spread_key
+    #    load-balances the winning tier across the fleet. Quota is a
+    #    preference, not a hard gate: an all-blocked fleet still returns
+    #    the least-bad fresh account.
     return pick_ranked(
         [h.name for h in fresh],
         u5,
         u7,
+        reset_7d=r7,
+        now=probe_now,
         spread_key=spread_key,
         near_cap_pct=near_cap_pct,
         blocked_5h_pct=blocked_5h_pct,
+        expiring_horizon_s=expiring_horizon_s,
     )
 
 

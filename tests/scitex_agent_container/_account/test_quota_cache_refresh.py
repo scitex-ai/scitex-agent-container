@@ -97,8 +97,61 @@ def test_refresh_entry_carries_h5_d7_and_ttl(tmp_path: Path) -> None:
         now=_NOW,
     )
     entry = read_quota_entry(account="ywatanabe-scitex-ai", cache_path=cache)
+    # Assert — the reset stamps are part of the entry shape now (None here:
+    # this fetcher's response omits them, which must stay a usable entry).
+    assert entry == {
+        "short": "ywatanabe",
+        "h5": 19.0,
+        "d7": 3.0,
+        "ttl_h": 7.5,
+        "reset_at_5h": None,
+        "reset_at_7d": None,
+    }
+
+
+def test_refresh_persists_the_7d_reset_stamp_for_the_picker(tmp_path: Path) -> None:
+    # Arrange — the usage API returns `resets_at` for both windows and
+    # `claude_usage` already parses it into reset_at_5h / reset_at_7d. The
+    # populator used to DROP it here, which left the account picker unable
+    # to tell expiring quota from a reserve (it binned ~10% of every 7d
+    # window). It must round-trip into the cache the picker reads.
+    store = tmp_path / "store"
+    _make_account(store, "ywatanabe-scitex-ai", ttl_hours=7.5)
+    cache = tmp_path / "quota-cache.json"
+    usage = _ok(0.0, 90.0)
+    usage["reset_at_7d"] = "2026-07-14T09:00:00+00:00"
+    fetch = _fetcher({"ywatanabe-scitex-ai": usage})
+    # Act
+    refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
+    )
+    entry = read_quota_entry(account="ywatanabe-scitex-ai", cache_path=cache)
     # Assert
-    assert entry == {"short": "ywatanabe", "h5": 19.0, "d7": 3.0, "ttl_h": 7.5}
+    assert entry is not None and entry["reset_at_7d"] == "2026-07-14T09:00:00+00:00"
+
+
+def test_refresh_keeps_entry_usable_when_upstream_omits_reset(tmp_path: Path) -> None:
+    # Arrange — the reset stamps are OPTIONAL, unlike h5/d7/ttl_h: a response
+    # without them must still yield a cached entry (the picker just degrades
+    # to its reset-unaware ranking), never blank the account.
+    store = tmp_path / "store"
+    _make_account(store, "a-gmail-com", ttl_hours=3.0)
+    cache = tmp_path / "quota-cache.json"
+    fetch = _fetcher({"a-gmail-com": _ok(5.0, 1.0)})
+    # Act
+    result = refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
+    )
+    # Assert
+    assert result["ok"] == 1
 
 
 def test_refresh_reports_ok_count(tmp_path: Path) -> None:
