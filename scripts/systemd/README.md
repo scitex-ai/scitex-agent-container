@@ -23,6 +23,63 @@ broker, lead inbox. Before this unit landed, the listen was
 operator-started ad-hoc and could be found DOWN with nothing
 restarting it.
 
+> **THE HOST HAS ALREADY PICKED: this hand-maintained unit.** It was
+> installed 2026-07-05 14:38 (`Restart=always`) and has supervised the
+> daemon ever since — `NRestarts=0`. **Do NOT run
+> `scitex-dev service ensure sac.listen`.** It does not adopt this unit:
+> scitex-dev derives the unit name from the job name VERBATIM, so it
+> installs a SECOND unit, `sac.listen.service` (a DOT), beside the
+> `sac-listen.service` (a HYPHEN) already running. systemd treats them as
+> unrelated, and you get exactly the double-unit fight this file warns
+> about below — with every lost round destroying the in-memory Broker and
+> deafening every agent's inbox.
+>
+> The `sac.listen` JobSpec was therefore REMOVED from `provide_jobs()`
+> (a test now pins its absence). PR #543 added it on the premise that
+> listen "had NO SUPERVISOR" — false: this unit was created the same day
+> that PR was opened, and the PR then sat 9 days and merged unre-checked.
+> Read the rest of this section before re-federating anything.
+>
+> That verb resolves the name from the `scitex_dev.jobs` federation and
+> then — in ONE idempotent step — writes the `.service` unit,
+> `daemon-reload`s, and `enable --now`s it (falling back to a respawn
+> keep-alive loop under `~/.scitex/<pkg>/runtime/` on hosts with no
+> reachable systemd `--user` manager). It is the purpose-built consumer
+> for `kind="service"`; `scitex-dev ecosystem systemd install` is the
+> *timer* installer and does not start a service.
+>
+> This is an ALTERNATIVE activation path to the hand-maintained unit
+> below — the two are NOT meant to run simultaneously (both would try
+> to bind `127.0.0.1:7878`; the flock-backed single-instance guard
+> stops a double *process*, but a double *unit* still fights over
+> restarts). Pick ONE:
+>
+> * **`scitex-dev service ensure sac.listen`** — federated unit, one
+>   idempotent command, single source of truth with the rest of the
+>   ecosystem's jobs, and the only path that also works on a host with
+>   no systemd `--user` manager. Covers **every** non-`systemctl stop`
+>   exit via `Restart=always` — including the CLEAN 0-exit shutdown
+>   that is how this daemon has actually been lost in production
+>   (2026-07-05, and again 2026-07-14), with nothing bringing it back.
+>   Does **not** detect a wedged-but-alive process.
+> * `scripts/systemd/install-sac-listen.sh` — hand-maintained unit plus
+>   the `sac-listen-health.timer` wedge-detection watchdog, i.e. hang
+>   coverage on top of crash coverage. Choose this if wedge detection
+>   is worth hand-maintaining the unit; note the probe restarts
+>   `sac-listen.service` **by name**, so it does not compose as-is with
+>   the federated `sac.listen.service` unit.
+>
+> Wedge detection has no equivalent in `scitex_dev.jobs` yet
+> (`JobSpec.watchdog_sec` drives systemd's `sd_notify` watchdog, which
+> `sac listen` does not implement — see the `watchdog_sec` note in
+> `_jobs_plugin.py`). Closing that gap in the federated path — a
+> health-probe primitive keyed on an HTTP endpoint — is the follow-up
+> that would make the federated unit a strict superset.
+>
+> If you switch from the hand-maintained unit to the federated one (or
+> vice versa), `systemctl --user disable --now` the one you are
+> retiring first.
+
 ```bash
 # Install BOTH the listen unit and its health watchdog (preferred —
 # copies units + probe script, daemon-reload, enable --now, status):

@@ -79,17 +79,33 @@ Reads `session_id` from the per-agent state dir and shells out to `claude --resu
 
 ## sac listen (HTTP/JSON control plane)
 
+`listen` is a **noun** — a command group like `agents` / `db` / `host`. Its
+four verbs are the whole lifecycle:
+
 ```bash
-sac listen                                # Boot the local control-plane server (loopback only by default)
-sac listen --bind 127.0.0.1:7878          # Custom bind
-sac listen --print-token                  # Echo the bearer token & exit
+sac listen start                          # Boot the control-plane daemon (loopback only by default)
+sac listen start --bind 127.0.0.1:7979    # Custom bind
+sac listen start --print-token            # Echo the bearer token & exit (does not boot)
 sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
+sac listen stop                           # Stop the daemon (idempotent — exit 0 if already down)
+sac listen stop --force                   # SIGKILL the daemon + any wedged port holder immediately
+sac listen stop --json                    # Machine-readable result envelope
 sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
 sac listen restart --force                # SIGKILL the daemon + any wedged port holder immediately
 ```
 
-`restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis.
+Options may be given on the verb (`sac listen start --bind …`) or on the
+group (`sac listen --bind … start`); the verb wins.
+
+`restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis. `stop` is `restart`'s stop half on its own — they share one implementation (`_listen._stop.stop_listen`), so they cannot drift.
+
+> **DEPRECATED — bare `sac listen`.** It still BOOTS the daemon (the systemd
+> unit, `sac listen restart`'s respawn, and the systemd JobSpec all still
+> invoke it bare), but it now prints a deprecation warning to stderr. Use
+> **`sac listen start`**. The bare form is removed in **v0.23.0**; every
+> launcher must move to `sac listen start` before then. Booting a daemon off a
+> bare noun is a footgun — a typo or a stray tab-complete starts a server.
 
 When running, exposes (bearer-token authenticated, except the public health route):
 

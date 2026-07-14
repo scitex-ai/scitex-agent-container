@@ -49,13 +49,210 @@ versioning follows [SemVer](https://semver.org/).
 - `SCITEX_AGENT_CONTAINER_ROOT` — override the sac install root that the rename's
   seven locations all derive from. Resolved at call time.
 
-## [0.21.16] — 2026-07-14
+## [0.21.17] — 2026-07-14
+
+### Added
+
+- **`sac listen start` and `sac listen stop` — `listen` is a NOUN, so give it
+  verbs.** `listen` is a command group like `agents` / `db` / `host`, but bare
+  `sac listen` *booted a daemon*. Every other noun group in this CLI prints help
+  when invoked bare; this one silently became a server on 7878 — so a typo or a
+  stray tab-complete started one. That is the anti-pattern the scitex CLI
+  convention names outright (§1: *"trailing noun, no action: **never**"*).
+
+  The group already had `restart` and `status` (the latter easy to miss — it was
+  absent from the help's example block). It now has the coherent set:
+
+  ```bash
+  sac listen start      # boot the daemon (the explicit form of bare `sac listen`)
+  sac listen stop       # NEW — idempotent, like `systemctl stop`
+  sac listen restart    # unchanged
+  sac listen status     # unchanged, now discoverable in `-h`
+  ```
+
+  `start`, not `serve`: the §1d catalog reserves `start`/`stop`/`restart` for
+  *daemonized* lifecycle (a background process with a pid) and gives `serve` to
+  foreground, browser-facing surfaces under a `gui` group. This daemon writes a
+  flock-backed pidfile that `stop`/`restart`/`status` all address by pid, and a
+  systemd unit supervises it. `start` also keeps SSOT with `sac agents start`.
+
+  Options work on the verb (`sac listen start --bind …`) or on the group
+  (`sac listen --bind … start`); the verb wins.
+
+  `stop` is `restart`'s stop half on its own — both now call one implementation
+  (`_listen._stop.stop_listen`), so the two verbs cannot drift. It inherits the
+  full self-heal: SIGTERM → grace → SIGKILL, verify-dead *before* clearing the
+  pidfile, then force-kill a wedged remnant the pidfile never named (the "curl
+  hangs forever" case). `--json` emits a machine-readable envelope.
+
+### Deprecated
+
+- **Bare `sac listen` (boot-by-default) — removal in v0.23.0.** It **still
+  boots**, and deliberately so. Three launchers still invoke it bare:
+
+  1. `scripts/systemd/sac-listen.service` — `ExecStart=/usr/bin/env sac listen`
+  2. `_listen/_restart.py` — the respawn argv, `[sac_binary(), "listen"]`
+  3. `_jobs_plugin.py` — the `sac.listen` systemd JobSpec (#543), `command="sac listen"`
+
+  `sac listen` *is* the host control plane on 127.0.0.1:7878, and the whole fleet
+  loses host access when it is down — flipping the bare form to show-help would
+  take it offline. So this is phase W of the deprecation ladder: **warn and
+  forward**, never break.
+
+  Bare boot now prints a stderr warning naming `sac listen start` and the removal
+  version. **Follow-up (required before v0.23.0):** move all three launchers to
+  `sac listen start` — but only once a `sac` carrying the `start` verb is actually
+  *deployed* everywhere, or a respawn/JobSpec would die on "No such command" and
+  the control plane would never come back.
+### Fixed
+
+- **`a2a_send` reported SUCCESS for a message that reached nobody — agents were
+  silently swallowing each other's messages.** Reported by the `grant` agent,
+  who measured it live: of four peers that `a2a_peers` listed as running (pid,
+  port, start time, group `active`), two delivered and two had
+  `delivered_subscriber_count=0`. The tool *did* put "reached no live
+  subscriber" in its response **body** — but returned it as a plain
+  `list[TextContent]`, and the MCP low-level server stamps `isError=False` on
+  anything a handler returns that way. So the protocol classified the call as
+  successful. In grant's words: *"Had it returned a bare 200, I would have
+  believed the message landed and moved on. How many agent-to-agent messages
+  have been swallowed this way? Nobody would know."*
+
+  A 0-subscriber send is now an **MCP error** (`isError=True`), so a caller
+  cannot mistake it for delivery. It keeps the structured detail — target,
+  machine-readable `code`, subscriber count — and adds what to do instead.
+  Notably it does **not** tell you to re-send (sac persists to
+  `channel_events` *before* it publishes, and replays undelivered rows on the
+  target's next connect, so the message is queued, not lost — re-sending would
+  double-deliver), and it does **not** tell you to restart the target
+  (0 subscribers means a detached inbox adapter, not a dead agent).
+
+- **`GET /agents` (and so `a2a_peers`) conflated REGISTERED with REACHABLE.**
+  Every row said what the registry *declared* — a pid, a port, a group — and
+  nothing said whether a message would actually wake anybody. That signal was
+  load-bearing: the fleet constitution says to confirm a peer is "alive and
+  able to act" before handing it work, and `a2a_peers` is the tool provided to
+  do it. It answered yes for a deaf agent.
+
+  Rows now carry `inbox_subscribers` (live SSE subscribers on that agent's
+  inbox stream) and `inbox_reachable`, which is **ternary** on purpose:
+  `reachable` / `unreachable` / `unknown` — the last for a peer on another host
+  whose broker this listen cannot observe. "I could not check" is never
+  rendered as either success or death. Same fields on
+  `GET /agents/<name>/status` and in `sac agents health --json`.
+
+  `healthy` is deliberately **not** derived from the subscriber count, and
+  nothing auto-restarts on it. Measured during this investigation:
+  `claude-code-telegrammer`'s zero was a *transient* reconnect window on a
+  perfectly healthy agent — a restart would have destroyed a live session.
+
+- **The account picker threw away ~10% of a 7-day Max-20x window, every cycle.**
+  `sac accounts list` at the time of the report:
+
+  ```
+  wyusuuke-gmail-com   5h 28%   7d 67%  (resets in 5d 14h)
+  ywata1989-gmail-com  5h  0%   7d 90%  (resets in 9h06m)
+  ywatanabe-scitex-ai  5h  0%   7d 90%  (resets in 6 MINUTES)   <- 10% about to evaporate
+  ```
+
+  The picker sent every agent to `wyusuuke` (67%), so `ywatanabe-scitex-ai`'s
+  remaining **10% of a 7-day window was deleted unused six minutes later**
+  (operator: 「毎回 90%で10%捨ててる」 — we bin it every cycle).
+
+  Root cause: `_creds._quota_rank.pick_ranked` **had no notion of when a window
+  resets.** It scored "90%, resets in 6 minutes" and "90%, resets in 6 days"
+  *identically* and avoided both — but they are opposites. 90% with 6 days left
+  is a genuine reserve (avoiding it is correct); 90% with 6 minutes left is
+  **use-it-or-lose-it**, and avoiding it burns the capacity for nothing.
+
+  The reset time was not merely unused — it was **unreachable**. The usage API
+  returns `resets_at` for both windows and `_account.claude_usage` already parsed
+  it, but `_account.quota_cache_refresh` **dropped it when writing the aggregate
+  `quota-cache.json` the picker reads**, so the ranker was structurally unable to
+  see it. (`sac accounts list` renders "resets in …" from a *different* cache —
+  the per-account `usage.json` — which is why it was visible to the human and
+  invisible to the picker.)
+
+  Fixed in three parts:
+  - `quota_cache_refresh` now persists `reset_at_5h` / `reset_at_7d` into the
+    aggregate cache (additive; entries stay valid when upstream omits them).
+  - `_quota_rank.is_expiring_7d` classifies a near-capped window whose reset is
+    imminent as **expiring, not scarce**: it no longer suffers the `near_capped`
+    demotion, and its rendezvous-hash weight is boosted so the fleet spends
+    vanishing capacity before a reserve that persists.
+  - `_pick_healthy` applies the same rule to the `preferred` account, so an agent
+    is no longer rotated *off* the very account whose quota is about to evaporate.
+
+  On the table above the expiring account goes from **0 of 60 agents to 37 of 60**,
+  while the 9h-away reserve stays correctly avoided (**0 of 60**) and the fleet
+  still spreads (23 of 60 to `wyusuuke`).
+
+  Bounded against a 429 (the risk of routing onto a 90% account): the 5h window
+  remains the supreme, untouched gate; an account with <2% of its weekly window
+  left is never treated as expiring capacity; the horizon is 2h, so worst-case
+  "stuck at the cap" exposure is short; the preference is a spread *weight*, not
+  a hard tier, so a bulk restart cannot stack the whole fleet onto a window with
+  10% left; and a 429 at these usage levels already classifies as `Mode.ROTATE`
+  (`_account.rate_limit_classifier`), which rotates the agent to a *different*
+  healthy account — `rotate_account` excludes the current one, so it cannot
+  thrash back onto the drained account.
+
+  An old cache with no reset stamps degrades to exactly the previous behaviour.
+
+- **Three CI legs shared ONE tmux socket — this is what failed the 0.21.16
+  release (#667).** `SOCKET = "sac-probe-tests"` was a literal. A tmux socket is
+  keyed by `(user, socket-NAME)`, **never by process**, so a literal name is a
+  *host-global namespace*. The comment above it called the socket "private", and
+  it was — private from the **operator's** fleet. Not from our own sibling CI
+  legs:
+
+  ```
+  test (3.12)  runner=scitex-agent-container-03             23:24:23 -> 23:31:16  [ok]
+  test (3.11)  runner=scitex-agent-container-02             23:24:23 -> 23:31:10  [ok]
+  test (3.13)  runner=spartan-cpu-scitex-agent-container-01 23:24:23 -> 23:31:25  [FAIL]
+  ```
+
+  All three started **in the same second** and overlapped for seven minutes;
+  `-01/-02/-03` are three runner *registrations of one physical node*, same user.
+  So all three drove a **single** tmux server and killed each other's sessions.
+  Note *which* two tests failed: the only two asserting an **exact global count**
+  (`== {}` and `len == 30`). The four asserting *membership* structurally cannot
+  see a collision. That asymmetry is the fingerprint.
+
+  This is the **same dead invariant #662 already documented** in `exec-in-sif.sh`
+  — "runs here are serialised (one job at a time)" stopped being true the day -02
+  and -03 were registered. #662 removed *its own* dependence on it and nobody
+  grepped for the rest. This was the rest.
+
+  The socket name is now unique per process (pid + uuid), so concurrent legs and
+  xdist workers cannot meet. The subprocess deadline went 10s → 30s: a fixed
+  deadline tight enough to blow on a three-legs-at-once box is a race, and it
+  raises inside the *fixture*, reporting as a broken test rather than a busy
+  host. Measured, not assumed — old code, 2 concurrent legs: **FAILED**; new
+  code, 3 concurrent legs: **6 passed, 6 passed, 6 passed**.
+
+### Added
+
+- **`sac listen` is now a supervised service (#543).** It is declared as a
+  `kind="service"` JobSpec (`sac.listen`, `restart_policy="always"`) via the
+  `scitex_dev.jobs` entry point, so `scitex-dev service ensure sac.listen`
+  installs and keeps it alive (systemd `--user` where available, a respawn
+  keep-alive otherwise). Until now **nothing restarted it**: the listen log
+  showed two *clean* shutdowns followed by silence — it had no supervisor at
+  all, and the fleet's control plane simply stayed down until a human noticed.
+
+## [0.21.16] — 2026-07-14 *(tagged, never published — see 0.21.17)*
+
+**⚠️ 0.21.16 WAS NEVER PUBLISHED EITHER.** Its release run died on the CI tmux
+collision fixed above (#667) — `test (3.13)` failed, so `build`/`publish` never
+ran and PyPI stayed on 0.21.14. The *code* below is sound and is included in
+0.21.17. **Install 0.21.17.**
 
 **⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and
 that is deliberate.** It shipped #658 (the shared-executor fix) *with a hole*:
 #658 did not introduce the cancellation race below, but it **widened the window
 enormously**, so 0.21.15 would have traded a thread leak for a `sac listen` that
-cannot be stopped. It was held back rather than published. **Install 0.21.16.**
+cannot be stopped. It was held back rather than published.
 
 ### Fixed
 

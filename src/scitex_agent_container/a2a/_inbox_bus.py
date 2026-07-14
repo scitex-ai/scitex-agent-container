@@ -190,6 +190,29 @@ class Broker:
         async with self._lock:
             return len(self._subs.get(agent, ()))
 
+    async def subscriber_counts(self) -> dict[str, int]:
+        """Snapshot every agent's live subscriber count in ONE lock take.
+
+        This is the control plane's only OBSERVATION of reachability — the
+        registry can say an agent is running and ``active`` while its inbox
+        adapter is not attached here, in which case :meth:`publish` fans out
+        to nobody and the message wakes no one. ``GET /agents`` reports this
+        count per row so "registered" and "reachable" stay distinguishable
+        (see ``_listen/_reachability.py``).
+
+        One lock acquisition rather than N (as repeated
+        :meth:`subscriber_count` calls would take) so annotating a whole
+        peer list stays O(1) in lock round-trips and cannot stall the
+        ``/agents`` route.
+
+        Agents with zero subscribers are simply absent from ``_subs``
+        (:meth:`unsubscribe` pops the empty set), so a name missing from the
+        returned dict means zero — callers must treat "absent" as 0, which
+        :func:`_listen._reachability.annotate_reachability` does.
+        """
+        async with self._lock:
+            return {agent: len(queues) for agent, queues in self._subs.items()}
+
 
 def mint_event(
     agent: str,

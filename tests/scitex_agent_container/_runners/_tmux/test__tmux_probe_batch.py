@@ -21,8 +21,11 @@ STX-TQ002 AAA-markers each on its own line + STX-TQ007 one-assert.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
 import subprocess
+import uuid
 
 import pytest
 
@@ -32,23 +35,52 @@ pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="tmux is not installed on this host"
 )
 
-# Private socket so the tests can never touch the operator's real tmux
-# server (which carries the live fleet's `tui-<agent>` sessions).
-SOCKET = "sac-probe-tests"
+# A tmux socket is keyed by (user, socket-NAME), never by process — so a LITERAL
+# name is a HOST-GLOBAL namespace shared with everything else running as us. Two
+# things live there. The obvious one is the operator's real fleet (the live
+# `tui-<agent>` sessions), which is why this socket is separate at all. The one
+# that bit us is our own sibling CI legs: the three matrix legs run CONCURRENTLY
+# as one user on ONE Spartan node (runners -01/-02/-03 are three registrations
+# of the same machine — the v0.21.16 release started all three at 23:24:23 and
+# overlapped them for seven minutes). A literal name put all three on a SINGLE
+# tmux server where they killed each other's sessions, and the two tests below
+# that assert an EXACT count ({} and len == 30) lost that race and failed the
+# release. The four that assert membership could not see it.
+#
+# This is the same dead invariant `.github/ci/exec-in-sif.sh` already documents:
+# "runs here are serialised (one job at a time)" stopped being true the day -02
+# and -03 were registered. That file removed its own dependence on it; nobody
+# grepped for the others, and this was one.
+#
+# Unique per PROCESS, so concurrent legs (and xdist workers) cannot meet. Orphan
+# servers self-reap: every session below runs `sleep`, and tmux exits with its
+# last session.
+SOCKET = f"sac-probe-tests-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
 def _tmux(*args: str) -> subprocess.CompletedProcess:
+    # 30s, not 10s. Three CI legs now share one node, so a `tmux` spawn competes
+    # for a loaded box's CPU; a deadline tight enough to blow under that load is
+    # a race, and blowing it here raises inside the FIXTURE — which reports as a
+    # broken test rather than a busy host. Observed once locally at load ~65.
     return subprocess.run(
-        ["tmux", "-L", SOCKET, *args], capture_output=True, text=True, timeout=10
+        ["tmux", "-L", SOCKET, *args], capture_output=True, text=True, timeout=30
     )
 
 
 @pytest.fixture()
 def tmux_server():
-    """A real, isolated tmux server; killed on teardown."""
+    """A real tmux server on a socket only this process can name."""
+    # SOCKET is per-process, so the tests in one process share a server: this
+    # kill is what isolates each test from the last one's sessions. It is NOT
+    # vestigial — dropping it lets test N inherit test N-1's fleet.
     _tmux("kill-server")
     yield _tmux
-    _tmux("kill-server")
+    # Teardown. A reap that cannot finish is not a test failure: the socket name
+    # is unique, so nothing else can collide with a leftover, and it self-reaps
+    # anyway (every session here runs `sleep`; tmux exits with its last one).
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        _tmux("kill-server")
 
 
 def _probe_on_socket(*, timeout_s: float = 5.0):
