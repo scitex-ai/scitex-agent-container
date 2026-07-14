@@ -1304,14 +1304,15 @@ def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
 def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     cross_host_ssh_env,
 ) -> None:
-    """Cross-group sends are denied by default; an explicit grant on
-    the *destination's* ``comms_grants`` flips deny→allow. The grant
-    must live on the receiver's db — the forwarder is just a router.
+    """A cross-group send delivered across the ssh transport lands at the
+    destination. (Under messaging DEFAULT-ALLOW, operator 2026-07-03, the
+    grant is redundant — cross-group already allows — but the grant path
+    still works and the message must arrive at the receiver's inbox.)
     """
-    # Arrange — sender lives under a SEPARATE root from alice, so the
-    # default intra-group ACL would deny. The grant on the receiver's
-    # db (same db here; the fixture's tmp HOME pins both apps to it)
-    # is the only thing that should let the message through.
+    # Arrange — sender lives under a SEPARATE root from alice; the grant
+    # on the receiver's db (same db here; the fixture's tmp HOME pins both
+    # apps to it) is written on the destination side, and the message
+    # must arrive at the receiver's inbox across the transport.
     db = cross_host_ssh_env["db"]
     record_lineage(child="alice", parent="root-a", db_path=db)
     record_lineage(child="outsider", parent="root-b", db_path=db)
@@ -1332,16 +1333,21 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
 def test_cross_host_send_without_grant_returns_403_from_target_listen(
     cross_host_ssh_env,
 ) -> None:
-    """Without a ``comms_grants`` row the receiver denies cross-group
-    sends — the ssh transport must surface that as a non-2xx response
-    to the originating sender (loud failure, no silent drop).
+    """A receiver-side ACL deny must surface across the ssh transport as
+    a non-2xx response to the originating sender (loud failure, no silent
+    drop). Since messaging is now DEFAULT-ALLOW cross-group (operator
+    2026-07-03), the deny is triggered by a per-spec ``inbound.siblings=
+    deny`` on the receiver (``alice``); ``outsider`` is a sibling.
     """
     # Arrange
     db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
-    record_lineage(child="alice", parent="root-a", db_path=db)
-    record_lineage(child="outsider", parent="root-b", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="outsider", parent="root", db_path=db)
+    state_db_nodes_grant.record_comms_policy(
+        name="alice", inbound_siblings="deny", db_path=db
+    )
     state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
     with state_db.open_db(db) as conn:
         conn.execute(

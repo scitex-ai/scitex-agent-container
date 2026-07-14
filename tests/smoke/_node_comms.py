@@ -29,6 +29,7 @@ from pathlib import Path
 import httpx
 import yaml
 
+from scitex_agent_container._state.state_db_acl_policy import record_comms_policy
 from scitex_agent_container._state.state_db_nodes import (
     mint_node_token,
     record_lineage,
@@ -141,6 +142,41 @@ def _set_up_two_groups(db: Path) -> dict[str, str]:
         "alpha": mint_node_token(name="alpha", db_path=db),
         "beta": mint_node_token(name="beta", db_path=db),
         "parent_b": mint_node_token(name="parent_b", db_path=db),
+        "gamma": mint_node_token(name="gamma", db_path=db),
+    }
+
+
+def _set_up_denied_send(db: Path) -> dict[str, str]:
+    """alpha + gamma are SIBLINGS under parent_a; gamma REFUSES inbound
+    sibling sends (``spec.comms.inbound.siblings = deny``).
+
+    The substrate for every denied-send assertion in the smoke layer.
+
+    Why not simply "cross-group with no grant", which is what these tests
+    used to rely on: messaging is now DEFAULT-ALLOW cross-group (operator
+    2026-07-03) — collaboration is not a security boundary — so a
+    cross-group send with no grant ALLOWS. The deny path therefore needs a
+    deny that SURVIVES the default. ``check_send_acl`` evaluates two such
+    overrides BEFORE the default allow, and they are NOT interchangeable:
+
+    * an explicit BLOCK returns ``("block", ...)``, which 403s the sender
+      but DELIBERATELY shows the receiver NOTHING (no denied_attempt push,
+      no approval prompt) so the block flag itself cannot leak. Triggering
+      the deny that way would silently gut the receiver-side assertions.
+    * a per-spec RELATIONSHIP deny returns ``("deny", ...)`` — the verdict
+      that fires the receiver-side ``denied_attempt`` notification and the
+      approval prompt. That is the path these tests exist to pin, so that
+      is the one we trigger.
+
+    Mints a per-node bearer for every name. Returns ``{name: token}``.
+    """
+    record_lineage(child="alpha", parent="parent_a", db_path=db)
+    record_lineage(child="gamma", parent="parent_a", db_path=db)
+    record_comms_policy(name="gamma", inbound_siblings="deny", db_path=db)
+    return {
+        "host": "smoke-host-token",
+        "parent_a": mint_node_token(name="parent_a", db_path=db),
+        "alpha": mint_node_token(name="alpha", db_path=db),
         "gamma": mint_node_token(name="gamma", db_path=db),
     }
 

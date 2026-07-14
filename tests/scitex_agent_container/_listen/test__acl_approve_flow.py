@@ -60,8 +60,13 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     try:
-        # Seed parent → child lineage so ``worker-a → lead`` is
-        # cross-group (the scenario task #27 fixes).
+        # Seed worker-a → root lineage. Under messaging DEFAULT-ALLOW
+        # (operator 2026-07-03) a cross-group ``worker-a → lead`` send no
+        # longer denies, so the receiver approve-prompt (grant-or-block on
+        # a cross-group deny) no longer fires from a send. The surviving,
+        # still-meaningful behaviour this file covers is the BLOCK /
+        # UNBLOCK decision primitives + CLI, plus the pending-prompt clear
+        # (pending seeded directly via ``record_pending_prompt``).
         record_lineage(child="worker-a", parent="root", db_path=db)
         yield db
     finally:
@@ -94,109 +99,82 @@ def _send_payload(sender: str, content: str = "hi") -> dict:
     }
 
 
-def _approve_prompt_rows(target: str, db_path: Path) -> list[dict]:
-    return [
-        r
-        for r in list_undelivered(target=target, db_path=db_path)
-        if (r["event"].get("extra") or {}).get("approval_prompt")
-    ]
-
-
 # ---------------------------------------------------------------------------
-# Cross-group deny: pending-prompt recorded + ONE receiver push
+# Approve-prompt helpers (unit). Under messaging DEFAULT-ALLOW (operator
+# 2026-07-03) a cross-group send no longer denies, so the receiver
+# approve-prompt no longer fires from a send. The dedupe + prompt-content
+# primitives remain and are exercised directly here so the block/unblock
+# UX stays covered.
 # ---------------------------------------------------------------------------
 
 
-def test_cross_group_deny_records_pending_prompt(
+def test_record_pending_prompt_first_call_returns_true(
     isolated_state: Path,
 ) -> None:
     # Arrange
-    app = create_app(token=_TOKEN)
+    from scitex_agent_container._state.state_db_pending_approval import (
+        record_pending_prompt,
+    )
+
     # Act
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
+    first = record_pending_prompt(
+        sender="worker-a", target="lead", db_path=isolated_state
+    )
     # Assert
-    assert has_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
+    assert first is True
 
 
-def test_cross_group_deny_pushes_prompt_embedding_unblock_command(
+def test_record_pending_prompt_dedupes_second_call(
     isolated_state: Path,
 ) -> None:
-    # Arrange — the prompt MUST embed the exact `sac a2a unblock`
-    # command per lead's amendment.
-    app = create_app(token=_TOKEN)
+    # Arrange — the second record for the same pair must NOT re-prompt.
+    from scitex_agent_container._state.state_db_pending_approval import (
+        record_pending_prompt,
+    )
+
+    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
     # Act
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
-    contents = [
-        (r["event"].get("content") or "")
-        for r in _approve_prompt_rows("lead", isolated_state)
-    ]
+    second = record_pending_prompt(
+        sender="worker-a", target="lead", db_path=isolated_state
+    )
     # Assert
-    assert any("sac a2a unblock worker-a lead" in c for c in contents)
+    assert second is False
 
 
-def test_cross_group_deny_pushes_prompt_embedding_block_command(
-    isolated_state: Path,
-) -> None:
-    # Arrange — the prompt also embeds the BLOCK alternative.
-    app = create_app(token=_TOKEN)
+def test_approval_prompt_content_embeds_unblock_command() -> None:
+    # Arrange
+    from scitex_agent_container._listen._acl_approve_prompt import (
+        approval_prompt_content,
+    )
+
     # Act
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
-    contents = [
-        (r["event"].get("content") or "")
-        for r in _approve_prompt_rows("lead", isolated_state)
-    ]
+    content = approval_prompt_content("worker-a", "lead")
     # Assert
-    assert any("sac a2a block worker-a lead" in c for c in contents)
+    assert "sac a2a unblock worker-a lead" in content
 
 
-def test_repeated_denies_push_exactly_one_prompt(isolated_state: Path) -> None:
-    # Arrange — spammy un-granted sender must NOT flood receiver.
-    app = create_app(token=_TOKEN)
+def test_approval_prompt_content_embeds_block_command() -> None:
+    # Arrange
+    from scitex_agent_container._listen._acl_approve_prompt import (
+        approval_prompt_content,
+    )
+
     # Act
-    with TestClient(app) as client:
-        for _ in range(5):
-            client.post(
-                "/agents/lead/message:send",
-                json=_send_payload("worker-a"),
-                headers={"authorization": f"Bearer {_TOKEN}"},
-            )
-    prompt_count = len(_approve_prompt_rows("lead", isolated_state))
+    content = approval_prompt_content("worker-a", "lead")
     # Assert
-    assert prompt_count == 1
+    assert "sac a2a block worker-a lead" in content
 
 
-def test_no_content_leak_in_prompt_body(isolated_state: Path) -> None:
-    # Arrange — receiver decides on identity; the prompt MUST NOT
-    # reveal the denied message body pre-decision.
-    app = create_app(token=_TOKEN)
+def test_approval_prompt_body_does_not_leak_message_content() -> None:
+    # Arrange — the prompt decides on identity, never the message body.
+    from scitex_agent_container._listen._acl_approve_prompt import (
+        _mint_approval_prompt,
+    )
+
     # Act
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a", content="SECRET-PAYLOAD"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
-    contents = [
-        (r["event"].get("content") or "")
-        for r in _approve_prompt_rows("lead", isolated_state)
-    ]
+    prompt = _mint_approval_prompt(target="lead", sender="worker-a")
     # Assert
-    assert all("SECRET-PAYLOAD" not in c for c in contents)
+    assert "SECRET-PAYLOAD" not in (prompt.get("content") or "")
 
 
 # ---------------------------------------------------------------------------
@@ -217,18 +195,15 @@ def test_unblock_writes_comms_grants_row(isolated_state: Path) -> None:
 
 
 def test_unblock_clears_the_pending_prompt(isolated_state: Path) -> None:
-    # Arrange — deny first to record the pending row, then unblock.
-    app = create_app(token=_TOKEN)
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
+    # Arrange — seed a pending row directly, then unblock.
     from scitex_agent_container._state.grant_flush import (
         unblock_and_clear_pending,
     )
+    from scitex_agent_container._state.state_db_pending_approval import (
+        record_pending_prompt,
+    )
 
+    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
@@ -272,18 +247,15 @@ def test_block_writes_comms_blocks_row(isolated_state: Path) -> None:
 
 
 def test_block_clears_the_pending_prompt(isolated_state: Path) -> None:
-    # Arrange — deny first to record pending, then block.
-    app = create_app(token=_TOKEN)
-    with TestClient(app) as client:
-        client.post(
-            "/agents/lead/message:send",
-            json=_send_payload("worker-a"),
-            headers={"authorization": f"Bearer {_TOKEN}"},
-        )
+    # Arrange — seed a pending row directly, then block.
     from scitex_agent_container._state.grant_flush import (
         block_and_clear_pending,
     )
+    from scitex_agent_container._state.state_db_pending_approval import (
+        record_pending_prompt,
+    )
 
+    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
     # Act
     block_and_clear_pending(sender="worker-a", target="lead")
     # Assert
