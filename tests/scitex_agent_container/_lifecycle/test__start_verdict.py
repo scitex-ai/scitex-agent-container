@@ -35,6 +35,8 @@ import pytest
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._lifecycle._start_verdict import resolve_start_verdict
 from scitex_agent_container._lifecycle._verdict import (
+    INSTRUMENT_HOST_TMUX,
+    INSTRUMENT_LISTEN_BROKER,
     ALIVE,
     DEAD,
     SOURCE_DELIVERY,
@@ -205,7 +207,7 @@ def test_an_unknown_agent_is_started_rather_than_no_opped(tmp_path, registry):
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = _Runtime(running=True, start_result=True)
-    unknown = decide("alpha", [Signal(SOURCE_PROCESS, UNKNOWN, "tmux probe FAILED")])
+    unknown = decide("alpha", [Signal(SOURCE_PROCESS, UNKNOWN, "tmux probe FAILED", INSTRUMENT_HOST_TMUX)])
     # Act
     lc.agent_start(
         str(spec),
@@ -225,7 +227,7 @@ def test_an_unknown_agent_is_started_without_force(tmp_path, registry):
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = _Runtime(running=True, start_result=True)
-    unknown = decide("alpha", [Signal(SOURCE_PROCESS, UNKNOWN, "tmux probe FAILED")])
+    unknown = decide("alpha", [Signal(SOURCE_PROCESS, UNKNOWN, "tmux probe FAILED", INSTRUMENT_HOST_TMUX)])
     # Act
     lc.agent_start(
         str(spec),
@@ -244,7 +246,7 @@ def test_a_dead_agent_is_started(tmp_path, registry):
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = _Runtime(running=False, start_result=True)
-    dead = decide("alpha", [Signal(SOURCE_PROCESS, DEAD, "no session")])
+    dead = decide("alpha", [Signal(SOURCE_PROCESS, DEAD, "no session", INSTRUMENT_HOST_TMUX)])
     # Act
     lc.agent_start(
         str(spec),
@@ -269,7 +271,9 @@ def test_an_alive_agent_still_no_ops(tmp_path, registry):
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = _Runtime(running=True, start_result=True)
-    alive = decide("alpha", [Signal(SOURCE_DELIVERY, ALIVE, "1 live inbox subscriber")])
+    alive = decide("alpha", [Signal(
+            SOURCE_DELIVERY, ALIVE, "1 live inbox subscriber", INSTRUMENT_LISTEN_BROKER
+        )])
     # Act
     lc.agent_start(
         str(spec),
@@ -288,7 +292,9 @@ def test_an_alive_agent_no_op_returns_success(tmp_path, registry):
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = _Runtime(running=True, start_result=True)
-    alive = decide("alpha", [Signal(SOURCE_DELIVERY, ALIVE, "1 live inbox subscriber")])
+    alive = decide("alpha", [Signal(
+            SOURCE_DELIVERY, ALIVE, "1 live inbox subscriber", INSTRUMENT_LISTEN_BROKER
+        )])
     # Act
     ok = lc.agent_start(
         str(spec),
