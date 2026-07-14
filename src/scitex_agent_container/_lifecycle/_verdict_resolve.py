@@ -375,7 +375,10 @@ def heartbeat_signal(
                 )
             elif isinstance(pid, int) and not isinstance(pid, bool):
                 pid_note = f"; record pid={pid}"
-    except (OSError, ValueError):  # stx-allow: fallback (a torn heartbeat write still has a usable mtime; the pid note is a nicety)
+    except (
+        OSError,
+        ValueError,
+    ):  # stx-allow: fallback (a torn heartbeat write still has a usable mtime; the pid note is a nicety)
         pass
 
     if age < stale_s:
@@ -423,7 +426,9 @@ def registry_signal(
       The evidence is asymmetric and we grade it that way.
     """
     if pid_alive is None:
-        from .._listen._agent_exec_liveness import _pid_alive as pid_alive  # type: ignore
+        from .._listen._agent_exec_liveness import (
+            _pid_alive as pid_alive,  # type: ignore
+        )
 
     if rows is None:
         try:

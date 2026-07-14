@@ -71,6 +71,5 @@ def raise_start_failure(config: Any) -> None:
     except Exception:  # stx-allow: fallback (reason: diagnostics must never mask the real start failure — degrade to no pane)
         diag = " (no pane diagnostics available)"
     raise RuntimeError(
-        f"Failed to start agent '{config.name}': runtime.start() returned "
-        f"False.{diag}"
+        f"Failed to start agent '{config.name}': runtime.start() returned False.{diag}"
     )

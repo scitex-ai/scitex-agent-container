@@ -193,8 +193,6 @@ def test_omitting_the_name_keeps_the_legacy_pidfile_only_behaviour(tmp_path):
     # Arrange
     runtime_dir = tmp_path
     # Act
-    failure = _probe_post_ack_liveness(
-        runtime_dir, timeout_s=0.3, poll_interval_s=0.01
-    )
+    failure = _probe_post_ack_liveness(runtime_dir, timeout_s=0.3, poll_interval_s=0.01)
     # Assert
     assert failure[0] == "post_ack_no_apptainer_pid"

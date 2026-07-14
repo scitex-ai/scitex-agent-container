@@ -52,8 +52,7 @@ def liveness_payload(name: str, config: Any) -> dict:
                 Signal(
                     "resolver",
                     UNKNOWN,
-                    f"could not gather liveness evidence "
-                    f"({type(exc).__name__}: {exc})",
+                    f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
                 ),
             ),
         ).to_dict()
@@ -68,6 +67,5 @@ def print_liveness(console: Any, liveness: dict) -> None:
     veto = liveness.get("destroy_veto_reason")
     if veto:
         console.print(
-            f"[dim]  destructive action NOT authorised on this evidence: "
-            f"{veto}[/dim]"
+            f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]"
         )

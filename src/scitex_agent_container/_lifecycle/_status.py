@@ -120,8 +120,7 @@ def _liveness_block(
                 Signal(
                     "resolver",
                     UNKNOWN,
-                    f"could not gather liveness evidence "
-                    f"({type(exc).__name__}: {exc})",
+                    f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
                 ),
             ),
         ).to_dict()

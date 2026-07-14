@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 __all__ = [
     "_POST_ACK_LIVENESS_TIMEOUT_S",
