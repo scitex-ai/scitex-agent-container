@@ -51,6 +51,38 @@ versioning follows [SemVer](https://semver.org/).
 - `SCITEX_AGENT_CONTAINER_ROOT` — override the sac install root that the rename's
   seven locations all derive from. Resolved at call time.
 
+## [0.21.19] — 2026-07-14
+
+**v0.21.18 was a GHOST TAG** — its release run died on a2a port exhaustion caused
+by tests that were not isolated from the real state DB. Nine tags in this repo's
+history shipped nothing at all. This is the first release that **verifies its own
+artifact**, so a ghost is now a RED release rather than a silent success.
+
+### Fixed
+
+- **No test may touch the real sac state (#681).** `agent_start` in a test claimed
+  an a2a port in the *real* DB and never released it — `claim_port` consults only
+  the database (never whether a port is bound) and `a2a_ports.name` is the primary
+  key, so every distinct test-agent name burned another port. Within one run,
+  across three concurrent matrix legs, the 1000-port range exhausted **mid-run**
+  and killed the release. The guard is **function-scoped** — that is what does the
+  work; a session-scoped one would share a single DB across ~10k tests and
+  re-exhaust the range from the inside. A canary test pins the scope: unguarded it
+  printed `assert 19007 == 19000` — 19007 because the operator's live fleet DB
+  already held 7 rows.
+
+### Added
+
+- **The publish job VERIFIES ITS OWN ARTIFACT (#680).** A green `twine upload` is
+  evidence the *call returned*, not that the *artifact exists*. Publish now queries
+  the version-specific PyPI endpoint (never `/simple/` or `latest` — both are
+  CDN-cached and will answer 200 for a version that is not there; measured: this
+  repo's own chain read the previous version for ~34s after a successful publish),
+  requires real uploaded files, retries for eventual consistency, and **fails the
+  release otherwise**. An empty version fails as a *config fault*, explicitly not
+  as a ghost — a false RED whose remedy is "do not ship" is worse than the bug it
+  catches.
+
 ## [0.21.18] — 2026-07-14
 
 ### Fixed
