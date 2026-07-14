@@ -59,3 +59,10 @@ _sphinx_html/.doctrees/
 # build force-includes it, so being git-ignored does not keep it out of
 # the wheel; and a source checkout reads its commit live from .git anyway.
 src/scitex_agent_container/_provenance/_build_info.py
+
+# Test-run artifacts. The suite writes its coverage data, its listen-health
+# ledger and its sac-state FLOOR (the sandbox that keeps tests off the real
+# fleet state) under tests/results/. These are per-run scratch, never sources:
+# two of them (floor-*/runtime/<agent>/instance_id) reached a `git add -A`
+# during the v0.21.20 work and would have been committed.
+tests/results/

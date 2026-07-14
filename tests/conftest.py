@@ -121,9 +121,26 @@ os.environ["SAC_LISTEN_NOTIFY"] = "0"
 # `test` fails there, build/publish/release (all `needs: test`) are SKIPPED:
 # the tag is pushed and nothing reaches PyPI. That is a ghost tag, and eight
 # historical ones went unnoticed for months.
-_SAC_STATE_FLOOR = _PROJECT_ROOT / "tests" / "results" / "sac-state" / "floor"
+#
+# THE FLOOR IS PER-XDIST-WORKER, and that suffix is not cosmetic. The release
+# gate runs `pytest -n $(nproc)`, so N worker PROCESSES share one checkout. A
+# single project-relative floor is therefore a HOST-GLOBAL NAMESPACE shared by
+# every worker in the leg — the same shape of bug as the tmux-socket collision
+# and the persistent-$HOME collision. Anything that lands on the floor (rather
+# than in a per-test tmp db) is then contended ACROSS workers, which is
+# precisely the condition the a2a_ports race needs. `PYTEST_XDIST_WORKER` is set
+# in each worker's env before conftest is imported, so it is available here;
+# it is absent (-> "main") for a plain single-process run.
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_SAC_STATE_FLOOR = (
+    _PROJECT_ROOT / "tests" / "results" / "sac-state" / f"floor-{_XDIST_WORKER}"
+)
 os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(_SAC_STATE_FLOOR / "state.db")
 os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(_SAC_STATE_FLOOR / "registry")
+# Also reached by `_listen._single_instance.default_lock_dir()`, which used to
+# hard-code Path.home() and so was NOT redirected by this floor at all — on the
+# self-hosted release runner ($HOME = the operator's real home) that let a test
+# touch the LIVE `sac listen` PIDFILE. It now honours this same variable.
 os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(_SAC_STATE_FLOOR / "runtime")
 
 

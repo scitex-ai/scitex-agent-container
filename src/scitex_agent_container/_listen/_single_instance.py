@@ -189,11 +189,36 @@ def release_listen_lock(handle: LockHandle) -> None:
 
 
 def default_lock_dir() -> Path:
-    """Return the default lock dir under ``$HOME/.scitex/agent-container/runtime``.
+    """Return the default lock dir, honouring ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR``.
 
     The CLI uses this; tests pass an explicit ``lock_dir`` to avoid
     touching the operator's runtime. Caller is responsible for
     ``mkdir -p`` — :func:`acquire_listen_lock` does NOT create the
     directory (avoid surprising the operator with auto-created paths).
+
+    THE ENV OVERRIDE IS A SAFETY INTERLOCK, NOT A CONVENIENCE. This used to
+    hard-code ``Path.home()``, which made the docstring's "tests pass an
+    explicit ``lock_dir``" a promise enforced by NOTHING: any test that reached
+    a listen CLI path without threading one through silently resolved the
+    OPERATOR'S REAL runtime dir. That is not a dirty-state annoyance, it is an
+    OUTAGE — this directory holds the `sac listen` PIDFILE, and a test that
+    writes or acts on it can stop/restart the live control plane, tearing down
+    the in-memory a2a broker and DEAFENING EVERY AGENT'S INBOX AT ONCE.
+    Ambient-$HOME safety cannot rest on every future test remembering.
+
+    CI could not see this and never will: there is no fleet on a runner. But
+    the RELEASE gate runs on a self-hosted node where ``$HOME`` is the
+    operator's own, persistent, real home — so the blast radius is live.
+
+    ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` is the SAME variable
+    ``_runners._session_state.DEFAULT_STATE_ROOT`` reads: one runtime root, one
+    override, one place for a test harness to redirect (SSOT — deliberately not
+    a second, parallel mechanism). Resolved PER CALL rather than baked at
+    import, so a harness that sets the env is never too late.
     """
-    return Path.home() / ".scitex" / "agent-container" / "runtime"
+    return Path(
+        os.environ.get(
+            "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
+            str(Path.home() / ".scitex" / "agent-container" / "runtime"),
+        )
+    )
