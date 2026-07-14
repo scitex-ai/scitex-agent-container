@@ -1,0 +1,5 @@
+2026-07-14T05:13:15.212814+00:00 start failed for 'mini2': runtime.start() returned False. (tmux session_exists=False)
+  inner stderr (/home/ywatanabe/proj/scitex-agent-container/.worktrees/agent-ad273cb156433be7c/tests/results/sac-state/floor/runtime/mini2/boot.stderr.log):
+<no stderr captured — runtime never launched the process>
+  pane tail:
+<empty>

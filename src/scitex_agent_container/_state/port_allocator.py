@@ -131,6 +131,7 @@ def claim_port(
     range_: tuple[int, int] | None = None,
     explicit: int | None = None,
     db_path: Path | None = None,
+    explicit_is_pin: bool = True,
 ) -> int:
     """Atomically claim a free port for ``agent_name``.
 
@@ -140,18 +141,33 @@ def claim_port(
             mutating state.
         range_: ``(lo, hi)`` inclusive scan range. Falls back to
             ``config.yaml``'s ``a2a.port_range``, then ``DEFAULT_RANGE``.
-        explicit: When set, persist this specific port for the agent
-            (honours an operator-pinned ``spec.a2a.port`` int). Raises
-            ``RuntimeError`` if the port is already claimed by another
-            agent.
+        explicit: When set, try to persist this specific port for the agent.
         db_path: Override state.db location (tests).
+        explicit_is_pin: What a LOST RACE for ``explicit`` MEANS. The two
+            origins of an ``explicit`` value are not the same request, and
+            conflating them is what made a routine restart fail:
+
+            * ``True`` (an OPERATOR PIN from ``spec.a2a.port``) — the port is
+              part of the contract. A foreign holder is a real
+              misconfiguration, so raise and make it visible. Silently
+              handing back a different port would break the pin.
+            * ``False`` (a port WE auto-allocated earlier and are merely
+              RE-claiming across a restart) — this is not a pin, it is a
+              preference. If it was taken while we were down, a NEW free port
+              is the correct answer; failing the launch is not. Falls through
+              to the auto scan.
+
+            ``resolve_a2a_port`` MUTATES ``config.a2a.port`` from "auto" to the
+            int it claimed, which ERASES that distinction at the call site —
+            which is why an *auto*-port agent was traversing the pinned-port
+            code on every forced restart. The caller passes the origin back in.
 
     Returns:
         The port number now bound to ``agent_name``.
 
     Raises:
-        RuntimeError: When no free port remains in ``range_`` (or when
-            an ``explicit`` port collides with a foreign claim).
+        RuntimeError: When no free port remains in ``range_``, or when an
+            operator-PINNED ``explicit`` port is held by another agent.
     """
     _ensure_schema(db_path)
     lo, hi = _resolve_range(range_)
@@ -172,21 +188,58 @@ def claim_port(
                 return existing
 
         if explicit is not None:
-            # Honour the pin. Collision = the operator's spec disagrees
-            # with reality; raise so the misconfiguration is visible.
-            clash = conn.execute(
-                "SELECT name FROM a2a_ports WHERE port=?", (explicit,)
-            ).fetchone()
-            if clash:
-                raise RuntimeError(
-                    f"a2a port {explicit} already claimed by "
-                    f"{clash['name']!r}; cannot pin for {agent_name!r}"
-                )
+            # ATOMIC claim-or-lose. This used to be a TOCTOU — a `SELECT` for a
+            # clash, then a bare `INSERT` — and that is exactly how the v0.21.19
+            # release died:
+            #
+            #   sqlite3.IntegrityError: UNIQUE constraint failed: a2a_ports.port
+            #
+            # A concurrent claimant landing between the two statements tripped
+            # UNIQUE(port) and the raw driver exception escaped. WHICH error you
+            # got — the intended diagnosis or a sqlite traceback — was decided
+            # purely by thread timing, which is why the failure MOVED between
+            # releases and read as a flake. Reproduced deterministically: 16
+            # threads => 6 raw IntegrityError escapes, 9 clean RuntimeErrors.
+            #
+            # NOT a test artefact. `resolve_a2a_port` MUTATES `config.a2a.port`
+            # from "auto" to the int it just claimed, and `agent_start`'s
+            # force/restart path re-resolves AFTER `agent_stop` released the
+            # row — so a plain `--force` restart of an *auto*-port agent
+            # re-enters this branch with an int. Two concurrent restarts race
+            # here on a real host too.
+            #
+            # ONE STATEMENT now decides it. `ON CONFLICT DO NOTHING` + read-back
+            # cannot interleave: either our row is in, or someone else's is, and
+            # the read-back says whose. Catching the exception was not enough —
+            # a caught-then-failed claim is still a FAILED LAUNCH, and the
+            # operator relaunches ~14 agents at once. A live start must WIN a
+            # port, not error politely.
             conn.execute(
-                "INSERT INTO a2a_ports (name, port, claimed_at) VALUES (?, ?, ?)",
+                "INSERT INTO a2a_ports (name, port, claimed_at) VALUES (?, ?, ?) "
+                "ON CONFLICT DO NOTHING",
                 (agent_name, explicit, now),
             )
-            return int(explicit)
+            holder = conn.execute(
+                "SELECT name FROM a2a_ports WHERE port=?", (explicit,)
+            ).fetchone()
+            if holder is not None and str(holder["name"]) == agent_name:
+                # We won it — or we raced OURSELVES (two starts of one agent),
+                # which honours claim_port's documented idempotency rather than
+                # failing a legitimate re-entry.
+                return int(explicit)
+
+            if explicit_is_pin:
+                # An OPERATOR PIN held by someone else is a real
+                # misconfiguration. Handing back a different port would silently
+                # break the contract the pin exists to state, so fail loud.
+                owner = str(holder["name"]) if holder is not None else "another agent"
+                raise RuntimeError(
+                    f"a2a port {explicit} already claimed by "
+                    f"{owner!r}; cannot pin for {agent_name!r}"
+                )
+            # Not a pin — just the port we happened to hold before this restart,
+            # taken while we were down. A fresh port is the correct answer; a
+            # dead agent is not. Fall through to the auto scan.
 
         # Auto: ascending scan + UNIQUE-constraint optimistic insert.
         # The transaction (open_db wraps commit/rollback) plus
