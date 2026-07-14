@@ -324,6 +324,10 @@ exclude = [".git"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
+# The deploy-freshness alarm (cron half of `sac freshness`). Must ship in
+# the wheel: it is what writes the cache the every-invocation CLI warning
+# reads, so a host that installs sac from PyPI gets the alarm with it.
+"src/scitex_agent_container/cron/deploy-freshness-alarm.py" = "scitex_agent_container/cron/deploy-freshness-alarm.py"
 # Bundle pyproject.toml + README.md inside the wheel so the
 # source-bundled SIF build (cli_pkg/_image_source_build.py) can
 # reconstruct a pip-installable source tree from the INSTALLED

@@ -71,7 +71,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Diagnostics", ["doctor", "ports", "provenance"]),
+    ("Diagnostics", ["doctor", "ports", "provenance", "freshness"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -112,6 +112,11 @@ class _MainGroup(LazyGroup):
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "provenance": f"{_PKG}.provenance_cmds:provenance",
+        # Whether the loaded code is what SHIPPED: ghost tags, host behind
+        # PyPI, daemons running pre-upgrade code, failed release runs.
+        # `provenance` answers "which code is loaded"; `freshness` answers
+        # "is that the code that was released".
+        "freshness": f"{_PKG}.freshness_cmds:freshness_group",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
         # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
@@ -293,6 +298,7 @@ class _MainGroup(LazyGroup):
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "freshness": "Is the loaded code what shipped? Ghost tags, stale installs, stale daemons.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
@@ -423,6 +429,35 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
         click.echo(ctx.get_help())
 
 
+def _warn_if_stale() -> None:
+    """Tell the operator, on EVERY ``sac``, when this sac is not what shipped.
+
+    Operator directive 2026-07-14, after a day lost to a fix that was
+    merged but never published: "If you're not on the latest version,
+    that itself should emit a warning. When I type ``sac`` on the host
+    and a newer version is already published, a warning should appear.
+    THAT is how I learn I need to install."
+
+    Placed in ``cli_entry_point`` rather than in ``main``'s group callback
+    because that callback is skipped by click's eager flags — so ``sac
+    --version``, the very command someone runs to ask "am I current?",
+    would have been the one invocation that never answered it.
+
+    Cost: one small JSON read (the cron refresher does the network). Never
+    raises — ``warn_if_stale`` swallows everything and degrades to silence,
+    because a staleness warning that can break the CLI is far worse than
+    the staleness it reports. Silenced with ``SAC_FRESHNESS_QUIET=1``;
+    escalated to a hard exit with ``SAC_FRESHNESS_SEVERITY=error``.
+    """
+    from .._freshness._warn import warn_if_stale
+
+    code = warn_if_stale()
+    if code:
+        import sys
+
+        sys.exit(code)
+
+
 def cli_entry_point() -> None:
     """Console-script entry. Honours the global ``--on <peer>`` flag.
 
@@ -435,6 +470,12 @@ def cli_entry_point() -> None:
     otherwise.
     """
     import sys
+
+    # Before anything else: is this sac the sac that shipped? Emitted to
+    # stderr, so it never pollutes the stdout that `--json` consumers
+    # parse (`quota-alarm.py` parses `sac accounts list --json`; a chatty
+    # stdout would break it).
+    _warn_if_stale()
 
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing
