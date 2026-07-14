@@ -164,16 +164,49 @@ def test_state_dir_for_does_not_create_directory(tmp_path: Path) -> None:
     assert not result.exists()
 
 
-def test_state_dir_for_default_root_is_under_user_home() -> None:
-    # Arrange
-    name = "zeta"
-    # Act
-    result_str = str(runner.state_dir_for(name))
+def test_state_dir_for_default_root_falls_back_to_user_home_when_env_unset() -> None:
+    # Arrange — THE OLD VERSION OF THIS TEST ASSERTED THE BUG.
+    #
+    # It read the AMBIENT `state_dir_for("zeta")` and asserted the path lay
+    # under the operator's real home. But the harness deliberately redirects
+    # SCITEX_AGENT_CONTAINER_RUNTIME_DIR at a sandbox floor precisely so that NO
+    # test can write to the operator's live fleet state — so a test demanding
+    # the real home is demanding the pollution the floor exists to prevent, and
+    # it goes RED exactly when the isolation starts working.
+    #
+    # Worse, it had been passing for the wrong reason: `DEFAULT_STATE_ROOT` is a
+    # module constant frozen at import, and a sibling fixture was reloading the
+    # module and LEAKING its own tmp dir into that global for the rest of the
+    # xdist worker. The path this assertion actually received came from a
+    # DIFFERENT test (`test_status_payload_existing`'s tmp dir). Whoever patched
+    # last won. Only the xdist gate could ever see that; the single-process PR
+    # gate never could.
+    #
+    # So test the RESOLUTION LOGIC, which is the real contract, rather than the
+    # ambient value: with the override REMOVED, the root falls back to the user
+    # home. Restores the env and re-derives the constant on the way out — the
+    # leak this test was a victim of.
+    import importlib
+
+    import scitex_agent_container._runners._session_state as _ss
+
+    key = "SCITEX_AGENT_CONTAINER_RUNTIME_DIR"
+    saved = os.environ.get(key)
+    os.environ.pop(key, None)
+    try:
+        importlib.reload(_ss)
+
+        # Act
+        result = _ss.state_dir_for("zeta")
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(_ss)
+
     # Assert
-    assert (
-        "agent-container/runtime/zeta" in result_str
-        or "agent-container\\runtime\\zeta" in result_str
-    )
+    assert result == Path.home() / ".scitex" / "agent-container" / "runtime" / "zeta"
 
 
 # ---------------------------------------------------------------------------
