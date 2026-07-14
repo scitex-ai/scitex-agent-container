@@ -338,6 +338,33 @@ exclude = [".git"]
 "README.md" = "scitex_agent_container/_bundled/README.md"
 
 [tool.pytest.ini_options]
+# THE PACKAGE UNDER TEST IS THIS CHECKOUT, NOT WHATEVER IS INSTALLED.
+#
+# Without this line a bare `pytest` here imported scitex_agent_container from
+# site-packages: pytest only prepends the ROOTDIR (which holds no importable
+# package — the code lives under src/), so `import scitex_agent_container` fell
+# through to the ambient interpreter's copy. In the agent container that is a
+# REAL, non-editable copy in /opt/venv-sac/lib/python3.12/site-packages, and it
+# was FOUR RELEASES STALE (0.21.13 vs the tree's 0.21.20).
+#
+# A worker ran the suite against their PR and got 50/50 PASSED on a package
+# that did not contain their PR at all. They only caught it because their
+# branch ADDED a file, so collection raised ImportError on something that
+# should have existed. A change that only EDITS existing files has no such
+# tell — it just goes green, against code nobody wrote.
+#
+# `pythonpath` is inserted at sys.path[0] (pytest's python_path plugin runs
+# tryfirst on pytest_load_initial_conftests), so it beats BOTH site-packages
+# and any inherited $PYTHONPATH. That last part is what keeps CI correct: CI
+# exports PYTHONPATH="$TMPDIR/site:$PWD/src" (.github/ci/run-in-sif.sh), and
+# this line makes the checkout win regardless of what landed in $TMPDIR/site.
+#
+# Belt AND braces: tests/conftest.py::pytest_sessionstart independently asserts
+# that scitex_agent_container.__file__ resolves under <rootdir>/src and ABORTS
+# the session otherwise. Deleting this line does not quietly restore the old
+# behaviour — it turns the suite red. That is deliberate: the failure mode this
+# closes is invisible by construction, so it must not be re-openable in silence.
+pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short -m 'not integration and not docker_smoke'"

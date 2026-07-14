@@ -39,7 +39,14 @@ from pathlib import Path
 
 from ._git import head_sha, repo_root_for_package
 
-__all__ = ["DIST_NAME", "baked", "format_terse", "identity", "package_dir"]
+__all__ = [
+    "DIST_NAME",
+    "baked",
+    "format_terse",
+    "identity",
+    "origin_mismatch",
+    "package_dir",
+]
 
 DIST_NAME = "scitex-agent-container"
 
@@ -47,6 +54,66 @@ DIST_NAME = "scitex-agent-container"
 def package_dir() -> Path:
     """Absolute path of the LOADED ``scitex_agent_container`` package."""
     return Path(__file__).resolve().parent.parent
+
+
+def origin_mismatch(project_root: str | Path) -> str | None:
+    """Fail-loud message when the LOADED package did not come from ``<root>/src``.
+
+    Returns ``None`` when the import resolved inside ``project_root`` — the only
+    acceptable outcome for a test run — else the text a developer needs, with
+    BOTH paths named.
+
+    WHY THIS IS NOT ``_audit._check_shadowed``. That check asks "is the loaded
+    module the INSTALLED distribution?" and answers it correctly. This asks a
+    DIFFERENT question — "did the loaded module come from the repo whose tests
+    are running?" — and only the caller knows the answer to "which repo is
+    that", which is why the root is a parameter.
+
+    The difference is not academic; it is the whole bug. Under a bare ``pytest``
+    the import resolves to site-packages AND site-packages IS the installed
+    distribution, so ``audit()`` sees no shadowing and returns ``ok=True`` with
+    zero anomalies (measured 2026-07-14) — on the exact scenario ``_audit``'s
+    own docstring cites. It detects a worktree shadowing an install; the bug is
+    an install shadowing the worktree, and nothing in ``audit()`` has any notion
+    of "the worktree" to compare against.
+
+    The verdict is the PATH. Never the version string: ``0.21.13`` on this host's
+    site-packages copy against ``0.21.20`` in the tree, and two host binaries
+    reporting 0.21.11 and 0.21.13 while executing the same working tree. A stale
+    ``.dist-info`` advertises a number whose code is gone. ``__file__`` cannot.
+    """
+    src_root = Path(project_root).resolve() / "src"
+    origin = package_dir()
+
+    if origin.is_relative_to(src_root):
+        return None
+
+    return (
+        "\n"
+        "=================== WRONG PACKAGE UNDER TEST ===================\n"
+        "`import scitex_agent_container` did NOT resolve inside the repo\n"
+        "whose tests are running. This run would report PASS/FAIL for code\n"
+        "that is not the code you are editing — a green here means nothing.\n"
+        "\n"
+        f"  imported from : {origin}\n"
+        f"  expected under: {src_root}\n"
+        "\n"
+        "This is an ERROR, not a warning. A test run against the wrong\n"
+        "package is not a weaker signal than no run; it is a FALSE one.\n"
+        "\n"
+        'Fix: `pythonpath = ["src"]` under [tool.pytest.ini_options] in\n'
+        "pyproject.toml puts this checkout ahead of site-packages. If it is\n"
+        "already there, something is prepending to sys.path before pytest --\n"
+        "check for a stale editable `.pth` in site-packages (on this fleet one\n"
+        "pointed at an unrelated agent's worktree) or a real copy of the\n"
+        "package installed into site-packages, which shadows both.\n"
+        "\n"
+        "NOTE: the version string cannot detect this. It is a fossil -- a\n"
+        "stale .dist-info happily reports a number that matches nothing on\n"
+        "disk. The module PATH above is the only truth. Run `sac provenance`\n"
+        "for the full picture (duplicate .dist-info, patched bytes, ...).\n"
+        "===============================================================\n"
+    )
 
 
 def baked() -> dict:

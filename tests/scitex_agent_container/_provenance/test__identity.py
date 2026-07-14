@@ -139,4 +139,82 @@ class TestIdentity:
         # Assert
         assert found in {"src", "wheel", "unknown"}
 
+
+class TestOriginMismatch:
+    """The guard that certifies every other test in this repo.
+
+    A guard only ever seen to PASS is a hope. Two shipped in this fleet on
+    2026-07-14 alone: a "fail-loud" version gate that returned exit 0 on the
+    artifact it existed to reject, and a pin-check that was a substring match
+    on "0.3" — so it rejected every STRONGER pin and froze the fleet's
+    containers for months while looking like diligence. So the first thing
+    asserted here is that this one REJECTS.
+
+    Note `_audit.audit()` cannot stand in for these: under a bare `pytest` the
+    import resolves to site-packages AND site-packages IS the installed
+    distribution, so its `shadowed` check sees `origin == installed`, fires
+    nothing, and returns ok=True (measured) — on the very case its docstring
+    cites. Hence a separate check that takes the repo root as a parameter.
+    """
+
+    def test_rejects_the_installed_site_packages_copy(self, tmp_path: Path):
+        # Arrange — a root the loaded module cannot possibly live under, which
+        # is precisely the bare-`pytest` condition: the import came from
+        # /opt/venv-sac/.../site-packages, the tests live here.
+        foreign_root = tmp_path / "some-other-repo"
+
+        # Act
+        verdict = origin_mismatch(foreign_root)
+
+        # Assert
+        assert verdict is not None
+
+    def test_names_the_path_it_actually_imported(self, tmp_path: Path):
+        # Arrange
+        foreign_root = tmp_path / "some-other-repo"
+
+        # Act
+        verdict = origin_mismatch(foreign_root)
+
+        # Assert — half the failure mode is not knowing WHICH package ran.
+        assert str(package_dir()) in verdict
+
+    def test_names_the_path_it_expected(self, tmp_path: Path):
+        # Arrange
+        foreign_root = tmp_path / "some-other-repo"
+
+        # Act
+        verdict = origin_mismatch(foreign_root)
+
+        # Assert — the other half is not knowing what it SHOULD have been.
+        assert str(foreign_root.resolve() / "src") in verdict
+
+    def test_says_the_version_string_is_a_fossil(self, tmp_path: Path):
+        # Arrange — nobody may "improve" this into a version comparison. The
+        # site-packages copy on this host reported 0.21.13 against 0.21.20 in
+        # the tree; two host binaries reported 0.21.11 and 0.21.13 while
+        # executing the same working tree. A version check is fooled by all of
+        # them; a path check by none.
+        foreign_root = tmp_path / "some-other-repo"
+
+        # Act
+        verdict = origin_mismatch(foreign_root)
+
+        # Assert
+        assert "fossil" in verdict.lower()
+
+    def test_accepts_the_repo_that_is_actually_under_test(self):
+        # Arrange — the other direction of the proof. A guard that cannot pass
+        # is as useless as one that cannot fail: it just gets disabled. This is
+        # the assertion that would have caught the original bug, and it is live
+        # in tests/conftest.py::pytest_sessionstart on every run.
+        project_root = Path(__file__).resolve().parents[3]
+
+        # Act
+        verdict = origin_mismatch(project_root)
+
+        # Assert
+        assert verdict is None
+
+
 # EOF
