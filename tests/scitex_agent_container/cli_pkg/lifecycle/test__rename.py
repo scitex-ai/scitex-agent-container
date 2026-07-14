@@ -1,21 +1,26 @@
 """``sac agents rename`` through the real CLI.
 
 NO MOCKS: a real ``CliRunner`` drives the real click command against a real
-on-disk fleet and a real scitex-todo store. The command resolves its OWN
-``Layout.default()`` — there is no ``--root`` flag — so isolation comes
-from the ``$SCITEX_AGENT_CONTAINER_ROOT`` port, which is read at call time.
-Without that, this file would rename a live agent.
+on-disk fleet. The command resolves its OWN ``Layout.default()`` — there is
+no ``--root`` flag — so isolation comes from the
+``$SCITEX_AGENT_CONTAINER_ROOT`` port, which is read at call time. Without
+that, this file would rename a live agent.
+
+Most tests here drive ``--no-cards``, so they exercise the CLI everywhere
+including sac's own CI, where the optional ``scitex-todo`` peer is absent.
+The card-bearing tests ``importorskip`` it individually rather than taking
+the whole file down with them — the CLI's refusals, its plan rendering and
+its confirmation gate are worth CI coverage on their own.
 """
 
 from __future__ import annotations
 
-import sqlite3
+import json
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._lifecycle._rename_cards import find_owned_cards
 from scitex_agent_container._lifecycle._rename_plan import Layout
 from scitex_agent_container.cli_pkg.lifecycle._rename import rename
 
@@ -23,17 +28,11 @@ from ..._helpers.fleet_root import (
     isolated_board,
     isolated_root,
     make_fleet,
-    make_state_db,
-    seed_cards,
+    seed_identity_and_history,
 )
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
-
-
-@pytest.fixture
-def board(tmp_path: Path):
-    yield from isolated_board(tmp_path)
 
 
 @pytest.fixture
@@ -42,19 +41,15 @@ def sac_root(tmp_path: Path):
 
 
 @pytest.fixture
-def fleet(sac_root: Path, board: Path) -> Layout:
-    """A real agent on disk, with rows in state.db and cards on the board."""
+def board(tmp_path: Path):
+    yield from isolated_board(tmp_path)
+
+
+@pytest.fixture
+def fleet(sac_root: Path) -> Layout:
+    """A real agent on disk, with rows in state.db. No board."""
     layout = make_fleet(sac_root, OLD)
-    db = make_state_db(layout)
-    conn = sqlite3.connect(str(db))
-    with conn:
-        conn.execute(
-            "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-            "updated_at) VALUES (?, ?, ?, ?, ?)",
-            (OLD, "h", 9001, 1.0, 1.0),
-        )
-    conn.close()
-    seed_cards(board, OLD, 3)
+    seed_identity_and_history(layout, OLD)
     return layout
 
 
@@ -64,12 +59,12 @@ def _run(*argv: str):
 
 @pytest.fixture
 def dry_run(fleet: Layout):
-    return _run(OLD, NEW, "--dry-run")
+    return _run(OLD, NEW, "--dry-run", "--no-cards")
 
 
 @pytest.fixture
 def applied(fleet: Layout):
-    return _run(OLD, NEW, "-y")
+    return _run(OLD, NEW, "-y", "--no-cards")
 
 
 # ---------------------------------------------------------------------------
@@ -96,18 +91,9 @@ def test_dry_run_says_it_is_a_dry_run(dry_run):
 
 
 def test_dry_run_reports_the_board_identity_change(dry_run):
-    """The change that orphans the cards must be impossible to miss."""
+    """The spec change that orphans the cards must be impossible to miss."""
     # Arrange
     needle = "BOARD IDENTITY"
-    # Act
-    output = dry_run.output
-    # Assert
-    assert needle in output
-
-
-def test_dry_run_reports_the_card_count(dry_run):
-    # Arrange
-    needle = "3 card(s)"
     # Act
     output = dry_run.output
     # Assert
@@ -123,10 +109,19 @@ def test_dry_run_reports_the_state_db_rows(dry_run):
     assert needle in output
 
 
-def test_dry_run_names_the_port_it_migrates_cards_through(dry_run):
-    """Ports and adapters, stated in the UI: sac calls the board's primitive."""
+def test_dry_run_reports_the_overlay_move(dry_run):
     # Arrange
-    needle = "reassign_task"
+    needle = "overlay-dir"
+    # Act
+    output = dry_run.output
+    # Assert
+    assert needle in output
+
+
+def test_dry_run_warns_that_no_cards_orphans_the_board(dry_run):
+    """The escape hatch has to say what it costs."""
+    # Arrange
+    needle = "ORPHANED"
     # Act
     output = dry_run.output
     # Assert
@@ -140,15 +135,6 @@ def test_dry_run_leaves_the_spec_dir_where_it_was(dry_run, fleet: Layout):
     exists = old_dir.is_dir()
     # Assert
     assert exists
-
-
-def test_dry_run_moves_no_cards(dry_run, fleet: Layout, board: Path):
-    # Arrange
-    expected = 3
-    # Act
-    still_owned = find_owned_cards(OLD, store=board)
-    # Assert
-    assert len(still_owned) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -174,15 +160,6 @@ def test_rename_moves_the_spec_dir(applied, fleet: Layout):
     assert exists
 
 
-def test_rename_migrates_every_card(applied, fleet: Layout, board: Path):
-    # Arrange
-    store = board
-    # Act
-    orphans = find_owned_cards(OLD, store=store)
-    # Assert
-    assert orphans == []
-
-
 def test_rename_tells_the_operator_how_to_start_the_agent(applied):
     # Arrange
     needle = f"sac agents start {NEW}"
@@ -201,7 +178,7 @@ def test_rename_refuses_an_unknown_agent(fleet: Layout):
     # Arrange
     unknown = "no-such-agent"
     # Act
-    result = _run(unknown, NEW, "-y")
+    result = _run(unknown, NEW, "-y", "--no-cards")
     # Assert
     assert result.exit_code != 0
 
@@ -210,7 +187,7 @@ def test_the_unknown_agent_refusal_says_not_found(fleet: Layout):
     # Arrange
     unknown = "no-such-agent"
     # Act
-    result = _run(unknown, NEW, "-y")
+    result = _run(unknown, NEW, "-y", "--no-cards")
     # Assert
     assert "not found" in result.output
 
@@ -219,7 +196,7 @@ def test_rename_refuses_when_the_target_name_is_taken(fleet: Layout):
     # Arrange
     make_fleet(fleet.root, NEW)
     # Act
-    result = _run(OLD, NEW, "-y")
+    result = _run(OLD, NEW, "-y", "--no-cards")
     # Assert
     assert "already exists" in result.output
 
@@ -229,26 +206,89 @@ def test_json_mode_refuses_to_run_unconfirmed(fleet: Layout):
     # Arrange
     expected = "non-interactive"
     # Act
-    result = _run(OLD, NEW, "--json")
+    result = _run(OLD, NEW, "--json", "--no-cards")
     # Assert
     assert expected in result.output
 
 
-def test_json_dry_run_emits_the_plan(fleet: Layout):
-    # Arrange
-    import json
-
-    # Act
-    result = _run(OLD, NEW, "--dry-run", "--json")
-    # Assert
-    assert json.loads(result.output)["cards"]["count"] == 3
+# ---------------------------------------------------------------------------
+# --json
+# ---------------------------------------------------------------------------
 
 
 def test_json_dry_run_reports_the_new_name(fleet: Layout):
     # Arrange
-    import json
-
+    expected = NEW
     # Act
-    result = _run(OLD, NEW, "--dry-run", "--json")
+    result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
     # Assert
-    assert json.loads(result.output)["new"] == NEW
+    assert json.loads(result.output)["new"] == expected
+
+
+def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
+    # Arrange
+    needle = "SCITEX_TODO_AGENT_ID"
+    # Act
+    result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
+    # Assert
+    assert any(
+        needle in c["path"] for c in json.loads(result.output)["spec_changes"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# With a real board (skipped when the optional peer is absent)
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_reports_the_card_count(fleet: Layout, board: Path):
+    # Arrange
+    _seed(board, 3)
+    # Act
+    result = _run(OLD, NEW, "--dry-run")
+    # Assert
+    assert "3 card(s)" in result.output
+
+
+def test_dry_run_names_the_port_it_migrates_cards_through(
+    fleet: Layout, board: Path
+):
+    """Ports and adapters, stated in the UI: sac calls the board's primitive."""
+    # Arrange
+    _seed(board, 1)
+    # Act
+    result = _run(OLD, NEW, "--dry-run")
+    # Assert
+    assert "reassign_task" in result.output
+
+
+def test_dry_run_moves_no_card(fleet: Layout, board: Path):
+    # Arrange
+    _seed(board, 3)
+    # Act
+    _run(OLD, NEW, "--dry-run")
+    # Assert
+    assert len(_owned(OLD, board)) == 3
+
+
+def test_rename_migrates_every_card(fleet: Layout, board: Path):
+    # Arrange
+    _seed(board, 3)
+    # Act
+    _run(OLD, NEW, "-y")
+    # Assert
+    assert _owned(OLD, board) == []
+
+
+def _seed(board: Path, count: int) -> list[str]:
+    """Seed real cards, skipping the test when the optional peer is absent."""
+    pytest.importorskip("scitex_todo")
+    from ..._helpers.fleet_root import seed_cards
+
+    return seed_cards(board, OLD, count)
+
+
+def _owned(name: str, board: Path) -> list[str]:
+    from scitex_agent_container._lifecycle._rename_cards import find_owned_cards
+
+    return find_owned_cards(name, store=board)

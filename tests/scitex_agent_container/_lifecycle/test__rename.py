@@ -4,13 +4,21 @@ A rollback that has never been exercised does not work. So the rollback
 here is not one happy test: a failure is injected at each of the eight
 steps in turn (the ``rolled_back`` fixture is parametrised over all of
 them), and every one must leave the agent EXACTLY as it was — spec text,
-directory contents, state.db rows, and card ownership. One organic failure
-(a read-only overlays dir, no injection at all) covers the case where the
-world, not a callback, says no.
+directory contents, and state.db rows. One organic failure (a read-only
+overlays dir, no injection at all) covers the case where the world, not a
+callback, says no.
 
-Fully isolated: an injected ``Layout`` root and an explicit tmp board.
-Nothing here can see the live fleet — ``test__rename_isolation.py`` proves
-that separately, and proves it rather than assuming it.
+BOARD-FREE ON PURPOSE (``cards=False`` throughout). ``scitex-todo`` is an
+OPTIONAL peer — it is not a declared dependency of sac and is absent from
+sac's own CI — so a board-coupled engine test would ERROR there rather than
+run, and the rollback matrix (the part most worth protecting) would never
+execute in CI at all. The card half of the engine lives in the sibling
+``test__rename_board.py``, which skips when the peer is missing. Splitting
+them keeps the atomicity guarantee under test EVERYWHERE.
+
+Fully isolated: an injected ``Layout`` root. Nothing here can see the live
+fleet — ``test__rename_isolation.py`` proves that separately, and proves it
+rather than assuming it.
 """
 
 from __future__ import annotations
@@ -28,7 +36,6 @@ from scitex_agent_container._lifecycle._rename import (
     agent_rename,
     apply_plan,
 )
-from scitex_agent_container._lifecycle._rename_cards import find_owned_cards
 from scitex_agent_container._lifecycle._rename_plan import (
     Layout,
     RenameError,
@@ -36,13 +43,7 @@ from scitex_agent_container._lifecycle._rename_plan import (
     probe_running,
 )
 
-from .._helpers.fleet_root import (
-    isolated_board,
-    make_fleet,
-    make_spec,
-    make_state_db,
-    seed_cards,
-)
+from .._helpers.fleet_root import make_fleet, make_spec, seed_identity_and_history
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
@@ -61,8 +62,6 @@ class World:
     """The whole isolated world a rename touches, plus a way to photograph it."""
 
     layout: Layout
-    board: Path
-    cards: list[str]
     before: dict = field(default_factory=dict)
     error: str = ""
 
@@ -85,8 +84,6 @@ class World:
                 )
             ),
             "db_names": _db_names(self.layout.state_db),
-            "cards_owned_by_old": sorted(find_owned_cards(OLD, store=self.board)),
-            "cards_owned_by_new": sorted(find_owned_cards(NEW, store=self.board)),
         }
 
 
@@ -122,10 +119,14 @@ def _raise_at(step_to_fail: str):
 def _refusal(world: World, old: str = OLD, new: str = NEW) -> str:
     """Run a plan that must be refused; return the refusal message."""
     try:
-        build_plan(old, new, layout=world.layout, store=world.board)
+        build_plan(old, new, layout=world.layout, cards=False)
     except RenameError as exc:
         return str(exc)
     raise AssertionError(f"build_plan({old!r} -> {new!r}) was NOT refused")
+
+
+def _plan(world: World) -> object:
+    return build_plan(OLD, NEW, layout=world.layout, cards=False)
 
 
 # ---------------------------------------------------------------------------
@@ -134,35 +135,12 @@ def _refusal(world: World, old: str = OLD, new: str = NEW) -> str:
 
 
 @pytest.fixture
-def board(tmp_path: Path):
-    yield from isolated_board(tmp_path)
-
-
-@pytest.fixture
-def world(tmp_path: Path, board: Path) -> World:
-    """A complete isolated fleet: agent on disk, rows in state.db, cards on the board."""
+def world(tmp_path: Path) -> World:
+    """An isolated fleet: agent on disk, rows in state.db. No board — see the
+    module docstring."""
     layout = make_fleet(tmp_path / "fleet", OLD)
-    db = make_state_db(layout)
-    conn = sqlite3.connect(str(db))
-    with conn:
-        conn.execute(
-            "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-            "updated_at) VALUES (?, ?, ?, ?, ?)",
-            (OLD, "h", 9001, 1.0, 1.0),
-        )
-        conn.execute(
-            "INSERT INTO turns (turn_id, name, host, status, ts) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("t1", OLD, "h", "ok", 1.0),
-        )
-    conn.close()
-    # Two cards, not twenty: every card write goes through the REAL
-    # scitex-todo store, whose per-write cost is ~2.2 s of uncached
-    # importlib entry-point rescanning (see _helpers.fleet_root.add_card).
-    # Two is enough to prove "every card follows"; the card behaviour itself
-    # is covered exhaustively in test__rename_cards.py.
-    cards = seed_cards(board, OLD, 2)
-    built = World(layout=layout, board=board, cards=cards)
+    seed_identity_and_history(layout, OLD)
+    built = World(layout=layout)
     built.before = built.snapshot()
     return built
 
@@ -170,7 +148,7 @@ def world(tmp_path: Path, board: Path) -> World:
 @pytest.fixture
 def renamed(world: World) -> World:
     """The happy path, already applied."""
-    agent_rename(OLD, NEW, layout=world.layout, store=world.board)
+    agent_rename(OLD, NEW, layout=world.layout, cards=False)
     return world
 
 
@@ -181,9 +159,9 @@ def rolled_back(world: World, request) -> World:
     Parametrised over every step, so each assertion below is checked at
     eight distinct points of failure.
     """
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    plan = _plan(world)
     try:
-        apply_plan(plan, store=world.board, on_step=_raise_at(request.param))
+        apply_plan(plan, on_step=_raise_at(request.param))
     except RenameError as exc:
         world.error = str(exc)
         return world
@@ -200,9 +178,9 @@ def organic_failure(world: World) -> World:
     overlays = world.layout.overlay_dir(OLD).parent
     overlays.chmod(0o555)
     try:
-        plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+        plan = _plan(world)
         try:
-            apply_plan(plan, store=world.board)
+            apply_plan(plan)
         except RenameError as exc:
             world.error = str(exc)
             return world
@@ -288,20 +266,12 @@ def test_a_stale_pid_file_does_not_block_the_rename(world: World):
 # ---------------------------------------------------------------------------
 
 
-def test_the_plan_counts_every_card_that_would_be_reassigned(world: World):
-    # Arrange
-    expected = set(world.cards)
-    # Act
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
-    # Assert
-    assert set(plan.card_ids) == expected
-
-
 def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
+    """The spec-side half of the board identity, provable without a board."""
     # Arrange
     needle = "SCITEX_TODO_AGENT_ID"
     # Act
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    plan = _plan(world)
     # Assert
     assert any(needle in c.path for c in plan.spec_changes)
 
@@ -310,7 +280,7 @@ def test_the_plan_counts_the_state_db_rows(world: World):
     # Arrange
     key = "comms_nodes.name"
     # Act
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    plan = _plan(world)
     # Assert
     assert plan.db_counts[key] == 1
 
@@ -320,7 +290,7 @@ def test_building_a_plan_changes_nothing(world: World):
     # Arrange
     before = world.before
     # Act
-    build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    _plan(world)
     # Assert
     assert world.snapshot() == before
 
@@ -330,16 +300,17 @@ def test_the_plan_warns_when_the_workdir_target_does_not_exist(world: World):
     # Arrange
     needle = "sac renames the AGENT, not the repo"
     # Act
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    plan = _plan(world)
     # Assert
     assert any(needle in w for w in plan.warnings)
 
 
 def test_no_cards_mode_warns_that_the_cards_will_be_orphaned(world: World):
+    """The `--no-cards` escape hatch must say what it costs."""
     # Arrange
     needle = "ORPHANED"
     # Act
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board, cards=False)
+    plan = _plan(world)
     # Assert
     assert any(needle in w for w in plan.warnings)
 
@@ -430,25 +401,6 @@ def test_rename_moves_the_state_db_rows(renamed: World):
     assert names == expected
 
 
-def test_rename_leaves_no_card_orphaned(renamed: World):
-    """THE point of the verb."""
-    # Arrange
-    store = renamed.board
-    # Act
-    orphans = find_owned_cards(OLD, store=store)
-    # Assert
-    assert orphans == []
-
-
-def test_rename_gives_every_card_to_the_new_owner(renamed: World):
-    # Arrange
-    expected = set(renamed.cards)
-    # Act
-    owned = set(find_owned_cards(NEW, store=renamed.board))
-    # Assert
-    assert owned == expected
-
-
 def test_rename_keeps_the_operators_spec_comments(renamed: World):
     # Arrange
     marker = "# This comment block is LOAD-BEARING"
@@ -461,9 +413,9 @@ def test_rename_keeps_the_operators_spec_comments(renamed: World):
 def test_a_renamed_agent_can_be_renamed_back(world: World):
     """The rename is not a one-way door."""
     # Arrange
-    agent_rename(OLD, NEW, layout=world.layout, store=world.board)
+    agent_rename(OLD, NEW, layout=world.layout, cards=False)
     # Act
-    agent_rename(NEW, OLD, layout=world.layout, store=world.board)
+    agent_rename(NEW, OLD, layout=world.layout, cards=False)
     # Assert
     assert world.layout.spec_file(OLD).read_text() == make_spec(OLD)
 
@@ -476,11 +428,11 @@ def test_a_renamed_agent_can_be_renamed_back(world: World):
 @pytest.mark.parametrize("failing_step", STEPS)
 def test_a_failure_at_any_step_raises_rename_error(world: World, failing_step: str):
     # Arrange
-    plan = build_plan(OLD, NEW, layout=world.layout, store=world.board)
+    plan = _plan(world)
     # Act
     # Assert
     with pytest.raises(RenameError):
-        apply_plan(plan, store=world.board, on_step=_raise_at(failing_step))
+        apply_plan(plan, on_step=_raise_at(failing_step))
 
 
 def test_rollback_leaves_the_world_exactly_as_it_was(rolled_back: World):
@@ -500,25 +452,6 @@ def test_rollback_leaves_nothing_under_the_new_name(rolled_back: World):
     exists = new_spec_dir.exists()
     # Assert
     assert not exists
-
-
-def test_rollback_hands_every_card_back(rolled_back: World):
-    """A `verify`-step failure happens AFTER the cards moved — they must return."""
-    # Arrange
-    expected = set(rolled_back.cards)
-    # Act
-    owned = set(find_owned_cards(OLD, store=rolled_back.board))
-    # Assert
-    assert owned == expected
-
-
-def test_rollback_leaves_the_new_owner_holding_no_cards(rolled_back: World):
-    # Arrange
-    store = rolled_back.board
-    # Act
-    owned = find_owned_cards(NEW, store=store)
-    # Assert
-    assert owned == []
 
 
 def test_rollback_restores_the_state_db_rows(rolled_back: World):

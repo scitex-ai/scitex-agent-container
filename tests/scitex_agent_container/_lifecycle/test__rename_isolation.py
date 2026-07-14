@@ -98,10 +98,12 @@ def test_isolated_board_redirects_scitex_todos_default_store(board: Path):
     rename code would reassign real cards. The fixture points
     ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, and scitex-todo
     reads that env var at CALL time — so this holds.
+
+    Skips when the optional peer is absent (sac's own CI); there is no
+    default store to redirect then, and faking one would prove nothing.
     """
     # Arrange
-    from scitex_todo import _store
-
+    _store = pytest.importorskip("scitex_todo._store")
     # Act
     resolved = _store.resolve_tasks_path()
     # Assert

@@ -21,10 +21,44 @@ from scitex_agent_container._lifecycle._rename_db import (
 )
 from scitex_agent_container._lifecycle._rename_plan import Layout
 
-from .._helpers.fleet_root import make_state_db
+from .._helpers.fleet_root import make_state_db, seed_db_rows
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
+
+
+# The rows a real agent leaves across the identity AND history tables.
+_SEED = [
+    (
+        "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
+        "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ("d1", OLD, f"/root/agents/{OLD}/spec.yaml", "sha", "user", "t0"),
+    ),
+    (
+        "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
+        "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
+    ),
+    (
+        "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
+        "updated_at) VALUES (?, ?, ?, ?, ?)",
+        (OLD, "h", 9001, 1.0, 1.0),
+    ),
+    (
+        "INSERT INTO node_comms_policy (name, updated_at) VALUES (?, ?)",
+        (OLD, 1.0),
+    ),
+    (
+        "INSERT INTO lineage (child_name, parent_name, created_at) "
+        "VALUES (?, ?, ?)",
+        ("child-a", OLD, 1.0),
+    ),
+    (
+        "INSERT INTO turns (turn_id, name, host, status, ts) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("t1", OLD, "h", "ok", 1.0),
+    ),
+]
 
 
 @pytest.fixture
@@ -36,39 +70,7 @@ def db(tmp_path: Path) -> Path:
 @pytest.fixture
 def seeded(db: Path) -> Path:
     """A DB holding rows for OLD across the identity + history tables."""
-    conn = sqlite3.connect(str(db))
-    with conn:
-        conn.execute(
-            "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
-            "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("d1", OLD, f"/root/agents/{OLD}/spec.yaml", "sha", "user", "t0"),
-        )
-        conn.execute(
-            "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
-            "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
-        )
-        conn.execute(
-            "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-            "updated_at) VALUES (?, ?, ?, ?, ?)",
-            (OLD, "h", 9001, 1.0, 1.0),
-        )
-        conn.execute(
-            "INSERT INTO node_comms_policy (name, updated_at) VALUES (?, ?)",
-            (OLD, 1.0),
-        )
-        conn.execute(
-            "INSERT INTO lineage (child_name, parent_name, created_at) "
-            "VALUES (?, ?, ?)",
-            ("child-a", OLD, 1.0),
-        )
-        conn.execute(
-            "INSERT INTO turns (turn_id, name, host, status, ts) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("t1", OLD, "h", "ok", 1.0),
-        )
-    conn.close()
-    return db
+    return seed_db_rows(db, _SEED)
 
 
 def _one(db: Path, sql: str, *args):

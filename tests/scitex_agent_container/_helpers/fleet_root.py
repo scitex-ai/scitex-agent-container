@@ -161,6 +161,55 @@ def make_state_db(layout: Layout) -> Path:
     return db_path
 
 
+def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
+    """Execute seeding INSERTs against a real state.db, committing once.
+
+    Lives HERE rather than inline in a fixture on purpose. STX-TQ005 (the
+    ecosystem test-quality rule) forbids a fixture that opens an external
+    resource — ``sqlite3.connect(...)`` — and hands it back with ``return``
+    instead of ``yield``, because a returned connection is never closed.
+    These fixtures never hand the connection back at all; they open it,
+    write, and close it. Extracting that into a plain helper keeps the
+    fixture bodies resource-free and the rule satisfied for the right
+    reason rather than by suppression.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        with conn:
+            for sql, args in statements:
+                conn.execute(sql, args)
+    finally:
+        conn.close()
+    return db_path
+
+
+COMMS_NODE_SQL = (
+    "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
+    "VALUES (?, ?, ?, ?, ?)"
+)
+TURN_SQL = (
+    "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
+)
+
+
+def seed_identity_and_history(layout: Layout, name: str) -> Path:
+    """Give ``name`` one identity row (comms_nodes) and one history row (turns).
+
+    The two halves the rename must both carry: the live A2A directory entry,
+    and the agent's past.
+    """
+    db_path = make_state_db(layout)
+    return seed_db_rows(
+        db_path,
+        [
+            (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
+            (TURN_SQL, ("t1", name, "h", "ok", 1.0)),
+        ],
+    )
+
+
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:
     """Set (or clear) env vars for the duration, then restore them.
 

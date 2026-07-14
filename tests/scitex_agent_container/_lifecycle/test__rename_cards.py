@@ -16,14 +16,25 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._lifecycle._rename_cards import (
+# scitex-todo is an OPTIONAL peer: not a declared dependency of sac, and
+# absent from sac's own CI. The repo's contract for a missing peer is to
+# SKIP (see tests/integration/test_cross_package_imports.py), and these
+# tests are meaningless without a real board — a faked one would prove
+# nothing about the primitive we are consuming.
+pytest.importorskip("scitex_todo")
+
+from scitex_agent_container._lifecycle._rename_cards import (  # noqa: E402
     find_foreign_scoped_cards,
     find_owned_cards,
     migrate_cards,
     undo_migrate_cards,
 )
 
-from .._helpers.fleet_root import add_card, isolated_board, seed_cards
+from .._helpers.fleet_root import (  # noqa: E402
+    add_card,
+    isolated_board,
+    seed_cards,
+)
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
