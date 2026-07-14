@@ -245,6 +245,7 @@ def request_spawn(
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -295,6 +296,21 @@ def request_spawn(
         the capsule runs one SDK turn (its ``startup_prompts``) and
         exits. Pairs naturally with ``foreground=True`` for the
         cohort capsule shape.
+    assume_yes
+        Forwarded as ``assume_yes: true`` in the POST body when set.
+        Bug fix (2026-07-05, reported by paper-scitex-clew): the host's
+        ``/agents`` handler shells a fresh ``sac agents start <name>``
+        subprocess, which re-runs the SAME interactive
+        refuse-without-``--yes`` gate (``cli_pkg/lifecycle/
+        _start_single.py::should_preview_and_require_yes``) that the
+        ORIGINAL in-SIF caller's own ``-y`` already satisfied. Before
+        this field existed there was no way for that consent to reach
+        the host subprocess, so a brokered ``sac agents start <name>
+        -y`` run from inside a container ALWAYS hit "refusing to start
+        ... without --yes/-y" even though ``-y`` was explicitly passed
+        at the top of the call chain. This does NOT weaken the
+        human-at-a-TTY default-refuse safety net — it only lets the
+        brokered/automated path assert consent that was already given.
 
     Returns
     -------
@@ -332,6 +348,11 @@ def request_spawn(
         body["foreground"] = True
     if one_shot:
         body["one_shot"] = True
+    # Consent-propagation fix (2026-07-05, paper-scitex-clew report): only
+    # emit the key when truthy, same back-compat rationale as foreground/
+    # one_shot above — pre-fix brokers simply ignore an absent field.
+    if assume_yes:
+        body["assume_yes"] = True
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"
@@ -369,13 +390,38 @@ def request_spawn(
         ) from exc
     except (urlerror.URLError, OSError, ValueError) as exc:
         # No HTTP exchange happened — connection refused / DNS / timeout.
-        # This (and only this) is a genuine "unreachable" condition. A
-        # 401/403 is NOT routed here: ``HTTPError`` (a URLError subclass)
+        # A 401/403 is NOT routed here: ``HTTPError`` (a URLError subclass)
         # is caught above first, so an authenticated-but-rejected request
         # never gets misreported as 'cannot reach / timed out'.
-        logger.warning("spawn_client: POST %s transport error: %s", url, exc)
+        #
+        # But "no response on THIS route" is NOT yet "the daemon is
+        # unreachable" — the authenticated routes dispatch through listen's
+        # shared worker pool and the public health path does not, so one can
+        # hang while the other answers in 0.18s (observed 2026-07-14). The
+        # old text asserted "unreachable; it may be flapping" and was WRONG.
+        # Probe the cheap public path and let the EVIDENCE pick the message.
+        from ._listen_probe import probe_listen_health, transport_failure_message
+
+        probe = probe_listen_health(base, opener=opener)
+        logger.warning(
+            "spawn_client: POST %s transport error: %s (probe: listen "
+            "serving=%s status=%s in %.2fs)",
+            url,
+            exc,
+            probe.serving,
+            probe.status,
+            probe.elapsed_s,
+        )
         raise SpawnRequestError(
-            f"spawn of {child_name!r} failed: cannot reach listen at {base!r} ({exc})"
+            transport_failure_message(
+                verb="spawn",
+                name=child_name,
+                base=base,
+                route="POST /agents",
+                exc=exc,
+                timeout_s=timeout_s,
+                probe=probe,
+            )
         ) from exc
 
     parsed = _parse_body(raw)

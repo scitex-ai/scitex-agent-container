@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._port_holder import (
     PortHealResult,
     clear_wedged_port_holders,
@@ -344,14 +345,26 @@ def restart_listen(
     ``host``/``port`` mirror ``sac listen``'s bind resolution per (a);
     ``lock_dir`` matches ``_single_instance.default_lock_dir()``. Never
     raises — every failure populates ``RestartResult.error``.
-    """
-    pid_file = pidfile_path(port, lock_dir)
-    prior_pid = read_pid_from_file(pid_file)
-    had_prior_pidfile = pid_file.is_file()
-    prior_alive = prior_pid is not None and pid_alive(prior_pid)
 
-    escalated = False
-    port_holders_killed: tuple[int, ...] = ()
+    The STOP half (steps 1-5 above) is SSOT in ``._stop.stop_listen`` —
+    the exact sequence ``sac listen stop`` runs — so the two verbs can
+    never drift. Imported lazily because ``_stop`` imports THIS module
+    (it reaches the ``_kill`` / ``_sleep`` test seams through the module
+    object), and a top-level import here would close that cycle.
+    """
+    from ._stop import stop_listen
+
+    stopped = stop_listen(
+        host=host,
+        port=port,
+        lock_dir=lock_dir,
+        grace_secs=grace_secs,
+        force=force,
+    )
+    escalated = stopped.escalated_to_sigkill
+    had_prior_pidfile = stopped.had_prior_pidfile
+    prior_alive = stopped.prior_pid_alive
+    port_holders_killed = stopped.port_holders_killed
 
     def _fail(*, error: str, took_systemd_path: bool = False) -> RestartResult:
         """Failure result capturing pre-state + self-heal progress so
@@ -367,44 +380,10 @@ def restart_listen(
             port_holders_killed=port_holders_killed,
         )
 
-    if prior_pid is not None and prior_alive:
-        escalated = _terminate_then_kill(
-            prior_pid, grace_secs=grace_secs, force_kill=force
-        )
-        # Defence-in-depth: confirm the PID is actually dead before
-        # touching the pidfile. If still alive after SIGKILL, bail
-        # rather than clear the lock + let a second daemon start beside.
-        _sleep(_POLL_INTERVAL_SECS)
-        if pid_alive(prior_pid):
-            return _fail(
-                error=(
-                    f"PID {prior_pid} survived SIGKILL — refusing to "
-                    f"clear pidfile or relaunch. Inspect manually "
-                    f"(zombie/uninterruptible state)."
-                )
-            )
-
-    try:
-        pid_file.unlink(missing_ok=True)
-    except OSError as exc:
-        return _fail(error=f"failed to clear stale pidfile {pid_file}: {exc!r}")
-
-    # Self-heal a WEDGED port holder the pidfile never named (the
-    # "curl hangs forever" remnant) before relaunch so the new daemon
-    # doesn't hit EADDRINUSE. terminate/sleep are passed in so the
-    # escalation seams stay owned here (and avoid a circular import).
-    heal = clear_wedged_port_holders(
-        host=host,
-        port=port,
-        grace_secs=grace_secs,
-        force=force,
-        terminate_fn=_terminate_then_kill,
-        sleep_fn=_sleep,
-        poll_interval=_POLL_INTERVAL_SECS,
-    )
-    port_holders_killed = heal.killed
-    if heal.error:
-        return _fail(error=heal.error)
+    # A failed stop must NEVER relaunch — that would race a surviving
+    # daemon or bind into an EADDRINUSE on a still-wedged port.
+    if not stopped.ok:
+        return _fail(error=stopped.error)
 
     use_systemd = systemd_unit_is_active(systemd_unit_path)
     if use_systemd:
@@ -430,7 +409,10 @@ def restart_listen(
                 took_systemd_path=True,
             )
     else:
-        argv = sac_listen_argv or ["sac", "listen"]
+        try:
+            argv = sac_listen_argv or [sac_binary(), "listen"]
+        except SacBinaryNotFoundError as exc:
+            return _fail(error=f"cannot resolve sac binary: {exc}")
         try:
             _run_subprocess(
                 argv,

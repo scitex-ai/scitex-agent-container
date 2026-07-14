@@ -138,11 +138,16 @@ def test_cross_group_deny_publishes_synthetic_notification(
     assert len(rows) == 1
 
 
-def test_synthetic_notification_from_agent_is_system(
+def test_synthetic_notification_sender_is_daemon(
     isolated_state: Path,
 ) -> None:
     # Arrange — the frame must not appear to come from the sender
-    # (that would impersonate a granted peer at the receiver).
+    # (that would impersonate a granted peer at the receiver). As a sac
+    # daemon-originated frame it carries sender ``from_agent="daemon"``
+    # so the receiving agent's channel tag renders ``<- sac [daemon]``
+    # (operator directive 2026-07-05, bracket form).
+    from scitex_agent_container.a2a._inbox_bus import DAEMON_SENDER
+
     app = create_app(token=_TOKEN)
     # Act
     with TestClient(app) as client:
@@ -153,7 +158,26 @@ def test_synthetic_notification_from_agent_is_system(
         )
     rows = _synthetic_rows("lead", isolated_state)
     # Assert
-    assert rows[0]["event"]["from_agent"] == "system"
+    assert rows[0]["event"]["from_agent"] == DAEMON_SENDER
+
+
+def test_synthetic_notification_sender_literal_is_daemon(
+    isolated_state: Path,
+) -> None:
+    # Arrange — pin the literal wire value so a rename of the constant
+    # can't silently drift the on-the-wire sender the operator's bracket
+    # convention depends on. No package-suffixed source token.
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents/lead/message:send",
+            json=_send_payload("worker-a"),
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    rows = _synthetic_rows("lead", isolated_state)
+    # Assert
+    assert rows[0]["event"]["from_agent"] == "daemon"
 
 
 def test_synthetic_notification_embeds_grant_command(

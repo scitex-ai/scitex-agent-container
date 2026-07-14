@@ -159,7 +159,7 @@ def _registered(tmp_path: Path, env_save_restore):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "host": "local",
+                    "host": "${HOSTNAME}",
                     "workdir": str(workdir),
                     "apptainer": {"image": "/x.sif", "binds": []},
                     "claude": {"model": "sonnet"},
@@ -239,7 +239,7 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "host": "local",
+                    "host": "${HOSTNAME}",
                     "workdir": str(workdir),
                     "apptainer": {"image": "/x.sif", "binds": []},
                     "claude": {"model": "sonnet"},

@@ -17,6 +17,11 @@ build/
 .pytest_cache/
 GITIGNORED/
 .env
+# User/project-LOCAL direnv config (agent identity + $-references into the
+# secrets pool) — never tracked in this public repo. Tracked template:
+# .envrc.example. sac auto-resolves CCT_BOT_TOKEN from the pool when this
+# file is absent (runtimes/_cct_token_pool.py).
+.envrc
 
 # cld session artifacts (mirrors of ~/.claude/to_claude/ — canonical source
 # in ~/.dotfiles/src/.claude/to_claude/).
@@ -46,3 +51,27 @@ logs/
 # (CI in docs.yml strips this before committing _sphinx_html/)
 _sphinx_html/.doctrees/
 .worktrees/
+
+# Build stamp written by src/hatch_build.py at build time (commit + code
+# hash of the artifact). Generated, never committed — a checked-in copy
+# would go stale on the next commit and start LYING about which code is
+# loaded, which is the exact failure this stamp exists to prevent. The
+# build force-includes it, so being git-ignored does not keep it out of
+# the wheel; and a source checkout reads its commit live from .git anyway.
+src/scitex_agent_container/_provenance/_build_info.py
+
+# Test-run artifacts. The suite writes its coverage data, its listen-health
+# ledger and its sac-state FLOOR (the sandbox that keeps tests off the real
+# fleet state) under tests/results/. These are per-run scratch, never sources:
+# two of them (floor-*/runtime/<agent>/instance_id) reached a `git add -A`
+# during the v0.21.20 work and would have been committed.
+#
+# And it is worse than noise — it is a SECRET path. The suite exercises the
+# real secret-env writer, which propagates the AMBIENT $SAC_ANTHROPIC_API_KEY
+# into tests/results/sac-state/**/secret-env/apptainer.env. Untracked but NOT
+# ignored, so the same routine `git add -A` after a test run would have
+# committed the operator's LIVE API key. Verified 2026-07-14 via git-object
+# history that it never has been (`git log --all` over the path is empty);
+# this keeps it that way. (Two workers hit this independently, from different
+# artifacts, within a day — which is the argument for the ignore, not against.)
+tests/results/

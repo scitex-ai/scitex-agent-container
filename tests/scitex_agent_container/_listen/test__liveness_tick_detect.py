@@ -61,13 +61,23 @@ class TestOwnerNotLive:
         # Assert
         assert [s.reason for s in stuck] == ["owner-not-live"]
 
-    def test_owner_absent_from_liveness_map_is_not_live(self) -> None:
-        # Arrange — no entry at all for the owner ⇒ treated as not live.
+    def test_dead_owner_with_a_stale_heartbeat_still_fires(self) -> None:
+        # Arrange — POSITIVE evidence of death: the registry was readable
+        # (``known``), the owner has no live pid, its heartbeat writer stopped
+        # beating long ago and its activity record is stale too.
         doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=NOW - STALE_S * 10,
+                known=True,
+                last_beat_ts=NOW - STALE_S * 10,
+            )
+        }
         # Act
-        stuck = find_stuck_cards(doc, {}, now=NOW, stale_s=STALE_S)
-        # Assert
-        assert stuck and stuck[0].reason == "owner-not-live"
+        stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
+        # Assert — real detection must NOT be regressed by the UNKNOWN work.
+        assert [s.reason for s in stuck] == ["owner-not-live"]
 
     def test_anomaly_carries_the_card_id(self) -> None:
         # Arrange
@@ -106,6 +116,160 @@ class TestOwnerIdle:
         stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
         # Assert
         assert stuck and stuck[0].reason == "owner-idle"
+
+
+# ---------------------------------------------------------------------------
+# THE FLOOD REGRESSION — a LIVE owner the registry failed to vouch for
+#
+# Observed on the live fleet: every active ``instances`` row carries
+# ``pid = NULL``, so the registry proves NOBODY live. The old rule read that
+# as "everybody is dead" and fired ``owner-not-live`` / ``critical`` at ~100
+# cards per sweep, against agents that were serving HTTP in the same log.
+# The owner's OWN records must outrank the registry's silence.
+# ---------------------------------------------------------------------------
+
+
+class TestLiveOwnerRegistryMissed:
+    def test_recent_activity_record_outranks_a_registry_that_says_dead(
+        self,
+    ) -> None:
+        # Arrange — registry readable but proves nothing (pid-less rows), while
+        # the owner wrote an activity record 5s ago. It is demonstrably ALIVE
+        # and PROGRESSING.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False, last_active_ts=NOW - 5.0, known=True
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
+        # Assert — THE regression: this used to emit owner-not-live/critical.
+        assert stuck == []
+
+    def test_fresh_heartbeat_downgrades_a_stalled_owner_to_idle(self) -> None:
+        # Arrange — no live registry pid and no activity for a while, but the
+        # heartbeat writer beat 30s ago ⇒ the PROCESS is provably alive.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=None,
+                known=True,
+                last_beat_ts=NOW - 30.0,
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
+        # Assert — idle (true), never not-live (a lie about a beating agent).
+        assert [s.reason for s in stuck] == ["owner-idle"]
+
+
+# ---------------------------------------------------------------------------
+# UNKNOWN ≠ DEAD — no evidence either way ⇒ say nothing, never a critical
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownIsNotDead:
+    def test_unresolvable_owner_emits_nothing(self) -> None:
+        # Arrange — the registry read FAILED and the owner has no heartbeat, so
+        # nothing could have shown life had there been any.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False, last_active_ts=None, known=False
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
+        # Assert
+        assert stuck == []
+
+    def test_unknown_owner_never_escalates_to_critical(self) -> None:
+        # Arrange — a card stale by 5× the threshold would be CRITICAL if the
+        # owner were known-dead. Unknown must never reach that severity.
+        doc = {"tasks": [_card(last_activity=_iso(NOW - STALE_S * 5))]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False, last_active_ts=None, known=False
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(doc, liveness, now=NOW, stale_s=STALE_S)
+        # Assert
+        assert not any(s.severity == "critical" for s in stuck)
+
+    def test_owner_absent_from_liveness_map_is_unknown_not_dead(self) -> None:
+        # Arrange — no entry at all for the owner. We never resolved it; that
+        # is absence of evidence, not evidence of death.
+        doc = {"tasks": [_card()]}
+        # Act
+        stuck = find_stuck_cards(doc, {}, now=NOW, stale_s=STALE_S)
+        # Assert
+        assert stuck == []
+
+
+# ---------------------------------------------------------------------------
+# The heartbeat WRITER can die too
+#
+# The beats this rule reads as proof-of-life come from ONE shared writer
+# (sibling loops inside ``sac listen``) which is known to blow its budget and
+# get abandoned. When it stops, every beat freezes AT ONCE. Reading that as
+# "the whole fleet died" would just swap the registry flood for a heartbeat
+# flood — the same inversion down a different channel.
+# ---------------------------------------------------------------------------
+
+
+class TestAbandonedHeartbeatWriter:
+    def test_a_dead_writer_indicts_nobody(self) -> None:
+        # Arrange — the owner's beat is frozen AND the newest beat anywhere in
+        # the fleet is frozen too ⇒ the WRITER stopped. Its silence is a fact
+        # about the writer, not about this agent.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=None,
+                known=True,
+                last_beat_ts=NOW - STALE_S * 3,
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(
+            doc,
+            liveness,
+            now=NOW,
+            stale_s=STALE_S,
+            fleet_last_beat_ts=NOW - STALE_S * 3,  # nobody, anywhere, is beating
+        )
+        # Assert — no flood: an abandoned writer must not read as mass death.
+        assert stuck == []
+
+    def test_a_frozen_owner_still_dies_while_the_writer_beats_for_others(
+        self,
+    ) -> None:
+        # Arrange — the fleet reading is FRESH (some other agent, not
+        # necessarily a card owner, is still being beaten for), so the writer
+        # demonstrably WORKS. This owner's silence is therefore its own.
+        doc = {"tasks": [_card()]}
+        liveness = {
+            "agent-x": AgentLiveness(
+                is_live=False,
+                last_active_ts=None,
+                known=True,
+                last_beat_ts=NOW - STALE_S * 3,
+            )
+        }
+        # Act
+        stuck = find_stuck_cards(
+            doc,
+            liveness,
+            now=NOW,
+            stale_s=STALE_S,
+            fleet_last_beat_ts=NOW - 30.0,  # the writer is alive and beating
+        )
+        # Assert — real death is still detected (no gap for a lone dead owner).
+        assert [s.reason for s in stuck] == ["owner-not-live"]
 
 
 # ---------------------------------------------------------------------------

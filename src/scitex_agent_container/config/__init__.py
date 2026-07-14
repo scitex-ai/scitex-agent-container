@@ -86,6 +86,22 @@ def load_config(path: str | Path) -> AgentConfig:
     return config
 
 
+def _config_logger():
+    """Logger for load-time advisories, routed through scitex-logging.
+
+    scitex-logging gives the fleet-consistent coloured ``WARN:``/``ERRO:``
+    stderr lines (operator directive 2026-07-10) instead of raw
+    ``warnings.warn`` UserWarning spew with its ``file:line`` + source-echo
+    framing. Imported lazily: the package auto-configures handlers on first
+    import (~300 ms), which must not tax ``import scitex_agent_container.config``
+    itself (see ``21_cli-startup-budget.md``); CLI paths have usually paid it
+    already via ``cli_pkg._helpers._console``.
+    """
+    import scitex_logging
+
+    return scitex_logging.getLogger(__name__)
+
+
 def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
     """Soft-WARN (never fail) when ``spec.claude.account`` names an
     account whose snapshot dir is absent at load time.
@@ -101,20 +117,17 @@ def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
     # stx-allow: fallback (reason: store-path resolution is best-effort
     # advisory only; a hiccup must never break config loading.)
     try:
-        import warnings
-
         from .._state.account_store import _store_path
 
         store = _store_path(None, Path.home())
         if not (store / acct).is_dir():
-            warnings.warn(
+            _config_logger().warning(
                 f"spec.claude.account='{acct}' has no saved-account "
                 f"snapshot at {store / acct}; the agent will fall back "
                 "to the host live ~/.claude/.credentials.json at start. "
-                "Create it with `sac account save {acct}` (on the host "
+                f"Create it with `sac account save {acct}` (on the host "
                 "that holds those credentials), or ignore if the account "
-                "is provisioned on the target host.",
-                stacklevel=2,
+                "is provisioned on the target host."
             )
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         pass
@@ -141,8 +154,6 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
     start). Best-effort: any hiccup must never break config loading.
     """
     try:
-        import warnings
-
         for idx, prompt in enumerate(getattr(config, "startup_prompts", []) or []):
             text = str(prompt)
             n_chars = len(text)
@@ -151,7 +162,7 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
                 n_lines <= _STARTUP_PROMPT_WARN_LINES
             ):
                 continue
-            warnings.warn(
+            _config_logger().warning(
                 f"spec.startup_prompts[{idx}] for agent "
                 f"'{getattr(config, 'name', '?')}' is long "
                 f"({n_chars} chars, {n_lines} lines). startup_prompts are pasted "
@@ -159,8 +170,7 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
                 "belongs in the auto-loaded $HOME/.claude/CLAUDE.md (role + skill "
                 "@-imports) and reusable rules in .claude/skills/, which claude "
                 "re-reads every session. Keep startup_prompts to a short boot-KICK "
-                "(what to DO on start); move the prose to CLAUDE.md + skills.",
-                stacklevel=2,
+                "(what to DO on start); move the prose to CLAUDE.md + skills."
             )
     except Exception:  # stx-allow: fallback (reason: advisory only; never break load)
         pass

@@ -7,8 +7,8 @@ behavior previously expressed as sync handlers in
 streaming model.
 
 The lookup table :data:`EXECUTORS` maps the same yaml ``spec.a2a.handler``
-keys (``echo`` / ``claude_session`` / ``claude_cli`` / ``exec``) to
-executor classes, so the serve CLI can pick one by name.
+keys (``echo`` / ``claude_session`` / ``openai_session`` / ``claude_cli``
+/ ``exec``) to executor classes, so the serve CLI can pick one by name.
 
 ``claude_session`` is recommended for new agents — it uses Anthropic's
 official ``claude-agent-sdk`` and survives ``--print`` deprecation.
@@ -26,10 +26,14 @@ from scitex_agent_container.a2a.executors._claude_session import (
 )
 from scitex_agent_container.a2a.executors._echo import EchoExecutor
 from scitex_agent_container.a2a.executors._exec import ExecExecutor
+from scitex_agent_container.a2a.executors._openai_session import (
+    OpenAISessionExecutor,
+)
 
 EXECUTORS: dict[str, Type[BaseSyncExecutor]] = {
     "echo": EchoExecutor,
     "claude_session": ClaudeSessionExecutor,  # recommended (SDK-backed)
+    "openai_session": OpenAISessionExecutor,  # openai-agents SDK ([openai] extra)
     "claude_cli": ClaudeCliExecutor,  # legacy (--print, deprecating)
     "exec": ExecExecutor,
 }
@@ -41,4 +45,5 @@ __all__ = [
     "EchoExecutor",
     "EXECUTORS",
     "ExecExecutor",
+    "OpenAISessionExecutor",
 ]

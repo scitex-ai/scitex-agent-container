@@ -87,7 +87,7 @@ def _write_spec(parent: Path, name: str, *, body: str | None = None) -> Path:
             "metadata: {}\n"
             "spec:\n"
             "  runtime: apptainer\n"
-            "  host: local\n"
+            "  host: ${HOSTNAME}\n"
             "  workdir: /home/agent/work\n"
             "  apptainer:\n"
             "    image: /x.sif\n"
@@ -224,6 +224,30 @@ def test_format_account_block_renders_subscription_created_at(_full_meta):
     joined = "\n".join(_format_claude_account_block(meta))
     # Assert
     assert "2024-01-01" in joined
+
+
+def test_format_account_block_renders_since_in_jst():
+    # Arrange — the raw ``...T...Z`` API stamp must render as a readable
+    # JST wall clock (operator 2026-07-13), not the unreadable ISO string.
+    meta = {
+        "email_address": "x@y.com",
+        "subscription_created_at": "2025-05-30T19:59:34.010055Z",
+    }
+    # Act
+    lines = _format_claude_account_block(meta)
+    since_line = next(line for line in lines if "Since" in line)
+    # Assert — 19:59 UTC + 9h = 04:59 JST the next day.
+    assert since_line.rstrip().endswith("2025-05-31 04:59 (JST)")
+
+
+def test_format_account_block_since_missing_renders_dash():
+    # Arrange — no subscription_created_at → the Since cell is a bare dash.
+    meta = {"email_address": "x@y.com"}
+    # Act
+    lines = _format_claude_account_block(meta)
+    since_line = next(line for line in lines if "Since" in line)
+    # Assert
+    assert since_line.rstrip().endswith("-")
 
 
 def test_format_account_block_header_present(_full_meta):
@@ -374,12 +398,14 @@ def test_status_fleet_table_exits_zero(tmp_registry):
 
 
 def test_status_fleet_table_includes_registered_agent(tmp_path, tmp_registry):
-    # Arrange
+    # Arrange — a registered agent that is NOT running in the test env
+    # (no tmux/container). The DEFAULT view shows only running agents
+    # (operator TG 1490-1495), so the full roster is behind ``-v``.
     spec = _write_spec(tmp_path, "table-agent")
     _register(tmp_registry, "table-agent", spec)
     runner = CliRunner()
     # Act
-    result = runner.invoke(status, [])
+    result = runner.invoke(status, ["-v"])
     # Assert
     assert "table-agent" in result.output
 
@@ -444,6 +470,52 @@ def test_status_per_agent_table_includes_stopped_status(tmp_path, tmp_registry):
     result = runner.invoke(status, ["myagent"])
     # Assert
     assert "stopped" in result.output
+
+
+def test_status_per_agent_table_survives_non_ascii_extensions_on_ascii_stdout(
+    tmp_path, tmp_registry
+):
+    """Bug 2 (sac-fleet-ux-misc-2026-06-24): ``spec.extensions`` is an
+    opaque pass-through echoed verbatim into the status table -- real
+    agents commonly carry non-ASCII content there (and in pane_text /
+    CLAUDE.md snippets, which are harder to control deterministically in
+    a test). ``CliRunner(charset="ascii")`` gives ``sys.stdout`` a real
+    strict-ASCII ``TextIOWrapper`` -- the same shape a locale-stripped
+    container/cron invocation produces -- so ``console.print(table)``
+    used to raise ``UnicodeEncodeError`` partway through rendering."""
+    # Arrange
+    spec = _write_spec(
+        tmp_path,
+        "unicode-agent",
+        body=(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata: {}\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: true\n"
+            "    interval: 60\n"
+            "  restart:\n"
+            "    policy: on-failure\n"
+            "    max_retries: 3\n"
+            "  extensions:\n"
+            "    note: \"❯ ready\"\n"
+        ),
+    )
+    _register(tmp_registry, "unicode-agent", spec)
+    runner = CliRunner(charset="ascii")
+    # Act
+    result = runner.invoke(status, ["unicode-agent"])
+    # Assert
+    assert result.exit_code == 0, repr(result.exception)
 
 
 def test_status_per_agent_not_in_registry_json_exits_one(tmp_registry):

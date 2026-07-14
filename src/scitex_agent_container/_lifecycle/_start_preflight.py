@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import sys
 import traceback
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Mapping
 
 from ..config import AgentConfig
 
@@ -86,46 +87,209 @@ def _resolve_strict_drift(strict_drift: bool | None) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _slug_of_credentials_file(path: Path) -> str:
+    """Return the account slug for a ``.credentials.json`` path.
+
+    The slug is the file's PARENT directory name — the fleet layout is
+    ``~/.scitex/agent-container/accounts/<slug>/.credentials.json`` and
+    ``<slug>`` is exactly the stored-account name the quota-aware picker
+    (:func:`_creds.pick_healthy_account`) keys off (see
+    :func:`_creds._pick_healthy.account_health`).
+    """
+    return path.parent.name
+
+
+def _rotate_among_credentials_files(
+    config: AgentConfig,
+    paths: list[str],
+    *,
+    log_stream: Any = None,
+    now: float | None = None,
+    usage_5h: Mapping[str, float] | None = None,
+    usage_7d: Mapping[str, float] | None = None,
+    quota_cache_path: Path | str | None = None,
+) -> None:
+    """Pick ONE credentials file from the pool, quota-aware, and bind it.
+
+    ``paths`` is the account POOL (``spec.claude.credentials_files``, or
+    the singular ``spec.claude.credentials_file`` treated as a 1-element
+    pool). Each entry's account SLUG is its parent-dir name. We hand the
+    slug list to :func:`_creds.pick_healthy_account` so the SAME
+    quota-conditional pick used for named accounts chooses among exactly
+    the listed accounts — token freshness as the hard gate, then avoid
+    5h-blocked and 7d-near-capped accounts, then LOAD-BALANCE the
+    winning tier across the fleet (``spread_key=config.name`` →
+    7d-headroom-weighted rendezvous hash, so a bulk restart spreads
+    agents over the healthy accounts instead of stacking them all onto
+    one; see :mod:`_creds._quota_rank`). The pool is then collapsed down
+    to the picked entry by writing it into
+    ``config.claude.credentials_file`` — the field every downstream auth
+    path (``runtimes._apptainer_auth.auth_argv`` /
+    ``credentials_file_bind``) already resolves. Downstream binding is
+    therefore UNCHANGED; this only decides WHICH file it binds.
+
+    ``preferred`` (churn minimisation) is ONLY a genuine pin: the spec's
+    ``claude.account`` when it is one of the listed slugs, else the slug
+    of the currently-effective ``credentials_file`` when it is listed.
+    The first listed entry is deliberately NOT treated as preferred —
+    that made every fleet agent "prefer" the same account and defeated
+    the spread (2026-07 ``sac-restart --all-running`` incident).
+
+    Health probing reads each slug's snapshot from the pool's common
+    parent-of-parent directory (``store_dir``) so the freshness/quota
+    check inspects the EXACT listed files — this works for the fleet
+    ``accounts/`` layout and for custom locations alike. When the entries
+    span different parent dirs, ``store_dir`` falls back to the default
+    SciTeX account-store cascade.
+
+    Fail-loud: when NO listed entry has a usable (non-expired) snapshot,
+    :class:`_creds.NoHealthyAccountError` propagates (agent NOT started).
+    Back-compat: a 1-element pool whose one snapshot is healthy resolves
+    to that exact file (no-op — ``credentials_file`` unchanged, no log).
+    """
+    from .._creds import pick_healthy_account
+
+    entries: list[tuple[str, Path]] = []
+    grandparents: set[str] = set()
+    for raw in paths:
+        p = Path(str(raw)).expanduser()
+        entries.append((_slug_of_credentials_file(p), p))
+        grandparents.add(str(p.parent.parent))
+    slugs = [slug for slug, _ in entries]
+
+    # Common parent-of-parent = the account store dir. When every listed
+    # file lives under the same dir (the fleet layout), pass it so the
+    # health probe reads the EXACT listed files; otherwise degrade to the
+    # default store cascade (store_dir=None).
+    store_dir: Path | None = (
+        entries[0][1].parent.parent if len(grandparents) == 1 else None
+    )
+
+    claude = config.claude
+    # Preferred = a GENUINE pin only: the spec's named account when it is
+    # one of the listed slugs, else the currently-effective
+    # credentials_file's slug when it is listed. NOT the first listed
+    # entry — see the docstring (fleet-stacking incident).
+    account = str(getattr(claude, "account", "") or "").strip()
+    prior = str(getattr(claude, "credentials_file", "") or "").strip()
+    prior_slug = _slug_of_credentials_file(Path(prior)) if prior else ""
+    if account in slugs:
+        preferred: str | None = account
+    elif prior_slug in slugs:
+        preferred = prior_slug
+    else:
+        preferred = None
+
+    picked = pick_healthy_account(
+        preferred,
+        candidates=slugs,
+        store_dir=store_dir,
+        now=now,
+        usage_5h=usage_5h,
+        usage_7d=usage_7d,
+        quota_cache_path=quota_cache_path,
+        spread_key=config.name,
+    )
+
+    picked_path = next(p for slug, p in entries if slug == picked)
+    claude.credentials_file = str(picked_path)
+
+    if str(picked_path) == prior:
+        return  # 1-element / already-selected pool — no change, no log.
+
+    from .._creds import account_5h_usage, account_7d_usage
+
+    h5 = account_5h_usage(picked, usage_5h=usage_5h, quota_cache_path=quota_cache_path)
+    d7 = account_7d_usage(picked, usage_7d=usage_7d, quota_cache_path=quota_cache_path)
+
+    def fmt(v: float | None) -> str:
+        return "?" if v is None else f"{v:.0f}%"
+
+    stream = log_stream if log_stream is not None else sys.stderr
+    print(
+        f"[sac:creds] agent '{config.name}' selected credentials_files pool "
+        f"entry: account {picked!r} ({picked_path}) among {len(slugs)} listed "
+        f"credentials_files (quota-conditional pick — token-fresh, avoids "
+        f"5h-blocked and 7d-near-capped accounts, load-balanced per agent; "
+        f"picked usage 5h={fmt(h5)} 7d={fmt(d7)})",
+        file=stream,
+    )
+
+
 def _rotate_to_healthy_account(
     config: AgentConfig,
     *,
     log_stream: Any = None,
+    now: float | None = None,
+    usage_5h: Mapping[str, float] | None = None,
+    usage_7d: Mapping[str, float] | None = None,
+    quota_cache_path: Path | str | None = None,
 ) -> None:
-    """Rotate ``config.claude.account`` to a healthy stored account.
+    """Rotate the agent's credential to a healthy stored account.
 
-    CREDS-PHASE1 wiring. Only acts on PINNED agents
-    (``spec.claude.account`` non-empty). For an unpinned agent the
-    runtime continues to bind the host's live ``.credentials.json``
-    untouched.
+    CREDS-PHASE1 wiring. Two account-pool entry points, checked in order:
 
-    On a pinned agent:
+    1. **Account POOL** — ``spec.claude.credentials_files`` (plural), or
+       the singular ``spec.claude.credentials_file`` treated as a
+       1-element pool. When non-empty, delegate to
+       :func:`_rotate_among_credentials_files`: derive each entry's
+       account slug (parent-dir name), let :func:`_creds.
+       pick_healthy_account` choose the quota-aware winner among exactly
+       the listed accounts, and collapse the pool to the picked file via
+       ``config.claude.credentials_file``. THIS is the wiring that makes
+       the quota-aware pick (PR #583/#584) affect ``credentials_file``-
+       pinned fleet agents — previously such agents bypassed the pick
+       entirely (this function returned early on empty ``account``).
 
-    * If the pinned snapshot is healthy → no-op (config unchanged).
-    * If the pinned snapshot is EXPIRED/ABSENT but another stored
-      account has a fresh snapshot → ``config.claude.account`` is
-      mutated to that account and a one-line rotation notice is
-      printed to ``log_stream`` (default ``sys.stderr``). The runtime
-      then binds that account's snapshot ``:rw`` directly via
-      :func:`runtimes._apptainer_creds.resolve_cred_file` (operator
-      #15 — the prior boot-copy path was the root cause of the
-      2026-06-01 fleet outage; refreshes now write back to the
-      snapshot itself, never expiring).
-    * If NOTHING is healthy → :class:`_creds.NoHealthyAccountError`
-      propagates (fail loud, no silent stale-token launch). Agent is
-      NOT started.
+    2. **Named account** — ``spec.claude.account`` non-empty. Keep the
+       pinned account when its snapshot is healthy AND its quota is not
+       known-bad (5h-blocked / 7d-near-capped); otherwise rotate
+       ``config.claude.account`` to the ranked fresh account
+       (load-balanced per agent — ``spread_key=config.name``). For an
+       unpinned agent (no pool, no account) the runtime continues to
+       bind the host's live ``.credentials.json`` untouched.
 
-    See :mod:`scitex_agent_container._creds._pick_healthy` for the
-    health model — non-expired snapshot = healthy. Cap-induced 429s
-    still surface from claude in-turn; the picker only avoids
-    known-stale auth at boot.
+    In every case a total absence of a usable (non-expired) snapshot
+    raises :class:`_creds.NoHealthyAccountError` (fail loud, no silent
+    stale-token launch). See :mod:`scitex_agent_container._creds.
+    _pick_healthy` for the health model. The ``now`` / ``usage_5h`` /
+    ``usage_7d`` / ``quota_cache_path`` params are the same
+    test-injection seams ``pick_healthy_account`` exposes; production
+    passes ``None``.
     """
-    pinned = getattr(getattr(config, "claude", None), "account", "") or ""
+    claude = getattr(config, "claude", None)
+
+    # 1. Account POOL (plural, or the singular treated as a 1-element pool).
+    cred_files = list(getattr(claude, "credentials_files", []) or [])
+    single = str(getattr(claude, "credentials_file", "") or "").strip()
+    pool = cred_files if cred_files else ([single] if single else [])
+    if pool:
+        _rotate_among_credentials_files(
+            config,
+            pool,
+            log_stream=log_stream,
+            now=now,
+            usage_5h=usage_5h,
+            usage_7d=usage_7d,
+            quota_cache_path=quota_cache_path,
+        )
+        return
+
+    # 2. Named account (legacy CREDS-PHASE1 path).
+    pinned = getattr(claude, "account", "") or ""
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
 
     from .._creds import pick_healthy_account
 
-    picked = pick_healthy_account(pinned)
+    picked = pick_healthy_account(
+        pinned,
+        now=now,
+        usage_5h=usage_5h,
+        usage_7d=usage_7d,
+        quota_cache_path=quota_cache_path,
+        spread_key=config.name,
+    )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.
 
@@ -133,8 +297,9 @@ def _rotate_to_healthy_account(
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (pinned snapshot unhealthy; "
-        f"rotated to the first healthy stored account)",
+        f"{pinned!r} -> {picked!r} (pinned account stale, 5h-blocked, or "
+        f"near its weekly cap; rotated to a fresh account with headroom, "
+        f"load-balanced per agent)",
         file=stream,
     )
 

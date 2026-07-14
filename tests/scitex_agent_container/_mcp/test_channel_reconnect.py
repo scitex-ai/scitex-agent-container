@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from scitex_agent_container._mcp.channel import _consume_sse
+from scitex_agent_container._mcp.channel import _consume_sse, _jittered_backoff
 
 # ---------------------------------------------------------------------------
 # Servers — minimal asyncio TCP servers speaking SSE, with controllable
@@ -274,3 +275,165 @@ async def test_consume_sse_reconnects_after_server_starts_late():
     # callback, proving the consumer kept retrying through the
     # unreachable window.
     assert received and received[0]["msg_id"] == "late-start"
+
+
+# ---------------------------------------------------------------------------
+# Reconnect when the stream dies SILENTLY — no FIN, no RST, just a socket
+# nobody will ever speak on again.
+#
+# This is the failure mode the two tests above CANNOT see: they close the
+# connection, so the client gets an EOF and obviously loops. A real listen can
+# vanish without closing (hard host death, wedged uvicorn, an idle NAT/firewall
+# flow drop). With an unbounded read the consumer then parks inside
+# ``aiter_lines()`` forever, still believing it is subscribed while the broker
+# holds no subscriber for it — deafness with no error raised anywhere, curable
+# only by restarting the agent. That is the same shape as the bug #591 fixed in
+# the CONNECT path, surviving in the READ path.
+# ---------------------------------------------------------------------------
+
+
+class _SilentStallServer:
+    """Accepts, sends SSE headers, then goes SILENT — never writes, never closes.
+
+    Faithful to a peer that died without closing its socket: from the client's
+    side the connection is still ESTABLISHED and simply has nothing to say.
+    """
+
+    def __init__(self) -> None:
+        self.connection_count = 0
+        self._server: asyncio.base_events.Server | None = None
+        self._held: list[asyncio.StreamWriter] = []
+        self.host = "127.0.0.1"
+        self.port = 0
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, host=self.host, port=0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        for w in self._held:
+            try:
+                w.close()
+            except Exception:  # stx-allow: defensive on writer close
+                pass
+        self._held.clear()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        self.connection_count += 1
+        await reader.readline()
+        while True:
+            line = await reader.readline()
+            if line in (b"\r\n", b"\n", b""):
+                break
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            b"Cache-Control: no-cache\r\n"
+            b"Connection: keep-alive\r\n"
+            b"\r\n"
+            b": sac-channel ready\n\n"
+        )
+        await writer.drain()
+        # ...and now say nothing, forever. Hold the writer open so the socket
+        # is never closed — the client must time out the READ to escape.
+        self._held.append(writer)
+
+
+@pytest_asyncio.fixture
+async def silent_stall_server():
+    server = _SilentStallServer()
+    await server.start()
+    try:
+        yield server
+    finally:
+        await server.stop()
+
+
+@pytest.fixture
+def fast_read_deadline():
+    """Squeeze the SSE read deadline to 1s so this test runs in seconds.
+
+    Sets the REAL env var the production code reads (and restores it), rather
+    than rewriting an internal — the read deadline is resolved from the
+    environment at CALL time precisely so a deployment (or a test) can steer it.
+    """
+    key = "SAC_MCP_SSE_READ_TIMEOUT_S"
+    previous = os.environ.get(key)
+    os.environ[key] = "1"
+    try:
+        yield 1.0
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
+@pytest.mark.asyncio
+async def test_consume_sse_reconnects_when_stream_goes_silent(
+    silent_stall_server, fast_read_deadline
+):
+    # Arrange — a server that opens the stream and then never speaks again and
+    # never hangs up.
+    received: list[dict[str, Any]] = []
+
+    async def on_event(ev: dict[str, Any]) -> None:
+        received.append(ev)
+
+    url = f"{silent_stall_server.base_url}/agents/alice/inbox/stream"
+    task = asyncio.create_task(_consume_sse(url, bearer=None, on_event=on_event))
+    # Act — wait long enough for the read deadline to fire and the backoff to
+    # bring the consumer back around for a second connect.
+    for _ in range(120):
+        if silent_stall_server.connection_count >= 2:
+            break
+        await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+    # Assert — it re-dialled. With an unbounded read this stays at 1 forever:
+    # the consumer is wedged, the agent is deaf, and nothing anywhere errors.
+    assert silent_stall_server.connection_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# Jittered backoff — the thundering herd.
+#
+# Every agent on a host subscribes to the SAME listen, so when it goes away they
+# all lose the stream in the same instant and climb an IDENTICAL ladder (0.5s,
+# 1s, 2s, 4s …), re-dialling in lockstep at a process that is by definition
+# mid-restart. ~14 adapters landing together on every rung is a good way to
+# knock over the thing they are all waiting for.
+# ---------------------------------------------------------------------------
+
+
+def test_jittered_backoff_stays_within_its_window():
+    # Arrange — jitter must not extend the ladder: a retry still lands inside
+    # its own backoff window, so recovery latency is unchanged.
+    window = 8.0
+    # Act
+    samples = [_jittered_backoff(window) for _ in range(200)]
+    # Assert — equal jitter: never below half the window, never above it.
+    assert all(window / 2 <= s <= window for s in samples)
+
+
+def test_jittered_backoff_decorrelates_retries():
+    # Arrange — the whole point: two adapters that lost the stream in the same
+    # instant must NOT re-dial at the same moment.
+    window = 8.0
+    # Act
+    samples = [_jittered_backoff(window) for _ in range(200)]
+    # Assert — a fixed backoff would collapse to one value; jitter spreads them.
+    assert len(set(samples)) > 100

@@ -160,8 +160,14 @@ def test_a2a_send_tool_same_group_delivers_and_projects_notification(comms_env):
     with _run_loopback(app, port):
         event = asyncio.run(driver())
     notif = _build_notification(event)
-    # Assert — delivered content survives, and the projection names the sender.
-    assert notif["content"] == "hello via mcp" and notif["meta"]["source"] == "alpha"
+    # Assert — delivered content survives; source is the fixed system
+    # identity, from_agent names the real sender (operator directive
+    # 2026-07-09 — source must never leak a raw agent name).
+    assert (
+        notif["content"] == "hello via mcp"
+        and notif["meta"]["source"] == "sac"
+        and notif["meta"]["from_agent"] == "alpha"
+    )
 
 
 # ---------------------------------------------------------------------------

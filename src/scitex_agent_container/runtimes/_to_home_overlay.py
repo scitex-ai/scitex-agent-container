@@ -82,6 +82,26 @@ def _resolve_overlay_dir(config: AgentConfig) -> Path | None:
     no overlay is declared, or when the declared overlay path exists but is
     not a directory (e.g. an ``.img`` loopback image we cannot write into
     from the host).
+
+    DELIBERATELY NARROW — do not "fix" this to also read the ``=``-joined
+    ``--overlay=<path>`` spelling without reading this paragraph first.
+    This resolver does NOT answer "what overlay does apptainer get?" (that is
+    :func:`._apptainer_overlay.resolve_overlay_declaration`, which accepts
+    every spelling and drives provisioning). It answers a POLICY question:
+    "does sac back the container ``$HOME`` with this overlay's upper layer,
+    instead of with the workspace-home bind?" — see ``_apptainer_build_argv``'s
+    ``_overlay_backs_home``. Widening it therefore MIGRATES the ``$HOME`` of
+    every live agent whose spec uses the ``=``-joined spelling, from
+    ``<state>/home/`` to ``<overlay>/upper/home/agent/`` — a different, older
+    tree, so the agent would resume from a stale ``.claude/`` (session
+    history, ``.claude.json``). Verified 2026-07-13: ``paper-scitex-clew``
+    (``=``-joined) actively writes its workspace home while its overlay upper
+    home is a week stale, whereas ``scitex-scholar`` (space-separated) is
+    overlay-backed. That migration needs an operator decision and a
+    seed-the-upper-home step; it is NOT a parser bugfix. The stillborn-agent
+    bug this narrowness once caused (the overlay dir never being created) is
+    fixed at the correct layer — :func:`._apptainer_overlay.ensure_overlay_dirs`
+    — and no longer depends on what this function sees.
     """
     ap = getattr(config, "apptainer", None)
     if ap is None:
@@ -148,6 +168,16 @@ def deploy_to_home_overlay(config: AgentConfig) -> Path | None:
     dest.mkdir(parents=True, exist_ok=True)
     deploy_to_home(config, str(dest))
     logger.info("to_home: mirrored into overlay upper home %s", dest)
+    # Record the overlay's scitex-* package delta as a version manifest so a
+    # later ``sac versions`` reads it cheaply (source="manifest") instead of
+    # re-scanning the overlay venv. Best-effort provenance side-effect — a
+    # failure here must never affect the launch.
+    try:
+        from .._drift.versions import record_overlay_manifest
+
+        record_overlay_manifest(config)
+    except Exception:  # stx-allow: fallback (reason: version-manifest recording is best-effort; never break a launch)
+        logger.debug("to_home: overlay version-manifest recording skipped", exc_info=True)
     return dest
 
 

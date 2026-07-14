@@ -129,6 +129,33 @@ def _operator_env_dirs() -> List[Path]:
     return [Path(os.path.expanduser(p)) for p in env_raw.split(":") if p.strip()]
 
 
+def _user_agents_dir() -> Path:
+    """User-scope agents dir — ``$SCITEX_DIR/agent-container/agents``.
+
+    Honours ``$SCITEX_DIR`` (default ``~/.scitex``) instead of hardcoding
+    ``~``. sac's own docs already promise the user-state root is
+    "relocatable via ``$SCITEX_DIR``", and ``_drift/_fleet.py`` already
+    implements exactly that (``base="${SCITEX_DIR:-$HOME/.scitex}"``) —
+    this resolver was simply the one place that never got the memo, and it
+    is the one that decides where ``sac agents start <name>`` LOOKS for a
+    spec.
+
+    The cost of that miss, measured on Spartan 2026-07-14: a remote start
+    dispatched with ``SCITEX_DIR=<registry root>`` still searched
+    ``~/.scitex/agent-container/agents/`` — which on that host is a symlink
+    into an unrelated paper project — and reported the agent "not found"
+    for a spec that had just been rsynced, correctly, into the
+    registry-declared root. Resolving the root and then ignoring it is
+    worse than never resolving it at all.
+
+    Unset ``$SCITEX_DIR`` → byte-identical to the previous behaviour, so
+    every existing local agent resolves exactly as before.
+    """
+    from .._state.state_paths import agents_root
+
+    return agents_root()
+
+
 def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     """Return (primary_dir, env_dirs, fleet_dirs) with ~ expansion.
 
@@ -159,8 +186,7 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     not merely because both registry dirs exist. The operator-supplied
     ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` extension is always honoured.
     """
-    home = Path(os.path.expanduser("~"))
-    primary = home / ".scitex" / "agent-container" / "agents"
+    primary = _user_agents_dir()
     operator_env_dirs = _operator_env_dirs()
     project_local = _project_local_dirs()
 
@@ -178,9 +204,7 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     return primary, env_dirs, fleet_dirs
 
 
-def _apply_scope(
-    primary: Path, project_local: List[Path]
-) -> Tuple[Path, List[Path]]:
+def _apply_scope(primary: Path, project_local: List[Path]) -> Tuple[Path, List[Path]]:
     """Resolve the project-local-vs-fleet ambiguity per ``$SAC_AGENT_SCOPE``.
 
     Rule (simple + predictable):

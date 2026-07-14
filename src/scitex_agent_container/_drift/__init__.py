@@ -24,6 +24,11 @@ from ._local import (
     warn_if_spec_source_drifted,
 )
 from ._status import DriftState, DriftStatus
+from .versions import (
+    collect_versions,
+    discover_base_sifs,
+    record_overlay_manifest,
+)
 
 __all__ = [
     "DriftState",
@@ -33,7 +38,10 @@ __all__ = [
     "check_fleet_drift",
     "check_peer_drift",
     "check_spec_source_drift",
+    "collect_versions",
+    "discover_base_sifs",
     "drift_warning_lines",
+    "record_overlay_manifest",
     "spec_source_repo",
     "warn_if_spec_source_drifted",
 ]

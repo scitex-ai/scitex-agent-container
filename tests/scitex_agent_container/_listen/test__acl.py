@@ -280,13 +280,13 @@ def test_spawn_denies_child_caller(db_path: Path) -> None:
 
 
 def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
-    """The 403 body explains the lift-able policy."""
+    """The 403 body explains the role-based spawn policy."""
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
     _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "lift-able policy" in reason
+    assert reason is not None and "neither the developer nor research group" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +513,7 @@ def test_http_agents_start_denies_child_caller_with_403(
     assert r.status_code == 403, r.text
 
 
-def test_http_agents_start_403_carries_lift_able_policy_text(
+def test_http_agents_start_403_carries_role_policy_text(
     isolated_listen_env, db_path: Path
 ) -> None:
     # Arrange
@@ -529,7 +529,7 @@ def test_http_agents_start_403_carries_lift_able_policy_text(
         )
     body_json = r.json()
     # Assert
-    assert "lift-able policy" in body_json.get("reason", "")
+    assert "neither the developer nor research group" in body_json.get("reason", "")
 
 
 # ---------------------------------------------------------------------------

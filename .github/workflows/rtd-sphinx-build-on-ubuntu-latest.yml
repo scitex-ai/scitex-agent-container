@@ -1,5 +1,30 @@
 name: docs
 
+# Sphinx HTML build + refresh of the bundled src/scitex_agent_container/
+# _sphinx_html/ snapshot. (Local `sphinx-build` smoke check — ReadTheDocs
+# itself builds independently from its own webhook.)
+#
+# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
+# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
+# never fall back to a hosted runner.
+#
+# WHAT ubuntu-latest WAS HIDING HERE: `pip install -e ".[docs]"` onto the
+# runner's SYSTEM python. On Spartan that dies twice over — no Python on the
+# bare node (actions/setup-python fails "version 3.x not found for this OS")
+# and a PEP-668 externally-managed system python (pip refuses with
+# `externally-managed-environment`). Same class of latent breakage as lint and
+# quality: the step never worked, it was carried by the hosted image.
+#
+# NOTE this job does NOT call the org reusable
+# (scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml). That reusable
+# probes for conf.py at docs/, docs/source/ and docs/src/ ONLY — sac's lives at
+# docs/sphinx/conf.py, so the reusable would have found nothing, printed
+# "no sphinx conf.py — skipping" and exited 0. It would have converted this
+# gate into a GREEN NO-OP. Consolidate only after teaching it that path.
+#
+# `sphinx-build` is invoked as the CONSOLE SCRIPT (not `python -m sphinx`) so
+# the scitex-dev auditor's PS-122 still detects that this workflow runs it.
+
 on:
   push:
     branches: [main, develop]
@@ -7,8 +32,10 @@ on:
 
 jobs:
   sphinx:
+    # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: rtd-sphinx-build-on-ubuntu-latest
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -17,19 +44,23 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v3
         with:
-          python-version: "3.11"
+          cache-dependency-glob: pyproject.toml
 
       - name: Install package + docs deps
-        run: pip install -e ".[docs]"
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e ".[docs]"
 
       - name: Build Sphinx HTML (warnings fail PRs only)
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            sphinx-build -W -b html docs/sphinx docs/sphinx/_build/html
+            .venv/bin/sphinx-build -W -b html docs/sphinx docs/sphinx/_build/html
           else
-            sphinx-build -b html docs/sphinx docs/sphinx/_build/html
+            .venv/bin/sphinx-build -b html docs/sphinx docs/sphinx/_build/html
           fi
 
       - name: Refresh src/scitex_agent_container/_sphinx_html/ (push to default branch only)
@@ -51,6 +82,11 @@ jobs:
         if: github.event_name == 'push'
         run: |
           if [ -n "$(git status --porcelain src/scitex_agent_container/_sphinx_html)" ]; then
+            # `git config` WITHOUT --global, deliberately. On a PERSISTENT
+            # self-hosted runner $HOME is the OPERATOR'S REAL HOME — a
+            # `--global` write here would edit the operator's live ~/.gitconfig
+            # on every single docs build. Repo-local config stays inside the
+            # workspace and is discarded with it.
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add src/scitex_agent_container/_sphinx_html

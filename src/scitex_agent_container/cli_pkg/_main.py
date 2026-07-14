@@ -33,6 +33,31 @@ def _pkg_version(lookup=_pkg_version_lookup) -> str:
         return "dev"
 
 
+def _print_version(ctx: click.Context, param, value) -> None:
+    """``--version``: report the identity of the LOADED code, then exit.
+
+    This replaces ``click.version_option``, which prints only the declared
+    version string — a number that reads IDENTICALLY on a machine where a
+    fix shipped and one where it did not, because a fix that does not bump
+    the version does not move it. It therefore cannot answer the one
+    question it is ever asked: is my fix actually deployed?
+
+    The line keeps click's ``<prog>, version <X.Y.Z>`` prefix, so anything
+    parsing the third whitespace field still works, and appends the commit
+    and the path the module was really imported from.
+
+    Cost: ~0.5 ms over the ``importlib.metadata`` lookup click already did
+    — no subprocess (``git rev-parse`` forks cost ~89 ms) and no tree walk
+    (hashing the tree costs ~35 ms). Those live in ``sac provenance``.
+    """
+    if not value or ctx.resilient_parsing:
+        return
+    from .._provenance import format_terse, identity
+
+    click.echo(format_terse(identity()))
+    ctx.exit()
+
+
 # ---------------------------------------------------------------------------
 # Help categories — clean noun-group surface
 # ---------------------------------------------------------------------------
@@ -46,9 +71,9 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Diagnostics", ["doctor"]),
+    ("Diagnostics", ["doctor", "ports", "provenance"]),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["mcp", "list-python-apis", "skills"]),
+    ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -81,6 +106,12 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Read-only port-hygiene inventory: listen 7878 + a2a claims +
+        # the scitex/sac port-assignment reference map.
+        "ports": f"{_PKG}.ports_cmds:ports",
+        # Which code is ACTUALLY loaded — the heavy half of `--version`
+        # (tree hash, duplicate/fossil .dist-info, shadowed imports).
+        "provenance": f"{_PKG}.provenance_cmds:provenance",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
         # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
@@ -90,6 +121,10 @@ class _MainGroup(LazyGroup):
         # Top-level standalone
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
+        # scitex-* version introspection across sac's base + overlay layers
+        # (drift-report aggregation surface for scitex-dev ecosystem
+        # check-versions — the 2 layers only sac can see).
+        "versions": f"{_PKG}.versions_cmds:versions",
     }
 
     # Tracks whether scitex_dev._cli._completion has been attached.
@@ -257,7 +292,9 @@ class _MainGroup(LazyGroup):
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
-        "listen": "Boot the sac listen HTTP/JSON control-plane server.",
+        "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
+        "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
@@ -331,14 +368,17 @@ class _MainGroup(LazyGroup):
         "  $ sac agents status\n"
         "  $ sac agents start orchestrator                                      # by name\n"
         "  $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
+        "  $ sac listen status                                                  # host control-plane health\n"
     ),
 )
-@click.version_option(
-    None,
+@click.option(
     "-V",
     "--version",
-    package_name="scitex-agent-container",
-    prog_name="scitex-agent-container",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=_print_version,
+    help="Show the version, the commit it was built from, and where it loaded from.",
 )
 @click.option(
     "--help-recursive",

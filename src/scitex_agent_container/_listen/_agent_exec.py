@@ -16,13 +16,16 @@ import path keeps working unchanged.
 from __future__ import annotations
 
 import os
-import shutil
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_spawn, deny_response
-from ._agent_exec_liveness import _probe_post_ack_liveness
+from ._agent_exec_liveness import (
+    _POST_ACK_LIVENESS_TIMEOUT_S,
+    _probe_post_ack_liveness,
+)
 from ._agent_exec_send import _find_claude_binary, agent_send
 from ._inline_spec import materialize_inline_spec
 
@@ -103,6 +106,28 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "'one_shot' must be a boolean if present"},
             status_code=400,
         )
+    # Consent-propagation bug fix (2026-07-05, reported by
+    # paper-scitex-clew): the ``sac agents start <name>`` subprocess this
+    # handler shells below re-runs the SAME interactive
+    # refuse-without-``--yes`` gate (``cli_pkg/lifecycle/_start_single.py::
+    # should_preview_and_require_yes``) that the ORIGINAL in-SIF caller's
+    # own ``-y`` already satisfied. Without this field, that consent never
+    # reached this subprocess and every brokered start refused itself with
+    # "refusing to start ... without --yes/-y" even though ``-y`` was
+    # explicitly passed at the top of the call chain. Threaded through to
+    # the inner argv (``--yes``) AND the child env
+    # (``SAC_ASSUME_YES=1`` below) — belt-and-suspenders, since the env
+    # var is also the documented escape valve for callers that can't
+    # thread ``assume_yes`` through every layer. FAIL-LOUD invariant
+    # preserved: an ABSENT field means no consent was given, so the
+    # subprocess still hits the human-at-a-TTY default-refuse gate
+    # exactly as before this fix.
+    assume_yes = body.get("assume_yes", False)
+    if not isinstance(assume_yes, bool):
+        return JSONResponse(
+            {"error": "'assume_yes' must be a boolean if present"},
+            status_code=400,
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -136,7 +161,18 @@ async def agents_start(request: Request) -> JSONResponse:
             # to a different caller is loudly rejected.
             return JSONResponse({"error": str(exc)}, status_code=409)
 
-    sac_bin = shutil.which("sac") or "sac"
+    try:
+        sac_bin = sac_binary()
+    except SacBinaryNotFoundError as exc:
+        # Resolution-time failure (bug root cause, see _sac_binary.py):
+        # surface a structured, diagnosable error instead of building an
+        # unresolvable argv that would later die deep inside a subprocess
+        # call as an opaque FileNotFoundError / 500. Shape mirrors
+        # ``host_exec``'s error responses (``_host_exec.py``).
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     # ``agents`` (plural) is the canonical command group; the singular
     # ``agent`` form was removed in the F-CS13 rename and the host CLI
     # no longer exposes it (verified 2026-06-01 by the SAC-from-SAC
@@ -167,6 +203,15 @@ async def agents_start(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
+    # Consent-propagation fix (2026-07-05, paper-scitex-clew report): set
+    # the env-var escape valve in ADDITION to the --yes flag below so the
+    # inner subprocess's refuse-without-``--yes`` gate
+    # (``should_preview_and_require_yes`` in cli_pkg/lifecycle/
+    # _start_single.py) sees consent even if some intermediate wrapper
+    # strips CLI flags. Absent when assume_yes is False — the default
+    # refuse-without-consent behaviour is completely unchanged.
+    if assume_yes:
+        child_env["SAC_ASSUME_YES"] = "1"
     # PR-α: propagate --foreground / --one-shot to the inner argv per the
     # body fields validated above. Order matches the click signature on
     # `sac agents start` (flags before/after positional name are
@@ -176,6 +221,8 @@ async def agents_start(request: Request) -> JSONResponse:
         inner_argv.append("--foreground")
     if one_shot:
         inner_argv.append("--one-shot")
+    if assume_yes:
+        inner_argv.append("--yes")
     inner_argv.append(name)
     # Single-flight the OAuth-refresh boot window (card
     # sac-multi-start-queue-oauth): concurrent brokered background spawns share
@@ -187,12 +234,23 @@ async def agents_start(request: Request) -> JSONResponse:
     # would serialize everything for no safety gain).
     from ._credential_refresh_lock import run_brokered_launch
 
-    proc = await run_brokered_launch(
-        inner_argv,
-        child_env,
-        foreground=bool(foreground),
-        one_shot=bool(one_shot),
-    )
+    try:
+        proc = await run_brokered_launch(
+            inner_argv,
+            child_env,
+            foreground=bool(foreground),
+            one_shot=bool(one_shot),
+        )
+    except OSError as exc:
+        # Launch-time failure (e.g. the resolved sac_bin vanished between
+        # resolution and exec, or any other subprocess-creation error).
+        # Never let this propagate as an unhandled exception → opaque
+        # framework 500; surface it structured, same shape as the
+        # resolution-failure branch above / host_exec's error responses.
+        return JSONResponse(
+            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     if proc.returncode != 0:
         # PR-1 — stillborn agent observability. The subprocess can exit
         # non-zero for many reasons, including apptainer FATAL on a bind
@@ -282,18 +340,24 @@ async def agents_start(request: Request) -> JSONResponse:
     runtime_dir = state_dir_for(name)
     # Test escape hatch: ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` env
     # var lets the suite skip / shorten the probe (≤0 → skip entirely).
-    # Production callers leave it unset and get the default 5s grace.
+    # Production callers leave it unset and get the default grace window.
     try:
         env_timeout = float(
             os.environ.get(
                 "SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S",
-                str(5.0),
+                str(_POST_ACK_LIVENESS_TIMEOUT_S),
             )
         )
     except ValueError:
-        env_timeout = 5.0
+        env_timeout = _POST_ACK_LIVENESS_TIMEOUT_S
+    # Passing ``name`` is load-bearing: it lets the probe pick the check that is
+    # VALID for this agent's runtime. Without it, the probe waits for an
+    # ``apptainer_pid`` file that a ``tui`` agent — the fleet's DEFAULT runtime —
+    # never writes, and then stamps ``startup_failed`` on a perfectly healthy
+    # agent. See :mod:`._agent_exec_liveness`.
     liveness_failure = _probe_post_ack_liveness(
         runtime_dir,
+        name=name,
         timeout_s=env_timeout,
     )
     if liveness_failure is not None:

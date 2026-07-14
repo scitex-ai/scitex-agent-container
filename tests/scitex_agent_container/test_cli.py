@@ -17,7 +17,7 @@ VALID_CONFIG = {
     "kind": "Agent",
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/home/agent/work",
         "apptainer": {"image": "/x.sif", "binds": []},
         "claude": {"model": "sonnet"},
@@ -286,7 +286,7 @@ class TestCLI:
             },
             "spec": {
                 "runtime": "apptainer",
-                "host": "local",
+                "host": "${HOSTNAME}",
                 "workdir": "/home/agent/work",
                 "apptainer": {"image": "/x.sif", "binds": []},
                 "claude": {"model": "sonnet"},
@@ -568,7 +568,7 @@ spec:
 kind: Agent
 spec:
   runtime: apptainer
-  host: local
+  host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
     image: /x.sif

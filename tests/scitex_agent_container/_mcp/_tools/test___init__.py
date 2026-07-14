@@ -174,7 +174,7 @@ def test_agent_start_with_defaults_dispatches_text_argv_without_foreground():
         # Act
         _agent.agent_start("x")
     # Assert
-    assert captured[-1] == ("text", ["agents", "start", "x"])
+    assert captured[-1] == ("text", ["agents", "start", "x", "--yes"])
 
 
 def test_agent_start_with_foreground_true_appends_foreground_flag():
@@ -183,7 +183,10 @@ def test_agent_start_with_foreground_true_appends_foreground_flag():
         # Act
         _agent.agent_start("x", foreground=True)
     # Assert
-    assert captured[-1] == ("text", ["agents", "start", "x", "--foreground"])
+    assert captured[-1] == (
+        "text",
+        ["agents", "start", "x", "--yes", "--foreground"],
+    )
 
 
 def test_agent_start_with_session_continue_appends_continue_flag():
@@ -192,7 +195,10 @@ def test_agent_start_with_session_continue_appends_continue_flag():
         # Act
         _agent.agent_start("x", session="continue")
     # Assert
-    assert captured[-1] == ("text", ["agents", "start", "x", "--continue"])
+    assert captured[-1] == (
+        "text",
+        ["agents", "start", "x", "--yes", "--continue"],
+    )
 
 
 def test_agent_start_with_session_fresh_appends_fresh_flag():
@@ -201,7 +207,7 @@ def test_agent_start_with_session_fresh_appends_fresh_flag():
         # Act
         _agent.agent_start("x", session="fresh")
     # Assert
-    assert captured[-1] == ("text", ["agents", "start", "x", "--fresh"])
+    assert captured[-1] == ("text", ["agents", "start", "x", "--yes", "--fresh"])
 
 
 def test_agent_start_with_session_resume_appends_session_flag():
@@ -210,7 +216,10 @@ def test_agent_start_with_session_resume_appends_session_flag():
         # Act
         _agent.agent_start("x", session="resume")
     # Assert
-    assert captured[-1] == ("text", ["agents", "start", "x", "--session", "resume"])
+    assert captured[-1] == (
+        "text",
+        ["agents", "start", "x", "--yes", "--session", "resume"],
+    )
 
 
 def test_agent_start_with_invalid_session_returns_error_without_dispatch():

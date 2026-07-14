@@ -72,7 +72,7 @@ def _write_fleet(home: Path, names: list[str]) -> Path:
                     role: e2e-fleet-bulk
                 spec:
                   runtime: apptainer
-                  host: local
+                  host: ${{HOSTNAME}}
                   workdir: /home/agent/work
                   apptainer:
                     image: {image}

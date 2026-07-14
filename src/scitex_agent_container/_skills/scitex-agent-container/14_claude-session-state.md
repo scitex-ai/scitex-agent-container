@@ -102,9 +102,10 @@ sac agents start sdk-test --foreground
 # expected: sdk-runtime-ok
 ```
 
-The `sdk-runtime-smoke` GitHub workflow runs this exact command on every
-push to develop / main (and daily) so an upstream SDK breakage surfaces
-immediately rather than during the next manual fleet operation.
+Run it by hand — there is NO CI safety net behind it. A `sdk-runtime-smoke`
+workflow used to claim it ran this on every push; it was disabled at the
+docker ripout, never executed once, and has been deleted. An upstream SDK
+breakage surfaces at the next manual fleet operation, not in CI.
 
 ## Supervisor — auto-restart on SDK crash
 

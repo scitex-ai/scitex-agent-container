@@ -4,6 +4,31 @@ name: auto-merge-to-develop
 # so this file lives on main but acts ONLY on PRs whose base is develop.
 # codecov + readthedocs checks are ignored (advisory). Fail-safe: if a merge
 # is blocked by branch policy the PR simply stays open.
+#
+# *** THIS FILE TAKES EFFECT ONLY ONCE IT REACHES main. ***
+# Because check_suite workflows are read from the DEFAULT branch, editing this
+# file on develop changes NOTHING at runtime until develop is promoted to main.
+# Until that promotion the version of this workflow ACTUALLY EXECUTING is
+# whatever main holds — i.e. still the ubuntu-latest one. That is a property of
+# GitHub's event model, not an escape hatch: the tree is correct now, the
+# runtime follows at the next develop→main promotion.
+#
+# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
+# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
+# never fall back to a hosted runner.
+#
+# WHAT ubuntu-latest WAS HIDING HERE: `gh`. The hosted image preinstalls the
+# GitHub CLI; the bare Spartan node does NOT have it. This is not a guess —
+# the release pipeline already ate it: `gh release create` failed with
+# `gh: command not found` (exit 127) AFTER a successful PyPI publish, so a
+# version shipped with no Release page. That workflow's fix was to swap to a JS
+# action. This one CANNOT do that: its whole body is `gh` (`gh api`,
+# `gh pr view --json statusCheckRollup`, `gh pr merge --admin`), and
+# statusCheckRollup is a GraphQL-only field. Reimplementing it in
+# actions/github-script would be a from-scratch rewrite of the logic that
+# decides WHETHER TO AUTO-MERGE — precisely the code where a subtle bug merges
+# a red PR. So: keep the battle-tested logic byte-for-byte, and BOOTSTRAP `gh`
+# instead. The version is pinned (no moving refs).
 on:
   check_suite:
     types: [completed]
@@ -13,11 +38,40 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  # Pinned, not `latest`: a moving ref is an unreviewed binary on a persistent
+  # node whose $HOME is the operator's real home. Bump deliberately.
+  GH_CLI_VERSION: "2.96.0"
+
 jobs:
   automerge:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.check_suite.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 10
     steps:
+      - name: Ensure the gh CLI exists (the bare Spartan node has none)
+        # $GITHUB_PATH only affects SUBSEQUENT steps, so this must be its own
+        # step. No sudo / no apt on an HPC compute node — unpack the official
+        # tarball into the job-scoped RUNNER_TEMP, which is discarded with the
+        # job and never touches the operator's home.
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already present: $(gh --version | head -1)"
+            exit 0
+          fi
+          echo "gh not found on this runner — installing v${GH_CLI_VERSION} into RUNNER_TEMP"
+          tgz="$RUNNER_TEMP/gh.tar.gz"
+          curl -fsSL --retry 3 --max-time 120 -o "$tgz" \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP"
+          bindir="$RUNNER_TEMP/gh_${GH_CLI_VERSION}_linux_amd64/bin"
+          # fail-loud: a silently-missing gh would make the merge step's
+          # `|| true` fallbacks read every PR as "not green" and quietly stop
+          # auto-merging forever. Assert it actually runs.
+          "$bindir/gh" --version
+          echo "$bindir" >> "$GITHUB_PATH"
+
       - name: merge green PRs targeting develop
         env:
           GH_TOKEN: ${{ github.token }}

@@ -37,14 +37,15 @@ from scitex_agent_container.config._parsers._hosts import (
         ({"hosts": "all"}, "hosts", "all"),
         # Unsupported scalar type for ``host`` → normalized to empty.
         ({"host": 42}, "host", ""),
-        # ``host: local`` → the EXPLICIT local-singleton spelling, normalized
-        # to "" so downstream placement treats it as the historical default
-        # (never SSH-dispatched to a peer literally named "local").
-        ({"host": "local"}, "host", ""),
-        ({"host": "local"}, "hosts", ""),
-        # Case-insensitive + whitespace-tolerant.
-        ({"host": "LOCAL"}, "host", ""),
-        ({"host": "  local  "}, "host", ""),
+        # ``host: local`` is BANNED at validation (operator directive
+        # 2026-07-10) and the parser no longer normalizes it: a value that
+        # slips past validation stays LITERAL, classifying as an unknown
+        # host downstream (fail-loud) rather than a silent local default.
+        ({"host": "local"}, "host", "local"),
+        ({"host": "LOCAL"}, "host", "LOCAL"),
+        # ``${HOSTNAME}`` passes through untouched — the LOADER (not this
+        # parser) resolves the placement placeholder to the concrete name.
+        ({"host": "${HOSTNAME}"}, "host", "${HOSTNAME}"),
     ],
 )
 def test_parse_hosts_spec_returns_expected_field_for_spec(spec, field, expected):

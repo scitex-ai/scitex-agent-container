@@ -16,7 +16,6 @@ from ._agent_prune_claude import prune_claude as _prune_claude_impl
 from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
-from ._new import new as _new_impl
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
@@ -24,9 +23,11 @@ from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
 from .lifecycle import forget as _forget_impl
+from .lifecycle import rename as _rename_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
+from .lifecycle import twin as _twin_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl
@@ -51,10 +52,20 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["new", "create", "start", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            [
+                "create",
+                "start",
+                "twin",
+                "stop",
+                "restart",
+                "rename",
+                "delete",
+                "forget",
+                "spawn-from-here",
+            ],
         ),
         ("Interact", ["send", "attach"]),
-        ("Inspect", ["list", "status", "health", "tail", "recall"]),
+        ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
@@ -68,19 +79,35 @@ def agent_group() -> None:
 
 
 # Lifecycle verbs
-# `new` scaffolds a fresh v3 spec.yaml + to_home/ skeleton (card
+# `create` scaffolds a fresh v3 spec.yaml + to_home/ skeleton (card
 # sac-fresh-agent-specs, 2026-06-13). Placed FIRST in the lifecycle
 # block — authoring precedes start/stop.
-agent_group.add_command(_rebind(_new_impl, "new"))
-# `create` stamps a proven-shape developer/scientist agent from the
-# underscore-agent skeletons (card sac-templated-agent-create, 2026-06-25)
-# — folds the retired new_agent_spec.sh / gen_ecosystem_dev_specs.sh
-# stampers. `new` is the bare scaffold; `create` is the opinionated,
-# auto-detecting proven shape.
+#
+# This command was named `new` until card
+# refactor/consolidate-create-into-new-templates: the OLD, narrower
+# `sac agents create` (auto-detect / marker-block machinery, card
+# sac-templated-agent-create 2026-06-25) was folded into `new`'s
+# dir-template system, which freed the `create` name back up — `new`
+# was then renamed to `create` for CRUD-consistent naming (the CLI
+# already has `delete`). Use
+# `sac agents create <name> --template python_developer|researcher|generalist
+# --project <p>`.
 agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
+# `twin` — spawn a context-inheriting twin of a running agent (forks the
+# parent's live session, then diverges; parent never stops). See the
+# twin-spawning skill + docs/adr/0019.
+agent_group.add_command(_rebind(_twin_impl, "twin"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
+# `rename` — the ONE verb that moves an agent's name in every place it is
+# written: the spec dir, the spec's own self-references (labels, workdir,
+# overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
+# identity), the overlay/runtime dirs, the registry entry, the state.db
+# rows, AND the agent's task cards. Renaming by hand orphans the cards —
+# the board still knows the agent by its old id and nothing says so.
+# Atomic: every step records its inverse, any failure rolls the lot back.
+agent_group.add_command(_rebind(_rename_impl, "rename"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))
 agent_group.add_command(_rebind(_forget_impl, "forget"))
 # PR-3 — in-SIF-native spawn verb with wire-stable outcome JSON +
@@ -99,6 +126,13 @@ agent_group.add_command(_rebind(_status_impl, "list"))
 agent_group.add_command(_rebind(_status_impl, "status"))
 agent_group.add_command(_rebind(_tail_impl, "tail"))
 agent_group.add_command(_rebind(_health_impl, "health"))
+# `auth-status` — prompt-anchored TUI login-stuck report (near-prompt banner +
+# distance-frozen across two captures). The reliable version of the operator's
+# ad-hoc auth health check; distinct from `health` (per-agent heartbeat/
+# watchdog). See cli_pkg/_auth_status + _runners/_tmux/auth_status.
+from ._auth_status import auth_status as _auth_status_impl  # noqa: E402
+
+agent_group.add_command(_auth_status_impl)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))

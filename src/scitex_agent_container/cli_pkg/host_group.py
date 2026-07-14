@@ -80,6 +80,9 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
       $ sac host list --json
       $ sac host list --all-interfaces   # include docker0, br-*, etc.
     """
+    from .._state._host_ssh import resolve_peer_scitex_root
+    from .._state.host_registry import registry_hosts
+
     cfg = load()
     src = cfg.source_path
     config_path = str(src) if (src and src.is_file()) else None
@@ -97,12 +100,33 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
                 "scope": "peer",
                 "ssh": peer.ssh,
                 "via": list(peer.via),
+                # Where a remote sac WILL write its state — resolved through
+                # the scitex-dev registry (SSOT), inheriting through ``via:``
+                # for glob compute nodes. None = home-relative default on the
+                # peer (the registry root is ``~/.scitex``, or the host is
+                # unregistered). Surfaced so the operator can SEE the answer
+                # rather than discover it from a misplaced 1.4GB SIF.
+                "scitex_root": resolve_peer_scitex_root(name, cfg.peers),
             }
         )
+    registry = [
+        {
+            "name": h.name,
+            "kind": h.kind,
+            "ssh_alias": h.ssh_alias,
+            "scitex_root": h.scitex_root,
+        }
+        for h in registry_hosts()
+    ]
     if _json_flag(ctx, as_json):
         click.echo(
             json.dumps(
-                {"config_path": config_path, "local": local, "peers": peers},
+                {
+                    "config_path": config_path,
+                    "local": local,
+                    "peers": peers,
+                    "registry": registry,
+                },
                 indent=2,
             )
         )
@@ -127,8 +151,25 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
         for r in peers:
             via = f"  via={','.join(r['via'])}" if r["via"] else ""
             console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}")
+            if r["scitex_root"]:
+                console.print(
+                    f"              scitex_root={r['scitex_root']} [dim](registry)[/dim]"
+                )
     else:
         console.print("[dim](no peers configured)[/dim]")
+    # Registry (scitex-dev hosts.yaml) — the SSOT sac resolves through.
+    if registry:
+        console.print("[bold]registry[/bold] [dim](scitex_dev.hosts — SSOT)[/dim]")
+        for h in registry:
+            alias = f"  ssh_alias={h['ssh_alias']}" if h["ssh_alias"] else ""
+            console.print(
+                f"  {h['name']:<11} {h['kind']:<12} scitex_root={h['scitex_root']}{alias}"
+            )
+    else:
+        console.print(
+            "[dim](no scitex-dev host registry found — "
+            "peers fall back to the remote's ~/.scitex)[/dim]"
+        )
 
 
 @host_group.command("validate")
@@ -383,6 +424,14 @@ host_group.add_command(
 from ._host_crud import register as _register_host_crud  # noqa: E402
 
 _register_host_crud(host_group)
+
+
+# ``sac host sync`` — one-way code sync centre -> remote, plus its
+# read-only ``--check`` drift detector. Split out for the same reason as
+# the CRUD verbs: this file is at the 512-line ceiling.
+from ._host_sync import register as _register_host_sync  # noqa: E402
+
+_register_host_sync(host_group)
 
 
 # WI-4 Q4(b) — peer bearer-token registry. ``sac host add-peer`` /

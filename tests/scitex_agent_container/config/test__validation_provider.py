@@ -26,7 +26,7 @@ _BASE = {
     "kind": "Agent",
     "spec": {
         "runtime": "apptainer",
-        "host": "local",
+        "host": "${HOSTNAME}",
         "workdir": "/home/agent/work",
         "apptainer": {"image": "/x.sif", "binds": []},
         "health": {"enabled": True, "interval": 60},

@@ -22,10 +22,12 @@ from scitex_agent_container.config._group_resolver import (
     GENERALIST_GROUP,
     PRIVILEGED_GROUP,
     RESEARCHER_GROUP,
+    all_named_groups,
     group_from_labels,
     groups_mesh,
     is_developer_group,
     is_mesh_group,
+    is_research_group,
     resolve_group,
 )
 
@@ -263,6 +265,33 @@ def test_is_developer_group_false_for_empty() -> None:
     assert result is False
 
 
+def test_is_research_group_true_for_researcher() -> None:
+    # Arrange
+    group = "researcher"
+    # Act
+    result = is_research_group(group)
+    # Assert
+    assert result is True
+
+
+def test_is_research_group_false_for_other_group() -> None:
+    # Arrange
+    group = "analysts"
+    # Act
+    result = is_research_group(group)
+    # Assert
+    assert result is False
+
+
+def test_is_research_group_false_for_empty() -> None:
+    # Arrange
+    group = ""
+    # Act
+    result = is_research_group(group)
+    # Assert
+    assert result is False
+
+
 # ---------------------------------------------------------------------------
 # cross-group mesh predicates (operator 2026-06-27)
 # ---------------------------------------------------------------------------
@@ -317,6 +346,115 @@ def test_groups_mesh_false_when_one_side_is_ungrouped() -> None:
     result = groups_mesh(RESEARCHER_GROUP, "")
     # Assert
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# all_named_groups (bulk lifecycle selection, e.g. ``start --group``) — the
+# MULTI-value cut deliberately distinct from group_from_labels' ACL-effective
+# singular pick.
+# ---------------------------------------------------------------------------
+
+
+def test_all_named_groups_none_labels_is_empty() -> None:
+    # Arrange
+    labels = None
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset()
+
+
+def test_all_named_groups_empty_labels_is_empty() -> None:
+    # Arrange
+    labels = {}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset()
+
+
+def test_all_named_groups_returns_every_plural_element() -> None:
+    # Arrange — grant-style spec: belongs to all four at once.
+    labels = {"groups": ["generalist", "privileged", "developer", "researcher"]}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset({"generalist", "privileged", "developer", "researcher"})
+
+
+def test_all_named_groups_includes_developer_even_when_not_first() -> None:
+    # Arrange — the ACL-effective pick (group_from_labels) would only see
+    # "generalist"; the multi-value reader must still surface "developer".
+    labels = {"groups": ["generalist", "privileged", "developer", "researcher"]}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert "developer" in groups
+
+
+def test_all_named_groups_includes_singular_group_key() -> None:
+    # Arrange
+    labels = {"group": "analysts"}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert "analysts" in groups
+
+
+def test_all_named_groups_unions_singular_and_plural() -> None:
+    # Arrange
+    labels = {"group": "analysts", "groups": ["developer"]}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset({"analysts", "developer"})
+
+
+def test_all_named_groups_strips_whitespace() -> None:
+    # Arrange
+    labels = {"groups": ["  active  "]}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset({"active"})
+
+
+def test_all_named_groups_skips_blank_elements() -> None:
+    # Arrange
+    labels = {"groups": ["developer", "   ", ""]}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset({"developer"})
+
+
+def test_all_named_groups_non_list_plural_string_is_honoured() -> None:
+    # Arrange — defensive: a bare string (not the authored list form) is
+    # still treated as one group name rather than silently dropped.
+    labels = {"groups": "researcher"}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset({"researcher"})
+
+
+def test_all_named_groups_malformed_plural_int_is_ignored() -> None:
+    # Arrange — defensive: an unexpected scalar type must not raise.
+    labels = {"groups": 42}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset()
+
+
+def test_all_named_groups_does_not_derive_from_role() -> None:
+    # Arrange — unlike group_from_labels, no role-derivation fallback:
+    # this reader answers "what does the spec explicitly list", period.
+    labels = {"role": "dev-agent"}
+    # Act
+    groups = all_named_groups(labels)
+    # Assert
+    assert groups == frozenset()
 
 
 # ---------------------------------------------------------------------------

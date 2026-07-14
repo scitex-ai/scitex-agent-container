@@ -79,7 +79,7 @@ def _write_spec(tmp_path: Path, raw_args_yaml: str) -> Path:
         '    sac-builtin: "off"\n'
         "spec:\n"
         "  runtime: tui\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /tmp/agt-work\n"
         "  apptainer:\n"
         "    image: /x.sif\n"

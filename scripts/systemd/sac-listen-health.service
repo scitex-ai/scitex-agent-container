@@ -25,6 +25,9 @@ ExecStart=%h/.config/systemd/user/sac-listen-health-probe.sh
 # probe land in `journalctl --user -u sac-listen-health`.
 StandardOutput=journal
 StandardError=journal
-# A wedged-restart cycle should never itself hang the timer; bound the
-# whole probe (curl --max-time is 5s, restart is fast).
-TimeoutStartSec=60s
+# A wedged-restart cycle should never itself hang the timer; bound the whole
+# probe. The curl deadline is SAC_LISTEN_PROBE_TIMEOUT (20s by default — a
+# 5s fuse on a box at load 60-70 restarted a HEALTHY listen, incident
+# 2026-07-14) plus the restart itself, so 90s leaves generous headroom while
+# still guaranteeing the oneshot can never hang the timer forever.
+TimeoutStartSec=90s

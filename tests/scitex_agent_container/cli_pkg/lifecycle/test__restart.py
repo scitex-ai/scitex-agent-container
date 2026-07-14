@@ -615,3 +615,319 @@ def test_fresh_does_not_call_local_agent_restart():
         runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
     assert called == []
+
+
+# ---------------------------------------------------------------------------
+# Variadic NAME... + --all (operator TODO 2026-07-04): restart accepts
+# multiple names in one call and an --all flag that enumerates the same
+# fleet ``sac agents list`` shows. The per-agent restart is exercised via
+# ``_restart_one``; the loop-level behaviour (fan-out, mutual exclusion,
+# fail-loud aggregate, JSON aggregation) is asserted by swapping that seam.
+# ---------------------------------------------------------------------------
+
+
+def _ok_restart_one(name, *, as_json, fresh):
+    """Recorder stand-in for ``_restart_one`` — always succeeds."""
+    return {"name": name, "restarted": True, "dispatched": False}, True
+
+
+def test_multiple_names_exit_zero():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(restart, ["alpha", "beta", "-y"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_multiple_names_restart_each_once():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "beta", "-y"])
+    # Assert — each name restarted exactly once, in order.
+    assert seen == ["alpha", "beta"]
+
+
+def test_multiple_names_json_emits_array():
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(restart, ["alpha", "beta", "-y", "--json"])
+    payload = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert — multiple names aggregate into a JSON array.
+    assert isinstance(payload, list) and len(payload) == 2
+
+
+def test_all_flag_restarts_every_enumerated_agent():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: ["a1", "a2", "a3"]),
+        _swap("_restart_one", _rec),
+    ):
+        result = runner.invoke(restart, ["--all", "-y"])
+    # Assert — every enumerated agent restarted.
+    assert result.exit_code == 0 and seen == ["a1", "a2", "a3"]
+
+
+def test_all_flag_json_emits_array():
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: ["only-one"]),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all", "-y", "--json"])
+    payload = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert — --all always emits an array, even for a single enumerated agent.
+    assert isinstance(payload, list) and len(payload) == 1
+
+
+def test_all_with_explicit_names_is_usage_error():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["--all", "alpha", "-y"])
+    # Assert — --all and explicit NAMEs are mutually exclusive (exit 2).
+    assert result.exit_code == 2 and "cannot be combined" in result.output
+
+
+def test_all_without_yes_refuses_exit_two():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_fleet", lambda: ["a1", "a2"]):
+        result = runner.invoke(restart, ["--all"])
+    # Assert — a batch restart still requires -y/--yes.
+    assert result.exit_code == 2 and "Refusing to restart" in result.output
+
+
+def test_no_names_and_no_all_is_usage_error():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["-y"])
+    # Assert — nothing to restart is a usage error.
+    assert result.exit_code == 2
+
+
+def test_one_failure_still_attempts_rest():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        if name == "bad":
+            return {"name": name, "error": "boom"}, False
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["ok1", "bad", "ok2", "-y"])
+    # Assert — a mid-batch failure does not abort the remaining agents.
+    assert seen == ["ok1", "bad", "ok2"]
+
+
+def test_one_failure_exits_nonzero():
+    # Arrange
+    def _rec(name, *, as_json, fresh):
+        if name == "bad":
+            return {"name": name, "error": "boom"}, False
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        result = runner.invoke(restart, ["ok1", "bad", "-y"])
+    # Assert — any failure surfaces as an overall non-zero exit.
+    assert result.exit_code == 1
+
+
+def test_dry_run_multiple_names_lists_each():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["alpha", "beta", "--dry-run"])
+    # Assert — dry-run announces every target and invokes no restart.
+    assert (
+        "would restart agent 'alpha'" in result.output
+        and "would restart agent 'beta'" in result.output
+    )
+
+
+def test_single_name_json_stays_bare_object():
+    import json as _json
+
+    # Arrange — single explicit name must keep the historical bare-object shape.
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", lambda _name: None):
+        result = runner.invoke(restart, ["alpha", "-y", "--json"])
+    payload = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert
+    assert isinstance(payload, dict) and payload.get("name") == "alpha"
+
+
+# ---------------------------------------------------------------------------
+# Split selection flags (operator request 2026-07-09): --all was surprising
+# because it restarted stopped agents too. It is now split into
+# --all-running (only currently-running agents) and --all-registry (every
+# registered agent == the old --all behaviour). --all stays a backward-compat
+# alias for --all-registry. The two modes are mutually exclusive; more than
+# one selection flag fails loud.
+# ---------------------------------------------------------------------------
+
+
+def test_all_running_restarts_only_running_agents():
+    # Arrange — --all-running must enumerate via the RUNNING-only seam.
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1", "live-2"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "live-2", "stopped-3"]),
+        _swap("_restart_one", _rec),
+    ):
+        result = runner.invoke(restart, ["--all-running", "-y"])
+    # Assert — only the running agents restarted (stopped-3 excluded).
+    assert result.exit_code == 0 and seen == ["live-1", "live-2"]
+
+
+def test_all_registry_restarts_every_agent():
+    # Arrange — --all-registry must enumerate via the full-fleet seam.
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "stopped-2", "stopped-3"]),
+        _swap("_restart_one", _rec),
+    ):
+        result = runner.invoke(restart, ["--all-registry", "-y"])
+    # Assert — every registered agent restarted, stopped ones included.
+    assert result.exit_code == 0 and seen == ["live-1", "stopped-2", "stopped-3"]
+
+
+def test_all_alias_matches_all_registry_behaviour():
+    # Arrange — --all is a backward-compat alias for --all-registry: it must
+    # enumerate the FULL fleet, not the running-only subset.
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["live-1"]),
+        _swap("_enumerate_fleet", lambda: ["live-1", "stopped-2"]),
+        _swap("_restart_one", _rec),
+    ):
+        result = runner.invoke(restart, ["--all", "-y"])
+    # Assert — --all == --all-registry (uses the full-fleet enumeration).
+    assert result.exit_code == 0 and seen == ["live-1", "stopped-2"]
+
+
+def test_all_running_and_all_registry_together_is_usage_error():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["--all-running", "--all-registry", "-y"])
+    # Assert — the two selection modes are mutually exclusive (exit 2).
+    assert result.exit_code == 2 and "mutually exclusive" in result.output
+
+
+def test_all_running_and_all_alias_together_is_usage_error():
+    # Arrange — --all is the alias for --all-registry, so it conflicts with
+    # --all-running just the same.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["--all-running", "--all", "-y"])
+    # Assert
+    assert result.exit_code == 2 and "mutually exclusive" in result.output
+
+
+def test_all_running_with_explicit_names_is_usage_error():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_enumerate_running", lambda: ["live-1"]):
+        result = runner.invoke(restart, ["--all-running", "alpha", "-y"])
+    # Assert — a selection flag cannot combine with explicit NAMEs (exit 2).
+    assert result.exit_code == 2 and "cannot" in result.output
+
+
+def test_all_running_json_emits_array():
+    import json as _json
+
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_running", lambda: ["only-live"]),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all-running", "-y", "--json"])
+    payload = _json.loads(result.output.strip().splitlines()[-1])
+    # Assert — a batch selection flag always emits an array.
+    assert isinstance(payload, list) and len(payload) == 1
+
+
+def test_enumerate_running_keeps_only_running_status_rows():
+    # Arrange — _enumerate_running reuses the SAME data (and liveness) as the
+    # list command; it must keep only rows whose probed status is "running".
+    import scitex_agent_container.cli_pkg._helpers as _helpers_mod
+
+    rows = [
+        {"name": "run-a", "status": "running"},
+        {"name": "stop-b", "status": "stopped"},
+        {"name": "unk-c", "status": "unknown"},
+        {"name": "def-d", "status": "defined"},
+        {"name": "run-e", "status": "running"},
+    ]
+    saved = getattr(_helpers_mod, "get_agent_list_data", None)
+    _helpers_mod.get_agent_list_data = lambda *_a, **_kw: rows
+    # Act
+    try:
+        got = restart_mod._enumerate_running()
+    finally:
+        if saved is None:
+            delattr(_helpers_mod, "get_agent_list_data")
+        else:
+            _helpers_mod.get_agent_list_data = saved
+    # Assert — only the two running agents survive, in order.
+    assert got == ["run-a", "run-e"]

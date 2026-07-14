@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -172,25 +173,36 @@ class TestRunParallelTargets:
         assert attempted == set(targets)
 
     def test_concurrency_cap_respected(self, sac_shim):
-        # Arrange — cap=2 with 4 targets each sleeping 0.5s: the 3rd
-        # launch cannot START until one of the first two has finished,
-        # so its timestamp is >= ~0.5s after the earliest.
+        # Arrange — cap=2 over 4 targets, each child sleeping 0.5s, forces
+        # TWO serial waves ({a,b} then {c,d}), so the whole call takes
+        # >= ~1.0s; an unbounded pool would finish the single wave in ~0.5s.
         targets = ["a", "b", "c", "d"]
-        # Act
+        # Act — assert the wall-clock FLOOR, not per-child exec-time gaps.
+        # The floor is load-independent (load only makes children slower, so
+        # elapsed only grows); the old starts[2]-starts[0] exec-gap flaked in
+        # the CI SIF when a cold first child started slower than a warm third.
+        t0 = time.monotonic()
         run_parallel_targets(targets, **_kwargs(concurrency=2, stagger=0.0))
-        # Assert
-        starts = sorted(ts for ts, _ in _read_calls(sac_shim))
-        assert starts[2] - starts[0] >= 400
+        elapsed = time.monotonic() - t0
+        # Assert — two waves of a 0.5s child => >= ~1.0s (0.9s tolerance).
+        assert elapsed >= 0.9
 
     def test_stagger_spacing_applied(self, sac_shim):
-        # Arrange — stagger=0.3s between submissions with ample
-        # concurrency: consecutive launches are at least ~0.3s apart.
+        # Arrange — stagger=0.3s between submissions. run_parallel_targets
+        # sleeps `stagger` in the MAIN thread between each pool.submit, so the
+        # whole call takes AT LEAST (N-1)*stagger regardless of child exec
+        # latency. That floor is load-independent (load only adds); measuring
+        # the per-child exec-time gap instead (the old starts[1]-starts[0])
+        # flaked in the CI SIF when a cold first child ran slower than a warm
+        # second, compressing the measured gap below the real submission spacing.
         targets = ["a", "b", "c"]
+        stagger = 0.3
         # Act
-        run_parallel_targets(targets, **_kwargs(concurrency=3, stagger=0.3))
-        # Assert
-        starts = sorted(ts for ts, _ in _read_calls(sac_shim))
-        assert starts[1] - starts[0] >= 250
+        t0 = time.monotonic()
+        run_parallel_targets(targets, **_kwargs(concurrency=3, stagger=stagger))
+        elapsed = time.monotonic() - t0
+        # Assert — cumulative stagger floor: (N-1) sleeps of `stagger`.
+        assert elapsed >= (len(targets) - 1) * stagger - 0.05
 
     def test_nonzero_exit_when_a_target_fails(self, sac_shim):
         # Arrange — the ``boom`` target makes the shim exit 7; capture the

@@ -66,10 +66,51 @@ Fail-loud (never silent fallback):
   :class:`ProviderEnvError`. The two auth paths are mutually exclusive;
   the validator already rejects this at load time, but the runtime
   guards again so a hand-built ``AgentConfig`` can't sneak past.
+
+OpenAI SDK-family columns (openai-compat-3)
+--------------------------------------------
+
+This module ALSO owns the apptainer env story for the OTHER provider
+axis: the TOP-LEVEL ``spec.provider`` agent-SDK-family selector
+(``anthropic`` | ``openai`` — see the naming-collision note in
+:mod:`config._provider_types`; it is a DIFFERENT field from the nested
+``spec.claude.provider`` the functions above serve).
+
+:func:`resolve_agent_provider` resolves the family for one launch —
+``SAC_PROVIDER`` (host env) is the documented OPS-ONLY override, see its
+docstring. :func:`openai_env_flags` renders the ``--env`` flags for an
+``openai``-family agent, mirroring the Anthropic-creds plumbing in
+``_apptainer_auth.auth_argv``:
+
+* ``SAC_OPENAI_API_KEY`` ← the host key, resolved through the same
+  scitex-config cascade as above (shell export > ``$HOME/.env``), tried
+  as ``SAC_OPENAI_API_KEY`` first then ``OPENAI_API_KEY`` — matching the
+  in-container precedence of
+  :func:`runtimes._openai_sdk_common.provision_openai_auth` (which
+  bridges ``SAC_OPENAI_API_KEY`` → ``OPENAI_API_KEY`` for the SDK).
+* ``OPENAI_API_KEY`` ← the same value, injected directly as well so
+  in-container consumers WITHOUT the sac bridge (raw ``openai`` client
+  usage by tools, future non-runner processes) authenticate too — the
+  same dual-injection shape the Anthropic-compat path above uses for
+  ``ANTHROPIC_API_KEY``.
+* ``SAC_PROVIDER=openai`` ← the resolved family, made observable
+  in-container (forward wiring for in-container runner selection).
+* ``OPENAI_BASE_URL`` / ``OPENAI_ORG_ID`` / ``OPENAI_PROJECT_ID`` /
+  ``SAC_OPENAI_MODEL`` ← forwarded verbatim from the host env when set
+  (optional routing/attribution knobs; a host export would otherwise
+  silently do nothing for containerized agents).
+
+Fail-loud, same doctrine as the Anthropic-compat path: no resolvable
+key → :class:`ProviderEnvError` (a silent fallback would boot an agent
+whose every turn 401s behind a fresh-looking heartbeat); composing
+``spec.provider: openai`` with an active ``spec.claude.provider``
+backend override → :class:`ProviderEnvError` (the nested override
+configures the Claude SDK, which an ``openai``-family agent never runs).
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from scitex_config import PriorityConfig, load_dotenv
@@ -187,4 +228,149 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
     return flags
 
 
-__all__ = ["ProviderEnvError", "provider_active", "provider_env_flags"]
+# ---------------------------------------------------------------------------
+# OpenAI SDK-family columns (spec.provider — the TOP-LEVEL axis).
+# See the "OpenAI SDK-family columns" section of the module docstring.
+# ---------------------------------------------------------------------------
+
+# OPS-ONLY override for the agent-SDK-family axis. NOT a spec surface:
+# specs declare ``spec.provider``; this host env var overrides it for
+# every launch in the exporting shell (emergency flips, A/B smoke tests)
+# without editing specs. Documented in docs/spec-reference.md.
+AGENT_PROVIDER_ENV = "SAC_PROVIDER"
+
+_VALID_AGENT_PROVIDERS = ("anthropic", "openai")
+
+_SAC_OPENAI_KEY_ENV = "SAC_OPENAI_API_KEY"
+_OPENAI_KEY_ENV = "OPENAI_API_KEY"
+
+# Optional OpenAI routing/attribution knobs forwarded host → container
+# verbatim when set. No fail-loud — each merely refines client routing
+# (gateway base URL, org/project attribution, default model); absence
+# means "the SDK default". Forwarded because apptainer isolates the env:
+# a host-side export would otherwise silently do nothing in-container.
+_OPENAI_PASSTHROUGH_ENVS = (
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+    "OPENAI_PROJECT_ID",
+    "SAC_OPENAI_MODEL",
+)
+
+
+def resolve_agent_provider(config: AgentConfig) -> str:
+    """Resolve the agent-SDK-family axis (``spec.provider``) for one launch.
+
+    Precedence: ``$SAC_PROVIDER`` (host env, OPS-ONLY override) →
+    ``spec.provider`` → ``"anthropic"`` (the default family).
+
+    ``SAC_PROVIDER`` is deliberately an operations escape hatch, not a
+    config surface: it flips EVERY agent launched from the exporting
+    shell (blast radius = the shell, mirroring
+    ``SAC_QUOTA_CACHE_HOST_PATH``), which is exactly what an emergency
+    fleet flip or an A/B smoke test wants and exactly what a per-agent
+    spec should never rely on. Persistent per-agent selection belongs in
+    ``spec.provider``.
+
+    Raises :class:`ProviderEnvError` when ``SAC_PROVIDER`` carries an
+    unknown family — a typo must not silently launch the default family.
+    """
+    override = os.environ.get(AGENT_PROVIDER_ENV, "").strip().lower()
+    if override:
+        if override not in _VALID_AGENT_PROVIDERS:
+            valid = ", ".join(_VALID_AGENT_PROVIDERS)
+            raise ProviderEnvError(
+                f"${AGENT_PROVIDER_ENV}={override!r} is not a known agent "
+                f"provider (valid: {valid}). Unset it or set one of the "
+                "valid families — refusing to guess."
+            )
+        return override
+    provider = str(getattr(config, "provider", "") or "").strip().lower()
+    return provider or "anthropic"
+
+
+def openai_provider_active(config: AgentConfig) -> bool:
+    """True when this launch resolves to the ``openai`` agent-SDK family."""
+    return resolve_agent_provider(config) == "openai"
+
+
+def openai_env_flags(config: AgentConfig) -> list[str]:
+    """Render the ``--env`` flags for an ``openai``-family agent.
+
+    Returns ``[]`` when the launch does not resolve to the ``openai``
+    family. Raises :class:`ProviderEnvError` (fail-loud) when:
+
+    * an Anthropic-compat ``spec.claude.provider`` backend override is
+      ALSO active (that override configures the Claude SDK, which an
+      ``openai``-family agent never runs — the composition is a config
+      error, not a preference), or
+    * no API key resolves through the scitex-config cascade (tried as
+      ``SAC_OPENAI_API_KEY`` first, then ``OPENAI_API_KEY`` — the same
+      precedence :func:`~runtimes._openai_sdk_common.provision_openai_auth`
+      applies in-container).
+
+    The key VALUE is embedded in the argv but never logged by sac
+    (``PriorityConfig`` masks it in its resolution log). See the module
+    docstring for the full flag inventory.
+    """
+    if not openai_provider_active(config):
+        return []
+
+    if provider_active(config):
+        raise ProviderEnvError(
+            "spec.provider: openai cannot compose with an active "
+            "spec.claude.provider backend override — the nested override "
+            "points the CLAUDE SDK at an Anthropic-compatible gateway, "
+            "which an openai-family agent never runs. Remove one of the "
+            "two provider declarations."
+        )
+
+    # Same scitex-config precedence as provider_env_flags above:
+    # shell-export > $HOME/.env > default (see that function's comment
+    # for why the dotenv path is pinned to $HOME/.env).
+    load_dotenv(dotenv_path=str(Path.home() / ".env"))
+    resolver = PriorityConfig(auto_uppercase=False)
+    api_key = resolver.resolve(key=_SAC_OPENAI_KEY_ENV, default="")
+    if not api_key:
+        api_key = resolver.resolve(key=_OPENAI_KEY_ENV, default="")
+    if not api_key:
+        raise ProviderEnvError(
+            f"spec.provider: openai but neither {_SAC_OPENAI_KEY_ENV} "
+            f"(preferred; sac-tracked) nor {_OPENAI_KEY_ENV} resolves "
+            "through scitex-config (shell export > $HOME/.env). Set the "
+            "key by EITHER exporting it in the shell that runs `sac "
+            f"agents start` OR adding a `{_SAC_OPENAI_KEY_ENV}=...` line "
+            "to $HOME/.env (chmod 0600). sac reads the value at start "
+            "and never logs it."
+        )
+
+    flags = [
+        # Dual injection, mirroring the Anthropic-compat path above:
+        # SAC_OPENAI_API_KEY is the sac-tracked handoff (bridged to
+        # OPENAI_API_KEY in-container by provision_openai_auth, with
+        # provenance preserved); OPENAI_API_KEY directly serves any
+        # in-container consumer without the sac bridge.
+        "--env",
+        f"{_SAC_OPENAI_KEY_ENV}={api_key}",
+        "--env",
+        f"{_OPENAI_KEY_ENV}={api_key}",
+        # Make the resolved family observable in-container (forward
+        # wiring for in-container runner/executor selection).
+        "--env",
+        f"{AGENT_PROVIDER_ENV}=openai",
+    ]
+    for env_name in _OPENAI_PASSTHROUGH_ENVS:
+        val = os.environ.get(env_name, "")
+        if val:
+            flags.extend(["--env", f"{env_name}={val}"])
+    return flags
+
+
+__all__ = [
+    "AGENT_PROVIDER_ENV",
+    "ProviderEnvError",
+    "openai_env_flags",
+    "openai_provider_active",
+    "provider_active",
+    "provider_env_flags",
+    "resolve_agent_provider",
+]

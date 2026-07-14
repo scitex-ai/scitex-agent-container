@@ -12,17 +12,21 @@ No mocks. Real subprocesses against real git worktrees.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "checkout_branch",
     "commit_dirty",
     "current_branch",
     "is_dirty",
     "is_git_worktree",
+    "move_dirty_to_side_branch",
     "push_branch",
+    "rescue_branch_name",
     "write_diff_tarball",
 ]
 
@@ -95,6 +99,62 @@ def commit_dirty(
     return (True, msg)
 
 
+def rescue_branch_name(agent_name: str, timestamp: str) -> str:
+    """Return the dedicated side-branch name ``rescue/<agent>-<timestamp>``.
+
+    ``agent_name`` is sanitised to the git ref-safe alphabet so a stray
+    space / slash / colon in an agent id can't produce an invalid ref.
+    """
+    safe_agent = re.sub(r"[^A-Za-z0-9._-]", "-", agent_name).strip("-") or "agent"
+    return f"rescue/{safe_agent}-{timestamp}"
+
+
+def checkout_branch(path: Path, branch: str, *, timeout: float) -> tuple[bool, str]:
+    """``git checkout <branch>`` (existing branch). Returns (ok, error)."""
+    rc, _, err = _run(["git", "checkout", branch], cwd=path, timeout=timeout)
+    if rc != 0:
+        return (False, err.strip() or "checkout failed")
+    return (True, "")
+
+
+def move_dirty_to_side_branch(
+    path: Path, *, agent_name: str, timestamp: str, timeout: float
+) -> tuple[bool, str, str]:
+    """Carry the dirty tree onto a fresh ``rescue/`` side-branch and commit it.
+
+    Used when the checkout sits on a PROTECTED branch (``develop`` /
+    ``main`` / ``master`` / ``release/*``): committing the rescue there
+    would leave a local-only commit that diverges the branch from its
+    remote and breaks ``git pull --ff-only`` + the deploy-freshness
+    cron. Instead we ``git checkout -b rescue/<agent>-<ts>`` (which
+    CARRIES the uncommitted tree — tracked + untracked — onto the new
+    branch off the same HEAD, so no conflict is possible), then commit
+    the dirty tree THERE with the stable rescue message.
+
+    On success the caller is left standing ON the rescue branch (HEAD =
+    the rescue commit) so a subsequent ``push_branch`` / diff-tarball
+    captures the right commit; the caller MUST call ``checkout_branch``
+    to return to the protected branch — which then reverts to a clean,
+    ff-able tree since all the work is now committed on the side branch.
+
+    Returns ``(ok, rescue_branch, error)``. On failure the rescue branch
+    name is still returned (best effort) and ``error`` is populated; the
+    caller decides on the tarball fallback.
+    """
+    rescue_branch = rescue_branch_name(agent_name, timestamp)
+    rc, _, err = _run(
+        ["git", "checkout", "-b", rescue_branch], cwd=path, timeout=timeout
+    )
+    if rc != 0:
+        return (False, rescue_branch, f"git checkout -b failed: {err.strip()}")
+    ok_commit, commit_msg = commit_dirty(
+        path, agent_name=agent_name, timestamp=timestamp, timeout=timeout
+    )
+    if not ok_commit:
+        return (False, rescue_branch, commit_msg)
+    return (True, rescue_branch, "")
+
+
 def push_branch(path: Path, branch: str, *, timeout: float) -> tuple[bool, str]:
     """Push ``branch`` to ``origin`` with ``--force-with-lease -u``."""
     rc, _, err = _run(
@@ -133,7 +193,7 @@ def write_diff_tarball(
     if rc != 0:
         # No parent commit (first commit case) — fall back to diff HEAD.
         rc_diff, out_diff, _ = _run(["git", "diff", "HEAD"], cwd=path, timeout=timeout)
-        diff_path.write_text(out_diff if rc_diff == 0 else "")
+        patch_text = out_diff if rc_diff == 0 else ""
     else:
         # Re-run capturing stdout to file — single source of truth.
         proc = subprocess.run(
@@ -143,7 +203,18 @@ def write_diff_tarball(
             capture_output=True,
             text=True,
         )
-        diff_path.write_text(proc.stdout)
+        patch_text = proc.stdout
+    # ALSO capture any still-uncommitted work. On the happy path (rescue
+    # committed on a side-branch) this is empty; on the rare path where
+    # the commit never landed it is the ONLY copy of the dirty tree, so
+    # appending it guarantees the tarball never silently loses work.
+    _, out_uncommitted, _ = _run(["git", "diff", "HEAD"], cwd=path, timeout=timeout)
+    if out_uncommitted.strip():
+        patch_text += (
+            "\n### pre-stop rescue: uncommitted working-tree diff ###\n"
+            + out_uncommitted
+        )
+    diff_path.write_text(patch_text)
     manifest_path = rescue_root / f".{safe_branch}-{timestamp}.manifest"
     manifest_path.write_text(
         f"agent: {agent_name}\nbranch: {branch}\ntimestamp: {timestamp}\n"

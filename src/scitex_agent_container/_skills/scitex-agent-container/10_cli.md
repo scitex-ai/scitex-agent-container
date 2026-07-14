@@ -16,9 +16,42 @@ sac agents start <name|yaml>            # Launch one (or more) agents (dir-as-SS
 sac agents start <name> --foreground    # Stream stdio + block until the turn finishes
 sac agents stop <name|yaml>             # Stop a running agent (graceful SIGTERM → SIGKILL after 5 s)
 sac agents restart <name>               # Stop then start, preserving session_id resume
+sac agents rename <old> <new> --dry-run # Show every location a rename would touch (exact; changes nothing)
+sac agents rename <old> <new> -y        # Rename EVERYWHERE, atomically (rolls back on any failure)
 sac agents delete <name> -y             # Stop, deregister, and remove the agent's dir
 sac db clean                            # Sweep dead instances from state.db (replaces legacy registry clean)
 ```
+
+### `rename` — why it is a verb and not a `mv`
+
+An agent writes its own name into six places on disk plus the shared task
+board. `rename` moves all of them together, or none:
+
+| # | Location |
+|---|---|
+| 1 | spec dir — `~/.scitex/agent-container/agents/<name>/` |
+| 2 | the spec's self-references — `metadata.labels.project` / `.purpose`, `spec.workdir`, the `--overlay` path, `SCITEX_AGENT_CONTAINER_STATE_DB`, and `SCITEX_TODO_AGENT_ID` |
+| 3 | overlay dir — `.../containers/overlays/<name>/` |
+| 4 | runtime + state dir — `.../runtime/<name>/` (bound into the container at `/state/<name>`) |
+| 5 | registry entry — `.../runtime/registry/<name>.json` |
+| 6 | `state.db` — every table that keys on the agent name (identity **and** history) |
+| 7 | **task cards** — reassigned via scitex-todo's own `reassign_task` |
+
+Step 7 is the reason the verb exists. The board knows an agent by
+`SCITEX_TODO_AGENT_ID`. Change it without migrating the cards and every card
+that agent owns is **orphaned** — it can no longer see its own work, and
+nothing tells you.
+
+The agent must be **stopped** (renaming a live agent's workdir and overlay out
+from under it is unsafe); `rename` refuses otherwise and prints the `stop`
+command. Every step records its inverse, so any failure — including a partial
+card migration — rolls the whole rename back.
+
+`-y`/`--yes` is **required to apply**: without it the rename is refused (exit 2).
+It never prompts, so it cannot hang under cron, CI, or an agent's non-tty shell.
+
+`$SCITEX_AGENT_CONTAINER_ROOT` overrides the root all seven locations derive
+from.
 
 ## Inspection
 
@@ -49,17 +82,33 @@ Reads `session_id` from the per-agent state dir and shells out to `claude --resu
 
 ## sac listen (HTTP/JSON control plane)
 
+`listen` is a **noun** — a command group like `agents` / `db` / `host`. Its
+four verbs are the whole lifecycle:
+
 ```bash
-sac listen                                # Boot the local control-plane server (loopback only by default)
-sac listen --bind 127.0.0.1:7878          # Custom bind
-sac listen --print-token                  # Echo the bearer token & exit
+sac listen start                          # Boot the control-plane daemon (loopback only by default)
+sac listen start --bind 127.0.0.1:7979    # Custom bind
+sac listen start --print-token            # Echo the bearer token & exit (does not boot)
 sac listen status                         # One-shot health report (UP/WEDGED/DOWN); exit 1 if not serving
 sac listen status --json                  # Machine-readable status envelope
+sac listen stop                           # Stop the daemon (idempotent — exit 0 if already down)
+sac listen stop --force                   # SIGKILL the daemon + any wedged port holder immediately
+sac listen stop --json                    # Machine-readable result envelope
 sac listen restart                        # Self-healing stop-clean-relaunch (clears stale pidfile, force-kills wedged port holder)
 sac listen restart --force                # SIGKILL the daemon + any wedged port holder immediately
 ```
 
-`restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis.
+Options may be given on the verb (`sac listen start --bind …`) or on the
+group (`sac listen --bind … start`); the verb wins.
+
+`restart` is the deterministic incident-recovery verb: it clears a stale pidfile, force-kills an untracked remnant still holding the port (the "curl hangs forever" case), then relaunches and health-probes — failing loud (non-zero, `ERROR:` naming the real cause) if the daemon can't be brought up. `status` is the one-command diagnosis. `stop` is `restart`'s stop half on its own — they share one implementation (`_listen._stop.stop_listen`), so they cannot drift.
+
+> **DEPRECATED — bare `sac listen`.** It still BOOTS the daemon (the systemd
+> unit, `sac listen restart`'s respawn, and the systemd JobSpec all still
+> invoke it bare), but it now prints a deprecation warning to stderr. Use
+> **`sac listen start`**. The bare form is removed in **v0.23.0**; every
+> launcher must move to `sac listen start` before then. Booting a daemon off a
+> bare noun is a footgun — a typo or a stray tab-complete starts a server.
 
 When running, exposes (bearer-token authenticated, except the public health route):
 
