@@ -146,7 +146,10 @@ def bulk_with_yes_run(tmp_path):
     # Act
     with (
         _swap("load_config", lambda p: _FakeCfg(Path(p).stem)),
-        _swap("agent_stop", lambda name, force: stopped.append((name, force))),
+        _swap(
+            "agent_stop",
+            lambda name, force, *, prune_runtime=False: stopped.append((name, force)),
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(stop, [str(root), "-y"])
@@ -180,7 +183,7 @@ def test_bulk_with_yes_stops_all_invokes_agent_stop_per_agent(bulk_with_yes_run)
 @pytest.fixture
 def bulk_failure_result(tmp_path):
     # Arrange
-    def _boom(_name, _force):
+    def _boom(_name, _force, *, prune_runtime=False):
         raise RuntimeError("boom")
 
     root = _seed(tmp_path, ["a", "b"])
@@ -223,7 +226,10 @@ def single_name_run():
     # Arrange
     stopped: list = []
     # Act
-    with _swap("agent_stop", lambda name, force: stopped.append((name, force))):
+    with _swap(
+        "agent_stop",
+        lambda name, force, *, prune_runtime=False: stopped.append((name, force)),
+    ):
         runner = CliRunner()
         result = runner.invoke(stop, ["alpha"])
     # Assert
@@ -257,6 +263,34 @@ def test_single_name_path_prints_stopped_message(single_name_run):
     assert "Agent 'alpha' stopped" in out
 
 
+def test_terminal_stop_forwards_prune_runtime_to_agent_stop():
+    """A terminal operator stop must OPT IN to the inode-hygiene prune.
+
+    The stand-ins above accept ``prune_runtime`` with a default, so they no
+    longer crash when the CLI forwards it — which means dropping the kwarg at
+    the call site would otherwise regress in SILENCE. This is the seam that
+    broke; it gets its own assertion.
+
+    The flag is passed unconditionally on the terminal-stop path: the GATE
+    that restricts pruning to opted-in ephemeral agents (``restart.policy:
+    never`` + ``prune_on_stop: true``) lives inside ``agent_stop``, so
+    persistent agents stay untouched.
+    """
+    # Arrange
+    seen: dict = {}
+
+    def _capture(name, force=False, *, prune_runtime=False):
+        seen["prune_runtime"] = prune_runtime
+        return True
+
+    runner = CliRunner()
+    # Act
+    with _swap("agent_stop", _capture):
+        runner.invoke(stop, ["alpha"])
+    # Assert
+    assert seen.get("prune_runtime") is True
+
+
 # ---------------------------------------------------------------------------
 # Single-target by YAML path: resolved to config.name before stop.
 # ---------------------------------------------------------------------------
@@ -272,7 +306,10 @@ def single_yaml_run(tmp_path):
     with (
         _swap("resolve_with_prefix", lambda *_a, **_kw: str(p)),
         _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved-foo")),
-        _swap("agent_stop", lambda name, force: stopped.append((name, force))),
+        _swap(
+            "agent_stop",
+            lambda name, force, *, prune_runtime=False: stopped.append((name, force)),
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(stop, [str(p), "--force"])
@@ -308,7 +345,7 @@ def test_single_yaml_path_resolves_name_invokes_agent_stop_with_resolved_name(
 @pytest.fixture
 def single_failure_result():
     # Arrange
-    def _boom(name, force=False):
+    def _boom(name, force=False, *, prune_runtime=False):
         raise RuntimeError("nope")
 
     # Act
@@ -664,9 +701,14 @@ def test_no_force_on_unreachable_peer_message_surfaces_peer_diagnostic(
 
 
 def _recorder(stopped: list):
-    """Recording stand-in for ``agent_stop`` (a real callable, not a mock)."""
+    """Recording stand-in for ``agent_stop`` (a real callable, not a mock).
 
-    def _stop(name, force=False):
+    Mirrors the real signature, including the keyword-only ``prune_runtime``
+    the terminal-stop path forwards — a stand-in that cannot be CALLED the way
+    production calls it tests nothing.
+    """
+
+    def _stop(name, force=False, *, prune_runtime=False):
         stopped.append(name)
         return True
 
@@ -840,7 +882,7 @@ def test_all_registry_dry_run_lists_the_stopped_agents_too():
 
 def test_bulk_one_failure_exits_nonzero():
     # Arrange — any failed stop must surface as a non-zero exit (as restart does).
-    def _boom(name, force=False):
+    def _boom(name, force=False, *, prune_runtime=False):
         if name == "bad":
             raise RuntimeError("boom")
         return True
@@ -860,7 +902,7 @@ def test_bulk_one_failure_still_attempts_the_remaining_agents():
     # Arrange — a mid-fleet failure must not abort the rest of the shutdown.
     seen: list = []
 
-    def _flaky(name, force=False):
+    def _flaky(name, force=False, *, prune_runtime=False):
         seen.append(name)
         if name == "bad":
             raise RuntimeError("boom")

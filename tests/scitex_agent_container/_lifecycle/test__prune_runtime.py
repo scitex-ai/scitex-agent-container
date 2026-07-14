@@ -10,7 +10,6 @@ AAA markers + one-fact-per-test per the package TQ convention.
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
