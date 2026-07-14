@@ -4,6 +4,23 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [0.21.18] — 2026-07-14
+
+### Fixed
+
+- **`sac listen` was declared as a JobSpec that installs a SECOND supervisor (#672).**
+  0.21.17 shipped a `sac.listen` `kind="service"` JobSpec. scitex-dev derives the
+  unit name from the job name VERBATIM, so it materialises `sac.listen.service`
+  (a DOT) beside the `sac-listen.service` (a HYPHEN) that has actually supervised
+  the daemon since 2026-07-05 (`Restart=always`, `NRestarts=0`). systemd treats
+  them as unrelated units, so `scitex-dev service ensure sac.listen` does not adopt
+  the running supervisor — it installs a second one. Two units, both
+  `Restart=always`, both binding 127.0.0.1:7878, fighting for the port forever —
+  and **every listen restart destroys the in-memory Broker, deafening every
+  agent's inbox at once**. The JobSpec is removed and a test now pins its absence.
+  `scripts/systemd/README.md` had already warned that the two must not run
+  together ("Pick ONE"); it merged anyway.
+
 ## [0.21.17] — 2026-07-14
 
 ### Added
