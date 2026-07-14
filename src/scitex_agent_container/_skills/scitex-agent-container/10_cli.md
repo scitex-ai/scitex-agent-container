@@ -47,6 +47,9 @@ from under it is unsafe); `rename` refuses otherwise and prints the `stop`
 command. Every step records its inverse, so any failure — including a partial
 card migration — rolls the whole rename back.
 
+`-y`/`--yes` is **required to apply**: without it the rename is refused (exit 2).
+It never prompts, so it cannot hang under cron, CI, or an agent's non-tty shell.
+
 `$SCITEX_AGENT_CONTAINER_ROOT` overrides the root all seven locations derive
 from.
 

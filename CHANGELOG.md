@@ -35,7 +35,9 @@ versioning follows [SemVer](https://semver.org/).
   under itself); **atomic** — every step records its inverse and any failure,
   including a *partial* card migration, rolls the whole rename back; a
   postcondition step then proves nothing is left under the old name.
-  `--dry-run` prints every location exactly and touches nothing.
+  `--dry-run` prints every location exactly and touches nothing; `-y`/`--yes` is
+  **required** to apply and the verb never prompts, so it cannot hang under cron,
+  CI, or an agent's non-tty shell.
 
   The spec is edited by **loading it and changing the known fields** (ruamel
   round-trip, so operator comments and key order survive), never by a regex over
@@ -48,6 +50,23 @@ versioning follows [SemVer](https://semver.org/).
 
 - `SCITEX_AGENT_CONTAINER_ROOT` — override the sac install root that the rename's
   seven locations all derive from. Resolved at call time.
+
+## [0.21.18] — 2026-07-14
+
+### Fixed
+
+- **`sac listen` was declared as a JobSpec that installs a SECOND supervisor (#672).**
+  0.21.17 shipped a `sac.listen` `kind="service"` JobSpec. scitex-dev derives the
+  unit name from the job name VERBATIM, so it materialises `sac.listen.service`
+  (a DOT) beside the `sac-listen.service` (a HYPHEN) that has actually supervised
+  the daemon since 2026-07-05 (`Restart=always`, `NRestarts=0`). systemd treats
+  them as unrelated units, so `scitex-dev service ensure sac.listen` does not adopt
+  the running supervisor — it installs a second one. Two units, both
+  `Restart=always`, both binding 127.0.0.1:7878, fighting for the port forever —
+  and **every listen restart destroys the in-memory Broker, deafening every
+  agent's inbox at once**. The JobSpec is removed and a test now pins its absence.
+  `scripts/systemd/README.md` had already warned that the two must not run
+  together ("Pick ONE"); it merged anyway.
 
 ## [0.21.17] — 2026-07-14
 

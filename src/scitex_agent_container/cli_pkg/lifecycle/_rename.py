@@ -116,6 +116,13 @@ def _render_warnings(plan: RenamePlan) -> None:
     click.echo("")
 
 
+def _stakes(plan: RenamePlan) -> str:
+    """Name what the rename would move, for the refuse-without-yes line."""
+    if plan.cards_enabled and plan.card_ids:
+        return f" and reassign {len(plan.card_ids)} card(s)"
+    return ""
+
+
 def _plan_json(plan: RenamePlan, *, dry_run: bool, applied: bool) -> str:
     return _json.dumps(
         {
@@ -172,7 +179,10 @@ def _plan_json(plan: RenamePlan, *, dry_run: bool, applied: bool) -> str:
     "yes",
     is_flag=True,
     default=False,
-    help="Skip the confirmation gate.",
+    help=(
+        "Required to apply. Without it the rename is REFUSED (exit 2) — it "
+        "never prompts, so it cannot hang under cron, CI, or an agent shell."
+    ),
 )
 @click.option(
     "--no-cards",
@@ -259,26 +269,23 @@ def rename(
 
     if dry_run:
         click.echo(
-            "Re-run without --dry-run to apply "
-            f"({old!r} is stopped, so the rename is allowed)."
+            f"Re-run with -y to apply ({old!r} is stopped, so it is allowed)."
         )
         return
 
-    if not yes and not as_json:
-        card_note = (
-            f" and reassign {len(plan.card_ids)} card(s)"
-            if plan.cards_enabled and plan.card_ids
-            else ""
+    if not yes:
+        # REFUSE, never prompt. The ecosystem CLI convention (§2) is
+        # `--yes`/`-y` plus refuse-without-yes, and it is the right rule: an
+        # interactive confirm hangs forever under cron, CI, or an agent's
+        # non-tty shell — on a verb that has already been asked to move a
+        # live agent's dirs. Same shape as `sac agents delete`.
+        click.echo(
+            f"Refusing to rename {old!r} -> {new!r}{_stakes(plan)} "
+            "without --yes/-y.\n"
+            "Run --dry-run first — it prints every location this touches.",
+            err=True,
         )
-        click.confirm(
-            f"Rename {old!r} -> {new!r}{card_note}?",
-            abort=True,
-        )
-    elif not yes and as_json:
-        raise click.ClickException(
-            "--json is non-interactive: pass -y/--yes to confirm the rename, "
-            "or --dry-run to inspect it."
-        )
+        raise SystemExit(2)
 
     def _progress(step: str) -> None:
         if not as_json:

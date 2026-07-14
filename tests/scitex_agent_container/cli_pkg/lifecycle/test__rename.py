@@ -201,14 +201,38 @@ def test_rename_refuses_when_the_target_name_is_taken(fleet: Layout):
     assert "already exists" in result.output
 
 
-def test_json_mode_refuses_to_run_unconfirmed(fleet: Layout):
-    """--json is non-interactive; a silent unconfirmed rename would be a trap."""
+def test_rename_refuses_without_yes(fleet: Layout):
+    """REFUSE, never prompt (ecosystem CLI §2).
+
+    An interactive confirm would hang forever under cron, CI, or an agent's
+    non-tty shell — on a verb that has already been asked to move a live
+    agent's directories.
+    """
     # Arrange
-    expected = "non-interactive"
+    expected = 2
     # Act
-    result = _run(OLD, NEW, "--json", "--no-cards")
+    result = _run(OLD, NEW, "--no-cards")
+    # Assert
+    assert result.exit_code == expected
+
+
+def test_the_refusal_without_yes_names_the_flag(fleet: Layout):
+    # Arrange
+    expected = "--yes/-y"
+    # Act
+    result = _run(OLD, NEW, "--no-cards")
     # Assert
     assert expected in result.output
+
+
+def test_refusing_without_yes_moves_nothing(fleet: Layout):
+    """A refusal must be a no-op, not a half-rename."""
+    # Arrange
+    old_dir = fleet.spec_dir(OLD)
+    # Act
+    _run(OLD, NEW, "--no-cards")
+    # Assert
+    assert old_dir.is_dir()
 
 
 # ---------------------------------------------------------------------------
