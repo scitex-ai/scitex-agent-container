@@ -30,6 +30,8 @@ from .._state.state_db_channel import (
     persist_event,
 )
 from ..a2a._inbox_bus import (
+    KEEPALIVE,
+    keepalive_interval_s,
     mint_acl_deny_synthetic_notification,
     mint_deny_notification,
     mint_event,
@@ -414,6 +416,7 @@ async def node_inbox_stream(request: Request) -> Response:
                 )
                 mark_delivered([row_id])
 
+            beat_s = keepalive_interval_s()
             while True:
                 if await request.is_disconnected():
                     return
@@ -424,9 +427,20 @@ async def node_inbox_stream(request: Request) -> Response:
                 # (card sac-listen-sigterm-sse-shutdown-hang). ``None``
                 # means "broker closing" — return so the StreamingResponse
                 # completes and the daemon exits cleanly.
-                event = await broker.get_or_close(queue)
+                event = await broker.get_or_close(queue, keepalive_after=beat_s)
                 if event is None:
                     return
+                if event is KEEPALIVE:
+                    # Idle stream — beat. A comment frame is a no-op as CONTENT
+                    # to any SSE client (the adapter skips lines starting with
+                    # ':'), but it is not a no-op as SIGNAL: it gives the client
+                    # bytes, which is the ONLY way a bounded read deadline can
+                    # tell "quiet" from "silently dead" and re-dial instead of
+                    # parking forever on a socket nobody will ever speak on
+                    # again. Without it, a listen that vanishes without closing
+                    # deafens this agent until someone restarts it.
+                    yield b": keepalive\n\n"
+                    continue
                 # The publish path stamps the persisted row id onto
                 # the envelope as ``_row_id`` (see
                 # :func:`node_message_send`). We surface it as the SSE

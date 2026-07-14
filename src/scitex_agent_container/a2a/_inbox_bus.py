@@ -30,6 +30,7 @@ the same bearer-auth shape as the rest of sac listen.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from collections import defaultdict
@@ -39,6 +40,72 @@ from typing import Any
 # beyond that is almost certainly a misbehaving sender — we'd rather
 # drop oldest than block the publisher's HTTP handler.
 _QUEUE_CAP = 64
+
+
+class _Keepalive:
+    """Sentinel: the stream is IDLE — emit a beat, do NOT close."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "KEEPALIVE"
+
+
+#: Returned by :meth:`Broker.get_or_close` when no event arrived within
+#: ``keepalive_after`` and the broker is NOT closing. Deliberately distinct
+#: from ``None`` (closing): "nothing has happened yet" and "stop" are
+#: different facts, and collapsing them into one is how a healthy idle
+#: stream gets torn down.
+KEEPALIVE = _Keepalive()
+
+# How often an IDLE inbox stream emits a keepalive comment frame.
+#
+# This is not cosmetic. A stream that never writes cannot be told apart from a
+# stream that has DIED, and the CLIENT is the one that pays: a connection that
+# died SILENTLY (no FIN, no RST — a hard host death, a wedged uvicorn, an idle
+# NAT/firewall flow drop) parks the consumer on an unbounded read forever. It
+# still believes it is subscribed; the broker holds no subscriber for it; every
+# message aimed at that agent lands on an empty bus. That is deafness with no
+# error raised anywhere, curable only by restarting the agent — the same shape
+# as the 2026-07-01 fleet-comms outage, which lived in the CONNECT path until
+# #591 bounded it. The READ path was left unbounded; the beat is what closes it,
+# by giving the client bytes so a bounded read deadline can fire and it can
+# re-dial (see ``_mcp/channel.py::_consume_sse``).
+#
+# Server-side, be precise about what this buys, because it is narrower than it
+# looks: uvicorn ALREADY reaps a subscriber whose client closes cleanly or
+# resets (it sees ``connection_lost`` and cancels the response, running the
+# stream's ``finally``). The beat adds nothing there. What it adds is that on an
+# idle stream the beat is the ONLY write, so a peer that vanished with NO TCP
+# signal at all will eventually error out on write (TCP retransmit timeout)
+# rather than holding its subscriber slot indefinitely — which keeps
+# ``subscriber_counts`` (and the ``delivered_subscriber_count`` that ``a2a_send``
+# fails loudly on) from indefinitely reporting a subscriber nobody can reach.
+DEFAULT_KEEPALIVE_INTERVAL_S = 15.0
+ENV_KEEPALIVE_INTERVAL_S = "SAC_INBOX_KEEPALIVE_S"
+
+
+def keepalive_interval_s() -> float:
+    """Seconds between keepalive beats on an idle inbox stream.
+
+    Read from the environment at CALL time, never baked into a module-level
+    constant at import: an import-time ``float(os.environ[...])`` cannot be
+    redirected by a test (or an operator) that sets the env afterwards, and a
+    knob that silently ignores its own env var is worse than no knob at all.
+
+    A malformed or non-positive value falls back to the default rather than
+    disabling the beat. Disabling it is precisely the silent-deafness footgun
+    this exists to prevent, so a typo must never buy it.
+    """
+    raw = os.environ.get(ENV_KEEPALIVE_INTERVAL_S)
+    if raw is None:
+        return DEFAULT_KEEPALIVE_INTERVAL_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_KEEPALIVE_INTERVAL_S
+    return value if value > 0 else DEFAULT_KEEPALIVE_INTERVAL_S
+
 
 # Canonical ``from_agent`` (sender) value for messages sac's OWN
 # daemon originates — as opposed to an agent's a2a reasoning, which
@@ -96,23 +163,40 @@ class Broker:
         self._closing.set()
 
     async def get_or_close(
-        self, q: asyncio.Queue[dict[str, Any]]
-    ) -> dict[str, Any] | None:
-        """Await the next event on ``q``, or ``None`` when the broker is
-        closing.
+        self,
+        q: asyncio.Queue[dict[str, Any]],
+        *,
+        keepalive_after: float | None = None,
+    ) -> dict[str, Any] | _Keepalive | None:
+        """Await the next event on ``q``. Three outcomes, never two.
+
+        * an **event** — deliver it;
+        * :data:`KEEPALIVE` — ``keepalive_after`` seconds passed with no event
+          and the broker is NOT closing. The stream is healthy and idle: beat,
+          do not close. Only returned when ``keepalive_after`` is set;
+        * ``None`` — the broker is closing. Stop.
 
         The SSE inbox-stream handlers loop on this instead of a bare
-        ``await q.get()``. A bare ``get()`` parks forever when no event
-        is flowing, so uvicorn's graceful shutdown (SIGTERM) waits on the
+        ``await q.get()``. A bare ``get()`` parks forever when no event is
+        flowing, so uvicorn's graceful shutdown (SIGTERM) waits on the
         in-flight stream until it force-cancels / ``sac listen restart
         --force`` escalates to SIGKILL after 10 s (card
-        ``sac-listen-sigterm-sse-shutdown-hang``). Racing ``get()``
-        against the shutdown Event lets the loop return the instant
-        :meth:`close` fires, so the daemon exits cleanly.
+        ``sac-listen-sigterm-sse-shutdown-hang``). Racing ``get()`` against
+        the shutdown Event lets the loop return the instant :meth:`close`
+        fires, so the daemon exits cleanly.
 
-        A live event still in flight when close fires is delivered (not
-        dropped) so a normal event landing on the same tick is not lost
-        to the shutdown race.
+        ``keepalive_after`` adds the third outcome so an idle stream can emit a
+        beat (see :func:`keepalive_interval_s` for why a silent stream is a
+        deafness bug in both directions). ``None`` keeps the original two-state
+        contract verbatim for callers that do not want beats.
+
+        **An event is never lost to a beat.** A live event still in flight when
+        the timeout (or close) fires is returned, not dropped: we check
+        ``get_task`` for a result BEFORE treating the wait as idle. And
+        cancelling a pending ``Queue.get()`` does not consume an item —
+        ``asyncio.Queue.get`` only calls ``get_nowait()`` after its getter
+        future resolves, so an item that arrives in the cancellation race stays
+        queued and the next call picks it up.
         """
         if self._closing.is_set():
             return None
@@ -120,7 +204,9 @@ class Broker:
         close_task = asyncio.ensure_future(self._closing.wait())
         try:
             await asyncio.wait(
-                {get_task, close_task}, return_when=asyncio.FIRST_COMPLETED
+                {get_task, close_task},
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=keepalive_after,
             )
         except asyncio.CancelledError:
             # The whole stream is being cancelled (client gone, or
@@ -130,8 +216,9 @@ class Broker:
             get_task.cancel()
             close_task.cancel()
             raise
-        # Prefer a delivered event even if close fired on the same tick —
-        # an event already pulled off the queue must not be dropped.
+        # Prefer a delivered event even if close (or the keepalive timeout)
+        # fired on the same tick — an event already pulled off the queue must
+        # not be dropped.
         if (
             get_task.done()
             and not get_task.cancelled()
@@ -139,10 +226,17 @@ class Broker:
         ):
             close_task.cancel()
             return get_task.result()
-        # Closing won (or the queue errored) — abandon the pending get and
-        # signal the loop to stop.
+        # No event. Abandon the pending get (the item, if any, stays queued)
+        # and decide WHY we woke: shutdown, or merely an idle stream.
         get_task.cancel()
         close_task.cancel()
+        if self._closing.is_set():
+            return None
+        if keepalive_after is not None:
+            # Idle, not closing. This is the distinction the whole ternary
+            # exists for: reporting "closed" here would tear down a perfectly
+            # healthy stream every keepalive interval.
+            return KEEPALIVE
         return None
 
     async def subscribe(self, agent: str) -> asyncio.Queue[dict[str, Any]]:
@@ -375,7 +469,11 @@ def mint_acl_deny_synthetic_notification(
 
 __all__ = [
     "DAEMON_SENDER",
+    "DEFAULT_KEEPALIVE_INTERVAL_S",
+    "ENV_KEEPALIVE_INTERVAL_S",
+    "KEEPALIVE",
     "Broker",
+    "keepalive_interval_s",
     "mint_event",
     "mint_deny_notification",
     "mint_acl_deny_synthetic_notification",
