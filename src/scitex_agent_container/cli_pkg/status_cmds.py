@@ -457,6 +457,14 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     subscribers, reachable = probe_inbox_reachability(name)
 
+    # The ternary verdict (ALIVE/DEAD/UNKNOWN) + its EVIDENCE, published
+    # alongside the ``healthy`` bool rather than replacing it — a bool cannot
+    # say "I could not tell", and ``healthy`` gates this command's exit code.
+    # See :mod:`._health_liveness`.
+    from ._health_liveness import liveness_payload, print_liveness
+
+    liveness = liveness_payload(name, config)
+
     if use_json:
         click.echo(
             json_mod.dumps(
@@ -466,6 +474,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "message": message,
                     "inbox_subscribers": subscribers,
                     "inbox_reachable": reachable,
+                    "liveness": liveness,
                 },
                 indent=2,
             )
@@ -478,6 +487,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         console.print(f"[green]{message}[/green]")
     else:
         console.print(f"[red]{message}[/red]")
+
+    print_liveness(console, liveness)
 
     if reachable == UNREACHABLE:
         console.print(

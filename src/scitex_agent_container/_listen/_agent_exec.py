@@ -22,7 +22,10 @@ from starlette.responses import JSONResponse
 
 from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_spawn, deny_response
-from ._agent_exec_liveness import _probe_post_ack_liveness
+from ._agent_exec_liveness import (
+    _POST_ACK_LIVENESS_TIMEOUT_S,
+    _probe_post_ack_liveness,
+)
 from ._agent_exec_send import _find_claude_binary, agent_send
 from ._inline_spec import materialize_inline_spec
 
@@ -337,18 +340,24 @@ async def agents_start(request: Request) -> JSONResponse:
     runtime_dir = state_dir_for(name)
     # Test escape hatch: ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` env
     # var lets the suite skip / shorten the probe (≤0 → skip entirely).
-    # Production callers leave it unset and get the default 5s grace.
+    # Production callers leave it unset and get the default grace window.
     try:
         env_timeout = float(
             os.environ.get(
                 "SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S",
-                str(5.0),
+                str(_POST_ACK_LIVENESS_TIMEOUT_S),
             )
         )
     except ValueError:
-        env_timeout = 5.0
+        env_timeout = _POST_ACK_LIVENESS_TIMEOUT_S
+    # Passing ``name`` is load-bearing: it lets the probe pick the check that is
+    # VALID for this agent's runtime. Without it, the probe waits for an
+    # ``apptainer_pid`` file that a ``tui`` agent — the fleet's DEFAULT runtime —
+    # never writes, and then stamps ``startup_failed`` on a perfectly healthy
+    # agent. See :mod:`._agent_exec_liveness`.
     liveness_failure = _probe_post_ack_liveness(
         runtime_dir,
+        name=name,
         timeout_s=env_timeout,
     )
     if liveness_failure is not None:
