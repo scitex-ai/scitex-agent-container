@@ -140,6 +140,73 @@ jobs:
       - name: Publish to PyPI via manual OIDC trusted publishing in the SIF
         run: bash .github/ci/exec-in-sif.sh publish-in-sif.sh 3.12
 
+      # A GREEN `twine upload` IS NOT EVIDENCE THAT THE ARTIFACT EXISTS. It is
+      # evidence that the upload CALL RETURNED. Those are different facts, and
+      # the gap between them is where a GHOST TAG lives: the tag exists, the run
+      # is green, and PyPI serves nothing. Nobody notices, because nothing looks.
+      #
+      # A detector found EIGHT of them in this repo — v0.6.0, v0.17.1, v0.21.6,
+      # v0.21.8, v0.21.10, v0.21.12, v0.21.15, v0.21.16. A THIRD OF THE 0.21 LINE
+      # never shipped, silently, for months. The fleet then spent an entire day
+      # re-diagnosing an already-fixed bug (#658) because the fix was merged,
+      # tagged, and never published, while agents hand-drained a wedged control
+      # plane. The operator's question was 「これ何回目？」 — how many times is this?
+      # The honest answer was: we were not failing to FIX it, we were failing to
+      # SHIP it, and nothing anywhere was built to notice.
+      #
+      # So the publish job now VERIFIES ITS OWN ARTIFACT. A ghost becomes a RED
+      # RELEASE instead of a silent success.
+      #
+      # Query the VERSION-SPECIFIC JSON API. Do NOT use /simple/, and do NOT use
+      # the package-level "latest": both are CDN-cached and will cheerfully
+      # answer 200 for a version that is not really there. Measured on this repo:
+      # our own release chain read the PREVIOUS version for ~34s after publish
+      # had already succeeded. So retry for eventual consistency, and require the
+      # response to actually carry uploaded FILES rather than merely parse.
+      - name: Verify the artifact actually reached PyPI (a tag is not a release)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -uo pipefail
+          PKG=scitex-agent-container
+          # `build.outputs.version` is the TAG on a push ("v0.21.18") and a
+          # user-supplied string on workflow_dispatch (either form). `#v` strips
+          # a leading v and is a no-op on a bare version, so both are handled.
+          V="${VERSION#v}"
+          # An EMPTY version is a workflow CONFIG error, not a ghost. Without
+          # this, the URL becomes ".../scitex-agent-container//json" -> 404 ->
+          # we would report a phantom ghost and block a PERFECTLY GOOD RELEASE.
+          # A false RED here is worse than the ghost it exists to catch, because
+          # its remedy is "don't ship". Name the real fault instead.
+          if [ -z "$V" ]; then
+            echo "::error::version is EMPTY (build.outputs.version resolved to nothing)."
+            echo "::error::This is a workflow configuration fault, NOT a missing artifact."
+            exit 1
+          fi
+          URL="https://pypi.org/pypi/${PKG}/${V}/json"
+          echo "verifying PyPI really serves ${PKG}==${V}"
+          # Pure shell on purpose: an embedded multi-line python heredoc breaks
+          # this block scalar and yields an UNPARSEABLE workflow — i.e. it would
+          # take down every release while trying to protect them. `packagetype`
+          # appears once per uploaded file in the JSON's `urls` array, so a
+          # 200 that contains it proves a real, downloadable artifact.
+          for i in $(seq 1 18); do   # ~90s; PyPI is eventually consistent
+            CODE="$(curl -sS -o pypi.json -w '%{http_code}' --max-time 20 "$URL" || echo 000)"
+            if [ "$CODE" = "200" ] && grep -q '"packagetype"' pypi.json; then
+              N="$(grep -o '"packagetype"' pypi.json | wc -l | tr -d ' ')"
+              echo "OK: PyPI serves ${PKG}==${V} with ${N} file(s)."
+              rm -f pypi.json
+              exit 0
+            fi
+            echo "  attempt ${i}/18: http=${CODE}, no artifact yet; retry in 5s"
+            sleep 5
+          done
+          rm -f pypi.json
+          echo "::error::GHOST TAG: PyPI does NOT serve ${PKG}==${V} after a green publish."
+          echo "::error::The upload call returned, but no artifact is being served."
+          echo "::error::Do NOT cut the GitHub release. Fix publish, then re-tag."
+          exit 1
+
   release:
     needs: [build, publish]
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
