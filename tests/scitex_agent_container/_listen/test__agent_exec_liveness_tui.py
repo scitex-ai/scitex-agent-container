@@ -102,8 +102,23 @@ def test_a_tui_agent_whose_probe_could_not_run_is_not_a_startup_failure(tmp_path
     assert failure is None
 
 
-def test_an_unresolvable_spec_is_not_a_startup_failure(tmp_path):
-    """We could not tell WHICH runtime this is. That convicts nobody."""
+def test_an_unresolvable_spec_falls_back_to_the_legacy_pidfile_probe(tmp_path):
+    """We only ever SKIP the pidfile probe on POSITIVE knowledge.
+
+    An unresolvable spec means we do not know which runtime this is. The
+    tempting move is to skip the check ("UNKNOWN authorises nothing") — but that
+    is the wrong application of the rule, and I shipped it wrong once: skipping
+    here silently DISABLES the Layer-3 fail-loud guard, so a stillborn SIF gets
+    reported as SUCC. That trades one class of lie for another.
+
+    The rule is about not manufacturing a DEATH VERDICT from ignorance. It is
+    not a licence to stop checking. So ignorance falls back to the pre-existing
+    probe, which is conservative for the apptainer path — and we only ever skip
+    it when we POSITIVELY know the runtime writes no pidfile (i.e. it is tui).
+
+    In production this branch is unreachable for a real agent: the listen just
+    started it FROM its spec, so the spec resolves.
+    """
     # Arrange
     runtime_dir = tmp_path
     # Act
@@ -115,7 +130,7 @@ def test_an_unresolvable_spec_is_not_a_startup_failure(tmp_path):
         writes_pidfile_fn=lambda _n: None,  # unresolvable spec
     )
     # Assert
-    assert failure is None
+    assert failure[0] == "post_ack_no_apptainer_pid"
 
 
 def test_a_genuinely_absent_tui_session_IS_reported(tmp_path):

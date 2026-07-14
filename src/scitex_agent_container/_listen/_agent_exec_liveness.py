@@ -178,16 +178,28 @@ def _probe_post_ack_liveness(
 
     if name:
         writes = (writes_pidfile_fn or _runtime_writes_apptainer_pidfile)(name)
-        if writes is None:
-            # We could not tell which runtime this is. UNKNOWN — say nothing.
-            return None
-        if not writes:
+        if writes is False:
+            # POSITIVE knowledge that this runtime writes no apptainer_pid (it
+            # is a tui agent). Waiting for that file is guaranteed to "fail" and
+            # would mean nothing — ask the agent's own runtime instead.
             return _probe_non_apptainer_runtime(
                 name,
                 timeout_s=timeout_s,
                 poll_interval_s=poll_interval_s,
                 runtime_is_up_fn=runtime_is_up_fn or _probe_runtime_is_up,
             )
+        # ``writes is True``  -> an apptainer runtime; the pidfile probe below
+        #                        is the right one, unchanged.
+        # ``writes is None``  -> we could not resolve the spec, so we do not
+        #                        know which runtime this is. Fall through to the
+        #                        LEGACY pidfile probe rather than skipping the
+        #                        check: we only ever SKIP on positive knowledge.
+        #                        Skipping on ignorance would silently disable the
+        #                        Layer-3 fail-loud guard (a stillborn SIF would
+        #                        be reported as SUCC), trading one class of lie
+        #                        for another. In production this branch is
+        #                        unreachable for a real agent — the listen just
+        #                        started it FROM its spec, so the spec resolves.
 
     pid_file = runtime_dir / "apptainer_pid"
     deadline = time.monotonic() + max(0.0, timeout_s)
