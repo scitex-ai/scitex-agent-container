@@ -61,9 +61,18 @@ def _runtime_root() -> Path:
 
     Resolved at CALL time, never captured into a module-level constant. A
     ``Path.home()``-derived constant computed at IMPORT cannot be redirected by
-    a fixture that sets ``$HOME`` — that exact bug had this suite reading and
-    WRITING the real fleet registry, and it is invisible in CI (no fleet there,
-    so it passes).
+    a fixture that sets ``$HOME`` — that exact bug had a suite in this repo
+    reading and WRITING the real fleet registry, and it is invisible in CI (no
+    fleet there, so it passes).
+
+    KNOWN BLIND SPOT, and it is deliberately left blind rather than guessed at:
+    inside a container ``$HOME`` is ``/home/agent``, not the operator's home, so
+    this resolves to a directory that does not exist and the heartbeat signal
+    comes back UNKNOWN. That is the CORRECT degradation — "I cannot see this
+    agent's heartbeat from here" — and UNKNOWN authorises nothing. The tempting
+    fix (guess at the operator's home and read a path we were not given) trades
+    an honest UNKNOWN for a confident answer about a file we are not sure is the
+    right one, which is how this class of bug is born in the first place.
     """
     return Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "runtime"
 
@@ -145,25 +154,85 @@ def delivery_signal(
 # --------------------------------------------------------------------------
 
 
-def _tmux_probe_ran(socket_name: str | None = None) -> bool | None:
-    """Did the batched tmux probe actually RUN? ``None`` when we cannot tell.
+def _in_sif() -> bool:
+    """Are we running INSIDE an apptainer SIF (so the host's tmux is invisible)?
 
-    :func:`.._runners._tmux._tmux_probe.list_sessions_activity` already states
-    the contract we need: ``dict`` = probed, ``{}`` = probed and genuinely
-    empty, ``None`` = the probe FAILED and liveness is UNKNOWN. We only need
-    the "did it run" bit, so a ``False`` from ``TuiSessionRuntime.is_running``
-    can be told apart from "tmux is wedged / unreachable".
-
-    Without this, a wedged tmux (or a prober in a different mount namespace
-    that cannot see the host's tmux socket at all) makes EVERY TUI agent read
-    ``stopped`` at once — the fleet-wide false-death flood, re-armed.
+    Reuses the canonical predicate the spawn/status brokers already key off
+    (:func:`.._lifecycle._in_sif_broker.is_in_sif`) rather than sniffing for
+    apptainer markers a second time — one definition of "am I in a container",
+    so the probe and the brokers can never disagree.
     """
     try:
-        from .._runners._tmux._tmux_probe import list_sessions_activity
+        from ._in_sif_broker import is_in_sif
 
-        return list_sessions_activity(socket_name=socket_name) is not None
+        return bool(is_in_sif())
+    except Exception:  # stx-allow: fallback (if we cannot even tell where we are, assume the cautious answer: we might be blind)
+        return True
+
+
+def _tmux_probe_ran(
+    socket_name: str | None = None,
+    *,
+    snapshot_fn: Callable[..., dict | None] | None = None,
+    in_sif_fn: Callable[[], bool] | None = None,
+) -> bool | None:
+    """Did a tmux probe run that could actually SEE this fleet's sessions?
+
+    ``True`` = yes, so a "no session" answer is a real observation of absence.
+    ``None`` = no, so a "no session" answer means "I could not look".
+
+    Two distinct ways the probe fails to see the fleet, and BOTH must map to
+    ``None`` — one of them bit this very module during development:
+
+    1. **The probe errored / tmux is wedged.**
+       :func:`.._runners._tmux._tmux_probe.list_sessions_activity` returns
+       ``None`` for this, exactly as its contract says.
+
+    2. **We are inside a container, and the host's tmux is in another mount
+       namespace.** This one is a TRAP, because the probe does not error — it
+       SUCCEEDS and reports an EMPTY fleet. From inside a SIF, ``tmux ls``
+       prints ``no server running on /tmp/tmux-1000/default`` (true! for the
+       CONTAINER's own /tmp), which is one of ``_tmux_probe``'s
+       "no server ⇒ confirmed-empty" markers, so ``list_sessions_activity()``
+       returns ``{}`` — "the probe succeeded and the fleet is genuinely empty".
+
+       MEASURED (2026-07-14): from inside this container that path made
+       ``process_signal`` return DEAD for ``grant`` — an agent holding a live
+       tmux session, a fresh heartbeat and a live inbox subscriber on the host.
+       A confident, well-evidenced, completely false death verdict. Only the
+       corroboration gate stopped it authorising anything.
+
+       So an empty snapshot taken from inside a SIF is NOT evidence of absence.
+       It is the same fact ``_listen._reachability`` already encodes for
+       cross-host peers: *a thing you are not in a position to observe must be
+       UNKNOWN, and never accused.*
+
+    ``snapshot_fn`` / ``in_sif_fn`` are injection seams taking REAL callables
+    (production resolves the real probe + the real in-SIF predicate).
+    """
+    snapshot_fn = snapshot_fn or _real_tmux_snapshot
+    in_sif_fn = in_sif_fn or _in_sif
+
+    try:
+        snapshot = snapshot_fn(socket_name=socket_name)
     except Exception:  # stx-allow: fallback (cannot even ask tmux → we do not know whether a probe would have run)
         return None
+
+    if snapshot is None:
+        return None  # the probe FAILED — its own contract already says so.
+    if not snapshot and in_sif_fn():
+        # An "empty fleet" seen from inside a container is namespace blindness,
+        # not an empty fleet. Refuse to treat a non-observation as one.
+        return None
+    return True
+
+
+def _real_tmux_snapshot(*, socket_name: str | None = None) -> dict | None:
+    """The real batched tmux probe. Kept behind a seam so tests drive the RULE
+    above without needing a live tmux server in a specific namespace."""
+    from .._runners._tmux._tmux_probe import list_sessions_activity
+
+    return list_sessions_activity(socket_name=socket_name)
 
 
 def process_signal(

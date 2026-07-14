@@ -28,6 +28,7 @@ from scitex_agent_container._lifecycle._verdict import (
     UNKNOWN,
 )
 from scitex_agent_container._lifecycle._verdict_resolve import (
+    _tmux_probe_ran,
     heartbeat_signal,
     process_signal,
     registry_signal,
@@ -164,6 +165,66 @@ def test_process_signal_is_sourced_as_process():
     signal = process_signal(config, _RuntimeSaysUp(), tmux_probe_ran=lambda: True)
     # Assert
     assert signal.source == SOURCE_PROCESS
+
+
+# --------------------------------------------------------------------------
+# The false-DEAD this module produced on itself, caught in development.
+# --------------------------------------------------------------------------
+
+
+def test_an_empty_tmux_snapshot_from_inside_a_container_is_not_an_observation():
+    """MEASURED 2026-07-14 — and it convicted a live agent.
+
+    From inside a SIF, ``tmux ls`` prints "no server running on
+    /tmp/tmux-1000/default": TRUE of the CONTAINER's own /tmp, and one of
+    ``_tmux_probe``'s "no server ⇒ confirmed-empty" markers. So
+    ``list_sessions_activity()`` does not FAIL — it SUCCEEDS and returns ``{}``,
+    i.e. "the fleet is genuinely empty". The host's tmux is merely in another
+    mount namespace.
+
+    Run from in there, that made ``process_signal`` return DEAD for ``grant`` —
+    an agent holding a live tmux session, a fresh heartbeat and a live inbox
+    subscriber on the host. A confident, well-evidenced, entirely false death
+    verdict. Only the corroboration gate stopped it authorising anything.
+    """
+    # Arrange: the real "empty snapshot" + the real "we are in a container".
+    empty_snapshot = lambda **_kw: {}  # noqa: E731  — what tmux really returns
+    in_a_container = lambda: True  # noqa: E731
+    # Act
+    ran = _tmux_probe_ran(snapshot_fn=empty_snapshot, in_sif_fn=in_a_container)
+    # Assert — a non-observation must not be read as an observation.
+    assert ran is None
+
+
+def test_an_empty_tmux_snapshot_on_the_bare_host_IS_an_observation():
+    """The probe must keep its teeth where it CAN see: on the host, empty is empty."""
+    # Arrange
+    empty_snapshot = lambda **_kw: {}  # noqa: E731
+    on_the_host = lambda: False  # noqa: E731
+    # Act
+    ran = _tmux_probe_ran(snapshot_fn=empty_snapshot, in_sif_fn=on_the_host)
+    # Assert
+    assert ran is True
+
+
+def test_a_failed_tmux_probe_is_never_an_observation():
+    # Arrange — list_sessions_activity's own contract: None = the probe FAILED.
+    failed_probe = lambda **_kw: None  # noqa: E731
+    on_the_host = lambda: False  # noqa: E731
+    # Act
+    ran = _tmux_probe_ran(snapshot_fn=failed_probe, in_sif_fn=on_the_host)
+    # Assert
+    assert ran is None
+
+
+def test_a_tui_agent_is_unknown_not_dead_when_the_probe_cannot_see_the_fleet():
+    """The fix, at the signal level: cannot see ⇒ UNKNOWN, never DEAD."""
+    # Arrange
+    config = _Cfg("grant", "tui")
+    # Act
+    signal = process_signal(config, _RuntimeSaysDown(), tmux_probe_ran=lambda: None)
+    # Assert
+    assert signal.verdict == UNKNOWN
 
 
 # --------------------------------------------------------------------------
