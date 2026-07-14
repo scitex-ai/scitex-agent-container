@@ -30,10 +30,27 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-merge-conflict
+        # --assume-in-merge IS LOAD-BEARING. Without it this hook is INERT for
+        # the case anyone actually cares about. Its source (check_merge_conflict.py:37):
+        #
+        #     if not is_in_merge() and not args.assume_in_merge:
+        #         return 0
+        #
+        # i.e. OUTSIDE a merge state it returns 0 without looking at a single
+        # byte. Measured: staged a file containing `<<<<<<< HEAD` / `=======` /
+        # `>>>>>>>` and committed it. The hook ran, printed
+        # "check for merge conflicts....Passed", and THE COMMIT WENT THROUGH.
+        #
+        # A conflict marker pasted into a normal commit — the failure that
+        # actually happens — sails straight past the default config. (The
+        # git-template hook this replaces was equally blind: `git ls-files
+        # --unmerged` only populates during a merge. So this is not a regression
+        # against what we displaced; it is both of them being weaker than they
+        # read.) With the flag, the check runs on every staged file, always.
+        args: ["--assume-in-merge"]
         description: >
-          Conflict markers must never reach a commit. The displaced git-template
-          hook checked exactly this, so keeping it makes the hooksPath flip a
-          strict improvement rather than a trade.
+          Conflict markers must never reach a commit — in a merge OR outside one.
+          Verified by feeding it a marker-laden file and watching it BLOCK.
       - id: check-added-large-files
         args: ["--maxkb=10000"]
         description: >
