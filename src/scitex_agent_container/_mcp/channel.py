@@ -57,12 +57,56 @@ _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 _CHANNEL_SOURCE_ENV_VAR = "SAC_MCP_CHANNEL_SOURCE"
 _CHANNEL_SOURCE_DEFAULT = "sac"
 
-# Bound the SSE CONNECT phase; read stays unbounded (the event stream is
-# legitimately long-lived). Load-resilience fix (2026-07-09): ``timeout=None``
-# left CONNECT unbounded too, so a hung connect to ``:7878`` under load blocked
-# inside ``client.stream(...)`` forever and the reconnect-with-backoff loop never
-# retried. See ``docs/mcp-load-resilience.md``.
+# Bound the SSE CONNECT phase. Load-resilience fix (2026-07-09, #591):
+# ``timeout=None`` left CONNECT unbounded, so a hung connect to ``:7878`` under
+# load blocked inside ``client.stream(...)`` forever and the
+# reconnect-with-backoff loop never retried — the agent stayed alive and
+# permanently unsubscribed, curable only by restarting it. That was the
+# mechanism of the 2026-07-01 fleet-comms outage.
+# See ``docs/mcp-load-resilience.md``.
 _SSE_CONNECT_TIMEOUT_S: float = 30.0
+
+# ...and bound the READ, which that fix left unbounded.
+#
+# An unbounded read is the SAME bug one layer down. `sac listen` beats a
+# keepalive comment frame down every idle inbox stream (see
+# ``a2a._inbox_bus.keepalive_interval_s``, default 15 s), so a healthy stream is
+# NEVER silent for long. Without a read deadline, a connection that dies
+# SILENTLY — no FIN, no RST: a hard host death, a wedged uvicorn, an idle
+# NAT/firewall flow drop — parks this consumer inside ``aiter_lines()`` forever.
+# It believes it is subscribed; the broker holds no subscriber for it; every
+# message aimed at the agent lands on an empty bus. Deafness, with no error
+# raised anywhere, until someone restarts the agent.
+#
+# So: exceed the server's beat by a wide margin (tolerate several missed beats
+# before tearing down a healthy stream), then let the deadline fire. A
+# ``ReadTimeout`` is caught by the reconnect loop below, which re-dials with
+# backoff and RE-SUBSCRIBES. Reconnecting is cheap and idempotent — the stream
+# replays undelivered rows on connect — so a false positive costs a reconnect,
+# while a false negative costs the agent every message it will ever be sent.
+_DEFAULT_SSE_READ_TIMEOUT_S: float = 60.0
+_ENV_SSE_READ_TIMEOUT_S = "SAC_MCP_SSE_READ_TIMEOUT_S"
+
+
+def _sse_read_timeout_s() -> float:
+    """Seconds of total silence before the SSE read is declared dead.
+
+    Read from the env at CALL time, never baked into a module-level constant at
+    import: an import-time ``float(os.environ[...])`` cannot be redirected by a
+    test (or an operator) that sets the var afterwards, and a knob that silently
+    ignores its own env var is worse than no knob.
+
+    A malformed or non-positive value falls back to the default. Never returns
+    ``None``: "wait forever" is the bug, not a configuration.
+    """
+    raw = os.environ.get(_ENV_SSE_READ_TIMEOUT_S)
+    if raw is None:
+        return _DEFAULT_SSE_READ_TIMEOUT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_SSE_READ_TIMEOUT_S
+    return value if value > 0 else _DEFAULT_SSE_READ_TIMEOUT_S
 
 
 # WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
@@ -105,9 +149,27 @@ async def _consume_sse(
 ) -> None:
     """Long-lived SSE consumer. Reconnects with backoff on disconnect.
 
-    Each `event: message` frame's `data:` line is JSON-decoded and
-    handed to ``on_event``. Comment frames (``: ...``) are ignored —
-    sac listen emits one at connection time as a keep-alive hint.
+    Each ``event: message`` frame's ``data:`` line is JSON-decoded and handed to
+    ``on_event``. Comment frames (``: ...``) are ignored as content — sac listen
+    emits one on connect (``: sac-channel ready``) and then beats ``: keepalive``
+    down every idle stream. Ignored as CONTENT is not ignored as SIGNAL: each
+    beat is bytes arriving, which resets the read deadline below and is how this
+    consumer tells a quiet stream from a dead one.
+
+    THE INVARIANT THIS LOOP EXISTS FOR: an agent that survives ``sac listen``
+    going away must re-subscribe on its own, with no agent restart. Every way
+    the connection can end has to route back to the top of this loop:
+
+      * clean EOF mid-stream (listen restarted / SIGTERM'd) — ``aiter_lines()``
+        ends, we fall through and re-dial;
+      * connect refused / hung (listen down, or wedged under load) — bounded by
+        ``_SSE_CONNECT_TIMEOUT_S``; before #591 this was unbounded and the loop
+        never came around, which is how a whole fleet went permanently deaf;
+      * a socket that dies with NO close at all — bounded by the read deadline
+        (:func:`_sse_read_timeout_s`); before this, that parked here forever.
+
+    A non-200 (e.g. a stale bearer) is logged and retried too: we must never
+    exit this loop, because the process has no other path back to subscribed.
     """
     try:
         import httpx
@@ -125,7 +187,7 @@ async def _consume_sse(
         headers["Authorization"] = f"Bearer {bearer}"
 
     backoff = 0.5
-    sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=None)
+    sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=_sse_read_timeout_s())
     while True:
         try:
             async with httpx.AsyncClient(timeout=sse_timeout) as client:
@@ -205,7 +267,9 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     """
     from .._state.state_db_channel import format_ts_iso
 
-    source = os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
+    source = (
+        os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
+    )
     meta: dict[str, Any] = {
         "source": source,
         "from_agent": _meta_str(event.get("from_agent", "unknown")),
