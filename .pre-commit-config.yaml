@@ -98,10 +98,12 @@ repos:
 #   1. `scripts/check_stx_allow.py` is rewritten AST-based in this change, so it
 #      now flags only handlers that genuinely SWALLOW and can see multi-line
 #      clauses. It is a usable tool. It is not yet a passable gate.
-#   2. ~365 genuine un-annotated silent fallbacks remain in src/. Each needs a
-#      REAL reason string; a wrong one is a lie in a comment, which is the same
-#      disease. Auto-inserting 365 generic reasons would be cargo-culting a
-#      linter, not honouring a convention.
+#      Run it: /opt/venv-sac/bin/python scripts/check_stx_allow.py
+#   2. 349 genuine un-annotated silent fallbacks remain in src/ (measured by the
+#      rewritten checker itself — not an estimate). Each needs a REAL reason
+#      string; a wrong one is a lie in a comment, which is the same disease.
+#      Auto-inserting 349 generic reasons would be cargo-culting a linter, not
+#      honouring a convention.
 #   3. Once the tree is clean, add the hook back. A ratchet (fail only on lines
 #      the commit ADDS) is the standard way to land a lint on a dirty tree and
 #      is the likely shape.

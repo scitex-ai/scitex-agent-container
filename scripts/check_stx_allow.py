@@ -39,10 +39,10 @@ SWALLOWS — its body neither raises, nor exits, nor logs. The ``# stx-allow:``
 comment is searched across the handler's whole header span, so a multi-line
 ``except (...)`` that carries the comment on its closing line is honoured.
 
-NOTE ON STATUS: this is a usable TOOL, not yet a passable GATE. ~365 genuine
+NOTE ON STATUS: this is a usable TOOL, not yet a passable GATE. 349 genuine
 un-annotated silent fallbacks remain in src/, so it is deliberately NOT wired
 into .pre-commit-config.yaml — see the note there. Each of those needs a REAL
-reason string; auto-inserting 365 generic ones would be cargo-culting a linter
+reason string; auto-inserting 349 generic ones would be cargo-culting a linter
 rather than honouring a convention.
 
 Usage:
