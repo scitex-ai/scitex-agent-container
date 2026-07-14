@@ -293,7 +293,7 @@ class _MainGroup(LazyGroup):
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
-        "listen": "Boot the sac listen HTTP/JSON control-plane server.",
+        "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
@@ -368,6 +368,7 @@ class _MainGroup(LazyGroup):
         "  $ sac agents status\n"
         "  $ sac agents start orchestrator                                      # by name\n"
         "  $ sac agents start ~/.scitex/agent-container/agents/orchestrator/spec.yaml   # by path\n"
+        "  $ sac listen status                                                  # host control-plane health\n"
     ),
 )
 @click.option(

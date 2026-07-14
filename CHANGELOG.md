@@ -6,6 +6,53 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`sac listen start` and `sac listen stop` — `listen` is a NOUN, so give it
+  verbs.** `listen` is a command group like `agents` / `db` / `host`, but bare
+  `sac listen` *booted a daemon*. Every other noun group in this CLI prints help
+  when invoked bare; this one silently became a server on 7878 — so a typo or a
+  stray tab-complete started one. That is the anti-pattern the scitex CLI
+  convention names outright (§1: *"trailing noun, no action: **never**"*).
+
+  The group already had `restart` and `status` (the latter easy to miss — it was
+  absent from the help's example block). It now has the coherent set:
+
+  ```bash
+  sac listen start      # boot the daemon (the explicit form of bare `sac listen`)
+  sac listen stop       # NEW — idempotent, like `systemctl stop`
+  sac listen restart    # unchanged
+  sac listen status     # unchanged, now discoverable in `-h`
+  ```
+
+  `start`, not `serve`: the §1d catalog reserves `start`/`stop`/`restart` for
+  *daemonized* lifecycle (a background process with a pid) and gives `serve` to
+  foreground, browser-facing surfaces under a `gui` group. This daemon writes a
+  flock-backed pidfile that `stop`/`restart`/`status` all address by pid, and a
+  systemd unit supervises it. `start` also keeps SSOT with `sac agents start`.
+
+  Options work on the verb (`sac listen start --bind …`) or on the group
+  (`sac listen --bind … start`); the verb wins.
+
+  `stop` is `restart`'s stop half on its own — both now call one implementation
+  (`_listen._stop.stop_listen`), so the two verbs cannot drift. It inherits the
+  full self-heal: SIGTERM → grace → SIGKILL, verify-dead *before* clearing the
+  pidfile, then force-kill a wedged remnant the pidfile never named (the "curl
+  hangs forever" case). `--json` emits a machine-readable envelope.
+
+### Deprecated
+
+- **Bare `sac listen` (boot-by-default) — removal in v0.23.0.** It **still
+  boots**, and deliberately so: it is the launch command of the systemd unit,
+  of `sac listen restart`'s respawn, and of the systemd JobSpec in #543. `sac
+  listen` *is* the host control plane on 127.0.0.1:7878 — flipping the bare form
+  to show-help would take the whole fleet's host access down with it. So this is
+  phase W of the deprecation ladder: **warn and forward**, never break.
+
+  Bare boot now prints a stderr warning naming `sac listen start` and the
+  removal version. Before v0.23.0, every launcher above must move to
+  `sac listen start`.
+
 ## [0.21.16] — 2026-07-14
 
 **⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and

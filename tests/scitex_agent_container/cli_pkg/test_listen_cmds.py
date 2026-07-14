@@ -349,3 +349,143 @@ def test_listen_non_loopback_bind_with_allow_flag_passes_host_to_uvicorn(tmp_pat
         CliRunner().invoke(listen, ["--bind", "8.8.8.8:7878", "--allow-non-loopback"])
     # Assert
     assert fake_uvicorn.calls == [{"host": "8.8.8.8", "port": 7878}]
+
+
+# ---------------------------------------------------------------------------
+# Bare-boot deprecation (phase W: warn + FORWARD).
+#
+# `listen` is a NOUN, so booting a daemon off the bare noun is a footgun —
+# but the bare form MUST keep working until every launcher has migrated to
+# `sac listen start`. Three of them still invoke it bare TODAY:
+#
+#   1. scripts/systemd/sac-listen.service  -> ExecStart=/usr/bin/env sac listen
+#   2. _listen/_restart.py                 -> [sac_binary(), "listen"] respawn
+#   3. PR #543's systemd JobSpec           -> command="sac listen"
+#
+# `sac listen` IS the host control plane on 127.0.0.1:7878; the whole fleet
+# loses host access when it is down. Flipping the bare form to show-help
+# would take it offline. So: warn, never break. The first test below is the
+# regression guard that keeps it that way.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_listen_still_boots_the_daemon_for_launcher_compat(tmp_path):
+    """HARD COUPLING: the systemd unit + `_restart` respawn invoke this bare."""
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+    from scitex_agent_container._listen import tokens as _tokens
+
+    fake_uvicorn = _FakeUvicorn()
+    # Act
+    with (
+        _swap_standby_serves(),
+        _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
+        _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        CliRunner().invoke(listen, [])
+    # Assert
+    assert fake_uvicorn.calls == [{"host": "127.0.0.1", "port": 7878}]
+
+
+def test_bare_listen_boot_warns_that_it_is_deprecated(tmp_path):
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+    from scitex_agent_container._listen import tokens as _tokens
+
+    fake_uvicorn = _FakeUvicorn()
+    # Act
+    with (
+        _swap_standby_serves(),
+        _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
+        _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        result = CliRunner().invoke(listen, [])
+    # Assert
+    assert "DEPRECATED" in result.output.upper()
+
+
+def test_bare_listen_boot_warning_names_the_start_verb(tmp_path):
+    """A deprecation that doesn't name the replacement is just noise."""
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+    from scitex_agent_container._listen import tokens as _tokens
+
+    fake_uvicorn = _FakeUvicorn()
+    # Act
+    with (
+        _swap_standby_serves(),
+        _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
+        _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        result = CliRunner().invoke(listen, [])
+    # Assert
+    assert "sac listen start" in result.output
+
+
+def test_bare_listen_boot_warning_names_the_removal_version(tmp_path):
+    """CLI convention §5: every phase names the removal version."""
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+    from scitex_agent_container._listen import tokens as _tokens
+    from scitex_agent_container.cli_pkg.listen_cmds import (
+        BARE_BOOT_REMOVAL_VERSION,
+    )
+
+    fake_uvicorn = _FakeUvicorn()
+    # Act
+    with (
+        _swap_standby_serves(),
+        _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
+        _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        result = CliRunner().invoke(listen, [])
+    # Assert
+    assert BARE_BOOT_REMOVAL_VERSION in result.output
+
+
+def test_bare_listen_boot_warning_goes_to_stderr_not_stdout(tmp_path):
+    """§8: warnings are stderr. `sac listen --print-token` must stay pipeable."""
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+    from scitex_agent_container._listen import tokens as _tokens
+
+    fake_uvicorn = _FakeUvicorn()
+    runner = CliRunner()
+    # Act
+    with (
+        _swap_standby_serves(),
+        _swap_attr(_tokens, "ensure_token", lambda p: "tok"),
+        _swap_attr(_tokens, "default_token_path", lambda: tmp_path / "default.tok"),
+        _swap_attr(_server, "create_app", lambda token, **_kw: _fake_app()),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        result = runner.invoke(listen, [])
+    # Assert
+    assert "DEPRECATED" not in result.stdout.upper()
+
+
+def test_listen_print_token_emits_no_boot_deprecation_warning(tmp_path):
+    """`--print-token` never boots, so the boot-deprecation must not fire."""
+    # Arrange
+    from scitex_agent_container._listen import tokens as _tokens
+
+    tok = tmp_path / "tok.txt"
+    fake_uvicorn = _FakeUvicorn()
+    # Act
+    with (
+        _swap_attr(_tokens, "ensure_token", lambda p: "secret-token-abc"),
+        _swap_module("uvicorn", fake_uvicorn),
+    ):
+        result = CliRunner().invoke(
+            listen, ["--print-token", "--token-file", str(tok)]
+        )
+    # Assert
+    assert "DEPRECATED" not in result.output.upper()
