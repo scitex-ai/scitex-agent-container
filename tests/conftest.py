@@ -183,6 +183,58 @@ from tests.scitex_agent_container._helpers.subprocess_shim import (  # noqa: E40
     subprocess_shim,
 )
 
+
+# ---------------------------------------------------------------------------
+# THE PACKAGE UNDER TEST MUST BE THIS CHECKOUT. Fail the SESSION otherwise.
+#
+# Without `pythonpath = ["src"]` (pyproject, [tool.pytest.ini_options]) a bare
+# `pytest` here imported scitex_agent_container from wherever the ambient
+# interpreter found it — in the agent container, a REAL copy in
+# /opt/venv-sac/lib/python3.12/site-packages. A worker got 50/50 PASSED on a
+# package that did not contain their PR. They only caught it because their
+# branch ADDED a file, so collection raised ImportError; a change that merely
+# EDITS existing files has no such tell and simply goes green.
+#
+# CI never saw this and never could: .github/ci/run-in-sif.sh installs THIS
+# checkout into an ephemeral target and puts $PWD/src on PYTHONPATH, so CI
+# always resolved the checkout. The one gate that would have caught it is the
+# one gate that is structurally blind to it — which is exactly why it survived.
+# So the guard runs where the bug actually lives: the developer's box.
+#
+# It compares the MODULE PATH, never the version string. __version__ is a
+# fossil: the site-packages copy on this host reported 0.21.13 while pyproject
+# said 0.21.20, and a stale .dist-info will happily report a number matching
+# nothing on disk. Paths cannot lie about where the code came from.
+# ---------------------------------------------------------------------------
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Abort the run if `import scitex_agent_container` is not this worktree."""
+    try:
+        from scitex_agent_container._provenance import origin_mismatch
+    except ImportError as exc:
+        # `origin_mismatch` EXISTS in this checkout. If it cannot be imported,
+        # the package that got imported is not this checkout — which is the
+        # very thing we are here to detect. Do not let it surface as a bare
+        # ImportError; that is loud but unclear, and an older installed copy
+        # (site-packages here was FOUR releases stale) is exactly the case.
+        import scitex_agent_container
+
+        raise RuntimeError(
+            "\n=================== WRONG PACKAGE UNDER TEST ===================\n"
+            "`import scitex_agent_container` resolved to a package that does\n"
+            "not even contain `_provenance.origin_mismatch` — so it cannot be\n"
+            "this checkout, and this run would test code you did not write.\n"
+            f"\n  imported from : {getattr(scitex_agent_container, '__file__', '?')}\n"
+            f"  expected under: {Path(_PROJECT_ROOT).resolve() / 'src'}\n"
+            f"\n  underlying    : {exc}\n"
+            '\nFix: `pythonpath = ["src"]` under [tool.pytest.ini_options].\n'
+            "===============================================================\n"
+        ) from exc
+
+    error = origin_mismatch(_PROJECT_ROOT)
+    if error is not None:
+        raise RuntimeError(error)
+
+
 # ---------------------------------------------------------------------------
 # Per-test state.db isolation, layered ON TOP of the floor above.
 #

@@ -39,7 +39,13 @@ def liveness_payload(name: str, config: Any) -> dict:
     destructive), and never to an exception that takes the health command down.
     """
     from .._lifecycle._runtime_select import _get_runtime
-    from .._lifecycle._verdict import UNKNOWN, LivenessVerdict, Signal
+    from .._lifecycle._verdict import (
+        INSTRUMENT_NO_OBSERVATION,
+        SOURCE_RESOLVER,
+        UNKNOWN,
+        LivenessVerdict,
+        Signal,
+    )
     from .._lifecycle._verdict_resolve import resolve_verdict
 
     try:
@@ -50,9 +56,10 @@ def liveness_payload(name: str, config: Any) -> dict:
             verdict=UNKNOWN,
             signals=(
                 Signal(
-                    "resolver",
+                    SOURCE_RESOLVER,
                     UNKNOWN,
                     f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
+                    INSTRUMENT_NO_OBSERVATION,
                 ),
             ),
         ).to_dict()

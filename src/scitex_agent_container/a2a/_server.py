@@ -43,9 +43,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from scitex_agent_container._state.state_db_channel import (
-    list_since_id,
-    list_undelivered,
-    mark_delivered,
     persist_event,
 )
 from scitex_agent_container.a2a._card import (
@@ -57,6 +54,7 @@ from scitex_agent_container.a2a._card import (
 )
 from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
+from scitex_agent_container.a2a._inbox_stream import inbox_stream
 
 log = logging.getLogger(__name__)
 
@@ -227,112 +225,15 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
         return await sdk_route.endpoint(request)  # type: ignore[no-any-return]
 
     async def get_inbox_stream(request: Request) -> Response:
-        """SSE: one frame per inbound event addressed to /agents/<name>.
+        """SSE inbox stream for ``/agents/<name>`` — see :mod:`._inbox_stream`.
 
-        Consumed by `sac mcp channel` (commit 2) inside the agent's
-        container — each frame turns into a notifications/claude/channel
-        push so Claude sees `<channel source="..." msg_id="..." ...>`
-        tags in real time. Plain SSE — non-sac A2A clients work too.
-
-        WI-1 durability semantics (handoff §4 "Durability /
-        replay-on-reconnect"):
-
-          * On connect, the handler replays missed events from the
-            persistent ``channel_events`` table BEFORE accepting any
-            new live events. Replay source:
-
-              - if the client passed ``Last-Event-ID``, replay every
-                row with ``id > Last-Event-ID``;
-              - otherwise replay every undelivered row (the fresh-
-                subscriber case — handoff acceptance "an event POSTed
-                with no subscriber is delivered on connect").
-
-          * Each replay frame stamps the SQLite row id onto the SSE
-            ``id:`` line so the client can echo it back as
-            ``Last-Event-ID`` after a reconnect.
-
-          * After yielding a replay frame the handler marks that row
-            ``delivered_at`` so a subsequent fresh-subscriber connect
-            does not re-yield it.
+        Thin delegate. The handler lives in its own module so this file stays
+        under the per-file cap, and so the sidecar's stream and the host listen's
+        stream (``_listen/_node_channel.node_inbox_stream``) stay visibly the
+        same primitive rather than drifting apart — they must agree on connect
+        frame, durable replay, the idle KEEPALIVE beat, and unsubscribe-on-exit.
         """
-        name = request.path_params["name"]
-        if name not in ctx.yamls:
-            return JSONResponse({"error": f"unknown agent: {name}"}, status_code=404)
-        from starlette.responses import StreamingResponse
-
-        last_event_id_raw = request.headers.get("last-event-id")
-        last_event_id: int | None = None
-        if last_event_id_raw is not None:
-            # Loud failure on a malformed header: a corrupt cursor
-            # would silently disable replay if we tolerated it.
-            try:
-                last_event_id = int(last_event_id_raw)
-            except ValueError:
-                return JSONResponse(
-                    {
-                        "error": (
-                            "Last-Event-ID header must be an integer; got "
-                            f"{last_event_id_raw!r}"
-                        )
-                    },
-                    status_code=400,
-                )
-
-        queue = await ctx.inbox.subscribe(name)
-
-        async def stream():
-            try:
-                # Send a comment-only frame so HTTP clients see the
-                # connection open before any real event arrives.
-                yield b": sac-channel ready\n\n"
-
-                # WI-1: replay missed events from state.db. Mark each
-                # row delivered as soon as we ship its SSE frame so a
-                # second fresh subscriber does not re-receive it.
-                if last_event_id is not None:
-                    replay = list_since_id(target=name, since_id=last_event_id)
-                else:
-                    replay = list_undelivered(target=name)
-                for entry in replay:
-                    if await request.is_disconnected():
-                        return
-                    row_id = entry["id"]
-                    event = entry["event"]
-                    data = json.dumps(event, ensure_ascii=False)
-                    yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
-                        "utf-8"
-                    )
-                    mark_delivered([row_id])
-
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    event = await queue.get()
-                    # The publish path stamps the persisted row id onto
-                    # the envelope as ``_row_id`` (see
-                    # :func:`_publish_channel_event`). We surface it
-                    # as the SSE ``id:`` and mark the row delivered.
-                    row_id = event.pop("_row_id", None)
-                    data = json.dumps(event, ensure_ascii=False)
-                    if row_id is not None:
-                        yield (
-                            f"id: {row_id}\nevent: message\ndata: {data}\n\n"
-                        ).encode("utf-8")
-                        mark_delivered([int(row_id)])
-                    else:
-                        # No row id means the event was injected by a
-                        # path that did NOT persist (lifecycle event
-                        # fan-out, future ACL-reject notice, …).
-                        # Deliver it but skip the marker.
-                        yield f"event: message\ndata: {data}\n\n".encode("utf-8")
-            finally:
-                await ctx.inbox.unsubscribe(name, queue)
-
-        return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        return await inbox_stream(request, ctx)
 
     async def get_active_tasks(request: Request) -> Response:
         """Sac-side observability: list every task currently in the

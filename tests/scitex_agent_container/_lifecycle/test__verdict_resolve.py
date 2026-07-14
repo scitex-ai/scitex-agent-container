@@ -64,6 +64,18 @@ class _RuntimeProbeExplodes:
         raise OSError("tmux server is wedged; cannot probe")
 
 
+def _on_the_host() -> bool:
+    """We are NOT in a container, so a pid check is a real sensor.
+
+    Pinned explicitly wherever a resolver bottoms out in ``os.kill(pid, 0)``. A
+    pid only means anything in the namespace that minted it, so these tests would
+    otherwise return DEAD on a CI runner and UNKNOWN inside a container —
+    the same code, two answers, depending on where pytest happened to run. The
+    instrument-independence suite covers the in-container half explicitly.
+    """
+    return False
+
+
 @pytest.fixture
 def live_pid():
     """A REAL live OS process. Reaped at teardown."""
@@ -149,11 +161,20 @@ def test_a_probe_that_raises_is_unknown_not_dead():
 
 
 def test_a_non_tui_runtime_that_reports_down_is_dead():
-    """The apptainer pidfile read is local and reliable — its False IS a probe."""
+    """The apptainer pidfile read is a real probe — ON THE HOST.
+
+    ``in_sif_fn`` is pinned rather than left to the ambient environment, and that
+    is not a formality: ``ApptainerRuntime.is_running`` is ``os.kill(pid, 0)``,
+    which is only a sensor in the pid namespace that MINTED the pid. Run from
+    inside a container it reads "reaped" for every healthy agent on the host. So
+    "is this a probe at all" depends on where the test runs — and a test whose
+    verdict flips between CI and a container is testing the environment, not the
+    code.
+    """
     # Arrange
     config = _Cfg("agent-a", "apptainer")
     # Act
-    signal = process_signal(config, _RuntimeSaysDown())
+    signal = process_signal(config, _RuntimeSaysDown(), in_sif_fn=_on_the_host)
     # Assert
     assert signal.verdict == DEAD
 
@@ -301,11 +322,15 @@ def test_heartbeat_signal_is_sourced_as_heartbeat(tmp_path):
 
 
 def test_a_reaped_recorded_pid_is_positive_evidence_of_death(reaped_pid):
-    """``os.kill(pid, 0)`` raising ESRCH means THAT process does not exist."""
+    """``os.kill(pid, 0)`` raising ESRCH means THAT process does not exist.
+
+    True only in the namespace that minted the pid — hence the pinned
+    ``in_sif_fn``; see :func:`_on_the_host`.
+    """
     # Arrange
     rows = [{"name": "scitex-dev", "pid": reaped_pid}]
     # Act
-    signal = registry_signal("scitex-dev", rows=rows)
+    signal = registry_signal("scitex-dev", rows=rows, in_sif_fn=_on_the_host)
     # Assert
     assert signal.verdict == DEAD
 
@@ -315,7 +340,7 @@ def test_a_live_recorded_pid_is_only_unknown_because_pids_are_recycled(live_pid)
     # Arrange
     rows = [{"name": "grant", "pid": live_pid}]
     # Act
-    signal = registry_signal("grant", rows=rows)
+    signal = registry_signal("grant", rows=rows, in_sif_fn=_on_the_host)
     # Assert
     assert signal.verdict == UNKNOWN
 

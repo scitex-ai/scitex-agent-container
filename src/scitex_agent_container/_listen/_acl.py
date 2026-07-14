@@ -39,7 +39,6 @@ from typing import Literal
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ..config._group_resolver import groups_mesh
 from .._state.state_db_nodes import (
     derive_group,
     has_grant,
@@ -51,6 +50,7 @@ from .._state.state_db_nodes import (
     sender_target_relationship,
     spawn_allowed,
 )
+from ..config._group_resolver import groups_mesh
 
 log = logging.getLogger(__name__)
 
@@ -236,26 +236,27 @@ def check_send_acl(
     1. **Identity cannot be spoofed via a metadata field.** When a
        per-node bearer is presented, ``claimed_from_agent`` (if
        present) MUST match ``authenticated_node``; mismatch → deny.
-    2. **Cross-group is denied by default.** The effective sender
-       (authenticated_node, or claimed_from_agent for an
-       administrative caller) must share a group with the target.
-       Same-name (self-send) is trivially allowed. Two group notions
-       are honoured, either of which permits the send:
-
-         * the lineage-derived group mesh (parent↔child / sibling↔
-           sibling) via :func:`_state.state_db_nodes.derive_group`, and
-         * the NAMED group (operator 2026-06-25): sender and target
-           resolve to the same non-empty ``metadata.labels.group`` /
-           role-derived group via
-           :func:`_state.state_db_nodes.same_named_group`.
-
-    3. **Explicit cross-group grants flip a deny to allow** — see
-       :func:`_state.state_db_nodes.grant_send`.
+    2. **Messaging is DEFAULT-ALLOW cross-group (operator 2026-07-03).**
+       a2a messaging is collaboration, not a security boundary, so any
+       working group may address any other. The same-group / mesh / grant
+       predicates below still short-circuit to allow (byte-identical for
+       grouped fleets), but a cross-group send with no shared group / mesh
+       / grant now ALSO allows instead of denying. The security boundary
+       stays on PRIVILEGED ACTIONS only, gated elsewhere and NOT touched
+       here: host_exec (:data:`._host_exec.ELIGIBLE_GROUPS`) and lifecycle
+       management (:func:`check_lineage_acl`). Same-name (self-send) is
+       trivially allowed.
+    3. **Overrides that STILL deny** are evaluated before the default
+       allow: an explicit block (``state_db_blocks.has_block`` → "block")
+       and a per-spec ``spec.comms`` parent/siblings=deny
+       (:func:`_phase3_relationship_deny` → "deny"). An explicit
+       ``grant_send`` remains a no-op-compatible allow.
     4. The empty-sender case (no authenticated node AND no claimed
-       from_agent) is denied — there is no identity to gate on.
+       from_agent) is denied — there is no identity to gate on. Identity
+       spoof + missing target are denied likewise.
 
-    Returns ``("allow", None)`` or ``("deny", reason)``. The reason
-    is suitable for inclusion in a 403 body and a host log line.
+    Returns ``("allow", None)``, ``("deny", reason)``, or ``("block",
+    reason)``. The reason is suitable for a 403 body and a host log line.
     """
     if not target:
         return ("deny", "missing target")
@@ -348,16 +349,17 @@ def check_send_acl(
     if has_grant(sender=sender, target=target, db_path=db_path):
         return ("allow", None)
 
-    return (
-        "deny",
-        (
-            f"cross-group send: sender {sender!r} "
-            f"(group={sorted(sender_group)}) may not address {target!r} "
-            "without an explicit ACL grant. Add a grant with "
-            f"`grant_send(sender={sender!r}, target={target!r})` "
-            "in state.db."
-        ),
-    )
+    # DEFAULT-ALLOW for cross-group a2a MESSAGING (operator 2026-07-03):
+    # messaging is COLLABORATION, not a security boundary, so any working
+    # group may address any other. The security boundary lives ONLY in
+    # PRIVILEGED ACTIONS, gated elsewhere and untouched here — host_exec
+    # (``._host_exec.ELIGIBLE_GROUPS``) and lifecycle management
+    # (:func:`check_lineage_acl`). The overrides that still DENY a message
+    # are evaluated ABOVE and preserved: an explicit block (``has_block``
+    # → "block") and a per-spec ``spec.comms`` parent/siblings=deny
+    # (:func:`_phase3_relationship_deny` → "deny"). Reaching here means
+    # authenticated, unblocked, no per-spec deny, cross-group → ALLOW.
+    return ("allow", None)
 
 
 def _phase3_relationship_deny(
@@ -446,23 +448,29 @@ def check_spawn(
     as :func:`check_send_acl` so the listen-server handler can branch
     uniformly.
 
-    Policy:
+    **Read BOTH layers before concluding what is denied.** The
+    ``is_developer`` branch below is a SHORT-CIRCUIT, not the policy —
+    the RESEARCHER allow lives one level down, in :func:`spawn_allowed`.
+    Reading only this file, and seeing ``is_developer`` with no
+    ``is_researcher`` beside it, reads as "researchers fall through to
+    the root-only gate". That is FALSE, and has been mis-triaged that
+    way. Effective policy across both layers:
 
-      * ``caller=None`` — administrative / human-operator path (allowed
-        by :func:`spawn_allowed`).
-      * **Developer group full authority (operator 2026-06-25)** — a
-        caller whose resolved NAMED group is ``developer`` may spawn
-        regardless of the root-only default. Checked BEFORE the
-        root-only gate so a developer child (non-root) is still allowed.
-      * Otherwise the default root-only policy (a node with no lineage
-        parent may spawn; a child may not).
-
-    The developer bypass deliberately does NOT override a per-spec
-    ``spec.lineage.may_spawn=false`` deny by *not consulting it*: a
-    developer caller is granted authority by the group policy here. A
-    deployment that needs an agent which still cannot spawn should keep
-    it out of the developer group (and rely on the root-only +
-    ``may_spawn`` gates in :func:`spawn_allowed`).
+      * ``caller=None`` — administrative / operator path. Allowed.
+      * ``developer`` group — allowed regardless of the root-only
+        default, so a developer CHILD may spawn. Short-circuited here.
+      * ``researcher`` group — likewise allowed, resolved one layer
+        down in :func:`spawn_allowed` (operator ruling: dev AND
+        research agents must both be able to start/stop peers).
+      * ROOT node (no lineage parent) — allowed.
+      * Any other child — DENIED: ``generalist`` / ``privileged`` /
+        an isolated solver group / ungrouped. Note generalist and
+        privileged DO mesh for *manage* (:func:`check_lineage_acl`)
+        but get NO spawn authority; only developer + researcher do.
+      * ``spec.lineage.may_spawn=false`` denies even a researcher —
+        but NOT a developer, whose short-circuit here bypasses
+        :func:`spawn_allowed` and the ``may_spawn`` gate with it. An
+        agent that must never spawn has to stay out of ``developer``.
     """
     if caller and is_developer(name=caller, db_path=db_path):
         return ("allow", None)

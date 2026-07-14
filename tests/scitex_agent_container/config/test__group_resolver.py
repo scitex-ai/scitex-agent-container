@@ -113,6 +113,78 @@ def test_non_developer_role_is_ungrouped() -> None:
     assert group == ""
 
 
+# ---------------------------------------------------------------------------
+# Researcher role-derivation (operator ruling, nv-spawn-acl-incident:
+# developer AND researcher roles must BOTH be able to spawn / restart peers).
+#
+# The developer group has always had a role-derivation path, so a dev agent
+# joins ``developer`` with no spec edit. The researcher group had NONE: a spec
+# carrying ``role: researcher`` but no explicit ``groups:`` label resolved to
+# ``""`` (ungrouped) — and an ungrouped caller is denied BOTH spawn and
+# cross-group manage. These pin the symmetric derivation.
+# ---------------------------------------------------------------------------
+
+
+def test_role_researcher_derives_researcher_group() -> None:
+    # Arrange
+    role = "researcher"
+    # Act
+    group = resolve_group(group_label=None, role=role)
+    # Assert
+    assert group == RESEARCHER_GROUP
+
+
+def test_role_research_agent_derives_researcher_group() -> None:
+    # Arrange
+    role = "research-agent"
+    # Act
+    group = resolve_group(group_label=None, role=role)
+    # Assert
+    assert group == RESEARCHER_GROUP
+
+
+def test_role_scientist_derives_researcher_group() -> None:
+    # Arrange
+    role = "scientist"
+    # Act
+    group = resolve_group(group_label=None, role=role)
+    # Assert
+    assert group == RESEARCHER_GROUP
+
+
+def test_project_suffixed_research_agent_role_derives_researcher_group() -> None:
+    # Arrange
+    role = "research-agent-neurovista"
+    # Act
+    group = resolve_group(group_label=None, role=role)
+    # Assert
+    assert group == RESEARCHER_GROUP
+
+
+def test_researcher_role_match_is_case_insensitive() -> None:
+    # Arrange
+    role = "Research-Agent"
+    # Act
+    group = resolve_group(group_label=None, role=role)
+    # Assert
+    assert group == RESEARCHER_GROUP
+
+
+def test_explicit_group_label_wins_over_researcher_role() -> None:
+    """Isolation guard: an explicit label still beats the new role default.
+
+    A deliberately-isolated solver authored as ``role: researcher`` +
+    ``groups: [solver]`` must STAY in ``solver`` (a non-mesh group), so
+    role-derivation can never silently promote it into the fleet mesh.
+    """
+    # Arrange
+    label = "solver"
+    # Act
+    group = resolve_group(group_label=label, role="researcher")
+    # Assert
+    assert group == label
+
+
 def test_empty_group_label_falls_through_to_role() -> None:
     # Arrange
     label = "   "

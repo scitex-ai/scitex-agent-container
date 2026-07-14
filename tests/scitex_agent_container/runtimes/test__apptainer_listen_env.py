@@ -2,11 +2,16 @@
 
 ``listen_env_flags`` builds the ``--env`` flags ``build_run_argv`` appends
 to the ``apptainer exec`` argv. It UNCONDITIONALLY injects the bus-listen
-base URL plus — as of the persistent-testmon-cache change — the
-``SCITEX_TESTMON_CACHE_ROOT`` env var pointing at the container-side bind
-destination ``/home/agent/.cache/scitex-testmon``. scitex-dev's pre-commit
-hook reads that var so testmon's cache survives the fresh-git-worktree
-churn the develop-pin hook forces.
+base URL.
+
+It used to also inject ``SCITEX_TESTMON_CACHE_ROOT``, pointing at a host
+directory bound rw into every agent container, to accelerate a scitex-dev
+pre-commit hook. Both are GONE: scitex-dev's own pre-commit policy calls that
+hook broken and referenced by zero repos, its audit rule PS-HOOK-001 forbids
+the hook's shape, and sac never used testmon at all. Pre-commit runs fast,
+bounded, deterministic checks — it does NOT run the test suite — so there was
+never a suite in the commit path for a testmon cache to speed up. The
+assertion below is INVERTED to keep the plumbing from quietly returning.
 
 No mocks — a tiny in-test config stand-in (``types.SimpleNamespace``) plus
 a sandboxed ``$HOME`` so the bearer-token lookup resolves to an absent
@@ -36,8 +41,8 @@ def no_bus_config() -> SimpleNamespace:
     """A config whose ``claude.channels`` is empty (no ``server:sac``).
 
     With no bus channel requested, an absent bearer token is harmless —
-    ``listen_env_flags`` warns and returns the base-URL + testmon-cache
-    flags instead of raising, so the test never needs a real token file.
+    ``listen_env_flags`` warns and returns the base-URL flags instead of
+    raising, so the test never needs a real token file.
     """
     return SimpleNamespace(claude=SimpleNamespace(channels=[]))
 
@@ -56,17 +61,18 @@ def sandboxed_home(tmp_path: Path) -> Iterator[Path]:
             os.environ["HOME"] = prev
 
 
-def test_listen_env_flags_injects_testmon_cache_root_var(
+def test_listen_env_flags_injects_no_testmon_var(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
 ) -> None:
     # Arrange — fixtures supply an empty-channel config + sandboxed $HOME.
+    _ = sandboxed_home
     # Act
     flags = listen_env_flags(no_bus_config)
-    # Assert — the container-side testmon cache path is injected as an env var.
-    assert (
-        "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon" in flags
-    )
+    # Assert — no testmon env var reaches ANY agent's launch env. It served a
+    # hook scitex-dev's policy calls broken, its PS-HOOK-001 rule forbids, that
+    # zero repos reference, and that sac itself never used.
+    assert not [f for f in flags if "TESTMON" in f]
 
 
 def test_listen_env_flags_injects_mcp_timeout(
@@ -95,21 +101,6 @@ def test_listen_env_flags_mcp_timeout_follows_an_env_token(
     assert flags[idx - 1] == "--env"
 
 
-def test_listen_env_flags_testmon_var_follows_an_env_token(
-    no_bus_config: SimpleNamespace,
-    sandboxed_home: Path,
-) -> None:
-    # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens;
-    # the testmon var must be preceded by a literal ``--env`` flag.
-    flags = listen_env_flags(no_bus_config)
-    # Act
-    idx = flags.index(
-        "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon"
-    )
-    # Assert
-    assert flags[idx - 1] == "--env"
-
-
 def test_listen_env_flags_still_injects_base_url(
     no_bus_config: SimpleNamespace,
     sandboxed_home: Path,
@@ -119,19 +110,6 @@ def test_listen_env_flags_still_injects_base_url(
     flags = listen_env_flags(no_bus_config)
     # Assert — the pre-existing base-URL injection is unregressed.
     assert any(f.startswith("SAC_LISTEN_BASE_URL=") for f in flags)
-
-
-def test_listen_env_flags_still_injects_testmon_cache_root(
-    no_bus_config: SimpleNamespace,
-    sandboxed_home: Path,
-) -> None:
-    # Arrange — fixtures supply an empty-channel config + sandboxed $HOME.
-    # Act
-    flags = listen_env_flags(no_bus_config)
-    # Assert — the testmon-cache injection is unregressed.
-    assert (
-        "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon" in flags
-    )
 
 
 def test_listen_env_flags_injects_genai_base_url(
@@ -167,9 +145,7 @@ def test_listen_env_flags_injects_no_genai_api_key(
     # Act
     flags = listen_env_flags(no_bus_config)
     # Assert — no genai/qwen API-key env var is present.
-    assert not any(
-        "GENAI_API_KEY" in f or "QWEN_API_KEY" in f for f in flags
-    )
+    assert not any("GENAI_API_KEY" in f or "QWEN_API_KEY" in f for f in flags)
 
 
 @pytest.fixture
@@ -190,15 +166,11 @@ def test_listen_env_flags_injects_host_default_spec_dir_when_env_unset(
     cleared_spec_dirs: None,
 ) -> None:
     # Arrange — host env var is unset; sandboxed $HOME roots the default.
-    host_default = str(
-        (sandboxed_home / ".scitex" / "agent-container" / "agents")
-    )
+    host_default = str((sandboxed_home / ".scitex" / "agent-container" / "agents"))
     # Act
     flags = listen_env_flags(no_bus_config)
     # Assert — a YAML_DIRS --env is emitted whose value holds the host default.
-    assert any(
-        f == f"SCITEX_AGENT_CONTAINER_YAML_DIRS={host_default}" for f in flags
-    )
+    assert any(f == f"SCITEX_AGENT_CONTAINER_YAML_DIRS={host_default}" for f in flags)
 
 
 def test_listen_env_flags_unions_host_set_dir_with_default(
@@ -214,16 +186,12 @@ def test_listen_env_flags_unions_host_set_dir_with_default(
     # Act
     flags = listen_env_flags(no_bus_config)
     # Assert — the emitted value contains BOTH the host-set dir and default.
-    assert (
-        f"SCITEX_AGENT_CONTAINER_YAML_DIRS={custom}:{host_default}" in flags
-    )
+    assert f"SCITEX_AGENT_CONTAINER_YAML_DIRS={custom}:{host_default}" in flags
 
 
 def test_listen_env_flags_injects_sac_name(sandboxed_home: Path) -> None:
     # Arrange — a config carrying the agent's own name.
-    config = SimpleNamespace(
-        name="scitex-todo", claude=SimpleNamespace(channels=[])
-    )
+    config = SimpleNamespace(name="scitex-todo", claude=SimpleNamespace(channels=[]))
     # Act
     flags = listen_env_flags(config)
     # Assert — the self-name is injected so in-container agent_list/logs +
@@ -235,9 +203,7 @@ def test_listen_env_flags_sac_name_follows_an_env_token(
     sandboxed_home: Path,
 ) -> None:
     # Arrange — apptainer consumes ``--env KEY=VALUE`` as two argv tokens.
-    config = SimpleNamespace(
-        name="scitex-todo", claude=SimpleNamespace(channels=[])
-    )
+    config = SimpleNamespace(name="scitex-todo", claude=SimpleNamespace(channels=[]))
     flags = listen_env_flags(config)
     # Act
     idx = flags.index("SAC_NAME=scitex-todo")

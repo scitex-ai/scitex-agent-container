@@ -13,16 +13,28 @@ group mesh (:func:`scitex_agent_container._state.state_db_nodes.derive_group`):
     specs that prefer a scalar.
   * When NEITHER ``group`` nor ``groups`` is present, the group is
     *derived from the
-    role* (``metadata.labels.role`` / ``CLAUDE_AGENT_ROLE``): the
-    developer-ish roles — ``project-maintainer`` / ``maintainer`` /
-    ``dev-agent`` / ``contributor`` (and their project-suffixed forms,
-    e.g. ``contributor-figrecipe``) — resolve to the group
-    :data:`DEVELOPER_GROUP`. So every existing dev agent joins
-    ``developer`` with NO spec edit; an explicit ``labels.group``
-    always overrides the role default.
-  * Anything else (no group label, non-developer / absent role) →
-    the empty string ``""`` — "ungrouped". An ungrouped agent never
-    shares a NAMED group with anyone (the ACL same-group allow is
+    role* (``metadata.labels.role`` / ``CLAUDE_AGENT_ROLE``):
+
+      - the developer-ish roles — ``project-maintainer`` /
+        ``maintainer`` / ``dev-agent`` / ``contributor`` (and their
+        project-suffixed forms, e.g. ``contributor-figrecipe``) —
+        resolve to :data:`DEVELOPER_GROUP`;
+      - the research-ish roles — ``researcher`` / ``research-agent`` /
+        ``scientist`` (and their project-suffixed forms, e.g.
+        ``research-agent-neurovista``) — resolve to
+        :data:`RESEARCHER_GROUP`.
+
+    So every existing dev *and research* agent joins its group with NO
+    spec edit; an explicit ``labels.group`` / ``labels.groups`` always
+    overrides the role default. The two derivations are symmetric
+    because the operator granted BOTH groups peer spawn/restart
+    authority (nv-spawn-acl-incident): leaving the researcher half
+    label-only meant a research agent authored by role alone was
+    silently ungrouped, hence denied spawn AND denied cross-group
+    manage.
+  * Anything else (no group label; a ``worker`` / ``probe`` / absent
+    role) → the empty string ``""`` — "ungrouped". An ungrouped agent
+    never shares a NAMED group with anyone (the ACL same-group allow is
     gated on a non-empty match), so absence is byte-equivalent to the
     pre-existing behaviour.
 
@@ -139,17 +151,77 @@ def _role_is_developer(role: str | None) -> bool:
     return norm.startswith(_DEVELOPER_ROLE_PREFIXES)
 
 
+# Exact role strings (case-insensitive) that default to the RESEARCHER
+# group when no explicit ``labels.group`` / ``labels.groups`` is set —
+# the symmetric counterpart of :data:`_DEVELOPER_ROLES`.
+#
+# Operator ruling (nv-spawn-acl-incident): "Dev agents and research agents
+# MUST have full permissions — including the ability to start/stop peer
+# agents." The developer half of that ruling had a role-derivation path
+# from the start; the researcher half had NONE. A spec that named
+# ``role: researcher`` but no group therefore resolved to ``""``
+# (ungrouped) — and an ungrouped caller is denied BOTH spawn (root-only
+# gate) and cross-group manage (not in the mesh). Research agents only
+# worked because every one of them happened to carry an explicit
+# ``groups: [researcher]`` label; the first one authored by role alone
+# would have been silently denied.
+_RESEARCHER_ROLES: frozenset[str] = frozenset(
+    {
+        "researcher",
+        "research-agent",
+        "scientist",
+    }
+)
+
+# Role PREFIXES that also map to the researcher group even when the role
+# is project-suffixed — e.g. ``research-agent-neurovista``. Mirrors
+# :data:`_DEVELOPER_ROLE_PREFIXES`.
+_RESEARCHER_ROLE_PREFIXES: tuple[str, ...] = (
+    "researcher-",
+    "research-agent-",
+    "scientist-",
+)
+
+
+def _role_is_researcher(role: str | None) -> bool:
+    """Return True iff ``role`` is a research-ish role.
+
+    Case-insensitive, whitespace-trimmed. Matches the exact role set
+    or any project-suffixed prefix. ``None`` / empty → False. The exact
+    mirror of :func:`_role_is_developer`.
+    """
+    if not role:
+        return False
+    norm = str(role).strip().lower()
+    if not norm:
+        return False
+    if norm in _RESEARCHER_ROLES:
+        return True
+    return norm.startswith(_RESEARCHER_ROLE_PREFIXES)
+
+
 def resolve_group(*, group_label: str | None, role: str | None) -> str:
     """Resolve an agent's NAMED group from its group label + role.
 
-    Precedence (operator 2026-06-25):
+    Precedence (operator 2026-06-25; researcher derivation added for the
+    nv-spawn-acl-incident ruling):
 
       1. An explicit, non-empty ``group_label`` wins verbatim
          (whitespace-trimmed) — the operator can name ANY group, not
-         just ``developer``.
+         just ``developer``. This is what keeps a deliberately-isolated
+         solver (``groups: [solver]``) OUT of the fleet mesh even when
+         its role reads ``researcher``.
       2. Otherwise, if ``role`` is developer-ish, the group is
          :data:`DEVELOPER_GROUP`.
-      3. Otherwise, the empty string ``""`` (ungrouped).
+      3. Otherwise, if ``role`` is research-ish, the group is
+         :data:`RESEARCHER_GROUP`. These are the two groups the operator
+         granted peer spawn/restart authority; they derive symmetrically
+         so neither depends on the spec author remembering a group label.
+      4. Otherwise, the empty string ``""`` (ungrouped).
+
+    The role sets are DISJOINT, so rules 2 and 3 cannot both match and
+    their order carries no meaning. Every other role (``worker``,
+    ``probe``, ``experiment-capsule``, …) still falls to ``""``.
 
     Returns a plain ``str`` (never ``None``). An empty return means
     "no named group" — the ACL same-group allow is gated on a
@@ -162,6 +234,8 @@ def resolve_group(*, group_label: str | None, role: str | None) -> str:
             return trimmed
     if _role_is_developer(role):
         return DEVELOPER_GROUP
+    if _role_is_researcher(role):
+        return RESEARCHER_GROUP
     return ""
 
 

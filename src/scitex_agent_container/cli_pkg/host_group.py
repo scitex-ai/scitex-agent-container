@@ -426,6 +426,14 @@ from ._host_crud import register as _register_host_crud  # noqa: E402
 _register_host_crud(host_group)
 
 
+# ``sac host sync`` — one-way code sync centre -> remote, plus its
+# read-only ``--check`` drift detector. Split out for the same reason as
+# the CRUD verbs: this file is at the 512-line ceiling.
+from ._host_sync import register as _register_host_sync  # noqa: E402
+
+_register_host_sync(host_group)
+
+
 # WI-4 Q4(b) — peer bearer-token registry. ``sac host add-peer`` /
 # ``list-peers`` / ``remove-peer`` manage the
 # ``peer-tokens/<peer-host>.token`` files the cross-host forwarder

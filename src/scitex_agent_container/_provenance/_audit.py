@@ -11,9 +11,21 @@ split.
 Four failure modes, each of which has actually happened:
 
 * ``shadowed``     — the imported module is NOT the installed
-  distribution. A bare ``pytest`` under ``/opt/venv-sac`` imports the
-  INSTALLED package, not your worktree; a run can report "1087 passed"
-  having tested none of your changes.
+  distribution (e.g. a worktree on ``PYTHONPATH`` winning over the
+  installed copy).
+
+  THIS CHECK DOES NOT CATCH THE BARE-``pytest`` BUG, and this docstring
+  used to claim it did. Measured 2026-07-14: under a bare ``pytest`` the
+  import resolves to site-packages AND site-packages IS the installed
+  distribution, so ``origin == installed``, no anomaly fires, and
+  ``audit()`` returns ``ok=True`` — on the very scenario named here. It
+  detects a worktree shadowing an install; the bug is an INSTALL
+  SHADOWING THE WORKTREE, and ``audit()`` holds no notion of "the
+  worktree" to compare against. Only the caller knows which repo is
+  under test, so that check takes the root as a parameter and lives in
+  ``_identity.origin_mismatch`` (wired into ``tests/conftest.py``).
+  A guard whose docstring names the incident and whose code cannot see
+  it is worse than no guard: it is a false claim of coverage.
 * ``duplicate-dist`` — more than one ``.dist-info`` for this package.
   The loser is a fossil that keeps advertising a version whose code is
   gone.
@@ -93,7 +105,9 @@ def _is_editable(dist_info: Path) -> bool:
 def _dist_metadata_version() -> str | None:
     try:
         return distribution(DIST_NAME).version
-    except PackageNotFoundError:  # stx-allow: fallback (reason: source-tree run with nothing installed)
+    except (
+        PackageNotFoundError
+    ):  # stx-allow: fallback (reason: source-tree run with nothing installed)
         return None
 
 

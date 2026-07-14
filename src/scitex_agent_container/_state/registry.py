@@ -7,10 +7,16 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .._runtime_paths import runtime_base_dir
+
+# ``SCITEX_AGENT_CONTAINER_REGISTRY_DIR`` still wins (explicit override);
+# its FALLBACK routes through ``runtime_base_dir`` so the single
+# ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` knob relocates the registry too.
+# Unset env => identical to ``~/.scitex/agent-container/runtime/registry``.
 REGISTRY_DIR = Path(
     os.environ.get(
         "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
-        os.path.expanduser("~/.scitex/agent-container/runtime/registry"),
+        str(runtime_base_dir() / "registry"),
     )
 )
 

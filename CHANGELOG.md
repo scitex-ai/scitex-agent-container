@@ -6,6 +6,116 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`sac host sync` — the centre can finally say WHICH CODE runs on a peer, and
+  drift stops being silent.** sac could already LAUNCH an agent on Spartan but had
+  no way to control the code version there, and nothing announced the difference:
+  Spartan's checkout sat FIVE RELEASES STALE (v0.21.14 while develop was v0.21.20),
+  with no post-merge pull anywhere, and it was found *by hand*. Two more silent
+  divergences surfaced the same day — an agent left a branch checked out in
+  Spartan's sac tree (which doubles as the CI runner's audit workspace), so a
+  `develop` run audited that branch while claiming to test develop; and `~/.scitex`
+  there had been a symlink into an unrelated paper project for weeks.
+
+  The verb ships in two halves, and **detection is the product**:
+
+  - `sac host sync --check <peer>` / `--check --all` — READ-ONLY. Mutates nothing,
+    exits non-zero on drift, so it works as a cron alarm rather than a report
+    nobody reads. On its first live run it immediately found that `mba`'s fetch
+    fails (its code state is genuinely UNKNOWN) and that `nas` runs sac as a plain
+    wheel with no checkout to reconcile at all.
+  - `sac host sync <peer>` / `--all` — the fast-forward-only remedy, behind loud
+    preconditions.
+
+  One-way by construction — code flows centre → remote and a remote never
+  originates it:
+
+  - **AHEAD is an ALARM, not a merge.** A peer holding commits the centre lacks has
+    already broken the one-way property. sac will not merge them back (that would
+    make the remote a source of truth) and will not discard them (that would destroy
+    them). It prints them by subject line and REFUSES. A diverged remote is a bug
+    report, not a branch to reconcile.
+  - **Dirty trees are refused**, never stashed. **`--force` overrides the CI-idle
+    guard only** — it buys no destructive git operation, so the verb is safe to run
+    unattended.
+  - **UNKNOWN is not clean.** An unreachable peer, a failed fetch, or an unreadable
+    CI state all refuse; sac never mutates on an unobserved negative.
+  - **CI guard:** refuses while the peer's runners are busy *or* a run is merely
+    queued — an idle runner is one queued job away from busy, which is less time
+    than a merge takes to land.
+  - **Verification is by SYMBOL, never by version string** (those are proven liars —
+    eleven tags shipped nothing while reporting success). After the fast-forward sac
+    re-probes the peer and asserts HEAD is the sha it aimed at, that the interpreter
+    LOADS sac from inside that very checkout (catching a wheel or fossil `.dist-info`
+    shadowing an editable install), and that a real symbol imports out of it.
+
+  Drift is measured from the git OBJECT GRAPH (`rev-list --count`), never mtimes: a
+  plain `git pull` rewrites mtimes without changing content, and GPFS clock skew
+  across hosts makes them meaningless. The remote checkout is located by asking the
+  peer's own interpreter where it loads sac from — never by expanding a `~` locally,
+  which yields the *centre's* home. Everything dispatches through `build_ssh_argv`,
+  sac's single remote choke point, so ProxyJump chains and Lmod preambles apply for
+  free. Credential distribution deliberately does NOT ride along yet; when it is
+  decided it should use this same guarded one-way channel rather than growing a
+  second path to the same hosts.
+
+## [0.21.21] - 2026-07-15
+
+The release exists to carry **#696** to the machines. Everything else here is
+what had to be true for it to actually arrive.
+
+### Fixed
+
+- **`sac image build` has been dead since #652, and the SIF is how sac reaches the
+  fleet.** #652 added a custom hatchling build hook (`[tool.hatch.build.targets.*
+  .hooks.custom] path = "src/hatch_build.py"`). `stage_build_context()` copies
+  pyproject.toml, README.md and the package — but nothing taught it about the new
+  file, and the wheel never bundled it either. hatchling resolves a hook path
+  against *the tree being built*, and in a SIF build that tree is the staged one,
+  so every `sac image build` died ~8 minutes into `%post`, inside apptainer, on a
+  machine nobody was watching:
+
+      OSError: Build script does not exist: src/hatch_build.py
+
+  Staging now copies **every path pyproject NAMES**, and the wheel force-includes
+  the hook into the inert `_bundled/` data dir (no `__init__.py` — bundled is not
+  packaged, so hatch_build.py's own rule that an `import hatchling` module never
+  reaches the runtime path still holds).
+
+  The reason no test caught it is worth more than the fix: every staging test ran
+  against a fixture whose pyproject **declared nothing**. A fixture that declares
+  nothing cannot disagree with a stager that copies nothing — the suite was green
+  and blind at the same time. The new guard stages the **real** package root and
+  asserts the general invariant, derived from the staged pyproject rather than
+  hardcoded: *every path pyproject declares must exist in the staged tree.* It
+  fails for the next forgotten file too, not just this one. A second test pins that
+  the pyproject actually declares a hook, so the guard can never pass vacuously.
+
+### Changed
+
+- `pythonpath = [".", "src"]` — the rootdir joins the test import path, so
+  rootdir-relative imports (`tests.*`) resolve identically from any cwd. #698's
+  `pytest_sessionstart` guard was re-verified in both directions afterwards: it
+  still aborts when `scitex_agent_container` resolves outside `<rootdir>/src`.
+
+### Shipped from develop (already merged, released here)
+
+- **#696 — `may_destroy`'s two witnesses were the same syscall.** Read from inside a
+  container — which is where every fleet agent runs — the shipped v0.21.20 reported
+  every healthy peer as DEAD with `may_destroy=True`. Its two "independent"
+  witnesses were the same `os.kill(pid, 0)` on the same pid, an identity the module
+  documented in its own docstring. `Signal` now carries a closed-set `instrument`,
+  `may_destroy` dedupes by instrument, and a cross-namespace pid read is UNKNOWN,
+  not DEAD. A false-RED is worse than a false-green here: its remedy destroys a
+  healthy agent.
+- **#698** — a bare `pytest` tested the INSTALLED sac, not the worktree.
+- **#699** — the git hooks were advertised and enforced by nothing; they run now.
+- **#700** — `check-merge-conflict` was INERT outside a merge (exit 0 without
+  reading a byte).
+- **#694 / #697** — the last 9 workflows off GitHub-hosted runners, plus the guard
+  that keeps them off.
+
 ## [0.21.20] - 2026-07-14
 
 ### Fixed

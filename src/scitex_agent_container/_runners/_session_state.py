@@ -16,10 +16,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import shutil
 import time
 from pathlib import Path
+
+# SSOT: the runtime base (``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` knob or
+# the ``~/.scitex/agent-container/runtime`` default) is resolved once in
+# ``_runtime_paths.runtime_base_dir`` so state.db / registry / this
+# per-agent state root all relocate together.
+from .._runtime_paths import runtime_base_dir
 
 # Session-id resume marker + append-only history live in a focused
 # module to keep this file under the 512-line cap. Re-exported here
@@ -34,12 +39,7 @@ from ._session_id import read_session_id as read_session_id
 from ._session_id import read_session_id_history as read_session_id_history
 from ._session_id import write_session_id as write_session_id
 
-DEFAULT_STATE_ROOT = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
-        str(Path.home() / ".scitex" / "agent-container" / "runtime"),
-    )
-)
+DEFAULT_STATE_ROOT = runtime_base_dir()
 DEFAULT_TICK_SECONDS = 10.0
 
 # State-machine vocabulary used by both the runner and the runtime

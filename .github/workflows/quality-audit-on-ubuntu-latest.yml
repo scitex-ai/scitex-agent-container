@@ -11,6 +11,23 @@
 #   - audit-docs         drift between SKILL.md examples and real code
 #   - audit-lines        per-file line-count allowlist
 #   - audit-scope        public API covered by tests
+#
+# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
+# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
+# never fall back to a hosted runner.
+#
+# WHAT ubuntu-latest WAS HIDING HERE: this job's install step was
+# `pip install -e .` straight onto the runner's SYSTEM python. That works on a
+# hosted image and is a HARD FAILURE on Spartan two ways over — the bare node
+# has no Python at all (so actions/setup-python@v4 fails "version 3.x not found
+# for this OS"), and its system python is PEP-668 externally-managed (so pip
+# would refuse with `externally-managed-environment`). The step only ever
+# "passed" because a hosted image handed it a writable system python.
+#
+# THE FIX is the pattern the org-level reusables already run GREEN on
+# spartan-cpu: astral-sh/setup-uv (a JS action — fine on self-hosted) +
+# `uv venv --python 3.12`, which fetches uv's OWN managed CPython into the
+# workspace. Everything installs into that venv, never into system site.
 name: quality
 
 on:
@@ -24,27 +41,36 @@ on:
 
 jobs:
   audit:
+    # Deliberate misnomer, kept byte-identical — see lint.yml for the full
+    # reasoning. (Verified: not a protection-pinned required context.)
     name: scitex-dev-quality-audit-on-ubuntu-latest
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: astral-sh/setup-uv@v3
         with:
-          python-version: "3.11"
+          cache-dependency-glob: pyproject.toml
 
       - name: Install package + scitex-dev audit extras
         continue-on-error: true
         run: |
-          pip install -e . || true
+          set -uo pipefail
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e . || true
           # Prefer PyPI (public); fall back to git for unreleased audit features.
           # Both lines are tolerant — the audit steps below are
           # continue-on-error so a missing scitex-dev surfaces in the
           # summary rather than blocking the build.
-          pip install "scitex-dev[cli-audit]" || \
-            pip install "scitex-dev[cli-audit] @ git+https://github.com/ywatanabe1989/scitex-dev.git@main" || \
+          uv pip install --python .venv/bin/python "scitex-dev[cli-audit]" || \
+            uv pip install --python .venv/bin/python "scitex-dev[cli-audit] @ git+https://github.com/ywatanabe1989/scitex-dev.git@main" || \
             true
+          # Put the venv on PATH for every SUBSEQUENT step, so both `python`
+          # and the `scitex-dev` console script (plus the subcommands audit-all
+          # spawns) resolve to the venv rather than to a node python that does
+          # not exist.
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Detect package name
         id: pkg
