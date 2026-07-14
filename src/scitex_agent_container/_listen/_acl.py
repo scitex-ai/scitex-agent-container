@@ -39,7 +39,6 @@ from typing import Literal
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ..config._group_resolver import groups_mesh
 from .._state.state_db_nodes import (
     derive_group,
     has_grant,
@@ -51,6 +50,7 @@ from .._state.state_db_nodes import (
     sender_target_relationship,
     spawn_allowed,
 )
+from ..config._group_resolver import groups_mesh
 
 log = logging.getLogger(__name__)
 
@@ -446,23 +446,29 @@ def check_spawn(
     as :func:`check_send_acl` so the listen-server handler can branch
     uniformly.
 
-    Policy:
+    **Read BOTH layers before concluding what is denied.** The
+    ``is_developer`` branch below is a SHORT-CIRCUIT, not the policy —
+    the RESEARCHER allow lives one level down, in :func:`spawn_allowed`.
+    Reading only this file, and seeing ``is_developer`` with no
+    ``is_researcher`` beside it, reads as "researchers fall through to
+    the root-only gate". That is FALSE, and has been mis-triaged that
+    way. Effective policy across both layers:
 
-      * ``caller=None`` — administrative / human-operator path (allowed
-        by :func:`spawn_allowed`).
-      * **Developer group full authority (operator 2026-06-25)** — a
-        caller whose resolved NAMED group is ``developer`` may spawn
-        regardless of the root-only default. Checked BEFORE the
-        root-only gate so a developer child (non-root) is still allowed.
-      * Otherwise the default root-only policy (a node with no lineage
-        parent may spawn; a child may not).
-
-    The developer bypass deliberately does NOT override a per-spec
-    ``spec.lineage.may_spawn=false`` deny by *not consulting it*: a
-    developer caller is granted authority by the group policy here. A
-    deployment that needs an agent which still cannot spawn should keep
-    it out of the developer group (and rely on the root-only +
-    ``may_spawn`` gates in :func:`spawn_allowed`).
+      * ``caller=None`` — administrative / operator path. Allowed.
+      * ``developer`` group — allowed regardless of the root-only
+        default, so a developer CHILD may spawn. Short-circuited here.
+      * ``researcher`` group — likewise allowed, resolved one layer
+        down in :func:`spawn_allowed` (operator ruling: dev AND
+        research agents must both be able to start/stop peers).
+      * ROOT node (no lineage parent) — allowed.
+      * Any other child — DENIED: ``generalist`` / ``privileged`` /
+        an isolated solver group / ungrouped. Note generalist and
+        privileged DO mesh for *manage* (:func:`check_lineage_acl`)
+        but get NO spawn authority; only developer + researcher do.
+      * ``spec.lineage.may_spawn=false`` denies even a researcher —
+        but NOT a developer, whose short-circuit here bypasses
+        :func:`spawn_allowed` and the ``may_spawn`` gate with it. An
+        agent that must never spawn has to stay out of ``developer``.
     """
     if caller and is_developer(name=caller, db_path=db_path):
         return ("allow", None)
