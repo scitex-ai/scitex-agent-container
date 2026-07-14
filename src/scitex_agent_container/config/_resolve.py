@@ -151,16 +151,9 @@ def _user_agents_dir() -> Path:
     Unset ``$SCITEX_DIR`` → byte-identical to the previous behaviour, so
     every existing local agent resolves exactly as before.
     """
-    # stx-allow: fallback (reason: scitex-config is an OPTIONAL dep here —
-    # the module already degrades to a native git-walk when it is absent;
-    # mirror that stance rather than making it hard-required)
-    try:
-        from scitex_config._ecosystem import local_state
+    from .._state.state_paths import agents_root
 
-        return local_state.user_path("agent-container", "agents")
-    except Exception:
-        root = os.environ.get("SCITEX_DIR") or os.path.expanduser("~/.scitex")
-        return Path(root) / "agent-container" / "agents"
+    return agents_root()
 
 
 def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
