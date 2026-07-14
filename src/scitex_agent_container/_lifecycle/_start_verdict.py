@@ -62,7 +62,15 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ._verdict import ALIVE, UNKNOWN, LivenessVerdict, Signal, decide
+from ._verdict import (
+    ALIVE,
+    INSTRUMENT_PID_NAMESPACE,
+    SOURCE_REGISTRY,
+    UNKNOWN,
+    LivenessVerdict,
+    Signal,
+    decide,
+)
 
 __all__ = ["resolve_start_verdict"]
 
@@ -111,9 +119,22 @@ def resolve_start_verdict(
             "runtime.is_running) did not vouch for this agent — no positive "
             "evidence of life, which is not the same as evidence of death"
         )
+        # INSTRUMENT: this legacy signal is a CONJUNCTION spanning the registry
+        # row, ``runtime.is_running`` and the injected verifier — all of them
+        # pid/row-shaped. It can only ever emit ALIVE or UNKNOWN (a bool cannot
+        # express death), so it can never convict; and per the AMBIGUITY RULE we
+        # label the instrument that COLLAPSES with an existing one rather than
+        # inventing an independent witness.
         return decide(
             config.name,
-            [Signal("registry", ALIVE if legacy_alive else UNKNOWN, detail)],
+            [
+                Signal(
+                    SOURCE_REGISTRY,
+                    ALIVE if legacy_alive else UNKNOWN,
+                    detail,
+                    INSTRUMENT_PID_NAMESPACE,
+                )
+            ],
         )
 
     if resolver is None:

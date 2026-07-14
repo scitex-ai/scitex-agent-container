@@ -22,8 +22,13 @@ probe FAILED, liveness UNKNOWN — *"callers must NOT read this as 'every agent
 is dead'"*). This module generalises that discipline to liveness at large
 rather than inventing a competing abstraction.
 
-Three rules, and they are the whole module
-------------------------------------------
+The evidence VOCABULARY — the three states, the SOURCE_* reporters, the
+INSTRUMENT_* sensors and :class:`Signal` — lives in
+:mod:`._verdict_instruments` and is re-exported here, so every existing
+``from ._verdict import ...`` keeps working. This module is the RULE.
+
+Four rules, and they are the whole module
+-----------------------------------------
 1. **A verdict is never a bool.** ``pid <= 0``, an absent heartbeat, a probe
    that timed out, a peer on a host we cannot see → :data:`UNKNOWN`, named,
    with the reason attached. Not ``False``.
@@ -43,6 +48,14 @@ Three rules, and they are the whole module
    (starting a process is not destroying one), but it may never tear anything
    down. When in doubt we report and stop.
 
+4. **Corroboration is counted in INSTRUMENTS, not in reports.** Two signals
+   from one sensor are ONE witness. Until 2026-07-14 this gate counted source
+   STRINGS, so ``process`` + ``registry`` — which are the same
+   ``os.kill(pid, 0)`` on the same pid, *by explicit design in both runtimes* —
+   satisfied "2 independent sources" between them. A single syscall in the
+   wrong pid namespace could therefore authorise killing a healthy agent. See
+   :mod:`._verdict_instruments`.
+
 What each signal is worth
 -------------------------
 ``delivery``
@@ -51,17 +64,17 @@ What each signal is worth
     fact that predicts whether a message will wake it. Observed subscribers
     ⇒ :data:`ALIVE`, and nothing outranks it.
 
-    A delivery observation NEVER yields :data:`DEAD`. Zero subscribers means a
-    detached inbox adapter, not a corpse — the doctrine :mod:`.._listen.
-    _reachability` was written to enforce ("``UNREACHABLE`` must NEVER be wired
-    to anything destructive") — so it degrades to :data:`UNKNOWN` here.
+    A delivery observation NEVER yields :data:`DEAD` — that is now ENFORCED by
+    its :class:`._verdict_instruments.InstrumentSpec`, not merely asked for in
+    prose. Zero subscribers means a detached inbox adapter, not a corpse.
 
 ``process`` / ``heartbeat`` / ``registry``
     HINTS. They corroborate; they may promote a verdict to :data:`UNKNOWN`;
     a *positive* one (a live pane pid, a fresh beat) is real evidence of life
     and does yield :data:`ALIVE`. But a NEGATIVE one on its own is never
     enough to destroy anything, because each is a shadow of the agent rather
-    than the agent itself.
+    than the agent itself — and because two of them are frequently THE SAME
+    SHADOW.
 
 ``registry`` in particular is a DECLARATION, not an observation — a row in a
 table someone wrote once. It can vouch for a corpse, and it can be missing for
@@ -75,6 +88,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+from ._verdict_instruments import (
+    ALIVE,
+    CONVICTING_INSTRUMENTS,
+    DEAD,
+    INSTRUMENT_AGENT_SELF,
+    INSTRUMENT_HOST_TMUX,
+    INSTRUMENT_INDEPENDENCE,
+    INSTRUMENT_LISTEN_BROKER,
+    INSTRUMENT_NO_OBSERVATION,
+    INSTRUMENT_PID_NAMESPACE,
+    INSTRUMENTS,
+    SOURCE_DELIVERY,
+    SOURCE_HEARTBEAT,
+    SOURCE_PROCESS,
+    SOURCE_REGISTRY,
+    SOURCE_RESOLVER,
+    UNKNOWN,
+    InstrumentSpec,
+    Signal,
+)
+
 __all__ = [
     "ALIVE",
     "DEAD",
@@ -83,61 +117,29 @@ __all__ = [
     "SOURCE_HEARTBEAT",
     "SOURCE_PROCESS",
     "SOURCE_REGISTRY",
+    "SOURCE_RESOLVER",
+    "INSTRUMENT_AGENT_SELF",
+    "INSTRUMENT_HOST_TMUX",
+    "INSTRUMENT_LISTEN_BROKER",
+    "INSTRUMENT_NO_OBSERVATION",
+    "INSTRUMENT_PID_NAMESPACE",
+    "INSTRUMENTS",
+    "CONVICTING_INSTRUMENTS",
+    "INSTRUMENT_INDEPENDENCE",
+    "InstrumentSpec",
     "LivenessVerdict",
     "Signal",
     "decide",
 ]
 
-# The three states. There is no fourth, and there is deliberately no bool.
-ALIVE = "alive"
-DEAD = "dead"
-UNKNOWN = "unknown"
-
-# Signal sources, in descending evidential strength.
-SOURCE_DELIVERY = "delivery"  # the broker OBSERVED the agent's inbox. Authoritative.
-SOURCE_PROCESS = "process"  # a process/session probe (pane pid, apptainer pid).
-SOURCE_HEARTBEAT = "heartbeat"  # the agent's own writer refreshed its beat file.
-SOURCE_REGISTRY = "registry"  # a row in a table. A declaration, not an observation.
-
-# How many INDEPENDENT sources must agree on DEAD before a caller is allowed
-# to destroy anything. Two, because every single signal in this system has
-# been observed lying at least once, and the cost of being wrong is the
-# destruction of a healthy agent. One dissenting ALIVE vetoes regardless.
+# How many INDEPENDENT INSTRUMENTS must agree on DEAD before a caller is allowed
+# to destroy anything. Two, because every single signal in this system has been
+# observed lying at least once, and the cost of being wrong is the destruction
+# of a healthy agent. One dissenting ALIVE vetoes regardless.
+#
+# NOTE WHAT THIS COUNTS: instruments. Not signals, not sources. Four reports
+# from one sensor are ONE witness.
 _CORROBORATION_REQUIRED = 2
-
-
-@dataclass(frozen=True)
-class Signal:
-    """One observation about one agent.
-
-    ``verdict`` is ternary — :data:`ALIVE`, :data:`DEAD` or :data:`UNKNOWN`.
-    A probe that could not run MUST report :data:`UNKNOWN` with the reason in
-    ``detail``; it must never report :data:`DEAD`, because "I did not see it"
-    and "I saw that it is not there" are different facts and only the second
-    one may be acted on.
-
-    ``detail`` is operator-facing and is expected to be specific: not
-    "unhealthy" but ``pid=0 in heartbeat.json — no verdict possible`` or
-    ``no tmux session 'tui-grant' (probe succeeded)``. A row that reads
-    ``running | pid=None`` teaches an operator nothing; that is the UX bug
-    this field exists to fix.
-    """
-
-    source: str
-    verdict: str
-    detail: str
-
-    def __post_init__(self) -> None:
-        if self.verdict not in (ALIVE, DEAD, UNKNOWN):
-            raise ValueError(
-                f"Signal.verdict must be one of {ALIVE!r} / {DEAD!r} / "
-                f"{UNKNOWN!r}, got {self.verdict!r}. A liveness signal is "
-                f"never a bool — 'I could not tell' is a first-class answer "
-                f"and must be spelled {UNKNOWN!r}, never collapsed into a pole."
-            )
-
-    def to_dict(self) -> dict:
-        return {"source": self.source, "verdict": self.verdict, "detail": self.detail}
 
 
 @dataclass(frozen=True)
@@ -166,7 +168,12 @@ class LivenessVerdict:
 
     @property
     def dead_sources(self) -> tuple[str, ...]:
-        """The DISTINCT sources that independently observed death."""
+        """The DISTINCT sources that REPORTED death.
+
+        Reporters, not sensors — two of these can be one instrument, so this
+        feeds the operator-facing text only. :attr:`may_destroy` counts
+        :attr:`dead_instruments`.
+        """
         seen: list[str] = []
         for sig in self.signals:
             if sig.verdict == DEAD and sig.source not in seen:
@@ -175,11 +182,35 @@ class LivenessVerdict:
 
     @property
     def alive_sources(self) -> tuple[str, ...]:
-        """The DISTINCT sources that independently observed life."""
+        """The DISTINCT sources that reported life."""
         seen: list[str] = []
         for sig in self.signals:
             if sig.verdict == ALIVE and sig.source not in seen:
                 seen.append(sig.source)
+        return tuple(seen)
+
+    @property
+    def dead_instruments(self) -> tuple[str, ...]:
+        """The DISTINCT SENSORS that independently observed death.
+
+        THIS is what corroboration means. ``process`` and ``registry`` are two
+        reporters but ONE instrument (the same ``os.kill(pid, 0)`` on the same
+        pid, by explicit design in both runtimes), so they are ONE witness here.
+        That is the entire point of the field.
+        """
+        seen: list[str] = []
+        for sig in self.signals:
+            if sig.verdict == DEAD and sig.instrument not in seen:
+                seen.append(sig.instrument)
+        return tuple(seen)
+
+    @property
+    def alive_instruments(self) -> tuple[str, ...]:
+        """The DISTINCT SENSORS that observed life."""
+        seen: list[str] = []
+        for sig in self.signals:
+            if sig.verdict == ALIVE and sig.instrument not in seen:
+                seen.append(sig.instrument)
         return tuple(seen)
 
     @property
@@ -190,9 +221,12 @@ class LivenessVerdict:
 
         * the verdict is :data:`DEAD` — never :data:`UNKNOWN`, and obviously
           never :data:`ALIVE`;
-        * at least :data:`_CORROBORATION_REQUIRED` INDEPENDENT sources observed
-          it dead — one signal is never enough, because each of them has been
-          caught lying;
+        * at least :data:`_CORROBORATION_REQUIRED` INDEPENDENT INSTRUMENTS
+          observed it dead. **Instruments, not signals and not sources.** Two
+          reports from one sensor are one witness — and until 2026-07-14 this
+          gate counted them as two, which meant a single ``os.kill(pid, 0)``
+          evaluated in the wrong pid namespace could authorise killing a
+          perfectly healthy agent;
         * NOT ONE signal observed it alive. A single dissenting ALIVE vetoes
           destruction outright, even against a pile of DEADs. That asymmetry is
           deliberate: the cost of a false DEAD is a destroyed healthy agent,
@@ -207,7 +241,7 @@ class LivenessVerdict:
             return False
         if self.alive_sources:
             return False
-        return len(self.dead_sources) >= _CORROBORATION_REQUIRED
+        return len(self.dead_instruments) >= _CORROBORATION_REQUIRED
 
     @property
     def destroy_veto_reason(self) -> str:
@@ -236,11 +270,25 @@ class LivenessVerdict:
                 f"{', '.join(self.alive_sources)} observed it ALIVE — a single "
                 f"live signal vetoes destruction"
             )
+        if len(self.dead_sources) >= _CORROBORATION_REQUIRED:
+            # The hole this gate shipped with: enough REPORTS, but they all came
+            # off ONE sensor. Name it explicitly — an operator who sees "process
+            # and registry both say dead" deserves to be told those are the same
+            # os.kill(pid, 0) on the same pid, not two witnesses.
+            return (
+                f"{self.agent} reads DEAD on {len(self.dead_sources)} sources "
+                f"({', '.join(self.dead_sources)}), but they share only "
+                f"{len(self.dead_instruments)} INSTRUMENT "
+                f"({', '.join(self.dead_instruments) or 'none'}) — that is one "
+                f"sensor reported twice, not corroboration. "
+                f"{_CORROBORATION_REQUIRED} INDEPENDENT instruments are required "
+                f"before anything destructive is authorised"
+            )
         return (
-            f"{self.agent} reads DEAD on only {len(self.dead_sources)} source "
-            f"({', '.join(self.dead_sources) or 'none'}); "
-            f"{_CORROBORATION_REQUIRED} independent sources are required before "
-            f"anything destructive is authorised"
+            f"{self.agent} reads DEAD on only {len(self.dead_instruments)} "
+            f"instrument ({', '.join(self.dead_instruments) or 'none'}); "
+            f"{_CORROBORATION_REQUIRED} independent instruments are required "
+            f"before anything destructive is authorised"
         )
 
     def render(self) -> str:
@@ -274,13 +322,15 @@ class LivenessVerdict:
 
         ``evidence`` is always present, even when empty: a consumer must never
         have to guess whether the absence of evidence means "clean" or "we did
-        not look".
+        not look". ``dead_instruments`` is present so a consumer can see WHY a
+        pile of DEAD reports did (or did not) authorise anything.
         """
         return {
             "verdict": self.verdict,
             "summary": self.render(),
             "may_destroy": self.may_destroy,
             "destroy_veto_reason": self.destroy_veto_reason,
+            "dead_instruments": list(self.dead_instruments),
             "evidence": [s.to_dict() for s in self.signals],
         }
 
@@ -300,6 +350,10 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
 
     Note what is absent: there is no path from "we gathered nothing" to
     :data:`DEAD`. That path is the bug.
+
+    Note also what this does NOT decide: whether the DEAD may be ACTED on. A
+    DEAD verdict is a report; :attr:`LivenessVerdict.may_destroy` is the gate,
+    and it counts INSTRUMENTS.
     """
     sigs = tuple(signals)
     for sig in sigs:

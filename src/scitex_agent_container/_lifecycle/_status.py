@@ -103,7 +103,13 @@ def _liveness_block(
     verdict with the reason attached — never to a fabricated DEAD, and never to
     an exception that takes the whole status command down with it.
     """
-    from ._verdict import UNKNOWN, LivenessVerdict, Signal
+    from ._verdict import (
+        INSTRUMENT_NO_OBSERVATION,
+        SOURCE_RESOLVER,
+        UNKNOWN,
+        LivenessVerdict,
+        Signal,
+    )
     from ._verdict_resolve import resolve_verdict
 
     try:
@@ -118,9 +124,10 @@ def _liveness_block(
             verdict=UNKNOWN,
             signals=(
                 Signal(
-                    "resolver",
+                    SOURCE_RESOLVER,
                     UNKNOWN,
                     f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
+                    INSTRUMENT_NO_OBSERVATION,
                 ),
             ),
         ).to_dict()
