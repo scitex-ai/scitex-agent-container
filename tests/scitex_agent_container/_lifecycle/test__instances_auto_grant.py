@@ -129,3 +129,160 @@ def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(
     # Assert — record_local_instance documents ``str | None``; on the
     # happy path with a writeable state.db it MUST return the id string.
     assert isinstance(instance_id, str)
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION (2026-07-14) — the auto-grant must not escape into a FOREIGN
+# state.db.
+#
+# ``agent_start`` runs ``health_monitor`` on a DAEMON THREAD and hands it a
+# restart callback -> ``restart_and_record`` -> ``record_local_instance`` ->
+# ``grant_send(target="lead")``. That thread OUTLIVES the call that made it
+# (it wakes after ``health.interval`` + a restart backoff, ~90 s with the
+# shipped defaults).
+#
+# The callback used to take no ``db_path``, so each write re-resolved
+# ``state_db.DEFAULT_DB_PATH`` -- a MUTABLE PROCESS-GLOBAL -- at the moment
+# the monitor fired. Whatever the process then called "default" got the row:
+#
+#   * under pytest, a LATER, UNRELATED test's isolated tmp DB. That is the
+#     stray ``target='lead'`` grant that made
+#     cli_pkg/test_a2a_group.py's ``grants`` tests fail intermittently in
+#     full-suite runs while passing when run alone.
+#   * on a bare host with nothing redirecting the global, the LIVE FLEET
+#     state.db (``alpha``/``beta``/``zombie`` -> ``lead`` rows were found in
+#     production, written by this suite).
+#
+# The thread is captured rather than started: waiting ~90 s of real backoff
+# would make the test slow AND flaky, and the point under test is WHICH DB
+# the callback writes to, not that Python can run a thread. ``thread_factory``
+# is a first-class injectable seam on ``agent_start`` (production default:
+# ``threading.Thread``), already used this way by test_lifecycle.py.
+# ---------------------------------------------------------------------------
+
+
+class _CapturingThread:
+    """Honest stand-in for ``threading.Thread``: records target + args and
+    never spawns a real thread, so the monitor's restart callback can be
+    fired deterministically instead of waited on."""
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+
+class _DeadRuntime:
+    """Runtime that reports the agent as never running, so the health
+    monitor's restart path is the one under test."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self.start_calls: list[str] = []
+
+    def is_running(self, config: AgentConfig, **_kw) -> bool:
+        return False
+
+    def start(self, config: AgentConfig, **_kw) -> bool:
+        self.start_calls.append(config.name)
+        return True
+
+    def stop(self, config: AgentConfig, **_kw) -> bool:
+        return True
+
+    def _state_dir(self, config: AgentConfig) -> Path:
+        return self._root / config.name
+
+
+def _write_health_spec(tmp_path: Path, name: str) -> Path:
+    """v3 ``spec.yaml`` with health ENABLED (so agent_start spawns the
+    monitor). Dir-as-SSoT: the agent name comes from the parent dir."""
+    agent_dir = tmp_path / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    spec = agent_dir / "spec.yaml"
+    spec.write_text(
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        "  host: ${HOSTNAME}\n"
+        f"  workdir: {tmp_path / 'work'}\n"
+        "  apptainer:\n    image: /x.sif\n    binds: []\n"
+        "  health:\n    enabled: true\n    interval: 60\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        "  claude:\n    model: sonnet\n"
+    )
+    return spec
+
+
+def _fire_monitor_restart_against_foreign_db(
+    db_path: Path, tmp_path: Path, name: str
+) -> Path:
+    """Arrange + Act: start a health-monitored agent against ``db_path``,
+    then move the process-global default to a FOREIGN db and fire the
+    monitor's restart callback (what the leaked daemon thread does on its
+    next tick). Returns the foreign db path for the caller to assert on."""
+    from scitex_agent_container._lifecycle import lifecycle as lc
+    from scitex_agent_container._state import state_db
+    from scitex_agent_container._state.registry import Registry
+
+    created: list[_CapturingThread] = []
+
+    def _thread_factory(**kwargs) -> _CapturingThread:
+        t = _CapturingThread(**kwargs)
+        created.append(t)
+        return t
+
+    lc.agent_start(
+        str(_write_health_spec(tmp_path, name)),
+        registry=Registry(registry_dir=tmp_path / "reg"),
+        runtime_factory=lambda _c: _DeadRuntime(tmp_path),
+        sleep_fn=lambda _s: None,
+        thread_factory=_thread_factory,
+    )
+    assert created and created[0].started, "agent_start did not start a monitor"
+    restart_cb = created[0].args[3]
+    config = created[0].args[1]
+
+    # An unrelated LATER test isolates itself: the process-global moves.
+    foreign = tmp_path / "foreign" / "state.db"
+    state_db.init_schema(foreign)
+    saved = state_db.DEFAULT_DB_PATH
+    state_db.DEFAULT_DB_PATH = foreign
+    try:
+        restart_cb(config)  # the leaked monitor thread fires
+    finally:
+        state_db.DEFAULT_DB_PATH = saved
+    return foreign
+
+
+def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
+    db_path: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+
+    name = "pinned-1"
+    # Act — the leaked monitor thread fires while the global points elsewhere.
+    foreign = _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
+    # Assert — the unrelated store MUST be untouched. Pre-fix it held
+    # ("pinned-1" -> "lead"): exactly the stray target='lead' row that made
+    # cli_pkg/test_a2a_group.py's grants tests red in full-suite runs.
+    assert list_comms_grants(db_path=foreign) == []
+
+
+def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
+    db_path: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db_nodes import has_grant
+
+    name = "pinned-2"
+    # Act — same drive, asserting the other half of the contract.
+    _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
+    # Assert — pinning must not LOSE the write, only aim it correctly.
+    assert has_grant(sender=name, target="lead", db_path=db_path) is True
