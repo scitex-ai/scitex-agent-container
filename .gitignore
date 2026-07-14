@@ -65,4 +65,13 @@ src/scitex_agent_container/_provenance/_build_info.py
 # fleet state) under tests/results/. These are per-run scratch, never sources:
 # two of them (floor-*/runtime/<agent>/instance_id) reached a `git add -A`
 # during the v0.21.20 work and would have been committed.
+#
+# And it is worse than noise — it is a SECRET path. The suite exercises the
+# real secret-env writer, which propagates the AMBIENT $SAC_ANTHROPIC_API_KEY
+# into tests/results/sac-state/**/secret-env/apptainer.env. Untracked but NOT
+# ignored, so the same routine `git add -A` after a test run would have
+# committed the operator's LIVE API key. Verified 2026-07-14 via git-object
+# history that it never has been (`git log --all` over the path is empty);
+# this keeps it that way. (Two workers hit this independently, from different
+# artifacts, within a day — which is the argument for the ignore, not against.)
 tests/results/
