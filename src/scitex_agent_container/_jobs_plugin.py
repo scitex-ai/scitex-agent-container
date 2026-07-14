@@ -21,15 +21,38 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Two jobs today:
+    One job today:
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
       active one (``--include-active``), mirroring the rotated token back
       into the live ``~/.claude`` login (``--sync-active-login``).
-    * ``sac.listen`` (``kind="service"``) — the host-level HTTP/JSON
-      control plane (``127.0.0.1:7878``: push hub, spawn broker, lead
-      inbox).
+
+    ``sac listen`` is DELIBERATELY NOT declared here, and adding it back
+    would take the fleet's control plane down. scitex-dev derives a unit
+    name from the job name VERBATIM (``scitex-todo.dashboard`` ->
+    ``scitex-todo.dashboard.service``), so a ``sac.listen`` JobSpec
+    materialises ``sac.listen.service`` — while the listen that actually
+    runs on the host is ``sac-listen.service`` (a HYPHEN), hand-written
+    2026-07-05 14:38, ``Restart=always``, with ``10-venv-path`` and
+    ``20-hardening`` drop-ins. The two names differ by one character and
+    systemd treats them as unrelated units, so ``scitex-dev service ensure
+    sac.listen`` does not adopt the running supervisor — it installs a
+    SECOND one. Two units, both ``Restart=always``, both running
+    ``sac listen``, both binding 127.0.0.1:7878: they fight for the port
+    forever, and every lost round destroys the in-memory Broker, which
+    deafens EVERY agent's inbox at once.
+
+    PR #543 declared it on the premise that ``sac listen`` "had NO
+    SUPERVISOR". That premise was false by the time it merged — the
+    hand-written unit was created the SAME DAY the PR was opened, and had
+    been supervising listen for nine days (``NRestarts=0``). The PR was
+    obsolete on arrival and nobody re-checked before merging it.
+
+    If this is ever federated, it must be named ``sac-listen`` (hyphen) so
+    the derived unit is the one that already exists — and even then,
+    ``ensure`` must be shown to ADOPT the running unit rather than
+    overwrite its drop-ins. Do not re-add it without measuring that.
 
     Why ``sac.accounts-refresh`` is not ``--skip-active``: under the
     pre-2026-07-08 two-refresher model both the host timer and the
@@ -43,15 +66,12 @@ def provide_jobs() -> "list[JobSpec]":
     ``--sync-active-login`` keeps the operator's live session valid across
     the single-use refresh_token rotation.
 
-    Why ``sac.listen`` is federated here: it had NO SUPERVISOR. Declaring
-    it as a ``kind="service"`` JobSpec hands it to scitex-dev's supervisor
-    (``scitex-dev service ensure sac.listen`` — systemd ``--user`` with
-    ``Restart=`` where a user manager is reachable, else a respawn-loop
-    keep-alive), so it auto-starts on boot and comes back on ANY exit.
-    This replaces the fragile cron-based watchdog (``sac-listen-watch.sh``,
-    ``*/2`` cron) that died twice on 2026-07-05 (clew incident
-    ``clew-incident-sac-host-listen-down``) and left the whole fleet cut
-    off from the host after a CLEAN shutdown that nothing restarted.
+    The clew incident (``clew-incident-sac-host-listen-down``, 2026-07-05)
+    that motivated federating listen was ALREADY fixed on the day it
+    happened, by the hand-written ``sac-listen.service`` above — not by a
+    JobSpec. The fragile ``sac-listen-watch.sh`` ``*/2`` cron it replaced
+    is gone. Re-federating it does not fix that incident again; it only
+    adds a second supervisor to fight the first.
     """
     from scitex_dev.jobs import JobSpec
 
@@ -82,40 +102,6 @@ def provide_jobs() -> "list[JobSpec]":
             on_boot_sec="15min",
             on_unit_active_sec="2h",
             timeout_sec=120,
-        ),
-        JobSpec(
-            name="sac.listen",
-            kind="service",
-            schedule="",
-            command="sac listen",
-            description=(
-                "Host-level HTTP/JSON control plane for sac agents "
-                "(loopback 127.0.0.1:7878) — push hub, spawn broker, lead "
-                "inbox. No env vars required: SAC_LISTEN_BEARER "
-                "self-resolves from the on-disk token file "
-                "(~/.scitex/agent-container/tokens/listen-<host>.token) "
-                "when unset (PR #470)."
-            ),
-            # restart_policy="always", NOT "on-failure": Incident
-            # 2026-06-26 (scripts/systemd/sac-listen.service) found that
-            # a clean 0-exit (e.g. an unexpected SIGTERM that uvicorn
-            # turns into a graceful shutdown) is NOT covered by
-            # Restart=on-failure, and that is exactly how the fleet lost
-            # a2a comms silently with nothing restarting the listen.
-            # "always" covers every non-`systemctl stop` exit; JobSpec's
-            # ALLOWED_RESTART_POLICIES includes "always" for kind=
-            # "service" specifically for this reason.
-            restart_policy="always",
-            timeout_sec=30,
-            # No watchdog_sec: sac listen is a plain Type=simple daemon
-            # that does not call sd_notify(WATCHDOG=1), so requesting a
-            # watchdog here would just cause systemd to kill-and-restart
-            # it every interval (see JobSpec.watchdog_sec docstring).
-            # Wedge (hang, not crash) detection is instead covered by the
-            # hand-maintained companion
-            # scripts/systemd/sac-listen-health.{service,timer} probe,
-            # which this JobSpec does NOT replace — see
-            # scripts/systemd/README.md for the coexistence note.
         ),
     ]
 

@@ -23,11 +23,22 @@ broker, lead inbox. Before this unit landed, the listen was
 operator-started ad-hoc and could be found DOWN with nothing
 restarting it.
 
-> **Also federated as `sac.listen`** (2026-07-05, clew incident
-> `clew-incident-sac-host-listen-down`): sac's `provide_jobs()`
-> (`src/scitex_agent_container/_jobs_plugin.py`) registers a
-> `kind="service"` JobSpec for the same daemon, supervised via
-> **`scitex-dev service ensure sac.listen`**.
+> **THE HOST HAS ALREADY PICKED: this hand-maintained unit.** It was
+> installed 2026-07-05 14:38 (`Restart=always`) and has supervised the
+> daemon ever since — `NRestarts=0`. **Do NOT run
+> `scitex-dev service ensure sac.listen`.** It does not adopt this unit:
+> scitex-dev derives the unit name from the job name VERBATIM, so it
+> installs a SECOND unit, `sac.listen.service` (a DOT), beside the
+> `sac-listen.service` (a HYPHEN) already running. systemd treats them as
+> unrelated, and you get exactly the double-unit fight this file warns
+> about below — with every lost round destroying the in-memory Broker and
+> deafening every agent's inbox.
+>
+> The `sac.listen` JobSpec was therefore REMOVED from `provide_jobs()`
+> (a test now pins its absence). PR #543 added it on the premise that
+> listen "had NO SUPERVISOR" — false: this unit was created the same day
+> that PR was opened, and the PR then sat 9 days and merged unre-checked.
+> Read the rest of this section before re-federating anything.
 >
 > That verb resolves the name from the `scitex_dev.jobs` federation and
 > then — in ONE idempotent step — writes the `.service` unit,

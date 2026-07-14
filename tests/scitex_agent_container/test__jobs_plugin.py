@@ -6,11 +6,14 @@ entry-point group match the federated contract:
 * ``sac.accounts-refresh`` — a periodic systemd timer job that runs
   ``--all --include-active --sync-active-login`` every 2h (the SOLE
   refresher; see the ``--skip-active`` note below).
-* ``sac.listen`` — a long-running systemd service job (the host
-  control-plane daemon), auto-started on boot and auto-restarted on
-  ANY exit (``restart_policy="always"``), registered so the host no
-  longer needs a cron-based watchdog
-  (clew incident ``clew-incident-sac-host-listen-down``, 2026-07-05).
+
+``sac listen`` is deliberately NOT federated, and one test below PINS its
+absence: scitex-dev derives the unit name verbatim, so a ``sac.listen``
+JobSpec installs ``sac.listen.service`` ALONGSIDE the ``sac-listen.service``
+(hyphen) that already supervises the daemon — two units, both
+``Restart=always``, both binding 127.0.0.1:7878, fighting for the port and
+destroying the in-memory Broker (which deafens every agent's inbox) on each
+lost round. See ``_jobs_plugin.provide_jobs`` for the full reasoning.
 
 Skipped cleanly if the installed scitex-dev predates ``scitex_dev.jobs``
 (PyPI lag) — the entry-point registration is install-time metadata and
@@ -34,12 +37,13 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_two_jobs() -> None:
-    # Arrange — call the registered provider.
+def test_provider_returns_one_job() -> None:
+    # Arrange — call the registered provider. One, not two: `sac listen` is
+    # NOT federated (see the module docstring and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 2
+    assert len(jobs) == 1
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -116,49 +120,25 @@ def test_provider_job_cadence_is_two_hours() -> None:
     assert job.on_unit_active_sec == "2h"
 
 
-def test_provider_listen_job_is_a_service() -> None:
-    # Arrange — call the registered provider.
+def test_provider_does_not_federate_listen_it_would_duplicate_the_supervisor() -> None:
+    # Arrange — `sac listen` must NOT be declared as a JobSpec, and this
+    # test exists to keep it that way.
+    #
+    # scitex-dev derives the unit name from the job name VERBATIM
+    # (`scitex-todo.dashboard` -> `scitex-todo.dashboard.service`), so a
+    # `sac.listen` JobSpec materialises `sac.listen.service`. The listen
+    # that actually runs is `sac-listen.service` — a HYPHEN — hand-written
+    # 2026-07-05, Restart=always, NRestarts=0. systemd treats the two names
+    # as unrelated units, so `scitex-dev service ensure sac.listen` does not
+    # adopt the running supervisor: it installs a SECOND one. Two units,
+    # both Restart=always, both running `sac listen`, both binding
+    # 127.0.0.1:7878 — they fight for the port forever, and every lost round
+    # destroys the in-memory Broker, deafening EVERY agent's inbox at once.
+    #
+    # PR #543 declared it because listen "had NO SUPERVISOR". That premise
+    # was already false when it merged: the hand-written unit was created
+    # the same day the PR was opened and had supervised listen for 9 days.
     # Act
-    job = _job("sac.listen")
-    # Assert — long-running control-plane daemon, not scheduled.
-    assert job.kind == "service"
-
-
-def test_provider_listen_job_has_no_schedule() -> None:
-    # Arrange — call the registered provider. kind="service" requires
-    # schedule=="" (services aren't scheduled — they run continuously).
-    # Act
-    job = _job("sac.listen")
+    names = [spec.name for spec in provide_jobs()]
     # Assert
-    assert job.schedule == ""
-
-
-def test_provider_listen_job_command() -> None:
-    # Arrange — call the registered provider. Confirmed (task brief,
-    # 2026-07-05): SAC_LISTEN_BEARER self-resolves from the on-disk
-    # token file when unset (PR #470), so a bare command suffices.
-    # Act
-    job = _job("sac.listen")
-    # Assert
-    assert job.command == "sac listen"
-
-
-def test_provider_listen_job_restarts_always() -> None:
-    # Arrange — call the registered provider. "always" (not
-    # "on-failure") matches the incident-hardened hand-maintained unit
-    # (scripts/systemd/sac-listen.service, incident 2026-06-26): a
-    # clean 0-exit must still trigger a restart.
-    # Act
-    job = _job("sac.listen")
-    # Assert
-    assert job.restart_policy == "always"
-
-
-def test_provider_listen_job_has_no_watchdog() -> None:
-    # Arrange — call the registered provider. sac listen never calls
-    # sd_notify(WATCHDOG=1), so requesting a watchdog would cause
-    # systemd to kill-and-restart it every interval.
-    # Act
-    job = _job("sac.listen")
-    # Assert
-    assert job.watchdog_sec is None
+    assert "sac.listen" not in names
