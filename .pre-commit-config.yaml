@@ -1,6 +1,18 @@
 repos:
   - repo: local
     hooks:
+      - id: no-hosted-runners
+        name: "no GitHub-hosted runners in .github/workflows/"
+        entry: python -m scitex_agent_container._hosted_runner_guard
+        language: system
+        pass_filenames: false
+        files: ^\.github/(workflows/.*\.ya?ml|hosted-runner-allowlist\.yaml)$
+        description: >
+          Operator directive 2026-07-14 (mandatory, no exceptions): every job
+          runs on the self-hosted pool. The ONE approved exception (cla.yml)
+          lives in .github/hosted-runner-allowlist.yaml WITH its security
+          argument — an entry without a real `reason:` fails the guard.
+
       - id: stx-allow-fallback
         name: "stx-allow: fallback lint (no-silent-fallback)"
         entry: python scripts/check_stx_allow.py

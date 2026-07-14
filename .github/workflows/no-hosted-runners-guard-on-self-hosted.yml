@@ -1,0 +1,62 @@
+name: no-hosted-runners
+
+# THE GUARD FOR THE RULE THAT HAS NO OTHER GUARD.
+#
+# Operator directive 2026-07-14 (absolute, no exceptions): NO GitHub-hosted
+# runners anywhere in this repo. Every job runs on the self-hosted Spartan
+# pool. If Spartan misbehaves, that is OURS to fix — never fall back to a
+# hosted runner.
+#
+# PR #694 migrated the 11 jobs. It did NOT build the guard. So until this
+# workflow existed, nothing stopped the next PR from quietly landing on
+# `ubuntu-latest` again, and we would not have noticed until it had.
+#
+# WHAT IT CHECKS
+#   Parses every .github/workflows/*.y*ml, reads each job's `runs-on:`, and
+#   fails on any job that (a) lands on a GitHub-hosted image family
+#   (ubuntu-* / macos-* / windows-*, not just the `-latest` literals), or
+#   (b) whose runner target cannot be PROVEN self-hosted. It does not grep:
+#   our filenames and job `name:` fields still contain "ubuntu-latest", and
+#   a grep would red-flag the very jobs we just migrated.
+#
+# THE ONE EXCEPTION lives in .github/hosted-runner-allowlist.yaml, WITH the
+# security argument attached and machine-enforced (an entry without a real
+# `reason:` fails the guard). cla.yml stays hosted on purpose — read the
+# allowlist before you "fix" it.
+#
+# AND OBVIOUSLY: this job runs on the SELF-HOSTED pool. A no-hosted-runners
+# guard running on a hosted runner would be its own punchline.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  no-hosted-runners:
+    name: no-hosted-runners-guard-on-self-hosted
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same pattern as lint.yml: the bare Spartan node has no Python and is
+      # PEP-668 externally-managed, so setup-uv + uv's own managed CPython is
+      # the only thing that works there. The guard needs nothing but PyYAML.
+      - uses: astral-sh/setup-uv@v3
+        with:
+          cache-dependency-glob: pyproject.toml
+
+      - name: Guard — no GitHub-hosted runners
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python pyyaml
+          # 2>&1 on purpose: the guard prints its FAILURE report to stderr.
+          # Without the merge, the one thing a reader needs would be missing
+          # from the step summary. pipefail keeps the non-zero exit intact.
+          PYTHONPATH=src .venv/bin/python \
+            -m scitex_agent_container._hosted_runner_guard . 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"

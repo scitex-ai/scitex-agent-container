@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub-HOSTED runner allowlist — the ONLY sanctioned exceptions.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Operator directive, 2026-07-14: GitHub-hosted runners are FORBIDDEN.
+# Every job runs on the self-hosted Spartan pool. Mandatory, no exceptions.
+# If the pool is broken, that is OUR problem to fix — escaping back to a
+# hosted runner is not an option.
+#
+# Enforced by `src/scitex_agent_container/_hosted_runner_guard.py`, which runs
+#   - as a CI job on the SELF-HOSTED pool
+#     (.github/workflows/no-hosted-runners-guard-on-self-hosted.yml),
+#   - as a `pre-commit` hook,
+#   - as a pytest test against this very repo.
+#
+# WHY THIS FILE EXISTS AT ALL
+# ===========================
+# An operator-approved exception that lives only in a chat message and a
+# merged PR body is a fact written in one place and believed in another.
+# The next agent greps for `ubuntu-latest`, finds cla.yml, reads it as an
+# oversight, "fixes" it — and reopens a security hole with the best of
+# intentions. So the exception lives HERE, in the mechanism, with its
+# argument attached, where the person about to remove it must first read
+# why it is there.
+#
+# THE `reason:` FIELD IS MANDATORY AND MACHINE-ENFORCED.
+# The guard FAILS (SAC-CI003) on any entry whose `reason:` is missing or
+# shorter than 40 characters. You cannot add an exception without arguing
+# for it. The guard also FAILS (SAC-CI004) on a STALE entry — one whose
+# workflow is gone, or which no longer has a hosted job — because a dead
+# exception is a live loophole: it silently pre-approves whatever that
+# file does next.
+#
+# Adding an entry is a deliberate, reviewable act. Argue for it in the PR.
+# ─────────────────────────────────────────────────────────────────────────────
+
+allow:
+  - workflow: cla.yml
+    jobs:
+      - CLAssistant
+    approved_by: operator
+    approved_on: 2026-07-14
+    # Operator ruled explicitly on this (案1 / "option 1") after being shown
+    # the argument below. This is NOT "we forgot to migrate it".
+    reason: >-
+      Migrating this one to the self-hosted pool would be STRICTLY WORSE than
+      the hole it appears to be. cla.yml is triggered by `issue_comment` and
+      `pull_request_target` — both UNAUTHENTICATED triggers that ANY stranger
+      can fire simply by commenting on an issue. Neither is covered by the
+      fork-PR approval gate (`pull_request_target` is the documented way
+      AROUND that gate), and the job runs a THIRD-PARTY action. On the Spartan
+      self-hosted runner, $HOME is the operator's REAL home directory, holding
+      the fleet's LIVE CREDENTIALS. Migrating cla.yml would therefore let an
+      unauthenticated stranger execute third-party code on the crown-jewel node
+      by commenting on an issue. It stays on GitHub's disposable hardware,
+      where a compromise costs us a throwaway VM instead of the fleet. The
+      third-party action is SHA-pinned (not tag-pinned) as the compensating
+      control. DO NOT "FIX" THIS BY MIGRATING IT — that is the exact bug this
+      allowlist exists to prevent.
