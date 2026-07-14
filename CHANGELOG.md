@@ -6,6 +6,78 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.20] - 2026-07-14
+
+### Fixed
+
+- **The PR gate and the release gate are now the SAME environment — eleven tags
+  shipped nothing.** PyPI sat at 0.21.17 while v0.21.18, v0.21.19 and eight older
+  tags were GHOSTS: the tag exists, PyPI serves nothing. The two gates disagreed
+  *by configuration* — the PR gate ran `tests/` single-process on a hosted ubuntu
+  box; the release gate ran `-n $(nproc) --dist load` under xdist, inside the SIF,
+  on a persistent-`$HOME` Spartan node. A green PR predicted **nothing** about the
+  release, and the PR gate was *structurally incapable* of catching what killed it:
+  a single-process run cannot race with itself. `test` failed on the release
+  runner, `build`/`publish`/`release` were skipped via `needs: test`, and nothing
+  reached PyPI. Silently. For months. `pytest-matrix` now runs the **same
+  `run-in-sif.sh`** on the **same `vars.CI_RUNS_ON`** runners as the release
+  workflow — not an equivalent setup, the same bytes. Green PR ⇒ green release,
+  by construction.
+
+- **`claim_port()` lost a race and raised a raw sqlite traceback — the bug that
+  ghosted v0.21.18/19.** The pinned-port branch was a TOCTOU: it `SELECT`ed for a
+  clash, then `INSERT`ed, with nothing in between. A concurrent claimant landing
+  in that window tripped `UNIQUE(port)` and `sqlite3.IntegrityError` escaped to
+  the caller. *Which* error you got — the intended diagnosis or a driver
+  traceback — was decided purely by thread timing, which is why the failure moved
+  between releases and read as a flake. Reproduced deterministically (16 threads,
+  real sqlite, no mocks): 6 raw escapes, 9 clean errors. The claim is now a single
+  atomic statement (`INSERT ... ON CONFLICT DO NOTHING` + read-back).
+
+- **A lost port race is now resolved by ORIGIN, so a concurrent fleet relaunch
+  survives it.** Atomicity alone was not enough — a caught-then-failed claim is
+  still a *failed launch*. `resolve_a2a_port` overwrites its own input
+  (`"auto"` → the int it claimed), which made two opposite states byte-identical:
+  an **operator pin** (a foreign holder is a real misconfiguration → must raise)
+  and a **port we auto-allocated** and merely re-claim across a restart (taken
+  while we were down → a *fresh* port is correct; a dead agent is not). That lost
+  provenance is why a routine `--force` restart of an ordinary auto-port agent was
+  traversing the pinned-port code at all. The origin is now threaded through, so
+  restarting many agents at once no longer fails politely.
+
+- **A test could act on the operator's LIVE `sac listen` pidfile.**
+  `_listen/_single_instance.default_lock_dir()` hard-coded `Path.home()` and
+  ignored `SCITEX_AGENT_CONTAINER_RUNTIME_DIR`, so the harness's sandbox floor
+  never reached it. Its docstring promised "tests pass an explicit `lock_dir`" — a
+  promise enforced by nothing. On the self-hosted release runner (`$HOME` = the
+  operator's real home) that directory holds the live control plane's pidfile;
+  acting on it tears down the in-memory a2a broker and deafens every agent's inbox
+  at once. It now honours the same variable `_session_state.DEFAULT_STATE_ROOT`
+  reads (one runtime root, one override) and resolves per-call.
+
+- **`DEFAULT_STATE_ROOT` leaked across tests inside one xdist worker.**
+  `test__status_movement`'s `isolated_runtime` fixture reloaded `_session_state`
+  with its own tmp dir and never reloaded it back, leaving a dangling root in the
+  process global for every later test in that worker. A sibling assertion was
+  reading a path belonging to a *different* test — and
+  `test_state_dir_for_default_root_is_under_user_home` was asserting the operator's
+  real home, i.e. asserting the very pollution the sandbox exists to prevent. Both
+  fixed; the latter now exercises the resolution logic instead of the ambient value.
+
+- The sac-state floor is per-xdist-worker (one project-relative floor is a
+  host-global namespace shared by every worker in a leg), and `tests/results/` is
+  gitignored.
+
+### Changed
+
+- **No GitHub-hosted runners in the test gate.** Per operator rule (2026-07-14):
+  if Spartan misbehaves that is *ours* to fix, never a fallback to hosted. The
+  `pytest-matrix` job name is deliberately unchanged — it is a required status
+  check on both `develop` and `main`, and renaming it would leave every PR blocked
+  with all checks passing. Nine other workflows still declare `ubuntu-latest` and
+  are tracked separately.
+
+
 ### Added
 
 - **`sac agents rename <old> <new>` — the rename you cannot do safely by hand.**
