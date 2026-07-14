@@ -59,3 +59,12 @@ _sphinx_html/.doctrees/
 # build force-includes it, so being git-ignored does not keep it out of
 # the wheel; and a source checkout reads its commit live from .git anyway.
 src/scitex_agent_container/_provenance/_build_info.py
+
+# Pytest run artifacts. NOT merely noise: the suite exercises the real
+# secret-env writer, which propagates the AMBIENT $SAC_ANTHROPIC_API_KEY
+# into tests/results/sac-state/**/secret-env/apptainer.env. That path was
+# untracked but NOT ignored, so a routine `git add -A` after a test run
+# would have committed the operator's live API key. Verified 2026-07-14 it
+# has never been committed (git log --all over the path is empty); this
+# keeps it that way. Regenerable output — nothing here is source.
+tests/results/

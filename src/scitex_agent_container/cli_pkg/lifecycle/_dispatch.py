@@ -26,13 +26,13 @@ from __future__ import annotations
 import shlex
 import subprocess
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 
 from ...config import AgentConfig
 from ._common import _local_host_names
+from ._dispatch_paths import local_spec_dir, remote_spec_target
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -101,8 +101,8 @@ def _dispatch_remote_start(
             when the remote ``sac agents start`` returns non-zero,
             or when its stdout is not valid JSON.
     """
-    # 1. Locate the local spec dir.
-    src_dir = Path.home() / ".scitex" / "agent-container" / "agents" / name
+    # 1. Locate the local spec dir ($SCITEX_DIR-aware — see _dispatch_paths).
+    src_dir = local_spec_dir(name)
     if not src_dir.is_dir():
         raise FileNotFoundError(
             f"Spec dir for {name!r} not found on lead at {src_dir!s}. "
@@ -110,7 +110,12 @@ def _dispatch_remote_start(
         )
 
     # 2. rsync --dry-run --itemize-changes (content-checksum mode).
-    remote_target = f"{peer}:.scitex/agent-container/agents/{name}/"
+    # The destination root comes from the host REGISTRY (the SSOT port), not
+    # from the remote's ``~/.scitex`` — see :mod:`._dispatch_paths` for the
+    # measured Spartan incident that makes this mandatory.
+    from ..._state.host_config import load as _load_host_config_for_root
+
+    remote_target = remote_spec_target(name, peer, _load_host_config_for_root().peers)
     exclude_args = [
         "--exclude=runtime/",
         "--exclude=__pycache__/",
@@ -229,6 +234,10 @@ def _dispatch_remote_start(
     from ..._state.state_db import record_instance_start
 
     peers_map = _load_host_config().peers
+    # NOTE: the remote process's state root (``SCITEX_DIR=<registry root>``)
+    # is pinned inside ``build_ssh_argv`` — the single choke point every
+    # remote-sac invocation funnels through — so it is NOT injected here.
+    # See ``_state/_host_ssh._scitex_dir_prefix``.
     ssh_argv = build_ssh_argv(
         peer,
         ["sac", "agents", "start", name, "--no-redispatch", "--json"],

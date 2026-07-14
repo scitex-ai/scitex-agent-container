@@ -489,10 +489,7 @@ def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:
 # file mirror is 1:1 (project rule PS-204). This re-export keeps the
 # existing import surface (`from ..._state.host_config import
 # ssh_control_options`) working unchanged for downstream callers.
-from .ssh_control_options import (  # noqa: E402,F401
-    ssh_control_options,
-    ssh_control_options_str,
-)
+from ._host_interfaces import host_interfaces  # noqa: E402,F401
 
 # Transport rendering (``build_ssh_argv``) and interface inventory
 # (``host_interfaces``) live in focused sibling modules so the config
@@ -501,5 +498,11 @@ from .ssh_control_options import (  # noqa: E402,F401
 # ``from scitex_agent_container._state.host_config import build_ssh_argv``
 # / ``host_interfaces``. Tests for those functions sit unchanged
 # against the old import path.
-from ._host_ssh import build_ssh_argv  # noqa: E402,F401
-from ._host_interfaces import host_interfaces  # noqa: E402,F401
+from ._host_ssh import (
+    build_ssh_argv,  # noqa: E402,F401
+    resolve_peer_scitex_root,  # noqa: E402,F401
+)
+from .ssh_control_options import (  # noqa: E402,F401
+    ssh_control_options,
+    ssh_control_options_str,
+)
