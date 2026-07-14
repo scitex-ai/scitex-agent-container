@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import tomllib
 
 import scitex_agent_container
 from scitex_agent_container.cli_pkg import _image_source_build as isb
@@ -72,8 +73,14 @@ def fake_pkg_root(tmp_path: Path) -> Path:
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
+        '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "src/hatch_build.py"\n'
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
+    # The wheel force-includes the custom build hook too — pyproject
+    # NAMES it, so a staged tree without it cannot be built at all.
+    # The fixture must mirror the real wheel, or the suite is testing a
+    # layout that does not ship.
+    (bundled / "hatch_build.py").write_text("# fake build hook for tests\n")
     return root
 
 
@@ -204,6 +211,93 @@ def test_locate_bundled_readme_falls_back_to_editable_repo_root(tmp_path):
     found = isb.locate_bundled_readme(pkg)
     # Assert
     assert found == repo_readme
+
+
+def test_locate_bundled_hatch_build_falls_back_to_editable_src_dir(tmp_path):
+    # Arrange — editable layout. hatch_build.py lives at <repo>/src/,
+    # NOT the repo root: it is the one bundled sibling whose repo path
+    # differs from its slot in the wheel's flat _bundled/ dir.
+    repo = tmp_path / "repo"
+    pkg = repo / "src" / "scitex_agent_container"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("\n")
+    hook = repo / "src" / "hatch_build.py"
+    hook.write_text("# editable repo build hook\n")
+    # Act
+    found = isb.locate_bundled_hatch_build(pkg)
+    # Assert
+    assert found == hook
+
+
+def test_locate_bundled_hatch_build_raises_when_neither_location_exists(tmp_path):
+    # Arrange — no _bundled/hatch_build.py and no <repo>/src/hatch_build.py
+    pkg = tmp_path / "orphan-pkg" / "scitex_agent_container"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("\n")
+
+    # Act
+    def _call():
+        return isb.locate_bundled_hatch_build(pkg)
+
+    # Assert
+    with pytest.raises(FileNotFoundError, match=r"could not locate hatch_build\.py"):
+        _call()
+
+
+def test_stage_build_context_stages_hatch_build_hook_under_src(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — pyproject declares hooks.custom path = "src/hatch_build.py",
+    # a path hatchling resolves against the STAGED root.
+    dest = tmp_path / "staging"
+    # Act
+    isb.stage_build_context(fake_pkg_root, fake_def, dest)
+    # Assert — the hook is staged at exactly the path pyproject names,
+    # beside (not inside) the package dir.
+    staged_hook = dest / "scitex-agent-container-src" / "src" / "hatch_build.py"
+    bundled = fake_pkg_root / "_bundled" / "hatch_build.py"
+    assert staged_hook.is_file() and staged_hook.read_text() == bundled.read_text()
+
+
+def test_stage_build_context_missing_hatch_build_raises(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — a wheel-shaped pkg root whose _bundled/ has pyproject +
+    # README but NOT the build hook. That is precisely the layout every
+    # sac wheel shipped before this fix, and it must now fail LOUD at
+    # staging rather than silently producing a tree the container's
+    # `uv pip install` dies on 8 minutes into %post.
+    (fake_pkg_root / "_bundled" / "hatch_build.py").unlink()
+    dest = tmp_path / "staging"
+
+    # Act
+    def _call():
+        return isb.stage_build_context(fake_pkg_root, fake_def, dest)
+
+    # Assert
+    with pytest.raises(FileNotFoundError, match=r"could not locate hatch_build\.py"):
+        _call()
+
+
+def test_stage_build_context_does_not_wipe_dest_when_hatch_build_missing(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange — the hook is resolved BEFORE dest_dir is wiped, so a
+    # missing hook must not strand the operator with a half-staged tree.
+    (fake_pkg_root / "_bundled" / "hatch_build.py").unlink()
+    dest = tmp_path / "staging"
+    dest.mkdir()
+    sentinel = dest / "preexisting.txt"
+    sentinel.write_text("must not be wiped\n")
+
+    # Act
+    try:
+        isb.stage_build_context(fake_pkg_root, fake_def, dest)
+    except FileNotFoundError:
+        pass
+
+    # Assert
+    assert sentinel.read_text() == "must not be wiped\n"
 
 
 def test_locate_bundled_pyproject_raises_when_neither_location_exists(tmp_path):
@@ -860,6 +954,95 @@ _skip_no_pip = pytest.mark.skipif(
 )
 
 
+# ---------------------------------------------------------------------------
+# Staged-tree completeness — THE GUARD THAT WAS MISSING.
+#
+# Every staging test above runs against ``fake_pkg_root``, whose fake
+# pyproject.toml declares nothing. So when #652 added a custom hatchling
+# build hook to the REAL pyproject and nobody taught the stager to copy
+# it, the whole suite stayed green while EVERY `sac image build` died in
+# %post — 8 minutes in, on a machine nobody was watching:
+#
+#     OSError: Build script does not exist: src/hatch_build.py
+#
+# A fixture that declares nothing cannot disagree with a stager that
+# copies nothing. So this test stages the REAL package root and asserts
+# the general invariant, derived FROM the staged pyproject rather than
+# hardcoded: every path pyproject NAMES must EXIST in the staged tree.
+# It fails on any future pyproject that names a file staging forgets —
+# not just on hatch_build.py.
+# ---------------------------------------------------------------------------
+
+
+def _declared_hook_paths(pyproject_path: Path) -> list[str]:
+    """Every ``hooks.*.path`` the pyproject declares, across all targets.
+
+    hatchling resolves each of these RELATIVE TO THE TREE BEING BUILT,
+    which for a SIF build is the staged tree — so each one is a file the
+    stager owes the build.
+    """
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    targets = data.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {})
+    paths: list[str] = []
+    for target in targets.values():
+        for hook in (target.get("hooks") or {}).values():
+            path = (hook or {}).get("path")
+            if path:
+                paths.append(path)
+    return paths
+
+
+@pytest.fixture(scope="module")
+def real_staged_src(tmp_path_factory) -> Path:
+    """Stage the REAL package root + a REAL shipped .def, once.
+
+    Exactly what ``sac image build`` stages before it hands the tree to
+    apptainer — no fakes, so the staged pyproject is the one that ships.
+    """
+    dest = tmp_path_factory.mktemp("real-build-context") / "build-context"
+    isb.stage_build_context(_PKG_PATH.parent, _RECIPES_DIR / "apptainer-base.def", dest)
+    return dest / isb._STAGED_SRC_NAME
+
+
+@_skip_no_repo
+def test_real_staged_pyproject_declares_at_least_one_build_hook(real_staged_src: Path):
+    # Arrange — if the real pyproject declared no hooks, the completeness
+    # test below would pass VACUOUSLY. Pin that it cannot.
+    pyproject = real_staged_src / "pyproject.toml"
+    # Act
+    declared = _declared_hook_paths(pyproject)
+    # Assert
+    assert declared, (
+        "the staged pyproject declares no hatchling build hooks at all, so "
+        "the staged-tree completeness guard would pass vacuously. Either "
+        "staging copied the wrong pyproject, or the hook was removed — in "
+        "which case delete the guard deliberately rather than let it rot "
+        "into a test that can never fail."
+    )
+
+
+@_skip_no_repo
+def test_staged_tree_contains_every_path_the_real_pyproject_declares(
+    real_staged_src: Path,
+):
+    # Arrange — every path the STAGED pyproject names. Derived, not
+    # hardcoded: this fails for any future pyproject that names a file
+    # staging forgets, not just for hatch_build.py.
+    declared = _declared_hook_paths(real_staged_src / "pyproject.toml")
+    # Act — check each against the STAGED tree
+    missing = [p for p in declared if not (real_staged_src / p).is_file()]
+    # Assert
+    assert missing == [], (
+        f"the staged source tree is missing {missing}, which the staged "
+        f"pyproject.toml NAMES as a hatchling build-hook path. hatchling "
+        f"resolves those against the tree being built, so the .def's "
+        f"`uv pip install /opt/scitex-agent-container-src` dies in %post "
+        f"with 'Build script does not exist: {missing[0] if missing else ''}' "
+        f"— minutes into a SIF build nobody is watching. Stage every file "
+        f"pyproject names, not just the package."
+    )
+
+
 def _build_wheel(out_dir: Path) -> Path:
     """Build the wheel + return the .whl path. ``pip wheel --no-deps``.
 
@@ -895,6 +1078,44 @@ def _build_wheel(out_dir: Path) -> Path:
 def built_wheel(tmp_path_factory) -> Path:
     out_dir = tmp_path_factory.mktemp("wheel-out")
     return _build_wheel(out_dir)
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_wheel_ships_bundled_hatch_build_py(built_wheel: Path):
+    # Arrange — the bundled pyproject NAMES src/hatch_build.py as a build
+    # hook, so the wheel must carry the hook too or a wheel-installed sac
+    # stages a pyproject whose hook it does not have. That is the FLEET
+    # case: agents run sac from a wheel, not a checkout.
+    expected = "scitex_agent_container/_bundled/hatch_build.py"
+    # Act
+    with zipfile.ZipFile(built_wheel) as zf:
+        names = set(zf.namelist())
+    # Assert
+    assert expected in names, (
+        f"wheel must ship hatch_build.py under {expected} (force-include in "
+        "pyproject.toml). Ship the bundled pyproject without the hook it "
+        "declares and every `sac image build` from a wheel-installed sac "
+        "dies in %post: 'Build script does not exist: src/hatch_build.py'."
+    )
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_wheel_does_not_ship_hatch_build_as_importable_module(built_wheel: Path):
+    # Arrange — hatch_build.py imports hatchling at top level, so it must
+    # never land on the RUNTIME import path. _bundled/ is inert data (no
+    # __init__.py); scitex_agent_container/hatch_build.py would not be.
+    forbidden = "scitex_agent_container/hatch_build.py"
+    # Act
+    with zipfile.ZipFile(built_wheel) as zf:
+        names = set(zf.namelist())
+    # Assert
+    assert forbidden not in names, (
+        f"{forbidden} must not ship: it imports hatchling at module level "
+        "and the build frontend does not exist at runtime. Bundle it as "
+        "inert data under _bundled/ instead. Bundled != packaged."
+    )
 
 
 @_skip_no_repo

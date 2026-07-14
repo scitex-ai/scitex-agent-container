@@ -86,7 +86,9 @@ _COPY_IGNORE = shutil.ignore_patterns(
 _STAGED_SRC_NAME = "scitex-agent-container-src"
 
 
-def _locate_bundled_sibling(pkg_root: Path, name: str) -> Path:
+def _locate_bundled_sibling(
+    pkg_root: Path, name: str, *, editable_rel: str | None = None
+) -> Path:
     """Return the path to a wheel-bundled or repo-root file by name.
 
     Resolution order — both supported because sac is installed BOTH
@@ -95,10 +97,16 @@ def _locate_bundled_sibling(pkg_root: Path, name: str) -> Path:
       1. ``pkg_root/_bundled/<name>`` — wheel install. The wheel
          ships the file via ``[tool.hatch.build.targets.wheel.
          force-include]`` in the repo's own pyproject.toml.
-      2. ``pkg_root.parent.parent/<name>`` — editable install
-         (``pip install -e .``). The package is at
+      2. ``pkg_root.parent.parent/<editable_rel or name>`` — editable
+         install (``pip install -e .``). The package is at
          ``<repo>/src/scitex_agent_container/``; ``parent.parent``
          walks up through ``src/`` to the repo root.
+
+    ``editable_rel`` exists because a file's slot in the wheel's FLAT
+    ``_bundled/`` dir need not mirror its path in the repo:
+    ``hatch_build.py`` bundles to ``_bundled/hatch_build.py`` but lives
+    at ``<repo>/src/hatch_build.py``. Defaults to ``name`` (the
+    repo-root case: pyproject.toml, README.md).
 
     Raises
     ------
@@ -110,7 +118,7 @@ def _locate_bundled_sibling(pkg_root: Path, name: str) -> Path:
     bundled = pkg_root / "_bundled" / name
     if bundled.is_file():
         return bundled
-    editable_repo = pkg_root.parent.parent / name
+    editable_repo = pkg_root.parent.parent / (editable_rel or name)
     if editable_repo.is_file():
         return editable_repo
     raise FileNotFoundError(
@@ -140,6 +148,32 @@ def locate_bundled_readme(pkg_root: Path) -> Path:
     return _locate_bundled_sibling(pkg_root, "README.md")
 
 
+def locate_bundled_hatch_build(pkg_root: Path) -> Path:
+    """Return the custom hatchling BUILD HOOK pyproject.toml declares.
+
+    pyproject wires ``[tool.hatch.build.targets.*.hooks.custom] path =
+    "src/hatch_build.py"``, and hatchling resolves that path RELATIVE TO
+    THE TREE BEING BUILT. The staged tree IS that tree (the .def runs
+    ``uv pip install /opt/scitex-agent-container-src``), so the hook must
+    be staged next to pyproject.toml or the backend dies before reading
+    one line of source: ``OSError: Build script does not exist:
+    src/hatch_build.py``. Not hypothetical — that is how EVERY SIF build
+    failed from the moment the hook landed.
+
+    The hook is a BUILD input (same category as pyproject.toml/README.md),
+    not a runtime module, so the wheel carries it in the inert
+    ``_bundled/`` data dir — no ``__init__.py``, never importable as
+    ``scitex_agent_container.*`` — which keeps hatch_build.py's own rule
+    that an ``import hatchling`` module never reaches the runtime path.
+
+    Editable fallback is ``<repo>/src/hatch_build.py``, not the repo
+    root — hence ``editable_rel``. See :func:`_locate_bundled_sibling`.
+    """
+    return _locate_bundled_sibling(
+        pkg_root, "hatch_build.py", editable_rel="src/hatch_build.py"
+    )
+
+
 def stage_build_context(
     pkg_root: Path,
     def_path: Path,
@@ -157,6 +191,7 @@ def stage_build_context(
             scitex-agent-container-src/        # pip-installable source tree
                 pyproject.toml                 # from locate_bundled_pyproject
                 src/
+                    hatch_build.py             # pyproject's hooks.custom path
                     scitex_agent_container/    # copy of pkg_root contents
 
     The ``src/scitex_agent_container/`` layout matches what
@@ -213,11 +248,12 @@ def stage_build_context(
     if not pkg_root.is_dir():
         raise NotADirectoryError(f"package source is not a directory: {pkg_root}")
 
-    # Resolve pyproject.toml + README.md + (when set) bootstrap_sif
-    # BEFORE wiping dest_dir so a missing-file failure doesn't strand
-    # the operator with a half-staged tree.
+    # Resolve pyproject.toml + README.md + hatch_build.py + (when set)
+    # bootstrap_sif BEFORE wiping dest_dir so a missing-file failure
+    # doesn't strand the operator with a half-staged tree.
     pyproject_src = locate_bundled_pyproject(pkg_root)
     readme_src = locate_bundled_readme(pkg_root)
+    hatch_build_src = locate_bundled_hatch_build(pkg_root)
     if bootstrap_sif is not None and not bootstrap_sif.is_file():
         raise FileNotFoundError(
             f"bootstrap SIF not found: {bootstrap_sif} — build the prerequisite "
@@ -248,14 +284,20 @@ def stage_build_context(
 
     # The staged pip-installable source tree:
     #   <staged_src>/pyproject.toml
-    #   <staged_src>/README.md           (referenced by pyproject's readme=)
+    #   <staged_src>/README.md           (pyproject's readme=)
+    #   <staged_src>/src/hatch_build.py  (pyproject's hooks.custom path)
     #   <staged_src>/src/scitex_agent_container/...
+    #
+    # EVERY path pyproject NAMES must be staged, not just the package:
+    # the PEP-517 backend reads pyproject FIRST and resolves its declared
+    # paths against the staged root.
     staged_src = dest_dir / _STAGED_SRC_NAME
     staged_src.mkdir()
     shutil.copy2(pyproject_src, staged_src / "pyproject.toml")
     shutil.copy2(readme_src, staged_src / "README.md")
     pkg_dest = staged_src / "src" / "scitex_agent_container"
     pkg_dest.parent.mkdir(parents=True)
+    shutil.copy2(hatch_build_src, staged_src / "src" / "hatch_build.py")
     shutil.copytree(pkg_root, pkg_dest, ignore=_COPY_IGNORE)
 
     return staged_def
@@ -458,6 +500,7 @@ def resolve_bootstrap_sif(layer: str, output_dir: Path) -> Path | None:
 __all__ = [
     "stage_build_context",
     "build_layer_from_source",
+    "locate_bundled_hatch_build",
     "resolve_bootstrap_sif",
     "BootstrapSifMissing",
     "_default_container_build",

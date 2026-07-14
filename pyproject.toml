@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.21.20"
+version = "0.21.21"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -336,6 +336,18 @@ exclude = [".git"]
 # (with a fallback to the editable-install repo root).
 "pyproject.toml" = "scitex_agent_container/_bundled/pyproject.toml"
 "README.md" = "scitex_agent_container/_bundled/README.md"
+# ...and hatch_build.py, for the same reason and no other. The bundled
+# pyproject above DECLARES this file
+# (``[tool.hatch.build.targets.*.hooks.custom] path = "src/hatch_build.py"``)
+# and hatchling resolves that path against the tree being built — which,
+# in a SIF build, is the STAGED tree. Ship the pyproject without the hook
+# it names and every `sac image build` dies in %post before reading a line
+# of source: ``OSError: Build script does not exist: src/hatch_build.py``.
+# It lands in the inert ``_bundled/`` data dir (no ``__init__.py``), so it
+# is still NOT importable as ``scitex_agent_container.*`` — hatch_build.py's
+# own rule (never put an ``import hatchling`` module on the runtime path)
+# holds. Bundled ≠ packaged.
+"src/hatch_build.py" = "scitex_agent_container/_bundled/hatch_build.py"
 
 [tool.pytest.ini_options]
 # THE PACKAGE UNDER TEST IS THIS CHECKOUT, NOT WHATEVER IS INSTALLED.
@@ -364,7 +376,10 @@ exclude = [".git"]
 # the session otherwise. Deleting this line does not quietly restore the old
 # behaviour — it turns the suite red. That is deliberate: the failure mode this
 # closes is invisible by construction, so it must not be re-openable in silence.
-pythonpath = ["src"]
+#
+# "." is the rootdir, so rootdir-relative imports (`tests.*`) resolve the same
+# way from any cwd.
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
