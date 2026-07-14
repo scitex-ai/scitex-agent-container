@@ -169,7 +169,20 @@ jobs:
         run: |
           set -uo pipefail
           PKG=scitex-agent-container
+          # `build.outputs.version` is the TAG on a push ("v0.21.18") and a
+          # user-supplied string on workflow_dispatch (either form). `#v` strips
+          # a leading v and is a no-op on a bare version, so both are handled.
           V="${VERSION#v}"
+          # An EMPTY version is a workflow CONFIG error, not a ghost. Without
+          # this, the URL becomes ".../scitex-agent-container//json" -> 404 ->
+          # we would report a phantom ghost and block a PERFECTLY GOOD RELEASE.
+          # A false RED here is worse than the ghost it exists to catch, because
+          # its remedy is "don't ship". Name the real fault instead.
+          if [ -z "$V" ]; then
+            echo "::error::version is EMPTY (build.outputs.version resolved to nothing)."
+            echo "::error::This is a workflow configuration fault, NOT a missing artifact."
+            exit 1
+          fi
           URL="https://pypi.org/pypi/${PKG}/${V}/json"
           echo "verifying PyPI really serves ${PKG}==${V}"
           # Pure shell on purpose: an embedded multi-line python heredoc breaks
