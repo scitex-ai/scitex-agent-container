@@ -25,10 +25,39 @@ import pytest
 import pytest_asyncio
 
 mcp_types = pytest.importorskip("mcp.types")  # gates entire module on `mcp`
-from mcp.types import TextContent, Tool  # noqa: E402
+from mcp.types import CallToolResult, TextContent, Tool  # noqa: E402
 
 from scitex_agent_container._mcp._channel_tools import register_tools  # noqa: E402
 from scitex_agent_container._mcp.channel import _recent  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Result helpers.
+#
+# A tool result is EITHER a plain ``list[TextContent]`` (success — the MCP
+# server stamps ``isError=False`` on it) OR a ``CallToolResult`` carrying
+# ``isError=True`` (failure). Both shapes are unwrapped uniformly here so the
+# assertions stay about BEHAVIOUR, not about which container the payload
+# arrived in.
+# ---------------------------------------------------------------------------
+
+
+def _blocks(out: "list[TextContent] | CallToolResult") -> "list[TextContent]":
+    """Content blocks of a tool result, whichever shape it came back in."""
+    if isinstance(out, CallToolResult):
+        return list(out.content)
+    return list(out)
+
+
+def _payload(out: "list[TextContent] | CallToolResult") -> dict:
+    """The JSON body of a tool result."""
+    return json.loads(_blocks(out)[0].text)
+
+
+# NB: whether a failure is actually visible to the CALLER (the MCP ``isError``
+# flag, which a bare ``list[TextContent]`` can never set) is pinned in
+# ``test__channel_send_errors.py`` — it drives a real ``mcp.server.lowlevel``
+# Server rather than the ``_ToolRecorder`` stand-in used here, because that
+# flag is produced by the server, not by the handler.
 
 # ---------------------------------------------------------------------------
 # Real in-process HTTP/1.1 + JSON server (no aiohttp dependency).
@@ -259,7 +288,7 @@ async def test_call_tool_unknown_name_returns_error_payload(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("not_a_tool", {})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert "error" in body
 
@@ -311,7 +340,7 @@ async def test_call_tool_a2a_send_returns_status_field(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_send", {"target": "bob", "content": "hi"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body["status"] == 200
 
@@ -483,7 +512,7 @@ async def test_call_tool_a2a_reply_unknown_msg_id_returns_error(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_reply", {"in_reply_to": "ghost", "content": "x"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert "error" in body
 
@@ -539,7 +568,7 @@ async def test_call_tool_a2a_reply_unknown_sender_returns_error(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_reply", {"in_reply_to": "m9", "content": "x"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert "error" in body
 
@@ -552,7 +581,7 @@ async def test_call_tool_a2a_ack_unknown_msg_id_returns_error(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_ack", {"msg_id": "nope"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert "error" in body
 
@@ -566,7 +595,7 @@ async def test_call_tool_a2a_ack_unknown_sender_returns_error(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_ack", {"msg_id": "m11"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert "error" in body
 
@@ -599,7 +628,7 @@ async def test_call_tool_a2a_ack_returns_suppression_marker(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_ack", {"msg_id": "m1"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body.get("body", {}).get("suppressed") == "empty_ack"
 
@@ -613,7 +642,7 @@ async def test_call_tool_a2a_peers_returns_status(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_peers", {})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body["status"] == 200
 
@@ -627,7 +656,7 @@ async def test_call_tool_a2a_peers_returns_peers_body(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_peers", {})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body["body"] == {"agents": ["alice", "bob"]}
 
@@ -647,7 +676,7 @@ async def test_call_tool_a2a_inbox_returns_count(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_inbox", {"limit": 10})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body["count"] == 3
 
@@ -662,7 +691,7 @@ async def test_call_tool_a2a_inbox_respects_limit(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_inbox", {"limit": 5})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert body["count"] == 5
 
@@ -705,9 +734,9 @@ async def test_register_tools_forwards_bearer_token_on_post(fake_listen):
 # ---------------------------------------------------------------------------
 
 
-def _err(out: "list[TextContent]") -> str | None:
+def _err(out: "list[TextContent] | CallToolResult") -> str | None:
     """Pull the ``error`` field out of a tool result, or None."""
-    body = json.loads(out[0].text)
+    body = _payload(out)
     return body.get("error") if isinstance(body, dict) else None
 
 
@@ -833,6 +862,6 @@ async def test_a2a_ack_is_suppressed_before_subscriber_check(
     call_fn = registered_tools.call_tool_fn
     # Act
     out = await call_fn("a2a_ack", {"msg_id": "orig2"})
-    body = json.loads(out[0].text)
+    body = _payload(out)
     # Assert
     assert _err(out) is None and body.get("body", {}).get("suppressed") == "empty_ack"
