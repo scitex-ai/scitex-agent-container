@@ -109,7 +109,7 @@ def _make_spec_repo(tmp_path: Path, *, drifted: bool) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {tmp_path / 'work'}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"

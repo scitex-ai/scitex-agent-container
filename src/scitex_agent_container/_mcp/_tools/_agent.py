@@ -95,6 +95,15 @@ def agent_start(
     :func:`scitex_agent_container._lifecycle.lifecycle.agent_start`
     directly.
 
+    Passes ``--yes`` unconditionally: the CLI refuses an unconfirmed
+    start against a non-running agent (exit 2, "refusing to start ...
+    without --yes/-y"), but an MCP tool call has no TTY to prompt on,
+    so the call itself IS the confirmation. Without this the tool
+    always failed the same way ``agent_restart`` did before it was
+    patched (no-surprise: the documented MCP surface must actually
+    work, not dead-end on an interactive guard that can never be
+    satisfied over MCP).
+
     Args:
         name: The agent to start.
         foreground: Attach to the caller's terminal (claude-session only).
@@ -122,7 +131,7 @@ def agent_start(
        broker semantics in a hybrid script that might also run on
        the bare host.
     """
-    argv = ["agents", "start", name]
+    argv = ["agents", "start", name, "--yes"]
     if foreground:
         argv.append("--foreground")
     if session is not None:
@@ -205,6 +214,58 @@ def agent_spawn(
             "body": exc.body,
         }
     return {"status": "ok", "result": result}
+
+
+def agent_twin(
+    parent: str,
+    name: str | None = None,
+    task: str | None = None,
+    persist: bool = False,
+    role: str | None = None,
+    caller: str | None = None,
+) -> dict[str, Any]:
+    """Spawn a context-inheriting TWIN of a running agent (e.g. your own).
+
+    A TWIN forks PARENT's live session — inherits its transcript at birth
+    then diverges; PARENT is never touched. Same host-broker path as
+    ``agent_spawn``; repo/workdir/image/binds/model inherited verbatim; own
+    name + fresh a2a port + ``session: continue``; host seeds the twin's
+    session from the parent's transcript at first boot. (Use one to inherit context
+    without sharing future context, split parallel work, or run heavy work
+    off your main loop; a plain Task subagent is cheaper otherwise.)
+
+    IDENTITY CONTRACT (safety-critical; the twin's boot-kick repeats it):
+    AUTHOR = twin (``SCITEX_TODO_AGENT_ID`` = twin — its scitex-todo writes
+    attribute to it). OWNER = parent, but scitex-todo cannot default the card
+    owner from env, so the twin MUST pass ``assignee=<parent>`` (==
+    ``$SAC_TWIN_PARENT``) on every card write — a hard rule, not an env
+    guarantee; an ephemeral twin that owns cards then exits orphans them.
+
+    ``name`` defaults to ``<parent>-twin`` (bumped if taken); ``persist``
+    makes it long-lived (default ephemeral); ``task``/``role``/``caller``
+    optional. Returns ``{"status":"ok","twin":..,"result":{..}}`` else
+    ``{"status":"error","reason":..}``.
+    """
+    from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
+    from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
+
+    try:
+        twin_name, doc = prepare_twin_spawn(
+            parent, twin_name=name, task=task, persist=persist, role=role
+        )
+    except TwinSeedError as exc:
+        return {"status": "error", "reason": str(exc)}
+
+    try:
+        result = request_spawn(twin_name, spec=doc, caller=caller, assume_yes=True)
+    except SpawnRequestError as exc:
+        return {
+            "status": "error",
+            "reason": str(exc),
+            "http_status": exc.status,
+            "body": exc.body,
+        }
+    return {"status": "ok", "twin": twin_name, "parent": parent, "result": result}
 
 
 def agent_stop(name: str) -> dict[str, Any]:
@@ -300,31 +361,52 @@ def agent_send(
 
 def agent_create(
     name: str,
-    template: str = "developer",
-    workdir: str | None = None,
-    telegram_token: str | None = None,
-    group: str | None = None,
+    template: str = "python_developer",
+    project: str | None = None,
     start: bool = False,
 ) -> dict[str, Any]:
     """Create a proven-shape agent spec from a template. Mirrors
-    ``sac agents create <name> --template developer|scientist``.
+    ``sac agents create <name> --template python_developer|researcher|generalist
+    --project <p>``.
 
-    Writes ``<name>/spec.yaml`` from the developer/scientist skeleton,
-    filling identity (name -> project / workdir / overlay / state-db /
-    SCITEX_TODO_AGENT_ID) and auto-detecting the editable-install block
-    (workdir ships a package) and the per-agent Telegram bot
-    (``telegram_token`` file present). ``start=True`` launches the agent
-    afterwards. The developer group is authorized to CRUD agents."""
-    argv = ["agents", "create", name, "--template", template]
-    if workdir:
-        argv += ["--workdir", workdir]
-    if telegram_token:
-        argv += ["--telegram-token", telegram_token]
-    if group:
-        argv += ["--group", group]
-    if start:
-        argv += ["--start"]
-    return invoke_cli_text(argv)
+    ``create`` was folded into ``new``'s dir-template system (card
+    refactor/consolidate-create-into-new-templates), and ``new`` was in
+    turn renamed to ``create`` (CRUD naming, reusing the vacated verb).
+    There is no ``developer``/``scientist`` template — those were the
+    planned-then-dropped names; the fleet's PROVEN dir-templates already
+    cover the same ground: use ``python_developer`` for a developer-role
+    agent and ``researcher`` for a research-role agent (``generalist`` for
+    anything else). The underscore-agent skeleton is copied wholesale and
+    its ``SAC_PLACEHOLDER_PROJECT`` / ``SAC_PLACEHOLDER_AGENT_ID`` tokens
+    filled from ``project`` (defaults to ``name``) and ``name``
+    respectively. The old auto-detected editable-install toggle is gone —
+    the install step is now unconditional in the template (delete it by
+    hand if the target repo ships no Python package). For Telegram, add
+    ``server:claude-code-telegrammer`` to the spec by hand after creation;
+    the BOT TOKEN itself is then auto-resolved at start from the fleet
+    pool (``CCT_BOT_TOKEN_<SLOT>`` via ``SAC_SECRETS_ENVRC`` — see
+    ``runtimes/_cct_token_pool.py``), so no per-project ``.envrc`` is
+    required anymore. ``start=True`` launches the agent afterwards. The
+    developer group is authorized to CRUD agents."""
+    argv = [
+        "agents",
+        "create",
+        name,
+        "--template",
+        template,
+        "--project",
+        project or name,
+        "--agent-id",
+        name,
+    ]
+    result = invoke_cli_text(argv)
+    if start and result.get("exit_code") == 0:
+        start_result = invoke_cli_text(["agents", "start", name])
+        result = {
+            "exit_code": start_result.get("exit_code"),
+            "stdout": result.get("stdout", "") + start_result.get("stdout", ""),
+        }
+    return result
 
 
 def host_exec_local(
@@ -402,6 +484,7 @@ def register_agent_tools(mcp) -> None:
         agent_create,
         agent_start,
         agent_spawn,
+        agent_twin,
         agent_stop,
         agent_restart,
         agent_send,
@@ -421,6 +504,7 @@ __all__ = [
     "agent_create",
     "agent_start",
     "agent_spawn",
+    "agent_twin",
     "agent_stop",
     "agent_restart",
     "agent_send",

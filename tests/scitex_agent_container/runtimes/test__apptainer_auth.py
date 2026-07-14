@@ -130,7 +130,9 @@ def test_oauth_argv_binds_credentials_when_present(tmp_path: Path, home_redirect
     cfg = _oauth_config(tmp_path / "wd")
     # Act
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
-    # Assert — dir-bind at /tmp/sac-claude (NOT /tmp/sac-claude/.credentials.json).
+    # Assert — dir-bind at /tmp/sac-claude (NOT /tmp/sac-claude/.credentials.json),
+    # WRITABLE (shared-credential model, operator 2026-07-11: a rotation
+    # performed in-container must be recorded, not silently dropped).
     assert any(a == f"{creds.parent}:/tmp/sac-claude:rw" for a in argv)
 
 
@@ -165,3 +167,95 @@ def test_oauth_argv_omits_provider_base_url(tmp_path: Path, home_redirect: Path)
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
     # Assert
     assert not any(a.startswith("ANTHROPIC_BASE_URL=") for a in argv)
+
+
+# ---------------------------------------------------------------------------
+# spec.provider: openai (TOP-LEVEL family axis) → OPENAI columns only
+# (openai-compat-3; see _apptainer_provider.openai_env_flags)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def openai_family_env(home_redirect: Path, env_save_restore):
+    """Scrub the family override + key vars, then install a fake sac key.
+
+    ``home_redirect`` already sandboxes ``$HOME`` so the real ``~/.env``
+    never feeds ``openai_env_flags``' scitex-config cascade.
+    """
+    for key in ("SAC_PROVIDER", "SAC_OPENAI_API_KEY", "OPENAI_API_KEY"):
+        env_save_restore.delete(key)
+    env_save_restore.set("SAC_OPENAI_API_KEY", "sk-oai-secret")
+    return env_save_restore
+
+
+def _openai_family_config(workdir: Path) -> AgentConfig:
+    return AgentConfig(
+        name="oai-agent",
+        runtime="apptainer",
+        provider="openai",
+        workdir=str(workdir),
+        claude=ClaudeSpec(),
+    )
+
+
+def test_openai_family_argv_injects_sac_openai_api_key(
+    tmp_path: Path, home_redirect: Path, openai_family_env
+):
+    # Arrange
+    cfg = _openai_family_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert "SAC_OPENAI_API_KEY=sk-oai-secret" in argv
+
+
+def test_openai_family_argv_skips_oauth_credentials_bind(
+    tmp_path: Path, home_redirect: Path, openai_family_env
+):
+    # Arrange — even with a real host creds file present, an openai-family
+    # launch must not bind any Anthropic credential.
+    _write_host_creds(home_redirect)
+    cfg = _openai_family_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert not any("/tmp/sac-claude" in a for a in argv)
+
+
+def test_openai_family_argv_omits_claude_config_dir(
+    tmp_path: Path, home_redirect: Path, openai_family_env
+):
+    # Arrange — no Claude CLI/SDK runs, so no config-dir redirect either.
+    _write_host_creds(home_redirect)
+    cfg = _openai_family_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert not any(a.startswith("CLAUDE_CONFIG_DIR=") for a in argv)
+
+
+def test_openai_family_argv_does_not_forward_anthropic_key(
+    tmp_path: Path, home_redirect: Path, openai_family_env
+):
+    # Arrange — a host ANTHROPIC_API_KEY must NOT leak into an
+    # openai-family container (the OAuth forwarding path is skipped).
+    openai_family_env.set("ANTHROPIC_API_KEY", "sk-ant-should-not-leak")
+    cfg = _openai_family_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert not any(a.startswith("ANTHROPIC_API_KEY=") for a in argv)
+
+
+def test_default_family_argv_omits_openai_key(
+    tmp_path: Path, home_redirect: Path, openai_family_env
+):
+    # Arrange — the Claude column stays clean: a default (anthropic)
+    # spec never receives the OPENAI columns even when the host holds
+    # an OpenAI key.
+    _write_host_creds(home_redirect)
+    cfg = _oauth_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert not any(a.startswith("SAC_OPENAI_API_KEY=") for a in argv)

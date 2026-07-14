@@ -24,14 +24,26 @@ from pathlib import Path
 
 import click
 
-from . import _image_source_build
+from .. import _build_priority
+from . import _image_inventory_cmds, _image_source_build
 from ._helpers import HelpRecursiveGroup, console
+from ._helpers._console import logger
 
 # Module-level overridable reference for the source-bundled build path.
 # Tests reassign this to a real recording callable (same swap-and-restore
 # pattern as ``_load_apptainer``); production code calls through it so
 # tests don't need to patch the cli_pkg._image_source_build module.
 _build_layer_from_source = _image_source_build.build_layer_from_source
+
+# Same seam pattern for the low-priority self-demotion
+# (incident-local-heavy-build) — tests swap in a recording fake so the
+# pytest process itself never gets demoted (demotion is one-way).
+_demote_build_priority = _build_priority.demote_current_process_to_low_priority
+
+# Same seam pattern for the remote-first load advisory — tests swap in a
+# canned-string fake so the decision doesn't depend on the CI host's
+# live loadavg.
+_remote_build_advisory = _build_priority.remote_build_advisory
 
 # Recipes ship inside the wheel (read-only, package-relative).
 _RECIPES_DIR = Path(__file__).resolve().parent.parent / "containers"
@@ -129,6 +141,14 @@ def image_group() -> None:
     """Container image lifecycle (apptainer + docker; delegates to scitex-container)."""
 
 
+# Read-only reporting verbs (list / status / snapshot) — extracted to
+# _image_inventory_cmds (512-line budget); registered here so the CLI
+# surface is unchanged.
+image_group.add_command(_image_inventory_cmds.image_list)
+image_group.add_command(_image_inventory_cmds.image_status)
+image_group.add_command(_image_inventory_cmds.image_snapshot)
+
+
 # ---------------------------------------------------------------------------
 # build
 # ---------------------------------------------------------------------------
@@ -148,10 +168,21 @@ def image_group() -> None:
     default=False,
     help="Skip confirmation. Also implies overwrite of any existing SIF.",
 )
-def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
+@click.option(
+    "--no-nice",
+    is_flag=True,
+    default=False,
+    help="Build at normal priority (skip the default nice-19 + ionice "
+    "best-effort-low self-demotion; for dedicated build machines / CI).",
+)
+def image_build(
+    layer: str, sandbox: bool, dry_run: bool, yes: bool, no_nice: bool
+) -> None:
     """Build the :LAYER Apptainer SIF (default: base).
 
     Sac is apptainer-only since the 2026-05-13 docker/podman ripout.
+    Builds self-demote to low CPU/IO priority by default so a bake
+    can't starve an interactive host; ``--no-nice`` restores full speed.
 
     \b
     Examples:
@@ -224,6 +255,26 @@ def image_build(layer: str, sandbox: bool, dry_run: bool, yes: bool) -> None:
     except _image_source_build.BootstrapSifMissing as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
+
+    # incident-local-heavy-build closure #3 (remote-first): when this
+    # host is already busy (loadavg above LOAD_ADVISORY_FACTOR x cores),
+    # say LOUDLY that a remote / dedicated build host (Spartan) is the
+    # right place for the bake — then still proceed, demoted.
+    # scitex-logging WARNING so it is colour-coded and unmissable
+    # (PR #607 convention).
+    advisory = _remote_build_advisory()
+    if advisory:
+        logger.warning(advisory)
+
+    # incident-local-heavy-build: self-demote NOW — after every cheap
+    # validation/refusal path, right before the heavy work — so the whole
+    # bake (staging copytree + scitex-container's apptainer build →
+    # %post apt/pip → mksquashfs, which all inherit this process's
+    # priority) runs at low CPU/IO priority by default. Best-effort-low
+    # IO, not idle class — idle starved/killed a real mksquashfs stage
+    # under load (see _build_priority module docstring).
+    for line in _demote_build_priority(skip=no_nice):
+        click.echo(line)
 
     try:
         output = _build_layer_from_source(
@@ -321,76 +372,6 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# list
-# ---------------------------------------------------------------------------
-@image_group.command("list")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def image_list(as_json: bool) -> None:
-    """List installed SIFs across every scitex-* package.
-
-    Discovers via the ``~/.scitex/<pkg>/containers/*.sif`` convention
-    (operator design 8566) — sac does NOT know any other package by
-    name; new packages light up automatically.
-
-    \b
-    Example:
-      $ sac image list
-      $ sac image list --json
-    """
-    _ensure_containers_dir()
-    entries: list[Path] = []
-    entries.extend(sorted(_SCITEX_USER_STATE_ROOT.glob("*/containers/*.sif")))
-    entries.extend(
-        sorted(
-            p
-            for p in _SCITEX_USER_STATE_ROOT.glob("*/containers/*.sandbox")
-            if p.is_dir()
-        )
-    )
-
-    def _dir_size_bytes(d: Path) -> int:
-        total = 0
-        for p in d.rglob("*"):
-            try:
-                if p.is_file() and not p.is_symlink():
-                    total += p.stat().st_size
-            except OSError:
-                pass
-        return total
-
-    versions = []
-    for p in entries:
-        is_sandbox = p.is_dir()
-        size_bytes = _dir_size_bytes(p) if is_sandbox else p.stat().st_size
-        versions.append(
-            {
-                "package": p.parent.parent.name,
-                "name": p.name,
-                "path": str(p),
-                "kind": "sandbox" if is_sandbox else "sif",
-                "size_bytes": size_bytes,
-                "mtime": p.stat().st_mtime,
-            }
-        )
-    console.print(f"[dim]scan root: {_SCITEX_USER_STATE_ROOT}/*/containers/[/dim]")
-    if as_json:
-        click.echo(json.dumps(versions, indent=2, default=str))
-        return
-    if not versions:
-        console.print(
-            f"[dim](no SIFs under {_SCITEX_USER_STATE_ROOT}/*/containers/ — "
-            f"run `sac image build base -y && sac image build scitex -y` to "
-            f"populate; downstream packages populate their own siblings)[/dim]"
-        )
-        return
-    for v in versions:
-        size_mb = v["size_bytes"] / (1024 * 1024)
-        tag = "sandbox" if v["kind"] == "sandbox" else "sif"
-        label = f"{v['package']}/{v['name']}"
-        console.print(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB")
-
-
-# ---------------------------------------------------------------------------
 # switch
 # ---------------------------------------------------------------------------
 @image_group.command("switch")
@@ -423,65 +404,6 @@ def image_rollback() -> None:
 
     prev = rollback(containers_dir=_CONTAINERS_DIR)
     console.print(f"[green]rolled back[/green] -> {prev}")
-
-
-# ---------------------------------------------------------------------------
-# status
-# ---------------------------------------------------------------------------
-@image_group.command("status")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def image_status(as_json: bool) -> None:
-    """Unified container dashboard (active version, sandboxes, sizes).
-
-    \b
-    Example:
-      $ sac image status
-      $ sac image status --json
-    """
-    sc_status = _load_apptainer().status
-
-    info = sc_status(containers_dir=_CONTAINERS_DIR)
-    if as_json:
-        click.echo(json.dumps(info, indent=2, default=str))
-        return
-    if not info:
-        console.print(f"[dim](no containers in {_CONTAINERS_DIR})[/dim]")
-        return
-    for entry in info:
-        name = entry.get("name", "?")
-        size = entry.get("sif_size", "-")
-        rebuild = "REBUILD" if entry.get("needs_rebuild") else "ok"
-        console.print(f"  {name:30s}  {size!s:>10}  {rebuild}")
-
-
-# ---------------------------------------------------------------------------
-# snapshot
-# ---------------------------------------------------------------------------
-@image_group.command("snapshot")
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Write JSON to this path instead of stdout.",
-)
-def image_snapshot(output: Path | None) -> None:
-    """Capture a reproducibility snapshot (pip + apt + conda + git + ...).
-
-    \b
-    Example:
-      $ sac image snapshot
-      $ sac image snapshot -o env.json
-    """
-    env_snapshot = _load_env_snapshot()
-
-    snap = env_snapshot(containers_dir=_CONTAINERS_DIR)
-    payload = json.dumps(snap, indent=2, default=str)
-    if output:
-        output.write_text(payload)
-        console.print(f"[green]wrote[/green] {output}")
-    else:
-        click.echo(payload)
 
 
 # ---------------------------------------------------------------------------

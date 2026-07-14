@@ -313,6 +313,41 @@ def test_broker_forwards_one_shot_to_body(listen_env) -> None:
     assert json.loads(captured["body"])["one_shot"] is True
 
 
+def test_broker_forwards_assume_yes_to_body(listen_env) -> None:
+    # Arrange — consent-propagation fix (2026-07-05, paper-scitex-clew report).
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener, assume_yes=True)
+    # Assert
+    assert json.loads(captured["body"])["assume_yes"] is True
+
+
+def test_broker_omits_assume_yes_when_default_false(listen_env) -> None:
+    # Arrange — regression guard: default (no consent given) is unchanged.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener)
+    # Assert
+    assert "assume_yes" not in json.loads(captured["body"])
+
+
+def test_maybe_broker_in_sif_forwards_assume_yes_to_body(sif_env, listen_env) -> None:
+    # Arrange — flip is_in_sif() to True so the chokepoint actually brokers.
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener, assume_yes=True)
+    # Assert
+    assert json.loads(captured["body"])["assume_yes"] is True
+
+
 def test_maybe_broker_in_sif_forwards_foreground_to_body(sif_env, listen_env) -> None:
     # Arrange — flip is_in_sif() to True so the chokepoint actually
     # brokers (rather than returning False for the bare-host path).
@@ -405,7 +440,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {yaml_root / (name + '-work')}\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
@@ -487,6 +522,29 @@ def test_agent_start_in_sif_raises_when_listen_url_missing(
         raised_msg = str(exc)
     # Assert — fail-loud names the missing env var so the operator can fix.
     assert "SAC_LISTEN_BASE_URL" in raised_msg
+
+
+def test_agent_start_forwards_assume_yes_to_broker_body(
+    isolated_state, sif_env, listen_env, tmp_path
+) -> None:
+    # Arrange — consent-propagation fix (2026-07-05, paper-scitex-clew
+    # report): agent_start's own assume_yes kwarg must reach the wire.
+    sif_env("/path/to/agent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    spec = _write_spec(tmp_path / "yaml", "capsule-child")
+    opener, captured = _opener_returning(b'{"name":"capsule-child","returncode":0}')
+    # Act
+    agent_start(
+        str(spec),
+        registry=Registry(registry_dir=tmp_path / "reg"),
+        runtime_factory=lambda _c: _RuntimeRecorder(),
+        handover_mod=_FakeHandover(),
+        sleep_fn=lambda _s: None,
+        in_sif_opener=opener,
+        assume_yes=True,
+    )
+    # Assert
+    assert json.loads(captured["body"])["assume_yes"] is True
 
 
 def test_agent_start_not_in_sif_uses_local_runtime(

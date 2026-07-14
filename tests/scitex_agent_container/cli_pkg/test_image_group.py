@@ -153,6 +153,55 @@ def _use_source_builder(
         ig._build_layer_from_source = saved  # type: ignore[assignment]
 
 
+@contextmanager
+def _use_demoter(*, lines: list[str] | None = None) -> Iterator[list[dict]]:
+    """Swap ``image_group._demote_build_priority`` for a recording fake.
+
+    Same save/restore pattern as ``_use_source_builder``. The fake
+    records each call's kwargs into the yielded list and returns
+    ``lines`` (default: none) — it NEVER demotes, so the pytest process
+    keeps its priority (real demotion is one-way; see
+    tests/scitex_agent_container/test__build_priority.py for the real
+    child-process behavior tests).
+    """
+    calls: list[dict] = []
+
+    def _fake_demoter(**kw):
+        calls.append(kw)
+        return list(lines or [])
+
+    saved = ig._demote_build_priority
+    ig._demote_build_priority = _fake_demoter  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        ig._demote_build_priority = saved  # type: ignore[assignment]
+
+
+@contextmanager
+def _use_advisory(*, text: str | None = None) -> Iterator[list[dict]]:
+    """Swap ``image_group._remote_build_advisory`` for a recording fake.
+
+    Same save/restore pattern as ``_use_demoter``. The fake records each
+    call's kwargs into the yielded list and returns ``text`` (default:
+    ``None`` = host looks idle) so the decision never depends on the CI
+    host's live loadavg (real threshold behavior is covered in
+    tests/scitex_agent_container/test__build_priority.py).
+    """
+    calls: list[dict] = []
+
+    def _fake_advisory(**kw):
+        calls.append(kw)
+        return text
+
+    saved = ig._remote_build_advisory
+    ig._remote_build_advisory = _fake_advisory  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        ig._remote_build_advisory = saved  # type: ignore[assignment]
+
+
 # ---------------------------------------------------------------------------
 # tmp-rooted HOME so every command writes into ``tmp_path``.
 # Real env var, real bootstrap, real ``.gitignore``. No monkeypatch.
@@ -345,6 +394,95 @@ def test_build_scitex_errors_loud_when_base_sif_missing(home_tmp):
     result = runner.invoke(image_group, ["build", "scitex", "--yes"])
     # Assert
     assert result.exit_code == 1 and "sac image build base" in result.output
+
+
+# ---------------------------------------------------------------------------
+# build — low-priority self-demotion (incident-local-heavy-build)
+# ---------------------------------------------------------------------------
+
+
+def test_build_default_calls_priority_demoter_with_skip_false(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")):
+        with _use_demoter() as calls:
+            runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert — self-demotion is the DEFAULT (no flag needed).
+    assert calls == [{"skip": False}]
+
+
+def test_build_no_nice_flag_forwards_skip_true_to_demoter(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")):
+        with _use_demoter() as calls:
+            runner.invoke(image_group, ["build", "base", "--yes", "--no-nice"])
+    # Assert — the explicit opt-out for dedicated build machines / CI.
+    assert calls == [{"skip": True}]
+
+
+def test_build_dry_run_never_calls_priority_demoter(home_tmp):
+    # Arrange — a dry run does no heavy work, so it must not demote.
+    runner = CliRunner()
+    # Act
+    with _use_demoter() as calls:
+        runner.invoke(image_group, ["build", "--dry-run"])
+    # Assert
+    assert calls == []
+
+
+def test_build_echoes_low_priority_notice_from_demoter(home_tmp):
+    # Arrange — the loud one-line notice must land in the build output
+    # so nobody is surprised by a slower build.
+    from scitex_agent_container._build_priority import LOW_PRIORITY_NOTICE
+
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")):
+        with _use_demoter(lines=[LOW_PRIORITY_NOTICE]):
+            result = runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert LOW_PRIORITY_NOTICE in result.output
+
+
+# ---------------------------------------------------------------------------
+# build — remote-first load advisory (incident-local-heavy-build closure #3)
+# ---------------------------------------------------------------------------
+
+
+def test_build_consults_remote_advisory_before_heavy_work(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")):
+        with _use_advisory() as calls:
+            runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert — consulted exactly once, with live introspection defaults.
+    assert calls == [{}]
+
+
+def test_build_proceeds_demoted_when_advisory_fires(home_tmp):
+    # Arrange — the advisory is a WARNING, never a refusal: a loaded
+    # host still gets its (demoted) build.
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-base.sif")):
+        with _use_advisory(text="HOST ALREADY LOADED: prefer Spartan"):
+            result = runner.invoke(image_group, ["build", "base", "--yes"])
+    # Assert
+    assert result.exit_code == 0 and "built" in result.output
+
+
+def test_build_dry_run_never_consults_remote_advisory(home_tmp):
+    # Arrange — a dry run does no heavy work, so no advisory either.
+    runner = CliRunner()
+    # Act
+    with _use_advisory() as calls:
+        runner.invoke(image_group, ["build", "--dry-run"])
+    # Assert
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------

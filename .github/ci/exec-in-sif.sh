@@ -50,12 +50,45 @@ mkdir -p "$APPTAINER_TMPDIR"
 # (`python -m scitex_agent_container ...`); a failed/killed run leaves them
 # running and holding a2a ports [19000-19999], so claims accumulate until the
 # allocator can't find a free port (test__start_force_clears_session went red on
-# the release node after repeated retries). Runs here are serialised (one job at
-# a time) and the operator's LIVE agents run on a DIFFERENT host, so killing
-# leftover CI sac/ci-cpu processes before this run starts is safe + makes the
-# node self-healing instead of needing a manual clean.
-pkill -f 'python.* -m scitex_agent_container' 2>/dev/null || true
-pkill -f 'apptainer.*ci-cpu' 2>/dev/null || true
+# the release node after repeated retries). So the reap itself is legitimate.
+#
+# *** BUT AN UNSCOPED pkill HERE IS A LOADED GUN AIMED AT OUR OWN SIBLING JOBS. ***
+#
+# This block used to justify itself with: "runs here are serialised (one job at a
+# time)". That WAS true when there was ONE runner. Then -02 and -03 were
+# registered — and nobody re-checked the invariant this destructive action rests
+# on. It is now FALSE: all three matrix legs start at the SAME INSTANT, they run
+# the SAME ci-cpu SIF, `pkill -f` is MACHINE-scoped, and the runners share one
+# node (spartan-bm155). Nothing but timing has been stopping a leg from SIGTERMing
+# its siblings mid-run.
+#
+# HONESTY, because the wrong story is worse than no story: this pkill is NOT known
+# to have caused the v0.21.14 / v0.21.15 release ghost-tags. I believed it had, and
+# said so. The real cause was found by scitex-hpc, by inspecting live processes:
+# DUPLICATE Runner.Listener processes under one registered runner identity, with
+# GitHub reconciling the conflict by killing the other session's in-flight job
+# (SIGTERM → 143). That explains a MID-RUN kill; this pkill only fires at startup
+# and could not have. Fixed on their side.
+#
+# So this change is HAZARD REMOVAL, not a root-cause fix. It stays because the
+# hazard is real and the justifying assumption is provably dead.
+#
+# THE AGE GUARD IS THE FIX: it puts the word this comment always used — LEFTOVER —
+# into the MECHANISM instead of into an assumption the world can quietly
+# invalidate underneath it. A leftover from a prior run is minutes-to-hours old; a
+# concurrent sibling is seconds old. `--older` separates them no matter how many
+# runners share the node, which is exactly the property "serialised" did not have.
+_REAP_MIN_AGE_S=600
+if pkill --help 2>&1 | grep -q -- '--older'; then
+    pkill --older "$_REAP_MIN_AGE_S" -f 'python.* -m scitex_agent_container' 2>/dev/null || true
+    pkill --older "$_REAP_MIN_AGE_S" -f 'apptainer.*ci-cpu'                   2>/dev/null || true
+else
+    # procps too old for --older. Reaping leftovers is a nice-to-have; killing the
+    # sibling matrix legs is not. Skip LOUDLY rather than shoot blind — a silently
+    # skipped cleanup costs a stale port, an unscoped pkill costs a release.
+    echo "::warning::pkill --older unsupported here; skipping the leftover reap." \
+         "An unscoped pkill would SIGTERM the sibling matrix legs (see run 29284554656)."
+fi
 
 # --bind punim0264: $HOME/.scitex is a symlink into punim0264; bind it so the
 # symlink resolves inside the container. --pwd "$PWD" keeps the checkout as cwd.

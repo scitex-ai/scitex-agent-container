@@ -37,6 +37,14 @@ Public surface:
 * :func:`scan_textual_cap_markers(text, patterns=DEFAULT_PATTERNS)`
   — case-insensitive regex scan over a multi-line blob. Returns
   ``RateLimitSignal.TEXTUAL_MATCH`` on any hit (or ``None``).
+* :func:`detect_signal_from_text(text)` — the REACTIVE entry point
+  for a stringified SDK failure (``str(exc)`` + captured stderr):
+  scans for an embedded HTTP-status signature FIRST
+  (:data:`_STATUS_TEXT_SIGNATURES`), then falls back to
+  :func:`scan_textual_cap_markers`. This is what closes the gap
+  between "the SDK never gives us a typed status code" (see
+  ``_runners/_auth_failure.py``'s identical 401 problem) and
+  :func:`classify_http_status`, which needs an already-parsed int.
 * :data:`DEFAULT_TEXTUAL_PATTERNS` — operator-tunable list of
   case-insensitive regex strings. Driven by data, not code, so
   adding "Xiaomi quota exhausted" or "DeepSeek 402 insufficient
@@ -48,9 +56,11 @@ Out of scope (deferred):
   ``_runners/_provider_dispatch``) owns 401/402/500-503 etc;
   THIS module concerns itself only with the subset that signals
   ACCOUNT cap (vs network blip, vs operator bug).
-* Action layer — Mode A backoff_agent and Mode B rotate_account
-  are sibling modules; this file feeds them through the
-  classifier.
+* Action layer — Mode A :func:`_account.backoff_agent.backoff_agent`
+  and Mode B :func:`_account.rotate_account.rotate_account` are
+  sibling modules; :mod:`_runners._rate_limit_reactive` wires this
+  file's detectors through :mod:`_account.rate_limit_classifier`
+  into those two.
 """
 
 from __future__ import annotations
@@ -174,9 +184,74 @@ def scan_textual_cap_markers(
     return None
 
 
+# Signatures that reveal an HTTP status embedded in a STRINGIFIED SDK
+# failure — ``str(exc)`` plus whatever stderr
+# ``_runners._stderr_capture.enrich_detail_with_stderr`` folded in. The
+# ``claude-agent-sdk`` does not surface a typed status code (identical
+# gap to the 401 problem ``_runners/_auth_failure.py`` already solves
+# with its own narrow substring list), so detection here is text-based
+# too.
+#
+# Provider ``error.type`` strings are checked FIRST — Anthropic's JSON
+# error body shape is ``{"type": "error", "error": {"type":
+# "rate_limit_error", ...}}`` for 429 and ``"overloaded_error"`` for
+# 529; these are unambiguous, provider-defined tokens with no realistic
+# false-positive risk. The bare status-code fallback is a
+# word-boundary match (``\b429\b`` etc) — narrower than a plain
+# substring so an unrelated "...429 lines changed..." in a tool-result
+# blob is far less likely to trip it, though — like the 401 list — it
+# is not a zero-risk heuristic. Order matters: first match wins.
+_STATUS_TEXT_SIGNATURES: tuple[tuple[str, RateLimitSignal], ...] = (
+    (r"rate_limit_error", RateLimitSignal.HTTP_429),
+    (r"overloaded_error", RateLimitSignal.HTTP_529),
+    (r"\b429\b", RateLimitSignal.HTTP_429),
+    (r"\b529\b", RateLimitSignal.HTTP_529),
+    (r"\b403\b", RateLimitSignal.HTTP_403),
+)
+
+
+def detect_signal_from_text(text: str) -> tuple[RateLimitSignal, str] | None:
+    """Detect a REACTIVE rate-limit signal in a stringified SDK failure.
+
+    Two-tier scan, first hit wins:
+
+    1. HTTP-status text signatures (:data:`_STATUS_TEXT_SIGNATURES`) —
+       provider ``error.type`` strings, then a bare status-code
+       fallback.
+    2. Textual cap markers (:func:`scan_textual_cap_markers`) —
+       unambiguous cap phrasing such as "hit your weekly limit".
+
+    Parameters
+    ----------
+    text
+        The failure text to scan — typically the exception's ``str()``
+        already enriched with captured subprocess stderr (see
+        ``_runners._stderr_capture.enrich_detail_with_stderr``).
+
+    Returns
+    -------
+    tuple[RateLimitSignal, str] | None
+        ``(signal, matched_pattern)`` on a hit, else ``None``. Empty /
+        whitespace-only input returns ``None``.
+
+    Never raises — a malformed pattern is skipped, same tolerance as
+    :func:`scan_textual_cap_markers`.
+    """
+    if not text or not text.strip():
+        return None
+    for pattern, signal in _STATUS_TEXT_SIGNATURES:
+        try:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return signal, pattern
+        except re.error:  # stx-allow: fallback (reason: mirrors scan_textual_cap_markers's malformed-pattern tolerance — a bad signature must not crash the runner)
+            continue
+    return scan_textual_cap_markers(text)
+
+
 __all__ = [
     "DEFAULT_TEXTUAL_PATTERNS",
     "RateLimitSignal",
     "classify_http_status",
+    "detect_signal_from_text",
     "scan_textual_cap_markers",
 ]

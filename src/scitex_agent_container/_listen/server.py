@@ -55,143 +55,14 @@ async def health(_request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "service": "sac-listen", "v": 1})
 
 
-async def list_agents(_request: Request) -> JSONResponse:
-    """List agents the local Registry knows about + self-peers.
+# ``list_agents`` (GET /agents — the peer-discovery route backing the
+# ``a2a_peers`` MCP tool) was extracted into ``_agents_list`` when it grew
+# the inbox-subscriber reachability observation (REGISTERED IS NOT
+# REACHABLE — see ``_reachability``). Re-imported here so route
+# registration and the historical
+# ``from ..._listen.server import list_agents`` import path keep working.
+from ._agents_list import list_agents  # noqa: E402,F401
 
-    Two sources, concatenated in this order:
-
-    1. Container-agent rows from :meth:`Registry.list_all` — the
-       traditional ``sac a2a peers`` shape (``name`` / ``config`` /
-       ``pid`` / ``started_at`` / ``screen``).
-    2. Self-peer rows from :func:`_self_peers.discover_self_peers`
-       — any agent dir whose ``spec.yaml`` carries only a
-       ``listen_url`` (no container ``spec`` block, no
-       ``apiVersion``). These have no ``pid`` / ``screen`` — they
-       are external listen sessions that own a port and want to be
-       discoverable. Carries ``"kind": "self-peer"`` so peer-aware
-       clients can branch on the source.
-
-    Dedup: a self-peer whose ``name`` already appears in the
-    container-row list loses to the container row (the running
-    container is the more authoritative source). Order matches
-    operator-facing convention: container rows first, then
-    self-peers alphabetically by ``name``.
-    """
-    rows: list[dict] = []
-    seen_names: set[str] = set()
-    try:
-        reg = Registry()
-        for row in reg.list_all():
-            rows.append(row)
-            name = row.get("name") if isinstance(row, dict) else None
-            if isinstance(name, str):
-                seen_names.add(name)
-    except Exception as exc:  # stx-allow: fallback (reason: surface a JSON error to the caller rather than ASGI 500 stack)
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    # Self-peers — best-effort. Failures here must NOT mask a healthy
-    # container-row response (an unreadable agents dir is operator
-    # state, not a listen failure).
-    #
-    # Runtime self-identity is derived from host_config — the same
-    # source the existing channel/listen self-registration paths
-    # consult. Missing host_config / missing ``lead:`` block degrades
-    # to ``None``; :func:`discover_self_peers` then surfaces the
-    # literal ``self`` dir as ``"self"`` with a logged warning, which
-    # is the loudest signal short of failing the request.
-    try:
-        from ..config._resolve import _search_dirs
-        from ._self_peers import discover_self_peers
-
-        primary, env_dirs, fleet_dirs = _search_dirs()
-        search_dirs = [*env_dirs, primary, *fleet_dirs]
-        self_identity = _resolve_runtime_self_identity()
-        for peer in discover_self_peers(search_dirs, self_identity=self_identity):
-            if peer["name"] in seen_names:
-                continue
-            rows.append(peer)
-            seen_names.add(peer["name"])
-    except Exception as exc:  # stx-allow: fallback (reason: self-peer discovery must never block the registry response)
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "list_agents: self-peer discovery failed (returning registry rows only): %s",
-            exc,
-        )
-    # Comms-node self-registrations (operator mandate 2026-06-14): ANY
-    # process that loaded the sac MCP and self-registered into the
-    # comms_nodes table (e.g. ``sac mcp channel --name lead``, or any
-    # CLI/SDK session running the channel adapter) MUST appear in
-    # ``a2a peers`` at startup -- no exceptions. Such nodes are not in
-    # the Registry (no container) and can live outside the filesystem
-    # self-peer search dirs, so without this source the lead (and any
-    # bare sac-MCP session) is invisible here. Best-effort: a read
-    # failure must not mask the rest of the response.
-    try:
-        from .._state.state_db_comms_nodes import list_comms_nodes
-
-        for node in list_comms_nodes():
-            if node["name"] in seen_names:
-                continue
-            rows.append(
-                {
-                    "name": node["name"],
-                    "host": node["host"],
-                    "a2a_port": node["a2a_port"],
-                    "kind": "comms-node",
-                    "registered_at": node.get("registered_at"),
-                    "updated_at": node.get("updated_at"),
-                }
-            )
-            seen_names.add(node["name"])
-    except Exception as exc:  # stx-allow: fallback (reason: comms-node surfacing must never block the registry response)
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "list_agents: comms_nodes surfacing failed (returning prior rows): %s",
-            exc,
-        )
-    # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
-    # ``a2a_port`` + derived ``turn_url`` on every row so scitex-todo's
-    # notify resolver (P3a-b) can dispatch nudge→turn without redeploy.
-    # Idempotent: self-peer rows that already carry a non-None value
-    # keep theirs (the discovery layer is the authoritative source for
-    # those).
-    from ._registry_endpoints import enrich_row_with_endpoint
-
-    rows = [enrich_row_with_endpoint(row) for row in rows]
-    return JSONResponse({"agents": rows})
-
-
-def _resolve_runtime_self_identity() -> str | None:
-    """Return the running listen's runtime identity, or ``None``.
-
-    Reads :func:`host_config.load().lead.name` — the same source the
-    existing channel/listen self-registration paths
-    (:mod:`_mcp._channel_self_register`,
-    :func:`cli_pkg.listen_cmds._register_self_comms_node`) consult.
-    A missing ``lead:`` block in host_config returns ``None`` — the
-    self-peer discovery downstream then surfaces the literal
-    ``self`` dir as ``"self"`` so the operator sees the gap rather
-    than getting a silently-renamed peer row.
-
-    Generic on purpose: there is no name-specific branching here.
-    ``host_config.lead.name`` is THE host's "who am I" answer for
-    operator-class sessions; a future evolution that supports
-    multiple self-identities on one host would extend the host_config
-    shape, not insert per-name special cases here.
-    """
-    try:
-        from .._state.host_config import load as load_host_config
-
-        cfg = load_host_config()
-        lead = getattr(cfg, "lead", None)
-        if lead is not None:
-            name = getattr(lead, "name", None)
-            if isinstance(name, str) and name.strip():
-                return name
-    except Exception:  # stx-allow: fallback (reason: host_config errors must never block the /agents response)
-        pass
-    return None
 
 
 async def agent_status(request: Request) -> JSONResponse:
@@ -224,10 +95,43 @@ async def agent_status(request: Request) -> JSONResponse:
     # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
     # ``a2a_port`` + derived ``turn_url`` so a status poll yields the
     # same endpoint shape ``GET /agents`` does.
-    from ._registry_endpoints import enrich_row_with_endpoint
+    from ._registry_endpoints import enrich_row
 
-    body = enrich_row_with_endpoint(body)
+    body = enrich_row(body)
+    # …and the same inbox-subscriber OBSERVATION ``GET /agents`` carries, so
+    # a single-agent status poll can also tell REGISTERED from REACHABLE. A
+    # running session_id + a live pid say nothing about whether this agent's
+    # inbox adapter is attached; only the broker does. See ``_reachability``.
+    body = await _annotate_status_reachability(request, body)
     return JSONResponse(body)
+
+
+async def _annotate_status_reachability(
+    request: Request, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Add ``inbox_subscribers`` / ``inbox_reachable`` to a status body.
+
+    Degrades to ``unknown`` (never ``unreachable``) if the broker cannot be
+    read — "I could not check" must not be rendered as death.
+    """
+    from ._reachability import UNKNOWN, annotate_reachability
+
+    try:
+        counts = await request.app.state.inbox.subscriber_counts()
+        local_host = getattr(request.app.state, "local_host", None)
+    except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "agent_status: could not read inbox broker (reporting reachability "
+            "as %r, NOT as unreachable): %s",
+            UNKNOWN,
+            exc,
+        )
+        return {**body, "inbox_subscribers": None, "inbox_reachable": UNKNOWN}
+    return annotate_reachability(
+        body, subscriber_counts=counts, local_host=local_host
+    )
 
 
 # --- extracted handlers re-imported for routes + back-compat ---------------

@@ -29,7 +29,7 @@ import pytest
 
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config import AgentConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, real YAML on disk
@@ -84,7 +84,7 @@ def _write_spec(
         "kind: Agent\n"
         "spec:\n"
         f"  runtime: {runtime}\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         f"  workdir: {tmp_path / 'work'}\n"
         f"{apptainer_default}"
         "  claude:\n"
@@ -819,6 +819,57 @@ def test_agent_start_runtime_failure_raises_runtime_error(
         call()
 
 
+def _start_with_failing_runtime(spec: Path, registry: Registry) -> None:
+    """Drive a real ``agent_start`` failure, swallowing the expected
+    ``RuntimeError`` -- the raise itself is covered by
+    ``test_agent_start_runtime_failure_raises_runtime_error``; these
+    helpers only care about what got written to disk before it fired."""
+    runtime = FakeRuntime(running=False, start_result=False)
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            runtime_factory=lambda _c: runtime,
+            handover_mod=FakeHandover(),
+            sleep_fn=_no_sleep,
+        )
+    except RuntimeError:
+        pass
+
+
+def test_agent_start_runtime_failure_persists_diag_file(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange -- a false-negative start whose only evidence must survive
+    # past the raised exception (sac-agent-start-false-negative-tui-
+    # registry-row-20260710): killing the tmux session is often the only
+    # way to stop an agent with no registry row, which destroys a
+    # not-yet-persisted pane capture forever.
+    from scitex_agent_container.runtimes.tui_session import state_dir_for_config
+
+    spec = _write_spec(tmp_path)
+    config = load_config(str(spec))
+    # Act
+    _start_with_failing_runtime(spec, registry)
+    # Assert
+    assert (state_dir_for_config(config) / "start_failure_diag.log").is_file()
+
+
+def test_agent_start_runtime_failure_diag_names_the_reason(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    from scitex_agent_container.runtimes.tui_session import state_dir_for_config
+
+    spec = _write_spec(tmp_path)
+    config = load_config(str(spec))
+    # Act
+    _start_with_failing_runtime(spec, registry)
+    # Assert
+    diag_log = state_dir_for_config(config) / "start_failure_diag.log"
+    assert "runtime.start() returned False" in diag_log.read_text()
+
+
 def test_agent_start_dry_run_does_not_register(
     tmp_path: Path, registry: Registry
 ) -> None:
@@ -1498,6 +1549,60 @@ def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
     assert ok is True and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_passes_assume_yes_to_start_leg(
+    tmp_path: Path, registry: Registry
+) -> None:
+    """A restart's inner ``agent_start`` MUST carry ``assume_yes=True``.
+
+    Regression guard for the in-SIF broker 502 reproduced 2026-07-09: a
+    ``sac agents restart <name>`` run inside an apptainer SIF reaches the
+    LOCAL ``agent_restart`` → ``agent_start`` path; ``agent_start`` then
+    brokers the start to the host's ``sac listen`` ``POST /agents``
+    handler, which shells a FRESH ``sac agents start <name>`` subprocess.
+    That subprocess re-runs the interactive refuse-without-``--yes`` gate,
+    so unless the ORIGINAL restart's consent is threaded through as
+    ``assume_yes`` the host refused itself with "refusing to start <name>
+    without --yes/-y" → HTTP 502 — even though the restart was explicitly
+    authorized. The host-side ``assume_yes`` → ``--yes`` argv plumbing is
+    proven in ``test__agent_exec_subprocess.py``; this pins the missing
+    link: ``agent_restart`` actually SETS ``assume_yes=True``.
+
+    Real seam (no MagicMock): the ``_start.agent_start`` module attribute
+    is swapped for a capture callable and restored in ``finally`` — the
+    same save/restore-a-real-callable pattern the
+    ``test_fire_forget_hook_swallows_run_hook_exceptions`` test uses.
+    """
+    # Arrange — a real on-disk spec so the pre-start stop/settle legs run
+    # against a real FakeRuntime, then capture the kwargs the (swapped)
+    # start leg receives.
+    spec = _write_spec(tmp_path)
+    from scitex_agent_container._lifecycle import _start as _start_mod
+
+    captured: dict[str, Any] = {}
+    original_start = _start_mod.agent_start
+
+    def _capture_start(config_path: str, registry: Any = None, **kwargs: Any) -> bool:
+        captured["config_path"] = config_path
+        captured.update(kwargs)
+        return True
+
+    _start_mod.agent_start = _capture_start  # real callable, not Mock
+    try:
+        # Act
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            sleep_fn=_no_sleep,
+            handover_mod=FakeHandover(),
+            config_resolver=lambda _name: str(spec),
+        )
+    finally:
+        _start_mod.agent_start = original_start
+    # Assert — the restart's start leg asserted the already-given consent.
+    assert captured.get("assume_yes") is True, captured
+
+
 class _StaggeredRuntime(FakeRuntime):
     """Real fake whose ``is_running`` returns the next bool from a stage list.
 
@@ -1656,18 +1761,38 @@ def test_agent_restart_polls_is_running_until_false(
 # ---------------------------------------------------------------------------
 
 
+# A previous runtime that will NOT die: ``is_running`` stays True forever and
+# ``FakeRuntime`` never overrides ``agent_pid``, so the escalation has nothing
+# to SIGKILL. This is the shape that produced the operator's 2026-07-14
+# terminal:
+#
+#   WARN: previous runtime still running after 15.00s (SIGTERM ignored...);
+#         proceeding to start anyway.
+#   FAIL: duplicate session 'tui-neurovista' — agent already running.
+#   Agent 'neurovista' restarted        <-- IT WAS NOT
+#
+# The gate PREDICTED the collision, proceeded into it, and the restart then
+# reported success over an agent that was left DOWN. These cases used to
+# assert exactly that behaviour ("returns True", "starts anyway"); they now
+# assert its opposite. A stop that could not stop the thing must not report
+# success and must not start a replacement that is guaranteed to collide.
+
+
 def _build_unkillable_setup(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> _StaggeredRuntime:
     """Arrange helper: previous runtime whose ``is_running`` stays True
-    forever; caplog routed to the stop module so WARN records are
-    captured for the warning-content assertion.
+    forever and which cannot name a pid to kill; caplog routed to the
+    escalation module so its WARN records are captured.
     """
     import logging as _logging
 
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
-    caplog.set_level(_logging.WARNING, logger="scitex_agent_container._lifecycle._stop")
+    caplog.set_level(
+        _logging.WARNING,
+        logger="scitex_agent_container._lifecycle._stop_escalate",
+    )
     return _StaggeredRuntime(stages=[True])
 
 
@@ -1687,39 +1812,52 @@ def _restart_alpha_with_short_wait(
     )
 
 
-def test_agent_restart_returns_true_when_previous_runtime_will_not_exit(
+def test_agent_restart_raises_when_previous_runtime_will_not_exit(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    ok = _restart_alpha_with_short_wait(runtime, registry)
-    # Assert
-    assert ok is True
+    call = lambda: _restart_alpha_with_short_wait(runtime, registry)  # noqa: E731
+    # Assert — it used to return True here, and the CLI printed "restarted".
+    with pytest.raises(StopEscalationError):
+        call()
 
 
-def test_agent_restart_starts_new_runtime_when_previous_runtime_will_not_exit(
+def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    _restart_alpha_with_short_wait(runtime, registry)
-    # Assert
-    assert len(runtime.start_calls) == 1
+    try:
+        _restart_alpha_with_short_wait(runtime, registry)
+    except StopEscalationError:
+        pass
+    # Assert — starting here is what caused the duplicate-session collision.
+    assert len(runtime.start_calls) == 0
 
 
 def test_agent_restart_warns_about_still_running_previous_runtime(
     tmp_path: Path, registry: Registry, caplog: Any
 ) -> None:
     # Arrange
+    from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
+
     runtime = _build_unkillable_setup(tmp_path, registry, caplog)
     # Act
-    _restart_alpha_with_short_wait(runtime, registry)
+    try:
+        _restart_alpha_with_short_wait(runtime, registry)
+    except StopEscalationError:
+        pass
     messages = " ".join(rec.getMessage() for rec in caplog.records)
-    # Assert — a WARN log mentions the race so a future "telegrammer
-    # dropped after restart" recurrence is self-diagnosing from stdout.log.
-    assert "still running" in messages or "SIGTERM" in messages
+    # Assert — a WARN log still names the SIGTERM-deaf runtime, so a
+    # recurrence stays self-diagnosing from stdout.log.
+    assert "SIGTERM" in messages
 
 
 # ---------------------------------------------------------------------------

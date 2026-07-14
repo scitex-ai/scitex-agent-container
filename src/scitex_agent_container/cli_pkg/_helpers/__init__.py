@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         _extract_damaged_fields,
         _probe_local,
         get_agent_list_data,
+        is_live_status,
         print_agent_list,
         print_agent_list_json,
     )
@@ -42,6 +43,7 @@ __all__ = [
     "agent_name_complete",
     "console",
     "get_agent_list_data",
+    "is_live_status",
     "print_agent_list",
     "print_agent_list_json",
     "renamed_redirect",
@@ -56,6 +58,7 @@ _LAZY_ATTR_SOURCES = {
     "_extract_damaged_fields": "._agent_list",
     "_probe_local": "._agent_list",
     "get_agent_list_data": "._agent_list",
+    "is_live_status": "._agent_list",
     "print_agent_list": "._agent_list",
     "print_agent_list_json": "._agent_list",
     "agent_name_complete": "._completion",

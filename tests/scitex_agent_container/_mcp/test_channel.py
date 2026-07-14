@@ -211,22 +211,59 @@ def test_build_notification_missing_content_defaults_to_empty_string():
     assert notif["content"] == ""
 
 
-def test_build_notification_source_carries_from_agent():
-    # Arrange
+def test_build_notification_source_is_the_fixed_system_identity():
+    # Arrange — source must be "sac" regardless of who sent the message
+    # (operator directive 2026-07-09: source names the adapter, not the
+    # sender; matches cct's source="cct" / scitex-todo's source="stodo").
     event = {"from_agent": "bob", "content": "x"}
     # Act
     meta = _build_notification(event)["meta"]
     # Assert
-    assert meta["source"] == "bob"
+    assert meta["source"] == "sac"
 
 
-def test_build_notification_missing_from_agent_marks_unknown_source():
+def test_build_notification_source_ignores_missing_from_agent():
+    # Arrange
+    event = {"content": "x"}
+    # Act
+    meta = _build_notification(event)["meta"]
+    # Assert — source is fixed; a missing sender does not change it.
+    assert meta["source"] == "sac"
+
+
+def test_build_notification_from_agent_carries_the_sender():
+    # Arrange
+    event = {"from_agent": "bob", "content": "x"}
+    # Act
+    meta = _build_notification(event)["meta"]
+    # Assert — the sender's own identity moved here, not into source.
+    assert meta["from_agent"] == "bob"
+
+
+def test_build_notification_missing_from_agent_marks_unknown():
     # Arrange
     event = {"content": "x"}
     # Act
     meta = _build_notification(event)["meta"]
     # Assert
-    assert meta["source"] == "unknown"
+    assert meta["from_agent"] == "unknown"
+
+
+def test_build_notification_source_honours_env_override():
+    # Arrange
+    event = {"from_agent": "bob", "content": "x"}
+    saved = os.environ.get("SAC_MCP_CHANNEL_SOURCE")
+    os.environ["SAC_MCP_CHANNEL_SOURCE"] = "custom-label"
+    try:
+        # Act
+        meta = _build_notification(event)["meta"]
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_MCP_CHANNEL_SOURCE", None)
+        else:
+            os.environ["SAC_MCP_CHANNEL_SOURCE"] = saved
+    # Assert
+    assert meta["source"] == "custom-label"
 
 
 def test_build_notification_carries_msg_id():
@@ -988,6 +1025,32 @@ async def test_push_channel_event_still_injects_notification(fake_listen):
     )
     # Assert — the channel notification was sent through the session.
     assert len(session.sent) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank_content", ["", "   ", "\n\t"])
+async def test_push_channel_event_skips_notification_for_blank_content(
+    fake_listen, blank_content
+):
+    """Bug 1 (sac-fleet-ux-misc-2026-06-24): an empty/whitespace-only
+    content must not push a notification -- it used to render as a bare
+    "<- sac:" line with nothing after it. Distinct from the wake-loop /
+    auto-ack logic covered elsewhere in this module."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": blank_content, "msg_id": "m1"}
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+    )
+    # Assert — no notification was pushed for blank content.
+    assert session.sent == []
 
 
 def _contentless_ack_posts(fake_listen) -> list:

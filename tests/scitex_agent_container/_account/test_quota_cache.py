@@ -28,7 +28,9 @@ from scitex_agent_container._account.quota_cache import (
     META_KEY_PCT_5H,
     META_KEY_PCT_7D,
     META_KEY_TTL_H,
+    _first_existing,
     build_a2a_metadata,
+    host_cache_candidates,
     read_quota_entry,
 )
 
@@ -353,6 +355,66 @@ def test_build_a2a_metadata_canonical_key_name(name: str, expected: str) -> None
     actual = getattr(module, name)
     # Assert
     assert actual == expected
+
+
+def test_host_cache_candidates_puts_runtime_convention_path_first(
+    tmp_path: Path,
+) -> None:
+    # Arrange — sac quota cache is sac runtime state; canonical home is the
+    # per-package runtime dir, NOT the shared ~/.scitex root (constitution §3;
+    # operator 2026-07-11). The 2026-07-11 incident was the reader ignoring
+    # this host path entirely and reading "?" on every host-side `sac-start`.
+    home = tmp_path
+    # Act
+    candidates = host_cache_candidates(home)
+    # Assert
+    assert candidates[0] == home / ".scitex" / "agent-container" / "runtime" / "quota-cache.json"
+
+
+def test_host_cache_candidates_keeps_legacy_path_as_backcompat_last(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the old top-level path stays readable during migration so a
+    # not-yet-moved populator's file still resolves.
+    home = tmp_path
+    # Act
+    candidates = host_cache_candidates(home)
+    # Assert
+    assert candidates[-1] == home / ".scitex" / "quota-cache.json"
+
+
+def test_first_existing_returns_runtime_path_over_legacy(tmp_path: Path) -> None:
+    # Arrange — both host files present; the runtime canonical must win.
+    runtime = tmp_path / ".scitex" / "agent-container" / "runtime" / "quota-cache.json"
+    legacy = tmp_path / ".scitex" / "quota-cache.json"
+    for p in (runtime, legacy):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(SAMPLE), encoding="utf-8")
+    # Act
+    chosen = _first_existing(host_cache_candidates(tmp_path))
+    # Assert
+    assert chosen == runtime
+
+
+def test_first_existing_falls_back_to_legacy_when_only_legacy_present(
+    tmp_path: Path,
+) -> None:
+    # Arrange — only the legacy file exists (populator not yet migrated).
+    legacy = tmp_path / ".scitex" / "quota-cache.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(SAMPLE), encoding="utf-8")
+    # Act
+    chosen = _first_existing(host_cache_candidates(tmp_path))
+    # Assert
+    assert chosen == legacy
+
+
+def test_first_existing_returns_none_when_no_host_file(tmp_path: Path) -> None:
+    # Arrange — a bare home with neither host file (fresh machine / CI).
+    # Act
+    chosen = _first_existing(host_cache_candidates(tmp_path))
+    # Assert
+    assert chosen is None
 
 
 def test_build_a2a_metadata_empty_dict_when_no_entry(clean_env, tmp_path: Path) -> None:

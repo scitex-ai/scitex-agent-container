@@ -17,14 +17,21 @@ from ..config import AgentConfig, load_config, resolve_config
 from ._a2a_port import resolve_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
+from ._instances import make_restart_callback as _make_restart_callback
 from ._instances import record_local_instance as _record_local_instance
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 
+# Re-exported from _start_failure_diag for back-compat: this helper lived here
+# before the 512-line-cap split.
+from ._start_failure_diag import _format_boot_stderr_section  # noqa: F401
+
 # Re-exported from _start_preflight for back-compat: callers/tests import these
-# pre-flight helpers from _start. _resolve_strict_drift is used only transitively
-# (by _check_spec_source_drift_at_launch) but stays re-exported here.
+# pre-flight helpers from _start. ``_verify_real_liveness`` is no longer the
+# no-op GATE (see :mod:`._start_verdict` — it is now one signal among several,
+# and its ``False`` no longer means "dead"), but it remains a supported helper
+# with its own tests. _resolve_strict_drift is used only transitively.
 from ._start_preflight import (  # noqa: F401
     _check_spec_source_drift_at_launch,
     _resolve_strict_drift,
@@ -34,21 +41,26 @@ from ._start_preflight import (  # noqa: F401
 from .health import health_monitor
 
 
-def _format_boot_stderr_section(log: Path) -> str:
-    """Formatted 'inner stderr' diagnostic section for a failed TUI start.
+def _announce_start_verdict(verdict) -> None:
+    """Print the liveness verdict + its evidence before a non-no-op start.
 
-    B->A feedback / no silent fallback: ``TuiSessionRuntime`` redirects the
-    inner ``apptainer exec … claude`` STDERR — where apptainer's FATAL mount
-    errors and an immediate claude exit land — to ``<state>/boot.stderr.log``
-    (``log``), which SURVIVES the tmux pane's death. Return its tail so a boot
-    failure is the LOUD cause in the raised error, never a cause-less
-    ``<empty>`` pane fallback. Empty/absent-log safe; never raises.
+    An operator staring at ``running | pid=None`` learns nothing. This prints
+    WHY — ``ALIVE (delivery: 1 live inbox subscriber)`` / ``UNKNOWN (heartbeat:
+    beat is 5086s stale …)`` — and, on UNKNOWN, says plainly that we are
+    starting the agent anyway and that doing so destroys nothing.
     """
-    tail = ""
-    if log.is_file():
-        tail = log.read_text(errors="replace")[-4_000:].rstrip()
-    body = tail or "<no stderr captured — runtime never launched the process>"
-    return f"  inner stderr ({log}):\n{body}\n"
+    import sys as _sys
+
+    print(f"[sac:liveness] {verdict.agent}: {verdict.render()}", file=_sys.stderr)
+    if verdict.is_unknown:
+        print(
+            f"[sac:liveness] cannot CONFIRM '{verdict.agent}' is alive, and "
+            f"nothing answers for it — starting it. This is NOT destructive: "
+            f"if it is in fact alive, the runtime's own duplicate-session "
+            f"guard no-ops instead of relaunching over it. (`--force` is the "
+            f"only verb that tears an existing session down.)",
+            file=_sys.stderr,
+        )
 
 
 def agent_start(
@@ -62,13 +74,16 @@ def agent_start(
     no_preflight: bool = False,
     foreground: bool = False,
     one_shot: bool = False,
+    assume_yes: bool = False,
     strict_drift: bool | None = None,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     thread_factory: Callable[..., Any] = threading.Thread,
     handover_mod: Any = None,
     liveness_verifier: Callable[[AgentConfig, Any], bool] | None = None,
+    verdict_override: Any = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
+    successor_auth_check: Callable[[AgentConfig], None] | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -83,6 +98,20 @@ def agent_start(
         foreground: Run the runtime in the foreground.
         one_shot: Run the startup prompts once and exit; requires
             ``spec.startup_prompts`` to be non-empty.
+        assume_yes: The CLI caller's own ``-y``/``--yes`` consent,
+            propagated to the in-SIF broker (bug fix 2026-07-05,
+            paper-scitex-clew report). When ``agent_start`` is invoked
+            from inside an apptainer SIF, the spawn is brokered to the
+            host's ``sac listen`` (see :func:`_in_sif_broker.
+            maybe_broker_in_sif_spawn`), which shells a FRESH
+            ``sac agents start <name>`` on the bare host — a subprocess
+            that re-runs the same interactive refuse-without-``--yes``
+            gate the ORIGINAL caller already satisfied. Without
+            threading this through, that consent never reached the host
+            subprocess and every brokered start refused itself even
+            though ``-y`` was explicitly passed at the CLI. Ignored on
+            the non-SIF (direct) path — it has no interactive gate of
+            its own to satisfy.
         strict_drift: Escalate a drifted spec-source git repo from a
             loud warning to a hard block (raise before launch). ``None``
             (default) reads ``SAC_STRICT_DRIFT`` / ``--strict-drift`` is
@@ -124,6 +153,7 @@ def agent_start(
         opener=in_sif_opener,
         foreground=foreground,
         one_shot=one_shot,
+        assume_yes=assume_yes,
     ):
         return True
 
@@ -222,31 +252,51 @@ def agent_start(
 
     # Already running?
     forced_stop = False
-    # Bug 1 (real-liveness): three independent signals must all agree
-    # before we trust the "already-running" no-op branch. registry +
-    # runtime.is_running is not enough — see :func:`_verify_real_liveness`
-    # for the false-positive cases the third signal closes.
-    _verify = (
-        liveness_verifier if liveness_verifier is not None else _verify_real_liveness
-    )
     # Stale-lease cleanup (operator pain point — replaces the manual
-    # ``sqlite3 … DELETE FROM instances …`` workaround). When the
-    # runtime PID is dead, any active ``instances`` row for this agent
-    # name is stale (the previous container died without going through
-    # agent_stop). Clear those rows so the third liveness signal does
-    # not pin the no-op branch on a zombie lease. Live runtimes are
+    # ``sqlite3 … DELETE FROM instances …`` workaround). When the runtime PID
+    # is dead, any active ``instances`` row for this agent name is stale (the
+    # previous container died without going through agent_stop). Clear those
+    # rows so a zombie lease cannot vouch for a dead agent. Live runtimes are
     # NEVER touched — the gate is the precondition.
     if not runtime.is_running(config):
         from ._stale_lease import clear_stale_instance_lease
 
         clear_stale_instance_lease(config.name)
-    really_running = (
-        registry.exists(config.name)
-        and runtime.is_running(config)
-        and _verify(config, runtime)
+
+    # TERNARY liveness (ALIVE / DEAD / UNKNOWN), never a bool. Only POSITIVE
+    # evidence of life pins the no-op branch; UNKNOWN now falls through to a
+    # real start, which is what makes a previously-unfalsifiable row
+    # recoverable WITHOUT ``--force --fresh``. Safe because starting is not
+    # destroying — the runtime's own duplicate-session guard no-ops over a
+    # live session. Full rationale (incl. why this is strictly LESS
+    # destructive than the old three-way AND) in :mod:`._start_verdict`.
+    # ``verdict_override`` is the injection seam for the no-op WIRING (a real
+    # LivenessVerdict, not a mock): the decision rule and the resolvers have
+    # their own suites, so what remains to pin is "does ALIVE no-op, and does
+    # UNKNOWN start?".
+    from ._start_verdict import resolve_start_verdict
+
+    verdict = (
+        verdict_override
+        if verdict_override is not None
+        else resolve_start_verdict(
+            config, runtime, registry=registry, liveness_verifier=liveness_verifier
+        )
     )
+    really_running = verdict.is_alive
+    if not really_running and not dry_run:
+        _announce_start_verdict(verdict)
     if really_running:
         if force:
+            # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
+            # 20260712): probe the already-rotated successor credential; a
+            # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
+            # the live container is LEFT UP. Covers `start --force` (the PR #628
+            # self-restart bounce); `sac agents restart` is covered upstream.
+            from ._restart_preflight import assert_successor_auth_usable
+
+            _auth_check = successor_auth_check or assert_successor_auth_usable
+            _auth_check(config)
             agent_stop(
                 config.name,
                 registry=registry,
@@ -263,13 +313,18 @@ def agent_start(
             # agent is running — the prep does not touch the container.
             pass
         else:
-            # Idempotent start: re-running ``sac agent start <name>`` on
-            # an agent that's already healthy is a no-op, not an error.
-            # Use ``--force`` to actually restart, ``sac agent restart``
-            # to be explicit, or ``sac agent stop`` then re-start.
+            # Idempotent start: re-running ``sac agent start <name>`` on an
+            # agent we have POSITIVE evidence is alive is a no-op, not an
+            # error. Use ``--force`` to actually restart.
+            #
+            # The verdict + its evidence is printed, not just the conclusion:
+            # a no-op that says only "already running" is unfalsifiable from
+            # the outside — the operator cannot tell whether we OBSERVED the
+            # agent (delivery: a message would reach it) or merely found a
+            # process-shaped shadow of one. Now they can read which.
             print(
-                f"Agent '{config.name}' is already running. No-op. "
-                "Use --force to restart.",
+                f"Agent '{config.name}' is already running "
+                f"[{verdict.render()}]. No-op. Use --force to restart.",
                 file=__import__("sys").stderr,
             )
             return True
@@ -364,6 +419,28 @@ def agent_start(
 
     kill_orphan_mcp_children(config.name)
 
+    # Spec-pinned session resume (``spec.claude.session: resume`` +
+    # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
+    # marker from the pinned uuid — but ONLY when no marker exists yet
+    # (first boot / migration). Must run BEFORE ``runtime.start`` so the
+    # in-container runner sees the seeded id on its first resume attempt.
+    # Seed-if-absent preserves a later SDK fork (see ``_session_seed``).
+    from ._session_seed import seed_pinned_session_id
+
+    seed_pinned_session_id(config, runtime)
+
+    # Twin context-inheritance (``sac agents twin``). When this spec carries
+    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # CURRENT session uuid, pin this twin's resume to it, and copy the
+    # parent's transcript into the twin's container-home projects store so
+    # the resume finds it. Host-side (paths always resolve on the bare host)
+    # and a strict no-op for every non-twin start. Fail-loud (TwinSeedError)
+    # when the parent has no resolvable live session — a twin with no context
+    # to inherit is pointless. See ``_twin.seed_twin_from_parent``.
+    from ._twin import seed_twin_from_parent
+
+    seed_twin_from_parent(config, runtime)
+
     # Start — ``force`` is propagated to the runtime. The legacy
     # ``config.remote.no_preflight`` override was retired with
     # ``RemoteSpec`` in WI-6 (handoff §6, 2026-05-20); the
@@ -374,32 +451,12 @@ def agent_start(
     success = runtime.start(config, **start_kw)
     if not success:
         # Fail loud: a bare False from runtime.start() must not become a
-        # cause-less "Failed to start". Capture the agent's tmux pane (the
-        # inner apptainer/claude output) + whether a session exists, so the
-        # real boot failure — boot-drain timeout, auth, a broken in-container
-        # login shell, an immediate claude exit — is visible, not swallowed.
-        diag = ""
-        try:
-            from .._runners._tmux.tmux import TmuxManager
-            from ..runtimes.tui_session import (
-                session_name_for,
-                state_dir_for_config,
-            )
+        # cause-less "Failed to start". Capture + persist the pane / inner
+        # stderr, then raise with the real cause attached. See
+        # :mod:`._start_failure_diag`.
+        from ._start_failure_diag import raise_start_failure
 
-            _sess = session_name_for(config)
-            _pane = TmuxManager.capture_logs(_sess, lines=60).rstrip()
-            _boot_log = state_dir_for_config(config) / "boot.stderr.log"
-            diag = (
-                f" (tmux session_exists={TmuxManager.exists(_sess)})\n"
-                f"{_format_boot_stderr_section(_boot_log)}"
-                f"  pane tail:\n{_pane or '<empty>'}"
-            )
-        except Exception:  # stx-allow: fallback (reason: diagnostics must never mask the real start failure — degrade to no pane)
-            diag = " (no pane diagnostics available)"
-        raise RuntimeError(
-            f"Failed to start agent '{config.name}': runtime.start() returned "
-            f"False.{diag}"
-        )
+        raise_start_failure(config)
 
     # Register
     registry.add(
@@ -421,7 +478,8 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Start health monitor in background if enabled
+    # Restart callback re-records the row (a restart = a NEW pid) AND pins
+    # the state.db it writes to -- see ``_instances.make_restart_callback``.
     if config.health.enabled:
         thread = thread_factory(
             target=health_monitor,
@@ -429,7 +487,7 @@ def agent_start(
                 config.name,
                 config,
                 registry,
-                lambda c: runtime_factory(c).start(c),
+                _make_restart_callback(runtime_factory),
             ),
             daemon=True,
         )

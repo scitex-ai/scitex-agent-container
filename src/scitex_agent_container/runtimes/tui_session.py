@@ -9,16 +9,14 @@ tmux is a PTY holder only (it never runs ``claude`` on the host); it lets the
 agent survive operator detach and gives the inner TUI a PTY.
 
 This module is a thin adapter — it owns the session-name convention and the
-``RuntimeBase`` surface, and delegates:
+``RuntimeBase`` surface, and delegates: tmux mechanics → ``_runners/_tmux/``;
+$HOME materialisation → :mod:`_tui_workspace`; modal drain → :mod:`_tui_drain`;
+compose-buffer clear / submit-verify → :mod:`_tui_compose`; startup-prompt
+injection → :mod:`_tui_inject`; liveness decisions → :mod:`_tui_liveness`.
 
-  * tmux mechanics → ``_runners/_tmux/`` (multiplexer / tmux / pane_capture);
-  * $HOME materialisation → :mod:`_tui_workspace`;
-  * modal drain → :mod:`_tui_drain` (pure, injectable);
-  * compose-buffer clear / submit-verify → :mod:`_tui_compose` (pure);
-  * startup-prompt injection → :mod:`_tui_inject`.
-
-``is_running`` is a responsiveness probe (tmux ``session_activity`` freshness),
-so the supervisor's RestartPolicy catches an inner-hang, not just a dead session.
+``is_running`` is a LIVENESS probe (session exists AND its pane process is
+alive); ``is_responsive`` is the separate ``session_activity``-freshness signal
+for hang-detection (see :mod:`_tui_liveness`).
 """
 
 from __future__ import annotations
@@ -39,13 +37,16 @@ from ._tui_compose import (
     clear_compose_buffer,
     verify_submit_by_advancement,
 )
-from ._tui_drain import (
-    drain_modals_until_ready,
-    wait_until_input_ready as _wait_until_input_ready,
-)
+from ._tui_drain import drain_modals_until_ready
 from ._tui_auth_stage import TuiAuthStageError
+from ._tui_boot_drain import TuiBootDrainMixin
 from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_inject import StartupPromptInjectorMixin
+from ._tui_liveness import (
+    is_responsive_from_activity,
+    pane_pid_of,
+    pane_process_alive,
+)
 from ._tui_workspace import materialize_workspace as _materialize_workspace
 from .base import RuntimeBase
 
@@ -65,13 +66,10 @@ __all__ = [
 
 _CLAUDE_BIN_DEFAULT = "claude"
 
-# Default max-idle window for the tui-alive probe (see
-# ``TuiSessionRuntime.is_running``). 300s mirrors the SDK runtime's
-# health.interval default and gives a quiet but healthy TUI a
-# generous grace window before the supervisor's restart policy
-# fires on it. Overridable per-call via the ``max_idle_s`` kwarg
-# so a custom health policy in spec.health can tune it without a
-# code change.
+# Default max-idle window for the RESPONSIVENESS probe
+# (``TuiSessionRuntime.is_responsive``; liveness/``is_running`` no longer
+# uses it). 300s mirrors the SDK ``health.interval`` default so a
+# quiet-but-healthy TUI has grace. Overridable per-call via ``max_idle_s``.
 _DEFAULT_MAX_IDLE_S = 300.0
 
 # Boot-drain window when ``spec.startup_commands`` delay ``exec claude``
@@ -151,7 +149,12 @@ def state_dir_for_config(config: AgentConfig) -> Path:
     return _runner.state_dir_for(config.name, root=root)
 
 
-class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, RuntimeBase):
+class TuiSessionRuntime(
+    StartupPromptInjectorMixin,
+    TurnBridgeSeamMixin,
+    TuiBootDrainMixin,
+    RuntimeBase,
+):
     """Interactive tmux-backed Claude TUI runtime (``spec.runtime: tui``).
 
     Delegates multiplexer mechanics to ``TmuxManager``; owns the session-name
@@ -245,7 +248,13 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
                 f"duplicate session '{name}' — agent already running. "
                 f"Attach: `sac agents attach {config.name}` "
                 f"(or `tmux attach -t {name}`). "
-                f"Relaunch: `sac agents restart {config.name}`.",
+                # NOT `sac agents restart` — when this guard fires DURING a
+                # restart (the old session survived SIGTERM), that is the very
+                # command that just failed, so recommending it loops the
+                # operator back into the failure. Give the remedy that
+                # actually works: kill the stale session, then start fresh.
+                f"Force-relaunch: `tmux kill-session -t {name}` then "
+                f"`sac agents start {config.name} -y --fresh`.",
                 style="red",
             )
             if not dry_run:
@@ -275,9 +284,11 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             return False
 
         if dry_run:
+            from ._apptainer_argv_record import write_redacted_argv
+
             state_dir = state_dir_for_config(config)
             state_dir.mkdir(parents=True, exist_ok=True)
-            (state_dir / "apptainer_run.argv.txt").write_text("\n".join(argv) + "\n")
+            write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
@@ -378,25 +389,47 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
     def is_running(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
     ) -> bool:
-        """True iff sac's tmux session for this agent is **responsive**.
+        """LIVENESS: ``tui-<name>`` exists AND its pane process is alive
+        (``os.kill(pane_pid, 0)``; NO activity gate — an idle agent is
+        still running). ``max_idle_s`` ignored. See :mod:`_tui_liveness`."""
+        del max_idle_s
+        return pane_process_alive(
+            session_name_for(config),
+            exists_fn=self._mux.exists,
+            pane_dead_fn=getattr(self._mux, "pane_dead", None),
+            pane_pid_fn=getattr(self._mux, "pane_pid", None),
+        )
 
-        Not just "session exists": requires pane activity within the last
-        ``max_idle_s`` seconds (``tmux display -p '#{session_activity}'``
-        advances on every pane read OR write), so the supervisor's RestartPolicy
-        also catches an inner-hang (a claude that neither exits nor reads stdin),
-        not only a dead session. ``max_idle_s`` defaults to 300s (the SDK
-        ``health.interval`` default) so a quiet-but-healthy TUI has grace.
+    def agent_pid(self, config: AgentConfig) -> int | None:
+        """The pane's long-lived ``apptainer exec ... claude`` pid.
 
-        Returns ``False`` when the session is absent, when ``session_activity``
-        is unavailable (``None``), or when the stamp is older than ``max_idle_s``.
+        The ``RuntimeBase`` seam that hands ``instances.pid`` its value.
+        This is the SAME signal :meth:`is_running` above keys its verdict
+        on (both go through the pane pid), so the registry and
+        ``is_running`` cannot disagree about which process is this agent.
+
+        NOT the launcher pid: the launcher spawns the tmux session and
+        returns within seconds. The pane's ``bash -c`` ``exec``s
+        apptainer — ``exec`` keeps the pid — so the pane pid IS the
+        long-lived container process. See :func:`_tui_liveness.pane_pid_of`.
         """
+        return pane_pid_of(
+            session_name_for(config),
+            pane_pid_fn=getattr(self._mux, "pane_pid", None),
+        )
+
+    def is_responsive(
+        self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
+    ) -> bool:
+        """RESPONSIVENESS: alive AND pane activity within ``max_idle_s``
+        (the OLD is_running rule, for hang-detection). See
+        :mod:`_tui_liveness`."""
         name = session_name_for(config)
         if not self._mux.exists(name):
             return False
-        activity = self._mux.session_activity(name)
-        if activity is None:
-            return False
-        return (time.time() - float(activity)) <= max_idle_s
+        return is_responsive_from_activity(
+            self._mux.session_activity(name), time.time(), max_idle_s
+        )
 
     def send_turn(
         self,
@@ -426,78 +459,6 @@ class TuiSessionRuntime(StartupPromptInjectorMixin, TurnBridgeSeamMixin, Runtime
             self.wait_until_input_ready(config)
         self._mux.send_text_and_submit(name, text)
         return True
-
-    def _drain_at_boot(
-        self,
-        config: AgentConfig,
-        *,
-        timeout_s: float,
-        poll_s: float = 0.5,
-    ) -> bool:
-        """Dismiss claude's first-run modals at boot; return as soon as the TUI
-        is up (marker OR :func:`prompts.is_ready`) — not when it goes idle, so
-        an autonomous agent that goes straight to work is not waited out, and a
-        ``startup_commands``-delayed ``exec claude`` is polled through. Thin
-        wrapper over :meth:`_drain_modals_until_ready`. Best-effort: never
-        raises. Returns True iff a ready signal was observed within the window.
-        """
-        name = session_name_for(config)
-        if not self._mux.exists(name):
-            return False
-        return self._drain_modals_until_ready(name, timeout_s=timeout_s, poll_s=poll_s)
-
-    def _drain_modals_until_ready(
-        self,
-        name: str,
-        *,
-        timeout_s: float,
-        poll_s: float = 0.5,
-    ) -> bool:
-        """Verified, retrying, fail-loud modal drain. True iff ready in window.
-
-        Thin wrapper over the pure, unit-testable
-        :func:`_tui_drain.drain_modals_until_ready` (fail-fast-on-session-death,
-        settle-before-send [BUG 2], verified-resend). Dismisses modals by their
-        REGISTERED keys (Enter/digit, never Escape), so a dev-channels
-        "Esc to cancel" modal is CONFIRMED — the session-killing Escape lives
-        only in the guarded compose-buffer clear (BUG 1).
-        """
-        return drain_modals_until_ready(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            exists_fn=self._mux.exists,
-            timeout_s=timeout_s,
-            poll_s=poll_s,
-        )
-
-    def wait_until_input_ready(
-        self,
-        config: AgentConfig,
-        *,
-        timeout_s: float = 60.0,
-        poll_s: float = 0.4,
-        sleep_fn=time.sleep,
-    ) -> bool:
-        """Drain first-launch / mid-session modals, then block until the TUI
-        input field is bound.
-
-        Thin wrapper over the pure, unit-testable
-        :func:`_tui_drain.wait_until_input_ready`: dismisses each modal by its
-        REGISTERED keys (never Escape → dev-channels is CONFIRMED, BUG 1) and
-        SETTLES the pane before sending (BUG 2). Raises
-        :class:`TuiInputNotReadyError` on timeout.
-        """
-        del sleep_fn  # honoured internally by the extracted function's default
-        name = session_name_for(config)
-        return _wait_until_input_ready(
-            name,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=lambda key: self._mux.send_keys(name, key),
-            exists_fn=self._mux.exists,
-            timeout_s=timeout_s,
-            poll_s=poll_s,
-        )
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output; empty string when the

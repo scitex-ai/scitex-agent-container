@@ -52,7 +52,6 @@ def deliver_verdict(
     record: Any = None,
     db_path: Any = None,
     agents_dir: Any = None,
-    tasks_path: Any = None,
     pr_body: str | None = None,
 ) -> dict:
     """Deliver one CI verdict to its owner + up the lineage. Idempotent.
@@ -92,9 +91,7 @@ def deliver_verdict(
     ):
         return {"delivered": [], "skipped": True, "reason": "already-delivered"}
 
-    owner = owner_resolver(
-        repo, pr_body=pr_body, agents_dir=agents_dir, tasks_path=tasks_path
-    )
+    owner = owner_resolver(repo, pr_body=pr_body, agents_dir=agents_dir)
     if not owner:
         return {"delivered": [], "skipped": True, "reason": "no-owner"}
 

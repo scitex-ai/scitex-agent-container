@@ -46,7 +46,7 @@ from scitex_agent_container.config import AgentConfig, load_config, validate_con
 # NOTE: ``runtime`` is intentionally NOT scaffolded — the body must supply it
 # (every test does), keeping the validator's runtime-required rule honest.
 _REQUIRED_SCAFFOLD: dict = {
-    "host": "local",
+    "host": "${HOSTNAME}",
     "workdir": "~/.scitex/agent-container/runtime/agents/v3spec",
     "claude": {"model": "claude-opus-4-8[1m]"},
     "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},

@@ -11,6 +11,7 @@ delegates the per-target loop here. Mirrors the existing sibling
 from __future__ import annotations
 
 import json as _json
+import os
 import sys
 import traceback
 from contextlib import nullcontext
@@ -71,6 +72,8 @@ def run_single_targets(
     preflight_runner: Callable[[], None],
     broker_self: bool = False,
     yes: bool = False,
+    verbose: bool = False,
+    tail_lines: int | None = None,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -86,7 +89,37 @@ def run_single_targets(
     in-SIF broker has somewhere to POST, then tears the listen down
     on exit. ``--dry-run`` short-circuits this — the listen isn't
     needed to inspect the planned argv.
+
+    ``verbose`` (``-v``/``--verbose``): when the interactive
+    refuse-without-``--yes`` preview fires, show the FULL effective
+    launch plan (``render_plan`` — same detail as ``sac agents
+    explain``) instead of the default short summary
+    (``render_plan_summary``: identity, spec path, runtime/image,
+    workdir + backed-by-bind check, model). Either way the refusal
+    without ``--yes``/``-y`` is unchanged.
+
+    ``SAC_ASSUME_YES=1`` env-var fallback (bug fix 2026-07-05,
+    paper-scitex-clew report): OR'd into ``yes`` here — the ONE place
+    in this module where ``yes`` is finally resolved before the
+    refuse-without-``--yes`` gate fires and before the value is
+    forwarded into ``agent_start``. This is the escape valve for
+    callers that cannot easily thread ``assume_yes`` through every
+    layer (e.g. an operator wiring up a bespoke launcher): the host's
+    ``/agents`` handler (``_listen/_agent_exec.py``) sets this env var
+    on the brokered subprocess's environment when the original in-SIF
+    caller's ``assume_yes`` body field was true, so a brokered
+    ``sac agents start <name> -y`` no longer refuses itself on the
+    host side. Does NOT weaken the human-at-a-TTY default-refuse
+    safety net — a real interactive operator invocation never has
+    this env var set.
+
+    ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
+    ``--resume`` preflight's candidate listing — how many trailing
+    transcript messages to preview per resumable conversation
+    (sac-session-candidates-tail-preview). ``None`` defers to the
+    module default.
     """
+    effective_yes = yes or os.environ.get("SAC_ASSUME_YES") == "1"
 
     def _emit_json(payload: dict) -> None:
         click.echo(_json.dumps(payload, ensure_ascii=False))
@@ -120,10 +153,26 @@ def run_single_targets(
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
                     current_host = ""
-                # Cross-host dispatch branch (routing only). Skipped when
-                # --no-redispatch is passed (peer-side invocation uses this
-                # to prevent recursion).
-                if not no_redispatch:
+                # Liveness-gated singleton skip FIRST: an agent VERIFIED
+                # LIVE on its pinned host needs no action (idempotent
+                # start) and no ssh — the calm answer whether or not the
+                # pin is a registered peer. Routing below engages only
+                # when nothing live backs the pin. Bug 1 root cause
+                # (PR #252): the skip is a dead-end when
+                # no_redispatch=True (operator explicitly disabled the
+                # redispatch chain, e.g. via ``sac --on <peer>``) —
+                # _resolve_singleton_skip honours that and returns None.
+                skip = _resolve_singleton_skip(
+                    config, current_host, no_redispatch=no_redispatch
+                )
+                # Cross-host dispatch branch (spec.host routing): a
+                # registered-peer pin dispatches remotely; an UNKNOWN pin
+                # fails loud with the registered-peer list (operator
+                # directive 2026-07-10 — see _dispatch.try_dispatch).
+                # Skipped when --no-redispatch is passed (peer-side
+                # invocation uses this to prevent recursion) and when the
+                # liveness skip above already answered.
+                if not skip and not no_redispatch:
                     from ..._state.host_config import load as _load_host_config
 
                     peers = _load_host_config().peers
@@ -135,15 +184,6 @@ def run_single_targets(
                         force=force,
                     ):
                         continue
-                # Bug 1 root cause: a singleton-on-wrong-host skip is a
-                # dead-end when no_redispatch=True (the operator has
-                # explicitly disabled the redispatch chain — e.g. via
-                # ``sac --on <peer>``). _resolve_singleton_skip honours
-                # that and returns None instead of producing a silent no-op
-                # the propagator would then drop on the floor.
-                skip = _resolve_singleton_skip(
-                    config, current_host, no_redispatch=no_redispatch
-                )
                 if skip:
                     if as_json:
                         _emit_json(
@@ -201,7 +241,7 @@ def run_single_targets(
                 # supervisor / spawn-broker / scripts (non-tty, or --yes/
                 # foreground/one-shot/broker-self) launch without refusal.
                 if should_preview_and_require_yes(
-                    yes=yes,
+                    yes=effective_yes,
                     dry_run=dry_run,
                     as_json=as_json,
                     foreground=foreground,
@@ -209,9 +249,14 @@ def run_single_targets(
                     broker_self=broker_self,
                     is_tty=sys.stdin.isatty(),
                 ):
-                    from .._explain import render_plan
+                    from .._explain import render_plan, render_plan_summary
 
-                    click.echo(render_plan(config, spec_path=Path(config_path)))
+                    plan = (
+                        render_plan(config, spec_path=Path(config_path))
+                        if verbose
+                        else render_plan_summary(config, spec_path=Path(config_path))
+                    )
+                    click.echo(plan)
                     system_msg(
                         f"refusing to start {config.name} without --yes/-y — the "
                         "plan above shows exactly what will mount and run; re-run "
@@ -241,7 +286,12 @@ def run_single_targets(
                         else (spec_host or None)
                     )
                     is_remote = bool(target_host) and target_host != current_host
-                    preflight_resume_id(config, resume_id, is_remote=is_remote)
+                    preflight_resume_id(
+                        config,
+                        resume_id,
+                        is_remote=is_remote,
+                        tail_lines=tail_lines,
+                    )
                 agent_start(
                     config_path,
                     no_preflight=no_preflight,
@@ -251,6 +301,7 @@ def run_single_targets(
                     resume_id_override=resume_id,
                     foreground=foreground,
                     one_shot=one_shot,
+                    assume_yes=effective_yes,
                     strict_drift=strict_drift,
                 )
                 if as_json:

@@ -88,6 +88,38 @@ def _free_port() -> int:
     return port
 
 
+@pytest.fixture(autouse=True)
+def isolated_ledger(tmp_path):
+    """Give every test in this module its OWN watchdog failure ledger.
+
+    The probe counts CONSECUTIVE failures across a state file (systemd
+    invokes it FRESH every ~30s, so a file is the only way to count). Two
+    hazards follow, and this closes both:
+
+    * Without redirection these tests write the REAL ledger under ``$HOME``.
+      On the host that could push the LIVE ``sac listen`` into a restart —
+      the test suite causing the very outage the watchdog exists to prevent.
+      ``tests/conftest.py`` sets a session-wide floor; this makes it per-test.
+    * Sharing one ledger makes the heal-mode tests ORDER-DEPENDENT: one
+      test's leftover failure weight silently satisfies the next test's
+      corroboration threshold. That is a green test proving nothing — and it
+      is exactly how ``test_heal_mode_logs_restart_intent`` passed in CI
+      while asserting a restart it had not actually earned.
+
+    Real env, real file, restored on teardown (no monkeypatch — STX-NM002).
+    """
+    key = "SAC_LISTEN_HEALTH_STATE"
+    prior = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "listen-health.state")
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prior
+
+
 def _run_probe(*args: str, env_extra: dict[str, str] | None = None):
     env = os.environ.copy()
     # Never let a test accidentally fire the operator alarm.
@@ -132,13 +164,17 @@ def test_check_only_fails_against_dead_port():
     assert result.returncode == 1
 
 
-def test_check_only_down_logs_unhealthy_line():
+def test_check_only_down_names_the_verdict():
     # Arrange
     env = _down_env()
     # Act
     result = _run_probe("--check-only", env_extra=env)
-    # Assert
-    assert "UNHEALTHY" in result.stderr
+    # Assert — the probe now reports a THREE-STATE verdict. "UNHEALTHY" was a
+    # two-state word, and two states cannot distinguish "connection refused"
+    # (nothing is listening) from "I asked and got nothing" (a loaded box).
+    # Collapsing those is what restarted a HEALTHY control plane on
+    # 2026-07-14, so the vocabulary changed with the decision model.
+    assert "DOWN" in result.stderr
 
 
 def test_check_only_healthy_is_quiet(live_health_server):
@@ -153,10 +189,35 @@ def test_check_only_healthy_is_quiet(live_health_server):
 # --- probe: heal-mode loudness (no real systemctl needed) -----------------
 
 
-def test_heal_mode_down_emits_loud_error():
-    # Arrange
+def _corroborated_down_env() -> dict[str, str]:
+    """A dead port, probed ONCE already — the next probe corroborates.
+
+    A SINGLE failed probe is no longer grounds to restart: that was the
+    2026-07-14 false-RED, where one 5s timeout on a box at load 60-70
+    restarted a HEALTHY listen and deafened every agent's inbox. These two
+    tests used to assert the loud line after ONE probe — i.e. they ENCODED
+    the bug. They now earn the verdict first (a refusal is weight 2, the
+    threshold is 3, so a second one crosses it).
+    """
     env = _down_env()
     env["SAC_LISTEN_UNIT"] = "sac-listen-nonexistent-test.service"
+    _run_probe(env_extra=env)
+    return env
+
+
+def test_uncorroborated_down_does_not_restart():
+    # Arrange — the regression that made this whole rewrite necessary.
+    env = _down_env()
+    env["SAC_LISTEN_UNIT"] = "sac-listen-nonexistent-test.service"
+    # Act
+    result = _run_probe(env_extra=env)
+    # Assert — one failed probe must NOT destroy the control plane.
+    assert "RESTARTING" not in result.stderr
+
+
+def test_heal_mode_corroborated_down_emits_loud_error():
+    # Arrange
+    env = _corroborated_down_env()
     # Act
     result = _run_probe(env_extra=env)
     # Assert
@@ -165,11 +226,10 @@ def test_heal_mode_down_emits_loud_error():
 
 def test_heal_mode_logs_restart_intent():
     # Arrange
-    env = _down_env()
-    env["SAC_LISTEN_UNIT"] = "sac-listen-nonexistent-test.service"
+    env = _corroborated_down_env()
     # Act
     result = _run_probe(env_extra=env)
-    # Assert
+    # Assert — a genuinely dead listen still comes back (incident 2026-06-26).
     assert "RESTARTING" in result.stderr
 
 

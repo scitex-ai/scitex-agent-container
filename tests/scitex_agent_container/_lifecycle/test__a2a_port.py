@@ -81,8 +81,35 @@ def test_resolve_explicit_int_invokes_claim_with_explicit_kwarg() -> None:
     # Act
     with _swap("claim_port", rec):
         resolve_a2a_port(cfg)
+    # Assert — an int the OPERATOR wrote in the spec is a PIN: a foreign holder
+    # must raise, never be silently downgraded to some other port.
+    assert rec.calls == [
+        ((cfg.name,), {"explicit": 7901, "explicit_is_pin": True})
+    ]  # stx-allow: STX-NL001
+
+
+def test_reresolve_after_auto_claim_does_not_pass_it_off_as_an_operator_pin() -> None:
+    # Arrange — THE RESTART PATH. `resolve_a2a_port` overwrites its own input
+    # ("auto" -> the int it claimed), so the SECOND resolve (agent_start's
+    # force/restart branch, after agent_stop released the row) sees an int and
+    # is indistinguishable from an operator pin. It must NOT be treated as one:
+    # a port we merely auto-allocated is a preference, and if it was taken while
+    # we were down the agent must come back on a FRESH port rather than die.
+    # This is the provenance loss that sent a routine restart down the
+    # pinned-port TOCTOU that ghosted v0.21.18/19.
+    cfg = _cfg("auto")  # stx-allow: STX-NL001
+    rec = _Recorder().configured_to_return(19000)  # stx-allow: STX-NL001
+
+    # Act — resolve twice against the SAME config object, as agent_start does.
+    with _swap("claim_port", rec):
+        resolve_a2a_port(cfg)
+        resolve_a2a_port(cfg)
+
     # Assert
-    assert rec.calls == [((cfg.name,), {"explicit": 7901})]  # stx-allow: STX-NL001
+    assert rec.calls[1] == (
+        (cfg.name,),
+        {"explicit": 19000, "explicit_is_pin": False},
+    )  # stx-allow: STX-NL001
 
 
 def test_resolve_explicit_int_assigns_claimed_port_to_cfg() -> None:

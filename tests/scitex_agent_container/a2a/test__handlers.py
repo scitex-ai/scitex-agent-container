@@ -371,15 +371,26 @@ def test_handle_exec_passes_agent_name_via_env(isolated_env: Path) -> None:
 @pytest.mark.parametrize(
     "key,expected",
     [
-        ("__keys__", {"echo", "claude_session", "claude_cli", "exec"}),
+        (
+            "__keys__",
+            {"echo", "claude_session", "openai_session", "claude_cli", "exec"},
+        ),
         ("echo", "handle_echo"),
         ("claude_cli", "handle_claude_cli"),
         ("claude_session", "handle_claude_session"),
+        ("openai_session", "handle_openai_session"),
         ("exec", "handle_exec"),
     ],
-    ids=["all-keys", "echo", "claude_cli", "claude_session", "exec"],
+    ids=[
+        "all-keys",
+        "echo",
+        "claude_cli",
+        "claude_session",
+        "openai_session",
+        "exec",
+    ],
 )
-def test_handlers_registry_contains_all_four_keys(key: str, expected: object) -> None:
+def test_handlers_registry_contains_all_five_keys(key: str, expected: object) -> None:
     # Arrange
     registry = h.HANDLERS
     # Act

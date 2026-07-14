@@ -513,7 +513,7 @@ def _registered(tmp_path: Path, env_save_restore):
                 "kind": "Agent",
                 "spec": {
                     "runtime": "apptainer",
-                    "host": "local",
+                    "host": "${HOSTNAME}",
                     "workdir": str(workdir),
                     "apptainer": {"image": "/x.sif", "binds": []},
                     "claude": {"model": "sonnet"},

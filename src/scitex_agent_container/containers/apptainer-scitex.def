@@ -77,10 +77,13 @@ From: ./sac-base.sif
     # package's OWN source tree, copied in by the %files section above.
     # The SIF's sac version is structurally pinned to the source tree
     # that shipped this .def; no `git+...@main` snapshot drift.
-    # claude-agent-sdk MUST be pinned here too — leaving it unpinned
-    # lets uv/pip drift away from the base layer's 0.2.87 pin (the
-    # version that bundles the working claude CLI 2.1.150). Keep
-    # both branches' version in lockstep with apptainer-base.def.
+    # claude-agent-sdk is FLOORED TO LATEST here too (installed bare, no
+    # `==` pin) — matching the base layer, per the operator directive to
+    # "carry the LATEST of ALL ecosystem packages". Lockstep is preserved
+    # because BOTH layers now float the SDK to latest (nothing to drift
+    # apart), and the runtime `claude` CLI is the decoupled standalone
+    # npm `@anthropic-ai/claude-code@latest` from apptainer-base.def §6b,
+    # not the SDK's bundled binary.
     #
     # ``xarray`` is listed EXPLICITLY here because ``scitex[all]``'s
     # current extras set does not pull it. Without xarray, clew's
@@ -122,12 +125,21 @@ From: ./sac-base.sif
     # shorthand (narrower blast radius) and would also work; we use the
     # portable ``--force-reinstall --no-deps`` form so the pip-fallback
     # branch below uses the same flags.
+    # ``openai-agents`` is listed EXPLICITLY (not via sac's ``[openai]``
+    # extra) because step 2 below installs sac with ``--no-deps`` — an
+    # extra can never ride that install — and step 1's transitive sac
+    # wheel from ``scitex[all]`` may predate the extra entirely. Baked
+    # UNCONDITIONALLY: one image serves every agent; per-spec
+    # conditionality is a RUNTIME concern (`spec.provider: openai` env
+    # injection + `openai_session` executor routing — openai-compat-3).
+    # Floor mirrors pyproject.toml's ``[openai]`` extra; keep in lockstep.
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.110" \
+            "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         uv pip install --python /opt/venv-sac/bin/python \
@@ -141,23 +153,62 @@ From: ./sac-base.sif
         # ecosystem system-deps`` exists and every leaf's
         # ``scitex_dev.system_deps`` entry-point is discoverable for the
         # federated install in section 3.
-        #   scitex-dev   >=0.20.1 — keystone aggregator (list/install/check-superset)
-        #   scitex-writer>=2.22.0 — texlive provider (ships the soul.sty fix)
+        # Floors verified against live PyPI on 2026-07-13 — a floor ABOVE the
+        # newest published version makes the build UNSATISFIABLE (uv/pip
+        # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
+        # this recipe once already. Never raise a floor without checking that
+        # the version exists.
+        #   scitex-dev   >=0.29.0 — keystone aggregator (list/install/check-superset)
+        #   scitex-writer>=2.29.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
+        #
+        # scitex-todo — ``--upgrade-package`` (-P), NOT a bare floor. THIS IS
+        # THE FLEET-DRIFT FIX (incident-fleet-drift-stale-scitex-todo,
+        # 2026-07-12), and the flag is load-bearing:
+        #
+        #   scitex-todo is installed at the :base layer, and this layer
+        #   INHERITS base's /opt/venv-sac. A ``>=`` floor that the inherited
+        #   version ALREADY SATISFIES is a NO-OP — uv audits it and moves on.
+        #   So the :scitex layer could NEVER carry a newer scitex-todo than
+        #   :base, no matter how often it was rebuilt. Proof: sac-scitex.sif
+        #   was baked 2026-07-11 21:14, four hours AFTER scitex-todo 0.8.4
+        #   published (20:27), and still shipped the 0.7.50 it inherited from
+        #   a 2026-07-10 sac-base.sif. The floor was satisfied; nothing
+        #   upgraded; nothing complained. Six busy agents then ran a WIP gate
+        #   that counted DEFERRED + CANCELLED cards as open.
+        #
+        #   ``-P scitex-todo`` re-resolves that ONE package against PyPI even
+        #   when the inherited version satisfies the floor, so a :scitex
+        #   rebuild picks up the newest scitex-todo instead of freezing on
+        #   whatever :base happened to bake. Scoped to the single package
+        #   (not a blanket ``-U``) so it cannot perturb scitex[all]'s
+        #   resolution or the local-source sac force-reinstalled in step 2.
+        #   The floor stays as the CAPABILITY statement (>=0.9.4 = the #356
+        #   WIP-gate fix, first released in 0.8.0); section 2b then asserts
+        #   the capability BY SYMBOL so a stale bake dies loudly.
+        #
+        #   ``[mcp]`` extra is carried here too (base installs it): a plain
+        #   ``scitex-todo`` upgrade would leave fastmcp pinned to whatever the
+        #   OLD version's extra resolved, so the extra rides the upgrade.
         uv pip install --python /opt/venv-sac/bin/python \
-            "scitex-dev>=0.20.1" \
-            "scitex-writer>=2.22.0" \
+            --upgrade-package scitex-todo \
+            "scitex-dev>=0.29.0" \
+            "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-todo[mcp]>=0.9.4"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
+        # openai-agents: explicit for the same --no-deps reason as the
+        # uv branch above; floor mirrors pyproject.toml's [openai] extra.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
-            "claude-agent-sdk==0.2.110" \
+            "claude-agent-sdk" \
+            "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
         /opt/venv-sac/bin/pip install --no-cache-dir \
@@ -170,11 +221,133 @@ From: ./sac-base.sif
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
         # above. Matches this branch's plain ``pip install`` style.
         /opt/venv-sac/bin/pip install --no-cache-dir \
-            "scitex-dev>=0.20.1" \
-            "scitex-writer>=2.22.0" \
+            "scitex-dev>=0.29.0" \
+            "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0"
+        # scitex-todo gets its OWN invocation with ``--upgrade`` — pip's
+        # equivalent of the uv branch's ``-P scitex-todo``, and load-bearing
+        # for the same reason: this layer INHERITS base's venv, so a bare
+        # ``>=`` floor the inherited scitex-todo already satisfies is a no-op
+        # and the layer freezes on base's version forever (the 2026-07-12
+        # fleet-drift incident — see the uv branch above for the full
+        # autopsy). ``--upgrade`` re-resolves it against PyPI. Kept as a
+        # SEPARATE command so the flag applies to scitex-todo alone (pip's
+        # default only-if-needed strategy would otherwise let it reach into
+        # the providers' resolution too).
+        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
+            "scitex-todo[mcp]>=0.9.4"
     fi
+
+    # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
+    # The counterpart of the :base layer's section-6c gate, re-run HERE
+    # because this layer inherits base's venv and then mutates it: the
+    # scitex[all] resolve, the sac force-reinstall and the provider install
+    # above can each move scitex-todo, so base passing its gate proves
+    # nothing about what THIS image ships. Guard the artefact you ship.
+    #
+    # Asserts BY SYMBOL, never by version string — a duplicate/orphaned
+    # .dist-info freezes what importlib.metadata reports while the live
+    # code differs (open incident), so "the SIF says 0.9.4" is not
+    # evidence. ``scitex_todo._throughput.WIP_STATUSES`` (scitex-todo #356,
+    # first released in 0.8.0) is the WIP gate's status set: it must
+    # contain ``in_progress`` and no terminal state. A stale bake dies on
+    # the import; a regressed one dies on the membership checks.
+    #
+    # SECOND probe, and in THIS layer it is the sharp one: section 2's
+    # step 2 force-reinstalls sac from the %files-staged source tree
+    # precisely because step 1's ``scitex[all]`` drags in a transitive
+    # ``scitex-agent-container`` wheel from PyPI, and uv once SKIPPED the
+    # local install under its version-already-satisfied check — the SIF
+    # quietly shipped the WRONG sac tree. The two-pass install is the fix;
+    # this probe is the proof it worked, which nothing has ever asserted.
+    #
+    # Explicit ``sys.exit(1)``, not ``assert`` — a bare assert is stripped
+    # under ``python -O`` / PYTHONOPTIMIZE, which would silently disarm the
+    # very gate that exists to end silent staleness.
+    cat > /tmp/sac-assert-image-fresh.py <<'EOF'
+"""Build-time gate: nothing stale got baked into this image.
+
+Asserts BY SYMBOL, never by version string. The version string LIES — in
+two different ways, and BOTH of them live in this image:
+
+  * an orphaned / duplicate .dist-info freezes what importlib.metadata
+    reports while the code actually on sys.path is a different tree;
+  * the %files-staged sac reports its last RELEASED version no matter how
+    new the bundled source tree really is.
+
+A symbol cannot lie: it is imported from the code this image will run.
+Exits non-zero and prints WHY on failure; the .def turns that into a
+fatal build error.
+"""
+
+import importlib.metadata as md
+import sys
+
+# Both imports ARE staleness probes: each raises ImportError (unhandled →
+# non-zero exit → dead build) on a stale bake, naming the missing symbol.
+
+# scitex-todo #356 (first released in 0.8.0): the WIP gate must count
+# `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
+# CANCELLED cards as open and refuses legitimate card creation — the
+# 2026-07-12 fleet-drift incident this gate exists to end.
+from scitex_todo._throughput import WIP_STATUSES
+
+# sac #633: auto-provisions a new agent's container overlay root; without
+# it every newly-created agent is stillborn on a raw apptainer FATAL.
+# This symbol is NEWER THAN ANY PUBLISHED sac RELEASE, so it doubles as
+# proof that the %files-staged local source tree won the install and no
+# transitive PyPI sac wheel overwrote it. Raise this floor when a newer
+# must-ship fix lands; never delete the probe.
+from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
+
+# Printed for the BUILD LOG only — these numbers are NOT the gate.
+print("scitex-todo reported version :", md.version("scitex-todo"))
+print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+print("sac reported version         :", md.version("scitex-agent-container"))
+print(
+    "sac overlay auto-provision   :",
+    f"{ensure_overlay_dirs.__module__}.{ensure_overlay_dirs.__name__}",
+)
+
+failures = []
+
+# The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
+# states must never occupy a WIP slot.
+if "in_progress" not in WIP_STATUSES:
+    failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
+if terminal:
+    failures.append(
+        f"terminal states {sorted(terminal)} counted as WIP: {sorted(WIP_STATUSES)} "
+        "— the pre-0.8.0 bug that jams every agent's WIP gate."
+    )
+
+# Exactly one installed distribution may claim each name. Two (an
+# orphaned .dist-info left by a partial reinstall) is the failure mode
+# that lets the reported version diverge from the code.
+for name in ("scitex-todo", "scitex-agent-container"):
+    dists = [
+        dist
+        for dist in md.distributions()
+        if (dist.metadata["Name"] or "").lower().replace("_", "-") == name
+    ]
+    if len(dists) != 1:
+        failures.append(
+            f"{len(dists)} {name} distributions installed (expected 1) — a "
+            "duplicate/orphaned .dist-info makes the reported version a lie."
+        )
+
+if failures:
+    print("", file=sys.stderr)
+    for line in failures:
+        print(f"  - {line}", file=sys.stderr)
+    sys.exit(1)
+
+print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
+EOF
+    /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
+        || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
 
     # ---- 3. Federated system (apt) deps — SSoT install -----------------
     # The audio/video libs + the curated manuscript LaTeX toolchain
@@ -252,6 +425,21 @@ EOF
     # paper venvs depend on (regression neurovista hit when a venv pointed
     # at a removed path). No new python is installed — this is a guard.
     /usr/bin/python3 --version
+
+    # ---- 6. Bake the scitex-* version manifest (`sac versions`) --------
+    # `sac versions --json` reads this baked manifest (source="manifest",
+    # near-zero cost — a `cat`, not a full `pip list`) so scitex-dev's
+    # ecosystem drift aggregator can see the base-image venv layer cheaply.
+    # The verb falls back to a live `apptainer exec <sif> pip list` when
+    # this file is absent (older images), so shipping it is purely additive.
+    # This layer's scitex[all] + scitex-dev/-writer/-audio/-cv make the
+    # manifest much richer than :base. Filtered to scitex-* and written in
+    # pip's `--format=json` shape. Pure pipe + `python -c` (dash-safe — no
+    # bash process substitution under /bin/sh).
+    /opt/venv-sac/bin/pip list --format=json \
+        | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
+        > /opt/scitex-versions.json
+    cat /opt/scitex-versions.json
 
 %environment
     export PATH=/opt/venv-sac/bin:$PATH

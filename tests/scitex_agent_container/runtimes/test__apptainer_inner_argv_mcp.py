@@ -23,11 +23,29 @@ STX-TQ002 AAA-marker + STX-TQ007 one-assert + PA-306 no-mock-fixtures.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     build_inner_argv,
 )
+
+
+def _effective_argv(argv: list[str]) -> list[str]:
+    """Token-list of the actual runner invocation.
+
+    ``build_inner_argv`` now ALWAYS wraps the runner argv in
+    ``/bin/bash -lc <inline>`` (the unconditional SAC_GIT_* env alias
+    step, see ``_apptainer_inner_argv._GIT_ENV_ALIAS_STEPS``), so the
+    literal runner argv (e.g. ``claude --mcp-config ...``) is embedded
+    as shell-quoted text after ``exec `` inside ``argv[2]`` rather than
+    being ``argv`` itself. Token-splitting that tail recovers the same
+    flat list these tests asserted against before the wrap became
+    unconditional.
+    """
+    inline = argv[2]
+    exec_part = inline.split("exec ", 1)[1]
+    return shlex.split(exec_part)
 
 
 @dataclass
@@ -76,6 +94,7 @@ def test_tui_runner_emits_one_mcp_config_flag_per_value() -> None:
         tui_mcp_config="/home/agent/.mcp.json",
         tui_channel_mcp='{"mcpServers":{"sac":{}}}',
     )
+    argv = _effective_argv(argv)
     # Assert — exactly two ``--mcp-config`` flags (one per value), not
     # one flag with two space-separated values (the operator-reported
     # silent-drop shape).
@@ -92,6 +111,7 @@ def test_tui_runner_each_mcp_config_value_immediately_follows_its_flag() -> None
         tui_mcp_config="/home/agent/.mcp.json",
         tui_channel_mcp='{"mcpServers":{"sac":{}}}',
     )
+    argv = _effective_argv(argv)
     # Assert — each value sits adjacent to its OWN ``--mcp-config``.
     # The buggy shape would put both behind a single flag and the second
     # would be unreachable via this lookup (returns only one entry).
@@ -112,6 +132,7 @@ def test_tui_runner_single_mcp_config_value_still_emits_one_flag() -> None:
         tui_mcp_config="/home/agent/.mcp.json",
         tui_channel_mcp=None,
     )
+    argv = _effective_argv(argv)
     # Assert
     assert _count_flag_occurrences(argv, "--mcp-config") == 1
 
@@ -126,6 +147,7 @@ def test_tui_runner_only_channel_mcp_still_emits_one_flag() -> None:
         tui_mcp_config=None,
         tui_channel_mcp='{"mcpServers":{"sac":{}}}',
     )
+    argv = _effective_argv(argv)
     # Assert
     assert _count_flag_occurrences(argv, "--mcp-config") == 1
 
@@ -140,6 +162,7 @@ def test_tui_runner_no_mcp_config_emits_no_flag() -> None:
         tui_mcp_config=None,
         tui_channel_mcp=None,
     )
+    argv = _effective_argv(argv)
     # Assert
     assert _count_flag_occurrences(argv, "--mcp-config") == 0
 
@@ -157,6 +180,7 @@ def test_tui_runner_mcp_config_value_is_not_a_joined_pair() -> None:
         tui_mcp_config="/home/agent/.mcp.json",
         tui_channel_mcp='{"mcpServers":{"sac":{}}}',
     )
+    argv = _effective_argv(argv)
     # Assert — no single argv element contains BOTH the path and the
     # JSON (the smoking-gun of the joined-string regression).
     joined_entries = [

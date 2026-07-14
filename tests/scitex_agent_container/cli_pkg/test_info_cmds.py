@@ -55,7 +55,7 @@ def _write_spec_dir(tmp_path: Path, name: str, caps: str = "HPC,GPU") -> Path:
         "metadata:\n"
         f"  labels:\n    capabilities: '{caps}'\n    machine: m1\n"
         "spec:\n  runtime: apptainer\n"
-        "  host: local\n"
+        "  host: ${HOSTNAME}\n"
         "  workdir: /home/agent/work\n"
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"

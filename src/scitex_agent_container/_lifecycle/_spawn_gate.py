@@ -142,8 +142,8 @@ def enforce_spawn_gate(
 
     Raises:
         SpawnDeniedError: when the spawn is not permitted by current
-            policy, or when the lineage edge conflicts with an existing
-            different parent.
+            policy. (A re-parent attempt no longer raises — record_lineage
+            keeps the existing parent in-place, so restarts are allowed.)
     """
     from .._listen._acl import check_spawn
     from .._state.state_db_nodes import record_lineage
@@ -162,9 +162,9 @@ def enforce_spawn_gate(
         try:
             record_lineage(child=child_name, parent=caller, db_path=db_path)
         except ValueError as exc:
-            # A child that switches parents is exactly the identity drift
-            # the ACL is meant to prevent — reject loudly, never silently
-            # re-parent.
+            # record_lineage keeps the existing parent on a re-parent
+            # attempt (restart-in-place) rather than raising; this except
+            # now only guards the empty child/parent programming error.
             raise SpawnDeniedError(str(exc)) from exc
 
     return caller

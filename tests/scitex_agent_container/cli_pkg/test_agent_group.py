@@ -44,3 +44,32 @@ def test_agents_status_and_list_share_same_callback() -> None:
     same_callback = status_cmd.callback is list_cmd.callback
     # Assert
     assert same_callback
+
+
+def test_agents_new_command_name_is_retired() -> None:
+    # Arrange — the old, narrower `create` was folded into `new`'s
+    # dir-template system (card refactor/consolidate-create-into-new-templates),
+    # and `new` was then renamed to `create` for CRUD-consistent naming
+    # (the CLI already has `delete`). The `new` name is no longer registered.
+    # Act
+    is_registered = "new" in agent_group.commands
+    # Assert
+    assert is_registered is False
+
+
+def test_agents_create_command_is_registered() -> None:
+    # Arrange — `create` now names the unified dir-template-aware command
+    # (formerly `new`); the vacated old-`create` name was reused.
+    # Act
+    is_registered = "create" in agent_group.commands
+    # Assert
+    assert is_registered is True
+
+
+def test_agents_help_lists_create_under_lifecycle() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert — the Lifecycle section names `create` (renamed from `new`).
+    assert "create" in result.output

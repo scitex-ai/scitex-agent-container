@@ -25,7 +25,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._apptainer_argv_guard import validate_flag_argv
-from ._apptainer_build import _create_overlay_image
+from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 
 # ----------------------------------------------------------------------
 # Module-level constants (moved from _apptainer_runtime, re-exported
@@ -86,6 +86,21 @@ def build_run_argv(
     # discovery works without manual operator config.
     home_host = state_dir.expanduser() / "home"
     home_host.mkdir(parents=True, exist_ok=True)
+
+    # Overlay precondition — idempotent, fail-loud, form-agnostic.
+    # Apptainer CREATES `<overlay>/upper` + `<overlay>/work`, but it
+    # lstat()s the overlay ROOT and refuses to create THAT: a missing root
+    # is a hard FATAL ("failed to open overlay image ... no such file or
+    # directory") that sac's lifecycle classifier could only label
+    # `container_creation_unknown`. Nothing used to guarantee the root
+    # existed — the fleet's overlays exist only as an INCIDENTAL side-effect
+    # of deploy_to_home_overlay's `<overlay>/upper/<home>` mkdir(parents=True),
+    # which is gated on a resolver blind to the `--overlay=<path>` (=-joined)
+    # spelling that `sac agents create --template ...` emits. A brand-new
+    # agent was therefore STILLBORN. Provision it EXPLICITLY here — the one
+    # choke point every apptainer launch (SDK + TUI) passes through — reading
+    # BOTH raw_args spellings. See _apptainer_overlay.
+    ensure_overlay_dirs(config)
 
     # Relaxed-overlay double-bind fix: when a directory overlay
     # materialises the to_home tree into the overlay upper-home, THAT
@@ -236,43 +251,14 @@ def build_run_argv(
             argv.append("--nv")
         if getattr(ap, "rocm", False):
             argv.append("--rocm")
-        # Writable overlay — lets the agent install packages, write
-        # caches and persist state while the base SIF stays
-        # immutable. Resolution: absolute path used as-is; relative
-        # paths are interpreted against the workdir.
-        #
-        # Declarative auto-create (see docs/isolation.md §7):
-        # ``spec.apptainer.overlay_size`` + the default
-        # ``overlay_create_if_missing=True`` flag drives
-        # ``apptainer overlay create --size <MB> <path>`` when the
-        # overlay file is missing. Without ``overlay_size`` we fail
-        # loudly here (FileNotFoundError) instead of letting
-        # apptainer error cryptically at exec time.
-        overlay = getattr(ap, "overlay", "") or ""
-        if overlay:
-            overlay_p = Path(overlay).expanduser()
-            if not overlay_p.is_absolute():
-                overlay_p = Path(config.workdir).expanduser() / overlay_p
-            if not overlay_p.exists():
-                overlay_size = getattr(ap, "overlay_size", "") or ""
-                create_ok = getattr(ap, "overlay_create_if_missing", True)
-                if overlay_size and create_ok:
-                    _create_overlay_image(overlay_p, overlay_size)
-                elif overlay_size:
-                    raise FileNotFoundError(
-                        f"overlay {overlay_p} missing and "
-                        "overlay_create_if_missing=false; pre-create with "
-                        "`apptainer overlay create --size <MB> <path>` or "
-                        "flip overlay_create_if_missing back to true."
-                    )
-                else:
-                    raise FileNotFoundError(
-                        f"overlay {overlay_p} missing; set "
-                        "spec.apptainer.overlay_size (e.g. '5G') for "
-                        "declarative auto-create, or pre-create with "
-                        "`apptainer overlay create`."
-                    )
-            argv += ["--overlay", str(overlay_p)]
+        # Writable overlay (spec.apptainer.overlay) — path resolution,
+        # declarative sized-image auto-create and the ``--overlay`` flag
+        # itself now live in _apptainer_overlay, alongside the directory-
+        # overlay provisioning already run above, so every overlay concern
+        # sits in ONE module. Mirrors the tmpfs_workdir_flags /
+        # nested_build_flags / auth_argv extraction pattern below. No-op
+        # for raw_args-declared overlays (passed through verbatim).
+        argv += overlay_flags(config)
 
     # Sized /tmp scratch (spec.apptainer.tmpfs_size, default "2G").
     # A --containall container otherwise gets a 64 MB session tmpfs
@@ -364,17 +350,24 @@ def build_run_argv(
     # (apptainer applies user binds after home setup). No-op for
     # non-relaxed / non-directory-overlay specs (resolver returns
     # None) and when the upper-home wasn't materialised.
-    from ._to_home_overlay import (
-        resolve_container_home,
-        resolve_overlay_upper_home,
-    )
-
-    # Reuse the up-front resolution (see the home_backing block above) so
-    # the skip-the-workspace-home decision and this bind agree exactly.
+    # resolve_container_home / resolve_overlay_upper_home already imported at
+    # the top of this function; reuse the up-front resolution.
     upper_home = _upper_home
     if upper_home is not None and upper_home.is_dir():
         container_home = resolve_container_home(config)
         argv += ["--bind", f"{upper_home}:{container_home}"]
+
+    # SECURITY (P1 credential fix): lift secret-shaped ``--env KEY=VALUE``
+    # pairs out of the WORLD-READABLE argv (it becomes a tmux ``bash -c``
+    # pane cmd; /proc/<pid>/cmdline leaks it to any local process) into a
+    # per-agent 0600 ``--env-file``. AFTER every ``--env`` source
+    # (auth/provider/listen/spec.env/raw_args) so any secret is caught, but
+    # BEFORE the creds bind below so that bind stays LAST (its last-wins
+    # shadowing invariant). apptainer still delivers every value; see
+    # _apptainer_secret_env.
+    from ._apptainer_secret_env import redact_secret_env_to_file
+
+    argv = redact_secret_env_to_file(argv, state_dir=state_dir)
 
     # Designated credentials file (spec.claude.credentials_file) — bound
     # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
@@ -498,6 +491,11 @@ def build_run_argv(
 
         inner_str = " ".join(shlex.quote(a) for a in inner_argv)
         argv += ["bash", "-c", f"{PREFLIGHT_SCRIPT}\nexec {inner_str}"]
+    # Jailed-capsule mount boundary (non-bypassable, fail-loud): forces
+    # --containall + rejects shared-FS binds/--pwd. See _apptainer_jail.
+    from ._apptainer_jail import enforce_jail
+
+    enforce_jail(config, argv)
     return argv
 
 

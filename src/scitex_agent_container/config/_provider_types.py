@@ -4,11 +4,50 @@ Lives in its own module to keep ``_types.py`` under the project's
 512-line cap (mirrors ``_proxy_types.py``). Re-exported from
 :mod:`scitex_agent_container.config` alongside the rest of the spec
 dataclasses.
+
+Also home to :data:`AgentProvider` (``spec.provider``, TOP-LEVEL) — see
+the naming-collision note below before touching either symbol.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+# ---------------------------------------------------------------------------
+# Agent SDK family selector — spec.provider (TOP-LEVEL; openai-compat-1
+# foundation, scitex-todo card)
+# ---------------------------------------------------------------------------
+#
+# NAMING COLLISION WARNING: this module ALSO defines :class:`ProviderSpec`
+# below, for the pre-existing ``spec.claude.provider`` (nested) — a vendor-
+# agnostic ANTHROPIC-COMPATIBLE backend override (DeepSeek, Mimo/Xiaomi, a
+# self-hosted gateway, ...). That field still runs the SAME
+# ``claude-agent-sdk``, just pointed at a different ``base_url`` via an API
+# key instead of Anthropic OAuth (see ``_provider_registry.PROVIDERS`` /
+# ``runtimes/_apptainer_provider.py``).
+#
+# :data:`AgentProvider` is a DIFFERENT axis entirely: ``spec.provider``
+# (top-level, sibling of ``spec.runtime`` — see ``config._types.AgentConfig``)
+# selects WHICH AGENT SDK / tool-calling framework backs the session at all —
+# ``anthropic`` (``claude-agent-sdk``, talking to Anthropic OR an Anthropic-
+# compatible gateway) vs ``openai`` (the ``openai-agents`` SDK, talking to
+# OpenAI's Agents/Responses API). The two axes COMPOSE, they don't collide in
+# practice — e.g. ``provider: anthropic`` (top-level, default) +
+# ``claude.provider: mimo`` (nested) runs the Claude Agent SDK against
+# Xiaomi's Anthropic-compatible endpoint. Do not conflate the two fields when
+# reading/writing either one.
+#
+# Landed foundation-only: the schema + dataclass field exist and validate,
+# but nothing branches on ``AgentConfig.provider`` yet — selecting
+# ``"openai"`` today only affects `sac agents explain` / config introspection.
+# openai-compat-2 lands the concrete ``openai`` runner (see
+# ``_runners/_provider_session.py`` for the ``ProviderSession`` Protocol it
+# will implement); openai-compat-3 wires the selection into the apptainer
+# entrypoint + container image.
+AgentProvider = Literal["anthropic", "openai"]
+
+DEFAULT_AGENT_PROVIDER: AgentProvider = "anthropic"
 
 
 @dataclass

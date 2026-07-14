@@ -20,6 +20,7 @@ from scitex_agent_container._account.rate_limit_signals import (
     DEFAULT_TEXTUAL_PATTERNS,
     RateLimitSignal,
     classify_http_status,
+    detect_signal_from_text,
     scan_textual_cap_markers,
 )
 
@@ -200,3 +201,113 @@ def test_default_textual_patterns_is_a_tuple():
     is_tuple = isinstance(patterns, tuple)
     # Assert
     assert is_tuple is True
+
+
+# ---------------------------------------------------------------------------
+# detect_signal_from_text — REACTIVE entry point (task #13 wiring)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_signal_from_text_empty_string_returns_none():
+    # Arrange
+    text = ""
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is None
+
+
+def test_detect_signal_from_text_unrelated_text_returns_none():
+    # Arrange
+    text = "connection reset by peer"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is None
+
+
+def test_detect_signal_from_text_anthropic_rate_limit_error_type():
+    # Arrange — the real Anthropic JSON error body shape.
+    text = '{"type":"error","error":{"type":"rate_limit_error","message":"..."}}'
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_429
+
+
+def test_detect_signal_from_text_anthropic_overloaded_error_type():
+    # Arrange
+    text = '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_529
+
+
+def test_detect_signal_from_text_bare_429_word_boundary():
+    # Arrange
+    text = "ProcessError: API Error: 429 Too Many Requests"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_429
+
+
+def test_detect_signal_from_text_bare_529_word_boundary():
+    # Arrange
+    text = "ProcessError: API Error: 529 Overloaded"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_529
+
+
+def test_detect_signal_from_text_bare_403_word_boundary():
+    # Arrange
+    text = "ProcessError: API Error: 403 Forbidden — organization rate limit"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_403
+
+
+def test_detect_signal_from_text_does_not_misfire_on_unrelated_number():
+    # Arrange — "429" does NOT appear anywhere here; only an unrelated
+    # numeric substring risk-case ("42900" contains "429" but not as a
+    # word-boundary token).
+    text = "processed 42900 rows in 12ms"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is None
+
+
+def test_detect_signal_from_text_falls_back_to_textual_cap_marker():
+    # Arrange — no HTTP-status signature present, only the textual marker.
+    text = "You've hit your weekly limit · resets 2026-06-18T05:00Z"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
+
+
+def test_detect_signal_from_text_status_signature_wins_over_textual_order():
+    # Arrange — rate_limit_error appears first in the scan order; a
+    # textual marker later in the SAME text must not override it.
+    text = (
+        '{"type":"error","error":{"type":"rate_limit_error"}} '
+        "— quota exceeded"
+    )
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.HTTP_429
+
+
+def test_detect_signal_from_text_returns_the_matched_pattern():
+    # Arrange
+    text = '{"error":{"type":"overloaded_error"}}'
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[1] == "overloaded_error"

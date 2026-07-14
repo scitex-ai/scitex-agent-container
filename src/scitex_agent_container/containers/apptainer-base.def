@@ -71,6 +71,20 @@ From: ubuntu:24.04
     # Added on the lib row because it's a runtime system library (no
     # -dev companion needed for the consumers that hit the silent-
     # fallback path). Supersedes the standalone PR #322.
+    #
+    # The "playwright/headless-chromium runtime libs" group at the tail
+    # of the apt list is the shared-object set a headless Chromium needs
+    # to LAUNCH (equivalent to `npx playwright install-deps chromium`).
+    # Baked at :base — NOT via scitex_dev.system_deps — on purpose: the
+    # system-deps SSoT only runs at the :scitex layer (scitex-dev isn't
+    # installed here), but the operator wants ANY agent to screenshot /
+    # run browser e2e regardless of which scitex packages its overlay
+    # carries. Two consumers ALREADY baked into :base need exactly these
+    # libs — `@mermaid-js/mermaid-cli` (section 3) and puppeteer's
+    # `chrome-headless-shell` (section 3a) both drive a headless Chromium
+    # — so this also fixes their latent "libnspr4.so: cannot open shared
+    # object file" breakage, not just Playwright's. libglib2.0-0 is
+    # already on the lib row above; libcairo2/libpango pull it transitively.
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
@@ -86,7 +100,15 @@ From: ubuntu:24.04
         git-delta \
         direnv \
         tmux ncurses-term \
-        tini
+        tini \
+        libnss3 libnspr4 \
+        libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
+        libcups2t64 libdrm2 libgbm1 libxshmfence1 \
+        libxkbcommon0 libasound2t64 \
+        libcairo2 libpango-1.0-0 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libxext6 libxrender1 \
+        fonts-liberation
     locale-gen en_US.UTF-8
 
     # ---- 1a. Canonical container user `agent` (UID 1000) --------------
@@ -173,20 +195,23 @@ From: ubuntu:24.04
         @typescript-eslint/eslint-plugin \
         jsonlint \
         @mermaid-js/mermaid-cli \
-        @anthropic-ai/claude-code@2.1.198
+        @anthropic-ai/claude-code@latest
 
     # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
-    # 2026-07-02: the SDK-bundled CLI is stuck at 2.1.191 even on the
-    # latest claude-agent-sdk (0.2.110), and the operator needs 2.1.198
-    # to unlock the `fable[1m]` model. So the PATH `claude` binary is now
-    # DECOUPLED from the SDK: we install the standalone
-    # `@anthropic-ai/claude-code@2.1.198` npm package (added to the
+    # 2026-07-02: the SDK-bundled CLI (`_bundled/claude`) lags the
+    # standalone npm claude-code release even on the latest
+    # claude-agent-sdk, and the operator wants the LATEST claude-code
+    # (e.g. to unlock the `fable[1m]` model). So the PATH `claude` binary
+    # is DECOUPLED from the SDK: we install the standalone
+    # `@anthropic-ai/claude-code@latest` npm package (added to the
     # `npm install -g` list above; npm prefix is /opt/npm-global, so it
     # lands at /opt/npm-global/bin/claude) and repoint /usr/local/bin/claude
-    # at THAT in section 6b — the SDK stays pinned at 0.2.110 purely for
-    # the Python runtime. NOTE: this is a deliberate CLI/SDK version
-    # mismatch (2.1.198 CLI vs the SDK's own 2.1.191 bundle); see section
-    # 6b for the caveat about SDK/claude-session agents.
+    # at THAT in section 6b. Per the operator directive to "carry the
+    # LATEST of ALL ecosystem packages", BOTH the npm claude-code (here)
+    # and the Python claude-agent-sdk (section 6b) now float to latest —
+    # the decoupling is STRUCTURAL (standalone npm CLI vs the SDK's
+    # internal bundle), not a frozen version mismatch; see section 6b for
+    # the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
     rm -rf /var/lib/apt/lists/*
@@ -259,7 +284,18 @@ From: ubuntu:24.04
     rm -rf /tmp/unix-tree-*
 
     # ---- 6. uv (Astral) + pipx + pre-commit ----------------------------
-    UV_INSTALL_DIR=/usr/local/bin curl -LsSf https://astral.sh/uv/install.sh | sh
+    # uv (Astral) — install, then place uv+uvx at a WORLD-READABLE path.
+    # The curl|sh installer ignores UV_INSTALL_DIR and lands in
+    # $HOME/.local/bin (=/root/.local/bin under the root build shell),
+    # which is unreachable to the uid-1000 `agent` user (/root is 0700) —
+    # which is why agents used to re-curl|sh uv into /uvwork at boot.
+    # Copy to /usr/local/bin (0755) so the baked uv is on agent's PATH.
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    for b in uv uvx; do
+        src="$(command -v "$b" 2>/dev/null || echo "/root/.local/bin/$b")"
+        [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
+    done
+    /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
     python3 -m pip install --no-cache-dir --break-system-packages pipx
     # pre-commit into SYSTEM python on purpose: every repo's git hook execs
     # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
@@ -287,18 +323,19 @@ From: ubuntu:24.04
     # just these two into a dedicated venv so /usr/bin/python3 stays
     # untouched and per-agent overlays own their own scientific stack.
     #
-    # claude-agent-sdk PINNED to 0.2.87 — bundles claude CLI 2.1.150
-    # (verified in-apptainer 2026-06-05, including Bash
-    # run_in_background). The old 0.1.72 pin was a workaround for a
-    # since-fixed 2.1.139 startup hang on `GET /v1/mcp_servers`; the
-    # SDK has rolled forward across the affected window and the
-    # currently shipping pair is the one the lead's hand-built SIF
-    # uses today. The SDK bundles its CLI under `_bundled/claude`, but
-    # as of 2026-07-02 that bundle is STALE at 2.1.191 even on 0.2.110,
-    # so we no longer surface it on PATH — the PATH `claude` binary is
-    # the standalone npm `@anthropic-ai/claude-code@2.1.198` install
-    # instead (see section 3a and the repoint below in this section).
-    # The SDK pin (0.2.110) is kept ONLY for the Python runtime that
+    # claude-agent-sdk is FLOORED TO LATEST (installed bare, no `==`
+    # pin) per the operator directive to "install the LATEST
+    # claude-agent-sdk" / "carry the LATEST of ALL ecosystem packages".
+    # History: it was previously pinned (0.1.72 → 0.2.87 → 0.2.114); the
+    # 0.1.72 pin was a workaround for a since-fixed 2.1.139 startup hang
+    # on `GET /v1/mcp_servers`, and the SDK has long since rolled forward
+    # past that window, so a floating latest is safe and is what the
+    # operator wants. The SDK bundles its OWN CLI under `_bundled/claude`,
+    # but that bundle lags the standalone npm release — so we no longer
+    # surface it on PATH; the PATH `claude` binary is the standalone npm
+    # `@anthropic-ai/claude-code@latest` install instead (see section 3a
+    # and the repoint below in this section). The SDK (floated to latest)
+    # is installed ONLY for the Python runtime that
     # scitex-agent-container's runner imports.
     #
     # sac itself is installed from /opt/scitex-agent-container-src/ —
@@ -307,10 +344,12 @@ From: ubuntu:24.04
     # this .def (no `git+...@main` snapshot drift). The wheel build
     # via hatchling happens inside the SIF, against the bundled tree.
     #
-    # uv landed at /root/.local/bin/uv (the uv installer ignores
-    # UV_INSTALL_DIR for the curl|sh path and uses XDG_BIN_HOME ->
-    # ~/.local/bin under root). PATH below is conservative — extend
-    # it explicitly rather than rely on the build shell.
+    # uv is now baked WORLD-READABLE at /usr/local/bin/uv (section 6
+    # copies it out of /root/.local/bin, which the curl|sh installer
+    # uses despite UV_INSTALL_DIR and which is unreachable to the
+    # uid-1000 `agent` user). /root/.local/bin is kept on PATH below
+    # for the build shell only (harmless); /usr/local/bin is what
+    # matters at runtime.
     python3 -m venv /opt/venv-sac
     export PATH=/root/.local/bin:/usr/local/bin:$PATH
     # P3a-1.5 (operator directive feedback_scitex_todo_single_shared_store,
@@ -321,21 +360,164 @@ From: ubuntu:24.04
     # `scitex_todo._mcp_server:mcp`. scitex-todo's hard deps (click,
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
+    #
+    # scitex-todo floor >=0.9.4 (was >=0.3.0) — incident-fleet-drift-
+    # stale-scitex-todo (2026-07-12). THIS layer is the one that matters:
+    # most agent specs boot sac-base.sif directly, and the :scitex layer
+    # INHERITS this venv, so whatever scitex-todo lands here is what the
+    # whole fleet runs. The ancient >=0.3.0 floor did not FORCE anything
+    # — it just took whatever was newest on the bake day (0.7.50 on
+    # 2026-07-10) and then froze it into every downstream layer. The
+    # floor now names the capability the fleet actually depends on: the
+    # WIP-gate fix (scitex-todo #356, first released in 0.8.0 — the gate
+    # counts `in_progress` ONLY). Below it, every agent's WIP gate counts
+    # DEFERRED + CANCELLED cards as open and refuses legitimate card
+    # creation. Keep this floor at-or-above the version whose symbol the
+    # section-6c gate below asserts; the gate is what makes a violation
+    # LOUD instead of silent.
+    # sac's [openai] extra (openai-agents — the `spec.provider: openai`
+    # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
+    # image serves EVERY agent, so a per-spec conditional install is
+    # impossible at image-build time. Per-spec conditionality is a
+    # RUNTIME concern instead — only `provider: openai` launches get the
+    # OPENAI_* env injection + `openai_session` executor routing (see
+    # runtimes/_apptainer_provider.py). The extra's version floor lives
+    # in pyproject.toml (SSoT); the bracket syntax on the local source
+    # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
-        "claude-agent-sdk==0.2.110" \
-        "scitex-todo[mcp]>=0.3.0" \
-        /opt/scitex-agent-container-src
+        "claude-agent-sdk" \
+        "scitex-todo[mcp]>=0.9.4" \
+        "/opt/scitex-agent-container-src[openai]"
 
-    # Surface the standalone npm-installed claude CLI (2.1.198) on PATH,
-    # DECOUPLED from the SDK's stale 2.1.191 bundle (2026-07-02). This is
-    # what humans get on `apptainer shell` and what TUI agents
-    # (runtime: tui) invoke via `command -v claude` — so they get
-    # 2.1.198 and the `fable[1m]` model. CAVEAT: this is a CLI/SDK
-    # version mismatch. SDK/claude-session agents may still invoke the
-    # SDK's OWN bundled binary (2.1.191) depending on how
-    # subprocess_cli resolves the executable, rather than this PATH
-    # symlink — that path is NOT yet validated on a rebuilt SIF and
-    # needs a smoke-test before fleet-wide rollout.
+    # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
+    # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
+    # silently shipped scitex-todo 0.7.50 — days and two minor releases
+    # behind — and NOTHING failed. The bake was green, `sac versions`
+    # looked plausible, and the fleet quietly ran a scitex-todo whose WIP
+    # gate counted DEFERRED + CANCELLED cards as open (refusing legitimate
+    # card creation) while agents "diagnosed" bugs in peer code that had
+    # shipped fixed releases earlier. Silent staleness is the whole bug;
+    # this gate converts it into a BUILD FAILURE.
+    #
+    # Why a SYMBOL and not the version string: the version string LIES.
+    # An orphaned / duplicate .dist-info freezes what
+    # ``importlib.metadata.version()`` reports while the code actually on
+    # sys.path is a different tree entirely — a live open incident, and
+    # precisely why "the SIF says 0.9.4" would be worthless evidence. The
+    # symbol cannot lie: it is imported from the code this image will run.
+    #
+    # ``scitex_todo._throughput.WIP_STATUSES`` is the WIP gate's status
+    # set (scitex-todo #356, first released in 0.8.0): it must contain
+    # ``in_progress`` and must NOT contain terminal states. A pre-0.8.0
+    # scitex-todo dies on the import; a regressed one dies on the
+    # membership checks. Either way the build stops HERE rather than
+    # shipping a fleet-wide silent regression.
+    #
+    # SECOND probe, same standard: the sac in this image must be the
+    # %files-staged SOURCE TREE that shipped this .def — not a transitive
+    # PyPI sac wheel. uv/pip have skipped that local install before (their
+    # version-already-satisfied check) and quietly shipped a SIF built from
+    # the WRONG tree; the source-bundled install exists to stop that, and
+    # until now NOTHING asserted that it worked.
+    #
+    # Explicit ``sys.exit(1)`` rather than ``assert``: a bare ``assert``
+    # is stripped under ``python -O`` / PYTHONOPTIMIZE, which would turn
+    # this very gate into another silent no-op. Fail-loud means the check
+    # cannot be optimised away.
+    cat > /tmp/sac-assert-image-fresh.py <<'EOF'
+"""Build-time gate: nothing stale got baked into this image.
+
+Asserts BY SYMBOL, never by version string. The version string LIES — in
+two different ways, and BOTH of them live in this image:
+
+  * an orphaned / duplicate .dist-info freezes what importlib.metadata
+    reports while the code actually on sys.path is a different tree;
+  * the %files-staged sac reports its last RELEASED version no matter how
+    new the bundled source tree really is.
+
+A symbol cannot lie: it is imported from the code this image will run.
+Exits non-zero and prints WHY on failure; the .def turns that into a
+fatal build error.
+"""
+
+import importlib.metadata as md
+import sys
+
+# Both imports ARE staleness probes: each raises ImportError (unhandled →
+# non-zero exit → dead build) on a stale bake, naming the missing symbol.
+
+# scitex-todo #356 (first released in 0.8.0): the WIP gate must count
+# `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
+# CANCELLED cards as open and refuses legitimate card creation — the
+# 2026-07-12 fleet-drift incident this gate exists to end.
+from scitex_todo._throughput import WIP_STATUSES
+
+# sac #633: auto-provisions a new agent's container overlay root; without
+# it every newly-created agent is stillborn on a raw apptainer FATAL.
+# This symbol is NEWER THAN ANY PUBLISHED sac RELEASE, so it doubles as
+# proof that the %files-staged local source tree won the install and no
+# transitive PyPI sac wheel overwrote it. Raise this floor when a newer
+# must-ship fix lands; never delete the probe.
+from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
+
+# Printed for the BUILD LOG only — these numbers are NOT the gate.
+print("scitex-todo reported version :", md.version("scitex-todo"))
+print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+print("sac reported version         :", md.version("scitex-agent-container"))
+print(
+    "sac overlay auto-provision   :",
+    f"{ensure_overlay_dirs.__module__}.{ensure_overlay_dirs.__name__}",
+)
+
+failures = []
+
+# The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
+# states must never occupy a WIP slot.
+if "in_progress" not in WIP_STATUSES:
+    failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
+if terminal:
+    failures.append(
+        f"terminal states {sorted(terminal)} counted as WIP: {sorted(WIP_STATUSES)} "
+        "— the pre-0.8.0 bug that jams every agent's WIP gate."
+    )
+
+# Exactly one installed distribution may claim each name. Two (an
+# orphaned .dist-info left by a partial reinstall) is the failure mode
+# that lets the reported version diverge from the code.
+for name in ("scitex-todo", "scitex-agent-container"):
+    dists = [
+        dist
+        for dist in md.distributions()
+        if (dist.metadata["Name"] or "").lower().replace("_", "-") == name
+    ]
+    if len(dists) != 1:
+        failures.append(
+            f"{len(dists)} {name} distributions installed (expected 1) — a "
+            "duplicate/orphaned .dist-info makes the reported version a lie."
+        )
+
+if failures:
+    print("", file=sys.stderr)
+    for line in failures:
+        print(f"  - {line}", file=sys.stderr)
+    sys.exit(1)
+
+print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
+EOF
+    /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
+        || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
+
+    # Surface the standalone npm-installed claude CLI (latest) on PATH,
+    # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
+    # npm release). This is what humans get on `apptainer shell` and what
+    # TUI agents (runtime: tui) invoke via `command -v claude` — so they
+    # get the latest claude-code and the `fable[1m]` model. CAVEAT: the
+    # SDK ships its own bundled CLI, so SDK/claude-session agents may
+    # still invoke that bundled binary (not this PATH symlink) depending
+    # on how subprocess_cli resolves the executable — that path is NOT
+    # yet validated on a rebuilt SIF and needs a smoke-test before
+    # fleet-wide rollout.
     if [ -x /opt/npm-global/bin/claude ]; then
         ln -sf /opt/npm-global/bin/claude /usr/local/bin/claude
     fi
@@ -359,17 +541,32 @@ From: ubuntu:24.04
     # Fail loud if the build did not produce a working binary.
     /opt/cargo/bin/rtk --version
 
+    # ---- 8. Bake the scitex-* version manifest (`sac versions`) --------
+    # `sac versions --json` reads this baked manifest (source="manifest",
+    # near-zero cost — a `cat`, not a full `pip list`) so scitex-dev's
+    # ecosystem drift aggregator can see the base-image venv layer cheaply.
+    # The verb falls back to a live `apptainer exec <sif> pip list` when
+    # this file is absent (older images not yet rebuilt), so shipping it is
+    # purely additive. Filtered to the scitex-* ecosystem packages; written
+    # in pip's own `--format=json` shape so the reader parses both paths
+    # identically. Pure pipe + `python -c` (dash-safe — apptainer %post runs
+    # under /bin/sh, which has no bash process substitution).
+    /opt/venv-sac/bin/pip list --format=json \
+        | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
+        > /opt/scitex-versions.json
+    cat /opt/scitex-versions.json
+
 %environment
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
     # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
     # (with scitex-agent-container + claude-agent-sdk preinstalled).
     # The PATH `claude` resolves to /usr/local/bin/claude, which section
-    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@2.1.198`
-    # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's stale
-    # 2.1.191 bundle (2026-07-02, for `fable[1m]`). No `claude` lands in
+    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@latest`
+    # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's OWN
+    # bundled CLI (for `fable[1m]`). No `claude` lands in
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
-    # those earlier entries do NOT shadow the 2.1.198 symlink.
+    # those earlier entries do NOT shadow the npm claude symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo

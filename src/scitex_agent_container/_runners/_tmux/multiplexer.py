@@ -39,6 +39,15 @@ class MultiplexerProtocol(Protocol):
     def send_keys(session_name: str, *keys: str) -> None: ...
 
     @staticmethod
+    def send_text_literal(session_name: str, text: str) -> None:
+        """Paste ``text`` into the pane LITERALLY (``send-keys -l``) WITHOUT
+        submitting. See :meth:`TmuxManager.send_text_literal` — the ``-l`` flag
+        is REQUIRED or the containerized Ink/React ``claude`` TUI silently drops
+        the keystrokes. The SUBMIT is a separate idle-gated named ``Enter``.
+        """
+        ...
+
+    @staticmethod
     def send_text_and_submit(session_name: str, text: str) -> None: ...
 
     @staticmethod

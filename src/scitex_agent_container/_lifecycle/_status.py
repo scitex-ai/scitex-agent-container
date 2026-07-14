@@ -92,6 +92,40 @@ def _remote_instance_status(name: str) -> dict | None:
         return None
 
 
+def _liveness_block(
+    name: str,
+    config: AgentConfig | None,
+    runtime_factory: Optional[Callable[[AgentConfig], Any]],
+) -> dict:
+    """The ternary liveness verdict + its evidence, for ``agent_status``.
+
+    Tolerant by construction: any failure to gather degrades to an UNKNOWN
+    verdict with the reason attached — never to a fabricated DEAD, and never to
+    an exception that takes the whole status command down with it.
+    """
+    from ._verdict import UNKNOWN, LivenessVerdict, Signal
+    from ._verdict_resolve import resolve_verdict
+
+    try:
+        runtime = None
+        if config is not None:
+            factory = runtime_factory or _get_runtime
+            runtime = factory(config)
+        return resolve_verdict(name, config, runtime).to_dict()
+    except Exception as exc:  # stx-allow: fallback (reason: an un-gatherable verdict is UNKNOWN with its reason — never a fabricated DEAD, and never a crashed status command)
+        return LivenessVerdict(
+            agent=name,
+            verdict=UNKNOWN,
+            signals=(
+                Signal(
+                    "resolver",
+                    UNKNOWN,
+                    f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
+                ),
+            ),
+        ).to_dict()
+
+
 def agent_status(
     name: str,
     registry: Registry | None = None,
@@ -143,6 +177,20 @@ def agent_status(
         # rate limit. Resolved from the agent's effective auth source.
         "account": _resolve_account(config),
     }
+
+    # TERNARY liveness verdict + THE EVIDENCE FOR IT.
+    #
+    # ``status`` above is the legacy BOOL ("running"/"stopped"), and it cannot
+    # say "I don't know" — so it says one of the two poles and the reader has no
+    # way to tell a confident verdict from a coin-flip. An operator staring at
+    # ``running | pid=None`` learns nothing at all.
+    #
+    # ``liveness`` says WHICH and WHY: "ALIVE (delivery: 1 live inbox
+    # subscriber)" / "UNKNOWN (heartbeat: beat is 5086s stale …; registry: …)".
+    # ``status`` is left untouched for back-compat — this is ADDITIVE, the same
+    # discipline ``inbox_reachable`` follows (observation published NEXT TO the
+    # declaration, never overwriting it).
+    result["liveness"] = _liveness_block(name, config, runtime_factory)
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.

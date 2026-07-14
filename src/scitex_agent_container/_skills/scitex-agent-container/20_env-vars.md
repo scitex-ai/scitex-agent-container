@@ -61,6 +61,7 @@ resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
 | `SCITEX_AGENT_CONTAINER_REGISTRY_DIR` | Directory where the container registers its presence. | `~/.scitex/agent-container/runtime/registry` | path |
 | `SCITEX_AGENT_CONTAINER_RUNTIME_DIR` | Per-agent runtime state root for the claude-session runner (pid / heartbeat.json / session.jsonl / quota.json / session_id). | `~/.scitex/agent-container/runtime` | path |
 | `SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR` | Directory for SLURM-job state handoff. | `~/.scitex/agent-container/slurm` | path |
+| `SCITEX_AGENT_CONTAINER_ROOT` | sac's install root, as a single base. Read by `sac agents rename` (`_lifecycle._rename_plan.Layout.default`) to derive the spec / overlay / runtime / registry / state.db paths together. Resolved at CALL time, so it actually takes effect. | `~/.scitex/agent-container` | path |
 | `SAC_CACHE_DIR` | Agent-local cache directory. | `~/.cache/scitex-agent` | path |
 
 ## Credentials
@@ -140,6 +141,12 @@ start`` against the bare host's apptainer.
 |---|---|---|---|
 | `SAC_LISTEN_BASE_URL` | Host-stable ``sac listen`` base URL the in-SIF CLI POSTs spawn requests against (also used by the in-container channel adapter to subscribe to the bus). Auto-injected by the apptainer runtime from ``listen.host`` / ``listen.port`` in ``~/.scitex/agent-container/config.yaml``. | `http://127.0.0.1:7878` | URL |
 | `SAC_LISTEN_BEARER` | Bearer token presented as ``Authorization: Bearer ...`` to the host listen server. Auto-injected from the host's bearer-token file; required when ``server:sac`` is in ``spec.claude.channels`` (the runtime fails loud at launch otherwise). | `—` | string |
+| `SAC_INBOX_KEEPALIVE_S` | Server: seconds between `: keepalive` frames on an IDLE inbox SSE stream. A silent stream is indistinguishable from a dead one, which parks the subscriber forever (silent deafness) — so a bad value falls back to the default rather than disabling the beat. | `15` | float |
+| `SAC_MCP_SSE_READ_TIMEOUT_S` | Client (`sac mcp channel`): seconds of silence before the inbox read is declared dead and the adapter re-dials. Keep well above `SAC_INBOX_KEEPALIVE_S`. Never unbounded — "wait forever" is the bug, not a setting. | `60` | float |
+
+Deploy order: restart `sac listen` when shipping the beat. A NEW adapter against
+a not-yet-restarted daemon gets no beats and re-dials every ~60s — lossless and
+self-healing (rows replay on connect), but it looks like flapping.
 
 Fail-loud: when the broker runs in a SIF and ``SAC_LISTEN_BASE_URL`` is
 unset, ``sac agents start`` raises ``InSifBrokerError`` (apptainer

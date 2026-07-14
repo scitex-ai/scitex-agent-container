@@ -14,6 +14,7 @@ Same-shape result-field invariants over a single arrange/act collapse into
 from __future__ import annotations
 
 import json
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -53,15 +54,37 @@ def _make_home(tmp_path: Path, email: str = "test@example.com") -> Path:
 
 
 def _make_store(tmp_path: Path, accounts: list[dict]) -> Path:
-    """Create a fake account store populated with accounts."""
+    """Create a fake account store populated with accounts.
+
+    Each account dict may carry a ``_health`` control key (stripped before
+    it is written to ``account.json``):
+
+      * ``"valid"``  (default) — writes a ``.credentials.json`` whose
+        ``claudeAiOauth.expiresAt`` is 30 days in the FUTURE → healthy.
+      * ``"expired"`` — writes a snapshot whose ``expiresAt`` is in the
+        PAST → unhealthy (the exact shape of the 2026-07-06 bug).
+      * ``"absent"`` — writes NO ``.credentials.json`` → unhealthy.
+
+    Freshness is what :func:`_creds._pick_healthy.account_health` reads, so
+    this seam lets the tests exercise the health gate without any network.
+    """
+    future_ms = int((time.time() + 30 * 24 * 3600) * 1000)
+    past_ms = int((time.time() - 24 * 3600) * 1000)
     store = tmp_path / "store"
     store.mkdir()
-    for acct in accounts:
+    for raw in accounts:
+        acct = dict(raw)  # copy: never mutate the caller's dict
+        health = acct.pop("_health", "valid")
         name = acct["name"]
         cred_dir = store / name
         cred_dir.mkdir()
         (cred_dir / "account.json").write_text(json.dumps(acct))
-        (cred_dir / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {}}))
+        if health == "absent":
+            continue  # no snapshot on disk → ABSENT → unhealthy
+        expires = future_ms if health == "valid" else past_ms
+        (cred_dir / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": {"expiresAt": expires}})
+        )
     return store
 
 
@@ -277,25 +300,165 @@ def test_check_and_rotate_between_warn_and_threshold_returns_warning(
 # ---------------------------------------------------------------------------
 
 
-def test_select_next_account_skips_account_matching_current_email():
+def test_select_next_account_skips_account_matching_current_email(tmp_path):
     # Arrange
     accounts = [
         {"name": "a", "email_address": "a@x.com", "quota_5h_used_pct": 50.0},
         {"name": "b", "email_address": "b@x.com", "quota_5h_used_pct": 10.0},
     ]
+    store = _make_store(tmp_path, accounts)
     # Act
-    result = _select_next_account(accounts, current_email="a@x.com")
+    result = _select_next_account(accounts, current_email="a@x.com", store_dir=store)
     # Assert
     assert result["name"] == "b"
 
 
-def test_select_next_account_returns_none_when_only_current_account_present():
+def test_select_next_account_returns_none_when_only_current_account_present(tmp_path):
     # Arrange
     accounts = [{"name": "only", "email_address": "only@x.com"}]
+    store = _make_store(tmp_path, accounts)
     # Act
-    result = _select_next_account(accounts, current_email="only@x.com")
+    result = _select_next_account(accounts, current_email="only@x.com", store_dir=store)
     # Assert
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _select_next_account — credential-health gate (2026-07-06 regression)
+# ---------------------------------------------------------------------------
+
+
+def test_select_next_account_excludes_expired_account_even_at_zero_quota(tmp_path):
+    # Arrange — the EXACT bug: an EXPIRED account reads 0.0% and would win
+    # on pure-quota ordering, but must be excluded as unhealthy.
+    accounts = [
+        {
+            "name": "expired",
+            "email_address": "expired@x.com",
+            "quota_5h_used_pct": 0.0,
+            "_health": "expired",
+        },
+        {
+            "name": "healthy",
+            "email_address": "healthy@x.com",
+            "quota_5h_used_pct": 40.0,
+        },
+    ]
+    store = _make_store(tmp_path, accounts)
+    # Act
+    result = _select_next_account(
+        accounts, current_email="cur@x.com", store_dir=store
+    )
+    # Assert
+    assert result["name"] == "healthy"
+
+
+def test_select_next_account_picks_lowest_quota_among_healthy(tmp_path):
+    # Arrange
+    accounts = [
+        {"name": "high", "email_address": "high@x.com", "quota_5h_used_pct": 70.0},
+        {"name": "low", "email_address": "low@x.com", "quota_5h_used_pct": 5.0},
+        {
+            "name": "expired-zero",
+            "email_address": "ez@x.com",
+            "quota_5h_used_pct": 0.0,
+            "_health": "expired",
+        },
+    ]
+    store = _make_store(tmp_path, accounts)
+    # Act
+    result = _select_next_account(
+        accounts, current_email="cur@x.com", store_dir=store
+    )
+    # Assert
+    assert result["name"] == "low"
+
+
+def test_select_next_account_returns_none_when_all_non_current_unhealthy(tmp_path):
+    # Arrange — every non-current candidate is expired or absent.
+    accounts = [
+        {"name": "cur", "email_address": "cur@x.com", "quota_5h_used_pct": 90.0},
+        {
+            "name": "dead",
+            "email_address": "dead@x.com",
+            "quota_5h_used_pct": 0.0,
+            "_health": "expired",
+        },
+        {
+            "name": "gone",
+            "email_address": "gone@x.com",
+            "quota_5h_used_pct": 0.0,
+            "_health": "absent",
+        },
+    ]
+    store = _make_store(tmp_path, accounts)
+    # Act
+    result = _select_next_account(
+        accounts, current_email="cur@x.com", store_dir=store
+    )
+    # Assert
+    assert result is None
+
+
+def test_select_next_account_never_selects_current_even_if_lowest(tmp_path):
+    # Arrange — current account has the lowest quota AND is healthy.
+    accounts = [
+        {"name": "cur", "email_address": "cur@x.com", "quota_5h_used_pct": 1.0},
+        {"name": "other", "email_address": "other@x.com", "quota_5h_used_pct": 80.0},
+    ]
+    store = _make_store(tmp_path, accounts)
+    # Act
+    result = _select_next_account(
+        accounts, current_email="cur@x.com", store_dir=store
+    )
+    # Assert
+    assert result["name"] == "other"
+
+
+def test_check_and_rotate_over_threshold_excludes_expired_backup(tmp_path):
+    # Arrange — over threshold, but the ONLY other account has an expired
+    # credential at 0% quota. End-to-end guard against the live bug: stay
+    # put, never rotate to the dead token.
+    home = _make_home(tmp_path, email="primary@example.com")
+    (home / ".claude").mkdir()
+    store = _make_store(
+        tmp_path,
+        [
+            {
+                "name": "expired-backup",
+                "email_address": "backup@example.com",
+                "quota_5h_used_pct": 0.0,
+                "_health": "expired",
+            }
+        ],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 92.0, "used_pct_7d": 70.0, "error": None}):
+        result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
+    # Assert
+    assert result["action"] == "no_accounts"
+
+
+def test_check_and_rotate_over_threshold_expired_backup_does_not_switch(tmp_path):
+    # Arrange
+    home = _make_home(tmp_path, email="primary@example.com")
+    (home / ".claude").mkdir()
+    store = _make_store(
+        tmp_path,
+        [
+            {
+                "name": "expired-backup",
+                "email_address": "backup@example.com",
+                "quota_5h_used_pct": 0.0,
+                "_health": "expired",
+            }
+        ],
+    )
+    # Act
+    with _fake_fetch_usage({"used_pct_5h": 92.0, "used_pct_7d": 70.0, "error": None}):
+        result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
+    # Assert
+    assert result["switched_to"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +491,7 @@ def test_check_and_rotate_only_current_account_message_mentions_cannot_rotate(tm
     with _fake_fetch_usage({"used_pct_5h": 92.0, "used_pct_7d": 70.0, "error": None}):
         result = check_and_rotate(threshold=80.0, store_dir=store, home=home)
     # Assert
-    assert "cannot rotate" in result["message"]
+    assert "staying put" in result["message"]
 
 
 # ---------------------------------------------------------------------------

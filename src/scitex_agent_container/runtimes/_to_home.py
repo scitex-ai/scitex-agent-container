@@ -58,10 +58,10 @@ content — see ``_to_home_errors.py`` for context.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._cct_token_pool import ensure_cct_bot_token
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
@@ -79,6 +79,13 @@ from ._to_home_errors import (
     WorkspaceCLAUDEMarkerError,
     WorkspaceCredentialLeakError,
     WorkspaceMcpMergeError,
+)
+from ._to_home_resolve import (
+    _spec_dir,
+    _user_baseline_to_home_dir,
+    resolve_baseline_to_home_dir,
+    resolve_to_home_dir,
+    settings_layer_dirs,
 )
 from ._to_home_settings import deploy_settings_cascade
 from ._to_home_text import (
@@ -138,91 +145,15 @@ _VERBATIM_SECRET_BASENAMES = frozenset({".envrc"})
 # accepted as a layer source but never plain-copied.
 _CASCADE_DEPLOYED_BASENAMES = frozenset({"settings.json", "settings.local.json"})
 
-# Env var: explicit override for the shared/common baseline to_home dir.
-# Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
-# (or the legacy ``_base`` sibling).
-_BASELINE_ENV_VAR = "SAC_TO_HOME_BASELINE"
-
-# Names of the sibling dir (under the agents root) that holds the common
-# baseline. Agents live at ``<agents_dir>/<name>/``, so the agents root
-# is the spec dir's parent and the baseline is ``<parent>/_shared/to_home``.
-# ``_shared`` is the current name; ``_base`` is retained as a
-# backward-compat fallback for hosts/fleets not yet renamed (first match
-# under the agents root wins, in declared order).
-_BASELINE_DIR_NAMES = ("_shared", "_base")
+# Path-resolution helpers (``resolve_to_home_dir`` /
+# ``resolve_baseline_to_home_dir`` / ``_user_baseline_to_home_dir`` /
+# ``settings_layer_dirs`` / ``_spec_dir``) + their env/dir-name constants live
+# in :mod:`._to_home_resolve` and are imported + re-exported above, so the
+# legacy ``from ...runtimes._to_home import resolve_baseline_to_home_dir``
+# contract keeps resolving. This module owns the materialize/deploy side only.
 
 
 # --- public API ------------------------------------------------------------
-
-
-def resolve_to_home_dir(config: AgentConfig) -> Path | None:
-    """Resolve ``spec.to_home`` to an absolute directory.
-
-    Resolution order:
-      1. Absolute path: use as-is.
-      2. Relative path: resolve against the directory containing
-         ``spec.yaml``.
-      3. Empty: auto-discover ``./to_home`` next to ``spec.yaml``.
-
-    Returns ``None`` if no directory can be resolved (legacy specs
-    without a to_home/ dir simply skip materialization).
-    """
-    spec_dir = _spec_dir(config)
-    raw = (getattr(config, "to_home", "") or "").strip()
-    if not raw:
-        if spec_dir is not None and (spec_dir / "to_home").is_dir():
-            return spec_dir / "to_home"
-        return None
-    p = Path(raw).expanduser()
-    if not p.is_absolute():
-        if spec_dir is None:
-            return None
-        p = spec_dir / p
-    return p if p.is_dir() else None
-
-
-def resolve_baseline_to_home_dir(spec_dir: Path | None) -> Path | None:
-    """Resolve the shared/common baseline ``to_home/`` directory.
-
-    Resolution order:
-      1. ``$SAC_TO_HOME_BASELINE`` (absolute dir) — explicit override.
-      2. ``<agents_dir>/_shared/to_home`` — a sibling ``_shared`` dir
-         under the agents root (``_base`` accepted as a backward-compat
-         fallback). Agents live at ``<agents_dir>/<name>/``, so the
-         agents root is ``spec_dir.parent``.
-
-    Returns ``None`` when no baseline dir can be resolved (no baseline =
-    current behavior; fully backward compatible).
-    """
-    override = (os.environ.get(_BASELINE_ENV_VAR, "") or "").strip()
-    if override:
-        p = Path(override).expanduser()
-        return p if p.is_dir() else None
-    if spec_dir is None:
-        return None
-    for name in _BASELINE_DIR_NAMES:
-        p = spec_dir.parent / name / "to_home"
-        if p.is_dir():
-            return p
-    return None
-
-
-def _user_baseline_to_home_dir() -> Path | None:
-    """The USER-level shared baseline ``to_home`` — applies to every agent
-    regardless of where its spec lives: ``~/.scitex/agent-container/agents/
-    {_shared,_base}/to_home`` (first match wins). Returns ``None`` when absent.
-
-    Distinct from :func:`resolve_baseline_to_home_dir`, which resolves the
-    baseline *relative to the spec's* agents root (project-local for a
-    project-local spec). The ``.envrc`` cascade sources BOTH so a user-global
-    default and a project ``_shared`` both apply, lowest precedence first.
-    """
-    base = Path("~/.scitex/agent-container/agents").expanduser()
-    for name in _BASELINE_DIR_NAMES:
-        p = base / name / "to_home"
-        if p.is_dir():
-            return p
-    return None
 
 
 def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
@@ -349,6 +280,17 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         dest / ".envrc",
     ]
     fold_envrc_cascade_into_env(dest, envrc_cascade)
+    # DETERMINISTIC CCT BOT-TOKEN INJECTION (card sac-fleet-ux-misc-2026-06-24,
+    # last item): when the spec requests server:claude-code-telegrammer and the
+    # cascade above did NOT provide CCT_BOT_TOKEN (no per-project .envrc), sac
+    # resolves the agent/project -> CCT_BOT_TOKEN_<SLOT> from the fleet pool
+    # (launching env + SAC_SECRETS_ENVRC secret files) and appends it to
+    # dest/.env itself — per-agent identity must never depend on .envrc
+    # goodwill (SCITEX_TODO_AGENT incident doctrine). Missing token => LOUD
+    # scitex-logging ERROR naming the pool path + fix; never silent, never
+    # fatal, token value never logged. Runs AFTER the fold so an explicit
+    # .envrc mapping stays authoritative.
+    ensure_cct_bot_token(config, dest)
     # settings.json CASCADE (same precedence order as .envrc): deep-merge each
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
@@ -387,22 +329,6 @@ def _apply_host_merge_with_drift_guard(config: AgentConfig, dest: Path) -> None:
             f"host deep-merge still drifted after re-materialize for agent "
             f"{config.name!r} at {dest}/.claude:\n  - {bullet}"
         )
-
-
-def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
-    """The ordered settings.json cascade layers (lowest precedence first).
-
-    ``(name, dir)`` pairs for the user-level ``_shared`` baseline, the spec's
-    ``_shared`` baseline, and the per-agent ``to_home`` — the inputs to
-    :func:`_to_home_settings.deploy_settings_cascade` /
-    :func:`_to_home_settings.settings_cascade_provenance`. Shared by
-    ``deploy_to_home`` and ``sac agents explain`` so both resolve identically.
-    """
-    return [
-        ("user-shared", _user_baseline_to_home_dir()),
-        ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
-        ("per-agent", resolve_to_home_dir(config)),
-    ]
 
 
 # --- traversal -------------------------------------------------------------
@@ -488,15 +414,6 @@ def _walk_and_apply(
 # re-imported above and re-exported below so legacy import paths still resolve.
 # Symlinks are dereference-copied to real content via
 # :func:`_symlink_resolve.deref_copy_symlink`, called directly by the traversal.
-
-
-# --- internal helpers ------------------------------------------------------
-
-
-def _spec_dir(config: AgentConfig) -> Path | None:
-    if not getattr(config, "config_path", ""):
-        return None
-    return Path(config.config_path).parent
 
 
 __all__ = [

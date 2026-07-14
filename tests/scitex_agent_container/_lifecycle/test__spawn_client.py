@@ -291,6 +291,36 @@ def test_body_omits_foreground_and_one_shot_when_default_false(
     assert "foreground" not in body and "one_shot" not in body
 
 
+# ---------------------------------------------------------------------------
+# Consent-propagation fix (2026-07-05, paper-scitex-clew report): the host's
+# ``/agents`` handler shells a FRESH ``sac agents start <name>`` subprocess
+# that re-runs the interactive refuse-without-``--yes`` gate. request_spawn
+# emits an ``assume_yes`` body field only when truthy — same back-compat
+# rationale as ``foreground``/``one_shot`` above.
+# ---------------------------------------------------------------------------
+
+
+def test_body_includes_assume_yes_true_when_requested(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", assume_yes=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["assume_yes"] is True
+
+
+def test_body_omits_assume_yes_when_default_false(listen_env) -> None:
+    # Arrange — default kwargs absent on the call.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", opener=opener)
+    # Assert — key must be ABSENT (not present-but-false), matching the
+    # wire shape of pre-fix brokers.
+    assert "assume_yes" not in json.loads(captured["body"])
+
+
 def test_bearer_token_attached_as_authorization_header(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")
@@ -419,6 +449,83 @@ def test_transport_error_raises_spawn_request_error(listen_env) -> None:
         captured_status = exc.status
     # Assert — no HTTP exchange happened, so status stays None.
     assert captured_status is None
+
+
+def test_transport_error_message_carries_broker_hint(listen_env) -> None:
+    # Arrange — listen unreachable (connection refused etc.).
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener = _opener_raising(urlerror.URLError("connection refused"))
+    message = ""
+    # Act
+    try:
+        request_spawn("c", opener=opener)
+    except SpawnRequestError as exc:
+        message = str(exc)
+    # Assert — the enriched message keeps the original 'cannot reach listen'
+    # detail AND appends the cause+fix hint naming `sac listen restart`, so a
+    # broker-down spawn is a dead-end no longer.
+    assert "cannot reach listen" in message and "sac listen restart" in message
+
+
+# ---------------------------------------------------------------------------
+# The authenticated route is wedged while the daemon is UP (2026-07-14).
+#
+# Measured on the live host: an unauthenticated GET answered HTTP 401 in
+# 0.18s (twice) while the authenticated POST hung. The old message asserted
+# "the host listen broker is unreachable; it may be flapping" — unmeasured,
+# and wrong. Authed routes dispatch through listen's shared worker pool; the
+# public /v1/health path is served on the event loop and never touches it.
+# ---------------------------------------------------------------------------
+
+
+def _opener_wedged_authed_route():
+    """Real opener: the authenticated POST hangs; GET /v1/health answers fast."""
+
+    def opener(req, timeout=None):
+        if req.get_method() == "GET" and req.full_url.endswith("/v1/health"):
+            return _FakeResp(b'{"ok": true}', 200)
+        raise urlerror.URLError(TimeoutError("timed out"))
+
+    return opener
+
+
+def test_wedged_authed_route_reports_daemon_up(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_spawn("c", opener=_opener_wedged_authed_route())
+    except SpawnRequestError as exc:
+        message = str(exc)
+    # Assert
+    assert "the listen daemon is UP and serving" in message
+
+
+def test_wedged_authed_route_never_claims_flapping(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_spawn("c", opener=_opener_wedged_authed_route())
+    except SpawnRequestError as exc:
+        message = str(exc)
+    # Assert — nothing here observed a crash loop, so nothing may assert one.
+    assert "flapping" not in message
+
+
+def test_wedged_authed_route_never_claims_unreachable(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://127.0.0.1:7878")
+    message = ""
+    # Act
+    try:
+        request_spawn("c", opener=_opener_wedged_authed_route())
+    except SpawnRequestError as exc:
+        message = str(exc)
+    # Assert
+    assert "cannot reach listen" not in message
 
 
 def test_non_dict_2xx_body_raises_spawn_request_error(listen_env) -> None:
