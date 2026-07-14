@@ -112,22 +112,13 @@ def listen_env_flags(config) -> list[str]:
     # scitex-* package.
     flags += ["--env", "UV_PROJECT_ENVIRONMENT=/uvwork/venv-agent"]
 
-    # PERSISTENT TESTMON CACHE — point testmon's data file at the
-    # container-side bind destination (see
-    # ``_p3a_default_binds._FLEET_DEFAULT_BINDS``: the host's
-    # ``~/.cache/scitex-testmon`` is bound ``rw`` to
-    # ``/home/agent/.cache/scitex-testmon``). scitex-dev's pre-commit-hook
-    # wrapper reads ``$SCITEX_TESTMON_CACHE_ROOT`` so the testmon cache
-    # PERSISTS across the fresh-git-worktree churn the develop-pin hook
-    # forces — otherwise every commit re-runs the full ~2500-test suite
-    # against a cold worktree-local ``.testmondata``. UNCONDITIONAL (same
-    # as the base URL above): the cache helps every agent regardless of
-    # bus membership, and a missing host bind dir is already a silent
-    # no-op via ``default_binds_for_host``'s skip-if-missing filter.
-    flags += [
-        "--env",
-        "SCITEX_TESTMON_CACHE_ROOT=/home/agent/.cache/scitex-testmon",
-    ]
+    # (``SCITEX_TESTMON_CACHE_ROOT`` was injected here, unconditionally, to
+    # point testmon's data file at a host bind. Both are REMOVED — see
+    # ``_p3a_default_binds._FLEET_DEFAULT_BINDS`` for the full reasoning. In
+    # short: they served a scitex-dev pre-commit hook that scitex-dev's own
+    # policy now calls broken and forbids by audit rule PS-HOOK-001, that zero
+    # repos reference, and that sac never used. Pre-commit does not run the
+    # test suite; there was nothing to accelerate.)
 
     # HOST-TUNNELED QWEN FALLBACK — point the scitex-genai client at the
     # host-side ssh tunnel to Spartan-hosted qwen. ``127.0.0.1:4000`` is
@@ -139,7 +130,7 @@ def listen_env_flags(config) -> list[str]:
     # and would misroute real ``gpt-*`` traffic to this local qwen tunnel).
     # Only the base URL is injected here; the qwen API key is gated on a
     # separate operator security decision and is intentionally NOT set.
-    # UNCONDITIONAL (same as the base URL + testmon cache above): a base
+    # UNCONDITIONAL (same as the base URL above): a base
     # URL with no key is harmless to agents that never hit the fallback.
     flags += [
         "--env",
@@ -172,9 +163,7 @@ def listen_env_flags(config) -> list[str]:
     # ``.scitex/agent-container/agents`` matches ``config/_resolve.py``'s
     # ``_search_dirs`` ``primary`` so the two stay in sync. Do NOT hardcode
     # a username — ``expanduser`` resolves the invoking host's home.
-    host_default = str(
-        Path("~/.scitex/agent-container/agents").expanduser()
-    )
+    host_default = str(Path("~/.scitex/agent-container/agents").expanduser())
     spec_dirs_raw = os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "")
     spec_dirs: list[str] = [p for p in spec_dirs_raw.split(":") if p.strip()]
     if host_default not in spec_dirs:

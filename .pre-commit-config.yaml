@@ -1,4 +1,47 @@
+# Pre-commit is NOT a gate. CI is the gate.
+#
+# Policy (scitex-dev, _skills/general/05_development/15_pre-commit-policy.md —
+# ADOPTED here, not re-derived):
+#
+#     "Pre-commit runs fast, bounded, deterministic checks.
+#      It does NOT run the test suite."
+#
+# Tests belong in CI, which already runs the full suite on 3 Python versions on
+# every push. Pre-commit's only job is saving you a wasted CI cycle. Enforced
+# mechanically by audit rule PS-HOOK-001 (severity E): no `language: system`
+# hook may invoke a bare `python`/`pytest`/`mypy`/... — a bare command name is a
+# $PATH lookup, so it resolves to whichever virtualenv happens to be active at
+# commit time, which differs per machine. Every hook below is `language: python`
+# (an isolated venv pre-commit builds itself) or a pinned remote hook.
+#
+# THESE HOOKS NOW ACTUALLY RUN. Until this change they did not: the framework's
+# shim was never installed into .git/hooks, and `core.hooksPath` pointed at the
+# ABSOLUTE `.git/hooks`, which shadowed the version-controlled `.githooks/`. The
+# config existed, CONTRIBUTING.md advertised it, and nothing executed. See
+# `.githooks/pre-commit` + `scripts/install-git-hooks.sh`.
+
 repos:
+  # Pinned remote hooks — pre-commit installs these into an isolated, cached
+  # environment; they take milliseconds and behave identically on every machine.
+  # These are not NEW coverage: they REPLACE the git-template `.git/hooks`
+  # pre-commit that was the only thing actually running before, so pointing
+  # core.hooksPath at `.githooks/` loses nothing it used to catch.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+        description: >
+          Conflict markers must never reach a commit. The displaced git-template
+          hook checked exactly this, so keeping it makes the hooksPath flip a
+          strict improvement rather than a trade.
+      - id: check-added-large-files
+        args: ["--maxkb=10000"]
+        description: >
+          Mirrors the displaced template hook's 10 MB hard limit.
+      - id: detect-private-key
+        description: >
+          On the policy's allow-list, and cheap. A key committed is a key leaked.
+
   - repo: local
     hooks:
       - id: no-hosted-runners
@@ -19,13 +62,49 @@ repos:
           lives in .github/hosted-runner-allowlist.yaml WITH its security
           argument — an entry without a real `reason:` fails the guard.
 
-      - id: stx-allow-fallback
-        name: "stx-allow: fallback lint (no-silent-fallback)"
-        entry: python scripts/check_stx_allow.py
-        language: python
-        types: [python]
-        pass_filenames: true
-        description: >
-          Every except clause in src/ must carry a
-          '# stx-allow: fallback (reason: ...)' comment.
-          Fleet-wide convention — see docs/conventions/no-silent-fallback.md.
+# ---------------------------------------------------------------------------
+# `stx-allow-fallback` IS DELIBERATELY ABSENT, AND SAYING SO IS THE POINT.
+#
+# It used to be declared here, and it had never run. The moment the hooks were
+# made to actually run, it turned out to be UNSHIPPABLE — not merely unenforced.
+# Measured on this tree, `scripts/check_stx_allow.py`:
+#
+#   * FLAGS 552 handlers in src/ alone. 187 of them (34%) are FALSE POSITIVES —
+#     the handler re-raises, exits, or logs. A re-raise is the OPPOSITE of a
+#     silent fallback. The old checker was a regex that never read the handler
+#     body at all:
+#
+#         except SpawnRequestError as exc:
+#             raise click.ClickException(str(exc)) from exc   # <-- "violation"
+#
+#   * Was BLIND to 619 multi-line `except (` clauses. Its pattern was
+#     `^\s*except\b.*:` — there is no colon on the `except (` line, so it never
+#     matched, and the `# stx-allow:` comment those handlers carry after the
+#     closing paren was invisible to it either way.
+#
+# It over-fired AND under-fired. Enabling it would have blocked essentially
+# every commit touching src/ — across ~50 in-flight agent worktrees — while
+# still not enforcing the convention on 619 handlers. Same shape as the
+# container pin-check that was a substring match on "0.3" and therefore REJECTED
+# every STRONGER pin: a guard that reads like diligence and behaves like a
+# freeze. (And the old checker's own body swallowed exceptions with a bare
+# `except Exception: continue`, carrying no stx-allow comment — the
+# no-silent-fallback linter contained the exact violation it existed to prevent.)
+#
+# The two honest ways to handle a claim you cannot back are to MAKE IT TRUE or
+# to STOP MAKING IT. Declared-but-dead was neither. Making it true is a real
+# project, so it is carded rather than faked:
+#
+#   1. `scripts/check_stx_allow.py` is rewritten AST-based in this change, so it
+#      now flags only handlers that genuinely SWALLOW and can see multi-line
+#      clauses. It is a usable tool. It is not yet a passable gate.
+#   2. ~365 genuine un-annotated silent fallbacks remain in src/. Each needs a
+#      REAL reason string; a wrong one is a lie in a comment, which is the same
+#      disease. Auto-inserting 365 generic reasons would be cargo-culting a
+#      linter, not honouring a convention.
+#   3. Once the tree is clean, add the hook back. A ratchet (fail only on lines
+#      the commit ADDS) is the standard way to land a lint on a dirty tree and
+#      is the likely shape.
+#
+# Card: sac-stx-allow-checker-unsound-and-tree-dirty-20260715
+# ---------------------------------------------------------------------------
