@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scitex_agent_container._provenance import identity, package_dir
+from scitex_agent_container._provenance import (
+    identity,
+    origin_mismatch,
+    package_dir,
+)
 from scitex_agent_container._provenance._identity import format_terse, short_id
 
 
