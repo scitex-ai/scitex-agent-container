@@ -373,23 +373,24 @@ def test_fleet_defaults_include_host_tmp_handoff_bind_read_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Persistent testmon cache bind — host ~/.cache/scitex-testmon bound rw to the
-# container-side /home/agent/.cache/scitex-testmon so testmon's data file
-# survives the fresh-git-worktree churn the develop-pin hook forces (scitex-dev
-# pre-commit-hook wrapper reads $SCITEX_TESTMON_CACHE_ROOT). Skip-if-missing
-# (no sac-side mkdir) is covered by the host-existence-gate tests above.
+# NO testmon cache bind. sac used to bind ~/.cache/scitex-testmon rw into EVERY
+# agent container (and inject SCITEX_TESTMON_CACHE_ROOT to match) to accelerate
+# a scitex-dev pre-commit hook. scitex-dev's own pre-commit policy now calls
+# that hook broken ("referenced by ZERO repos ... Do not build another one"),
+# and its audit rule PS-HOOK-001 (severity E) forbids the hook's shape outright.
+# sac never used testmon itself. The assertion is INVERTED so that re-adding the
+# plumbing fails loudly rather than quietly reappearing on every agent.
 # ---------------------------------------------------------------------------
 
 
-def test_fleet_defaults_include_testmon_cache_bind_rw() -> None:
+def test_fleet_defaults_carry_no_testmon_cache_bind() -> None:
     # Arrange — read the static fleet-default tuple directly.
     from scitex_agent_container.runtimes._p3a_default_binds import (
         _FLEET_DEFAULT_BINDS,
     )
 
     # Act
-    testmon = [b for b in _FLEET_DEFAULT_BINDS if "scitex-testmon" in b]
-    # Assert — bound rw to the container-side cache path under /home/agent.
-    assert testmon == [
-        "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw"
-    ]
+    testmon = [b for b in _FLEET_DEFAULT_BINDS if "testmon" in b]
+    # Assert — pre-commit does not run the test suite, so there is nothing for a
+    # testmon cache to accelerate; a rw host bind on every agent bought nothing.
+    assert testmon == []

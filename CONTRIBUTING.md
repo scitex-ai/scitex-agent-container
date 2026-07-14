@@ -16,8 +16,33 @@ pip install -e ".[dev]"     # pulls fastmcp + pytest-asyncio so the full
 # Need every optional surface (telegram + slurm + docs as well)?
 #   pip install -e ".[all]"
 pytest tests/
-scripts/install-pre-push-hook.sh   # one-time: enables ruff pre-push gate
+scripts/install-git-hooks.sh   # one-time: points core.hooksPath at .githooks/
+                               # so the repo's hooks ACTUALLY RUN
 ```
+
+## Git hooks
+
+`scripts/install-git-hooks.sh` sets `core.hooksPath` to the version-controlled
+`.githooks/`. Run it once per clone. `.git/hooks` is untracked, so a fresh clone
+otherwise starts with no hooks and no way to notice.
+
+| hook | what it runs |
+|---|---|
+| `.githooks/pre-commit` | the pre-commit framework (`.pre-commit-config.yaml`) — fast, bounded, deterministic checks |
+| `.githooks/pre-push`   | `ruff --select F401,F811` + a direct-push guard on `main`/`master` |
+
+**Pre-commit is not a gate. CI is the gate.** Pre-commit runs fast, bounded,
+deterministic checks and **does not run the test suite** — that is scitex-dev's
+fleet policy (`_skills/general/05_development/15_pre-commit-policy.md`), enforced
+mechanically by audit rule **PS-HOOK-001** (severity E). Tests belong in CI,
+which already runs the full suite on three Python versions on every push.
+Pre-commit's only job is saving you a wasted CI cycle.
+
+Until 2026-07-15 none of this actually executed: the framework's shim was never
+installed, and `core.hooksPath` pointed at the absolute `.git/hooks`, which
+shadowed `.githooks/`. The conventions were advertised as hook-enforced and were
+enforced by nothing — which is why the CI ruff job exists at all
+(see the comment at the top of `.github/workflows/lint.yml`).
 
 ## Branch model
 
@@ -50,8 +75,8 @@ scitex-dev ecosystem audit-all scitex-agent-container
 ```
 
 A narrower **`ruff check --select F401,F811`** also runs as a pre-push
-gate (`.githooks/pre-push`, installed by
-`scripts/install-pre-push-hook.sh`) and as a CI job
+gate (`.githooks/pre-push`, armed by
+`scripts/install-git-hooks.sh`) and as a CI job
 (`.github/workflows/lint.yml`) on PRs + pushes to `develop`/`main`.
 Scope is intentionally narrow (unused-import + redefinition only) — the
 local edit hook stopped autofixing F401 so subagent multi-step edits

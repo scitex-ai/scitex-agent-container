@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Pre-commit gate — the one that ACTUALLY RUNS.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# This repo shipped a `.pre-commit-config.yaml` and advertised its hooks in
+# CONTRIBUTING.md. None of them had ever executed. Three mechanisms, zero
+# enforcement:
+#
+#   1. The pre-commit FRAMEWORK's shim was never installed into .git/hooks
+#      (only 3 of 136 repos on this box have it).
+#   2. `.githooks/pre-push` (the ruff F401/F811 gate) was SHADOWED:
+#      `core.hooksPath` pointed at the ABSOLUTE `.git/hooks`, which overrides
+#      the version-controlled `.githooks/`.
+#   3. What actually ran was an April-7 git-TEMPLATE hook (merge-conflict
+#      markers + file size) that nobody had looked at in months.
+#
+# So the conventions were ADVERTISED as pre-commit-enforced and enforced by
+# NOTHING. A false claim of coverage is worse than no coverage: it is the
+# reason lint.yml's own comment says the CI ruff job exists "because a push
+# that bypassed the local hook still fails on the remote".
+#
+# `scripts/install-git-hooks.sh` points core.hooksPath at `.githooks/`, so this
+# file travels with the clone instead of living in an untracked `.git/hooks`
+# that every fresh clone silently loses.
+#
+# WHAT MAY LIVE HERE — the policy is scitex-dev's, and it is not ours to
+# re-derive (_skills/general/05_development/15_pre-commit-policy.md):
+#
+#     "Pre-commit runs fast, bounded, deterministic checks.
+#      It does NOT run the test suite."
+#
+# Tests belong in CI, which already runs the full suite on 3 Python versions.
+# Pre-commit is not a gate — CI is the gate. Pre-commit's only job is saving
+# you a wasted CI cycle. Anything slow, flaky, or ambient-dependent belongs on
+# the other side of the push. Enforced mechanically by audit rule PS-HOOK-001
+# (severity E), which fires on any `language: system` hook invoking a bare
+# `python`/`pytest`/`mypy`/... off the $PATH lottery.
+#
+# Skip in a true emergency with: git commit --no-verify
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Locate the pre-commit binary. Mirrors .githooks/pre-push's search order:
+# the venvs the SciTeX harness installs into, then $PATH. Verified present on
+# both sides of the container boundary — host: ~/.env-3.11/bin/pre-commit;
+# agent container: /usr/local/bin + /opt/venv-sac/bin (apptainer-base.def
+# installs it into the system python precisely so repo hooks can exec it).
+# Operator-overridable via $SAC_PRE_COMMIT for a non-standard venv.
+PRE_COMMIT=""
+for candidate in \
+    "${SAC_PRE_COMMIT:-}" \
+    ".venv/bin/pre-commit" \
+    "/opt/venv-sac/bin/pre-commit" \
+    "/usr/local/bin/pre-commit" \
+    "$HOME/.env-3.11/bin/pre-commit" \
+    "$HOME/.local/bin/pre-commit" \
+; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    PRE_COMMIT="$candidate"
+    break
+  fi
+done
+if [ -z "$PRE_COMMIT" ] && command -v pre-commit >/dev/null 2>&1; then
+  PRE_COMMIT="$(command -v pre-commit)"
+fi
+
+if [ -z "$PRE_COMMIT" ]; then
+  # Loud failure — never silently skip the gate. A hook that quietly does
+  # nothing when its tool is missing is precisely the false-coverage bug this
+  # file was written to end: it would look installed and enforce nothing.
+  echo "PRE-COMMIT BLOCKED: the \`pre-commit\` binary was not found." >&2
+  echo "  Searched: \$SAC_PRE_COMMIT, .venv/bin, /opt/venv-sac/bin," >&2
+  echo "           /usr/local/bin, ~/.env-3.11/bin, ~/.local/bin, \$PATH." >&2
+  echo "  Install with: pip install -e '.[dev]'   (pre-commit>=3.5 is in [dev])" >&2
+  echo "  Or point the hook at one: export SAC_PRE_COMMIT=/path/to/pre-commit" >&2
+  echo "  Or bypass once (emergency only): git commit --no-verify" >&2
+  exit 1
+fi
+
+# Runs ONLY on the staged files, and only the hooks in
+# .pre-commit-config.yaml — every one of which is fast, bounded, and
+# `language: python` (an isolated, pre-commit-built venv), never
+# `language: system` reaching for whatever interpreter happens to be ambient.
+exec "$PRE_COMMIT" run --hook-stage pre-commit

@@ -132,23 +132,34 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # credentials bind, and the nested-apptainer cache; mounting at the
     # ``/tmp/host`` subpath sits harmlessly inside the tmpfs.
     "/tmp:/tmp/host:ro",
-    # PERSISTENT TESTMON CACHE — survive the fresh-git-worktree churn the
-    # develop-pin hook forces. Every commit lands in a NEW worktree, so a
-    # worktree-local ``.testmondata`` is always cold and pytest re-runs the
-    # full ~2500-test suite (~2h). A peer package (scitex-dev) is building a
-    # pre-commit-hook wrapper that points testmon's data file at
-    # ``$SCITEX_TESTMON_CACHE_ROOT`` (sac injects that env var to the
-    # container-side path ``/home/agent/.cache/scitex-testmon`` — see
-    # ``_apptainer_listen_env.listen_env_flags``). Binding the host's
-    # ``~/.cache/scitex-testmon`` to that container path ``rw`` lets the
-    # cache PERSIST across worktree churn so only impacted tests re-run.
-    # ``rw`` because testmon must WRITE the updated cache after each run.
-    # The ``default_binds_for_host`` skip-if-missing filter means a missing
-    # host dir is a silent no-op (NO bind, NO crash) — so sac must NOT
-    # mkdir it; the operator/infra creates ``~/.cache/scitex-testmon`` on
-    # the host separately (non-container local dev falls back to the same
-    # ``~/.cache/scitex-testmon`` path the wrapper reads directly).
-    "~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw",
+    # REMOVED — the persistent-testmon-cache bind
+    # (``~/.cache/scitex-testmon:/home/agent/.cache/scitex-testmon:rw``), and
+    # with it the ``SCITEX_TESTMON_CACHE_ROOT`` injection in
+    # ``_apptainer_listen_env.listen_env_flags``.
+    #
+    # It bound a host directory RW into EVERY agent container to serve a
+    # scitex-dev pre-commit-hook wrapper that this comment described, in the
+    # future tense, as something a peer "IS BUILDING". The package that owns
+    # that wrapper has since declared it DEAD:
+    #
+    #   scitex_dev/_skills/general/05_development/15_pre-commit-policy.md —
+    #   "scitex-dev-testmon exists and is BROKEN ... it is referenced by ZERO
+    #    repos, and scitex-dev does not dogfood it. Do not build another one."
+    #
+    # and its audit rule PS-HOOK-001 (severity E) mechanically FORBIDS that
+    # hook's shape: ``python3 -m pytest --testmon`` under ``language: system``
+    # is a bare $PATH lookup, so it resolves to a different interpreter on
+    # every machine.
+    #
+    # sac's own ``.pre-commit-config.yaml`` never referenced testmon at all. So
+    # this was speculative plumbing for someone else's unshipped feature, kept
+    # alive by a comment written in the future tense — a rw host bind and an
+    # env var on every agent in the fleet, serving nothing.
+    #
+    # The superseding policy is not sac's to restate: pre-commit runs fast,
+    # bounded, deterministic checks and does NOT run the test suite. CI runs
+    # the tests. There is no test suite in the commit path for a testmon cache
+    # to accelerate.
 )
 
 

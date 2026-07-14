@@ -14,12 +14,32 @@
 # would block every push. Tighten the --select set once those are
 # triaged. The stated F401-slip-through risk is fully covered here.
 #
-# Install once per clone with:  scripts/install-pre-push-hook.sh
+# Install once per clone with:  scripts/install-git-hooks.sh
 # Skip in true emergencies with: git push --no-verify
 set -euo pipefail
 
 # Run from repo root.
 cd "$(git rev-parse --show-toplevel)"
+
+# --- Protected branches -----------------------------------------------------
+# PORTED from the git-TEMPLATE .git/hooks/pre-push, which is what actually ran
+# before core.hooksPath was pointed at .githooks/. Without this port, arming the
+# version-controlled hooks would have SILENTLY REMOVED the direct-push guard on
+# main/master — a regression disguised as a fix. Turning a gate on must not turn
+# another one off.
+#
+# git feeds pre-push one line per ref on stdin:
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "${remote_ref##refs/heads/}" in
+    main|master)
+      echo "PRE-PUSH BLOCKED: refusing to push directly to '${remote_ref##refs/heads/}'." >&2
+      echo "  Open a PR against develop instead." >&2
+      echo "  Bypass (emergency only): git push --no-verify" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Locate ruff. Search order matches the venvs the SciTeX harness
 # typically installs into; falls back to whatever ruff is on PATH.
