@@ -8,6 +8,46 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **`a2a_send` reported SUCCESS for a message that reached nobody — agents were
+  silently swallowing each other's messages.** Reported by the `grant` agent,
+  who measured it live: of four peers that `a2a_peers` listed as running (pid,
+  port, start time, group `active`), two delivered and two had
+  `delivered_subscriber_count=0`. The tool *did* put "reached no live
+  subscriber" in its response **body** — but returned it as a plain
+  `list[TextContent]`, and the MCP low-level server stamps `isError=False` on
+  anything a handler returns that way. So the protocol classified the call as
+  successful. In grant's words: *"Had it returned a bare 200, I would have
+  believed the message landed and moved on. How many agent-to-agent messages
+  have been swallowed this way? Nobody would know."*
+
+  A 0-subscriber send is now an **MCP error** (`isError=True`), so a caller
+  cannot mistake it for delivery. It keeps the structured detail — target,
+  machine-readable `code`, subscriber count — and adds what to do instead.
+  Notably it does **not** tell you to re-send (sac persists to
+  `channel_events` *before* it publishes, and replays undelivered rows on the
+  target's next connect, so the message is queued, not lost — re-sending would
+  double-deliver), and it does **not** tell you to restart the target
+  (0 subscribers means a detached inbox adapter, not a dead agent).
+
+- **`GET /agents` (and so `a2a_peers`) conflated REGISTERED with REACHABLE.**
+  Every row said what the registry *declared* — a pid, a port, a group — and
+  nothing said whether a message would actually wake anybody. That signal was
+  load-bearing: the fleet constitution says to confirm a peer is "alive and
+  able to act" before handing it work, and `a2a_peers` is the tool provided to
+  do it. It answered yes for a deaf agent.
+
+  Rows now carry `inbox_subscribers` (live SSE subscribers on that agent's
+  inbox stream) and `inbox_reachable`, which is **ternary** on purpose:
+  `reachable` / `unreachable` / `unknown` — the last for a peer on another host
+  whose broker this listen cannot observe. "I could not check" is never
+  rendered as either success or death. Same fields on
+  `GET /agents/<name>/status` and in `sac agents health --json`.
+
+  `healthy` is deliberately **not** derived from the subscriber count, and
+  nothing auto-restarts on it. Measured during this investigation:
+  `claude-code-telegrammer`'s zero was a *transient* reconnect window on a
+  perfectly healthy agent — a restart would have destroyed a live session.
+
 - **The account picker threw away ~10% of a 7-day Max-20x window, every cycle.**
   `sac accounts list` at the time of the report:
 

@@ -443,10 +443,30 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     is_healthy, message = health_check(config)
 
+    # REGISTERED IS NOT REACHABLE. ``health_check`` asks "is the process
+    # up?" — a deaf agent (one whose inbox adapter is not subscribed to the
+    # channel bus) passes that check while silently swallowing every
+    # a2a_send aimed at it. Report the inbox observation ALONGSIDE the
+    # process verdict so the two facts stay distinguishable.
+    #
+    # ``healthy`` is deliberately NOT derived from this: 0 subscribers means
+    # a detached inbox adapter, not a dead agent, and anything that
+    # auto-restarts on it would destroy a healthy session. Observation only.
+    from .._lifecycle.inbox_probe import probe_inbox_reachability
+    from .._listen._reachability import UNKNOWN, UNREACHABLE
+
+    subscribers, reachable = probe_inbox_reachability(name)
+
     if use_json:
         click.echo(
             json_mod.dumps(
-                {"name": name, "healthy": is_healthy, "message": message},
+                {
+                    "name": name,
+                    "healthy": is_healthy,
+                    "message": message,
+                    "inbox_subscribers": subscribers,
+                    "inbox_reachable": reachable,
+                },
                 indent=2,
             )
         )
@@ -458,4 +478,22 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         console.print(f"[green]{message}[/green]")
     else:
         console.print(f"[red]{message}[/red]")
+
+    if reachable == UNREACHABLE:
+        console.print(
+            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers. "
+            f"a2a_send to '{name}' will reach nobody (messages are queued and "
+            f"replayed when its channel adapter reconnects). The process is "
+            f"up; its inbox adapter is not attached. Do NOT force-restart on "
+            f"this alone.[/yellow]"
+        )
+    elif reachable == UNKNOWN:
+        console.print(
+            "[dim]inbox: unknown (could not reach sac listen to observe "
+            "subscribers)[/dim]"
+        )
+    else:
+        console.print(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]")
+
+    if not is_healthy:
         sys.exit(1)
