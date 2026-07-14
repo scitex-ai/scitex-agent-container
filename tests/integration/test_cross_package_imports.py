@@ -25,6 +25,7 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_container",
     "scitex_dev",
     "scitex_dev._cli._completion",
+    "scitex_dev.hosts",
     "scitex_dev.jobs",
     "scitex_dev.linter._rules._base",
     "scitex_dev.linter._rules._lookup",
