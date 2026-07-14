@@ -60,6 +60,62 @@ versioning follows [SemVer](https://semver.org/).
   decided it should use this same guarded one-way channel rather than growing a
   second path to the same hosts.
 
+## [0.21.21] - 2026-07-15
+
+The release exists to carry **#696** to the machines. Everything else here is
+what had to be true for it to actually arrive.
+
+### Fixed
+
+- **`sac image build` has been dead since #652, and the SIF is how sac reaches the
+  fleet.** #652 added a custom hatchling build hook (`[tool.hatch.build.targets.*
+  .hooks.custom] path = "src/hatch_build.py"`). `stage_build_context()` copies
+  pyproject.toml, README.md and the package — but nothing taught it about the new
+  file, and the wheel never bundled it either. hatchling resolves a hook path
+  against *the tree being built*, and in a SIF build that tree is the staged one,
+  so every `sac image build` died ~8 minutes into `%post`, inside apptainer, on a
+  machine nobody was watching:
+
+      OSError: Build script does not exist: src/hatch_build.py
+
+  Staging now copies **every path pyproject NAMES**, and the wheel force-includes
+  the hook into the inert `_bundled/` data dir (no `__init__.py` — bundled is not
+  packaged, so hatch_build.py's own rule that an `import hatchling` module never
+  reaches the runtime path still holds).
+
+  The reason no test caught it is worth more than the fix: every staging test ran
+  against a fixture whose pyproject **declared nothing**. A fixture that declares
+  nothing cannot disagree with a stager that copies nothing — the suite was green
+  and blind at the same time. The new guard stages the **real** package root and
+  asserts the general invariant, derived from the staged pyproject rather than
+  hardcoded: *every path pyproject declares must exist in the staged tree.* It
+  fails for the next forgotten file too, not just this one. A second test pins that
+  the pyproject actually declares a hook, so the guard can never pass vacuously.
+
+### Changed
+
+- `pythonpath = [".", "src"]` — the rootdir joins the test import path, so
+  rootdir-relative imports (`tests.*`) resolve identically from any cwd. #698's
+  `pytest_sessionstart` guard was re-verified in both directions afterwards: it
+  still aborts when `scitex_agent_container` resolves outside `<rootdir>/src`.
+
+### Shipped from develop (already merged, released here)
+
+- **#696 — `may_destroy`'s two witnesses were the same syscall.** Read from inside a
+  container — which is where every fleet agent runs — the shipped v0.21.20 reported
+  every healthy peer as DEAD with `may_destroy=True`. Its two "independent"
+  witnesses were the same `os.kill(pid, 0)` on the same pid, an identity the module
+  documented in its own docstring. `Signal` now carries a closed-set `instrument`,
+  `may_destroy` dedupes by instrument, and a cross-namespace pid read is UNKNOWN,
+  not DEAD. A false-RED is worse than a false-green here: its remedy destroys a
+  healthy agent.
+- **#698** — a bare `pytest` tested the INSTALLED sac, not the worktree.
+- **#699** — the git hooks were advertised and enforced by nothing; they run now.
+- **#700** — `check-merge-conflict` was INERT outside a merge (exit 0 without
+  reading a byte).
+- **#694 / #697** — the last 9 workflows off GitHub-hosted runners, plus the guard
+  that keeps them off.
+
 ## [0.21.20] - 2026-07-14
 
 ### Fixed
