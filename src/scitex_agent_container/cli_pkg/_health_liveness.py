@@ -1,0 +1,71 @@
+"""The ternary liveness verdict, rendered for ``sac agents health``.
+
+Extracted from :mod:`.status_cmds` (512-line per-file cap).
+
+WHY THIS EXISTS NEXT TO ``healthy``, RATHER THAN REPLACING IT
+-------------------------------------------------------------
+``sac agents health`` answers with a BOOL (``healthy``), and a bool cannot say
+"I could not tell". It reports one of two poles no matter how little was
+actually observed — so a reader cannot distinguish *"we watched a message reach
+this agent"* from *"every probe we ran failed and we guessed"*. Those are the
+same output today, and acting on them as if they were the same is the bug.
+
+So we publish the VERDICT and ITS EVIDENCE alongside the bool, and leave the
+bool alone. Two reasons it is additive rather than a replacement:
+
+1. ``healthy`` gates this command's EXIT CODE, and automation keys on that exit
+   code. Re-deriving it from a new signal would change what every one of those
+   callers does, silently, in one step.
+2. It is the same restraint :mod:`.._listen._reachability` already practises —
+   the observation is published NEXT TO the declaration, never overwriting it —
+   and that restraint is precisely what keeps a watchdog from wiring itself to a
+   signal that would kill healthy agents.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+__all__ = ["liveness_payload", "print_liveness"]
+
+_VERDICT_COLOUR = {"alive": "green", "dead": "red", "unknown": "yellow"}
+
+
+def liveness_payload(name: str, config: Any) -> dict:
+    """Resolve ``name``'s ternary verdict + evidence as a JSON-ready dict.
+
+    Tolerant by construction: any failure to gather degrades to an UNKNOWN
+    verdict carrying the reason — never to a fabricated DEAD (whose remedy is
+    destructive), and never to an exception that takes the health command down.
+    """
+    from .._lifecycle._runtime_select import _get_runtime
+    from .._lifecycle._verdict import UNKNOWN, LivenessVerdict, Signal
+    from .._lifecycle._verdict_resolve import resolve_verdict
+
+    try:
+        return resolve_verdict(name, config, _get_runtime(config)).to_dict()
+    except Exception as exc:  # stx-allow: fallback (reason: an un-gatherable verdict is UNKNOWN with its reason — never a fabricated DEAD, and never a crashed health command)
+        return LivenessVerdict(
+            agent=name,
+            verdict=UNKNOWN,
+            signals=(
+                Signal(
+                    "resolver",
+                    UNKNOWN,
+                    f"could not gather liveness evidence ({type(exc).__name__}: {exc})",
+                ),
+            ),
+        ).to_dict()
+
+
+def print_liveness(console: Any, liveness: dict) -> None:
+    """Print the verdict AND why, plus what it does (not) authorise."""
+    verdict = str(liveness.get("verdict", "unknown"))
+    colour = _VERDICT_COLOUR.get(verdict, "yellow")
+    summary = liveness.get("summary", "?")
+    console.print(f"[{colour}]liveness: {summary}[/{colour}]")
+    veto = liveness.get("destroy_veto_reason")
+    if veto:
+        console.print(
+            f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]"
+        )

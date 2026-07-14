@@ -4,6 +4,85 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`sac agents rename <old> <new>` — the rename you cannot do safely by hand.**
+  An agent writes its own name into six places on disk *plus* the shared task
+  board, and the one a human misses is silent. The worst is the board identity:
+  `SCITEX_TODO_AGENT_ID` is how scitex-todo knows the agent, so changing it
+  without migrating the cards **orphans every card that agent owns** — it can no
+  longer see its own work, and nothing tells you. Measured on the live board
+  before this verb existed: `scitex-todo` owned **158 cards** (84 of them scoped
+  `agent:scitex-todo`); a hand rename would have stranded all of them.
+
+  `rename` moves all seven together, or none:
+
+  1. spec dir `agents/<name>/`
+  2. the spec's own self-references — `metadata.labels.project` / `.purpose`,
+     `spec.workdir`, the `--overlay` path, `SCITEX_AGENT_CONTAINER_STATE_DB`,
+     `SCITEX_TODO_AGENT_ID`, and any identity-bearing bind
+  3. overlay dir `containers/overlays/<name>/`
+  4. runtime + state dir `runtime/<name>/` (bound at `/state/<name>`)
+  5. registry entry `runtime/registry/<name>.json`
+  6. `state.db` — 16 name columns + 2 path columns, in one transaction
+  7. **task cards**, via scitex-todo's own `reassign_task`
+
+  Properties: **preflight refuses a running agent** (physical evidence — a live
+  pid, not a row that merely claims to be open — so a stale row cannot wedge a
+  legitimate rename, and a wedged-but-alive agent cannot be renamed out from
+  under itself); **atomic** — every step records its inverse and any failure,
+  including a *partial* card migration, rolls the whole rename back; a
+  postcondition step then proves nothing is left under the old name.
+  `--dry-run` prints every location exactly and touches nothing; `-y`/`--yes` is
+  **required** to apply and the verb never prompts, so it cannot hang under cron,
+  CI, or an agent's non-tty shell.
+
+  The spec is edited by **loading it and changing the known fields** (ruamel
+  round-trip, so operator comments and key order survive), never by a regex over
+  the YAML — and the rewrite re-parses its own output and refuses to write a spec
+  whose semantic diff is anything other than the changes it planned.
+
+  sac **calls** scitex-todo's `reassign_task`; it does not reimplement it. The
+  board belongs to scitex-todo, and a forked copy of another package's store
+  logic drifts into a worse version of it.
+
+- `SCITEX_AGENT_CONTAINER_ROOT` — override the sac install root that the rename's
+  seven locations all derive from. Resolved at call time.
+
+## [0.21.19] — 2026-07-14
+
+**v0.21.18 was a GHOST TAG** — its release run died on a2a port exhaustion caused
+by tests that were not isolated from the real state DB. Nine tags in this repo's
+history shipped nothing at all. This is the first release that **verifies its own
+artifact**, so a ghost is now a RED release rather than a silent success.
+
+### Fixed
+
+- **No test may touch the real sac state (#681).** `agent_start` in a test claimed
+  an a2a port in the *real* DB and never released it — `claim_port` consults only
+  the database (never whether a port is bound) and `a2a_ports.name` is the primary
+  key, so every distinct test-agent name burned another port. Within one run,
+  across three concurrent matrix legs, the 1000-port range exhausted **mid-run**
+  and killed the release. The guard is **function-scoped** — that is what does the
+  work; a session-scoped one would share a single DB across ~10k tests and
+  re-exhaust the range from the inside. A canary test pins the scope: unguarded it
+  printed `assert 19007 == 19000` — 19007 because the operator's live fleet DB
+  already held 7 rows.
+
+### Added
+
+- **The publish job VERIFIES ITS OWN ARTIFACT (#680).** A green `twine upload` is
+  evidence the *call returned*, not that the *artifact exists*. Publish now queries
+  the version-specific PyPI endpoint (never `/simple/` or `latest` — both are
+  CDN-cached and will answer 200 for a version that is not there; measured: this
+  repo's own chain read the previous version for ~34s after a successful publish),
+  requires real uploaded files, retries for eventual consistency, and **fails the
+  release otherwise**. An empty version fails as a *config fault*, explicitly not
+  as a ghost — a false RED whose remedy is "do not ship" is worse than the bug it
+  catches.
+
 ## [0.21.18] — 2026-07-14
 
 ### Fixed
