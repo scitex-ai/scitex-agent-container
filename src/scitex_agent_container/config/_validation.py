@@ -410,6 +410,13 @@ def validate_raw(raw: dict, path: str) -> list[str]:
             errors.append(
                 f"spec.restart.policy must be never|on-failure|always, got '{policy}'"
             )
+        # restart.prune_on_stop — inode-hygiene opt-in (bool only).
+        prune_on_stop = restart.get("prune_on_stop")
+        if prune_on_stop is not None and not isinstance(prune_on_stop, bool):
+            errors.append(
+                "spec.restart.prune_on_stop must be a boolean, got "
+                f"{type(prune_on_stop).__name__}"
+            )
 
         # health.method — sole supported probe is the SDK runner's
         # /healthz / heartbeat-file check (see runtimes/_sdk_common.py).

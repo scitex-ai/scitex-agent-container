@@ -14,4 +14,5 @@ def parse_restart(spec: dict) -> RestartSpec:
         backoff_initial=backoff.get("initial", 30),
         backoff_max=backoff.get("max", 300),
         backoff_multiplier=backoff.get("multiplier", 2),
+        prune_on_stop=bool(raw.get("prune_on_stop", False)),
     )

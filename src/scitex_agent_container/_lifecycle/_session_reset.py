@@ -12,20 +12,14 @@ from pathlib import Path
 def _runtime_state_dir(name: str) -> Path:
     """Resolve ``<runtime-root>/<name>`` from the env every call.
 
-    Re-reads ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` each invocation rather
-    than capturing a module-level constant at import time, so tests (and
-    callers that flip the env var per-process) see the fresh value without
-    monkeypatching.
+    Re-reads ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` each invocation (via
+    the shared ``runtime_base_dir`` resolver) rather than capturing a
+    module-level constant at import time, so tests (and callers that flip
+    the env var per-process) see the fresh value without monkeypatching.
     """
-    import os
+    from .._runtime_paths import runtime_base_dir
 
-    runtime_root = Path(
-        os.environ.get(
-            "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
-            str(Path.home() / ".scitex" / "agent-container" / "runtime"),
-        )
-    )
-    return runtime_root / name
+    return runtime_base_dir() / name
 
 
 def _clear_persisted_session_id(name: str) -> None:

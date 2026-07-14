@@ -168,10 +168,12 @@ def db_migrate(
       $ sac db migrate --host head-nas --json
     """
     if registry_dir is None:
+        from .._runtime_paths import runtime_base_dir
+
         registry_dir = Path(
             os.environ.get(
                 "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
-                os.path.expanduser("~/.scitex/agent-container/runtime/registry"),
+                str(runtime_base_dir() / "registry"),
             )
         )
     result = import_legacy_registry(registry_dir, host=host)
