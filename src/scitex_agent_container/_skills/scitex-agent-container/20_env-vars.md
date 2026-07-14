@@ -141,27 +141,12 @@ start`` against the bare host's apptainer.
 |---|---|---|---|
 | `SAC_LISTEN_BASE_URL` | Host-stable ``sac listen`` base URL the in-SIF CLI POSTs spawn requests against (also used by the in-container channel adapter to subscribe to the bus). Auto-injected by the apptainer runtime from ``listen.host`` / ``listen.port`` in ``~/.scitex/agent-container/config.yaml``. | `http://127.0.0.1:7878` | URL |
 | `SAC_LISTEN_BEARER` | Bearer token presented as ``Authorization: Bearer ...`` to the host listen server. Auto-injected from the host's bearer-token file; required when ``server:sac`` is in ``spec.claude.channels`` (the runtime fails loud at launch otherwise). | `—` | string |
-| `SAC_INBOX_KEEPALIVE_S` | **Server side.** Seconds between keepalive comment frames (``: keepalive``) on an IDLE inbox SSE stream. A stream that never writes is indistinguishable from one that has died silently, which parks the subscriber forever and deafens the agent — so a malformed or non-positive value falls back to the default rather than disabling the beat. | `15` | float |
-| `SAC_MCP_SSE_READ_TIMEOUT_S` | **Client side** (``sac mcp channel``). Seconds of total silence on the inbox stream before the read is declared dead and the adapter re-dials with backoff. MUST stay comfortably above `SAC_INBOX_KEEPALIVE_S` (several missed beats) or a healthy stream is torn down every cycle. Never unbounded: "wait forever" is the bug, not a setting. | `60` | float |
+| `SAC_INBOX_KEEPALIVE_S` | Server: seconds between `: keepalive` frames on an IDLE inbox SSE stream. A silent stream is indistinguishable from a dead one, which parks the subscriber forever (silent deafness) — so a bad value falls back to the default rather than disabling the beat. | `15` | float |
+| `SAC_MCP_SSE_READ_TIMEOUT_S` | Client (`sac mcp channel`): seconds of silence before the inbox read is declared dead and the adapter re-dials. Keep well above `SAC_INBOX_KEEPALIVE_S`. Never unbounded — "wait forever" is the bug, not a setting. | `60` | float |
 
-The keepalive pair is the fleet's guard against SILENT deafness: a listen that
-vanishes **without closing the socket** (hard host death, wedged uvicorn, idle
-NAT/firewall drop) leaves the agent believing it is subscribed while the broker
-holds no subscriber for it. The beat gives the client bytes; the read deadline
-turns their absence into a reconnect. Reconnecting is cheap and idempotent (the
-stream replays undelivered rows on connect), so err toward re-dialling.
-
-**Deploy order — restart `sac listen` when you ship this.** The two halves are
-independent binaries (the host daemon; the in-SIF adapter), so they can be
-skewed, and only one skew is noisy:
-
-| skew | behaviour |
-|---|---|
-| new listen + **old** adapter | fine. The old adapter ignores `:` comment frames as content; the beat is simply unused. |
-| **new** adapter + old listen | the adapter gets no beats, so it re-dials every `SAC_MCP_SSE_READ_TIMEOUT_S` (~60s). Harmless and self-healing — it re-subscribes each time and undelivered rows are replayed, so **no message is lost** — but it looks like flapping in the logs until the daemon is restarted. |
-
-So restart the daemon (`systemctl --user restart sac-listen.service`) at or
-before the SIF rebuild that carries the new adapter, and the skew never appears.
+Deploy order: restart `sac listen` when shipping the beat. A NEW adapter against
+a not-yet-restarted daemon gets no beats and re-dials every ~60s — lossless and
+self-healing (rows replay on connect), but it looks like flapping.
 
 Fail-loud: when the broker runs in a SIF and ``SAC_LISTEN_BASE_URL`` is
 unset, ``sac agents start`` raises ``InSifBrokerError`` (apptainer

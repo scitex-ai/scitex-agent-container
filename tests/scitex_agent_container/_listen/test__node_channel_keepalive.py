@@ -71,8 +71,13 @@ def fast_beat_env():
             os.environ[key] = previous
 
 
-@pytest.fixture
-def free_port() -> int:
+def _free_port() -> int:
+    """Pick a free loopback port.
+
+    A plain helper, deliberately NOT a fixture: STX-TQ005 forbids a fixture from
+    acquiring an external resource, and the same convention is already used by
+    the sibling suites (see ``test__nodes.py::_sse_roundtrip``).
+    """
     with contextlib.closing(socket.socket()) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -90,16 +95,17 @@ async def _serve(port: int):
 
 
 @pytest.mark.asyncio
-async def test_idle_inbox_stream_emits_keepalive_frames(fast_beat_env, free_port):
+async def test_idle_inbox_stream_emits_keepalive_frames(fast_beat_env):
     # Arrange — subscribe and then publish NOTHING. Under the old handler this
     # connection would receive exactly one frame ever and then fall silent.
-    app, server, thread = await _serve(free_port)
+    port = _free_port()
+    app, server, thread = await _serve(port)
     headers = {"authorization": f"Bearer {TOKEN}"}
     beats: list[str] = []
 
     async def subscribe() -> None:
         async with httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{free_port}", timeout=10.0
+            base_url=f"http://127.0.0.1:{port}", timeout=10.0
         ) as ac:
             async with ac.stream(
                 "GET", f"/agents/{AGENT}/inbox/stream", headers=headers
