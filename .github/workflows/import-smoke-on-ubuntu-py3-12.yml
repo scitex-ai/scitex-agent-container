@@ -8,7 +8,7 @@ name: import-smoke
 # install sac via ``pip install /opt/scitex-agent-container-src`` (a
 # %files copy of the package's OWN source tree, see
 # containers/apptainer-base.def). This workflow proves the same
-# pip-install-from-source path works on a clean ubuntu-latest with no
+# pip-install-from-source path works on a clean runner with no
 # git+https fallback — if this is green the in-SIF install will also
 # resolve. We don't build an actual SIF here: apptainer SIF builds
 # need ``sudo`` (or ``--fakeroot`` + uidmap for sandboxes) and a full
@@ -16,6 +16,23 @@ name: import-smoke
 # The contract test ``tests/scitex_agent_container/containers/
 # test_def_install_from_bundled_source.py`` locks the .def-side of the
 # invariant; this workflow locks the install-side.
+#
+# RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
+# runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
+# never fall back to a hosted runner.
+#
+# WHY NOT actions/setup-python: the bare Spartan node has no Python and no
+# Python tool cache; that action fails there ("version 3.x not found for this
+# OS"). `uv venv --python 3.12` fetches uv's own managed CPython instead —
+# the pattern the org-level reusables already run GREEN on spartan-cpu.
+#
+# NOTE this job does NOT simply call the org reusable
+# (scitex-ai/.github/.github/workflows/import-smoke.yml). That reusable stops
+# at `import <pkg>`; sac additionally asserts the CONSOLE SCRIPT resolves
+# (`sac --version`), which is the same entry point the SIF exercises and is the
+# half of this gate that actually catches [project.scripts] drift. Calling the
+# reusable would have silently dropped that coverage. Upstream the extra step
+# first if this is ever consolidated.
 
 on:
   push:
@@ -28,26 +45,34 @@ on:
 
 jobs:
   install-check:
+    # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: import-smoke-on-ubuntu-py3-12
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - uses: astral-sh/setup-uv@v3
         with:
-          python-version: "3.12"
+          cache-dependency-glob: pyproject.toml
+
       - name: Install from source (no extras)
-        # Mirrors the in-SIF install: ``pip install <package-source-root>``.
+        # Mirrors the in-SIF install: install the package source root itself.
         # No git+https fallback — if this step fails the .def's
         # ``pip install /opt/scitex-agent-container-src`` will also fail.
         run: |
-          python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install -e .
+          set -euo pipefail
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e .
+
       - name: Import smoke
         run: .venv/bin/python -c "import scitex_agent_container; print(scitex_agent_container.__version__)"
+
       - name: CLI entry-point smoke (sac --version)
         # The console script defined in pyproject.toml's [project.scripts]
         # (sac = scitex_agent_container.cli:cli_entry_point) must be on
         # PATH and resolve to the installed package — same shape as the
-        # in-SIF entry point.
+        # in-SIF entry point. A venv install DOES materialise entry-point
+        # scripts in .venv/bin (unlike `pip install --target`, which does
+        # not — that is why run-in-sif.sh has to hand-write shims).
         run: .venv/bin/sac --version
