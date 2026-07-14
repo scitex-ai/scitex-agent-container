@@ -29,6 +29,7 @@ from ._identity import (
     baked,
     format_terse,
     identity,
+    origin_mismatch,
     package_dir,
     short_id,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "format_terse",
     "head_sha",
     "identity",
+    "origin_mismatch",
     "package_dir",
     "repo_root_for_package",
     "short_id",
