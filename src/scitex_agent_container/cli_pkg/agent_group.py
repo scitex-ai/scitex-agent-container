@@ -23,6 +23,7 @@ from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
 from .lifecycle import forget as _forget_impl
+from .lifecycle import rename as _rename_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
@@ -51,7 +52,17 @@ class _AgentsGroup(HelpRecursiveGroup):
     COMMAND_CATEGORIES = [
         (
             "Lifecycle",
-            ["create", "start", "twin", "stop", "restart", "delete", "forget", "spawn-from-here"],
+            [
+                "create",
+                "start",
+                "twin",
+                "stop",
+                "restart",
+                "rename",
+                "delete",
+                "forget",
+                "spawn-from-here",
+            ],
         ),
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
@@ -89,6 +100,14 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_twin_impl, "twin"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
+# `rename` — the ONE verb that moves an agent's name in every place it is
+# written: the spec dir, the spec's own self-references (labels, workdir,
+# overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
+# identity), the overlay/runtime dirs, the registry entry, the state.db
+# rows, AND the agent's task cards. Renaming by hand orphans the cards —
+# the board still knows the agent by its old id and nothing says so.
+# Atomic: every step records its inverse, any failure rolls the lot back.
+agent_group.add_command(_rebind(_rename_impl, "rename"))
 agent_group.add_command(_rebind(_delete_impl, "delete"))
 agent_group.add_command(_rebind(_forget_impl, "forget"))
 # PR-3 — in-SIF-native spawn verb with wire-stable outcome JSON +

@@ -47,6 +47,10 @@ from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state.state_db_nodes import record_lineage
+from tests.scitex_agent_container._helpers.loopback_server import (
+    await_until_serving,
+    serve_in_thread,
+)
 
 TOKEN = "test-token-wi3"
 
@@ -201,7 +205,6 @@ async def _sse_roundtrip(
     """
     import contextlib as _contextlib
     import socket
-    import threading
 
     import uvicorn
 
@@ -217,14 +220,11 @@ async def _sse_roundtrip(
     )
     server = uvicorn.Server(config)
 
-    server_thread = threading.Thread(target=server.run, daemon=True)
-    server_thread.start()
-    # Wait for the server to come up.
-    deadline = asyncio.get_event_loop().time() + 5.0
-    while not server.started:
-        if asyncio.get_event_loop().time() > deadline:
-            raise AssertionError("uvicorn did not start in 5s")
-        await asyncio.sleep(0.05)
+    # Shared startup wait: the hand-rolled 5s ceiling that used to live here
+    # raced the listen lifespan (measured 7.49s under load) and turned the
+    # py3.11 leg red. See tests/.../_helpers/loopback_server.py.
+    server_thread, crash = serve_in_thread(server, port)
+    await await_until_serving(server, server_thread, port=port, crash=crash)
 
     headers = {"authorization": f"Bearer {TOKEN}"}
     ready = asyncio.Event()

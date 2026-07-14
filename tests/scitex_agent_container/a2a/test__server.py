@@ -658,12 +658,13 @@ def test_sdk_round_trip_get_task_envelope_carries_result(_round_trip):
 import asyncio as _asyncio
 import contextlib as _contextlib
 import socket as _socket
-import threading as _threading
 
 import httpx as _httpx
-import uvicorn as _uvicorn
 
 from scitex_agent_container._state import state_db as _state_db
+from tests.scitex_agent_container._helpers.loopback_server import (
+    run_loopback as _run_loopback_shared,
+)
 
 
 @pytest.fixture
@@ -709,27 +710,14 @@ def _send_payload(text: str, *, from_agent: str = "alice") -> dict:
 
 @_contextlib.contextmanager
 def _run_loopback(app, port: int):
-    """Spin up uvicorn on a loopback port for a single test block."""
-    # Arrange — boot the uvicorn server on a background thread.
-    config = _uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", ws="none"
-    )
-    server = _uvicorn.Server(config)
-    t = _threading.Thread(target=server.run, daemon=True)
-    t.start()
-    # Wait for "started"; raise loudly if it doesn't come up.
-    import time as _time
+    """Spin up uvicorn on a loopback port for a single test block.
 
-    deadline = _time.monotonic() + 5.0
-    while not server.started:
-        if _time.monotonic() > deadline:
-            raise RuntimeError("uvicorn loopback did not start in 5s")
-        _time.sleep(0.05)
-    try:
-        yield port
-    finally:
-        server.should_exit = True
-        t.join(timeout=5.0)
+    Startup wait lives in the shared helper — the hand-rolled 5s ceiling this
+    used to carry raced the app's lifespan startup (measured 7.49s under load)
+    and turned the py3.11 leg red. See ``_helpers/loopback_server.py``.
+    """
+    with _run_loopback_shared(app, port) as p:
+        yield p
 
 
 def _free_port() -> int:

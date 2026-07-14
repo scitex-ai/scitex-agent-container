@@ -19,26 +19,17 @@ import json
 import logging
 from typing import Any
 
+from ._channel_send_errors import (
+    SendError,
+    delivery_error,
+    error_result,
+    lookup_error_result,
+    no_subscriber_error,
+    unreachable_error,
+)
 from .channel import _recent
 
 log = logging.getLogger(__name__)
-
-
-class SendError(RuntimeError):
-    """A send/push could NOT reach or wake the target agent.
-
-    Raised by the send helper when delivery demonstrably failed:
-
-    * the transport raised (agent down / connection refused),
-    * the listen server returned a non-2xx status (delivery error), or
-    * the publish reported ``delivered_subscriber_count == 0`` — no live
-      inbox subscriber, so the message woke nobody.
-
-    The send-side ``a2a_*`` tools translate this into a loud, explicit
-    ``{"error": ...}`` result for the calling agent (never a misleading
-    success) and log it. STX hard rule: fail loudly, never silently drop
-    or return a misleading success.
-    """
 
 
 def register_tools(
@@ -53,7 +44,7 @@ def register_tools(
     """
     import uuid as _uuid
 
-    from mcp.types import TextContent, Tool
+    from mcp.types import CallToolResult, TextContent, Tool
 
     from .._state.dispatch_ledger import (
         STATUS_DELIVERED,
@@ -122,7 +113,8 @@ def register_tools(
         """POST a send/push and FAIL LOUDLY when it cannot reach/wake (WI-2).
 
         Returns the parsed ``{status, body}`` on success. Raises
-        :class:`SendError` — never a misleading success — when:
+        :class:`SendError` — which the caller renders as an MCP result
+        with ``isError=True``, never a misleading success — when:
 
         * the transport raises (target agent down / connection refused),
         * the HTTP status is 5xx (server / infra delivery error), or
@@ -135,6 +127,17 @@ def register_tools(
         the agent ("denial is the policy working"). Reshaping it into an
         opaque error string would lose the structured ``reason`` and is not
         the silent-drop/misleading-success the fail-loud rule targets.
+
+        KNOWN GAP (deliberate, not an oversight): a 4xx therefore still comes
+        back with ``isError=False``, even though it delivered nothing. It is
+        far less dangerous than the 0-subscriber case this fail-loud path was
+        written for — a 403 body is self-evidently a failure, whereas a
+        no-subscriber publish returned an HTTP **200** and read as success by
+        every conventional measure. Flipping 4xx to ``isError=True`` (keeping
+        the body verbatim, so the original "don't lose the structured reason"
+        objection would not apply) is a one-line change, but it alters the ACL
+        contract and is pinned by ``tests/smoke/test_node_comms_e2e_mcp.py``,
+        so it belongs in its own PR rather than riding along with this one.
 
         ``delivered_subscriber_count`` ABSENT is NOT treated as zero: some
         responses (cross-host forwards) don't carry it, and inventing a
@@ -180,9 +183,7 @@ def register_tools(
             res = await _post(path, payload)
         except httpx.HTTPError as exc:
             log.warning("sac a2a: send to %r failed (transport): %s", target, exc)
-            raise SendError(
-                f"send to {target!r} failed: agent unreachable ({exc})"
-            ) from exc
+            raise unreachable_error(target, exc) from exc
 
         status = res.get("status")
         # 5xx (and any non-int / sub-200) = server/infra delivery failure.
@@ -192,9 +193,7 @@ def register_tools(
             log.warning(
                 "sac a2a: send to %r returned HTTP %s: %s", target, status, body
             )
-            raise SendError(
-                f"send to {target!r} failed: listen returned HTTP {status} ({body})"
-            )
+            raise delivery_error(target, status, body)
         if not isinstance(status, int) or status < 200:
             body = res.get("body")
             log.warning(
@@ -203,9 +202,7 @@ def register_tools(
                 status,
                 body,
             )
-            raise SendError(
-                f"send to {target!r} failed: unexpected status {status!r} ({body})"
-            )
+            raise delivery_error(target, status, body)
 
         body = res.get("body")
         if isinstance(body, dict):
@@ -213,21 +210,11 @@ def register_tools(
             if isinstance(delivered, int) and delivered == 0:
                 log.warning(
                     "sac a2a: send to %r reached no subscriber "
-                    "(delivered_subscriber_count=0)",
+                    "(delivered_subscriber_count=0) — NOT DELIVERED",
                     target,
                 )
-                raise SendError(
-                    f"send to {target!r} reached no live subscriber "
-                    "(delivered_subscriber_count=0): the agent is not "
-                    "subscribed to its inbox (down, not started, or its "
-                    "channel adapter is not connected) — the message woke "
-                    "nobody and was not delivered."
-                )
+                raise no_subscriber_error(target)
         return res
-
-    def _error_result(exc: SendError) -> "list[TextContent]":
-        """Render a :class:`SendError` as a loud tool result."""
-        return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
 
     def _find(msg_id: str) -> dict[str, Any] | None:
         for ev in reversed(_recent):
@@ -279,7 +266,10 @@ def register_tools(
                 description=(
                     "Send a message to another agent on this sac listen. "
                     "Sets from_agent automatically; mints conversation_id "
-                    "when omitted."
+                    "when omitted. FAILS (isError) when the message reached "
+                    "no live inbox subscriber — a peer listed as running is "
+                    "NOT necessarily subscribed. Check `inbox_subscribers` "
+                    "via a2a_peers before handing work to a peer."
                 ),
                 inputSchema={
                     "type": "object",
@@ -325,7 +315,17 @@ def register_tools(
             ),
             Tool(
                 name="a2a_peers",
-                description="List reachable agents on this sac listen.",
+                description=(
+                    "List agents known to this sac listen. REGISTERED IS NOT "
+                    "REACHABLE: a row can show a pid, a port and group "
+                    "'active' while having NO inbox subscriber, in which case "
+                    "a2a_send to it delivers nothing. Each row carries "
+                    "`inbox_subscribers` (live subscriber count) and "
+                    "`inbox_reachable` ('reachable' / 'unreachable' / "
+                    "'unknown' when it lives on another host and this listen "
+                    "cannot observe it). Only 'reachable' means a message "
+                    "will actually wake them."
+                ),
                 inputSchema={"type": "object", "properties": {}},
             ),
             Tool(
@@ -344,7 +344,20 @@ def register_tools(
         ]
 
     @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    async def _call_tool(
+        name: str, arguments: dict[str, Any]
+    ) -> "list[TextContent] | CallToolResult":
+        """Dispatch one ``a2a_*`` call.
+
+        Return-type contract (the fix for the swallowed-message false
+        green): a SUCCESS returns ``list[TextContent]``, which the MCP
+        low-level server stamps ``isError=False``. A FAILURE returns a
+        ``CallToolResult`` carrying ``isError=True``, which the server
+        passes through verbatim. A caller therefore cannot mistake a
+        message that reached nobody for a delivered one — previously
+        BOTH shapes came back as ``isError=False`` and the failure was
+        just a field in the body that a caller could (and did) miss.
+        """
         if name == "a2a_send":
             target = arguments["target"]
             content = arguments["content"]
@@ -367,7 +380,7 @@ def register_tools(
                 )
             except SendError as exc:
                 _ledger_update(dispatch_id, STATUS_FAILED)
-                return _error_result(exc)
+                return error_result(exc)
             _ledger_update(dispatch_id, STATUS_DELIVERED)
             return [TextContent(type="text", text=json.dumps(res))]
 
@@ -375,22 +388,10 @@ def register_tools(
             mid = arguments["in_reply_to"]
             orig = _find(mid)
             if orig is None:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {"error": f"unknown msg_id {mid} (inbox window)"}
-                        ),
-                    )
-                ]
+                return lookup_error_result(f"unknown msg_id {mid} (inbox window)")
             target = orig.get("from_agent", "")
             if not target:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"error": "original sender unknown"}),
-                    )
-                ]
+                return lookup_error_result("original sender unknown")
             payload = _wrap_message_send(
                 arguments["content"],
                 conversation_id=orig.get("conversation_id"),
@@ -401,29 +402,17 @@ def register_tools(
                     target, f"/agents/{target}/message:send", payload
                 )
             except SendError as exc:
-                return _error_result(exc)
+                return error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_ack":
             mid = arguments["msg_id"]
             orig = _find(mid)
             if orig is None:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(
-                            {"error": f"unknown msg_id {mid} (inbox window)"}
-                        ),
-                    )
-                ]
+                return lookup_error_result(f"unknown msg_id {mid} (inbox window)")
             target = orig.get("from_agent", "")
             if not target:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"error": "original sender unknown"}),
-                    )
-                ]
+                return lookup_error_result("original sender unknown")
             payload = _wrap_message_send(
                 "",
                 conversation_id=orig.get("conversation_id"),
@@ -435,13 +424,18 @@ def register_tools(
                     target, f"/agents/{target}/message:send", payload
                 )
             except SendError as exc:
-                return _error_result(exc)
+                return error_result(exc)
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_peers":
             # No trailing slash: sac listen registers `/agents` and a GET to
             # `/agents/` 307-redirects, which httpx does not follow by default
             # (a2a_peers then returns a bare 307 with empty body).
+            #
+            # Each row carries `inbox_subscribers` + `inbox_reachable` (see
+            # ``_listen/_reachability.py``) so a caller can tell REGISTERED
+            # from REACHABLE. Reading only pid/groups is what let a deaf peer
+            # look alive-and-able.
             res = await _get("/agents")
             return [TextContent(type="text", text=json.dumps(res))]
 
@@ -454,11 +448,7 @@ def register_tools(
                 )
             ]
 
-        return [
-            TextContent(
-                type="text", text=json.dumps({"error": f"unknown tool: {name}"})
-            )
-        ]
+        return lookup_error_result(f"unknown tool: {name}")
 
 
 __all__ = ["SendError", "register_tools"]

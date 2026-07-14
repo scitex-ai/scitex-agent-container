@@ -108,10 +108,39 @@ def has_grant(
 def list_comms_grants(
     db_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Return every grant row in insertion order.
+    """Return every grant row in INSERTION order (SQLite ``rowid``).
 
     Observability surface for the host operator. Each row carries the
     audit ``note`` (default: the deferred-identity caveat).
+
+    Ordering contract — the docstring is authoritative, the old
+    ``ORDER BY`` was the bug (fixed 2026-07-14). Both callers want
+    insertion order (``sac a2a grants`` documents "rows are emitted in
+    insertion order"; the tests assert it); NOTHING wants alphabetical.
+    The previous clause ::
+
+        ORDER BY created_at ASC, sender_name ASC, target_name ASC
+
+    only APPROXIMATED that, and lied in two ways:
+
+    * ``created_at`` is a wall-clock ``time.time()`` float, so equal
+      timestamps fall through to the ALPHABETICAL tiebreak. Ties are
+      real, not theoretical: :func:`state_db_export.import_state`
+      bulk-imports peer rows carrying the PEER's ``created_at``
+      verbatim.
+    * Wall clocks skew and step across hosts, so an imported row can
+      carry a SMALLER ``created_at`` than a row inserted locally before
+      it — and then sorts ahead of it. That is not insertion order by
+      any reading.
+
+    The net effect was that a foreign row sorted into a plausible-looking
+    position instead of standing out, which is precisely what let a
+    leaked ``-> lead`` grant hide inside this listing.
+
+    ``comms_grants`` is a plain rowid table (no ``WITHOUT ROWID``), so
+    the implicit ``rowid`` IS the true insertion order: monotonic,
+    tie-free and immune to clock skew. ``created_at`` stays in the
+    payload — it is useful audit data, just not a sort key.
     """
     from .state_db import open_db
 
@@ -119,7 +148,7 @@ def list_comms_grants(
         cur = conn.execute(
             "SELECT sender_name, target_name, created_at, note "
             "FROM comms_grants "
-            "ORDER BY created_at ASC, sender_name ASC, target_name ASC"
+            "ORDER BY rowid ASC"
         )
         return [
             {

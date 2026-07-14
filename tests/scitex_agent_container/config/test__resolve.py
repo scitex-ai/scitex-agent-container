@@ -412,3 +412,37 @@ def test_ambiguous_agent_str_contains_prefix_and_each_match(
     contained = fragment in rendered
     # Assert
     assert contained
+
+
+def test_user_agents_dir_honours_scitex_dir(env_bag, tmp_path):
+    """The spec search root must follow ``$SCITEX_DIR``, not bare ``~``.
+
+    Regression, measured on Spartan 2026-07-14: a remote start dispatched
+    with ``SCITEX_DIR=<registry root>`` still searched
+    ``~/.scitex/agent-container/agents/`` — on that host a symlink into an
+    unrelated paper project — and reported the agent "not found" for a spec
+    that had just been rsynced, correctly, into the registry-declared root.
+    Resolving the state root and then IGNORING it is worse than never
+    resolving it. sac's own docs already call this root "relocatable via
+    $SCITEX_DIR"; this pins that promise.
+    """
+    # Arrange
+    from scitex_agent_container.config._resolve import _user_agents_dir
+
+    env_bag.setenv("SCITEX_DIR", str(tmp_path / "relocated"))
+    # Act
+    resolved = _user_agents_dir()
+    # Assert
+    assert resolved == tmp_path / "relocated" / "agent-container" / "agents"
+
+
+def test_user_agents_dir_unset_scitex_dir_is_home_rooted(env_bag):
+    """Unset ``$SCITEX_DIR`` → byte-identical to the historical behaviour."""
+    # Arrange
+    from scitex_agent_container.config._resolve import _user_agents_dir
+
+    env_bag.delenv("SCITEX_DIR")
+    # Act
+    resolved = _user_agents_dir()
+    # Assert
+    assert resolved == Path.home() / ".scitex" / "agent-container" / "agents"

@@ -21,21 +21,57 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Currently one job: ``sac.accounts-refresh`` — a headless OAuth
-    access-token refresh for EVERY stored Claude account, including the
-    active one (``--include-active``), mirroring the rotated token back
-    into the live ``~/.claude`` login (``--sync-active-login``).
+    One job today:
 
-    Why not ``--skip-active``: under the pre-2026-07-08 two-refresher
-    model both the host timer and the in-container CLI redeemed the same
-    single-use refresh_token, so skipping the active account was the race
-    guard (2026-06-04 neurovista 401 storm). Since 2026-07-08 agents bind
-    the credential ``:ro`` and never refresh, making this timer the SOLE
-    refresher — so ``--skip-active`` stopped guarding a race and instead
-    starved the one account every agent uses, whose ~8h access_token then
-    expired and 401'd the whole fleet (2026-07-09/10 total stall).
+    * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
+      access-token refresh for EVERY stored Claude account, including the
+      active one (``--include-active``), mirroring the rotated token back
+      into the live ``~/.claude`` login (``--sync-active-login``).
+
+    ``sac listen`` is DELIBERATELY NOT declared here, and adding it back
+    would take the fleet's control plane down. scitex-dev derives a unit
+    name from the job name VERBATIM (``scitex-todo.dashboard`` ->
+    ``scitex-todo.dashboard.service``), so a ``sac.listen`` JobSpec
+    materialises ``sac.listen.service`` — while the listen that actually
+    runs on the host is ``sac-listen.service`` (a HYPHEN), hand-written
+    2026-07-05 14:38, ``Restart=always``, with ``10-venv-path`` and
+    ``20-hardening`` drop-ins. The two names differ by one character and
+    systemd treats them as unrelated units, so ``scitex-dev service ensure
+    sac.listen`` does not adopt the running supervisor — it installs a
+    SECOND one. Two units, both ``Restart=always``, both running
+    ``sac listen``, both binding 127.0.0.1:7878: they fight for the port
+    forever, and every lost round destroys the in-memory Broker, which
+    deafens EVERY agent's inbox at once.
+
+    PR #543 declared it on the premise that ``sac listen`` "had NO
+    SUPERVISOR". That premise was false by the time it merged — the
+    hand-written unit was created the SAME DAY the PR was opened, and had
+    been supervising listen for nine days (``NRestarts=0``). The PR was
+    obsolete on arrival and nobody re-checked before merging it.
+
+    If this is ever federated, it must be named ``sac-listen`` (hyphen) so
+    the derived unit is the one that already exists — and even then,
+    ``ensure`` must be shown to ADOPT the running unit rather than
+    overwrite its drop-ins. Do not re-add it without measuring that.
+
+    Why ``sac.accounts-refresh`` is not ``--skip-active``: under the
+    pre-2026-07-08 two-refresher model both the host timer and the
+    in-container CLI redeemed the same single-use refresh_token, so
+    skipping the active account was the race guard (2026-06-04 neurovista
+    401 storm). Since 2026-07-08 agents bind the credential ``:ro`` and
+    never refresh, making this timer the SOLE refresher — so
+    ``--skip-active`` stopped guarding a race and instead starved the one
+    account every agent uses, whose ~8h access_token then expired and
+    401'd the whole fleet (2026-07-09/10 total stall).
     ``--sync-active-login`` keeps the operator's live session valid across
     the single-use refresh_token rotation.
+
+    The clew incident (``clew-incident-sac-host-listen-down``, 2026-07-05)
+    that motivated federating listen was ALREADY fixed on the day it
+    happened, by the hand-written ``sac-listen.service`` above — not by a
+    JobSpec. The fragile ``sac-listen-watch.sh`` ``*/2`` cron it replaced
+    is gone. Re-federating it does not fix that incident again; it only
+    adds a second supervisor to fight the first.
     """
     from scitex_dev.jobs import JobSpec
 
@@ -66,7 +102,7 @@ def provide_jobs() -> "list[JobSpec]":
             on_boot_sec="15min",
             on_unit_active_sec="2h",
             timeout_sec=120,
-        )
+        ),
     ]
 
 

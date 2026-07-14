@@ -36,7 +36,6 @@ container and no spec; its AgentCard is synthesised by
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections import deque
@@ -56,14 +55,6 @@ _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 # separate from_agent meta key. Env-overridable (SAC_MCP_* convention, #591).
 _CHANNEL_SOURCE_ENV_VAR = "SAC_MCP_CHANNEL_SOURCE"
 _CHANNEL_SOURCE_DEFAULT = "sac"
-
-# Bound the SSE CONNECT phase; read stays unbounded (the event stream is
-# legitimately long-lived). Load-resilience fix (2026-07-09): ``timeout=None``
-# left CONNECT unbounded too, so a hung connect to ``:7878`` under load blocked
-# inside ``client.stream(...)`` forever and the reconnect-with-backoff loop never
-# retried. See ``docs/mcp-load-resilience.md``.
-_SSE_CONNECT_TIMEOUT_S: float = 30.0
-
 
 # WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
 # this receive-side adapter under the module size budget). Re-exported here
@@ -95,78 +86,19 @@ from ._channel_reaction_ack import (  # noqa: E402,F401
 from ._channel_self_register import (  # noqa: E402
     refresh_node as _refresh_comms_node,
 )
+
+# The SSE inbox consumer + its reconnect policy (bounded connect, bounded
+# read, jittered backoff) live in ``_channel_sse`` — the component whose
+# failure deafens an agent, kept readable on its own. Re-exported here so the
+# historical ``from ...channel import _consume_sse`` path (used by the tests
+# and by ``_serve`` below) keeps working unchanged.
+from ._channel_sse import (  # noqa: E402,F401
+    _SSE_CONNECT_TIMEOUT_S,
+    _consume_sse,
+    _jittered_backoff,
+    _sse_read_timeout_s,
+)
 from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
-
-
-async def _consume_sse(
-    url: str,
-    bearer: str | None,
-    on_event: "callable[[dict[str, Any]], asyncio.Future[None]]",
-) -> None:
-    """Long-lived SSE consumer. Reconnects with backoff on disconnect.
-
-    Each `event: message` frame's `data:` line is JSON-decoded and
-    handed to ``on_event``. Comment frames (``: ...``) are ignored —
-    sac listen emits one at connection time as a keep-alive hint.
-    """
-    try:
-        import httpx
-    except Exception as exc:  # pragma: no cover
-        # Catch broadly: optional deps can fail at *import time* with
-        # non-ImportError errors (e.g. a misconfigured transitive dep
-        # raising RuntimeError). Surface them as an actionable
-        # ImportError so the caller knows install/upgrade is needed.
-        raise ImportError(
-            "httpx is required for sac mcp channel — install with `pip install httpx`"
-        ) from exc
-
-    headers = {"Accept": "text/event-stream"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-
-    backoff = 0.5
-    sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=None)
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=sse_timeout) as client:
-                async with client.stream("GET", url, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        log.warning(
-                            "sac channel SSE %s returned %d: %s",
-                            url,
-                            resp.status_code,
-                            body[:200],
-                        )
-                    else:
-                        backoff = 0.5
-                        data_lines: list[str] = []
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                # frame separator — dispatch what we have
-                                if data_lines:
-                                    payload = "\n".join(data_lines)
-                                    data_lines = []
-                                    try:
-                                        event = json.loads(payload)
-                                    except json.JSONDecodeError:
-                                        log.warning(
-                                            "sac channel SSE bad JSON: %r",
-                                            payload[:200],
-                                        )
-                                        continue
-                                    await on_event(event)
-                                continue
-                            if line.startswith(":"):
-                                continue  # comment frame
-                            if line.startswith("data:"):
-                                data_lines.append(line[5:].lstrip())
-        except Exception as exc:  # stx-allow: fallback (reason: long-lived SSE — must retry on any transient error)
-            log.warning(
-                "sac channel SSE error (%s); reconnecting in %.1fs", exc, backoff
-            )
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 30.0)
 
 
 def _meta_str(value: Any) -> str:
@@ -205,7 +137,9 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
     """
     from .._state.state_db_channel import format_ts_iso
 
-    source = os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
+    source = (
+        os.environ.get(_CHANNEL_SOURCE_ENV_VAR, "").strip() or _CHANNEL_SOURCE_DEFAULT
+    )
     meta: dict[str, Any] = {
         "source": source,
         "from_agent": _meta_str(event.get("from_agent", "unknown")),

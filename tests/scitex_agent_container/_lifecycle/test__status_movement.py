@@ -25,14 +25,40 @@ import pytest
 def isolated_runtime(tmp_path: Path, env_save_restore):
     """Redirect the runtime root + reload ``_session_state`` so the
     helper's ``state_dir_for(name)`` lookup lands inside ``tmp_path``.
+
+    THE RELOAD MUST BE UNDONE, and for a long time it was not. ``env_save_restore``
+    put the ENV VAR back, but ``DEFAULT_STATE_ROOT`` is a MODULE CONSTANT baked at
+    import — so after ``importlib.reload`` it kept pointing at THIS test's tmp dir
+    (which pytest then deletes) for the remainder of the worker's session. Every
+    later test in that worker read a dangling root out of the process global.
+
+    That leak is invisible when this module runs alone and is ORDER-DEPENDENT
+    under `-n auto`, so it surfaced as a "flaky" unrelated test:
+    ``test_state_dir_for_default_root_is_under_user_home`` failed with a path
+    from ``test_status_payload_existing``'s tmp dir. It is not flaky — it is this
+    fixture, and only the xdist gate could ever see it.
+
+    Restoring the env and reloading AGAIN is the whole fix. Order matters: the
+    env must be put back BEFORE the reload, or the reload just re-derives the
+    tmp path we are trying to forget. ``env_save_restore`` tears down AFTER this
+    fixture (we depend on it), so it is too late to rely on — restore it here.
     """
     root = tmp_path / "runtime"
     root.mkdir()
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
+    key = "SCITEX_AGENT_CONTAINER_RUNTIME_DIR"
+    saved = os.environ.get(key)
+    env_save_restore.set(key, str(root))
     import scitex_agent_container._runners._session_state as _ss
 
     importlib.reload(_ss)
-    return root
+    try:
+        yield root
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(_ss)
 
 
 @pytest.fixture
