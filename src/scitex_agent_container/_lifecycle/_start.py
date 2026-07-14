@@ -18,8 +18,8 @@ from ..config import AgentConfig, load_config, resolve_config
 from ._a2a_port import resolve_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
+from ._instances import make_restart_callback as _make_restart_callback
 from ._instances import record_local_instance as _record_local_instance
-from ._instances import restart_and_record as _restart_and_record
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
@@ -484,8 +484,8 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Restart callback re-records the row: a restart = a NEW pid. See
-    # ``_instances.restart_and_record`` for why a stale pid is dangerous.
+    # Restart callback re-records the row (a restart = a NEW pid) AND pins
+    # the state.db it writes to -- see ``_instances.make_restart_callback``.
     if config.health.enabled:
         thread = thread_factory(
             target=health_monitor,
@@ -493,7 +493,7 @@ def agent_start(
                 config.name,
                 config,
                 registry,
-                lambda c: _restart_and_record(c, runtime_factory),
+                _make_restart_callback(runtime_factory),
             ),
             daemon=True,
         )

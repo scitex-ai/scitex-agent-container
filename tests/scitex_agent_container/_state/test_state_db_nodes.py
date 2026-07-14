@@ -541,6 +541,70 @@ def test_list_comms_grants_returns_each_grant_pair(db_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ORDERING CONTRACT (2026-07-14) — ``list_comms_grants`` documents INSERTION
+# order and both callers rely on it (``sac a2a grants`` says "rows are
+# emitted in insertion order"); nothing wants alphabetical. It used to sort
+# by ``ORDER BY created_at ASC, sender_name ASC, target_name ASC``, which
+# only APPROXIMATES insertion order and lies whenever the wall-clock
+# ``created_at`` ties (-> falls through to the ALPHABETICAL tiebreak) or
+# skews (-> a peer row sorts ahead of a locally-earlier one).
+#
+# Neither case is theoretical: ``import_state`` bulk-imports peer rows
+# carrying the PEER's ``created_at`` verbatim, and peer clocks drift. The
+# rows below are written through the real ``open_db`` connection with
+# explicit timestamps -- exactly the shape ``import_state`` produces. Real
+# SQLite, real rows, no mocks.
+#
+# The pre-existing insertion-order test could not catch this: it inserted
+# "first-sender" then "second-sender", which are in the SAME order
+# alphabetically as by insertion, so it passed under both implementations.
+# ---------------------------------------------------------------------------
+
+
+def _insert_grant_at(db_path: Path, sender: str, target: str, created_at: float) -> None:
+    """Write one ``comms_grants`` row with an EXPLICIT ``created_at``.
+
+    ``grant_send`` stamps ``time.time()`` internally, so a tie / skew can't
+    be expressed through it. This is the same INSERT ``import_state`` uses
+    when it replays a peer's rows.
+    """
+    from scitex_agent_container._state.state_db import open_db
+
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO comms_grants "
+            "(sender_name, target_name, created_at, note) VALUES (?, ?, ?, ?)",
+            (sender, target, created_at, None),
+        )
+
+
+def test_list_comms_grants_keeps_insertion_order_when_timestamps_tie(
+    db_path: Path,
+) -> None:
+    # Arrange — same created_at, inserted in NON-alphabetical order. The old
+    # clause fell through to `sender_name ASC` and returned "alpha" first.
+    _insert_grant_at(db_path, "zeta", "lead", 100.0)
+    _insert_grant_at(db_path, "alpha", "lead", 100.0)
+    # Act
+    rows = list_comms_grants(db_path=db_path)
+    # Assert
+    assert [r["sender"] for r in rows] == ["zeta", "alpha"]
+
+
+def test_list_comms_grants_keeps_insertion_order_when_peer_clock_is_behind(
+    db_path: Path,
+) -> None:
+    # Arrange — a peer row imported LATER but stamped EARLIER (clock skew).
+    # The old clause sorted by created_at and put the peer's row first.
+    _insert_grant_at(db_path, "local-first", "lead", 200.0)
+    _insert_grant_at(db_path, "peer-imported-later", "lead", 100.0)
+    # Act
+    rows = list_comms_grants(db_path=db_path)
+    # Assert
+    assert [r["sender"] for r in rows] == ["local-first", "peer-imported-later"]
+
+
+# ---------------------------------------------------------------------------
 # node_tokens — authenticated identity primitive (handoff §4 acceptance)
 # ---------------------------------------------------------------------------
 
