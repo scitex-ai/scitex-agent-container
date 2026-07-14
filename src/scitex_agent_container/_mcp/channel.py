@@ -36,7 +36,6 @@ container and no spec; its AgentCard is synthesised by
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections import deque
@@ -56,58 +55,6 @@ _recent: "deque[dict[str, Any]]" = deque(maxlen=_INBOX_CAP)
 # separate from_agent meta key. Env-overridable (SAC_MCP_* convention, #591).
 _CHANNEL_SOURCE_ENV_VAR = "SAC_MCP_CHANNEL_SOURCE"
 _CHANNEL_SOURCE_DEFAULT = "sac"
-
-# Bound the SSE CONNECT phase. Load-resilience fix (2026-07-09, #591):
-# ``timeout=None`` left CONNECT unbounded, so a hung connect to ``:7878`` under
-# load blocked inside ``client.stream(...)`` forever and the
-# reconnect-with-backoff loop never retried — the agent stayed alive and
-# permanently unsubscribed, curable only by restarting it. That was the
-# mechanism of the 2026-07-01 fleet-comms outage.
-# See ``docs/mcp-load-resilience.md``.
-_SSE_CONNECT_TIMEOUT_S: float = 30.0
-
-# ...and bound the READ, which that fix left unbounded.
-#
-# An unbounded read is the SAME bug one layer down. `sac listen` beats a
-# keepalive comment frame down every idle inbox stream (see
-# ``a2a._inbox_bus.keepalive_interval_s``, default 15 s), so a healthy stream is
-# NEVER silent for long. Without a read deadline, a connection that dies
-# SILENTLY — no FIN, no RST: a hard host death, a wedged uvicorn, an idle
-# NAT/firewall flow drop — parks this consumer inside ``aiter_lines()`` forever.
-# It believes it is subscribed; the broker holds no subscriber for it; every
-# message aimed at the agent lands on an empty bus. Deafness, with no error
-# raised anywhere, until someone restarts the agent.
-#
-# So: exceed the server's beat by a wide margin (tolerate several missed beats
-# before tearing down a healthy stream), then let the deadline fire. A
-# ``ReadTimeout`` is caught by the reconnect loop below, which re-dials with
-# backoff and RE-SUBSCRIBES. Reconnecting is cheap and idempotent — the stream
-# replays undelivered rows on connect — so a false positive costs a reconnect,
-# while a false negative costs the agent every message it will ever be sent.
-_DEFAULT_SSE_READ_TIMEOUT_S: float = 60.0
-_ENV_SSE_READ_TIMEOUT_S = "SAC_MCP_SSE_READ_TIMEOUT_S"
-
-
-def _sse_read_timeout_s() -> float:
-    """Seconds of total silence before the SSE read is declared dead.
-
-    Read from the env at CALL time, never baked into a module-level constant at
-    import: an import-time ``float(os.environ[...])`` cannot be redirected by a
-    test (or an operator) that sets the var afterwards, and a knob that silently
-    ignores its own env var is worse than no knob.
-
-    A malformed or non-positive value falls back to the default. Never returns
-    ``None``: "wait forever" is the bug, not a configuration.
-    """
-    raw = os.environ.get(_ENV_SSE_READ_TIMEOUT_S)
-    if raw is None:
-        return _DEFAULT_SSE_READ_TIMEOUT_S
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return _DEFAULT_SSE_READ_TIMEOUT_S
-    return value if value > 0 else _DEFAULT_SSE_READ_TIMEOUT_S
-
 
 # WI-1 wake-on-push primitives live in ``_channel_wake`` (extracted to keep
 # this receive-side adapter under the module size budget). Re-exported here
@@ -139,96 +86,19 @@ from ._channel_reaction_ack import (  # noqa: E402,F401
 from ._channel_self_register import (  # noqa: E402
     refresh_node as _refresh_comms_node,
 )
+
+# The SSE inbox consumer + its reconnect policy (bounded connect, bounded
+# read, jittered backoff) live in ``_channel_sse`` — the component whose
+# failure deafens an agent, kept readable on its own. Re-exported here so the
+# historical ``from ...channel import _consume_sse`` path (used by the tests
+# and by ``_serve`` below) keeps working unchanged.
+from ._channel_sse import (  # noqa: E402,F401
+    _SSE_CONNECT_TIMEOUT_S,
+    _consume_sse,
+    _jittered_backoff,
+    _sse_read_timeout_s,
+)
 from ._channel_wake import _should_wake_turn, _wake_text, _wake_turn  # noqa: E402,F401
-
-
-async def _consume_sse(
-    url: str,
-    bearer: str | None,
-    on_event: "callable[[dict[str, Any]], asyncio.Future[None]]",
-) -> None:
-    """Long-lived SSE consumer. Reconnects with backoff on disconnect.
-
-    Each ``event: message`` frame's ``data:`` line is JSON-decoded and handed to
-    ``on_event``. Comment frames (``: ...``) are ignored as content — sac listen
-    emits one on connect (``: sac-channel ready``) and then beats ``: keepalive``
-    down every idle stream. Ignored as CONTENT is not ignored as SIGNAL: each
-    beat is bytes arriving, which resets the read deadline below and is how this
-    consumer tells a quiet stream from a dead one.
-
-    THE INVARIANT THIS LOOP EXISTS FOR: an agent that survives ``sac listen``
-    going away must re-subscribe on its own, with no agent restart. Every way
-    the connection can end has to route back to the top of this loop:
-
-      * clean EOF mid-stream (listen restarted / SIGTERM'd) — ``aiter_lines()``
-        ends, we fall through and re-dial;
-      * connect refused / hung (listen down, or wedged under load) — bounded by
-        ``_SSE_CONNECT_TIMEOUT_S``; before #591 this was unbounded and the loop
-        never came around, which is how a whole fleet went permanently deaf;
-      * a socket that dies with NO close at all — bounded by the read deadline
-        (:func:`_sse_read_timeout_s`); before this, that parked here forever.
-
-    A non-200 (e.g. a stale bearer) is logged and retried too: we must never
-    exit this loop, because the process has no other path back to subscribed.
-    """
-    try:
-        import httpx
-    except Exception as exc:  # pragma: no cover
-        # Catch broadly: optional deps can fail at *import time* with
-        # non-ImportError errors (e.g. a misconfigured transitive dep
-        # raising RuntimeError). Surface them as an actionable
-        # ImportError so the caller knows install/upgrade is needed.
-        raise ImportError(
-            "httpx is required for sac mcp channel — install with `pip install httpx`"
-        ) from exc
-
-    headers = {"Accept": "text/event-stream"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-
-    backoff = 0.5
-    sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=_sse_read_timeout_s())
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=sse_timeout) as client:
-                async with client.stream("GET", url, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        log.warning(
-                            "sac channel SSE %s returned %d: %s",
-                            url,
-                            resp.status_code,
-                            body[:200],
-                        )
-                    else:
-                        backoff = 0.5
-                        data_lines: list[str] = []
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                # frame separator — dispatch what we have
-                                if data_lines:
-                                    payload = "\n".join(data_lines)
-                                    data_lines = []
-                                    try:
-                                        event = json.loads(payload)
-                                    except json.JSONDecodeError:
-                                        log.warning(
-                                            "sac channel SSE bad JSON: %r",
-                                            payload[:200],
-                                        )
-                                        continue
-                                    await on_event(event)
-                                continue
-                            if line.startswith(":"):
-                                continue  # comment frame
-                            if line.startswith("data:"):
-                                data_lines.append(line[5:].lstrip())
-        except Exception as exc:  # stx-allow: fallback (reason: long-lived SSE — must retry on any transient error)
-            log.warning(
-                "sac channel SSE error (%s); reconnecting in %.1fs", exc, backoff
-            )
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 30.0)
 
 
 def _meta_str(value: Any) -> str:

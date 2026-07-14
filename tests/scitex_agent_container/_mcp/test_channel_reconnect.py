@@ -37,7 +37,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from scitex_agent_container._mcp.channel import _consume_sse
+from scitex_agent_container._mcp.channel import _consume_sse, _jittered_backoff
 
 # ---------------------------------------------------------------------------
 # Servers — minimal asyncio TCP servers speaking SSE, with controllable
@@ -406,3 +406,34 @@ async def test_consume_sse_reconnects_when_stream_goes_silent(
     # Assert — it re-dialled. With an unbounded read this stays at 1 forever:
     # the consumer is wedged, the agent is deaf, and nothing anywhere errors.
     assert silent_stall_server.connection_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# Jittered backoff — the thundering herd.
+#
+# Every agent on a host subscribes to the SAME listen, so when it goes away they
+# all lose the stream in the same instant and climb an IDENTICAL ladder (0.5s,
+# 1s, 2s, 4s …), re-dialling in lockstep at a process that is by definition
+# mid-restart. ~14 adapters landing together on every rung is a good way to
+# knock over the thing they are all waiting for.
+# ---------------------------------------------------------------------------
+
+
+def test_jittered_backoff_stays_within_its_window():
+    # Arrange — jitter must not extend the ladder: a retry still lands inside
+    # its own backoff window, so recovery latency is unchanged.
+    window = 8.0
+    # Act
+    samples = [_jittered_backoff(window) for _ in range(200)]
+    # Assert — equal jitter: never below half the window, never above it.
+    assert all(window / 2 <= s <= window for s in samples)
+
+
+def test_jittered_backoff_decorrelates_retries():
+    # Arrange — the whole point: two adapters that lost the stream in the same
+    # instant must NOT re-dial at the same moment.
+    window = 8.0
+    # Act
+    samples = [_jittered_backoff(window) for _ in range(200)]
+    # Assert — a fixed backoff would collapse to one value; jitter spreads them.
+    assert len(set(samples)) > 100
