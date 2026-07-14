@@ -12,6 +12,32 @@ the one component that actually knows: the broker inside ``sac listen``
 (via ``GET /agents/<name>/status``, which carries ``inbox_subscribers`` —
 see ``_listen/_reachability.py``).
 
+⚠️ ``inbox_subscribers == 0`` IS CONFOUNDED. READ THIS BEFORE YOU USE IT.
+------------------------------------------------------------------------
+A zero has **at least two** causes, and this probe **cannot tell them apart**:
+
+    (a) the agent is ALIVE but its inbox adapter is DETACHED   (deaf), and
+    (b) the agent IS NOT RUNNING AT ALL                        (dead).
+
+A registry row **outlives the process**, so a stopped agent still appears in
+the listing, still shows a pid and a port — and reports ``0`` exactly like a
+deaf one. **A zero therefore tells you NOTHING about which of (a) or (b) holds.**
+
+This is not hypothetical. On 2026-07-14 **three agents independently** read a
+fleet-wide wall of zeros and each concluded "the fleet has gone deaf". All of
+them were reading *this signal*. Every agent in their lists was simply
+**stopped**. It cost an escalation to the operator and a P0 that did not exist.
+Note the shape: three agreeing reports were **one instrument read three times**.
+
+**To distinguish (a) from (b) you MUST corroborate with an instrument that does
+not derive from ``sac listen``'s own bookkeeping.** Note that the ``instances``
+row, ``runtime/<name>/heartbeat.json`` and this subscriber count *all* reflect
+listen's BELIEF, not the agent's LIFE — they are far less independent than they
+look. Genuinely independent: the **host tmux session** (the only signal that was
+right that day), and **delivery** itself. NOT independent, and NOT a sensor at
+all from inside a container: ``/proc/<pid>`` — the pid namespace differs, so it
+reports ABSENT for demonstrably alive host processes.
+
 Two rules this module will not break
 ------------------------------------
 1. **It never invents a verdict.** Every failure to observe — no listen
@@ -22,8 +48,9 @@ Two rules this module will not break
 2. **It never feeds a restart.** The subscriber count is reported, and
    that is ALL it does. ``healthy`` (which gates ``sac agents health``'s
    exit code, and any automation keyed on it) is deliberately NOT derived
-   from it: 0 subscribers means an inbox adapter is detached, NOT that the
-   agent is dead, and auto-restarting on it would destroy a healthy session.
+   from it: 0 subscribers means an inbox adapter is detached **or that the
+   agent is not running** — never that a *living* agent is beyond saving —
+   and auto-restarting on it would destroy a healthy session.
 """
 
 from __future__ import annotations
@@ -74,7 +101,12 @@ def probe_inbox_reachability(
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
             body = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):  # stx-allow: fallback (reason: an unobservable listen must yield UNKNOWN — never a false 'unreachable' verdict against a healthy agent)
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        OSError,
+    ):  # stx-allow: fallback (reason: an unobservable listen must yield UNKNOWN — never a false 'unreachable' verdict against a healthy agent)
         return None, UNKNOWN
 
     if not isinstance(body, dict):
