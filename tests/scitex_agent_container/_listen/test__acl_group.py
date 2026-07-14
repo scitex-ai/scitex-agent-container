@@ -40,6 +40,30 @@ from scitex_agent_container._state.state_db_nodes import (
     record_comms_policy,
     record_lineage,
 )
+from scitex_agent_container.config._group_resolver import group_from_labels
+
+
+def _seed_child_from_labels(
+    name: str,
+    labels: dict,
+    *,
+    db_path: Path,
+    may_spawn: bool = True,
+) -> None:
+    """Seed a non-root agent EXACTLY as ``agent_start`` would.
+
+    Walks the real production path — ``metadata.labels`` → ``group_from_labels``
+    → ``node_comms_policy.group_name`` — rather than hand-writing the resolved
+    group into the DB. That is what makes these tests able to catch a gap in
+    the RESOLVER (a role that derives no group) and not just in the gate.
+    """
+    record_lineage(child=name, parent="root-parent", db_path=db_path)
+    record_comms_policy(
+        name=name,
+        group_name=group_from_labels(labels),
+        may_spawn=may_spawn,
+        db_path=db_path,
+    )
 
 
 @pytest.fixture
@@ -255,6 +279,116 @@ def test_non_developer_child_still_denied_spawn(db_path: Path) -> None:
     record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
     # Act
     decision, _reason = check_spawn(caller="worker-a", db_path=db_path)
+    # Assert
+    assert decision == "deny"
+
+
+# ---------------------------------------------------------------------------
+# check_spawn / check_lineage_acl — BOTH privileged roles, seeded from real
+# spec labels (nv-spawn-acl-incident). The operator ruled that developer AND
+# researcher roles must both be able to spawn / restart peers. A child agent
+# authored with an explicit ``groups: [researcher]`` label already worked; a
+# child authored with only ``role: researcher`` did NOT — it resolved to the
+# empty group and was denied by the root-only gate. Both are pinned here,
+# together with the cases that must STAY denied.
+# ---------------------------------------------------------------------------
+
+
+def test_labelled_researcher_child_may_spawn(db_path: Path) -> None:
+    """Explicit ``groups: [researcher]`` child may spawn (regression pin)."""
+    # Arrange
+    _seed_child_from_labels(
+        "neurovista", {"groups": ["researcher", "active"]}, db_path=db_path
+    )
+    # Act
+    decision, _reason = check_spawn(caller="neurovista", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_role_derived_researcher_child_may_spawn(db_path: Path) -> None:
+    """``role: researcher`` with NO groups label may spawn.
+
+    The half of the operator's ruling that was missing: only developer-ish
+    ROLES auto-joined their group, so a research agent that named its role
+    but not its group was ungrouped — and an ungrouped child is denied.
+    """
+    # Arrange
+    _seed_child_from_labels("res-by-role", {"role": "researcher"}, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="res-by-role", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_role_derived_researcher_child_may_manage_peer(db_path: Path) -> None:
+    """``role: researcher`` child may RESTART a developer peer (the incident)."""
+    # Arrange
+    _seed_child_from_labels("res-by-role", {"role": "research-agent"}, db_path=db_path)
+    record_comms_policy(name="scitex-clew", group_name="developer", db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller="res-by-role", target="scitex-clew", db_path=db_path
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_role_derived_developer_child_may_spawn(db_path: Path) -> None:
+    """The other half of the ruling: ``role: project-maintainer`` may spawn."""
+    # Arrange
+    _seed_child_from_labels(
+        "dev-by-role", {"role": "project-maintainer"}, db_path=db_path
+    )
+    # Act
+    decision, _reason = check_spawn(caller="dev-by-role", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_worker_role_child_still_denied_spawn(db_path: Path) -> None:
+    """NEGATIVE: a ``role: worker`` child derives no group → still denied.
+
+    Guards against the fix over-reaching: role-derivation must promote the
+    research roles ONLY, not every role. The clew haiku-TUI workers are real
+    agents carrying exactly this label.
+    """
+    # Arrange
+    _seed_child_from_labels("worker-1", {"role": "worker"}, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="worker-1", db_path=db_path)
+    # Assert
+    assert decision == "deny"
+
+
+def test_isolated_solver_child_still_denied_spawn(db_path: Path) -> None:
+    """NEGATIVE: an explicit non-mesh ``groups: [solver]`` child stays denied.
+
+    Even when its role says ``researcher``: the explicit label wins, so a
+    deliberately-isolated solver is never promoted into the fleet mesh.
+    """
+    # Arrange
+    _seed_child_from_labels(
+        "solver-1", {"role": "researcher", "groups": ["solver"]}, db_path=db_path
+    )
+    # Act
+    decision, _reason = check_spawn(caller="solver-1", db_path=db_path)
+    # Assert
+    assert decision == "deny"
+
+
+def test_researcher_child_with_may_spawn_false_is_denied(db_path: Path) -> None:
+    """NEGATIVE: per-spec ``lineage.may_spawn=false`` still overrides the group.
+
+    The group grants authority; the spec can still revoke it. Without this,
+    the fix would have removed an operator escape hatch.
+    """
+    # Arrange
+    _seed_child_from_labels(
+        "res-nospawn", {"role": "researcher"}, db_path=db_path, may_spawn=False
+    )
+    # Act
+    decision, _reason = check_spawn(caller="res-nospawn", db_path=db_path)
     # Assert
     assert decision == "deny"
 

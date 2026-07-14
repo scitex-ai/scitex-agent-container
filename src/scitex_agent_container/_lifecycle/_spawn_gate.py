@@ -16,9 +16,8 @@ This module unifies the two. The core start codepath now:
   1. resolves the *caller* identity from the parent agent's
      ``SAC_NAME`` container env (``None`` / empty → admin / human-operator
      / lead path — always allowed);
-  2. runs :func:`check_spawn` — root-only spawn under current policy;
-     a denied spawn raises :class:`SpawnDeniedError` BEFORE the runtime
-     is touched;
+  2. runs :func:`check_spawn`; a denied spawn raises
+     :class:`SpawnDeniedError` BEFORE the runtime is touched;
   3. on allow with a non-empty caller, records the ``caller → child``
      edge in the ``lineage`` table (idempotent; same-parent re-record is
      a no-op).
@@ -28,11 +27,24 @@ The same ``SAC_NAME`` already drives ``_instances._spawned_by()`` (the
 and the spawned_by string are written from the same identity on the
 same codepath — the split-brain is resolved.
 
-Scope (ADR-0010 staged plan): this is **Phase 2 / Step 1 only** —
+Current spawn policy — NOT root-only (this prose said "root-only" long
+after the code stopped being root-only, and that stale sentence is how
+the policy got mis-triaged; keep it in step with
+:func:`._listen._acl.check_spawn`, which is the SSOT):
+
+  * admin / operator (no ``SAC_NAME``) — allowed;
+  * a ``developer``- or ``researcher``-group caller — allowed EVEN AS A
+    CHILD (operator ruling: dev and research agents must both be able to
+    start/stop peer agents);
+  * a ROOT node (no lineage parent) — allowed;
+  * any other child (``generalist`` / ``privileged`` / isolated solver /
+    ungrouped) — denied, as is any caller with
+    ``spec.lineage.may_spawn=false``.
+
+Scope (ADR-0010 staged plan): this module is **Phase 2 / Step 1** —
 make ALL spawn paths go through ``check_spawn`` + write the lineage
 row. The ``spec.acl`` schema (Step 2) and ``child ⊆ parent`` clamp
-(Step 3) are separate follow-up PRs; ``check_spawn``'s current binary
-root/child policy is kept verbatim.
+(Step 3) are separate follow-up PRs.
 """
 
 from __future__ import annotations
@@ -84,9 +96,12 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
 class SpawnDeniedError(RuntimeError):
     """Raised when an agent-from-agent spawn is rejected by the ACL.
 
-    Current policy (``spawn_allowed``): only a *root* node (no parent
-    in ``lineage``) may spawn. A child caller gets this error, carrying
-    the explicit allow/deny reason for the operator log + caller.
+    Carries the explicit deny reason from :func:`._listen._acl.check_spawn`
+    (the policy SSOT) for the operator log + the caller. A ROOT node, and a
+    ``developer``- or ``researcher``-group caller, may spawn; any other
+    child — and any caller with ``spec.lineage.may_spawn=false`` — gets
+    this error. (This docstring used to say "only a root node may spawn",
+    which the code had already outgrown.)
     """
 
 
