@@ -1,6 +1,24 @@
 repos:
   - repo: local
     hooks:
+      - id: no-hosted-runners
+        name: "no GitHub-hosted runners in .github/workflows/"
+        # Invoked BY PATH, not `-m`: the module is self-contained (stdlib +
+        # pyyaml, no intra-package imports), so the hook works in a bare
+        # checkout without sac installed. `language: system` + `-m` would
+        # false-RED for any contributor whose PATH python cannot import
+        # scitex_agent_container — and a guard that cries wolf gets disabled.
+        entry: python src/scitex_agent_container/_hosted_runner_guard.py
+        language: python
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        files: ^\.github/(workflows/.*\.ya?ml|hosted-runner-allowlist\.yaml)$
+        description: >
+          Operator directive 2026-07-14 (mandatory, no exceptions): every job
+          runs on the self-hosted pool. The ONE approved exception (cla.yml)
+          lives in .github/hosted-runner-allowlist.yaml WITH its security
+          argument — an entry without a real `reason:` fails the guard.
+
       - id: stx-allow-fallback
         name: "stx-allow: fallback lint (no-silent-fallback)"
         entry: python scripts/check_stx_allow.py
