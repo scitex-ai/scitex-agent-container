@@ -61,6 +61,7 @@ from tests.smoke._node_comms import (  # noqa: E402
     _bearer,
     _free_port,
     _run_loopback,
+    _set_up_denied_send,
     _set_up_four_siblings,
     _set_up_two_groups,
 )
@@ -175,10 +176,18 @@ def test_a2a_send_tool_same_group_delivers_and_projects_notification(comms_env):
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_tool_cross_group_denied_with_reason(comms_env):
+def test_a2a_send_tool_denied_surfaces_403_with_reason(comms_env):
+    """A denied send must reach the caller as a 403 + reason, not a silent drop.
+
+    The deny trigger is gamma's per-spec ``inbound.siblings = deny``. It used
+    to be "cross-group with no grant", but messaging is now DEFAULT-ALLOW
+    cross-group (operator 2026-07-03), so that no longer denies anything. What
+    this test actually pins is unchanged and is the point: the MCP tool layer
+    SURFACES an ACL deny faithfully instead of swallowing it.
+    """
     # Arrange
     db = comms_env["db"]
-    tokens = _set_up_two_groups(db)
+    tokens = _set_up_denied_send(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
@@ -192,7 +201,7 @@ def test_a2a_send_tool_cross_group_denied_with_reason(comms_env):
         result = asyncio.run(driver())
     # Assert
     body = result.get("body") or {}
-    assert result.get("status") == 403 and "cross-group" in (
+    assert result.get("status") == 403 and "per-spec inbound deny" in (
         body.get("reason") or ""
     ), f"unexpected tool result: {result!r}"
 

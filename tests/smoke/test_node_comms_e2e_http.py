@@ -73,6 +73,7 @@ from tests.smoke._node_comms import (
     _free_port,
     _run_loopback,
     _send_payload,
+    _set_up_denied_send,
     _set_up_four_siblings,
     _set_up_two_groups,
     _write_a2a_yaml,
@@ -137,7 +138,21 @@ def test_same_group_sibling_send_delivers_to_recipient(comms_env):
 # ---------------------------------------------------------------------------
 
 
-def test_cross_group_send_without_grant_returns_403_with_reason(comms_env):
+def test_cross_group_send_without_grant_is_allowed(comms_env):
+    """Cross-group messaging is DEFAULT-ALLOW (operator 2026-07-03).
+
+    This test previously asserted the opposite — a 403 with a "cross-group"
+    reason — and that WAS the contract until messaging was split from the
+    privileged actions. a2a messaging is collaboration, not a security
+    boundary, so any working group may address any other without a grant.
+
+    The boundary did not move; it just stopped living here. It is still
+    enforced on the PRIVILEGED actions (``host_exec`` via ELIGIBLE_GROUPS,
+    lifecycle via ``check_lineage_acl``), and messaging can still be denied
+    by an explicit block or a per-spec ``comms`` deny — both exercised by
+    the denied-send tests below. What is gone is the implicit deny that
+    fired merely because two agents did not share a group.
+    """
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
@@ -148,13 +163,13 @@ def test_cross_group_send_without_grant_returns_403_with_reason(comms_env):
         with httpx.Client(timeout=5.0) as c:
             resp = c.post(
                 f"http://127.0.0.1:{port}/agents/gamma/message:send",
-                json=_send_payload("forbidden ping", from_agent="alpha"),
+                json=_send_payload("cross-group ping", from_agent="alpha"),
                 headers=_bearer(tokens["alpha"]),
             )
-    # Assert (one combined assert: status + reason substring)
-    body = resp.json()
-    assert resp.status_code == 403 and "cross-group" in (body.get("reason") or ""), (
-        f"unexpected response: status={resp.status_code} body={body!r}"
+    # Assert
+    assert resp.status_code == 200, (
+        f"cross-group send must be allowed without a grant: "
+        f"status={resp.status_code} body={resp.text!r}"
     )
 
 
@@ -180,9 +195,14 @@ def cross_group_deny_smoke(comms_env):
     Item D: the SSE event MUST be the denied-attempt notification —
     same broker/channel the receiver subscribes to via
     ``a2a/_inbox_bus.py``.
+
+    The deny is driven by gamma's per-spec ``inbound.siblings = deny``
+    (see ``_set_up_denied_send``), NOT by "cross-group with no grant",
+    which no longer denies now that messaging is default-allow
+    cross-group (operator 2026-07-03).
     """
     db = comms_env["db"]
-    tokens = _set_up_two_groups(db)
+    tokens = _set_up_denied_send(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 
@@ -276,12 +296,13 @@ def test_cross_group_deny_smoke_notification_names_the_receiver(
 def test_cross_group_deny_smoke_notification_carries_deny_reason(
     cross_group_deny_smoke,
 ):
-    # Arrange
+    # Arrange — the deny now comes from gamma's spec.comms.inbound.siblings,
+    # not from an implicit cross-group rule, so the reason names that policy.
     event = cross_group_deny_smoke["event"]
     # Act
     reason = event.get("extra", {}).get("deny_reason", "")
     # Assert
-    assert "cross-group" in reason
+    assert "per-spec inbound deny" in reason, reason
 
 
 def test_cross_group_deny_smoke_body_does_not_leak_to_recipient(
@@ -835,9 +856,14 @@ def denied_send_channel_rows(comms_env):
     """Boot real ``sac listen``, post a denied alpha→gamma send, then
     return the response + every ``channel_events`` row whose target
     is gamma.
+
+    Deny trigger: gamma's per-spec ``inbound.siblings = deny`` (see
+    ``_set_up_denied_send``) — the ("deny", ...) verdict, which is the
+    one that persists the denied_attempt + approval-prompt rows this
+    fixture's tests read back.
     """
     db = comms_env["db"]
-    tokens = _set_up_two_groups(db)
+    tokens = _set_up_denied_send(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 
@@ -862,25 +888,34 @@ def test_listen_denied_send_returns_403_to_sender(denied_send_channel_rows):
     assert status == 403, resp.text
 
 
-def test_listen_denied_send_persists_three_channel_events_rows(
+def test_listen_denied_send_persists_two_channel_events_rows(
     denied_send_channel_rows,
 ):
-    """Task #27 (ACL block/unblock approve-flow) + sac-comms item-D
-    (ACL-deny synthetic notify to target receiver, lead a2a c42b3e3c)
-    — a cross-group deny persists THREE rows on the receiver: (1) the
-    existing metadata-only ``denied_attempt`` (comms item D pre-#27),
-    (2) the ADDITIVE synthetic ``acl_deny_notify`` push to the target
-    receiver (rate-limited per sender/target, PR #389), (3) the
-    operator-facing ``approval_prompt`` push embedding the
-    ``sac a2a unblock`` / ``sac a2a block`` CLI commands. The two
-    push rows have different audiences: synthetic notify → target
-    agent that should grant; approval_prompt → operator with CLI."""
+    """A denied send persists TWO rows on the receiver: (1) the
+    metadata-only ``denied_attempt`` (comms item D), and (2) the additive
+    synthetic ``acl_deny_notify`` push to the target receiver
+    (rate-limited per sender/target, PR #389).
+
+    It used to be THREE. The third was the operator-facing
+    ``approval_prompt`` (task #27), and ``_node_channel`` emits it on a
+    CROSS-GROUP deny only — "the only deny reason the receiver can REMEDY
+    via grant/block". Messaging is now DEFAULT-ALLOW cross-group (operator
+    2026-07-03), so that deny is never produced and the prompt never fires
+    from a send. That is deliberate, not a regression: a grant is no longer
+    the remedy for anything, because nothing is denied for want of one.
+
+    The prompt's PRIMITIVES stay fully covered — as direct unit tests, in
+    tests/scitex_agent_container/_listen/test__acl_approve_flow.py: the
+    dedupe (``record_pending_prompt`` first True / second False), the
+    embedded ``sac a2a unblock`` and ``sac a2a block`` commands, and the
+    no-body-leak guarantee. Only the send-triggered path is gone.
+    """
     # Arrange
     rows = denied_send_channel_rows["rows"]
     # Act
     n = len(rows)
     # Assert
-    assert n == 3, rows
+    assert n == 2, rows
 
 
 def test_listen_denied_send_persisted_first_row_kind_is_denied_attempt(
@@ -895,24 +930,25 @@ def test_listen_denied_send_persisted_first_row_kind_is_denied_attempt(
     assert kind == "denied_attempt"
 
 
-def test_listen_denied_send_persisted_third_row_is_approval_prompt(
-    denied_send_channel_rows,
-):
-    """Third row preserved from task #27 — the operator-facing prompt
-    (``kind="message"`` so existing inbox renderers surface it via
-    the normal-message path; structured fields ride in
-    ``extra.approval_prompt``). Shifted from index [1] to [2] when
-    PR #389 added the additive synthetic ``acl_deny_notify`` push
-    between the existing ``denied_attempt`` and ``approval_prompt``
-    rows (synthetic notify targets the receiver-agent; approval_prompt
-    targets the operator with CLI commands)."""
-    # Arrange
-    row = denied_send_channel_rows["rows"][2]
-    meta = json.loads(row["meta_json"])
-    # Act
-    is_prompt = (meta.get("extra") or {}).get("approval_prompt")
-    # Assert
-    assert is_prompt is True
+# ---------------------------------------------------------------------------
+# The send-triggered approval_prompt tests that used to live here are GONE,
+# not weakened. ``_node_channel`` emits that prompt on a CROSS-GROUP deny
+# only, and messaging is now DEFAULT-ALLOW cross-group (operator
+# 2026-07-03), so no send can produce one. Every assertion they made is
+# preserved as a direct unit test in
+# tests/scitex_agent_container/_listen/test__acl_approve_flow.py:
+#
+#   third row is approval_prompt   -> (no third row; the prompt has no
+#                                      send-triggered path left to assert)
+#   embeds `sac a2a unblock`       -> test_approval_prompt_content_embeds_unblock_command
+#   embeds `sac a2a block`         -> test_approval_prompt_content_embeds_block_command
+#   does not leak the sender body  -> test_approval_prompt_body_does_not_leak_message_content
+#   one prompt per (sender,target) -> test_record_pending_prompt_dedupes_second_call
+#
+# The denied-send NO-LEAK guarantee itself is untouched and still pinned
+# HERE, on the rows a denied send does still persist — see
+# ``..._content_column_is_empty`` and ``..._does_not_leak_message_body``.
+# ---------------------------------------------------------------------------
 
 
 def test_listen_denied_send_persisted_row_source_names_the_sender(
@@ -947,58 +983,14 @@ def test_listen_denied_send_persisted_row_content_column_is_empty(
 def test_listen_denied_send_persisted_row_meta_json_carries_deny_reason(
     denied_send_channel_rows,
 ):
-    # Arrange
+    # Arrange — the deny now comes from gamma's spec.comms.inbound.siblings,
+    # not from an implicit cross-group rule, so the reason names that policy.
     row = denied_send_channel_rows["rows"][0]
     meta = json.loads(row["meta_json"])
     # Act
     reason = meta.get("extra", {}).get("deny_reason", "")
     # Assert
-    assert "cross-group" in reason
-
-
-def test_listen_denied_send_approval_prompt_embeds_unblock_command(
-    denied_send_channel_rows,
-):
-    """The approve-prompt push MUST embed the ``sac a2a unblock``
-    command so the operator can act without leaving the inbox.
-    Task #27 contract: prompt body is self-contained. Row index
-    shifted to [2] after PR #389 inserted the additive synthetic
-    notify between [0] and the approval_prompt."""
-    # Arrange
-    row = denied_send_channel_rows["rows"][2]
-    # Act
-    body = row["content"] or ""
-    # Assert
-    assert "sac a2a unblock alpha gamma" in body
-
-
-def test_listen_denied_send_approval_prompt_embeds_block_command(
-    denied_send_channel_rows,
-):
-    """Task #27 contract: the prompt embeds BOTH the unblock AND
-    block commands so the operator picks one verb. Row index [2]
-    after PR #389 (additive synthetic notify slots at [1])."""
-    # Arrange
-    row = denied_send_channel_rows["rows"][2]
-    # Act
-    body = row["content"] or ""
-    # Assert
-    assert "sac a2a block alpha gamma" in body
-
-
-def test_listen_denied_send_approval_prompt_does_not_leak_sender_body(
-    denied_send_channel_rows,
-):
-    """Task #27 contract: the approval prompt MUST NOT echo the
-    denied message body — receivers decide on IDENTITY, not on
-    content. The sender's original body (``_DENIED_BODY``) is
-    NEVER copied into the prompt push. Row index [2] after PR #389."""
-    # Arrange
-    row = denied_send_channel_rows["rows"][2]
-    # Act
-    body = row["content"] or ""
-    # Assert
-    assert _DENIED_BODY not in body
+    assert "per-spec inbound deny" in reason, reason
 
 
 def test_listen_denied_send_persisted_row_does_not_leak_message_body(
