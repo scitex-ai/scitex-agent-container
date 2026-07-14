@@ -51,6 +51,49 @@ from ._listen_registry_hooks import (  # noqa: E402
     _register_self_comms_node,
 )
 
+# ---------------------------------------------------------------------------
+# Bare-boot deprecation — scitex CLI convention §5, phase W (warn + forward)
+# ---------------------------------------------------------------------------
+
+#: The release that REMOVES boot-on-bare-``sac listen``. Every warning names
+#: it, so callers always know the deadline (§5: "each phase names the removal
+#: version").
+BARE_BOOT_REMOVAL_VERSION = "v0.23.0"
+
+
+def _warn_bare_boot_deprecated() -> None:
+    """Warn that bare ``sac listen`` booted a daemon, and name the verb.
+
+    Phase W: the bare form still FORWARDS to the boot, so every caller keeps
+    working — and three still invoke it bare TODAY (the systemd unit's
+    ``ExecStart``, ``_listen._restart``'s direct-spawn argv, and the systemd
+    JobSpec in PR #543). ``sac listen`` IS the host control plane; flipping
+    the bare form to show-help would take the fleet's host access down with
+    it. Removing the bare boot is a FOLLOW-UP, only after all three migrate.
+
+    DELIBERATE DEVIATION from §5a's once-per-shell suppression: §5a keys its
+    marker on ``$PPID`` to give one warning per interactive shell, but this
+    daemon's principal caller is a **systemd unit**, whose PPID is the
+    (constant) user manager — a once-per-PPID marker would warn on the first
+    boot then stay silent forever, muting exactly the caller that must
+    migrate. §5a's rationale ("cron jobs and loops would drown in it") also
+    does not apply: a daemon boots once per lifetime, so this is at most one
+    journal line per start. stderr only, and no marker-file write — the
+    control plane's boot path must not be able to fail on a write it does
+    not need.
+    """
+    click.echo(
+        "WARN: bare `sac listen` is DEPRECATED — use `sac listen start` "
+        f"(removed in {BARE_BOOT_REMOVAL_VERSION}).",
+        err=True,
+    )
+    click.echo(
+        "      `listen` is a command GROUP, not a verb: booting a daemon off "
+        "the bare noun means a typo or a stray tab-complete starts a server. "
+        "Verbs: start / stop / restart / status  (see `sac listen -h`).",
+        err=True,
+    )
+
 
 @click.group(name="listen", invoke_without_command=True)
 @click.option(
@@ -91,17 +134,29 @@ def listen(
     allow_non_loopback: bool,
     print_token: bool,
 ) -> None:
-    """Boot the sac listen HTTP server (default) or invoke a subverb.
+    """The host HTTP/JSON control plane (command group).
+
+    The plane every sac agent reaches the host through — 127.0.0.1:7878 by
+    default, bearer-token authenticated, loopback-only unless you opt out.
+    `listen` is a NOUN; the verbs below are its whole lifecycle.
 
     \b
     Example:
-        sac listen                          # 127.0.0.1:7878 (start)
-        sac listen --bind 100.64.1.2:7878 --allow-non-loopback
-        sac listen --print-token            # echo token then exit
+        sac listen start                    # boot the daemon (loopback only)
+        sac listen status                   # health report; exit 1 if down
+        sac listen status --json            # machine-readable envelope
+        sac listen stop                     # stop it (idempotent)
         sac listen restart                  # atomic stop-clean-relaunch
+        sac listen start --print-token      # echo the bearer token, then exit
+
+    \b
+    DEPRECATED: bare `sac listen` still BOOTS the daemon, so the systemd unit
+    and every existing launcher keep working — but it now warns. Use
+    `sac listen start`. The bare form is removed in v0.23.0.
     """
-    # Stash group-level options so subcommands (``restart``) can
-    # mirror ``sac listen``'s own bind resolution per design call (a).
+    # Stash group-level options so subcommands (``start`` / ``stop`` /
+    # ``restart`` / ``status``) can mirror ``sac listen``'s own bind
+    # resolution per design call (a).
     ctx.ensure_object(dict)
     ctx.obj["bind"] = bind
     ctx.obj["token_file"] = token_file
@@ -111,6 +166,13 @@ def listen(
     if ctx.invoked_subcommand is not None:
         # Subcommand will run next; group callback just stashed options.
         return
+
+    # Bare ``sac listen`` — the deprecated boot-by-default path (phase W:
+    # warn + FORWARD). ``--print-token`` short-circuits inside
+    # ``_do_start_listen`` before anything binds, so it is NOT a boot and
+    # must not draw a boot-deprecation warning.
+    if not print_token:
+        _warn_bare_boot_deprecated()
 
     _do_start_listen(
         bind=bind,
@@ -427,3 +489,18 @@ def listen_status(ctx: click.Context, as_json: bool) -> None:
 
     if not payload["running"]:
         ctx.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# ``sac listen start`` / ``sac listen stop`` — the explicit lifecycle verbs.
+#
+# Defined in a sibling module to keep THIS file under the 512-line cap (the
+# same extraction ``_listen_registry_hooks`` made) and attached here so they
+# resolve on the group. ``_listen_verbs`` imports its boot primitives lazily,
+# inside the command bodies, so importing it here is not a cycle.
+# ---------------------------------------------------------------------------
+
+from ._listen_verbs import listen_start, listen_stop  # noqa: E402
+
+listen.add_command(listen_start)
+listen.add_command(listen_stop)
