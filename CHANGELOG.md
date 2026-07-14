@@ -4,7 +4,7 @@ All notable changes to `scitex-agent-container` (sac) are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.21.17] — 2026-07-14
 
 ### Fixed
 
@@ -101,13 +101,60 @@ versioning follows [SemVer](https://semver.org/).
 
   An old cache with no reset stamps degrades to exactly the previous behaviour.
 
-## [0.21.16] — 2026-07-14
+- **Three CI legs shared ONE tmux socket — this is what failed the 0.21.16
+  release (#667).** `SOCKET = "sac-probe-tests"` was a literal. A tmux socket is
+  keyed by `(user, socket-NAME)`, **never by process**, so a literal name is a
+  *host-global namespace*. The comment above it called the socket "private", and
+  it was — private from the **operator's** fleet. Not from our own sibling CI
+  legs:
+
+  ```
+  test (3.12)  runner=scitex-agent-container-03             23:24:23 -> 23:31:16  [ok]
+  test (3.11)  runner=scitex-agent-container-02             23:24:23 -> 23:31:10  [ok]
+  test (3.13)  runner=spartan-cpu-scitex-agent-container-01 23:24:23 -> 23:31:25  [FAIL]
+  ```
+
+  All three started **in the same second** and overlapped for seven minutes;
+  `-01/-02/-03` are three runner *registrations of one physical node*, same user.
+  So all three drove a **single** tmux server and killed each other's sessions.
+  Note *which* two tests failed: the only two asserting an **exact global count**
+  (`== {}` and `len == 30`). The four asserting *membership* structurally cannot
+  see a collision. That asymmetry is the fingerprint.
+
+  This is the **same dead invariant #662 already documented** in `exec-in-sif.sh`
+  — "runs here are serialised (one job at a time)" stopped being true the day -02
+  and -03 were registered. #662 removed *its own* dependence on it and nobody
+  grepped for the rest. This was the rest.
+
+  The socket name is now unique per process (pid + uuid), so concurrent legs and
+  xdist workers cannot meet. The subprocess deadline went 10s → 30s: a fixed
+  deadline tight enough to blow on a three-legs-at-once box is a race, and it
+  raises inside the *fixture*, reporting as a broken test rather than a busy
+  host. Measured, not assumed — old code, 2 concurrent legs: **FAILED**; new
+  code, 3 concurrent legs: **6 passed, 6 passed, 6 passed**.
+
+### Added
+
+- **`sac listen` is now a supervised service (#543).** It is declared as a
+  `kind="service"` JobSpec (`sac.listen`, `restart_policy="always"`) via the
+  `scitex_dev.jobs` entry point, so `scitex-dev service ensure sac.listen`
+  installs and keeps it alive (systemd `--user` where available, a respawn
+  keep-alive otherwise). Until now **nothing restarted it**: the listen log
+  showed two *clean* shutdowns followed by silence — it had no supervisor at
+  all, and the fleet's control plane simply stayed down until a human noticed.
+
+## [0.21.16] — 2026-07-14 *(tagged, never published — see 0.21.17)*
+
+**⚠️ 0.21.16 WAS NEVER PUBLISHED EITHER.** Its release run died on the CI tmux
+collision fixed above (#667) — `test (3.13)` failed, so `build`/`publish` never
+ran and PyPI stayed on 0.21.14. The *code* below is sound and is included in
+0.21.17. **Install 0.21.17.**
 
 **⚠️ 0.21.15 WAS NEVER PUBLISHED — it is tagged, but nothing reached PyPI, and
 that is deliberate.** It shipped #658 (the shared-executor fix) *with a hole*:
 #658 did not introduce the cancellation race below, but it **widened the window
 enormously**, so 0.21.15 would have traded a thread leak for a `sac listen` that
-cannot be stopped. It was held back rather than published. **Install 0.21.16.**
+cannot be stopped. It was held back rather than published.
 
 ### Fixed
 
