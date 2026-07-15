@@ -359,49 +359,59 @@ def remote_process_signal(
     vanishes from cross-host ``sac agents list``. This ssh-probes the peer's
     own tmux bookkeeping for the agent's session instead.
 
+    The argv is rendered by :func:`.._state.host_config.build_ssh_argv` — sac's
+    ONE canonical dispatch primitive — never a hand-rolled ssh line. That is
+    what makes a two-tier HPC target work: ``build_ssh_argv`` applies the peer's
+    ``via:`` ProxyJump chain (``-J``), glob-matches ``spartan-bm043`` onto a
+    ``spartan*`` pattern peer, and wraps the command in that peer's
+    ``env_preamble`` via ``bash -c`` (NOT ``-lc``: a login shell trips the
+    profile's interactive-tmux and false-DEADs a live agent — #709). Hand-rolling
+    it skipped the hop, so every ``spartan-bmNNN`` agent probed UNKNOWN and
+    rendered stale. The ``preamble && tmux has-session`` chain keeps rc 1 for
+    "no session" (a real DEAD); a preamble/hop failure is some other non-0/1 rc,
+    read below as UNKNOWN.
+
     Verdicts (:data:`INSTRUMENT_HOST_TMUX` — the peer's tmux, a real
     independent bookkeeper, exactly as in the local case):
 
     * ssh connected + session present (rc 0) -> :data:`ALIVE`.
     * ssh connected + no session (rc 1)      -> :data:`DEAD` (positive remote
       absence, from the peer's own ``tmux has-session``).
-    * ssh could not run / any other rc       -> :data:`UNKNOWN`. A probe that
-      could not run is NEVER DEAD (this module's core doctrine); a wedged ssh,
-      a bare login PATH, or an auth failure must not slander a live remote
-      agent into a destroyable corpse.
+    * ssh could not run / any other rc, OR the peer is not resolvable (no
+      config / unknown peer / glob-miss, so ``build_ssh_argv`` raises)
+      -> :data:`UNKNOWN`. A probe that could not run is NEVER DEAD (this
+      module's core doctrine); a wedged ssh, a broken ProxyJump, a bare login
+      PATH, or an auth failure must not slander a live remote agent into a
+      destroyable corpse.
 
     ``run_ssh`` is the injection seam (a real callable returning the exit
     code); production uses :func:`_run_ssh_rc`.
     """
     session = session_name_for_config(config)
-    ssh_target = peer
+
+    # Render the probe argv through sac's canonical dispatch primitive so the
+    # peer's ProxyJump chain + env_preamble apply (see docstring). A load/build
+    # failure (no config, unknown / glob-missed peer) is "I could not look" ->
+    # UNKNOWN, never a false DEAD. ``-n`` so ssh never eats our stdin.
     try:
+        from .._state.host_config import build_ssh_argv
         from .._state.host_config import load as _load_host_config
 
-        spec = _load_host_config().peers.get(peer)
-        if spec is not None and getattr(spec, "ssh", None):
-            ssh_target = spec.ssh
+        peers = _load_host_config().peers
+        argv = build_ssh_argv(
+            peer, ["tmux", "has-session", "-t", session], peers, extra_opts=["-n"]
+        )
     except (
         Exception
-    ):  # stx-allow: fallback (peer without an ssh alias -> use the peer name verbatim)
-        pass
+    ) as exc:  # stx-allow: fallback (unresolvable peer -> UNKNOWN, never DEAD)
+        return Signal(
+            SOURCE_PROCESS,
+            UNKNOWN,
+            f"could not build an ssh probe for peer {peer!r} "
+            f"({type(exc).__name__}) — unresolvable peer is UNKNOWN, never DEAD",
+            INSTRUMENT_HOST_TMUX,
+        )
 
-    # tmux is on the peer's non-login PATH; a login shell (bash -lc) triggers the
-    # profile's interactive-tmux and fails with "open terminal failed: not a
-    # terminal" -> false DEAD. -n so ssh never consumes our stdin.
-    argv = [
-        "ssh",
-        "-n",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=6",
-        ssh_target,
-        "tmux",
-        "has-session",
-        "-t",
-        session,
-    ]
     try:
         rc = (run_ssh or _run_ssh_rc)(argv)
     except (
@@ -432,8 +442,9 @@ def remote_process_signal(
     return Signal(
         SOURCE_PROCESS,
         UNKNOWN,
-        f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged ssh, bare "
-        f"PATH, or auth) — remote liveness UNKNOWN, never DEAD",
+        f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged ssh, a "
+        f"failed ProxyJump/env_preamble, bare PATH, or auth) — remote liveness "
+        f"UNKNOWN, never DEAD",
         INSTRUMENT_HOST_TMUX,
     )
 
