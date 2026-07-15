@@ -361,20 +361,28 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-todo floor >=0.9.4 (was >=0.3.0) — incident-fleet-drift-
-    # stale-scitex-todo (2026-07-12). THIS layer is the one that matters:
-    # most agent specs boot sac-base.sif directly, and the :scitex layer
-    # INHERITS this venv, so whatever scitex-todo lands here is what the
-    # whole fleet runs. The ancient >=0.3.0 floor did not FORCE anything
-    # — it just took whatever was newest on the bake day (0.7.50 on
-    # 2026-07-10) and then froze it into every downstream layer. The
-    # floor now names the capability the fleet actually depends on: the
-    # WIP-gate fix (scitex-todo #356, first released in 0.8.0 — the gate
-    # counts `in_progress` ONLY). Below it, every agent's WIP gate counts
-    # DEFERRED + CANCELLED cards as open and refuses legitimate card
-    # creation. Keep this floor at-or-above the version whose symbol the
-    # section-6c gate below asserts; the gate is what makes a violation
-    # LOUD instead of silent.
+    # scitex-todo PINNED ==0.13.5 (was a >=0.9.4 floor). Two incidents
+    # settle this on an EXACT pin, not a floor. THIS layer is the one that
+    # matters: most agent specs boot sac-base.sif directly, and the :scitex
+    # layer INHERITS this venv, so whatever scitex-todo lands here is what
+    # the whole fleet runs.
+    #  - A floor (>=) never FORCES a version: it takes whatever is newest-
+    #    satisfying on bake day and freezes it downstream. That silently
+    #    shipped 0.7.50 for days (incident-fleet-drift-stale-scitex-todo,
+    #    2026-07-12) — and a bake once 0.13.4 was latest would have auto-
+    #    pulled a version whose per-write store rewrite costs ~171s vs
+    #    ~4.5s on 0.13.5, making the board unusable the moment it landed.
+    #  - The exact pin makes the baked version DETERMINISTIC and bumps
+    #    DELIBERATE (measure, then raise the pin), not automatic-and-hopeful
+    #    — the reproducible-pinned-PyPI rule, applied to the one package the
+    #    whole fleet's task board runs on.
+    #  - 0.13.5 is the MEASURED-good version (scitex-todo owner, 2026-07-15:
+    #    0.9.4=46s / 0.13.4=171s / 0.13.5=4.5s per card write, store
+    #    preserved). It still carries the #356 WIP-gate fix (>=0.8.0); the
+    #    section-6c gate below asserts that capability BY SYMBOL, so a pin
+    #    to a version that dropped it dies LOUD at bake, not silent. To bump:
+    #    raise this pin AND apptainer-scitex.def's, rebake, time one card
+    #    write, confirm it is fast, THEN ship.
     # sac's [openai] extra (openai-agents — the `spec.provider: openai`
     # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
     # image serves EVERY agent, so a per-spec conditional install is
@@ -386,7 +394,7 @@ From: ubuntu:24.04
     # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
-        "scitex-todo[mcp]>=0.9.4" \
+        "scitex-todo[mcp]==0.13.5" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
