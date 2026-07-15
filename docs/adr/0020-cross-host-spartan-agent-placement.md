@@ -92,11 +92,16 @@ process).
    The forwarder loads this per-request, so no listen restart is needed for
    it to take effect on forwards.
 
-7. **`lead` registry entry on Spartan** (final step for dev→master):
-   `resolve_node_host('lead')` returns None until Spartan has a
-   `comms_nodes` row for the master node — the Spartan listen warns about
-   this at startup ("no `lead:` block"). Add a `lead:` block to Spartan's
-   `host_config`, or run `sac registry sync` from the master.
+7. **Sync the master's agents into Spartan's registry** (final step for the
+   spartan-dev → master-side-agent leg). An agent on Spartan reaches an agent
+   on ywata-note-win **by agent name** (e.g. `scitex-agent-container`),
+   resolved through the federated `comms_nodes` registry — the fleet does
+   **not** use a `lead` identity. Run `sac registry sync` from the master so
+   Spartan holds a `{host, a2a_port}` row for each target agent.
+   (Terminology, to avoid the confusion this ADR originally shipped with:
+   "master" = the host **ywata-note-win**, "Spartan" = the host; a2a is
+   always **agent→agent** (e.g. `spartan-dev` → `scitex-agent-container`),
+   never host→host.)
 
 ## Consequences
 
@@ -105,9 +110,11 @@ process).
   `tui-spartan-dev`. Steps 1–6 verified end-to-end 2026-07-16.
 - **master→dev a2a works**: the master resolves spartan-dev and forwards
   ssh-curl to `:19002` with the `spartan` peer-token.
-- **dev→master a2a**: transport (ssh + peer-token + config) is in place and
-  Spartan→master is reachable (`ssh ywata-note-win` succeeds from Spartan);
-  the remaining piece is step 7 (the `lead`/registry resolution).
+- **spartan-dev → master-side agent** (e.g. `scitex-agent-container`): the
+  transport (ssh + peer-token + config) is in place and Spartan→master is
+  reachable (`ssh ywata-note-win` works from Spartan); the remaining piece is
+  step 7 — syncing the master's agents into Spartan's registry so spartan-dev
+  can resolve a target agent **by name** (the fleet does not use `lead`).
   **Gotcha:** the `sac agents send` CLI resolves the target's *spec*
   locally, so it cannot be driven cross-host from Spartan (specs are
   master-only) — the agent's own `server:sac` channel is the report path,
