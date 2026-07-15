@@ -385,3 +385,168 @@ def test_to_dict_evidence_names_the_instrument_behind_each_signal():
     payload = decide("x", signals).to_dict()
     # Assert
     assert payload["evidence"][0]["instrument"] == INSTRUMENT_PID_NAMESPACE
+
+
+# --------------------------------------------------------------------------
+# Rule 1, the TIME dimension: a STALE heartbeat artefact does not overrule a
+# LIVE probe of the SAME instrument (the reboot-recovery regression, 2026-07-15).
+# --------------------------------------------------------------------------
+
+
+def test_a_stale_heartbeat_alive_does_not_override_a_live_tmux_dead():
+    """After a reboot the beat is still <600s but the tmux session is GONE.
+
+    heartbeat and process are ONE instrument (host_tmux) for a TUI agent — the
+    beat merely re-reports the snapshot the live probe reads. The live "no
+    session" is newer than the file, so the fold must read DEAD, not ALIVE.
+    (The bug: sac-start read ALIVE and refused to relaunch a dead agent.)
+    """
+    # Arrange — a fresh-looking beat, and a live tmux probe that found nothing.
+    signals = [
+        Signal(
+            SOURCE_HEARTBEAT,
+            ALIVE,
+            "beaten 516s ago (< 600s) — sac listen observed this session",
+            INSTRUMENT_HOST_TMUX,
+        ),
+        Signal(
+            SOURCE_PROCESS,
+            DEAD,
+            "tmux probe SUCCEEDED and the server has NO session — positive absence",
+            INSTRUMENT_HOST_TMUX,
+        ),
+    ]
+    # Act
+    verdict = decide("alpha", signals)
+    # Assert
+    assert verdict.verdict == DEAD
+
+
+def test_the_stale_heartbeat_flip_still_authorises_no_destruction():
+    """DEAD here rests on ONE instrument (host_tmux): it may report, not destroy.
+
+    So the flip unblocks a NON-destructive sac-start, and cannot arm an auto-kill.
+    """
+    # Arrange
+    signals = [
+        Signal(
+            SOURCE_HEARTBEAT, ALIVE, "beaten 516s ago (< 600s)", INSTRUMENT_HOST_TMUX
+        ),
+        Signal(SOURCE_PROCESS, DEAD, "no session", INSTRUMENT_HOST_TMUX),
+    ]
+    # Act
+    verdict = decide("alpha", signals)
+    # Assert
+    assert verdict.may_destroy is False
+
+
+def test_a_delivery_alive_still_overrides_a_live_tmux_dead():
+    """The suppression is NARROW: only a heartbeat echo of the SAME instrument.
+
+    A delivery ALIVE is a LIVE, independent observation (the broker saw the
+    inbox), so it still vetoes — a working agent with a detached tmux is alive.
+    """
+    # Arrange
+    signals = [
+        Signal(
+            SOURCE_DELIVERY,
+            ALIVE,
+            "1 live inbox subscriber",
+            INSTRUMENT_LISTEN_BROKER,
+        ),
+        Signal(SOURCE_PROCESS, DEAD, "no session", INSTRUMENT_HOST_TMUX),
+    ]
+    # Act
+    verdict = decide("alpha", signals)
+    # Assert
+    assert verdict.verdict == ALIVE
+
+
+def test_a_self_heartbeat_is_not_suppressed_by_a_pid_dead():
+    """A NON-tui beat is INSTRUMENT_AGENT_SELF — a real self-report, not a tmux
+    echo — and the pid check is a DIFFERENT instrument, so it is not suppressed.
+    """
+    # Arrange
+    signals = [
+        Signal(
+            SOURCE_HEARTBEAT,
+            ALIVE,
+            "the agent's own loop beat 5s ago",
+            INSTRUMENT_AGENT_SELF,
+        ),
+        Signal(
+            SOURCE_PROCESS,
+            DEAD,
+            "recorded pid is reaped",
+            INSTRUMENT_PID_NAMESPACE,
+        ),
+    ]
+    # Act
+    verdict = decide("alpha", signals)
+    # Assert — a live self-report is real evidence of life; it wins.
+    assert verdict.verdict == ALIVE
+
+
+# --------------------------------------------------------------------------
+# render() is TERSE: the claim, not the lecture; dissenters as tags.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def verbose_dead_signals():
+    """A DEAD verdict's one signal: a claim followed by a long lecture tail."""
+    return [
+        Signal(
+            SOURCE_PROCESS,
+            DEAD,
+            "tmux has no session for this agent — positive evidence of absence, "
+            "from tmux's own bookkeeping",
+            INSTRUMENT_HOST_TMUX,
+        )
+    ]
+
+
+def test_render_shows_the_first_clause_of_a_verbose_detail(verbose_dead_signals):
+    # Arrange — verbose_dead_signals fixture
+    # Act
+    rendered = decide("alpha", verbose_dead_signals).render()
+    # Assert — the claim (before the em-dash) is shown.
+    assert "tmux has no session for this agent" in rendered
+
+
+def test_render_drops_the_lecture_after_the_em_dash(verbose_dead_signals):
+    # Arrange — verbose_dead_signals fixture
+    # Act
+    rendered = decide("alpha", verbose_dead_signals).render()
+    # Assert — the educational tail belongs in --json, not the one-liner.
+    assert "positive evidence of absence" not in rendered
+
+
+@pytest.fixture
+def dissenting_heartbeat_signals():
+    """A DEAD verdict where a suppressed same-instrument heartbeat ALIVE dissents."""
+    return [
+        Signal(SOURCE_PROCESS, DEAD, "tmux has no session", INSTRUMENT_HOST_TMUX),
+        Signal(
+            SOURCE_HEARTBEAT,
+            ALIVE,
+            "beaten 516s ago (< 600s) — sac listen observed this session recently",
+            INSTRUMENT_HOST_TMUX,
+        ),
+    ]
+
+
+def test_render_shows_a_dissenter_as_a_source_verdict_tag(dissenting_heartbeat_signals):
+    # Arrange — dissenting_heartbeat_signals fixture
+    # Act
+    rendered = decide("alpha", dissenting_heartbeat_signals).render()
+    # Assert — the dissenter is a compact tag.
+    assert "heartbeat[alive]" in rendered
+
+
+def test_render_omits_a_dissenters_verbose_prose(dissenting_heartbeat_signals):
+    # Arrange — dissenting_heartbeat_signals fixture
+    # Act
+    rendered = decide("alpha", dissenting_heartbeat_signals).render()
+    # Assert — the operator's "splurge" (the dissenter's prose) is gone.
+    assert "sac listen observed this session" not in rendered

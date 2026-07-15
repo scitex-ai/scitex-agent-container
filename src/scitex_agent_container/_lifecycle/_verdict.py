@@ -142,6 +142,24 @@ __all__ = [
 _CORROBORATION_REQUIRED = 2
 
 
+def _first_clause(detail: str) -> str:
+    """The claim at the head of a verbose signal detail, without the lecture.
+
+    Signal details lead with the OBSERVATION and put the (important, long)
+    justification after an em-dash or a semicolon — e.g. ``"tmux probe
+    SUCCEEDED and the server has NO session — positive evidence of absence,
+    from tmux's own bookkeeping"``. A one-line status wants only that head;
+    :meth:`LivenessVerdict.to_dict` keeps the whole thing for ``--json``.
+    Splits on whichever of ``—`` / ``;`` comes first.
+    """
+    cut = len(detail)
+    for sep in ("—", ";"):
+        i = detail.find(sep)
+        if i != -1:
+            cut = min(cut, i)
+    return detail[:cut].strip() or detail.strip()
+
+
 @dataclass(frozen=True)
 class LivenessVerdict:
     """The resolved verdict for one agent, and the evidence that produced it.
@@ -292,29 +310,33 @@ class LivenessVerdict:
         )
 
     def render(self) -> str:
-        """One line: the verdict AND why. Never just the verdict.
+        """One line: the verdict AND why — TERSE. The full prose is in --json.
 
         e.g. ``ALIVE (delivery: 1 live inbox subscriber)``
-             ``UNKNOWN (heartbeat: pid=0 — no verdict possible)``
-             ``DEAD (process: no tmux session 'tui-x'; registry: no active row)``
+             ``UNKNOWN (heartbeat: pid=0 in heartbeat.json)``
+             ``DEAD (process: tmux has no session for this agent) | also: heartbeat[alive], registry[unknown]``
 
-        An operator staring at ``running | pid=None`` learns nothing. This is
-        the line that replaces it.
+        Each signal's ``detail`` is deliberately verbose and educational — the
+        justification an operator can read once and learn from. But a STATUS
+        line must not dump all of it for every signal at once; that is the
+        "prose splurge" an operator rightly calls unreadable. So this shows the
+        FIRST CLAUSE (the claim, before the lecture) of each AGREEING signal and
+        reduces the dissenters to ``source[verdict]`` tags. The complete
+        reasoning for every signal is always one ``--json`` away in
+        :meth:`to_dict` (``evidence[].detail``) — nothing is lost, only folded.
         """
         if not self.signals:
             return f"{self.verdict.upper()} (no signals gathered)"
         # Lead with the signals that AGREE with the verdict — that is the
-        # reasoning; the dissenters follow so they are never hidden.
+        # reasoning; the dissenters follow as tags so they are never hidden.
         agreeing = [s for s in self.signals if s.verdict == self.verdict]
         dissenting = [s for s in self.signals if s.verdict != self.verdict]
-        parts = [f"{s.source}: {s.detail}" for s in agreeing]
+        parts = [f"{s.source}: {_first_clause(s.detail)}" for s in agreeing]
         why = "; ".join(parts) if parts else "no corroborating signal"
         out = f"{self.verdict.upper()} ({why})"
         if dissenting:
-            other = "; ".join(
-                f"{s.source}[{s.verdict}]: {s.detail}" for s in dissenting
-            )
-            out += f" | also: {other}"
+            tags = ", ".join(f"{s.source}[{s.verdict}]" for s in dissenting)
+            out += f" | also: {tags}"
         return out
 
     def to_dict(self) -> dict:
@@ -340,9 +362,14 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
 
     The rules, in order:
 
-    1. **Any ALIVE ⇒ ALIVE.** Positive evidence of life is never overruled by
-       the absence of other evidence. An agent that fails four proxy checks and
-       answers one real one is a running agent.
+    1. **Any LIVE ALIVE ⇒ ALIVE.** Positive evidence of life is never overruled
+       by the ABSENCE of other evidence. An agent that fails four proxy checks
+       and answers one real one is a running agent. The lone exception is a
+       heartbeat ALIVE contradicted by a LIVE probe of the SAME instrument: a
+       TUI beat merely re-reports the tmux snapshot ``process_signal`` reads
+       live, so a live "no such session" (DEAD) ages that beat out. That is the
+       instruments-not-sources rule across time, not a crack in the veto — a
+       delivery/process ALIVE is a live observation and is never suppressed.
     2. **Else any DEAD ⇒ DEAD.** Death needs POSITIVE evidence — a probe that
        actually ran and actually found nothing.
     3. **Else UNKNOWN.** No observation either way. This is a real answer, and
@@ -356,9 +383,25 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
     and it counts INSTRUMENTS.
     """
     sigs = tuple(signals)
+    # A heartbeat is a STALE ARTEFACT: a value some other loop wrote to a file
+    # at a past beat, re-reporting an instrument it sampled THEN. For a TUI agent
+    # it re-reports the very tmux snapshot process_signal probes LIVE — so when a
+    # live probe of the SAME instrument now returns DEAD (the tmux server
+    # positively has no such session), the older beat is out of date and must
+    # not vouch for life: "now" supersedes "up to 600s ago" ON ONE INSTRUMENT.
+    # This is the count-instruments-not-sources rule in the time dimension — one
+    # sensor cannot be alive and dead at once, and its LIVE reading beats its own
+    # stale echo. (A reboot left a <600s beat behind a vanished session; the fold
+    # read ALIVE and sac-start refused to relaunch a genuinely dead agent until
+    # the beat finally aged past 600s.) A delivery/process ALIVE is a LIVE
+    # observation, not an artefact, so it is never suppressed here.
+    dead_instruments = {s.instrument for s in sigs if s.verdict == DEAD}
     for sig in sigs:
-        if sig.verdict == ALIVE:
-            return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
+        if sig.verdict != ALIVE:
+            continue
+        if sig.source == SOURCE_HEARTBEAT and sig.instrument in dead_instruments:
+            continue  # stale echo of an instrument a live probe just found DEAD
+        return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
     for sig in sigs:
         if sig.verdict == DEAD:
             return LivenessVerdict(agent=agent, verdict=DEAD, signals=sigs)
