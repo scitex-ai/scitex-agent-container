@@ -56,8 +56,25 @@ def test_remote_attach_argv_runs_tmux_attach_on_the_named_session() -> None:
 
     # Act
     argv = _remote_attach_argv("tui-spartan-dev", "zzz-unknown-peer-zzz")
-    # Assert
-    assert argv[-1] == "tmux attach -t tui-spartan-dev"
+    # Assert — tmux attach runs DIRECTLY on the peer (no `bash -lc` wrapper).
+    assert argv[-4:] == ["tmux", "attach", "-t", "tui-spartan-dev"]
+
+
+def test_remote_attach_argv_uses_no_login_shell() -> None:
+    """Regression (2026-07-16): attach must not wrap tmux in a login shell.
+
+    A login shell (``bash -lc``) runs the peer's profile, whose interactive-tmux
+    stanza fails with "open terminal failed: not a terminal"; tmux is on the
+    peer's non-login PATH, so attach invokes it directly.
+    """
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._attach import _remote_attach_argv
+
+    login_shell_tokens = {"bash", "-lc"}
+    # Act
+    argv = _remote_attach_argv("tui-spartan-dev", "zzz-unknown-peer-zzz")
+    # Assert — no login shell: neither `bash` nor `-lc` in the built argv.
+    assert not (login_shell_tokens & set(argv))
 
 
 def test_remote_attach_argv_falls_back_to_peer_name_when_no_ssh_alias() -> None:
