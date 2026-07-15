@@ -34,6 +34,7 @@ cost of a false DEAD is a destroyed agent.
 
 from __future__ import annotations
 
+import shlex
 from typing import Any, Callable
 
 from ._verdict import (
@@ -65,6 +66,7 @@ __all__ = [
     "heartbeat_signal",
     "process_signal",
     "registry_signal",
+    "remote_process_signal",
     "resolve_verdict",
 ]
 
@@ -288,6 +290,151 @@ def process_signal(
 
 
 # --------------------------------------------------------------------------
+# remote process — the control-plane cross-host liveness probe. Ternary.
+# --------------------------------------------------------------------------
+
+
+def _remote_peer_for_config(config: Any) -> str | None:
+    """Return the peer name if the agent's ``spec.host`` is a remote peer.
+
+    Uses the SAME ``classify_dispatch_host`` resolver ``sac agents start`` and
+    ``sac agents attach`` route through, so "remote" means one thing across
+    the whole control plane. Best-effort — any resolution failure returns
+    ``None`` and the caller falls back to the ordinary (local) process probe.
+    Imports are LAZY to avoid a ``cli_pkg`` -> ``_lifecycle`` import cycle.
+    """
+    try:
+        from ..cli_pkg.lifecycle._common import (
+            _local_host_names,
+            classify_dispatch_host,
+        )
+        from ..config._host import resolve_hostname
+
+        spec = config.hosts_spec
+        host = spec.host
+        target = host if isinstance(host, str) else (host[0] if host else None)
+        if not target:
+            return None
+        from .._state.host_config import load as _load_host_config
+
+        current = resolve_hostname()
+        peers = _load_host_config().peers
+        kind, peer = classify_dispatch_host(
+            target, current, peers, local_names=_local_host_names(current)
+        )
+        return peer if kind == "remote" else None
+    except Exception:  # stx-allow: fallback (unresolvable host -> treat as local; the local probe still runs)
+        return None
+
+
+def _run_ssh_rc(argv: list[str]) -> int:
+    """Run ``argv`` and return its exit code (default remote-probe runner).
+
+    A generous 10s timeout keeps a wedged peer from hanging a listing; on
+    timeout or a missing ssh binary we return 255 (ssh's own connection-failed
+    code) so :func:`remote_process_signal` maps it to UNKNOWN. Injection seam —
+    tests pass their own runner and never shell out.
+    """
+    import subprocess
+
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=10).returncode
+    except (
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):  # stx-allow: fallback (ssh could not run -> 255 -> UNKNOWN upstream)
+        return 255
+
+
+def remote_process_signal(
+    config: Any,
+    peer: str,
+    *,
+    run_ssh: Callable[[list[str]], int] | None = None,
+) -> Signal:
+    """Is the agent's tmux session up ON ITS REMOTE HOST (ssh probe)?
+
+    An agent whose ``spec.host`` is a remote peer has its TUI session on that
+    peer, not here — the LOCAL tmux is blind to it, so the ordinary
+    :func:`process_signal` reads DEAD ("no local session") and the agent
+    vanishes from cross-host ``sac agents list``. This ssh-probes the peer's
+    own tmux bookkeeping for the agent's session instead.
+
+    Verdicts (:data:`INSTRUMENT_HOST_TMUX` — the peer's tmux, a real
+    independent bookkeeper, exactly as in the local case):
+
+    * ssh connected + session present (rc 0) -> :data:`ALIVE`.
+    * ssh connected + no session (rc 1)      -> :data:`DEAD` (positive remote
+      absence, from the peer's own ``tmux has-session``).
+    * ssh could not run / any other rc       -> :data:`UNKNOWN`. A probe that
+      could not run is NEVER DEAD (this module's core doctrine); a wedged ssh,
+      a bare login PATH, or an auth failure must not slander a live remote
+      agent into a destroyable corpse.
+
+    ``run_ssh`` is the injection seam (a real callable returning the exit
+    code); production uses :func:`_run_ssh_rc`.
+    """
+    session = session_name_for_config(config)
+    ssh_target = peer
+    try:
+        from .._state.host_config import load as _load_host_config
+
+        spec = _load_host_config().peers.get(peer)
+        if spec is not None and getattr(spec, "ssh", None):
+            ssh_target = spec.ssh
+    except (
+        Exception
+    ):  # stx-allow: fallback (peer without an ssh alias -> use the peer name verbatim)
+        pass
+
+    argv = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=6",
+        ssh_target,
+        "bash",
+        "-lc",
+        f"tmux has-session -t {shlex.quote(session)}",
+    ]
+    try:
+        rc = (run_ssh or _run_ssh_rc)(argv)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (probe shell-out blew up -> UNKNOWN, never DEAD)
+        return Signal(
+            SOURCE_PROCESS,
+            UNKNOWN,
+            f"could not ssh remote host {peer!r} to probe tmux "
+            f"({type(exc).__name__}) — remote liveness UNKNOWN, never DEAD",
+            INSTRUMENT_HOST_TMUX,
+        )
+    if rc == 0:
+        return Signal(
+            SOURCE_PROCESS,
+            ALIVE,
+            f"tmux session {session!r} is up on remote host {peer!r} (ssh probe)",
+            INSTRUMENT_HOST_TMUX,
+        )
+    if rc == 1:
+        return Signal(
+            SOURCE_PROCESS,
+            DEAD,
+            f"ssh to {peer!r} succeeded and its tmux has NO session {session!r} "
+            f"— positive remote absence, from the peer's own bookkeeping",
+            INSTRUMENT_HOST_TMUX,
+        )
+    return Signal(
+        SOURCE_PROCESS,
+        UNKNOWN,
+        f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged ssh, bare "
+        f"PATH, or auth) — remote liveness UNKNOWN, never DEAD",
+        INSTRUMENT_HOST_TMUX,
+    )
+
+
+# --------------------------------------------------------------------------
 # the fold
 # --------------------------------------------------------------------------
 
@@ -318,7 +465,16 @@ def resolve_verdict(
     signals.append((delivery or delivery_signal)(name))
 
     if config is not None and runtime is not None:
-        signals.append((process or process_signal)(config, runtime))
+        peer = _remote_peer_for_config(config)
+        if peer is not None and process is None:
+            # Remote agent: the LOCAL tmux is blind to it (its session lives on
+            # the peer), so the ordinary process_signal reads DEAD and the
+            # agent vanishes from `sac agents list`. Probe the peer's tmux over
+            # ssh instead — control-plane cross-host liveness. An injected
+            # `process` still wins, so the local verdict suite is unaffected.
+            signals.append(remote_process_signal(config, peer))
+        else:
+            signals.append((process or process_signal)(config, runtime))
 
     if heartbeat is None:
         # runtime_kind decides WHOSE writer produced the beat, hence which

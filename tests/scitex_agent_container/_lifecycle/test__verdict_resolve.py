@@ -32,6 +32,7 @@ from scitex_agent_container._lifecycle._verdict_resolve import (
     heartbeat_signal,
     process_signal,
     registry_signal,
+    remote_process_signal,
 )
 
 
@@ -386,3 +387,50 @@ def test_registry_signal_is_sourced_as_registry():
     signal = registry_signal("grant", rows=rows)
     # Assert
     assert signal.source == SOURCE_REGISTRY
+
+
+# --------------------------------------------------------------------------
+# remote_process_signal — control-plane cross-host liveness. ssh is INJECTED
+# (a real callable returning rc). Same doctrine: a probe that could not run
+# is UNKNOWN, never DEAD — so a wedged ssh cannot slander a live remote agent.
+# --------------------------------------------------------------------------
+
+
+def test_remote_process_signal_rc0_session_present_is_alive():
+    # Arrange
+    cfg = _Cfg("spartan-dev", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: 0)
+    # Assert
+    assert signal.verdict == ALIVE
+
+
+def test_remote_process_signal_rc1_no_remote_session_is_dead():
+    # Arrange
+    cfg = _Cfg("spartan-dev", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: 1)
+    # Assert
+    assert signal.verdict == DEAD
+
+
+def test_remote_process_signal_ssh_connect_failure_is_unknown_never_dead():
+    # Arrange — rc 255 is ssh's own connection-failed code.
+    cfg = _Cfg("spartan-dev", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: 255)
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+def test_remote_process_signal_run_ssh_raising_is_unknown_never_dead():
+    # Arrange
+    cfg = _Cfg("spartan-dev", "tui")
+
+    def _boom(_argv):
+        raise OSError("ssh shell-out exploded")
+
+    # Act
+    signal = remote_process_signal(cfg, "spartan", run_ssh=_boom)
+    # Assert
+    assert signal.verdict == UNKNOWN
