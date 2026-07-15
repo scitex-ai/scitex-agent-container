@@ -160,6 +160,8 @@ def get_agent_list_data(
     remote_probe_timeout_s: float = 2.0,
     max_parallel_probes: int = 8,
     running_only: bool = False,
+    remote_status_probe=None,
+    remote_run_ssh=None,
 ) -> list[dict]:
     """Get agent list as plain dicts for JSON or table output.
 
@@ -193,6 +195,15 @@ def get_agent_list_data(
         max_parallel_probes: How many remote probes to run concurrently.
             Kept small to stay under the macOS ``kern.maxproc`` wall
             that today's SSH fan-out regression exposed.
+        remote_status_probe: Injection seam for the cross-host status probe
+            (``(name, host) -> status``). ``None`` uses the default ssh probe
+            (peer tmux ``has-session`` via ``remote_process_signal``). Tests
+            pass a real callable so they never shell out.
+        remote_run_ssh: Injection seam ONE LEVEL DOWN — the ``(argv) -> rc``
+            ssh runner threaded into the default status probe's
+            ``remote_process_signal``. Lets a test drive the real
+            verdict-mapping (rc 0/1/other -> running/stopped/running) without
+            an ssh binary. Ignored when ``remote_status_probe`` is given.
 
     Rows with a remote probe that timed out have ``status="unknown"``
     and ``liveness_unknown=True`` so JSON consumers can surface a
@@ -417,13 +428,35 @@ def get_agent_list_data(
             row["labels"] = labels
         results.append(row)
 
-    # Merge in the agents DEFINED on disk but absent from the registry. Their
+    # Merge in agents recorded as running on a REMOTE peer (master-authoritative
+    # cross-host visibility). The master already wrote an ``instances`` row on
+    # dispatch (``host=<peer>``, ``remote=1``); this is the READ side that was
+    # missing. Precedence: a LOCAL registry row wins (its name is in
+    # ``reg_names`` so the remote merge skips it); the remote row in turn
+    # suppresses the defined-on-disk row (``covered`` feeds ``defined_agent_rows``
+    # so a remote agent is not ALSO emitted as a defined/local row).
+    reg_names = {r["name"] for r in results}
+    remote_rows = remote_instance_rows(
+        registered=reg_names,
+        display_host=display_host,
+        port_claims=port_claims,
+        running_only=running_only,
+        capability=capability,
+        machine=machine,
+        tags=tags,
+        status_probe=remote_status_probe,
+        run_ssh=remote_run_ssh,
+    )
+    results.extend(remote_rows)
+    covered = reg_names | {r["name"] for r in remote_rows}
+
+    # Then the agents DEFINED on disk but absent from BOTH registries. Their
     # discovery + row-build live together in the sibling ``_agent_list_discover``
-    # (512-line cap split); this stays the orchestrator that merges the two
-    # sources. They are never live, so they carry the never-checked auth shape.
+    # (512-line cap split); this stays the orchestrator that merges the sources.
+    # They are never live, so they carry the never-checked auth shape.
     results.extend(
         defined_agent_rows(
-            registered={r["name"] for r in results},
+            registered=covered,
             port_claims=port_claims,
             display_host=display_host,
             capability=capability,
@@ -443,8 +476,8 @@ from ._agent_list_discover import (  # noqa: E402,F401
     _discover_defined_agents,
     _is_self_peer_marker,
     defined_agent_rows,
+    remote_instance_rows,
 )
-
 
 # Presentation layer lives in the sibling ``_agent_list_render`` module
 # (512-line cap split). Re-exported here so ``from ._agent_list import
@@ -455,4 +488,3 @@ from ._agent_list_render import (  # noqa: E402,F401
     print_agent_list,
     print_agent_list_json,
 )
-
