@@ -17,6 +17,7 @@ them with the registry's rows.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Callable
 
 
 def _is_self_peer_marker(spec_path: Path) -> bool:
@@ -191,5 +192,250 @@ def defined_agent_rows(
             row["validation_errors"] = errors
         if labels:
             row["labels"] = labels
+        rows.append(row)
+    return rows
+
+
+def _load_or_synthesize_config(spec_path: Path | None, name: str) -> Any:
+    """Load ``name``'s spec, or synthesize a bare ``AgentConfig(name=name)``.
+
+    The remote probe only needs a config to derive the agent's tmux session
+    name (:func:`_verdict_tmux.session_name_for_config` → ``tui-<name>``). A
+    remote agent's spec DOES live on the master's disk (that is how the master
+    ssh-dispatched it), so ``load_config`` normally succeeds; the synthesize
+    fallback keeps the probe working — never silently skipped — even if the
+    spec is momentarily unreadable. Returns ``None`` only if even a bare
+    config cannot be built (so the caller degrades to "never hide").
+    """
+    from ...config import load_config
+
+    if spec_path:
+        # stx-allow: fallback (a transiently-unreadable spec must not disable the
+        # live probe; fall through to a synthesized name-only config)
+        try:
+            return load_config(str(spec_path))
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            pass
+    # stx-allow: fallback (a bare AgentConfig should always build; if it cannot,
+    # the caller maps None -> "running" so a live peer is never hidden)
+    try:
+        from ...config._types import AgentConfig
+
+        return AgentConfig(name=name)
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        return None
+
+
+def _default_remote_status_probe(
+    specs: dict[str, Path],
+    run_ssh: Callable[[list[str]], int] | None,
+) -> Callable[[str, str], str]:
+    """The production status probe: ssh the peer's tmux, map the verdict.
+
+    Returns a ``(name, host) -> status`` callable. It routes through the
+    ALREADY-deployed :func:`_lifecycle._verdict_resolve.remote_process_signal`
+    (ssh ``tmux has-session`` on the peer) and maps its TERNARY verdict:
+
+        ALIVE -> "running", DEAD -> "stopped", UNKNOWN -> "running".
+
+    UNKNOWN maps to "running" on purpose: a wedged ssh / bare-PATH / auth
+    hiccup must NEVER hide a live remote peer — that module's core doctrine.
+    Only a POSITIVE remote absence (the peer's own ``tmux has-session`` rc=1)
+    reads "stopped". ``run_ssh`` is threaded straight into
+    ``remote_process_signal`` so tests inject a real rc-returning callable and
+    never shell out.
+    """
+
+    def _probe(name: str, host: str) -> str:
+        from ..._lifecycle._verdict import ALIVE, DEAD
+        from ..._lifecycle._verdict_resolve import remote_process_signal
+
+        config = _load_or_synthesize_config(specs.get(name), name)
+        if config is None:
+            return "running"
+        # stx-allow: fallback (a probe that blew up observed NOTHING — never
+        # render that as a death that would hide a live peer)
+        try:
+            signal = remote_process_signal(config, host, run_ssh=run_ssh)
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            return "running"
+        return {ALIVE: "running", DEAD: "stopped"}.get(signal.verdict, "running")
+
+    return _probe
+
+
+def _probe_remote_statuses(
+    candidates: list[dict],
+    probe: Callable[[str, str], str],
+    max_parallel_probes: int,
+    probe_timeout_s: float,
+) -> dict[str, str]:
+    """``{name: status}`` from ``probe`` over a bounded pool with a hard timeout.
+
+    Mirrors the local liveness pass in :func:`_agent_list.get_agent_list_data`:
+    a dedicated ``ThreadPoolExecutor`` with a per-future timeout and
+    ``shutdown(wait=False)`` so one wedged peer cannot serialize (or hang) the
+    whole ``sac agents list``. A timed-out / raised probe maps to "running" —
+    the never-hide default, since a probe that could not run is not evidence a
+    remote agent died.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FuturesTimeout
+
+    statuses: dict[str, str] = {}
+    if not candidates:
+        return statuses
+    workers = max(1, min(max_parallel_probes, len(candidates)))
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        future_to_name = {
+            pool.submit(probe, c["name"], c["host"]): c["name"] for c in candidates
+        }
+        for future in list(future_to_name):
+            name = future_to_name[future]
+            # stx-allow: fallback (a per-probe timeout/exception is "unknown",
+            # which for a remote row means keep it visible as running)
+            try:
+                statuses[name] = future.result(timeout=probe_timeout_s)
+            except _FuturesTimeout:  # stx-allow: fallback (reason: see inline comment)
+                statuses[name] = "running"
+                future.cancel()
+            except Exception:  # stx-allow: fallback (reason: see inline comment)
+                statuses[name] = "running"
+    finally:
+        pool.shutdown(wait=False)
+    return statuses
+
+
+def remote_instance_rows(
+    *,
+    registered: set[str],
+    display_host: str,
+    port_claims: dict[str, int],
+    running_only: bool = False,
+    capability: str | None = None,
+    machine: str | None = None,
+    tags: str | None = None,
+    instances_oracle: Callable[[], list[dict]] | None = None,
+    status_probe: Callable[[str, str], str] | None = None,
+    run_ssh: Callable[[list[str]], int] | None = None,
+    max_parallel_probes: int = 8,
+    probe_timeout_s: float = 12.0,
+) -> list[dict]:
+    """Rows for agents recorded as running on a REMOTE peer (master-authoritative).
+
+    THE READ-SIDE the fleet view was missing. On dispatch, the master already
+    records an ``instances`` row (``host=<peer>``, ``remote=1``, ``pid=NULL``;
+    see ``_dispatch.try_dispatch_remote``) and tombstones it on stop — but
+    :func:`get_agent_list_data` only ever read the JSON ``Registry`` (local,
+    hostless) and the on-disk spec walk, so a spartan-dispatched agent fell
+    through to a misleading ``defined`` / ``local`` row. This reads the active
+    ``remote=1`` rows and emits a proper ``host=<peer>`` row per remote agent.
+
+    Precedence: a LOCAL ``Registry`` row wins (its name is in ``registered``,
+    so it is skipped here) and this in turn suppresses the defined-on-disk row
+    (the caller feeds the union of covered names into
+    :func:`defined_agent_rows`). Keyed on the authoritative ``remote`` flag, NOT
+    a hostname compare, so a same-host-named local start is never mistaken for a
+    cross-host one.
+
+    STATUS IS LIVE, never a trusted stale row: each remote row's status comes
+    from an ssh probe of the peer's own tmux (see
+    :func:`_default_remote_status_probe`), so an agent that died on a
+    login-node reboot reads ``stopped`` rather than a comforting ``running``.
+    Probes run through a bounded pool (:func:`_probe_remote_statuses`) to keep
+    list latency bounded. Both the ``status_probe`` and the underlying
+    ``run_ssh`` are injection seams so tests never shell out.
+
+    These agents are never locally LIVE, so — exactly like
+    :func:`defined_agent_rows` — they carry the never-checked auth shape
+    (``verdict_for(None)``) and the empty movement trio, keeping the ``--json``
+    row shape uniform. Helpers resolve through the ``_agent_list`` module
+    namespace so the suite's real-attribute seams keep working.
+    """
+    from ..._state.auth_state import verdict_for
+    from ..._state.state_db import list_active_instances
+    from ...config import load_config
+    from . import _agent_list as _al
+
+    del running_only  # accepted for signature-parity; remote status is always
+    # probed (a remote row's whole value is its live status), and the render
+    # layer — not this builder — hides non-running rows in the default view.
+
+    oracle = instances_oracle or (lambda: list_active_instances(host=None))
+    discover = getattr(_al, "_discover_defined_agents", _discover_defined_agents)
+    specs: dict[str, Path] = {name: path for name, path in discover()}
+
+    # First pass: keep only the active REMOTE rows, apply the label filters
+    # (loading the agent's on-disk spec for its labels), collect candidates.
+    candidates: list[dict] = []
+    for entry in oracle():
+        name = entry.get("name")
+        if not name or name in registered:  # a local Registry row wins
+            continue
+        if not entry.get("remote"):  # key on the authoritative flag
+            continue
+        spec_path = specs.get(name)
+        labels: dict[str, str] = {}
+        # stx-allow: fallback (label filtering is best-effort; an unreadable
+        # spec yields empty labels, never a crash of the list)
+        try:
+            if spec_path is not None:
+                labels = load_config(str(spec_path)).labels
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            labels = {}
+        if machine and labels.get("machine") != machine:
+            continue
+        if capability:
+            caps = [
+                c.strip()
+                for c in labels.get("capabilities", "").split(",")
+                if c.strip()
+            ]
+            if capability not in caps:
+                continue
+        if tags and not _al._label_list_contains(labels, "tags", tags):
+            continue
+        candidates.append(
+            {
+                "name": name,
+                "host": entry.get("host") or "",
+                "started_at": entry.get("started_at") or "-",
+                "a2a_port": entry.get("a2a_port")
+                or entry.get("bound_port")
+                or port_claims.get(name),
+                "spec_path": spec_path,
+                "labels": labels,
+            }
+        )
+
+    # Second pass: LIVE status via the injected (or default ssh) probe.
+    probe = status_probe or _default_remote_status_probe(specs, run_ssh)
+    statuses = _probe_remote_statuses(
+        candidates, probe, max_parallel_probes, probe_timeout_s
+    )
+
+    # Third pass: build the rows (mirrors ``defined_agent_rows``' shape).
+    rows: list[dict] = []
+    for cand in candidates:
+        name = cand["name"]
+        host = cand["host"]
+        row: dict = {
+            "name": name,
+            "status": statuses.get(name, "running"),
+            "screen": "-",
+            "multiplexer": None,
+            "started_at": cand["started_at"],
+            "host": host,
+            "host_display": _al._host_display_for(host, display_host),
+            "path": str(cand["spec_path"] or ""),
+            "a2a_port": cand["a2a_port"],
+            "account": "",
+            "remote": True,
+        }
+        row.update(dict(_al._MOVEMENT_DEFAULTS))
+        row.update(verdict_for(None))
+        if cand["labels"]:
+            row["labels"] = cand["labels"]
         rows.append(row)
     return rows
