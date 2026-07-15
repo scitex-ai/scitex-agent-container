@@ -34,9 +34,13 @@ import pytest
 
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container._state.registry import Registry
+from scitex_agent_container.cli_pkg._helpers import is_live_status
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
     get_agent_list_data,
     remote_instance_rows,
+)
+from scitex_agent_container.cli_pkg._helpers._agent_list_discover import (
+    _default_remote_status_probe,
 )
 
 # ---------------------------------------------------------------------------
@@ -68,6 +72,37 @@ def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
         else:
             os.environ[key] = saved
         importlib.reload(mod)
+
+
+@pytest.fixture(autouse=True)
+def _pin_spartan_peer(tmp_path: Path) -> Iterator[None]:
+    """Pin a REAL temp sac config.yaml with a ``spartan`` login-node peer.
+
+    Part 2 routes the remote probe through ``build_ssh_argv``, which raises for
+    an UNKNOWN peer (→ UNKNOWN, never a false DEAD). Every remote row in this
+    suite lives on host ``spartan``; make it a real, resolvable peer via the
+    documented ``SCITEX_AGENT_CONTAINER_CONFIG`` override so the probe's
+    rc→status mapping is actually exercised (not short-circuited to UNKNOWN by
+    an unresolvable peer). Real config file + real loader — no mock; the env is
+    saved/restored explicitly (no ``monkeypatch``). ``SAC_SSH_CONTROL_MASTER=0``
+    keeps the rendered argv deterministic.
+    """
+    cfg = tmp_path / "sac-config.yaml"
+    cfg.write_text("peers:\n  spartan: { ssh: ywatanabe@spartan-login }\n")
+    env = {
+        "SCITEX_AGENT_CONTAINER_CONFIG": str(cfg),
+        "SAC_SSH_CONTROL_MASTER": "0",
+    }
+    saved = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 @contextmanager
@@ -107,8 +142,15 @@ def _no_discover() -> list[tuple[str, Path]]:
     return []
 
 
-def _write_valid_spec(dir_: Path, *, machine: str | None = None) -> Path:
-    """Write a minimal real v3 spec.yaml (optionally with a machine label)."""
+def _write_valid_spec(
+    dir_: Path, *, machine: str | None = None, account: str | None = None
+) -> Path:
+    """Write a minimal real v3 spec.yaml.
+
+    ``machine`` adds a ``metadata.labels.machine`` label; ``account`` adds a
+    ``spec.claude.account`` pin (so ``_safe_account_for`` resolves a
+    deterministic, non-empty spec-derived label — Part 3).
+    """
     dir_.mkdir(parents=True, exist_ok=True)
     spec = dir_ / "spec.yaml"
     lines = ["apiVersion: scitex-agent-container/v3", "kind: Agent"]
@@ -126,6 +168,10 @@ def _write_valid_spec(dir_: Path, *, machine: str | None = None) -> Path:
         "    binds: []",
         "  claude:",
         "    model: sonnet",
+    ]
+    if account is not None:
+        lines.append(f"    account: {account}")
+    lines += [
         "  health:",
         "    enabled: true",
         "    interval: 60",
@@ -268,13 +314,14 @@ def test_remote_probe_dead_maps_to_stopped(isolated_state_db):
     assert _spartan_row(rows)["status"] == "stopped"
 
 
-def test_remote_probe_unknown_maps_to_running(isolated_state_db):
-    # Arrange — rc 255 == wedged/auth/bare-PATH ssh == UNKNOWN (never hide).
+def test_remote_probe_unknown_maps_to_unknown(isolated_state_db):
+    # Arrange — rc 255 == wedged/auth/bare-PATH/broken-ProxyJump ssh == UNKNOWN.
     _record_remote()
     # Act
     rows = _remote_rows_direct(run_ssh=lambda argv: 255)
-    # Assert
-    assert _spartan_row(rows)["status"] == "running"
+    # Assert — Part 1: an un-probed peer reads "unknown" (hidden from the default
+    # view but counted in the footer), NOT a comforting false "running".
+    assert _spartan_row(rows)["status"] == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -401,3 +448,94 @@ def test_machine_label_excludes_non_matching_remote_row(isolated_state_db, tmp_p
     rows = _list_rows(tmp_path, machine="nuc", discover=_disc)
     # Assert
     assert [r for r in rows if r["name"] == "spartan-dev"] == []
+
+
+# ---------------------------------------------------------------------------
+# 8. Part 1 — the default ssh probe maps the ternary verdict to a status word,
+#    with UNKNOWN → "unknown" (NOT a false "running"). Driven straight through
+#    the real ``remote_process_signal`` via an injected rc-returning ``run_ssh``
+#    (the ``_pin_spartan_peer`` autouse fixture makes ``spartan`` resolvable).
+# ---------------------------------------------------------------------------
+
+
+def test_default_remote_status_probe_rc0_is_running():
+    # Arrange — rc 0 == the peer's tmux HAS the session == ALIVE.
+    probe = _default_remote_status_probe({}, run_ssh=lambda argv: 0)
+    # Act
+    status = probe("spartan-dev", "spartan")
+    # Assert
+    assert status == "running"
+
+
+def test_default_remote_status_probe_rc1_is_stopped():
+    # Arrange — rc 1 == ssh connected, peer tmux has NO session == DEAD.
+    probe = _default_remote_status_probe({}, run_ssh=lambda argv: 1)
+    # Act
+    status = probe("spartan-dev", "spartan")
+    # Assert
+    assert status == "stopped"
+
+
+def test_default_remote_status_probe_rc255_is_unknown():
+    # Arrange — rc 255 == wedged/auth ssh == UNKNOWN, NOT a false "running".
+    probe = _default_remote_status_probe({}, run_ssh=lambda argv: 255)
+    # Act
+    status = probe("spartan-dev", "spartan")
+    # Assert
+    assert status == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# 9. Part 1 — get_agent_list_data surfaces an UNKNOWN remote row as status
+#    "unknown": present in the full (-v/--json) data, but excluded by the
+#    render layer's own default-view filter (``is_live_status``).
+# ---------------------------------------------------------------------------
+
+
+def test_get_agent_list_data_remote_unknown_probe_status_is_unknown(
+    isolated_state_db, tmp_path
+):
+    # Arrange — an active remote row whose live probe cannot observe the peer.
+    _record_remote()
+    # Act — full data keeps every row (running_only defers enrichment, not rows).
+    rows = _list_rows(tmp_path, run_ssh=lambda argv: 255)
+    # Assert
+    assert _spartan_row(rows)["status"] == "unknown"
+
+
+def test_get_agent_list_data_remote_unknown_row_hidden_from_default_view(
+    isolated_state_db, tmp_path
+):
+    # Arrange — an active remote row whose live probe cannot observe the peer.
+    _record_remote()
+    # Act — the exact predicate print_agent_list applies for the default view.
+    rows = _list_rows(tmp_path, run_ssh=lambda argv: 255)
+    # Assert — "unknown" is not a live status, so the default view omits it.
+    visible = [r["name"] for r in rows if is_live_status(r.get("status"))]
+    assert "spartan-dev" not in visible
+
+
+# ---------------------------------------------------------------------------
+# 10. Part 3 — the remote row's Account is derived from the on-disk spec (the
+#     SAME spec-derived label ``defined_agent_rows`` uses), killing the bare
+#     "—". The remote agent's spec lives on the master's disk (that is how it
+#     was ssh-dispatched), so the label is available without a DB migration.
+# ---------------------------------------------------------------------------
+
+
+def test_remote_row_account_is_spec_derived(isolated_state_db, tmp_path):
+    # Arrange — a real spec carrying a claude.account pin; discover feeds it.
+    from scitex_agent_container.cli_pkg._helpers._agent_list import _safe_account_for
+    from scitex_agent_container.config import load_config
+
+    spec = _write_valid_spec(tmp_path / "spartan-dev", account="pool-acct-xyz")
+    _record_remote()
+
+    def _disc() -> list[tuple[str, Path]]:
+        return [("spartan-dev", spec)]
+
+    expected = _safe_account_for(load_config(str(spec)))
+    # Act
+    rows = _remote_rows_direct(run_ssh=lambda argv: 0, discover=_disc)
+    # Assert — same spec-derived label, and demonstrably non-empty (not "").
+    assert _spartan_row(rows)["account"] == expected != ""

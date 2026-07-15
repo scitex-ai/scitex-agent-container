@@ -393,11 +393,55 @@ def test_registry_signal_is_sourced_as_registry():
 # remote_process_signal — control-plane cross-host liveness. ssh is INJECTED
 # (a real callable returning rc). Same doctrine: a probe that could not run
 # is UNKNOWN, never DEAD — so a wedged ssh cannot slander a live remote agent.
+#
+# The argv is rendered by the REAL ``build_ssh_argv`` off a REAL ``PeersMap``
+# parsed from a REAL temp config.yaml (``spartan_config`` — no mock), pinned via
+# the documented ``SCITEX_AGENT_CONTAINER_CONFIG`` override. That is what lets a
+# two-tier HPC target (a ``spartan-bmNNN`` compute node reachable ONLY via the
+# ``spartan`` login node) probe at all — the follow-on to #710.
 # --------------------------------------------------------------------------
 
 
-def test_remote_process_signal_rc0_session_present_is_alive():
-    # Arrange
+@pytest.fixture
+def spartan_config(tmp_path):
+    """A REAL temp sac config.yaml the remote probe loads through the real
+    ``host_config.load()`` (glob matching + ``build_ssh_argv`` all real):
+
+      * ``spartan``  — the login-node peer (DIRECT, no ProxyJump).
+      * ``spartan*`` — the compute-node GLOB peer whose ssh target is the queried
+        node name, reachable only ``via: [spartan]`` and gated behind an
+        ``env_preamble`` (Lmod) — the exact two-tier HPC shape.
+
+    Exported via env (explicit save/restore, no ``monkeypatch``): the documented
+    ``SCITEX_AGENT_CONTAINER_CONFIG`` override points ``load()`` at this file,
+    and ``SAC_SSH_CONTROL_MASTER=0`` opts out of ControlMaster so the rendered
+    argv is deterministic (no scratch-dir-dependent ``-o ControlPath`` triple).
+    """
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "peers:\n"
+        "  spartan: { ssh: ywatanabe@spartan-login }\n"
+        '  "spartan*": { via: [spartan], env_preamble: "source /lmod/init'
+        ' && module load apptainer" }\n'
+    )
+    env = {
+        "SCITEX_AGENT_CONTAINER_CONFIG": str(cfg),
+        "SAC_SSH_CONTROL_MASTER": "0",
+    }
+    saved = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    try:
+        yield cfg
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_remote_process_signal_rc0_session_present_is_alive(spartan_config):
+    # Arrange — spartan-dev lives on the login node (a DIRECT peer).
     cfg = _Cfg("spartan-dev", "tui")
     # Act
     signal = remote_process_signal(cfg, "spartan", run_ssh=lambda _argv: 0)
@@ -405,7 +449,7 @@ def test_remote_process_signal_rc0_session_present_is_alive():
     assert signal.verdict == ALIVE
 
 
-def test_remote_process_signal_rc1_no_remote_session_is_dead():
+def test_remote_process_signal_rc1_no_remote_session_is_dead(spartan_config):
     # Arrange
     cfg = _Cfg("spartan-dev", "tui")
     # Act
@@ -414,7 +458,9 @@ def test_remote_process_signal_rc1_no_remote_session_is_dead():
     assert signal.verdict == DEAD
 
 
-def test_remote_process_signal_ssh_connect_failure_is_unknown_never_dead():
+def test_remote_process_signal_ssh_connect_failure_is_unknown_never_dead(
+    spartan_config,
+):
     # Arrange — rc 255 is ssh's own connection-failed code.
     cfg = _Cfg("spartan-dev", "tui")
     # Act
@@ -423,7 +469,7 @@ def test_remote_process_signal_ssh_connect_failure_is_unknown_never_dead():
     assert signal.verdict == UNKNOWN
 
 
-def test_remote_process_signal_run_ssh_raising_is_unknown_never_dead():
+def test_remote_process_signal_run_ssh_raising_is_unknown_never_dead(spartan_config):
     # Arrange
     cfg = _Cfg("spartan-dev", "tui")
 
@@ -436,12 +482,59 @@ def test_remote_process_signal_run_ssh_raising_is_unknown_never_dead():
     assert signal.verdict == UNKNOWN
 
 
+def test_remote_process_signal_unknown_peer_is_unknown_never_dead(spartan_config):
+    """A peer that is neither a config entry nor a ``spartan*`` glob match cannot
+    be rendered into an argv (``build_ssh_argv`` raises ``KeyError``); that is
+    "I could not even look" -> UNKNOWN, never a false DEAD. ``run_ssh`` returning
+    0 is irrelevant — it is never reached."""
+    # Arrange
+    cfg = _Cfg("mystery", "tui")
+    # Act — rc 0 would be ALIVE if the argv had built; it does not.
+    signal = remote_process_signal(cfg, "nuc-not-in-config", run_ssh=lambda _argv: 0)
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+# --- Part 2: the ProxyJump multihop path (compute node via login node) --------
+
+
+def test_remote_process_signal_multihop_rc0_session_present_is_alive(spartan_config):
+    # Arrange — spartan-bm043 glob-matches spartan*, reached via the login node.
+    cfg = _Cfg("proj-x", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan-bm043", run_ssh=lambda _argv: 0)
+    # Assert
+    assert signal.verdict == ALIVE
+
+
+def test_remote_process_signal_multihop_rc1_no_session_is_dead(spartan_config):
+    """The ``preamble && tmux has-session`` chain preserves tmux's rc 1 through
+    ``bash -c`` for a genuinely-absent session -> DEAD."""
+    # Arrange
+    cfg = _Cfg("proj-x", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan-bm043", run_ssh=lambda _argv: 1)
+    # Assert
+    assert signal.verdict == DEAD
+
+
+def test_remote_process_signal_multihop_rc255_is_unknown_never_dead(spartan_config):
+    # Arrange — a wedged hop / failed ProxyJump is a non-0/1 rc.
+    cfg = _Cfg("proj-x", "tui")
+    # Act
+    signal = remote_process_signal(cfg, "spartan-bm043", run_ssh=lambda _argv: 255)
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
 # --------------------------------------------------------------------------
 # The argv the remote probe hands to ssh — captured via the injected run_ssh
-# (a real recording callable, no mock). A login shell (`bash -lc`) is the bug:
-# on Spartan it triggers the profile's interactive-tmux, which prints
-# "open terminal failed: not a terminal" and exits rc 1 — a LIVE remote agent
-# misread as DEAD. tmux is on the peer's non-login PATH, so we call it directly.
+# (a real recording callable, no mock), rendered by the REAL ``build_ssh_argv``
+# off the ``spartan_config`` PeersMap. A login shell (`bash -lc`) is the bug: on
+# Spartan it triggers the profile's interactive-tmux, which prints "open
+# terminal failed: not a terminal" and exits rc 1 — a LIVE remote agent misread
+# as DEAD. A DIRECT peer runs tmux without any wrapper; a preamble peer wraps it
+# in ``bash -c`` (deliberately ``-c``, NOT ``-lc``).
 # --------------------------------------------------------------------------
 
 
@@ -452,7 +545,8 @@ def _captured_remote_probe_argv(
 
     The ``run_ssh`` seam is a real callable; here it merely records the argv it
     is given and reports rc 0. No mock — this is the injection point the signal
-    is designed around.
+    is designed around. The caller must hold the ``spartan_config`` fixture so
+    the peer resolves through the real loader.
     """
     captured: list[list[str]] = []
 
@@ -464,7 +558,7 @@ def _captured_remote_probe_argv(
     return captured[0]
 
 
-def test_remote_process_signal_argv_uses_no_login_shell():
+def test_remote_process_signal_argv_uses_no_login_shell(spartan_config):
     """Regression (2026-07-16): the probe must NOT wrap tmux in a login shell.
 
     ``ssh <peer> bash -lc 'tmux has-session ...'`` runs the peer's login profile,
@@ -473,22 +567,22 @@ def test_remote_process_signal_argv_uses_no_login_shell():
     """
     # Arrange
     login_shell_tokens = {"bash", "-lc"}
-    # Act
+    # Act — a DIRECT peer (spartan): no wrapper at all.
     argv = _captured_remote_probe_argv()
     # Assert — no login shell: neither `bash` nor `-lc` in the built argv.
     assert not (login_shell_tokens & set(argv))
 
 
-def test_remote_process_signal_argv_probes_tmux_has_session_directly():
+def test_remote_process_signal_argv_probes_tmux_has_session_directly(spartan_config):
     # Arrange
     expected_tail = ["tmux", "has-session", "-t", "tui-spartan-dev"]
     # Act
     argv = _captured_remote_probe_argv()
-    # Assert — ssh runs `tmux has-session -t <session>` directly on the peer.
+    # Assert — a DIRECT peer runs `tmux has-session -t <session>` directly.
     assert argv[-4:] == expected_tail
 
 
-def test_remote_process_signal_argv_passes_ssh_dash_n():
+def test_remote_process_signal_argv_passes_ssh_dash_n(spartan_config):
     """``-n`` so ssh never consumes our stdin during a bulk `sac agents list`."""
     # Arrange
     required_flag = "-n"
@@ -496,3 +590,44 @@ def test_remote_process_signal_argv_passes_ssh_dash_n():
     argv = _captured_remote_probe_argv()
     # Assert
     assert required_flag in argv
+
+
+# --- Part 2: multihop argv (compute node via login node) + regression guard ---
+
+
+def test_remote_process_signal_direct_peer_argv_has_no_proxyjump(spartan_config):
+    """#710 regression guard: spartan-dev lives on the login node (host=spartan),
+    a DIRECT peer — its probe argv must carry NO ProxyJump (`-J`). Reusing
+    ``build_ssh_argv`` must not start hopping a login-node agent."""
+    # Arrange
+    direct_peer = "spartan"
+    # Act
+    argv = _captured_remote_probe_argv(peer=direct_peer, name="spartan-dev")
+    # Assert
+    assert "-J" not in argv
+
+
+def test_remote_process_signal_multihop_argv_uses_proxyjump_via_login(spartan_config):
+    """A ``spartan-bmNNN`` compute node is reachable ONLY through its login node,
+    so ``build_ssh_argv`` must emit ``-J <login-node ssh target>`` (from the
+    ``spartan*`` glob peer's ``via: [spartan]``)."""
+    # Arrange
+    compute_node = "spartan-bm043"
+    # Act
+    argv = _captured_remote_probe_argv(peer=compute_node, name="proj-x")
+    # Assert — `-J` is immediately followed by the login node's ssh target.
+    assert argv[argv.index("-J") + 1] == "ywatanabe@spartan-login"
+
+
+def test_remote_process_signal_multihop_argv_wraps_cmd_in_bash_c(spartan_config):
+    """The glob peer's ``env_preamble`` forces a single ``bash -c '<preamble> &&
+    tmux has-session ...'`` argv element (``-c``, NOT ``-lc``)."""
+    # Arrange
+    compute_node = "spartan-bm043"
+    # Act
+    argv = _captured_remote_probe_argv(peer=compute_node, name="proj-x")
+    # Assert — one collapsed element carrying the preamble + the tmux probe.
+    assert any(
+        el.startswith("bash -c ") and "tmux has-session -t tui-proj-x" in el
+        for el in argv
+    )
