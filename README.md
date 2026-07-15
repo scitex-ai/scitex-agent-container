@@ -1,5 +1,5 @@
 <!-- ---
-!-- Timestamp: 2026-06-07 03:00:00
+!-- Timestamp: 2026-07-16
 !-- Author: ywatanabe
 !-- File: /home/ywatanabe/proj/scitex-agent-container/README.md
 !-- --- -->
@@ -12,15 +12,15 @@
   </a>
 </p>
 
-<p align="center"><b>Declarative, on-prem-first lifecycle manager for Claude Code agents.</b></p>
+<p align="center"><b>Declarative, on-prem-first lifecycle manager for a fleet of Claude Code agents — one master, many hosts.</b></p>
 
 <p align="center">
   One YAML spec → one reproducible, sandboxed, fleet-addressable agent.<br/>
-  Runs anywhere Apptainer runs — laptop, HPC node, air-gapped server.
+  Define every agent on one master node; place any of them on a laptop, an HPC login node, or a compute node — and drive the whole fleet from one place.
 </p>
 
 <p align="center">
-  <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <code>uv pip install scitex-agent-container[all]</code>
+  <a href="https://scitex-agent-container.readthedocs.io/">Full Documentation</a> · <a href="docs/README.md">Docs Index</a> · <code>uv pip install scitex-agent-container[all]</code>
 </p>
 
 <!-- scitex-badges:start -->
@@ -40,15 +40,20 @@
 
 ---
 
+## What `sac` is
+
+`sac` (scitex-agent-container) is a **container-based, multi-agent fleet orchestrator** for the SciTeX ecosystem. Each agent is a long-lived Claude Code session, fully described by a single `spec.yaml`, and launched into a rootless Apptainer sandbox (or a plain tmux/TUI session). One master node holds every agent's definition and the authoritative registry; a one-line `host:` field in a spec places that agent on any reachable host — a laptop, an HPC login node, or (via multi-hop SSH) a compute node — while `sac agents list / attach / restart` reach across hosts to drive the whole fleet from one terminal.
+
 ## Why `sac`
 
-| # | What sac gives you                                                                                                                                                                                                                                                                                                                                                                                  |
+| # | What sac gives you |
 |---|---|
-| 1 | **Declarative agents.** One `spec.yaml` per agent — the file IS the agent (dir-as-SSoT, no hidden state). Reproducible across hosts, version-controlled, diff-reviewable. [`spec-reference.md`](docs/spec-reference.md). |
-| 2 | **Rootless Apptainer isolation.** Runs where cloud sandboxes (E2B, Modal, etc.) can't — HPC login nodes, on-prem clusters, fully air-gapped boxes. No root, no daemon, no Docker socket. Hardened by default with `--containall` ([`isolation.md`](docs/isolation.md)). |
-| 3 | **LLM-agnostic & on-prem capable.** Default: Anthropic OAuth. Alternative: any Anthropic-API-compatible endpoint (DeepSeek, MiMo / Xiaomi, your own LiteLLM / vLLM-with-Anthropic-shim gateway) via a one-line `spec.claude.provider:` knob. Data, code, and inference can stay entirely on your network. |
-| 4 | **Fleet ops out of the box.** A2A push (`POST /v1/turn` per agent, native), health & heartbeat, restart policies, multi-account credential rotation with auto-quota-watch, MCP + CLI + Python surface, cross-host orchestration via `sac fleet`. |
-| 5 | **AGPL-3.0.** Research-freedom license — infrastructure stays open, modifications stay shareable. The [Four Freedoms for Research](#four-freedoms-for-research) below. |
+| 1 | **Declarative agents.** One `spec.yaml` per agent — the file IS the agent (dir-as-SSoT, no hidden state). Reproducible across hosts, version-controlled, diff-reviewable. [`02_agent-spec.md`](docs/02_agent-spec.md). |
+| 2 | **Master-authoritative cross-host control plane.** Definitions and the registry live only on the master; `spec.host:` routes an agent to a peer over SSH (multi-hop `ProxyJump`-aware). `sac agents list / attach / restart` live-probe and drive remote agents from the master. [`03_cross-host-control-plane.md`](docs/03_cross-host-control-plane.md). |
+| 3 | **Rootless Apptainer isolation.** Runs where cloud sandboxes (E2B, Modal, …) can't — HPC login nodes, on-prem clusters, air-gapped boxes. No root, no daemon, no Docker socket. Hardened by default with `--containall`. [`isolation.md`](docs/isolation.md). |
+| 4 | **A2A mesh, out of the box.** Each host runs a `sac listen` control plane; peers forward to each other over SSH so any agent can reach any other by name (`POST /v1/turn`). Health, heartbeat, restart policies, and multi-account credential rotation with auto-quota-watch are built in. [`04_listen-and-a2a.md`](docs/04_listen-and-a2a.md). |
+| 5 | **LLM-agnostic & on-prem capable.** Default: Anthropic OAuth with a rotating multi-account pool. Alternative: any Anthropic-API-compatible endpoint (DeepSeek, MiMo/Xiaomi, a self-hosted LiteLLM / vLLM-with-Anthropic-shim gateway) via a one-line `spec.claude.provider:` knob. Data, code, and inference can stay entirely on your network. |
+| 6 | **AGPL-3.0.** Research-freedom license — infrastructure stays open, modifications stay shareable ([Four Freedoms for Research](#four-freedoms-for-research)). |
 
 ## Installation
 
@@ -60,139 +65,136 @@ Or via the SciTeX umbrella: `uv pip install "scitex[agent-container]"` → use a
 
 ## Quickstart
 
-**Step 1 — Build the base image (one-time, ~5 min)**
+**1 — Build the runtime image (one-time, ~5 min)**
 
 ```bash
 sac image build base
 ```
 
-**Step 2 — Create agent directories**
+**2 — Scaffold an agent spec**
 
 ```bash
-# Each agent lives in its own directory; the directory name is the agent name.
-mkdir -p ~/.scitex/agent-container/agents/hello-agent-{1,2}
+sac agents create hello-agent          # writes ~/.scitex/agent-container/agents/hello-agent/spec.yaml
 ```
 
-**Step 3 — Write `spec.yaml`** (copy into each agent directory, adjust `startup_prompts`)
+A minimal `spec.yaml` looks like this (edit the scaffold, or copy a bundled example from [`examples/agents/`](examples/agents/)):
 
 ```yaml
-# ~/.scitex/agent-container/agents/hello-agent-1/spec.yaml
+# ~/.scitex/agent-container/agents/hello-agent/spec.yaml
 apiVersion: scitex-agent-container/v3
 kind: Agent
 
 spec:
-  runtime: apptainer
-
+  runtime: apptainer                      # or `tui` (tmux + Claude Code CLI)
+  # host: spartan                         # ← omit to run locally; name a peer to place it there
   apptainer:
     image: ~/.scitex/agent-container/containers/sac-base.sif
-
   claude:
     model: haiku
-    flags:
-      - --dangerously-skip-permissions
-
+    flags: [--dangerously-skip-permissions]
   startup_prompts:
-    - "Reply with the string 'Hello! I am hello-agent-1' and nothing else."
-
-  health:
-    enabled: true
-    interval: 60
-    method: sdk-alive
-
-  restart:
-    policy: never
+    - "Reply with the string 'Hello! I am hello-agent' and nothing else."
+  health:   { enabled: true, interval: 60 }
+  restart:  { policy: never }
 ```
 
-> Or copy the bundled example: `cp -r examples/agents/hello-agent ~/.scitex/agent-container/agents/hello-agent-1`
-
-**Step 4 — Run**
+**3 — Run it and drive the fleet**
 
 ```bash
-# Start in foreground (waits for completion)
-sac agents start hello-agent-1 hello-agent-2 --foreground
-
-# Check status (fleet view)
-sac agents status
-
-# Start in background, send a follow-up turn, tail, stop, delete
-sac agents start  hello-agent-1 hello-agent-2
-sac agents send   hello-agent-1 "What is 2+2? Reply with just the number."
-sac agents tail   hello-agent-1 hello-agent-2 --json
-sac agents stop   hello-agent-1 hello-agent-2
-sac agents delete hello-agent-1 hello-agent-2 -y
+sac agents start   hello-agent            # daemon by default; --foreground streams stdio
+sac agents list                           # fleet view — one row per running agent (local + remote)
+sac agents attach  hello-agent            # attach your terminal to its TUI (Ctrl-b d to detach)
+sac agents send    hello-agent "What is 2+2? Reply with just the number."
+sac agents tail    hello-agent --json     # structured session transcript
+sac agents restart hello-agent -y
+sac agents stop    hello-agent
+sac agents delete  hello-agent -y
 ```
+
+**4 — (optional) Boot the host control plane** so agents can reach each other:
+
+```bash
+sac listen start                          # HTTP/JSON control plane on 127.0.0.1:7878 (bearer-auth)
+sac listen status                         # health report; exit 1 if down
+```
+
+> **Placing an agent on another host** is a one-line change: set `host: spartan` in the spec and run `sac agents start <name>` from the master. sac rsyncs the spec to the peer, starts it there over SSH, and records it in the master's registry so `sac agents list` shows it as running-on-peer. See [Cross-host control plane](#master-authoritative-cross-host-control-plane).
 
 ### Tutorial
 
-[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones. Pre-baked agent specs live in [`examples/agents/`](examples/agents/) (`hello-agent`, `minimal-agent`, `full-agent`, `deepseek-agent`, `proxy-agent`).
-
-### Models
-
-Pick the model per agent under `spec.claude.model`:
-
-| Alias    | Model (current)             | Use for                         |
-|----------|-----------------------------|---------------------------------|
-| `opus`   | Claude Opus 4.7             | Hardest reasoning; slowest      |
-| `sonnet` | Claude Sonnet 4.6 *(default)* | Balanced capability and speed |
-| `haiku`  | Claude Haiku 4.5            | Fast, cheap, light tasks        |
-
-Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`.
-
-**Non-Anthropic backend?** Set `spec.claude.provider: deepseek` (or `mimo` / `xiaomi`) for the bundled registry entries, or pass a dict `{ base_url: "...", auth_token_env: "..." }` for any Anthropic-API-compatible endpoint — LiteLLM, a self-hosted vLLM exposing an Anthropic shim, or any in-house gateway. See [`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for a complete spec. **[Full model + provider reference →](docs/spec-reference.md)**
+[`examples/`](examples/) walks through the runtime in ~15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first `spec.yaml`, `to_home/`, the A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones. Pre-baked specs live in [`examples/agents/`](examples/agents/) (`hello-agent`, `minimal-agent`, `full-agent`, `deepseek-agent`, `proxy-agent`).
 
 ## How it works
 
-`sac` materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
+`sac` materializes a `spec.yaml` (plus an optional `to_home/` overlay) into a long-lived, externally addressable Claude agent:
 
 ```
   spec.yaml   ─┐
-  to_home/    ─┴─→ sac agents start ──→ apptainer instance
+  to_home/    ─┴─→ sac agents start ──→ apptainer instance (or tmux/TUI)
                                           │
                                           ▼
-                              long-lived Claude SDK session
+                              long-lived Claude session
                               │
-                              ├── <workdir>  (= spec.workdir, mounted rw)
-                              ├── spec.mounts[]  ← host-path allowlist (ro/rw)
-                              ├── state-dir  (~/.scitex/agent-container/runtime/<name>/)
-                              └─→ POST /v1/turn  (per-agent A2A inbound)
+                              ├── $HOME   (runtime/<name>/home/, bind-mounted; CLAUDE.md/.mcp.json/.env ← to_home/)
+                              ├── <workdir>       (bound rw)
+                              ├── spec.mounts[]   ← host-path allowlist (ro/rw)
+                              ├── state-dir       (~/.scitex/agent-container/runtime/<name>/: pid, heartbeat, session.jsonl)
+                              └─→ POST /v1/turn   (per-agent A2A inbound)
 ```
 
-**SAC-from-SAC (in-SIF spawn).** An agent running INSIDE an apptainer SIF can spawn a child agent on the **bare host** by calling `sac agents start <child>` as normal — the CLI auto-detects the in-SIF condition (`APPTAINER_CONTAINER`) and POSTs the spawn RPC to the host's `sac listen` instead of trying nested apptainer (which the supported HPC shape forbids). The host re-runs ACL gating, records the parent → child lineage, and shells the real start against the bare host's apptainer. Wiring is automatic: `SAC_LISTEN_BASE_URL` + `SAC_LISTEN_BEARER` are injected at container launch.
+**[Full single-agent launch flow →](docs/how-sac-works.md)** — to_home merge rules, A2A inbound, restart/health.
 
-**[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.
+### Master-authoritative cross-host control plane
 
-**[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart, provider).
-
-**[Talking to a Running Agent →](docs/talking-to-agents.md)** — three transports (A2A `POST /v1/turn`, `sac agents send`, host-level `sac listen`), when to use which, copy-pasteable curl examples.
-
-**[Container Isolation →](docs/isolation.md)** — 10 Apptainer-default leak paths + sac's hardened-by-default countermeasures (`--containall` auto-prepended, opt-out via `spec.apptainer.relaxed: true`). The reference for reproducibility claims.
-
-## Configuration and Runtime Directories
-
-**[Full directory reference →](docs/directories.md)** — complete tree, configuration cascade (CLI flag → env var → project config → user config).
+Every agent is **defined once, on the master** (`ywata-note-win`), which also holds the **authoritative registry** (`state.db`). A spec's `host:` field is the only thing that decides *where* the agent runs — the master dispatches it there over SSH and keeps driving it remotely. Peers hold no definitions; they hold only a runtime SIF, host-local comms config, credentials, and the running process.
 
 ```
-~/.scitex/agent-container/
-├── agents/<name>/spec.yaml    ← agent definition (SSoT)
-├── containers/sac-base.sif    ← built images (gitignored)
-└── runtime/<name>/            ← live state: pid, heartbeat, session.jsonl
+                        ┌──────────────────────────────────────────────────────┐
+                        │                  MASTER · ywata-note-win               │
+   agent specs (SSoT) ─▶│  ~/.scitex/agent-container/agents/<name>/spec.yaml     │
+   one dir = one agent  │        │                                              │
+                        │        │  spec.host: <peer>           ┌─────────────┐ │
+   authoritative     ──▶│        ▼                              │  state.db   │ │
+   registry             │  sac agents start ──────────────────▶│  instances  │ │
+                        │  sac agents list / attach / restart   │ comms_nodes │ │
+                        │        (cross-host, node-aware)       └─────────────┘ │
+                        │        │        ▲ live-probe                          │
+                        │  sac listen :7878 ───────────  a2a mesh  ───────────┐ │
+                        └────────┼────────┼─────────────────────────────────┼─┘
+              ssh: rsync spec +  │        │ ssh: remote probe        ssh-curl │  peer /v1/turn
+              `start --no-redispatch`     │      / tmux attach       forward  │  (agent → agent, by name)
+                                 ▼        │                                   ▼
+              ┌───────────────────────────────┐        ┌──────────────────────────────┐
+              │   PEER · spartan (login node)  │◀───────│   PEER · mba / nas / …        │
+              │   sac listen (own bearer)      │        │   sac listen (own bearer)     │
+              │   SIF / TUI runtime            │        │   … each peer runs its own    │
+              │   agent: spartan-dev  a2a:19002│        │      listen, peered back      │
+              └───────────────┬────────────────┘        └──────────────────────────────┘
+                              │  ssh -J spartan   (ProxyJump multi-hop)
+                              ▼
+              ┌───────────────────────────────┐
+              │  spartan-bmNNN (compute node)  │   spec.host: spartan-bmNNN
+              │  SIF runtime (GPU/CPU lease)   │   glob peer — inherits Spartan's registry
+              │  agent: <remote agent>         │   root via its `via:` ProxyJump chain
+              └───────────────────────────────┘
 ```
 
-**[Apptainer images →](docs/images.md)** — `base` vs `scitex` layers, sandbox/freeze workflow, version pinning.
+1. **Host-field routing.** `spec.host: spartan` makes `sac agents start <name>` (run on the master) rsync the spec dir to the peer, invoke `sac agents start <name> --no-redispatch --json` there over SSH, and write a master-side `state.db` `instances` row so the fleet view sees the remote agent immediately. An empty/absent `host:` (or one naming the master) runs locally — an unroutable host is a loud error, never a silent local start on the wrong machine.
+2. **Multi-hop placement.** A compute-node target (`host: spartan-bmNNN`) is reached with OpenSSH `ProxyJump` (`-J login,…`) from the peer's `via:` chain — no bespoke tunnelling. Glob peers that are not registry rows inherit their login node's pinned state root.
+3. **Cross-host liveness & attach.** `sac agents list` live-probes each remote agent *on its own host* (a non-login-shell tmux probe, so a healthy session never reads DEAD); `sac agents attach` / `restart` reach the agent over SSH. You drive the entire fleet from the master.
+4. **A2A mesh.** Each host runs its own `sac listen` with its own bearer token; listens forward to each other as peers over SSH-`curl`, so an agent on one host reaches an agent on another **by name** (resolved through the federated `comms_nodes` registry), not by hard-wired URL.
 
-### Host listen as a persistent service
+**[Full cross-host runbook →](docs/03_cross-host-control-plane.md)** · **[ADR-0020 →](docs/adr/0020-cross-host-spartan-agent-placement.md)**
 
-`sac listen` is the host's HTTP/JSON control plane (push hub, spawn broker, lead inbox). For long-running deployments install the bundled systemd-user unit so it auto-starts on boot and auto-restarts on crash:
+## Key concepts
 
-```bash
-install -m 0644 scripts/systemd/sac-listen.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now sac-listen.service
-journalctl --user -u sac-listen.service -n 50          # logs
-curl -s http://127.0.0.1:7878/v1/health                # healthcheck
-```
+**Agent spec (`spec.yaml`) + host routing.** One directory per agent; the directory name is the agent name (no `name:` field). The spec fully describes the agent: `runtime`, `apptainer`/image + binds, `claude` model/provider/credentials/channels, `a2a` port, `health`, `restart`, and startup prompts/commands. The `host:` field routes placement; `to_home/` next to the spec seeds the agent's `$HOME` (CLAUDE.md, `.mcp.json`, `.env`, `.claude/`). See [`02_agent-spec.md`](docs/02_agent-spec.md).
 
-See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe + the federated-jobs vs hand-maintained-services split.
+**`sac listen` + A2A.** `sac listen` is the per-host HTTP/JSON control plane (default `127.0.0.1:7878`, bearer-authenticated, loopback-only) — the plane every agent reaches the host through, and the broker for cross-host spawns and pushes. Agent-to-agent messaging is `POST /v1/turn`; `sac peer post-turn <agent> "<msg>"` and `sac a2a` cover the generic surface. See [`04_listen-and-a2a.md`](docs/04_listen-and-a2a.md) and [`talking-to-agents.md`](docs/talking-to-agents.md).
+
+**Credential / account pool.** `sac accounts` manages a pool of stored Claude credentials for rotation: `save`, `switch`, `refresh` (mint a fresh access token), `status`/`quota` (5h% / 7d% / tier), `sync-live` / `watch-live` (auto-snapshot the live login), and `watch-quota` (auto-rotate when a quota threshold is hit). A spec lists `claude.credentials_files: [...]`; the runtime picks a healthy one at launch. See [`05_credentials-and-accounts.md`](docs/05_credentials-and-accounts.md).
+
+**Apptainer + TUI runtimes.** `spec.runtime` selects the launch mode. `apptainer` runs the agent as a Claude SDK session inside a rootless SIF, hardened with `--containall` (opt out per-agent with `apptainer.relaxed: true`); `tui` runs Claude Code in a tmux session you can `sac agents attach` to. `docker` / `podman` are also accepted. See [`isolation.md`](docs/isolation.md) and [`images.md`](docs/images.md).
 
 ## Three Interfaces
 
@@ -201,94 +203,23 @@ See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe
 
 <br>
 
-```bash
-# Agent lifecycle
-sac agents start  <name> [--foreground]   # daemon by default; --foreground streams stdio
-                                           # inside a SIF: auto-brokers to host listen
-                                           # (no apptainer-in-apptainer needed)
-sac agents stop   <name>                  # graceful SIGTERM, escalate to SIGKILL after 5 s
-                                           # --force tolerates an unreachable bound host
-sac agents restart <name>
-sac agents delete <name>                  # stop + remove spec dir + runtime dir + registry
-sac agents forget <name> [--force]        # local-only state.db cleanup for the
-                                           # "agent is gone, only stale rows persist" case
-                                           # (no ssh, no signal)
-sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
-sac agents send   <name> --key ESC        # interrupt current turn
-sac agents status [<name>] [--snapshot] [--priority]   # fleet view if no name; per-agent
-                                                       # JSON payload otherwise
-sac agents list   [<name>]                # alias of `status` (same renderer)
-sac agents health <name>
-sac agents tail   <name>                  # render session.jsonl (structured transcript)
-sac agents recall <name>                  # human-readable session summary
-sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
-sac agents find   <capability>            # search by metadata.labels.capabilities
+Top-level command groups (run `sac <group> --help`, or `sac --help-recursive` for the full tree):
 
-# Control plane (HTTP/JSON, loopback-only)
-sac listen [--bind 127.0.0.1:7878]        # boot per-host REST API (bearer-auth)
-                                           # single-instance flock guard fails loud
-                                           # on a duplicate launch (PID + lockfile shown)
-sac listen restart                        # atomic stop-clean-relaunch
-sac peer post-turn <to> "<msg>"           # local agent-to-agent message via sac listen
-sac peer resolve-url <to>                 # print URL post-turn would target
+| Group | What it does |
+|-------|--------------|
+| `sac agents`   | Agent lifecycle: `create`, `start`, `stop`, `restart`, `delete`, `rename`, `twin`; interact (`send`, `attach`); inspect (`list`/`status`, `health`, `tail`, `recall`); `find`, `check`. |
+| `sac listen`   | Per-host HTTP/JSON control plane: `start` / `stop` / `restart` / `status` (bare `sac listen` is deprecated). |
+| `sac peer`     | Outbound A2A: `post-turn` into another agent's `/v1/turn`; `resolve-url`. |
+| `sac a2a`      | Generic A2A protocol surface: `serve`, `doctor`, `grant` / `revoke` / `block` / `grants`. |
+| `sac host`     | Local host identity + peer routing: `add`/`remove`/`set`, `add-peer`/`list-peers`, `probe`, `exec`, `ssh-opts`, `sync`, `validate`. |
+| `sac fleet`    | Peer-aware orchestration: `launch` (rsync + start on a peer), `notify` (agent→lead event), `sync` (cross-host spec audit). |
+| `sac accounts` | Multi-account credential rotation: `save`/`switch`/`delete`, `refresh`, `status`/`quota`, `sync-live`/`watch-live`, `watch-quota`. |
+| `sac image`    | Apptainer image lifecycle (delegates to scitex-container): `build`, `sandbox`, `update`, `freeze`, `list`, `switch`, `rollback`, `status`, `snapshot`. |
+| `sac db`       | Inspect/maintain `state.db`: `show`, `query`, `clean`, `export`/`import`, `migrate`, `tick`. |
+| `sac doctor`   | Diagnose agent-spec source drift (`--fleet` across hosts). |
+| `sac installation` · `sac dev` · `sac mcp` · `sac skills` · `sac provenance` · `sac ports` · `sac pytest` | Host bootstrap, maintainer plumbing, MCP/skills introspection, provenance/ports diagnostics, remote (SLURM) pytest. |
 
-# A2A protocol (generic, no fleet deps)
-sac a2a serve <yamls...>                  # inbound HTTP for non-SDK runtimes
-                                           # (apptainer-runtime agents host /v1/turn themselves)
-sac a2a doctor <agent>                    # probe AgentCard endpoint
-sac a2a grant / revoke / block / unblock / grants
-
-# Image lifecycle (delegates to scitex-container)
-sac image build [base|scitex] [--sandbox]
-sac image sandbox SOURCE                  # SIF → writable sandbox
-sac image update  SANDBOX [-p PKG]        # pip install --upgrade
-sac image freeze  SANDBOX OUT.sif         # sandbox → SIF
-sac image list                            # installed versions
-sac image switch  VERSION                 # atomic flip
-sac image rollback                        # restore previous
-sac image status                          # unified dashboard
-sac image snapshot [-o env.json]          # reproducibility capsule
-
-# Accounts / quota (multi-account rotation)
-sac accounts list / save / delete / switch        # stored-credential rotation
-sac accounts status                       # one-shot quota snapshot (5h%, 7d%, tier)
-sac accounts quota                        # this agent's own live quota
-sac accounts refresh                      # mint fresh access_token from refresh_token
-sac accounts sync-live / watch-live       # auto-snapshot live cred on `claude /login`
-sac accounts watch-quota                  # auto-rotate when quota threshold hit
-
-# Network / peers
-sac host list / add / remove / set / probe / exec / validate
-sac host ssh-opts                         # print sac's ssh ControlMaster flags (shell-quoted)
-sac host add-peer / list-peers / remove-peer      # cross-host listen-bearer registry
-sac host probe-hub                        # WSL → fleet-hub layered connectivity probe
-
-# Fleet (peer-aware multi-agent orchestration)
-sac fleet launch  PEER <name>...          # rsync specs to PEER, start each remotely
-sac fleet notify  done|blocker|status --summary "..."   # agent→lead push (ADR-0013)
-sac fleet sync                            # cross-host spec audit (fails loud on drift)
-
-# Diagnostics / introspection
-sac doctor [--fleet]                      # diagnose agent-spec source drift
-sac subagent get-state                    # Claude Code Agent-tool subagent state
-sac mcp list-tools                        # MCP introspection
-sac skills list / get                     # bundled agent-facing skills
-
-# Federated scheduled jobs (delegates to scitex-dev ecosystem)
-sac dev systemd list / install / uninstall    # generate ~/.config/systemd/user/sac.*
-sac dev cron    list / install / uninstall    # crontab entries
-sac dev daemon  list / install / uninstall    # interactive daemons
-
-# State db / registry / events
-sac db query / show / clean / export / import / migrate / tick   # state.db inspection
-sac registry sync / reconcile             # cross-host comms_nodes anti-entropy
-sac event ingest                          # Claude Code hook event ingestor
-
-# Misc
-sac installation boot                     # first-time host bootstrap (venv, PATH, cron)
-sac list-python-apis                      # enumerate public Python API
-sac --help-recursive                      # full subcommand tree
-```
+> **[Full CLI reference →](docs/06_cli-reference.md)** · run `sac --help-recursive` for the live subcommand tree.
 
 </details>
 
@@ -298,23 +229,16 @@ sac --help-recursive                      # full subcommand tree
 <br>
 
 ```python
-# Direct import
 import scitex_agent_container as sac
 
-cfg = sac.load_config("~/.scitex/agent-container/agents/hello-agent-1/spec.yaml")
+cfg = sac.load_config("~/.scitex/agent-container/agents/hello-agent/spec.yaml")
 sac.validate_config(cfg)
-sac.agent.start("hello-agent-1")           # daemon
-sac.agent.status("hello-agent-1")          # dict matching `sac agents status --json`
-sac.peer.post_turn("hello-agent-1", "What is 2+2?")
+sac.agent.start("hello-agent")             # daemon
+sac.agent.status("hello-agent")            # dict matching `sac agents status --json`
+sac.peer.post_turn("hello-agent", "What is 2+2?")
 ```
 
-```python
-# Or via the umbrella
-import scitex
-scitex.agent_container.agent.start("hello-agent-1")
-```
-
-See [`docs/spec-reference.md`](docs/spec-reference.md) for `AgentConfig` fields.
+Or via the umbrella: `import scitex; scitex.agent_container.agent.start("hello-agent")`. See [`02_agent-spec.md`](docs/02_agent-spec.md) for `AgentConfig` fields.
 
 </details>
 
@@ -323,7 +247,7 @@ See [`docs/spec-reference.md`](docs/spec-reference.md) for `AgentConfig` fields.
 
 <br>
 
-sac itself does not ship an MCP server. Each agent declares its own MCP servers in `spec.mcp_servers` (which is mirrored into `$HOME/.mcp.json` at start via `to_home/`), so per-agent MCP surface is part of the YAML spec rather than a sac-global service.
+sac itself does not ship an MCP server. Each agent declares its own MCP servers under `spec.mcp_servers`, mirrored into `$HOME/.mcp.json` at start via `to_home/`, so the per-agent MCP surface is part of the YAML spec rather than a sac-global service.
 
 ```yaml
 spec:
@@ -335,11 +259,37 @@ spec:
 
 </details>
 
+## Documentation
+
+Start at the **[Docs Index](docs/README.md)**. Highlights:
+
+- [`01_architecture.md`](docs/01_architecture.md) — the big picture: spec → runtime → control plane.
+- [`02_agent-spec.md`](docs/02_agent-spec.md) — the `spec.yaml` schema (v3), field by field.
+- [`03_cross-host-control-plane.md`](docs/03_cross-host-control-plane.md) — master-authoritative placement, host-field routing, multi-hop.
+- [`04_listen-and-a2a.md`](docs/04_listen-and-a2a.md) — the listen server and agent-to-agent mesh.
+- [`05_credentials-and-accounts.md`](docs/05_credentials-and-accounts.md) — the credential/account pool and quota rotation.
+- [`06_cli-reference.md`](docs/06_cli-reference.md) — every command group and flag.
+
+Deep-dives: [`how-sac-works.md`](docs/how-sac-works.md) · [`spec-reference.md`](docs/spec-reference.md) · [`isolation.md`](docs/isolation.md) · [`images.md`](docs/images.md) · [`directories.md`](docs/directories.md) · [`talking-to-agents.md`](docs/talking-to-agents.md) · [`credentials.md`](docs/credentials.md) · [`sac-and-orochi.md`](docs/sac-and-orochi.md) · [ADRs](docs/adr/).
+
+### Host `sac listen` as a persistent service
+
+For long-running deployments, install the bundled systemd-user unit so the control plane auto-starts on boot and auto-restarts on crash:
+
+```bash
+install -m 0644 scripts/systemd/sac-listen.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sac-listen.service
+curl -s http://127.0.0.1:7878/v1/health           # healthcheck
+```
+
+See [`scripts/systemd/README.md`](scripts/systemd/README.md) for the full recipe.
+
 ## Part of SciTeX
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
-[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi. For details, see **[docs/sac-and-orochi.md](docs/sac-and-orochi.md)** — architecture diagram, responsibility split, how to wire `server:orochi-push`.
+[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi. See **[docs/sac-and-orochi.md](docs/sac-and-orochi.md)**.
 
 ## Four Freedoms for Research
 
