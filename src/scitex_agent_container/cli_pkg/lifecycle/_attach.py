@@ -24,7 +24,6 @@ drop into an empty tmux.
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 
 import click
@@ -83,13 +82,15 @@ def _classify_agent_host(name: str) -> tuple[str, str | None]:
 
 
 def _remote_attach_argv(session: str, peer: str) -> list[str]:
-    """Build the ``ssh -t <target> … tmux attach`` argv for a remote agent.
+    """Build the ``ssh -t <target> tmux attach -t <session>`` argv for a remote agent.
 
     The ssh alias comes from ``host_config.peers[peer].ssh`` (the same
     source ``sac agents start`` dispatches through); it falls back to the
-    peer name when no explicit ``ssh:`` is set. ``bash -lc`` gives the login
-    PATH so ``tmux`` resolves on hosts (e.g. Spartan) whose non-interactive
-    ssh PATH is bare, and ``-t`` forces a PTY so tmux gets a terminal.
+    peer name when no explicit ``ssh:`` is set. ``tmux`` is invoked DIRECTLY on
+    the peer's non-login PATH: a login shell (``bash -lc``) triggers the
+    profile's interactive-tmux and fails with "open terminal failed: not a
+    terminal", so attach must not wrap the command. ``-t`` still forces a PTY so
+    tmux gets a terminal.
     """
     ssh_target = peer
     try:
@@ -102,16 +103,16 @@ def _remote_attach_argv(session: str, peer: str) -> list[str]:
         Exception
     ):  # stx-allow: fallback (peer without an ssh alias → use the peer name)
         pass
-    remote = f"tmux attach -t {shlex.quote(session)}"
     return [
         "ssh",
         "-t",
         "-o",
         "StrictHostKeyChecking=accept-new",
         ssh_target,
-        "bash",
-        "-lc",
-        remote,
+        "tmux",
+        "attach",
+        "-t",
+        session,
     ]
 
 

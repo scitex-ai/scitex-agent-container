@@ -34,7 +34,6 @@ cost of a false DEAD is a destroyed agent.
 
 from __future__ import annotations
 
-import shlex
 from typing import Any, Callable
 
 from ._verdict import (
@@ -387,16 +386,21 @@ def remote_process_signal(
     ):  # stx-allow: fallback (peer without an ssh alias -> use the peer name verbatim)
         pass
 
+    # tmux is on the peer's non-login PATH; a login shell (bash -lc) triggers the
+    # profile's interactive-tmux and fails with "open terminal failed: not a
+    # terminal" -> false DEAD. -n so ssh never consumes our stdin.
     argv = [
         "ssh",
+        "-n",
         "-o",
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=6",
         ssh_target,
-        "bash",
-        "-lc",
-        f"tmux has-session -t {shlex.quote(session)}",
+        "tmux",
+        "has-session",
+        "-t",
+        session,
     ]
     try:
         rc = (run_ssh or _run_ssh_rc)(argv)

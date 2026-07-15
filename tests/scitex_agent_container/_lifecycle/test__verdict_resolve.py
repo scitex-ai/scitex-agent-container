@@ -434,3 +434,65 @@ def test_remote_process_signal_run_ssh_raising_is_unknown_never_dead():
     signal = remote_process_signal(cfg, "spartan", run_ssh=_boom)
     # Assert
     assert signal.verdict == UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# The argv the remote probe hands to ssh — captured via the injected run_ssh
+# (a real recording callable, no mock). A login shell (`bash -lc`) is the bug:
+# on Spartan it triggers the profile's interactive-tmux, which prints
+# "open terminal failed: not a terminal" and exits rc 1 — a LIVE remote agent
+# misread as DEAD. tmux is on the peer's non-login PATH, so we call it directly.
+# --------------------------------------------------------------------------
+
+
+def _captured_remote_probe_argv(
+    peer: str = "spartan", name: str = "spartan-dev"
+) -> list[str]:
+    """Return the argv ``remote_process_signal`` hands to ssh.
+
+    The ``run_ssh`` seam is a real callable; here it merely records the argv it
+    is given and reports rc 0. No mock — this is the injection point the signal
+    is designed around.
+    """
+    captured: list[list[str]] = []
+
+    def _run_ssh(argv: list[str]) -> int:
+        captured.append(argv)
+        return 0
+
+    remote_process_signal(_Cfg(name, "tui"), peer, run_ssh=_run_ssh)
+    return captured[0]
+
+
+def test_remote_process_signal_argv_uses_no_login_shell():
+    """Regression (2026-07-16): the probe must NOT wrap tmux in a login shell.
+
+    ``ssh <peer> bash -lc 'tmux has-session ...'`` runs the peer's login profile,
+    whose interactive-tmux stanza fails with "open terminal failed: not a
+    terminal" (rc 1) — mapping a live remote agent to DEAD in ``sac agents list``.
+    """
+    # Arrange
+    login_shell_tokens = {"bash", "-lc"}
+    # Act
+    argv = _captured_remote_probe_argv()
+    # Assert — no login shell: neither `bash` nor `-lc` in the built argv.
+    assert not (login_shell_tokens & set(argv))
+
+
+def test_remote_process_signal_argv_probes_tmux_has_session_directly():
+    # Arrange
+    expected_tail = ["tmux", "has-session", "-t", "tui-spartan-dev"]
+    # Act
+    argv = _captured_remote_probe_argv()
+    # Assert — ssh runs `tmux has-session -t <session>` directly on the peer.
+    assert argv[-4:] == expected_tail
+
+
+def test_remote_process_signal_argv_passes_ssh_dash_n():
+    """``-n`` so ssh never consumes our stdin during a bulk `sac agents list`."""
+    # Arrange
+    required_flag = "-n"
+    # Act
+    argv = _captured_remote_probe_argv()
+    # Assert
+    assert required_flag in argv
