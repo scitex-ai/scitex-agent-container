@@ -73,7 +73,7 @@ COMMAND_CATEGORIES = [
     ("Build & Install", ["image", "installation"]),
     ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
+    ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -123,6 +123,11 @@ class _MainGroup(LazyGroup):
         # underneath.
         "pytest": f"{_PKG}.spartan_pytest:pytest_group",
         # Top-level standalone
+        # In-container self-orientation: identity / placement / execution /
+        # role / how-to, from the sac-injected env + the (bind-visible)
+        # spec.yaml. Honest UNKNOWN for underivable facts; never prints
+        # secret values.
+        "whoami": f"{_PKG}._whoami:whoami",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
@@ -292,6 +297,7 @@ class _MainGroup(LazyGroup):
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
+        "whoami": "Who am I? In-container identity, placement, execution, role, how-to.",
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
