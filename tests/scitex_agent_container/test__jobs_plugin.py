@@ -37,14 +37,15 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_two_jobs() -> None:
-    # Arrange — call the registered provider. Two: accounts-refresh and the
-    # host-sync-check drift alarm. `sac listen` is still NOT federated (see
-    # the module docstring and the absence-pin below).
+def test_provider_returns_three_jobs() -> None:
+    # Arrange — call the registered provider. Three: accounts-refresh, the
+    # host-sync-check drift alarm, and the daily worktree GC. `sac listen`
+    # is still NOT federated (see the module docstring and the absence-pin
+    # below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 2
+    assert len(jobs) == 3
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -195,3 +196,52 @@ def test_host_sync_check_cadence_is_hourly() -> None:
     job = _job("sac.host-sync-check")
     # Assert
     assert job.on_unit_active_sec == "1h"
+
+
+def test_worktree_gc_job_name_is_package_prefixed() -> None:
+    # Arrange — the daily GC that makes the worktree-sprawl countermeasure
+    # PERIODIC. A GC nobody schedules is a script, not a countermeasure —
+    # which is exactly how one repo reached 105 worktrees.
+    # Act
+    job = _job("sac.worktree-gc")
+    # Assert
+    assert job.name == "sac.worktree-gc"
+
+
+def test_worktree_gc_job_kind_is_timer() -> None:
+    # Arrange — a periodic systemd --user timer (daily), so kind="timer".
+    # A bad kind makes `ecosystem up` silently drop sac's WHOLE provider.
+    # Act
+    job = _job("sac.worktree-gc")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_worktree_gc_command_is_the_apply_form() -> None:
+    # Arrange — the scheduled job must ACT, not just report: a timer that
+    # only dry-runs would print a nightly report nobody reads while the
+    # sprawl kept growing. The safety lives in the predicate, not in
+    # withholding --apply.
+    # Act
+    job = _job("sac.worktree-gc")
+    # Assert
+    assert job.command == "sac worktree gc --apply --all"
+
+
+def test_worktree_gc_command_sweeps_every_declared_repo() -> None:
+    # Arrange — --all is only correct because it HAS a clean source (every
+    # agent spec.workdir that is a local git repo toplevel). If that source
+    # ever disappears, this command silently sweeps nothing.
+    # Act
+    job = _job("sac.worktree-gc")
+    # Assert
+    assert "--all" in job.command
+
+
+def test_worktree_gc_cadence_is_daily() -> None:
+    # Arrange — sprawl accumulates over days and the age gate is 24h, so a
+    # faster pass could not remove anything a daily one would miss.
+    # Act
+    job = _job("sac.worktree-gc")
+    # Assert
+    assert job.on_unit_active_sec == "1d"
