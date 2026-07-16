@@ -55,17 +55,30 @@ async def _abandon_a_pools_worth(wedge) -> None:
 def wedge():
     """A callable that blocks until the test releases it. Always released."""
     released = threading.Event()
+    blocked: list[threading.Thread] = []
 
     def blocker() -> str:
+        blocked.append(threading.current_thread())
         released.wait()
         return "unblocked"
 
     try:
         yield blocker
     finally:
-        # Let every abandoned daemon thread exit instead of leaking into
-        # the rest of the session.
+        # Release AND JOIN every abandoned daemon thread before the next test
+        # observes the gauge. `set()` alone only SIGNALS: an abandoned thread
+        # calls _clear_abandoned() (a DECREMENT) on its way out, whenever it
+        # next gets scheduled. `_abandon_a_pools_worth` leaves a pool's worth
+        # of them, so under CI load those decrements land inside the NEXT
+        # test's measurement window and silently eat one of its marks --
+        # `assert abandoned_call_count() == before + 3` fails as 3 == (1 + 3).
         released.set()
+        for thread in blocked:
+            thread.join(timeout=5)
+            assert not thread.is_alive(), (
+                "a released wedge thread never exited; it would decrement the "
+                "abandoned gauge inside a later test"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +240,7 @@ async def test_abandoned_call_count_reports_the_wedged_calls(wedge):
 @pytest.mark.asyncio
 async def test_cancellation_is_never_swallowed_by_the_deadline_wait():
     """A cancelled `run_blocking` caller must STOP — not keep looping."""
+
     # Arrange — a poll loop shaped exactly like the real background loops:
     # a fast off-loop call, then a short sleep, forever.
     async def poll_loop() -> None:
