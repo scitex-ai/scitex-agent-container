@@ -70,24 +70,20 @@ def test_comms_grants_table_exists(db_path: Path) -> None:
     # Act
     with conn_ctx as conn:
         rows = conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='comms_grants'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='comms_grants'"
         ).fetchall()
     # Assert
     assert len(rows) == 1
 
 
-@pytest.mark.parametrize(
-    "column", ["sender_name", "target_name", "created_at", "note"]
-)
+@pytest.mark.parametrize("column", ["sender_name", "target_name", "created_at", "note"])
 def test_comms_grants_has_column(db_path: Path, column: str) -> None:
     # Arrange
     conn_ctx = state_db.open_db(db_path)
     # Act
     with conn_ctx as conn:
         cols = {
-            r[1]
-            for r in conn.execute("PRAGMA table_info(comms_grants)").fetchall()
+            r[1] for r in conn.execute("PRAGMA table_info(comms_grants)").fetchall()
         }
     # Assert
     assert column in cols
@@ -246,7 +242,10 @@ def test_spawn_allowed_deny_reason_explains_role_policy(
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "neither the developer nor research group" in reason
+    assert (
+        reason is not None
+        and "none of the developer, research, or privileged groups" in reason
+    )
 
 
 def test_spawn_allowed_returns_true_for_developer_group_child(
@@ -275,6 +274,24 @@ def test_spawn_allowed_returns_true_for_researcher_group_child(
     assert allowed is True
 
 
+def test_spawn_allowed_returns_true_for_privileged_group_child(
+    db_path: Path,
+) -> None:
+    """A privileged-group child may spawn (operator ruling 2026-07-16).
+
+    Watch-it-fail: on the pre-fix code this is the exact 403 the
+    dotfiles agent (groups [privileged, infra]) hit — the nominally
+    strongest group was absent from the spawn allowlist.
+    """
+    # Arrange
+    record_lineage(child="dotfiles", parent="root", db_path=db_path)
+    record_comms_policy(name="dotfiles", group_name="privileged", db_path=db_path)
+    # Act
+    allowed, _reason = spawn_allowed(caller="dotfiles", db_path=db_path)
+    # Assert
+    assert allowed is True
+
+
 def test_spawn_allowed_returns_false_for_non_dev_research_group_child(
     db_path: Path,
 ) -> None:
@@ -298,7 +315,10 @@ def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "neither the developer nor research group" in reason
+    assert (
+        reason is not None
+        and "none of the developer, research, or privileged groups" in reason
+    )
 
 
 def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
@@ -421,7 +441,9 @@ def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
     # Act
     _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
     # Assert
-    assert reason is not None and "developer/research group members, may spawn" in reason
+    assert (
+        reason is not None and "developer/research group members, may spawn" in reason
+    )
 
 
 def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
@@ -561,7 +583,9 @@ def test_list_comms_grants_returns_each_grant_pair(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _insert_grant_at(db_path: Path, sender: str, target: str, created_at: float) -> None:
+def _insert_grant_at(
+    db_path: Path, sender: str, target: str, created_at: float
+) -> None:
     """Write one ``comms_grants`` row with an EXPLICIT ``created_at``.
 
     ``grant_send`` stamps ``time.time()`` internally, so a tie / skew can't
@@ -615,8 +639,7 @@ def test_node_tokens_table_exists(db_path: Path) -> None:
     # Act
     with conn_ctx as conn:
         rows = conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='node_tokens'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='node_tokens'"
         ).fetchall()
     # Assert
     assert len(rows) == 1

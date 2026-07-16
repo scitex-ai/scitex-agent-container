@@ -120,7 +120,9 @@ def record_lineage(
                 return  # idempotent no-op
             _logger.warning(
                 "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
-                child, existing["parent_name"], parent,
+                child,
+                existing["parent_name"],
+                parent,
             )
             return
         conn.execute(
@@ -301,7 +303,11 @@ def spawn_allowed(
     ``developer`` or ``researcher`` (:func:`is_developer` /
     :func:`is_researcher`) — the operator's exact words: "Dev agents
     and research agents MUST have full permissions — including the
-    ability to start/stop peer agents." Any other child is denied.
+    ability to start/stop peer agents." The ``privileged`` group is
+    allowed on the same footing (operator ruling 2026-07-16: denying
+    a privileged-group agent — dotfiles — "is a sac bug"; checked in
+    the group fallthrough below, which every named path also reaches).
+    Any other child is denied.
     ``caller=None`` means the administrative / human-operator path
     (e.g., a shell invocation from outside any sac-managed agent) —
     allowed.
@@ -337,19 +343,28 @@ def spawn_allowed(
     # must be able to self-heal a DOWN peer like scitex-clew without waiting
     # on the operator). The per-spec may_spawn gate still layers on top,
     # exactly like the root path above.
-    from ..config._group_resolver import is_developer_group, is_research_group
+    from ..config._group_resolver import (
+        is_developer_group,
+        is_privileged_group,
+        is_research_group,
+    )
 
     group = resolve_group_name(name=caller, db_path=db_path)
-    if is_developer_group(group) or is_research_group(group):
+    if (
+        is_developer_group(group)
+        or is_research_group(group)
+        or is_privileged_group(group)
+    ):
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     return (
         False,
         (
             f"spawn denied: caller {caller!r} is a child of "
-            f"{parent_row['parent_name']!r} and is in neither the developer "
-            "nor research group. Current policy: only root nodes, or "
-            "developer/research group members, may spawn (handoff §4 "
-            "'lift-able policy' — a single edit to spawn_allowed())."
+            f"{parent_row['parent_name']!r} and is in none of the developer, "
+            "research, or privileged groups. Current policy: only root "
+            "nodes, or developer/research/privileged group members, may "
+            "spawn (handoff §4 'lift-able policy' — a single edit to "
+            "spawn_allowed())."
         ),
     )
 
@@ -367,7 +382,6 @@ from .state_db_grants import (  # noqa: E402, F401
     list_comms_grants,
     revoke_send,
 )
-
 
 # ---------------------------------------------------------------------------
 # WI-4 — name → host resolver primitives. Kept here (rather than
