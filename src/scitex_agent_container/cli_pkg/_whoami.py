@@ -7,7 +7,7 @@ real agent container actually has — the sac-injected environment and
 (when resolvable through the injected spec search path) its own
 ``spec.yaml``. It never assumes the host registry is readable: the
 in-container ``$HOME`` is ``/home/agent`` and shadows the host home, so
-any fact that cannot be derived renders an honest ``UNKNOWN``
+any fact that cannot be derived renders an honest placeholder
 (``null`` under ``--json``) instead of a guess.
 
 Environment facts surveyed (injection sites, for the record):
@@ -43,7 +43,10 @@ from pathlib import Path
 import click
 
 #: Text rendering for a fact we cannot derive in-container. JSON uses null.
-UNKNOWN = "UNKNOWN"
+# Operator UX ruling (2026-07-16, Telegram 2614): the literal word
+# "UNKNOWN" reads like a value and is misleading — render underivable
+# facts as an obviously-non-value placeholder instead. JSON stays null.
+UNKNOWN = "xxxx****xxxx"
 
 #: Mount-point prefixes worth showing (kept to a few lines by design).
 _MOUNT_PREFIXES = ("/home", "/work", "/uvwork", "/state")
@@ -401,7 +404,7 @@ def whoami(ctx: click.Context, as_json: bool) -> None:
 
     Facts come from the sac-injected environment and, when resolvable
     through $SCITEX_AGENT_CONTAINER_YAML_DIRS, the agent's own spec.yaml.
-    Underivable facts render an honest UNKNOWN (null under --json); no
+    Underivable facts render an honest placeholder (null under --json); no
     secret value (e.g. the listen bearer) is ever printed.
     """
     from ._helpers import _json_flag

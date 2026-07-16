@@ -140,13 +140,25 @@ def test_whoami_renders_all_section_headers(tmp_path):
     assert {h for h in headers if h in result.output} == headers
 
 
-def test_whoami_blank_env_agent_is_unknown(tmp_path):
+def test_whoami_blank_env_agent_renders_placeholder(tmp_path):
     # Arrange
+    from scitex_agent_container.cli_pkg._whoami import UNKNOWN
+
+    env = _blank_env(tmp_path)
+    # Act
+    result = _invoke(env)
+    # Assert — underivable facts render the placeholder shape.
+    assert UNKNOWN in _line(result.output, "agent:")
+
+
+def test_whoami_blank_env_never_prints_the_word_unknown(tmp_path):
+    # Arrange — the literal word reads like a value and misleads (operator
+    # UX ruling 2026-07-16); the placeholder is an obviously-non-value shape.
     env = _blank_env(tmp_path)
     # Act
     result = _invoke(env)
     # Assert
-    assert "UNKNOWN" in _line(result.output, "agent:")
+    assert "UNKNOWN" not in result.output
 
 
 def test_whoami_blank_env_role_points_to_claude_md(tmp_path):
