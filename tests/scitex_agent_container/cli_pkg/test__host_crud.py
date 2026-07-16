@@ -261,3 +261,87 @@ def test_host_set_preserves_symlink_after_write(symlinked_cfg):
     runner.invoke(host_set, ["gpu-box", "--ssh", "new@gpu"])
     # Assert
     assert link.is_symlink()
+
+
+# ---------------------------------------------------------------------------
+# generated-config guard (ADR-0021): on a client host, config.yaml is
+# renderer output pushed from the master. CRUD-editing it in place would
+# be drift the next push-config shouts about, so add/remove/set refuse
+# and point at the master. The fixture content is REAL renderer output —
+# the guard must recognise exactly what the renderer emits.
+# ---------------------------------------------------------------------------
+
+
+def _write_generated(cfg_path: Path) -> str:
+    """Put a real renderer-generated client config at ``cfg_path``."""
+    from scitex_agent_container._hostsync import render_peer_config
+    from scitex_agent_container._state.host_config import load as _load
+
+    text = render_peer_config(
+        "clienty",
+        _load(cfg_path.parent / "no-such-master.yaml"),
+        master_name="master-x",
+        master_sha="ab" * 32,
+    )
+    cfg_path.write_text(text)
+    return text
+
+
+def test_host_add_refuses_generated_config_with_exit_2(cfg_path: Path):
+    # Arrange — the local config is a generated CLIENT file.
+    _write_generated(cfg_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_host_add_refusal_names_push_config(cfg_path: Path):
+    # Arrange
+    _write_generated(cfg_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert — the refusal must name the next command.
+    assert "sac host push-config" in result.output
+
+
+def test_host_add_leaves_generated_bytes_untouched(cfg_path: Path):
+    # Arrange
+    original = _write_generated(cfg_path)
+    runner = CliRunner()
+    # Act
+    runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert — a refused edit must not half-write anything.
+    assert cfg_path.read_text() == original
+
+
+def test_host_set_refuses_generated_config_with_exit_2(cfg_path: Path):
+    # Arrange
+    _write_generated(cfg_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_set, ["master-x", "--ssh", "new@x"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_host_remove_refuses_generated_config_with_exit_2(cfg_path: Path):
+    # Arrange
+    _write_generated(cfg_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_remove, ["master-x"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_host_add_still_edits_a_hand_written_config(cfg_path: Path):
+    # Arrange — a normal (hand-written) config must stay editable.
+    cfg_path.write_text("# my config\npeers: {}\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_add, ["gpu-box", "--ssh", "u@gpu.lan"])
+    # Assert
+    assert result.exit_code == 0

@@ -32,6 +32,30 @@ def _parse_via_csv(via: str | None) -> list[str]:
     return [item.strip() for item in via.split(",") if item.strip()]
 
 
+def _refuse_if_generated(path: Path) -> None:
+    """ADR-0021 guard: never CRUD-edit a GENERATED client config.
+
+    On a client host, config.yaml is renderer output pushed from the
+    master (`sac host push-config`); an in-place edit here is drift the
+    next `--check` shouts about and the next push refuses to overwrite.
+    The fix belongs on the MASTER, so the refusal names it and stops
+    BEFORE any bytes change. Reads through symlinks (``read_text``
+    follows them), so orochi-shared layouts are guarded too.
+    """
+    from .._hostsync import is_generated
+
+    if not path.is_file():
+        return
+    if not is_generated(path.read_text()):
+        return
+    console.print(
+        "[red]error:[/red] this host's config is GENERATED (client). "
+        "Edit the MASTER's config.yaml and run "
+        "`sac host push-config <this-host>` from the master."
+    )
+    raise SystemExit(2)
+
+
 def _ensure_config_scaffold(path: Path) -> None:
     """Create a minimal config.yaml at ``path`` if absent."""
     if path.is_file():
@@ -204,6 +228,7 @@ def host_add(
       $ sac host add bm198 --ssh bm198 --via mba,spartan
     """
     path = _default_config_path()
+    _refuse_if_generated(path)
     pre_existing = path.is_file()
     _ensure_config_scaffold(path)
     original_text = path.read_text() if pre_existing else None
@@ -237,6 +262,7 @@ def host_remove(ctx: click.Context, name: str, as_json: bool) -> None:
       $ sac host remove gpu-box
     """
     path = _default_config_path()
+    _refuse_if_generated(path)
     if not path.is_file():
         click.echo(f"error: no config.yaml found at {path}.", err=True)
         raise SystemExit(2)
@@ -278,6 +304,7 @@ def host_set(
       $ sac host set bm198 --via mba,spartan
     """
     path = _default_config_path()
+    _refuse_if_generated(path)
     if not path.is_file():
         click.echo(f"error: no config.yaml found at {path}.", err=True)
         raise SystemExit(2)

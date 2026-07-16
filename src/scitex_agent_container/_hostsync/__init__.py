@@ -34,7 +34,15 @@ from ._alarm import AlarmOutcome, card_id_for, route_reports_to_cards
 from ._apply import FastForwardResult, apply_fast_forward
 from ._ci_guard import DEFAULT_REPO, CiState, CiVerdict, check_ci_idle
 from ._model import GraphState, PeerSyncReport, SyncDecision, sync_decision
+from ._peer_config import GENERATED_HEADER_MARK, is_generated, render_peer_config
 from ._probe import probe_peer
+from ._push_config import (
+    ConfigVerdict,
+    PushConfigResult,
+    check_config_peer,
+    master_config_sha,
+    push_config_peer,
+)
 from ._sync import (
     Outcome,
     SyncResult,
@@ -46,21 +54,29 @@ from ._sync import (
 
 __all__ = [
     "DEFAULT_REPO",
+    "GENERATED_HEADER_MARK",
     "AlarmOutcome",
     "CiState",
     "CiVerdict",
+    "ConfigVerdict",
     "FastForwardResult",
     "GraphState",
     "Outcome",
     "PeerSyncReport",
+    "PushConfigResult",
     "SyncDecision",
     "SyncResult",
     "apply_fast_forward",
     "card_id_for",
     "check_ci_idle",
+    "check_config_peer",
     "check_peer",
     "exit_code_for",
+    "is_generated",
+    "master_config_sha",
     "probe_peer",
+    "push_config_peer",
+    "render_peer_config",
     "route_reports_to_cards",
     "sync_decision",
     "sync_peer",

@@ -426,11 +426,14 @@ from ._host_crud import register as _register_host_crud  # noqa: E402
 _register_host_crud(host_group)
 
 
-# ``sac host sync`` — one-way code sync centre -> remote, plus its
-# read-only ``--check`` drift detector. Split out for the same reason as
-# the CRUD verbs: this file is at the 512-line ceiling.
+# ``sac host sync`` / ``sac host push-config`` — the one-way channels
+# (code and generated client config, centre -> remote), each with a
+# read-only ``--check`` drift detector. Split out like the CRUD verbs:
+# this file is at the 512-line ceiling.
+from ._host_push_config import register as _register_host_push_config  # noqa: E402
 from ._host_sync import register as _register_host_sync  # noqa: E402
 
+_register_host_push_config(host_group)
 _register_host_sync(host_group)
 
 
