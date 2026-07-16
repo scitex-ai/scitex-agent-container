@@ -58,6 +58,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "twin",
                 "stop",
                 "restart",
+                "reconcile",
                 "rename",
                 "delete",
                 "forget",
@@ -100,6 +101,18 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 agent_group.add_command(_rebind(_twin_impl, "twin"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
+# `reconcile` — the ENFORCER of "should be running => is running", and the
+# only thing that ever has been. `restart: {policy: on-failure}` in ~93
+# specs was dead code: the loop that reads it (`_lifecycle.health
+# .health_monitor`) is launched on a daemon thread by `agent_start` and dies
+# with the short-lived `sac agents start` CLI that launched it, while the
+# resident listen daemon only reconciles CARDS. So when an OAuth rotation
+# killed 33 agents they stayed dead until the operator noticed by chance.
+# Dry-run by default; only ever restarts a CORPSE (no tmux session => no
+# context to lose), never a deliberately-stopped or live-but-wedged agent.
+from ._agents_reconcile import register as _register_reconcile  # noqa: E402
+
+_register_reconcile(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
