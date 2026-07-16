@@ -71,6 +71,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
+    ("Host hygiene", ["worktree"]),
     ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
@@ -96,6 +97,12 @@ class _MainGroup(LazyGroup):
         "event": f"{_PKG}.event_group:event_group",
         "image": f"{_PKG}.image_group:image_group",
         "skills": f"{_PKG}.skills_group:skills_group",
+        # Git-worktree hygiene (repo-scoped, not agent-scoped): report +
+        # reap PROVABLY-safe stale worktrees, alarm on a repo still over
+        # its cap. The permanent countermeasure to worktree sprawl
+        # (incident-worktree-sprawl-permanent-gc-20260710 — one repo hit
+        # 105 worktrees and helped trigger a host load-spike).
+        "worktree": f"{_PKG}.worktree_group:worktree_group",
         # `accounts` is a top-level noun — the credential store is fleet-wide,
         # not agent-scoped. Reuses the underlying `account` click group;
         # `accounts` is just the plural surface name.
@@ -307,6 +314,7 @@ class _MainGroup(LazyGroup):
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
+        "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }

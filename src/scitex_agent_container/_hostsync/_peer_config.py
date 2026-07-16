@@ -40,6 +40,7 @@ __all__ = [
     "GENERATED_HEADER_MARK",
     "embedded_master_sha",
     "is_generated",
+    "listen_token_file",
     "render_peer_config",
     "strip_generated_stamp",
 ]
@@ -87,6 +88,23 @@ def strip_generated_stamp(text: str) -> str:
         for line in text.splitlines(keepends=True)
         if not line.startswith(_GENERATED_STAMP_PREFIX)
     )
+
+
+def listen_token_file(peer_name: str) -> str:
+    """The STABLE, canonical-name-keyed listen-bearer path for ``peer_name``.
+
+    The FQDN fix (ADR-0021 §Tokens). ``.._listen.tokens.default_token_path``
+    keys the file on ``socket.gethostname()``, so a listen restarted on
+    spartan-login2 reads a DIFFERENT file than one started on
+    spartan-login1 — and, finding it missing, MINTS a fresh bearer that
+    the master's copy silently stops matching. The canonical name is the
+    one identity that does not move when a login node does.
+
+    Emitted UNEXPANDED (``~``): the peer's home, not the master's. A
+    locally expanded path here would be the same footgun
+    :mod:`._push_config_io` exists to keep out of this subsystem.
+    """
+    return f"~/.scitex/agent-container/tokens/listen-{peer_name}.token"
 
 
 def embedded_master_sha(text: str) -> str:
@@ -144,6 +162,14 @@ def render_peer_config(
         f"  canonical: {peer_name}\n"
         "comms_nodes:\n"
         "  sync_on_start: false\n"
+        "# listen.token_file — the STABLE, canonical-name-keyed bearer path\n"
+        "# `sac host push-config --rotate-tokens` writes (ADR-0021 §Tokens).\n"
+        "# NOT YET READ AT BOOT: `sac listen` resolves its token from\n"
+        "# --token-file, else tokens/listen-<gethostname()>.token. Until this\n"
+        "# host's launcher passes --token-file <the path below>, this key\n"
+        "# records WHERE the rotated bearer is, not what the listen reads.\n"
+        "listen:\n"
+        f"  token_file: {listen_token_file(peer_name)}\n"
         "peers:\n"
         f"  {master_name}:\n"
         f"    ssh: {reverse_ssh}\n"
@@ -166,6 +192,7 @@ def _assert_roundtrip(
     expected = {
         "host": {"canonical": peer_name},
         "comms_nodes": {"sync_on_start": False},
+        "listen": {"token_file": listen_token_file(peer_name)},
         "peers": {master_name: {"ssh": reverse_ssh}},
     }
     try:
