@@ -28,6 +28,7 @@ from ._placement_validation import validate_placement
 # note in config._provider_types.AgentProvider.
 from ._provider_registry import is_known_agent_provider, list_agent_providers
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
+from ._startup_command_validation import validate_startup_commands
 
 # ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
 # ``_claude_validation`` alongside the rest of the claude-block checks;
@@ -454,6 +455,13 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # coupling rules — sibling ``_shape_validation`` module.
         errors.extend(validate_autonomous(spec))
         errors.extend(validate_proxy_coupling(spec, kind))
+
+        # spec.startup_commands destructive-command guard — REJECT an
+        # unguarded recursive-force ``rm`` on a variable target (the
+        # 2026-07-16 P0 landmine: ``rm -rf $HOME/proj`` one bad symlink
+        # from wiping ~195 repos). Sibling ``_startup_command_validation``
+        # module; allows the fixed ``rm -f $VAR`` form.
+        errors.extend(validate_startup_commands(spec))
 
         # Phase-3 capsule-isolation: type-check ``spec.comms`` +
         # ``spec.lineage`` shapes. Detailed rules live in the
