@@ -442,7 +442,8 @@ def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
     _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
     # Assert
     assert (
-        reason is not None and "developer/research group members, may spawn" in reason
+        reason is not None
+        and "developer/research/privileged group members, may" in reason
     )
 
 
