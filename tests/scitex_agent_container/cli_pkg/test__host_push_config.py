@@ -67,6 +67,12 @@ _ABSENT_BLOCK = "SAC_PUSHCFG __ABSENT__\nSAC_PUSHCFG end\n"
 
 # ---------------------------------------------------------------------------
 # --check exit codes (the cron contract)
+#
+# These pin the CONFIG verdicts, so they pass --no-tokens: PR-B made
+# --check ALSO probe token state (a silent bearer desync is exactly what a
+# cron alarm is for), and a fixed-reply ssh fake answering the config
+# protocol necessarily reads as UNDETERMINED to the token probe. The token
+# verdicts have their own suite below.
 # ---------------------------------------------------------------------------
 
 
@@ -74,7 +80,7 @@ def test_check_on_current_peer_exits_zero(cfg_path, subprocess_shim):
     # Arrange — the peer holds our render (older timestamp, same sha).
     subprocess_shim.install("ssh", stdout=_b64_block(_rendered_for(cfg_path)))
     # Act
-    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    result = CliRunner().invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert
     assert result.exit_code == 0
 
@@ -85,7 +91,7 @@ def test_check_on_stale_generated_peer_exits_one(cfg_path, subprocess_shim):
         "ssh", stdout=_b64_block(_rendered_for(cfg_path, sha="0" * 64))
     )
     # Act
-    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    result = CliRunner().invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert — an alarm that exits 0 on drift is not an alarm.
     assert result.exit_code == 1
 
@@ -94,7 +100,7 @@ def test_check_on_hand_edited_peer_exits_one(cfg_path, subprocess_shim):
     # Arrange
     subprocess_shim.install("ssh", stdout=_b64_block("peers: {}\n"))
     # Act
-    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    result = CliRunner().invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert
     assert result.exit_code == 1
 
@@ -103,7 +109,7 @@ def test_check_on_absent_peer_exits_one(cfg_path, subprocess_shim):
     # Arrange
     subprocess_shim.install("ssh", stdout=_ABSENT_BLOCK)
     # Act
-    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    result = CliRunner().invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert
     assert result.exit_code == 1
 
@@ -140,9 +146,11 @@ def test_json_output_carries_the_exit_code(cfg_path, subprocess_shim):
     # Arrange
     subprocess_shim.install("ssh", stdout=_ABSENT_BLOCK)
     # Act
-    result = CliRunner().invoke(host_push_config, ["--check", "spartan", "--json"])
+    result = CliRunner().invoke(
+        host_push_config, ["--check", "--no-tokens", "spartan", "--json"]
+    )
     # Assert
-    assert '"exit_code": 1' in result.output
+    assert json.loads(result.output)["exit_code"] == 1
 
 
 def test_all_visits_only_concrete_non_centre_peers(
@@ -336,7 +344,7 @@ def test_check_after_push_reports_current(cfg_path, stateful_ssh):
     runner = CliRunner()
     runner.invoke(host_push_config, ["spartan"])
     # Act
-    result = runner.invoke(host_push_config, ["--check", "spartan"])
+    result = runner.invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
     # Assert — the loop closes: what was pushed reads back CURRENT.
     assert result.exit_code == 0
 
@@ -359,3 +367,327 @@ def test_adopt_on_current_peer_is_refused_nonzero(cfg_path, stateful_ssh):
     result = runner.invoke(host_push_config, ["spartan", "--adopt"])
     # Assert
     assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# PR-B — token state in --check (ADR-0021 §Tokens)
+#
+# The token probe answers a DIFFERENT marker protocol than the config
+# probe, so these install an ssh fake that speaks SAC_PUSHTOK. Token
+# VALUES are planted in the fixture on purpose: the secrecy tests below
+# are only meaningful if there is a real value available to leak.
+# ---------------------------------------------------------------------------
+
+_MASTER_BEARER = "MASTER-BEARER-PLAINTEXT-do-not-print"
+_PEER_BEARER = "PEER-BEARER-PLAINTEXT-do-not-print"
+
+
+def _sha(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+@pytest.fixture
+def master_tokens(tmp_path: Path, env_save_restore):
+    """Real master-side token files, wired in via $HOME.
+
+    ``_listen.tokens.default_token_path`` / ``peer_tokens`` resolve off
+    ``Path.home()`` at CALL time, so redirecting $HOME redirects both —
+    the CLI is exercised through its real path resolution, not a
+    parameter only the tests pass.
+    """
+    home = tmp_path / "home"
+    (home / ".scitex" / "agent-container" / "tokens").mkdir(parents=True)
+    (home / ".scitex" / "agent-container" / "peer-tokens").mkdir(parents=True)
+    env_save_restore.set("HOME", str(home))
+    import socket
+
+    listen = (
+        home
+        / ".scitex"
+        / "agent-container"
+        / "tokens"
+        / f"listen-{socket.gethostname()}.token"
+    )
+    listen.write_text(_MASTER_BEARER)
+    listen.chmod(0o600)
+    peer_copy = home / ".scitex" / "agent-container" / "peer-tokens" / "spartan.token"
+    peer_copy.write_text(_PEER_BEARER)
+    peer_copy.chmod(0o600)
+    return home
+
+
+def _tok_block(listen_digest: str, peer_digest: str) -> str:
+    return (
+        "SAC_PUSHTOK hostname=spartan-login1\n"
+        f"SAC_PUSHTOK listen=listen-spartan-login1.token {listen_digest}\n"
+        f"SAC_PUSHTOK peer=master-x.token {peer_digest}\n"
+        "SAC_PUSHTOK end\n"
+    )
+
+
+def test_check_with_matching_tokens_exits_zero(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — one fake answers BOTH probes; the config half is the
+    # peer's current render, the token half reports matching digests.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha(_MASTER_BEARER))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_check_with_drifted_tokens_exits_one(cfg_path, master_tokens, subprocess_shim):
+    # Arrange — the peer holds a STALE copy of the master's bearer.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha("stale-bearer"))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert — a silent bearer desync is exactly what the alarm is for.
+    assert result.exit_code == 1
+
+
+def test_check_names_the_broken_a2a_direction(cfg_path, master_tokens, subprocess_shim):
+    # Arrange
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha("stale-bearer"))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert
+    assert "OUTBOUND" in result.output
+
+
+def test_check_prints_the_token_digest_columns(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha(_MASTER_BEARER))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert — the sha12 of the master's bearer is the evidence column.
+    assert _sha(_MASTER_BEARER)[:12] in result.output
+
+
+def test_check_token_probe_never_dispatches_a_write(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — drifted tokens under --check must stay untouched.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha("stale-bearer"))
+        ),
+    )
+    # Act
+    CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    calls = subprocess_shim.invocations("ssh")
+    # Assert — no token write snippet was ever dispatched.
+    assert not any("v=$(cat)" in " ".join(argv) for argv in calls)
+
+
+def test_no_tokens_skips_the_token_probe(cfg_path, master_tokens, subprocess_shim):
+    # Arrange — an unreadable token state would otherwise exit 2.
+    subprocess_shim.install("ssh", stdout=_b64_block(_rendered_for(cfg_path)))
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "--no-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_check_json_carries_the_token_verdict(cfg_path, master_tokens, subprocess_shim):
+    # Arrange
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha("stale-bearer"))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan", "--json"])
+    payload = json.loads(result.output)
+    # Assert
+    assert payload["tokens"][0]["verdict"] == "tokens-drifted"
+
+
+# ---------------------------------------------------------------------------
+# SECRECY — a real token value must never reach stdout or JSON
+# ---------------------------------------------------------------------------
+
+
+def test_check_output_never_prints_a_token_value(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — real bearers exist on disk for the CLI to leak.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha(_MASTER_BEARER))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert
+    assert _MASTER_BEARER not in result.output
+
+
+def test_check_json_never_carries_a_token_value(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — JSON is what cron ships to a log nobody guards.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha(_MASTER_BEARER))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan", "--json"])
+    # Assert
+    assert _MASTER_BEARER not in result.output
+
+
+def test_drift_output_never_prints_the_peers_token_value(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — a failure path is where secrets usually escape.
+    subprocess_shim.install(
+        "ssh",
+        stdout=(
+            _b64_block(_rendered_for(cfg_path))
+            + _tok_block(_sha(_PEER_BEARER), _sha("stale-bearer"))
+        ),
+    )
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--check", "spartan"])
+    # Assert
+    assert _PEER_BEARER not in result.output
+
+
+# ---------------------------------------------------------------------------
+# --rotate-tokens usage errors — misuse dies before any ssh
+# ---------------------------------------------------------------------------
+
+
+def test_rotate_tokens_with_check_is_a_usage_error(cfg_path):
+    # Arrange — rotation mutates; --check is read-only.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--check", "--rotate-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_with_all_is_a_usage_error(cfg_path):
+    # Arrange — a fleet-wide rotation restarts every peer's listen.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--all", "--rotate-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_with_a_positional_peer_is_a_usage_error(cfg_path):
+    # Arrange — two peers named, one verb: ambiguous.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["mba", "--rotate-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_on_the_master_itself_is_a_usage_error(cfg_path):
+    # Arrange — the master does not rotate its own bearer this way.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--rotate-tokens", "master-x"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_on_an_unknown_peer_is_a_usage_error(cfg_path):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--rotate-tokens", "ghost"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_with_adopt_is_a_usage_error(cfg_path):
+    # Arrange — --adopt is for a hand-edited CONFIG, not for tokens.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--adopt", "--rotate-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_with_tokens_under_check_is_a_usage_error(cfg_path):
+    # Arrange — --with-tokens WRITES; --check is read-only.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(host_push_config, ["--check", "--with-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_tokens_on_unreachable_peer_exits_two(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange — UNDETERMINED never mutates: a peer we cannot read is a
+    # peer we do not rotate.
+    subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
+    # Act
+    result = CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_rotate_refusal_dispatches_no_write(cfg_path, master_tokens, subprocess_shim):
+    # Arrange — the refusal must be structural, not cosmetic.
+    subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
+    # Act
+    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    calls = subprocess_shim.invocations("ssh")
+    # Assert
+    assert not any("v=$(cat)" in " ".join(argv) for argv in calls)
+
+
+def test_rotate_refusal_leaves_the_master_copy_intact(
+    cfg_path, master_tokens, subprocess_shim
+):
+    # Arrange
+    subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused\n")
+    copy = (
+        master_tokens / ".scitex" / "agent-container" / "peer-tokens" / "spartan.token"
+    )
+    # Act
+    CliRunner().invoke(host_push_config, ["--rotate-tokens", "spartan"])
+    # Assert
+    assert copy.read_text() == _PEER_BEARER
