@@ -71,7 +71,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Diagnostics", ["doctor", "ports", "provenance"]),
+    ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -106,6 +106,10 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Read WHY a CI run is red as cheaply as its status word — fetch
+        # the failing run's log once, print only the failing test IDs +
+        # assertion lines (or the ##[error] setup annotation).
+        "ci": f"{_PKG}.ci_group:ci_group",
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
         "ports": f"{_PKG}.ports_cmds:ports",
@@ -293,6 +297,7 @@ class _MainGroup(LazyGroup):
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
