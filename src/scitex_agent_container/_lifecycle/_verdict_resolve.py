@@ -50,6 +50,8 @@ from ._verdict import (
     Signal,
     decide,
 )
+from ._verdict_remote import _remote_peer_for_config, remote_process_signal
+from ._verdict_screen import screen_signal, started_at_for
 from ._verdict_state import HEARTBEAT_STALE_S, heartbeat_signal, registry_signal
 from ._verdict_tmux import in_sif as _in_sif  # noqa: F401  (kept as a seam alias)
 from ._verdict_tmux import (
@@ -67,6 +69,7 @@ __all__ = [
     "registry_signal",
     "remote_process_signal",
     "resolve_verdict",
+    "screen_signal",
 ]
 
 
@@ -289,167 +292,6 @@ def process_signal(
 
 
 # --------------------------------------------------------------------------
-# remote process — the control-plane cross-host liveness probe. Ternary.
-# --------------------------------------------------------------------------
-
-
-def _remote_peer_for_config(config: Any) -> str | None:
-    """Return the peer name if the agent's ``spec.host`` is a remote peer.
-
-    Uses the SAME ``classify_dispatch_host`` resolver ``sac agents start`` and
-    ``sac agents attach`` route through, so "remote" means one thing across
-    the whole control plane. Best-effort — any resolution failure returns
-    ``None`` and the caller falls back to the ordinary (local) process probe.
-    Imports are LAZY to avoid a ``cli_pkg`` -> ``_lifecycle`` import cycle.
-    """
-    try:
-        from ..cli_pkg.lifecycle._common import (
-            _local_host_names,
-            classify_dispatch_host,
-        )
-        from ..config._host import resolve_hostname
-
-        spec = config.hosts_spec
-        host = spec.host
-        target = host if isinstance(host, str) else (host[0] if host else None)
-        if not target:
-            return None
-        from .._state.host_config import load as _load_host_config
-
-        current = resolve_hostname()
-        peers = _load_host_config().peers
-        kind, peer = classify_dispatch_host(
-            target, current, peers, local_names=_local_host_names(current)
-        )
-        return peer if kind == "remote" else None
-    except Exception:  # stx-allow: fallback (unresolvable host -> treat as local; the local probe still runs)
-        return None
-
-
-def _run_ssh_rc(argv: list[str]) -> int:
-    """Run ``argv`` and return its exit code (default remote-probe runner).
-
-    A generous 10s timeout keeps a wedged peer from hanging a listing; on
-    timeout or a missing ssh binary we return 255 (ssh's own connection-failed
-    code) so :func:`remote_process_signal` maps it to UNKNOWN. Injection seam —
-    tests pass their own runner and never shell out.
-    """
-    import subprocess
-
-    try:
-        return subprocess.run(argv, capture_output=True, timeout=10).returncode
-    except (
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-    ):  # stx-allow: fallback (ssh could not run -> 255 -> UNKNOWN upstream)
-        return 255
-
-
-def remote_process_signal(
-    config: Any,
-    peer: str,
-    *,
-    run_ssh: Callable[[list[str]], int] | None = None,
-) -> Signal:
-    """Is the agent's tmux session up ON ITS REMOTE HOST (ssh probe)?
-
-    An agent whose ``spec.host`` is a remote peer has its TUI session on that
-    peer, not here — the LOCAL tmux is blind to it, so the ordinary
-    :func:`process_signal` reads DEAD ("no local session") and the agent
-    vanishes from cross-host ``sac agents list``. This ssh-probes the peer's
-    own tmux bookkeeping for the agent's session instead.
-
-    The argv is rendered by :func:`.._state.host_config.build_ssh_argv` — sac's
-    ONE canonical dispatch primitive — never a hand-rolled ssh line. That is
-    what makes a two-tier HPC target work: ``build_ssh_argv`` applies the peer's
-    ``via:`` ProxyJump chain (``-J``), glob-matches ``spartan-bm043`` onto a
-    ``spartan*`` pattern peer, and wraps the command in that peer's
-    ``env_preamble`` via ``bash -c`` (NOT ``-lc``: a login shell trips the
-    profile's interactive-tmux and false-DEADs a live agent — #709). Hand-rolling
-    it skipped the hop, so every ``spartan-bmNNN`` agent probed UNKNOWN and
-    rendered stale. The ``preamble && tmux has-session`` chain keeps rc 1 for
-    "no session" (a real DEAD); a preamble/hop failure is some other non-0/1 rc,
-    read below as UNKNOWN.
-
-    Verdicts (:data:`INSTRUMENT_HOST_TMUX` — the peer's tmux, a real
-    independent bookkeeper, exactly as in the local case):
-
-    * ssh connected + session present (rc 0) -> :data:`ALIVE`.
-    * ssh connected + no session (rc 1)      -> :data:`DEAD` (positive remote
-      absence, from the peer's own ``tmux has-session``).
-    * ssh could not run / any other rc, OR the peer is not resolvable (no
-      config / unknown peer / glob-miss, so ``build_ssh_argv`` raises)
-      -> :data:`UNKNOWN`. A probe that could not run is NEVER DEAD (this
-      module's core doctrine); a wedged ssh, a broken ProxyJump, a bare login
-      PATH, or an auth failure must not slander a live remote agent into a
-      destroyable corpse.
-
-    ``run_ssh`` is the injection seam (a real callable returning the exit
-    code); production uses :func:`_run_ssh_rc`.
-    """
-    session = session_name_for_config(config)
-
-    # Render the probe argv through sac's canonical dispatch primitive so the
-    # peer's ProxyJump chain + env_preamble apply (see docstring). A load/build
-    # failure (no config, unknown / glob-missed peer) is "I could not look" ->
-    # UNKNOWN, never a false DEAD. ``-n`` so ssh never eats our stdin.
-    try:
-        from .._state.host_config import build_ssh_argv
-        from .._state.host_config import load as _load_host_config
-
-        peers = _load_host_config().peers
-        argv = build_ssh_argv(
-            peer, ["tmux", "has-session", "-t", session], peers, extra_opts=["-n"]
-        )
-    except (
-        Exception
-    ) as exc:  # stx-allow: fallback (unresolvable peer -> UNKNOWN, never DEAD)
-        return Signal(
-            SOURCE_PROCESS,
-            UNKNOWN,
-            f"could not build an ssh probe for peer {peer!r} "
-            f"({type(exc).__name__}) — unresolvable peer is UNKNOWN, never DEAD",
-            INSTRUMENT_HOST_TMUX,
-        )
-
-    try:
-        rc = (run_ssh or _run_ssh_rc)(argv)
-    except (
-        Exception
-    ) as exc:  # stx-allow: fallback (probe shell-out blew up -> UNKNOWN, never DEAD)
-        return Signal(
-            SOURCE_PROCESS,
-            UNKNOWN,
-            f"could not ssh remote host {peer!r} to probe tmux "
-            f"({type(exc).__name__}) — remote liveness UNKNOWN, never DEAD",
-            INSTRUMENT_HOST_TMUX,
-        )
-    if rc == 0:
-        return Signal(
-            SOURCE_PROCESS,
-            ALIVE,
-            f"tmux session {session!r} is up on remote host {peer!r} (ssh probe)",
-            INSTRUMENT_HOST_TMUX,
-        )
-    if rc == 1:
-        return Signal(
-            SOURCE_PROCESS,
-            DEAD,
-            f"ssh to {peer!r} succeeded and its tmux has NO session {session!r} "
-            f"— positive remote absence, from the peer's own bookkeeping",
-            INSTRUMENT_HOST_TMUX,
-        )
-    return Signal(
-        SOURCE_PROCESS,
-        UNKNOWN,
-        f"ssh probe of {peer!r} returned rc={rc} (not 0/1: wedged ssh, a "
-        f"failed ProxyJump/env_preamble, bare PATH, or auth) — remote liveness "
-        f"UNKNOWN, never DEAD",
-        INSTRUMENT_HOST_TMUX,
-    )
-
-
-# --------------------------------------------------------------------------
 # the fold
 # --------------------------------------------------------------------------
 
@@ -463,6 +305,7 @@ def resolve_verdict(
     process: Callable[[Any, Any], Signal] | None = None,
     heartbeat: Callable[[str], Signal] | None = None,
     registry: Callable[[str], Signal] | None = None,
+    screen: Callable[[str], Signal] | None = None,
 ) -> LivenessVerdict:
     """Gather every signal we can, then fold them with :func:`._verdict.decide`.
 
@@ -472,7 +315,8 @@ def resolve_verdict(
 
     Every collaborator is an injection seam taking REAL callables (no mocks —
     the suite drives real tmux sockets, real processes, real files through
-    these).
+    these). ``screen`` (the WORKING sensor) folds in for a TUI agent only — see
+    :func:`._verdict_screen.screen_signal`.
     """
     signals: list[Signal] = []
     kind = str(getattr(config, "runtime", "") or "") if config is not None else ""
@@ -500,5 +344,18 @@ def resolve_verdict(
         signals.append(heartbeat(name))
 
     signals.append((registry or registry_signal)(name))
+
+    # SCREEN — the WORKING sensor. A wedged TUI agent's tmux session exists and
+    # its pane pid is alive, so process/heartbeat/registry all read PRESENCE-ALIVE
+    # while it does nothing. The screen signal reads the pane's rendered CONTENT
+    # (a frozen auth banner) and reports WEDGED, which decide() ranks ABOVE those
+    # presence-ALIVEs. TUI only — a pid-based runtime has no tui pane to read. An
+    # injected ``screen`` always wins (the test seam); otherwise we read the auth
+    # cache, passing this incarnation's started_at so a pre-restart (SUPERSEDED)
+    # verdict is discarded rather than read as wedged.
+    if screen is not None:
+        signals.append(screen(name))
+    elif kind == "tui":
+        signals.append(screen_signal(name, started_at=started_at_for(name)))
 
     return decide(name, signals)

@@ -22,11 +22,14 @@ from scitex_agent_container._lifecycle._verdict import (
     INSTRUMENT_LISTEN_BROKER,
     INSTRUMENT_NO_OBSERVATION,
     INSTRUMENT_PID_NAMESPACE,
+    INSTRUMENT_TUI_SCREEN,
     SOURCE_DELIVERY,
     SOURCE_HEARTBEAT,
     SOURCE_PROCESS,
     SOURCE_REGISTRY,
+    SOURCE_SCREEN,
     UNKNOWN,
+    WEDGED,
     Signal,
     decide,
 )
@@ -550,3 +553,158 @@ def test_render_omits_a_dissenters_verbose_prose(dissenting_heartbeat_signals):
     rendered = decide("alpha", dissenting_heartbeat_signals).render()
     # Assert — the operator's "splurge" (the dissenter's prose) is gone.
     assert "sac listen observed this session" not in rendered
+
+
+# --------------------------------------------------------------------------
+# WEDGED — present but NOT working. The P0: a tmux-GREEN agent stuck under a
+# frozen auth banner read ALIVE (false-green; clew sat dead two days). The
+# screen instrument observes WORKING, not mere presence, so a wedged agent now
+# resolves to WEDGED — above the pid/session ALIVE, below a delivery ALIVE.
+# --------------------------------------------------------------------------
+
+
+def test_a_wedged_screen_overrides_a_pid_shaped_process_alive():
+    """THE core regression, and the P0 stated as a test.
+
+    A wedged agent's tmux session exists and its pane pid is alive, so
+    ``process`` reads ALIVE — PRESENCE, not WORK. Under the OLD decide (any ALIVE
+    ⇒ ALIVE) this exact fold returned ALIVE: the false-green that let ``clew`` sit
+    auth-dead for two days behind a green row. The NEW decide ranks the screen
+    instrument's WEDGED above a pid/session ALIVE, so it must read WEDGED.
+    """
+    # Arrange — the false-green shape: a live-pid process ALIVE + a frozen banner.
+    signals = [
+        Signal(
+            SOURCE_PROCESS,
+            ALIVE,
+            "tmux session up, pane pid alive",
+            INSTRUMENT_HOST_TMUX,
+        ),
+        Signal(
+            SOURCE_SCREEN,
+            WEDGED,
+            "frozen 'Login expired' banner",
+            INSTRUMENT_TUI_SCREEN,
+        ),
+    ]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert — NEW behaviour: WEDGED (the OLD fold would have said ALIVE here).
+    assert verdict.verdict == WEDGED
+
+
+def test_a_wedged_agent_is_never_alive():
+    """The hard requirement, by construction: is_alive is ``verdict == ALIVE``."""
+    # Arrange
+    signals = [
+        Signal(SOURCE_PROCESS, ALIVE, "tmux up", INSTRUMENT_HOST_TMUX),
+        Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN),
+    ]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert
+    assert verdict.is_alive is False
+
+
+def test_a_delivery_alive_still_beats_a_wedged_screen():
+    """A broker-reachable agent is demonstrably WORKING, so it is never flagged.
+
+    The founding incident had delivery != ALIVE (the wedged agent's inbox was not
+    observed reachable), so ordering delivery above WEDGED keeps a live, answering
+    agent from ever reading wedged while costing the fix nothing.
+    """
+    # Arrange
+    signals = [
+        Signal(
+            SOURCE_DELIVERY, ALIVE, "1 live inbox subscriber", INSTRUMENT_LISTEN_BROKER
+        ),
+        Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN),
+    ]
+    # Act
+    verdict = decide("x", signals)
+    # Assert
+    assert verdict.verdict == ALIVE
+
+
+def test_a_lone_wedged_signal_yields_wedged():
+    # Arrange
+    signals = [Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN)]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert
+    assert verdict.verdict == WEDGED
+
+
+def test_a_wedged_verdict_authorises_nothing_destructive():
+    """WEDGED is present-but-stuck, not a corpse — a restart cures it, not a kill."""
+    # Arrange
+    signals = [Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN)]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert
+    assert verdict.may_destroy is False
+
+
+def test_a_wedged_veto_reason_points_at_a_restart_not_destruction():
+    # Arrange
+    signals = [Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN)]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert
+    assert "restart" in verdict.destroy_veto_reason
+
+
+def test_a_wedged_verdict_reports_is_wedged():
+    # Arrange
+    signals = [Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN)]
+    # Act
+    verdict = decide("clew", signals)
+    # Assert
+    assert verdict.is_wedged is True
+
+
+def test_a_screen_unknown_does_not_suppress_a_real_process_alive():
+    """A CLEAN pane is UNKNOWN (not proof of life), and UNKNOWN suppresses
+    nothing — a genuine process ALIVE still wins."""
+    # Arrange
+    signals = [
+        Signal(SOURCE_SCREEN, UNKNOWN, "fresh clean pane", INSTRUMENT_TUI_SCREEN),
+        Signal(SOURCE_PROCESS, ALIVE, "tmux up", INSTRUMENT_HOST_TMUX),
+    ]
+    # Act
+    verdict = decide("x", signals)
+    # Assert
+    assert verdict.verdict == ALIVE
+
+
+def test_a_wedged_beats_a_dead_because_wedged_is_never_destroyable():
+    """Precedence: WEDGED (rule 2) sits ABOVE any DEAD (rule 4).
+
+    A fresh WEDGE + a contradictory DEAD (a rare race) resolves to the SAFE,
+    non-destructive WEDGED rather than a DEAD that could arm a kill.
+    """
+    # Arrange
+    signals = [
+        Signal(SOURCE_SCREEN, WEDGED, "frozen banner", INSTRUMENT_TUI_SCREEN),
+        Signal(SOURCE_PROCESS, DEAD, "tmux has no session", INSTRUMENT_HOST_TMUX),
+    ]
+    # Act
+    verdict = decide("x", signals)
+    # Assert
+    assert verdict.verdict == WEDGED
+
+
+def test_the_screen_instrument_may_never_report_a_death():
+    """WEDGED is the one non-pole state, but the screen sensor still cannot DEAD.
+
+    A ``Signal(SOURCE_SCREEN, DEAD, ...)`` must raise: the pane, and the process
+    behind it, are PRESENT — DEAD would arm a destruction against a living
+    process. The InstrumentSpec (verdicts = WEDGED/UNKNOWN) forbids it.
+    """
+    # Arrange
+    instrument = INSTRUMENT_TUI_SCREEN
+    # Act
+    # (constructing the Signal IS the act under test — it must refuse.)
+    # Assert
+    with pytest.raises(ValueError, match="may not emit"):
+        Signal(SOURCE_SCREEN, DEAD, "a corpse, allegedly", instrument)
