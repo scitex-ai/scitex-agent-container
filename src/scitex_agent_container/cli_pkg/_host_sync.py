@@ -25,6 +25,7 @@ from .._hostsync import (
     SyncResult,
     check_peer,
     exit_code_for,
+    route_reports_to_cards,
     sync_peer,
     syncable_peers,
 )
@@ -128,6 +129,17 @@ def _print_result(result: SyncResult) -> None:
 @click.option("--repo", default=DEFAULT_REPO, help="owner/name for the CI guard.")
 @click.option("--timeout", type=int, default=120, help="Per-ssh wall-clock cap (s).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
+@click.option(
+    "--alarm",
+    is_flag=True,
+    default=False,
+    help=(
+        "READ-ONLY (requires --check): route each peer's verdict to an "
+        "idempotent scitex-todo card — upsert on drift/unknown, resolve on "
+        "clean — so the shout is SEEN on the board, not just in a log. "
+        "Mutates no peer."
+    ),
+)
 @click.pass_context
 def host_sync(
     ctx: click.Context,
@@ -139,6 +151,7 @@ def host_sync(
     repo: str,
     timeout: int,
     as_json: bool,
+    alarm: bool,
 ) -> None:
     """Reconcile a peer's sac checkout to the centre's code. One-way.
 
@@ -182,6 +195,14 @@ def host_sync(
             "give exactly one of PEER or --all  "
             "(e.g. `sac host sync --check spartan` or `sac host sync --check --all`)"
         )
+    if alarm and not check_only:
+        # Structural safety: the alarm rides ONLY the read-only detector. It
+        # must never be reachable from a mutating sync run — a scheduled
+        # alarm that could fast-forward a peer is Stage 1, not this.
+        raise click.UsageError(
+            "--alarm only rides the read-only --check form (never a mutating "
+            "sync).  Use:  sac host sync --check --all --alarm"
+        )
 
     cfg = _load_cfg()
     targets = syncable_peers(cfg) if all_peers else [peer or ""]
@@ -208,17 +229,25 @@ def host_sync(
 
     code = exit_code_for([r.outcome for r in results])
 
+    # Make the shout SEEN: route each verdict to an idempotent board card
+    # (upsert on drift/unknown, resolve on clean). This runs in BOTH output
+    # modes — the card is the delivery, independent of the console report.
+    alarm_outcome = route_reports_to_cards(results) if alarm else None
+
     if _json_flag(ctx, as_json):
-        click.echo(
-            json.dumps(
-                {
-                    "mode": "check" if check_only else "sync",
-                    "exit_code": code,
-                    "peers": [r.to_dict() for r in results],
-                },
-                indent=2,
-            )
-        )
+        payload: dict = {
+            "mode": "check" if check_only else "sync",
+            "exit_code": code,
+            "peers": [r.to_dict() for r in results],
+        }
+        if alarm_outcome is not None:
+            payload["alarm"] = {
+                "drifted": list(alarm_outcome.drifted),
+                "undetermined": list(alarm_outcome.undetermined),
+                "cleared": list(alarm_outcome.cleared),
+                "failed": list(alarm_outcome.failed),
+            }
+        click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
 
     mode = "check (read-only)" if check_only else "sync"
@@ -240,6 +269,8 @@ def host_sync(
             "[green]all peers match the centre[/green] "
             "[dim](verified by loaded-module path + symbol, not by version string)[/dim]"
         )
+    if alarm_outcome is not None:
+        console.print(f"[dim]{alarm_outcome.summary_line()}[/dim]")
     raise SystemExit(code)
 
 

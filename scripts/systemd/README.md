@@ -495,3 +495,16 @@ mutation is atomic write-back of the refreshed access_token to the
 per-account credentials file. The unit exits non-zero only when EVERY
 targeted account's refresh failed — that's the operator's signal that a
 real `claude /login` is finally needed.
+
+# sac.host-sync-check — federated timer (peer drift alarm)
+
+A SECOND federated `scitex_dev.jobs` job (same mechanism as above;
+`_jobs_plugin.py`). Runs `sac host sync --check --all --alarm` hourly:
+the **read-only** one-way-sync drift detector (mutates no peer), with
+`--alarm` routing each verdict to an idempotent scitex-todo card
+(`host-sync-drift-<peer>`, `status=blocked`/`blocker=operator-decision`)
+— upsert on drift/unknown, resolve on clean. This makes the Stage-0
+detector (PR #690), previously scheduled nowhere, actually RUN and be
+SEEN on the board instead of in a log nobody reads. Install with
+`sac dev systemd install --yes`, then
+`systemctl --user enable --now sac.host-sync-check.timer`.

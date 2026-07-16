@@ -37,13 +37,14 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_one_job() -> None:
-    # Arrange — call the registered provider. One, not two: `sac listen` is
-    # NOT federated (see the module docstring and the absence-pin below).
+def test_provider_returns_two_jobs() -> None:
+    # Arrange — call the registered provider. Two: accounts-refresh and the
+    # host-sync-check drift alarm. `sac listen` is still NOT federated (see
+    # the module docstring and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 1
+    assert len(jobs) == 2
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -142,3 +143,55 @@ def test_provider_does_not_federate_listen_it_would_duplicate_the_supervisor() -
     names = [spec.name for spec in provide_jobs()]
     # Assert
     assert "sac.listen" not in names
+
+
+def test_host_sync_check_job_name_is_package_prefixed() -> None:
+    # Arrange — the drift-alarm timer that makes the Stage-0 detector run.
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert
+    assert job.name == "sac.host-sync-check"
+
+
+def test_host_sync_check_job_kind_is_timer() -> None:
+    # Arrange — a periodic systemd --user timer (hourly), so kind="timer".
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_host_sync_check_command_is_the_readonly_check() -> None:
+    # Arrange — the scheduled command MUST carry --check. A timer that could
+    # fast-forward a peer unattended is Stage 1, explicitly out of scope.
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert
+    assert "--check" in job.command
+
+
+def test_host_sync_check_command_routes_to_a_seen_card() -> None:
+    # Arrange — --alarm is what turns the exit code into a SEEN board card
+    # instead of a journald line nobody reads.
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert
+    assert "--alarm" in job.command
+
+
+def test_host_sync_check_command_never_runs_the_mutating_remedy() -> None:
+    # Arrange — belt-and-braces: the exact mutating form `sac host sync
+    # <peer>` (no --check) must never be what this timer runs. The command
+    # is the read-only detector, full stop.
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert — the command is precisely the read-only check+alarm form.
+    assert job.command == "sac host sync --check --all --alarm"
+
+
+def test_host_sync_check_cadence_is_hourly() -> None:
+    # Arrange — drift is slow-moving; hourly is ample and gentle on ssh.
+    # Act
+    job = _job("sac.host-sync-check")
+    # Assert
+    assert job.on_unit_active_sec == "1h"

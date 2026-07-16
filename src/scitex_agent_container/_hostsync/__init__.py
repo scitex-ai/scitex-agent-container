@@ -30,6 +30,7 @@ The invariants, each one paid for:
   what it verified.
 """
 
+from ._alarm import AlarmOutcome, card_id_for, route_reports_to_cards
 from ._apply import FastForwardResult, apply_fast_forward
 from ._ci_guard import DEFAULT_REPO, CiState, CiVerdict, check_ci_idle
 from ._model import GraphState, PeerSyncReport, SyncDecision, sync_decision
@@ -45,6 +46,7 @@ from ._sync import (
 
 __all__ = [
     "DEFAULT_REPO",
+    "AlarmOutcome",
     "CiState",
     "CiVerdict",
     "FastForwardResult",
@@ -54,10 +56,12 @@ __all__ = [
     "SyncDecision",
     "SyncResult",
     "apply_fast_forward",
+    "card_id_for",
     "check_ci_idle",
     "check_peer",
     "exit_code_for",
     "probe_peer",
+    "route_reports_to_cards",
     "sync_decision",
     "sync_peer",
     "syncable_peers",

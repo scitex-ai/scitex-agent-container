@@ -138,3 +138,47 @@ def test_neither_peer_nor_all_is_a_usage_error(cfg_path):
     result = CliRunner().invoke(host_sync, ["--check"])
     # Assert
     assert result.exit_code == 2
+
+
+def test_alarm_without_check_is_a_usage_error(cfg_path):
+    # Arrange — the alarm must ride ONLY the read-only --check form; a
+    # scheduled alarm that could fast-forward a peer is Stage 1.
+    # Act
+    result = CliRunner().invoke(host_sync, ["--alarm", "--all"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_alarm_writes_a_card_for_a_stale_peer(
+    cfg_path, subprocess_shim, env_save_restore, tmp_path
+):
+    # Arrange — a real temp board, redirected via the documented env var,
+    # and a peer 4 commits behind the centre.
+    scitex_todo = pytest.importorskip("scitex_todo")
+    store = str(tmp_path / "board.yaml")
+    env_save_restore.set("SCITEX_TODO_TASKS_YAML_SHARED", store)
+    subprocess_shim.install(
+        "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
+    )
+    # Act — the exact read-only check+alarm form the timer runs.
+    CliRunner().invoke(host_sync, ["--check", "spartan", "--alarm"])
+    # Assert — the shout is SEEN: a card for spartan is on the board.
+    ids = [t["id"] for t in scitex_todo.list_tasks(store, blocking_me=True)]
+    assert ids == ["host-sync-drift-spartan"]
+
+
+def test_alarm_is_read_only_and_runs_no_merge(
+    cfg_path, subprocess_shim, env_save_restore, tmp_path
+):
+    # Arrange — a drifted peer plus a redirected board so nothing touches
+    # the real store.
+    pytest.importorskip("scitex_todo")
+    env_save_restore.set("SCITEX_TODO_TASKS_YAML_SHARED", str(tmp_path / "board.yaml"))
+    subprocess_shim.install(
+        "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
+    )
+    # Act
+    CliRunner().invoke(host_sync, ["--check", "spartan", "--alarm"])
+    calls = subprocess_shim.invocations("ssh")
+    # Assert — --alarm rides the read-only detector; it never mutates a peer.
+    assert not any("merge --ff-only" in " ".join(argv) for argv in calls)

@@ -21,12 +21,23 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    One job today:
+    Two jobs today:
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
       active one (``--include-active``), mirroring the rotated token back
       into the live ``~/.claude`` login (``--sync-active-login``).
+
+    * ``sac.host-sync-check`` (``kind="timer"``) — the READ-ONLY peer
+      drift detector ``sac host sync --check --all``, run hourly with
+      ``--alarm`` so each peer's verdict is routed to an idempotent
+      scitex-todo card (upsert on drift/unknown, resolve on clean). This
+      is what makes the Stage-0 detector (PR #690) actually RUN and be
+      SEEN: shipped but scheduled nowhere, it was an inert alarm. The job
+      mutates NOTHING on any peer — it never calls the fast-forward
+      remedy (that is Stage 1). ``--alarm`` is gated to require
+      ``--check`` in the CLI, so this scheduled command is read-only by
+      construction.
 
     ``sac listen`` is DELIBERATELY NOT declared here, and adding it back
     would take the fleet's control plane down. scitex-dev derives a unit
@@ -79,10 +90,7 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="sac.accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
-            command=(
-                "sac accounts refresh --all --include-active "
-                "--sync-active-login"
-            ),
+            command=("sac accounts refresh --all --include-active --sync-active-login"),
             description=(
                 "Headless OAuth access-token refresh for all stored Claude "
                 "accounts including the active one (sole-refresher model), "
@@ -102,6 +110,29 @@ def provide_jobs() -> "list[JobSpec]":
             on_boot_sec="15min",
             on_unit_active_sec="2h",
             timeout_sec=120,
+        ),
+        JobSpec(
+            name="sac.host-sync-check",
+            schedule="0 * * * *",  # hourly (cron form; timer cadence below)
+            command="sac host sync --check --all --alarm",
+            description=(
+                "Read-only drift check of every peer's sac checkout vs the "
+                "centre; routes each verdict to an idempotent scitex-todo "
+                "card (upsert on drift/unknown, resolve on clean) so the "
+                "shout is SEEN on the board. Mutates nothing on any peer — "
+                "never runs the fast-forward remedy (Stage 1)."
+            ),
+            kind="timer",
+            # First check 10min after boot/login (peers reachable, listen
+            # settled), then hourly. Drift is slow-moving relative to the
+            # 2h token refresh, so hourly is ample and gentle on ssh.
+            on_boot_sec="10min",
+            on_unit_active_sec="1h",
+            # Sequential per-ssh probe over every peer, each capped at the
+            # verb's 120s default (an unreachable peer waits its ssh
+            # connect-timeout). 600s comfortably covers a handful of peers
+            # including a slow/unreachable one without ever hanging forever.
+            timeout_sec=600,
         ),
     ]
 
