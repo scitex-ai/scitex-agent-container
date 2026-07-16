@@ -50,16 +50,19 @@ __all__ = [
     "ALIVE",
     "DEAD",
     "UNKNOWN",
+    "WEDGED",
     "SOURCE_DELIVERY",
     "SOURCE_HEARTBEAT",
     "SOURCE_PROCESS",
     "SOURCE_REGISTRY",
     "SOURCE_RESOLVER",
+    "SOURCE_SCREEN",
     "INSTRUMENT_AGENT_SELF",
     "INSTRUMENT_HOST_TMUX",
     "INSTRUMENT_LISTEN_BROKER",
     "INSTRUMENT_NO_OBSERVATION",
     "INSTRUMENT_PID_NAMESPACE",
+    "INSTRUMENT_TUI_SCREEN",
     "INSTRUMENTS",
     "CONVICTING_INSTRUMENTS",
     "INSTRUMENT_INDEPENDENCE",
@@ -67,10 +70,29 @@ __all__ = [
     "Signal",
 ]
 
-# The three states. There is no fourth, and there is deliberately no bool.
+# The three CORE states — ALIVE / DEAD / UNKNOWN — and WEDGED, a fourth that is
+# deliberately NOT a pole. There is still no bool.
+#
+# ALIVE / DEAD / UNKNOWN are the ternary every PROXY sensor speaks: observed
+# alive, a corroborated absence, or "I could not tell". WEDGED is different in
+# KIND — it is the answer of the one instrument that reads whether the agent is
+# WORKING rather than merely PRESENT. The process exists and its tmux session is
+# up (so every pid/session proxy reads ALIVE), yet a frozen auth-rejection banner
+# sits on its pane and it is doing nothing. WEDGED is NOT a pole:
+#
+#   * a wedged agent is PRESENT, so DEAD — "positive evidence of absence" — would
+#     be a lie, and destruction is NEVER authorised on it (``may_destroy`` gates
+#     on DEAD, so a WEDGED verdict can arm nothing); yet
+#   * it is not WORKING, so ALIVE would be exactly the false-green this state
+#     exists to kill (``is_alive`` stays ``verdict == ALIVE``, so WEDGED reads
+#     is_alive False by construction — the hard requirement).
+#
+# See :func:`.._verdict.decide` for where WEDGED sits in the precedence (below a
+# delivery-ALIVE, above the pid/session positive-life step).
 ALIVE = "alive"
 DEAD = "dead"
 UNKNOWN = "unknown"
+WEDGED = "wedged"
 
 # Signal SOURCES — the reporter that carried the news. Descending evidential
 # strength. NOTE: a source is NOT a sensor; see the module docstring.
@@ -79,6 +101,9 @@ SOURCE_PROCESS = "process"  # a process/session probe (pane pid, apptainer pid).
 SOURCE_HEARTBEAT = "heartbeat"  # a beat file someone refreshed.
 SOURCE_REGISTRY = "registry"  # a row in a table. A declaration, not an observation.
 SOURCE_RESOLVER = "resolver"  # the gatherer itself failed. Observes nothing, ever.
+SOURCE_SCREEN = (
+    "screen"  # the rendered CONTENT of the tui pane. Reads WORKING, not presence.
+)
 
 # Signal INSTRUMENTS — what PHYSICALLY made the observation.
 INSTRUMENT_LISTEN_BROKER = "listen_broker"
@@ -86,6 +111,7 @@ INSTRUMENT_HOST_TMUX = "host_tmux"
 INSTRUMENT_PID_NAMESPACE = "pid_namespace"
 INSTRUMENT_AGENT_SELF = "agent_self"
 INSTRUMENT_NO_OBSERVATION = "no_observation"
+INSTRUMENT_TUI_SCREEN = "tui_screen"
 
 
 @dataclass(frozen=True)
@@ -182,6 +208,32 @@ INSTRUMENT_INDEPENDENCE: dict[str, InstrumentSpec] = {
         verdicts=frozenset({UNKNOWN}),
         blind_when="always — by definition it observed nothing",
     ),
+    INSTRUMENT_TUI_SCREEN: InstrumentSpec(
+        reads=(
+            "the rendered CONTENT of the tui-<name> pane — whether a FROZEN auth "
+            "banner sits directly above the input prompt (read from the cached "
+            "``sac agents auth-status`` verdict, itself produced by the "
+            "2-run-frozen matcher). It observes whether the agent is WORKING, as "
+            "opposed to every pid/session sensor which observes only that the "
+            "process is PRESENT. A tmux-GREEN agent stuck under an auth-rejection "
+            "banner — pid alive, session up, doing nothing — is the exact "
+            "false-green this instrument exists to catch."
+        ),
+        # Never ALIVE (a clean pane is not proof of life — the agent may be busy,
+        # idle, or wedged in a way this banner match does not recognise) and
+        # never DEAD (the pane, and the process behind it, are PRESENT — a wedged
+        # agent is not a corpse, and DEAD would arm a destruction against a living
+        # process). It emits exactly WEDGED (a frozen banner) or UNKNOWN. Because
+        # DEAD ∉ verdicts, ``may_convict`` is False and it is absent from
+        # CONVICTING_INSTRUMENTS — it can NEVER arm a destroy.
+        verdicts=frozenset({WEDGED, UNKNOWN}),
+        blind_when=(
+            "the pane is uncapturable, there is no tui-<name> session on this "
+            "host, we are inside a container (the host's tmux is in another mount "
+            "namespace), or the auth-status cache is stale or absent — all of "
+            "which degrade to UNKNOWN, never a false WEDGE"
+        ),
+    ),
 }
 
 INSTRUMENTS = frozenset(INSTRUMENT_INDEPENDENCE)
@@ -228,12 +280,17 @@ class Signal:
     instrument: str
 
     def __post_init__(self) -> None:
-        if self.verdict not in (ALIVE, DEAD, UNKNOWN):
+        if self.verdict not in (ALIVE, DEAD, UNKNOWN, WEDGED):
             raise ValueError(
                 f"Signal.verdict must be one of {ALIVE!r} / {DEAD!r} / "
-                f"{UNKNOWN!r}, got {self.verdict!r}. A liveness signal is "
-                f"never a bool — 'I could not tell' is a first-class answer "
-                f"and must be spelled {UNKNOWN!r}, never collapsed into a pole."
+                f"{UNKNOWN!r} / {WEDGED!r}, got {self.verdict!r}. A liveness "
+                f"signal is never a bool — 'I could not tell' is a first-class "
+                f"answer and must be spelled {UNKNOWN!r}, never collapsed into a "
+                f"pole. {WEDGED!r} (present but not working) is the one non-pole "
+                f"state, and the InstrumentSpec still decides WHICH instrument "
+                f"may emit it (only the screen sensor), so a "
+                f"Signal(..., {WEDGED!r}, ...) on any other instrument still "
+                f"raises below."
             )
         spec = INSTRUMENT_INDEPENDENCE.get(self.instrument)
         if spec is None:

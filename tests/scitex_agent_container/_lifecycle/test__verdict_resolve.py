@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -25,7 +26,9 @@ from scitex_agent_container._lifecycle._verdict import (
     SOURCE_HEARTBEAT,
     SOURCE_PROCESS,
     SOURCE_REGISTRY,
+    SOURCE_SCREEN,
     UNKNOWN,
+    WEDGED,
 )
 from scitex_agent_container._lifecycle._verdict_resolve import (
     _tmux_probe_ran,
@@ -33,6 +36,7 @@ from scitex_agent_container._lifecycle._verdict_resolve import (
     process_signal,
     registry_signal,
     remote_process_signal,
+    screen_signal,
 )
 
 
@@ -631,3 +635,163 @@ def test_remote_process_signal_multihop_argv_wraps_cmd_in_bash_c(spartan_config)
         el.startswith("bash -c ") and "tmux has-session -t tui-proj-x" in el
         for el in argv
     )
+
+
+# --------------------------------------------------------------------------
+# screen_signal — the WORKING sensor, driven through the REAL
+# ``auth_state.verdict_for`` with REAL cached-row dicts and a REAL clock (no
+# mocks: ``read_state`` is an injection seam returning a real dict). All the
+# freshness / SUPERSEDED honesty lives in ``verdict_for``, so these pin that a
+# WEDGED reaches decide() ONLY when the cache is fresh AND this-incarnation —
+# every other read (stale, superseded, clean, never-checked) degrades to
+# UNKNOWN, never a false WEDGE.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def screen_now() -> datetime:
+    """A fixed reference instant, so freshness/scope assertions are deterministic."""
+    return datetime(2026, 7, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _screen_stamp(moment: datetime) -> str:
+    """``moment`` in the exact ISO-8601 UTC 'Z' shape the auth store writes."""
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_fresh_auth_failed_row_reads_wedged(screen_now):
+    """The P0 at the resolver level: a fresh frozen banner ⇒ WEDGED."""
+    # Arrange — checked 60s ago, this incarnation started an hour ago.
+    row = {
+        "auth_failed": True,
+        "checked_at": _screen_stamp(screen_now - timedelta(seconds=60)),
+        "banner": "Login expired",
+        "reason": "revoked",
+    }
+    # Act
+    signal = screen_signal(
+        "clew",
+        started_at=_screen_stamp(screen_now - timedelta(hours=1)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.verdict == WEDGED
+
+
+def test_a_wedged_screen_signal_carries_the_banner_and_remedy(screen_now):
+    """The evidence must be specific — the operator learns WHAT and WHAT TO DO."""
+    # Arrange
+    row = {
+        "auth_failed": True,
+        "checked_at": _screen_stamp(screen_now - timedelta(seconds=60)),
+        "banner": "Login expired",
+        "reason": "revoked",
+    }
+    # Act
+    signal = screen_signal(
+        "clew",
+        started_at=_screen_stamp(screen_now - timedelta(hours=1)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert — a revoked token's remedy is a restart, and it says so.
+    assert "restart" in signal.detail
+
+
+def test_a_fresh_clean_row_reads_unknown_not_alive(screen_now):
+    """A clean pane is NOT proof of life — only the absence of a known wedge."""
+    # Arrange — fresh, auth_failed False.
+    row = {
+        "auth_failed": False,
+        "checked_at": _screen_stamp(screen_now - timedelta(seconds=60)),
+    }
+    # Act
+    signal = screen_signal(
+        "worker",
+        started_at=_screen_stamp(screen_now - timedelta(hours=1)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+def test_a_stale_auth_failed_row_reads_unknown_never_a_stale_wedge(screen_now):
+    """A verdict older than 900s is weak evidence — the banner may be cleared.
+
+    A stale cache must never be rendered as a current WEDGE, so it degrades to
+    UNKNOWN rather than asserting a wedge that may no longer be true.
+    """
+    # Arrange — checked 6 hours ago (>> 900s STALE_AFTER_S).
+    row = {
+        "auth_failed": True,
+        "checked_at": _screen_stamp(screen_now - timedelta(hours=6)),
+        "banner": "Login expired",
+    }
+    # Act
+    signal = screen_signal(
+        "clew",
+        started_at=_screen_stamp(screen_now - timedelta(hours=12)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+def test_a_superseded_auth_failed_row_reads_unknown(screen_now):
+    """A verdict stamped BEFORE this incarnation's start describes a PREVIOUS
+    life — a restarted agent must never still read wedged.
+
+    verdict_for discards a ``checked_at`` older than ``started_at`` (reports it as
+    never-checked), so screen_signal sees no ``auth_checked_at`` and reports
+    UNKNOWN.
+    """
+    # Arrange — checked 2h ago, but this incarnation started only 1h ago.
+    row = {
+        "auth_failed": True,
+        "checked_at": _screen_stamp(screen_now - timedelta(hours=2)),
+        "banner": "Login expired",
+    }
+    # Act
+    signal = screen_signal(
+        "clew",
+        started_at=_screen_stamp(screen_now - timedelta(hours=1)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+def test_a_never_checked_agent_reads_unknown(screen_now):
+    """No cached row at all ⇒ the screen was not read ⇒ UNKNOWN, never a wedge."""
+    # Arrange — the auth cache has no row for this agent.
+    # Act
+    signal = screen_signal(
+        "ghost",
+        started_at=_screen_stamp(screen_now),
+        read_state=lambda _n: None,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.verdict == UNKNOWN
+
+
+def test_screen_signal_is_sourced_as_screen(screen_now):
+    # Arrange
+    row = {
+        "auth_failed": True,
+        "checked_at": _screen_stamp(screen_now - timedelta(seconds=60)),
+        "banner": "Login expired",
+    }
+    # Act
+    signal = screen_signal(
+        "clew",
+        started_at=_screen_stamp(screen_now - timedelta(hours=1)),
+        read_state=lambda _n: row,
+        now=screen_now,
+    )
+    # Assert
+    assert signal.source == SOURCE_SCREEN
