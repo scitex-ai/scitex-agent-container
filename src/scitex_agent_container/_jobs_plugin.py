@@ -21,7 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Three jobs today:
+    Four jobs today:
+
+    * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
+      "should be running ⇒ is running". Restarts agents whose tmux session
+      is gone though their spec asks to be kept running and nothing recorded
+      a deliberate stop. See its inline comment: the spec field it enforces
+      (``restart.policy``) is dead code without it, and 33 agents once
+      stayed dead for hours because of that.
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
@@ -174,6 +181,42 @@ def provide_jobs() -> "list[JobSpec]":
             # forever. Every gh failure already degrades to KEEP, so a
             # timeout costs a skipped reap, never a wrong one.
             timeout_sec=900,
+        ),
+        JobSpec(
+            name="sac.fleet-reconcile",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
+            command="sac agents reconcile --apply",
+            description=(
+                "The enforcer of 'should be running => is running'. Restarts "
+                "agents whose tmux session is GONE while their spec asks to be "
+                "kept running AND nothing recorded a deliberate stop. Only ever "
+                "touches a CORPSE (no session => no context to lose); never a "
+                "live-but-wedged agent (auth-heal owns those) and never a "
+                "deliberately-stopped one. Rate-limited (30min/agent debounce, "
+                "<=2/agent/hour, <=10/pass); an agent it cannot recover gets a "
+                "scitex-todo card instead of an endless bounce."
+            ),
+            kind="timer",
+            # THIS JOB IS THE MECHANISM, not an optimisation. `restart.policy`
+            # in ~93 specs is dead code — `_lifecycle/_start.py` launches the
+            # loop that reads it on a `daemon=True` thread and then returns,
+            # and `sac agents start` is a short-lived CLI, so the supervisor
+            # dies with the process that promised it. Nothing else owns fleet
+            # liveness: `sac listen`'s reconciler only alarms on stuck CARDS.
+            # An OAuth rotation killed 33 agents and they stayed dead until the
+            # operator noticed by chance. Unschedule this and that returns.
+            #
+            # 5min: the window an agent stays dead. A pass that finds nothing
+            # (the normal case) is one batched `tmux list-sessions` plus a spec
+            # read each — cheap enough to run often.
+            on_boot_sec="5min",
+            on_unit_active_sec="5min",
+            # A no-op pass takes ~seconds; this bounds the pathological one
+            # (`--limit` restarts, each a stop+settle+start). A pass killed at
+            # this timeout is SAFE: the restart history is persisted per
+            # restart, not at the end, so the next tick still honours the
+            # debounce for anything already bounced.
+            timeout_sec=300,
         ),
     ]
 
