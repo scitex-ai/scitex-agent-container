@@ -30,8 +30,8 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen._acl import check_send_acl, check_spawn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state import registry as _reg
+from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import block_send
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
@@ -286,7 +286,10 @@ def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
     # Act
     _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
-    assert reason is not None and "neither the developer nor research group" in reason
+    assert (
+        reason is not None
+        and "none of the developer, research, or privileged groups" in reason
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +532,9 @@ def test_http_agents_start_403_carries_role_policy_text(
         )
     body_json = r.json()
     # Assert
-    assert "neither the developer nor research group" in body_json.get("reason", "")
+    assert "none of the developer, research, or privileged groups" in body_json.get(
+        "reason", ""
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,9 +557,7 @@ def _denied_attempt_rows(target: str, db_path: Path) -> list[dict]:
     receiver coming online sees after the denial.
     """
     rows = list_undelivered(target=target, db_path=db_path)
-    return [
-        r for r in rows if (r["event"] or {}).get("kind") == "denied_attempt"
-    ]
+    return [r for r in rows if (r["event"] or {}).get("kind") == "denied_attempt"]
 
 
 # Scenarios are computed once per test function via fixtures; each
@@ -737,9 +740,7 @@ def fanout_scope_scenario(isolated_listen_env, db_path: Path) -> dict:
     return {
         "resp": resp,
         "target_notifs": _denied_attempt_rows(target="child-2", db_path=db_path),
-        "bystander_notifs": _denied_attempt_rows(
-            target="bystander", db_path=db_path
-        ),
+        "bystander_notifs": _denied_attempt_rows(target="bystander", db_path=db_path),
         "empty_notifs": _denied_attempt_rows(target="", db_path=db_path),
     }
 

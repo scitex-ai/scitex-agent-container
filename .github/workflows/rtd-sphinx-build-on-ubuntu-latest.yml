@@ -46,6 +46,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v3
         with:
+          # PINNED: unpinned `latest` made CI a function of wall-clock
+          # time and runner cache state. See sac-ci-pin-uv-version-*.
+          version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
       - name: Install package + docs deps

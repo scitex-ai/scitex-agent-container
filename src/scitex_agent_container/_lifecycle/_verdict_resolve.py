@@ -50,6 +50,8 @@ from ._verdict import (
     Signal,
     decide,
 )
+from ._verdict_remote import _remote_peer_for_config, remote_process_signal
+from ._verdict_screen import screen_signal, started_at_for
 from ._verdict_state import HEARTBEAT_STALE_S, heartbeat_signal, registry_signal
 from ._verdict_tmux import in_sif as _in_sif  # noqa: F401  (kept as a seam alias)
 from ._verdict_tmux import (
@@ -65,7 +67,9 @@ __all__ = [
     "heartbeat_signal",
     "process_signal",
     "registry_signal",
+    "remote_process_signal",
     "resolve_verdict",
+    "screen_signal",
 ]
 
 
@@ -301,6 +305,7 @@ def resolve_verdict(
     process: Callable[[Any, Any], Signal] | None = None,
     heartbeat: Callable[[str], Signal] | None = None,
     registry: Callable[[str], Signal] | None = None,
+    screen: Callable[[str], Signal] | None = None,
 ) -> LivenessVerdict:
     """Gather every signal we can, then fold them with :func:`._verdict.decide`.
 
@@ -310,7 +315,8 @@ def resolve_verdict(
 
     Every collaborator is an injection seam taking REAL callables (no mocks —
     the suite drives real tmux sockets, real processes, real files through
-    these).
+    these). ``screen`` (the WORKING sensor) folds in for a TUI agent only — see
+    :func:`._verdict_screen.screen_signal`.
     """
     signals: list[Signal] = []
     kind = str(getattr(config, "runtime", "") or "") if config is not None else ""
@@ -318,7 +324,16 @@ def resolve_verdict(
     signals.append((delivery or delivery_signal)(name))
 
     if config is not None and runtime is not None:
-        signals.append((process or process_signal)(config, runtime))
+        peer = _remote_peer_for_config(config)
+        if peer is not None and process is None:
+            # Remote agent: the LOCAL tmux is blind to it (its session lives on
+            # the peer), so the ordinary process_signal reads DEAD and the
+            # agent vanishes from `sac agents list`. Probe the peer's tmux over
+            # ssh instead — control-plane cross-host liveness. An injected
+            # `process` still wins, so the local verdict suite is unaffected.
+            signals.append(remote_process_signal(config, peer))
+        else:
+            signals.append((process or process_signal)(config, runtime))
 
     if heartbeat is None:
         # runtime_kind decides WHOSE writer produced the beat, hence which
@@ -329,5 +344,18 @@ def resolve_verdict(
         signals.append(heartbeat(name))
 
     signals.append((registry or registry_signal)(name))
+
+    # SCREEN — the WORKING sensor. A wedged TUI agent's tmux session exists and
+    # its pane pid is alive, so process/heartbeat/registry all read PRESENCE-ALIVE
+    # while it does nothing. The screen signal reads the pane's rendered CONTENT
+    # (a frozen auth banner) and reports WEDGED, which decide() ranks ABOVE those
+    # presence-ALIVEs. TUI only — a pid-based runtime has no tui pane to read. An
+    # injected ``screen`` always wins (the test seam); otherwise we read the auth
+    # cache, passing this incarnation's started_at so a pre-restart (SUPERSEDED)
+    # verdict is discarded rather than read as wedged.
+    if screen is not None:
+        signals.append(screen(name))
+    elif kind == "tui":
+        signals.append(screen_signal(name, started_at=started_at_for(name)))
 
     return decide(name, signals)

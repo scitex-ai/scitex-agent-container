@@ -52,8 +52,12 @@ def gc_dead_instances(
        is older than ``heartbeat_stale_seconds``, mark
        ``exit_reason='gc-stale'``.
 
-    Cross-host instances are NOT swept (we have no liveness signal
-    for them; F-CS12 will add ssh-based probing).
+    Cross-host (``remote=1``) instances are NEVER swept, by construction
+    in all three branches: reboot + pid are ``host=<self>``-scoped (a
+    peer's row has a different host), and the heartbeat sweep carries an
+    explicit ``AND remote=0``. We have no local liveness signal for a
+    remote agent — ``sac agents list`` ssh-probes the peer live instead of
+    tombstoning it here.
 
     ``dry_run=True`` runs all three checks but emits zero UPDATE
     statements — counters reflect what *would* be swept.
@@ -116,9 +120,16 @@ def gc_dead_instances(
                     )
                 counters["crashed"] += 1
 
+        # ``AND remote=0`` — the heartbeat sweep is the ONE branch without a
+        # host filter, so without this a cross-host (``remote=1``) row could be
+        # reaped from the master the instant a stale ``last_heartbeat_at`` were
+        # ever written to it. A master remote row is safe TODAY only because its
+        # heartbeat is NULL; this makes "cross-host instances are never swept"
+        # true BY CONSTRUCTION across all three branches (reboot + pid are
+        # already ``host=<self>``-scoped), not merely true by accident.
         cur = conn.execute(
             "SELECT id, last_heartbeat_at FROM instances "
-            "WHERE ended_at IS NULL AND last_heartbeat_at IS NOT NULL"
+            "WHERE ended_at IS NULL AND last_heartbeat_at IS NOT NULL AND remote=0"
         ).fetchall()
         for row in cur:
             try:

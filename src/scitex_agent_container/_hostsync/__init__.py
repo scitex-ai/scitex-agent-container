@@ -30,10 +30,24 @@ The invariants, each one paid for:
   what it verified.
 """
 
+from ._alarm import AlarmOutcome, card_id_for, route_reports_to_cards
 from ._apply import FastForwardResult, apply_fast_forward
 from ._ci_guard import DEFAULT_REPO, CiState, CiVerdict, check_ci_idle
 from ._model import GraphState, PeerSyncReport, SyncDecision, sync_decision
+from ._peer_config import (
+    GENERATED_HEADER_MARK,
+    is_generated,
+    listen_token_file,
+    render_peer_config,
+)
 from ._probe import probe_peer
+from ._push_config import (
+    ConfigVerdict,
+    PushConfigResult,
+    check_config_peer,
+    master_config_sha,
+    push_config_peer,
+)
 from ._sync import (
     Outcome,
     SyncResult,
@@ -42,22 +56,56 @@ from ._sync import (
     sync_peer,
     syncable_peers,
 )
+from ._token_rotate import RotateResult, push_master_bearer, rotate_peer_tokens
+from ._token_state import (
+    DEFAULT_LISTEN_PORT,
+    TokenStateResult,
+    TokenVerdict,
+    check_tokens_peer,
+    classify_token_state,
+    mint_bearer,
+    sha12,
+    stable_listen_token_name,
+)
 
 __all__ = [
+    "DEFAULT_LISTEN_PORT",
     "DEFAULT_REPO",
+    "GENERATED_HEADER_MARK",
+    "AlarmOutcome",
     "CiState",
     "CiVerdict",
+    "ConfigVerdict",
     "FastForwardResult",
     "GraphState",
     "Outcome",
     "PeerSyncReport",
+    "PushConfigResult",
+    "RotateResult",
     "SyncDecision",
     "SyncResult",
+    "TokenStateResult",
+    "TokenVerdict",
     "apply_fast_forward",
+    "card_id_for",
     "check_ci_idle",
+    "check_config_peer",
     "check_peer",
+    "check_tokens_peer",
+    "classify_token_state",
     "exit_code_for",
+    "is_generated",
+    "listen_token_file",
+    "master_config_sha",
+    "mint_bearer",
     "probe_peer",
+    "push_config_peer",
+    "push_master_bearer",
+    "render_peer_config",
+    "rotate_peer_tokens",
+    "route_reports_to_cards",
+    "sha12",
+    "stable_listen_token_name",
     "sync_decision",
     "sync_peer",
     "syncable_peers",

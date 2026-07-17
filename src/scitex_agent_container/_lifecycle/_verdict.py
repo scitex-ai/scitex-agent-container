@@ -33,14 +33,23 @@ Four rules, and they are the whole module
    that timed out, a peer on a host we cannot see → :data:`UNKNOWN`, named,
    with the reason attached. Not ``False``.
 
-2. **Positive evidence of life is never overruled.** If ANY signal observed
-   the agent alive, the verdict is :data:`ALIVE` — whatever the other signals
-   say. This is not a heuristic, it is a lesson: an earlier
+2. **Positive evidence of life is never overruled — but PRESENCE is not life.**
+   If a signal observed the agent ALIVE, the verdict is :data:`ALIVE` — whatever
+   the other signals say. This is not a heuristic, it is a lesson: an earlier
    ``pid AND port AND session_id`` predicate was refuted by ``scitex-writer``,
    which carried a stale ``startup_failed`` status, an unbound port and a null
    session_id — and was answering messages. Every one of those "dead" signals
    was a PROXY. The one that observed the agent itself said alive. Proxies
    lose.
+
+   The refinement WEDGED adds: a ``process`` / ``heartbeat`` / ``registry``
+   ALIVE observes only that the pid EXISTS — the session is up, the pane pid is
+   alive — NOT that the agent is WORKING. So those PRESENCE-ALIVEs are overruled
+   by a :data:`._verdict_instruments.WEDGED` from the screen instrument, which
+   read the pane's CONTENT and found a frozen auth banner (the ``scitex-clew``
+   auth-death that sat GREEN for two days). The one ALIVE that is real life, not
+   mere presence — a ``delivery`` ALIVE, the broker seeing the inbox reachable —
+   still wins outright. Presence loses to WEDGED; life does not.
 
 3. **Only a CORROBORATED DEAD may authorise destruction.** See
    :attr:`LivenessVerdict.may_destroy`. :data:`UNKNOWN` authorises NOTHING
@@ -98,13 +107,16 @@ from ._verdict_instruments import (
     INSTRUMENT_LISTEN_BROKER,
     INSTRUMENT_NO_OBSERVATION,
     INSTRUMENT_PID_NAMESPACE,
+    INSTRUMENT_TUI_SCREEN,
     INSTRUMENTS,
     SOURCE_DELIVERY,
     SOURCE_HEARTBEAT,
     SOURCE_PROCESS,
     SOURCE_REGISTRY,
     SOURCE_RESOLVER,
+    SOURCE_SCREEN,
     UNKNOWN,
+    WEDGED,
     InstrumentSpec,
     Signal,
 )
@@ -113,16 +125,19 @@ __all__ = [
     "ALIVE",
     "DEAD",
     "UNKNOWN",
+    "WEDGED",
     "SOURCE_DELIVERY",
     "SOURCE_HEARTBEAT",
     "SOURCE_PROCESS",
     "SOURCE_REGISTRY",
     "SOURCE_RESOLVER",
+    "SOURCE_SCREEN",
     "INSTRUMENT_AGENT_SELF",
     "INSTRUMENT_HOST_TMUX",
     "INSTRUMENT_LISTEN_BROKER",
     "INSTRUMENT_NO_OBSERVATION",
     "INSTRUMENT_PID_NAMESPACE",
+    "INSTRUMENT_TUI_SCREEN",
     "INSTRUMENTS",
     "CONVICTING_INSTRUMENTS",
     "INSTRUMENT_INDEPENDENCE",
@@ -142,6 +157,24 @@ __all__ = [
 _CORROBORATION_REQUIRED = 2
 
 
+def _first_clause(detail: str) -> str:
+    """The claim at the head of a verbose signal detail, without the lecture.
+
+    Signal details lead with the OBSERVATION and put the (important, long)
+    justification after an em-dash or a semicolon — e.g. ``"tmux probe
+    SUCCEEDED and the server has NO session — positive evidence of absence,
+    from tmux's own bookkeeping"``. A one-line status wants only that head;
+    :meth:`LivenessVerdict.to_dict` keeps the whole thing for ``--json``.
+    Splits on whichever of ``—`` / ``;`` comes first.
+    """
+    cut = len(detail)
+    for sep in ("—", ";"):
+        i = detail.find(sep)
+        if i != -1:
+            cut = min(cut, i)
+    return detail[:cut].strip() or detail.strip()
+
+
 @dataclass(frozen=True)
 class LivenessVerdict:
     """The resolved verdict for one agent, and the evidence that produced it.
@@ -156,6 +189,10 @@ class LivenessVerdict:
 
     @property
     def is_alive(self) -> bool:
+        # UNCHANGED, and load-bearing: is_alive is ``verdict == ALIVE``, so a
+        # WEDGED verdict reads is_alive False BY CONSTRUCTION. That is the whole
+        # point — an auth-dead agent that a pid/session proxy calls ALIVE now
+        # resolves to WEDGED, and WEDGED is not ALIVE.
         return self.verdict == ALIVE
 
     @property
@@ -165,6 +202,17 @@ class LivenessVerdict:
     @property
     def is_unknown(self) -> bool:
         return self.verdict == UNKNOWN
+
+    @property
+    def is_wedged(self) -> bool:
+        """PRESENT but not WORKING — a frozen auth banner, not a corpse.
+
+        Distinct from every pole: is_alive / is_dead / is_unknown are all False
+        for a wedged agent. It is not ALIVE (it is not working), not DEAD (the
+        process is present, so destruction is not authorised), and not UNKNOWN
+        (we DID observe it — we observed that it is stuck).
+        """
+        return self.verdict == WEDGED
 
     @property
     def dead_sources(self) -> tuple[str, ...]:
@@ -258,6 +306,13 @@ class LivenessVerdict:
                 f"{self.agent} is ALIVE ({', '.join(self.alive_sources)}) — "
                 f"refusing to destroy a live agent"
             )
+        if self.verdict == WEDGED:
+            return (
+                f"{self.agent} is WEDGED — present but not working (a frozen "
+                f"auth banner sits above its prompt). A restart clears a "
+                f"rotated/stale token; destruction is NOT authorised, because "
+                f"the process is alive and a wedged agent is not a corpse"
+            )
         if self.verdict == UNKNOWN:
             return (
                 f"{self.agent} liveness is UNKNOWN — no signal observed it "
@@ -292,29 +347,33 @@ class LivenessVerdict:
         )
 
     def render(self) -> str:
-        """One line: the verdict AND why. Never just the verdict.
+        """One line: the verdict AND why — TERSE. The full prose is in --json.
 
         e.g. ``ALIVE (delivery: 1 live inbox subscriber)``
-             ``UNKNOWN (heartbeat: pid=0 — no verdict possible)``
-             ``DEAD (process: no tmux session 'tui-x'; registry: no active row)``
+             ``UNKNOWN (heartbeat: pid=0 in heartbeat.json)``
+             ``DEAD (process: tmux has no session for this agent) | also: heartbeat[alive], registry[unknown]``
 
-        An operator staring at ``running | pid=None`` learns nothing. This is
-        the line that replaces it.
+        Each signal's ``detail`` is deliberately verbose and educational — the
+        justification an operator can read once and learn from. But a STATUS
+        line must not dump all of it for every signal at once; that is the
+        "prose splurge" an operator rightly calls unreadable. So this shows the
+        FIRST CLAUSE (the claim, before the lecture) of each AGREEING signal and
+        reduces the dissenters to ``source[verdict]`` tags. The complete
+        reasoning for every signal is always one ``--json`` away in
+        :meth:`to_dict` (``evidence[].detail``) — nothing is lost, only folded.
         """
         if not self.signals:
             return f"{self.verdict.upper()} (no signals gathered)"
         # Lead with the signals that AGREE with the verdict — that is the
-        # reasoning; the dissenters follow so they are never hidden.
+        # reasoning; the dissenters follow as tags so they are never hidden.
         agreeing = [s for s in self.signals if s.verdict == self.verdict]
         dissenting = [s for s in self.signals if s.verdict != self.verdict]
-        parts = [f"{s.source}: {s.detail}" for s in agreeing]
+        parts = [f"{s.source}: {_first_clause(s.detail)}" for s in agreeing]
         why = "; ".join(parts) if parts else "no corroborating signal"
         out = f"{self.verdict.upper()} ({why})"
         if dissenting:
-            other = "; ".join(
-                f"{s.source}[{s.verdict}]: {s.detail}" for s in dissenting
-            )
-            out += f" | also: {other}"
+            tags = ", ".join(f"{s.source}[{s.verdict}]" for s in dissenting)
+            out += f" | also: {tags}"
         return out
 
     def to_dict(self) -> dict:
@@ -338,14 +397,37 @@ class LivenessVerdict:
 def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> LivenessVerdict:
     """Fold observations into a verdict. Pure — no IO, no clock, no guessing.
 
-    The rules, in order:
+    The rules, in strict order:
 
-    1. **Any ALIVE ⇒ ALIVE.** Positive evidence of life is never overruled by
-       the absence of other evidence. An agent that fails four proxy checks and
-       answers one real one is a running agent.
-    2. **Else any DEAD ⇒ DEAD.** Death needs POSITIVE evidence — a probe that
+    1. **A ``delivery`` ALIVE is authoritative ⇒ ALIVE.** The broker OBSERVED the
+       agent's inbox adapter attached — the one signal that watched a message be
+       able to WAKE the agent, not a shadow of it. A broker-reachable agent is
+       working, full stop, so it is never flagged. This is FIRST so it beats even
+       WEDGED — see rule 2's rationale.
+    2. **Any WEDGED ⇒ WEDGED.** The screen instrument read the pane's rendered
+       CONTENT and found a FROZEN auth banner above the prompt: the agent is
+       PRESENT but NOT WORKING. This OVERRULES a ``process`` / ``heartbeat`` /
+       ``registry`` ALIVE, because every one of those observes only that the pid
+       EXISTS (the tmux session is up, the pane pid is alive) — none of them
+       looks at whether the agent can actually do anything. That gap is the
+       false-green this whole change exists to close: ``scitex-clew`` sat
+       auth-dead for two days behind a pid-shaped ALIVE. Why a delivery-ALIVE
+       (rule 1) still beats WEDGED: a broker-reachable agent is demonstrably
+       working, the false-red cost of flagging it would be high, and the founding
+       incident had delivery != ALIVE (the wedged agent's inbox was NOT
+       observed reachable), so ordering delivery above WEDGED costs the fix
+       nothing while keeping a live, answering agent from ever reading wedged.
+    3. **Else any LIVE ALIVE ⇒ ALIVE** (the #705 stale-heartbeat carve-out is
+       preserved here verbatim). Positive evidence of life is never overruled by
+       the ABSENCE of other evidence: an agent that fails four proxy checks and
+       answers one real one is running. The lone exception is a heartbeat ALIVE
+       contradicted by a LIVE probe of the SAME instrument — a TUI beat merely
+       re-reports the tmux snapshot ``process_signal`` reads live, so a live "no
+       such session" (DEAD) ages that beat out. (A delivery ALIVE already
+       returned in rule 1 and is never reached here.)
+    4. **Else any DEAD ⇒ DEAD.** Death needs POSITIVE evidence — a probe that
        actually ran and actually found nothing.
-    3. **Else UNKNOWN.** No observation either way. This is a real answer, and
+    5. **Else UNKNOWN.** No observation either way. This is a real answer, and
        the ONE thing a caller may not do with it is destroy something.
 
     Note what is absent: there is no path from "we gathered nothing" to
@@ -353,13 +435,47 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
 
     Note also what this does NOT decide: whether the DEAD may be ACTED on. A
     DEAD verdict is a report; :attr:`LivenessVerdict.may_destroy` is the gate,
-    and it counts INSTRUMENTS.
+    and it counts INSTRUMENTS. A WEDGED verdict authorises nothing destructive
+    either — ``may_destroy`` gates on DEAD, and WEDGED is not DEAD.
     """
     sigs = tuple(signals)
+    # (1) A delivery ALIVE is a LIVE observation of the one thing that matters —
+    # can a message reach this agent — and it is supreme, ABOVE even a WEDGED. It
+    # is pulled out of the general positive-life step (rule 3) purely so it sits
+    # ahead of rule 2.
     for sig in sigs:
-        if sig.verdict == ALIVE:
+        if sig.verdict == ALIVE and sig.source == SOURCE_DELIVERY:
             return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
+    # (2) Any WEDGED wins over a pid/session ALIVE. Those proxies see only that
+    # the process EXISTS; the screen instrument saw that it is not WORKING. A
+    # WEDGED that reaches here is already fresh + this-incarnation — all the
+    # staleness / SUPERSEDED gating lives in ``screen_signal`` — so it is trusted
+    # at face value.
+    for sig in sigs:
+        if sig.verdict == WEDGED:
+            return LivenessVerdict(agent=agent, verdict=WEDGED, signals=sigs)
+    # (3) The general positive-life step, WITH the #705 stale-heartbeat carve-out
+    # intact. A heartbeat is a STALE ARTEFACT: a value some other loop wrote to a
+    # file at a past beat, re-reporting an instrument it sampled THEN. For a TUI
+    # agent it re-reports the very tmux snapshot process_signal probes LIVE — so
+    # when a live probe of the SAME instrument now returns DEAD (the tmux server
+    # positively has no such session), the older beat is out of date and must not
+    # vouch for life: "now" supersedes "up to 600s ago" ON ONE INSTRUMENT. This
+    # is the count-instruments-not-sources rule in the time dimension — one sensor
+    # cannot be alive and dead at once, and its LIVE reading beats its own stale
+    # echo. (A reboot left a <600s beat behind a vanished session; the fold read
+    # ALIVE and sac-start refused to relaunch a genuinely dead agent until the
+    # beat finally aged past 600s.)
+    dead_instruments = {s.instrument for s in sigs if s.verdict == DEAD}
+    for sig in sigs:
+        if sig.verdict != ALIVE:
+            continue
+        if sig.source == SOURCE_HEARTBEAT and sig.instrument in dead_instruments:
+            continue  # stale echo of an instrument a live probe just found DEAD
+        return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
+    # (4) any DEAD ⇒ DEAD.
     for sig in sigs:
         if sig.verdict == DEAD:
             return LivenessVerdict(agent=agent, verdict=DEAD, signals=sigs)
+    # (5) else UNKNOWN.
     return LivenessVerdict(agent=agent, verdict=UNKNOWN, signals=sigs)

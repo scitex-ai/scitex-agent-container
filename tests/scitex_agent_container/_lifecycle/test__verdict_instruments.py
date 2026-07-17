@@ -37,10 +37,14 @@ from scitex_agent_container._lifecycle._verdict import (
     INSTRUMENT_LISTEN_BROKER,
     INSTRUMENT_NO_OBSERVATION,
     INSTRUMENT_PID_NAMESPACE,
+    INSTRUMENT_TUI_SCREEN,
     INSTRUMENTS,
     SOURCE_DELIVERY,
     SOURCE_PROCESS,
     SOURCE_REGISTRY,
+    SOURCE_SCREEN,
+    UNKNOWN,
+    WEDGED,
     Signal,
     decide,
 )
@@ -374,3 +378,54 @@ def test_the_listen_broker_may_not_report_a_death():
     # Assert
     with pytest.raises(ValueError, match="may not emit"):
         Signal(SOURCE_DELIVERY, DEAD, "0 subscribers", instrument)
+
+
+# --------------------------------------------------------------------------
+# The SCREEN instrument — the WORKING sensor. It reads whether the agent is
+# working, not merely present, so it emits WEDGED / UNKNOWN and NEVER convicts.
+# --------------------------------------------------------------------------
+
+
+def test_the_screen_instrument_is_classified_for_independence():
+    """A new sensor with no INSTRUMENT_INDEPENDENCE entry has not been reasoned
+    about — and the meta-test above would already fail. This pins it explicitly."""
+    # Arrange
+    instrument = INSTRUMENT_TUI_SCREEN
+    # Act
+    classified = instrument in INSTRUMENT_INDEPENDENCE
+    # Assert
+    assert classified is True
+
+
+def test_the_screen_instrument_emits_exactly_wedged_and_unknown():
+    """Never ALIVE (a clean pane is not proof of life), never DEAD (the pane and
+    the process behind it are PRESENT — DEAD would arm a kill on a live process)."""
+    # Arrange
+    spec = INSTRUMENT_INDEPENDENCE[INSTRUMENT_TUI_SCREEN]
+    # Act
+    verdicts = spec.verdicts
+    # Assert
+    assert verdicts == frozenset({WEDGED, UNKNOWN})
+
+
+def test_the_screen_instrument_is_not_a_convicting_instrument():
+    """DEAD ∉ its verdicts ⇒ ``may_convict`` False ⇒ absent from the convicting
+    set ⇒ it can NEVER arm a destruction. This is the load-bearing guarantee."""
+    # Arrange
+    instrument = INSTRUMENT_TUI_SCREEN
+    # Act
+    convicting = instrument in CONVICTING_INSTRUMENTS
+    # Assert
+    assert convicting is False
+
+
+def test_the_screen_instrument_may_not_report_a_death():
+    """Made MECHANICAL: a ``Signal(SOURCE_SCREEN, DEAD, ...)`` raises at
+    construction, because a wedged agent is present, not a corpse."""
+    # Arrange
+    instrument = INSTRUMENT_TUI_SCREEN
+    # Act
+    # (constructing the Signal IS the act under test — it must refuse.)
+    # Assert
+    with pytest.raises(ValueError, match="may not emit"):
+        Signal(SOURCE_SCREEN, DEAD, "a corpse, allegedly", instrument)

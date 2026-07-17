@@ -163,41 +163,37 @@ From: ./sac-base.sif
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
         #
-        # scitex-todo — ``--upgrade-package`` (-P), NOT a bare floor. THIS IS
-        # THE FLEET-DRIFT FIX (incident-fleet-drift-stale-scitex-todo,
-        # 2026-07-12), and the flag is load-bearing:
+        # scitex-todo — PINNED ==0.13.5 (was ``-P scitex-todo`` + a >=0.9.4
+        # floor). Base pins the SAME exact version, and this layer inherits
+        # base's /opt/venv-sac, so an exact ``==`` that base already satisfies
+        # is a correct no-op — there is nothing to re-resolve and no drift to
+        # fix, which is why the ``--upgrade-package scitex-todo`` flag that
+        # used to force re-resolution is GONE.
         #
-        #   scitex-todo is installed at the :base layer, and this layer
-        #   INHERITS base's /opt/venv-sac. A ``>=`` floor that the inherited
-        #   version ALREADY SATISFIES is a NO-OP — uv audits it and moves on.
-        #   So the :scitex layer could NEVER carry a newer scitex-todo than
-        #   :base, no matter how often it was rebuilt. Proof: sac-scitex.sif
-        #   was baked 2026-07-11 21:14, four hours AFTER scitex-todo 0.8.4
-        #   published (20:27), and still shipped the 0.7.50 it inherited from
-        #   a 2026-07-10 sac-base.sif. The floor was satisfied; nothing
-        #   upgraded; nothing complained. Six busy agents then ran a WIP gate
-        #   that counted DEFERRED + CANCELLED cards as open.
+        #   Why a pin, not the old ``-P latest``: ``-P`` re-resolved
+        #   scitex-todo to the NEWEST published on every :scitex rebuild.
+        #   That fixed the 2026-07-12 fleet-drift — a ``>=`` floor the
+        #   inherited version already satisfied is a NO-OP, so the layer
+        #   could freeze on whatever :base baked (it shipped 0.7.50 for days).
+        #   But ``-P latest`` is a MOVING ref: a rebuild once 0.13.4 was
+        #   latest would have baked its ~171s-per-write store-rewrite
+        #   regression into the fleet image (vs ~4.5s on 0.13.5) — the board
+        #   dies the moment the image lands. An exact pin trades auto-
+        #   currency for reproducibility + safety: the baked version is
+        #   deterministic and bumps are DELIBERATE (measure a timed write,
+        #   then raise the pin in BOTH layers). 0.13.5 = the measured-good
+        #   version (scitex-todo owner, 2026-07-15).
         #
-        #   ``-P scitex-todo`` re-resolves that ONE package against PyPI even
-        #   when the inherited version satisfies the floor, so a :scitex
-        #   rebuild picks up the newest scitex-todo instead of freezing on
-        #   whatever :base happened to bake. Scoped to the single package
-        #   (not a blanket ``-U``) so it cannot perturb scitex[all]'s
-        #   resolution or the local-source sac force-reinstalled in step 2.
-        #   The floor stays as the CAPABILITY statement (>=0.9.4 = the #356
-        #   WIP-gate fix, first released in 0.8.0); section 2b then asserts
-        #   the capability BY SYMBOL so a stale bake dies loudly.
-        #
-        #   ``[mcp]`` extra is carried here too (base installs it): a plain
-        #   ``scitex-todo`` upgrade would leave fastmcp pinned to whatever the
-        #   OLD version's extra resolved, so the extra rides the upgrade.
+        #   ``[mcp]`` extra stays: it pulls fastmcp for the in-container
+        #   ``scitex-todo mcp start`` path. Section 2b re-asserts the WIP-gate
+        #   symbol BY SYMBOL, so a pin to a version that dropped it dies at
+        #   bake rather than shipping silently.
         uv pip install --python /opt/venv-sac/bin/python \
-            --upgrade-package scitex-todo \
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
-            "scitex-todo[mcp]>=0.9.4"
+            "scitex-todo[mcp]==0.13.5"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -225,18 +221,16 @@ From: ./sac-base.sif
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0"
-        # scitex-todo gets its OWN invocation with ``--upgrade`` — pip's
-        # equivalent of the uv branch's ``-P scitex-todo``, and load-bearing
-        # for the same reason: this layer INHERITS base's venv, so a bare
-        # ``>=`` floor the inherited scitex-todo already satisfies is a no-op
-        # and the layer freezes on base's version forever (the 2026-07-12
-        # fleet-drift incident — see the uv branch above for the full
-        # autopsy). ``--upgrade`` re-resolves it against PyPI. Kept as a
-        # SEPARATE command so the flag applies to scitex-todo alone (pip's
-        # default only-if-needed strategy would otherwise let it reach into
-        # the providers' resolution too).
-        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-todo[mcp]>=0.9.4"
+        # scitex-todo — PINNED ==0.13.5 in its OWN invocation (pip's
+        # equivalent of the uv branch above). Was ``--upgrade`` + a >=0.9.4
+        # floor to force re-resolution over base's inherited venv; with an
+        # exact pin that base ALSO carries there is nothing to re-resolve, so
+        # ``--upgrade`` is dropped. Kept as a SEPARATE command anyway so the
+        # exact scitex-todo pin cannot reach into the providers' resolution
+        # above. See the uv branch for why a pin replaced ``-P latest`` (the
+        # 0.13.x ~171s-per-write regression a moving ref would have baked).
+        /opt/venv-sac/bin/pip install --no-cache-dir \
+            "scitex-todo[mcp]==0.13.5"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
