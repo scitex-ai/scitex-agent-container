@@ -150,11 +150,13 @@ how the sprawl accumulated.
 Sprawl accumulates over days and the age gate is 24h, so a faster cadence
 could not remove anything a daily pass would miss.
 
-Install (operator-side). Use the **scitex-dev** verb directly — sac's own
-`sac dev systemd install` wrapper is currently broken (it queries a dead
-kind; carded separately):
+Install (operator-side). sac's own wrapper works again — it used to query
+a dead kind (`jobs_of_kind("systemd")`) and report "No sac systemd-kind
+jobs to install." forever, so this page told you to route around it. Both
+forms below are equivalent; the wrapper just filters `sac.*` for you:
 
 ```bash
+sac dev systemd install --yes                 # or, equivalently:
 scitex-dev ecosystem systemd install --name sac.worktree-gc --yes
 systemctl --user daemon-reload
 systemctl --user enable --now sac.worktree-gc.timer

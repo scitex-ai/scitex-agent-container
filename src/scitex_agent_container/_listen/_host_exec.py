@@ -19,8 +19,9 @@ FLOW:
    ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator
    explicitly scoped arbitrary host-exec to developer + researcher
    (2026-07-01 Q1a) and added ``privileged`` on 2026-07-02.
-4. Execute ``subprocess.run(argv, ...)`` — no shell, argv list only. Capture
-   stdout/stderr, honour an optional timeout, return exit_code + duration.
+4. Execute the child — no shell, argv list only. Capture stdout/stderr, honour
+   an optional timeout, return exit_code + duration. See "WHY THIS ENDPOINT
+   WEDGED" below for the three guards that bound it.
 5. Audit log every invocation as one JSONL line to
    ``~/.scitex/agent-container/runtime/logs/host_exec.log`` — {ts, caller,
    caller_group, argv, cwd, exit_code, duration_s, timed_out}. The operator
@@ -30,6 +31,63 @@ FLOW:
 No shell, no argv-string form. The body's ``argv`` MUST be a non-empty list of
 strings. Anything else 400s. Guards against accidental shell-injection when
 downstream consumers pass user input.
+
+WHY THIS ENDPOINT WEDGED (INCIDENT 2026-07-17) — AND WHY "ADD A TIMEOUT" WAS
+THE WRONG DIAGNOSIS
+---------------------------------------------------------------------------
+Measured during the outage: ``GET /v1/health`` answered 200 in 0.016s while
+``POST /v1/host_exec`` returned **0 bytes at both 20s and 100s**. The endpoint
+was read as "host_exec has no timeout". *It had one* — a 300s default, passed
+to the child and empirically effective. The timeout was not missing; it was
+**unreachable**.
+
+The child timeout lives INSIDE the worker thread. This handler dispatched via
+``asyncio.to_thread``, i.e. the event loop's SHARED default
+``ThreadPoolExecutor``. When that pool has no free worker, the dispatch queues
+and **the thread never starts — so the child never starts, so the child's
+timeout never starts.** The handler then waits forever with nothing to bound
+it, which is precisely "0 bytes, at any deadline you care to pick", while
+``/v1/health`` (which never touches the pool) stays instant.
+
+That is not a new theory. ``_lifecycle/_off_loop.py``'s module docstring names
+*this file* as one of the unbounded ``to_thread`` callers that "queue behind
+the wedged threads and hang FOREVER", and the #647 changelog entry records the
+same fingerprint (health 200 while restarts timed out) from starvation by
+zombie heartbeat threads. The fact was written down; this handler was never
+changed to match it.
+
+Hence the guards below, in the order they catch things:
+
+1. DEDICATED THREAD, BOUNDED END-TO-END (:func:`_off_loop.run_blocking`) —
+   a private daemon thread, never the shared pool, so a drained pool cannot
+   delay this handler and this handler cannot drain the pool. The bound covers
+   dispatch + exec, so it holds even when the child never starts. This is the
+   guard that would have prevented the outage; the child timeout could not.
+2. PROCESS-GROUP KILL — ``start_new_session=True`` puts the child in its own
+   process group and the timeout path kills the GROUP. ``subprocess.run``'s
+   own timeout only SIGKILLs the direct child; measured, a grandchild
+   (``bash -c 'sleep 60 & cat'``) SURVIVED and kept running. Killing the pid
+   alone leaves the grandchildren that are usually the actual problem.
+3. ``stdin=DEVNULL`` — no child invoked here can block on stdin (``git``
+   without ``-F <file>``, an ssh passphrase prompt, ``apt``, a pager,
+   ``read``). Measured: a stdin-reading child gets EOF in 0.02s instead of
+   hanging. This does NOT break the ``echo <b64> | base64 -d | bash`` delivery
+   shape — that outer bash takes its script from ``-c`` and the inner pipeline
+   builds its own stdin internally; both forms verified identical. No caller
+   can send stdin anyway: the body has no ``stdin`` field.
+
+A timeout that returns EMPTY is worthless — an empty body is indistinguishable
+from success-with-no-output, a network fault, or a dead listener (all four had
+to be separated by hand during the incident, and the first reading was wrong).
+Every failure here returns a TYPED, LOUD error naming the deadline, the argv,
+and the caller.
+
+CONCURRENCY: this endpoint does NOT serialise. There is no global lock and no
+in-flight cap; concurrent callers run concurrently, each on its own thread.
+Stated explicitly because an undocumented global lock is exactly how the
+starvation above stayed invisible. ``GET /v1/host_exec/inflight`` reports what
+is currently running so a caller sees "N running, oldest 42s" instead of
+inferring from silence.
 """
 
 from __future__ import annotations
@@ -37,7 +95,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -45,16 +102,24 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._lifecycle._off_loop import run_blocking
 from ._acl import deny_response, resolve_group_name
+from ._host_exec_child import _POST_KILL_DRAIN_S, ChildOutcome, _run_child
+from ._host_exec_inflight import (
+    InflightExec,
+    host_exec_inflight,
+    inflight_snapshot,
+    next_exec_id,
+    register_inflight,
+    unregister_inflight,
+)
 
 # Operator-scoped groups (2026-07-01 Q1a + researcher; ``privileged`` added
 # 2026-07-02 per operator request). Members of these groups are permitted to
 # broker arbitrary commands as the operator's uid on the host. The
 # ``privileged`` group (grant / dotfiles / claude-code-telegrammer) was added
 # so those agents can run host ops and manage the fleet flexibly.
-ELIGIBLE_GROUPS: frozenset[str] = frozenset(
-    {"developer", "researcher", "privileged"}
-)
+ELIGIBLE_GROUPS: frozenset[str] = frozenset({"developer", "researcher", "privileged"})
 
 # Structured audit log — one JSONL entry per invocation. Path is fixed (matches
 # the other runtime logs). Test seam: monkeypatch ``_audit_log_path``.
@@ -65,6 +130,14 @@ _AUDIT_LOG_PATH = (
 # Guardrails
 _MAX_TIMEOUT_S: float = 3600.0  # 1h — image builds can take a while
 _DEFAULT_TIMEOUT_S: float = 300.0
+
+# Slack between the CHILD deadline (enforced inside the worker thread) and the
+# WATCHDOG deadline (enforced on the event loop by ``run_blocking``). The
+# watchdog only fires when the child timeout ITSELF failed to return — an
+# unkillable D-state child, or a drain that outlived _POST_KILL_DRAIN_S. It
+# must exceed the drain ceiling or it would pre-empt the orderly path that can
+# still report the child's partial output.
+_WATCHDOG_MARGIN_S: float = _POST_KILL_DRAIN_S + 10.0
 
 
 def _audit_log_path() -> Path:
@@ -99,11 +172,16 @@ async def host_exec(
     """``POST /v1/host_exec`` — see module docstring for the full contract.
 
     Body: ``{"argv": [str, ...], "cwd"?: str, "timeout_s"?: float, "env"?:
-    {str: str}, "caller"?: str}``.
+    {str: str}, "caller"?: str}``. There is deliberately no ``stdin`` field —
+    the child always runs with stdin on /dev/null.
     Response 200: ``{"exit_code": int, "stdout": str, "stderr": str,
-    "duration_s": float, "timed_out": bool}``.
+    "duration_s": float, "timed_out": bool, "killed_process_group": bool}``.
+    A child that overran its ``timeout_s`` is a 200 with ``timed_out: true``
+    (it ran, it was killed, and its partial output is real) — never an empty
+    body.
     Errors: 400 (bad body), 403 (ACL deny — group not eligible), 500 (exec
-    error not otherwise mapped).
+    error not otherwise mapped), 504 (the watchdog fired — the child's own
+    deadline failed to return; ``watchdog_fired: true``).
     """
     # ---- 1. Body ------------------------------------------------------------
     try:
@@ -111,9 +189,7 @@ async def host_exec(
     except Exception:  # stx-allow: fallback (empty/malformed JSON body → 400 below)
         body = None
     if not isinstance(body, dict):
-        return JSONResponse(
-            {"error": "body must be a JSON object"}, status_code=400
-        )
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
     argv = body.get("argv")
     if (
@@ -197,46 +273,71 @@ async def host_exec(
 
     started = time.monotonic()
     timed_out = False
+    watchdog_fired = False
+    killed_process_group = False
     stdout = ""
     stderr = ""
     exit_code = -1
     exec_error: str | None = None
+
+    entry = InflightExec(
+        exec_id=next_exec_id(),
+        caller=caller,
+        argv=tuple(argv),
+        timeout_s=timeout_s,
+        started_monotonic=started,
+    )
+    register_inflight(entry)
     try:
-        # Dispatch the blocking subprocess OFF the event loop. Running
-        # subprocess.run() directly in this async handler blocks the SINGLE
-        # uvicorn event loop for the command's whole lifetime — a long
-        # host_exec (e.g. a ~13-min `sac image build`) then starves EVERY
-        # other endpoint (a2a, health, spawn), the exact "agents can't reach
-        # sac" outage (INCIDENT 2026-07-02). asyncio.to_thread keeps the loop
-        # free to serve other requests concurrently; subprocess.TimeoutExpired
-        # raised inside the thread still propagates through the await.
-        completed = await asyncio.to_thread(
-            subprocess.run,
+        # Dispatch to a DEDICATED daemon thread, bounded end-to-end.
+        #
+        # NOT `asyncio.to_thread`: that uses the event loop's SHARED default
+        # ThreadPoolExecutor, and when the pool is drained the dispatch queues
+        # — the thread never starts, so the child never starts, so the CHILD'S
+        # OWN TIMEOUT NEVER STARTS, and this handler waits forever returning 0
+        # bytes while /v1/health stays instant. That is the 2026-07-17 outage,
+        # and it is why "the child has a timeout" was never a defence: the
+        # timeout was inside the thing that never ran. `_off_loop.run_blocking`
+        # uses a private daemon thread (immune to a drained pool, and it cannot
+        # drain the pool for others) and bounds the WHOLE dispatch on the event
+        # loop, which holds even when the child never starts.
+        #
+        # Two deadlines, deliberately: the child's `timeout_s` is the normal
+        # path (kills the process group, reports partial output); the watchdog
+        # at +_WATCHDOG_MARGIN_S catches the case where that path ITSELF wedged.
+        outcome = await run_blocking(
+            _run_child,
             argv,
             cwd=cwd_raw,
-            timeout=timeout_s,
-            capture_output=True,
-            text=True,
+            child_timeout_s=timeout_s,
             env=merged_env,
-            check=False,
+            timeout_s=timeout_s + _WATCHDOG_MARGIN_S,
         )
-        exit_code = completed.returncode
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
-    except subprocess.TimeoutExpired as exc:
+        exit_code = outcome.exit_code
+        stdout = outcome.stdout
+        stderr = outcome.stderr
+        timed_out = outcome.timed_out
+        killed_process_group = outcome.killed_process_group
+    except asyncio.TimeoutError:
+        # The child's own deadline failed to return (unkillable D-state child,
+        # or an escaped grandchild holding the pipe past the drain ceiling).
+        # Fail LOUD and typed — never an empty body, which the caller cannot
+        # distinguish from success-with-no-output or a dead listener.
+        watchdog_fired = True
         timed_out = True
-        stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else (
-            exc.stdout.decode("utf-8", "replace") if exc.stdout else ""
+        exec_error = (
+            f"host_exec watchdog fired after "
+            f"{timeout_s + _WATCHDOG_MARGIN_S:.1f}s (child timeout_s={timeout_s:.1f}s "
+            f"did not return): argv={argv!r} caller={caller!r}. The child was "
+            f"abandoned on its own thread; it starves no other caller."
         )
-        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else (
-            exc.stderr.decode("utf-8", "replace") if exc.stderr else ""
-        )
-        exit_code = -1
     except FileNotFoundError as exc:
         # argv[0] not found — surface a clear error instead of a raw 500.
         exec_error = f"command not found: {exc}"
     except Exception as exc:  # stx-allow: fallback (exec-layer errors must surface as a response, not a raw 500)
         exec_error = f"exec error: {type(exc).__name__}: {exc}"
+    finally:
+        unregister_inflight(entry.exec_id)
 
     duration_s = round(time.monotonic() - started, 3)
 
@@ -252,6 +353,8 @@ async def host_exec(
             "exit_code": exit_code,
             "duration_s": duration_s,
             "timed_out": timed_out,
+            "watchdog_fired": watchdog_fired,
+            "killed_process_group": killed_process_group,
             "exec_error": exec_error,
         }
     )
@@ -262,9 +365,10 @@ async def host_exec(
                 "error": exec_error,
                 "exit_code": exit_code,
                 "duration_s": duration_s,
-                "timed_out": False,
+                "timed_out": timed_out,
+                "watchdog_fired": watchdog_fired,
             },
-            status_code=500,
+            status_code=504 if watchdog_fired else 500,
         )
     return JSONResponse(
         {
@@ -273,8 +377,16 @@ async def host_exec(
             "stderr": stderr,
             "duration_s": duration_s,
             "timed_out": timed_out,
+            "killed_process_group": killed_process_group,
         }
     )
 
 
-__all__ = ["ELIGIBLE_GROUPS", "host_exec"]
+__all__ = [
+    "ELIGIBLE_GROUPS",
+    "ChildOutcome",
+    "InflightExec",
+    "host_exec",
+    "host_exec_inflight",
+    "inflight_snapshot",
+]

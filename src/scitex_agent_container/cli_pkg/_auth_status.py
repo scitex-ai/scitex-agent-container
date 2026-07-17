@@ -46,6 +46,24 @@ from ._helpers import _json_flag, console
 # server the live fleet actually runs on.
 _TUI_PREFIX = "tui-"
 
+# THREE verdicts, never two. A pane we could not READ has produced no evidence,
+# and "no evidence" is not "ok" — it is UNKNOWN. Collapsing it into OK is the
+# same false-green this command exists to abolish, just moved to the last inch:
+# an instrument reporting good news about a thing it never observed. The WRITE
+# path already refuses to record an unread pane (see :func:`persist_verdicts`);
+# these constants make the DISPLAY tell the same truth.
+VERDICT_OK = "ok"
+VERDICT_AUTH_FAILED = "auth_failed"
+VERDICT_UNKNOWN = "unknown"
+
+#: How each verdict renders. UNKNOWN is YELLOW — an unread pane is a warning to
+#: look closer, never a green light.
+_VERDICT_STYLE: dict[str, tuple[str, str]] = {
+    VERDICT_OK: ("OK", "green"),
+    VERDICT_AUTH_FAILED: ("AUTH-FAILED", "red"),
+    VERDICT_UNKNOWN: ("UNKNOWN", "yellow"),
+}
+
 
 def _list_tui_sessions() -> list[str]:
     """Live ``tui-<agent>`` tmux sessions on the default server (sorted)."""
@@ -101,6 +119,17 @@ def evaluate_agents(
     ``auth_failed``; a banner that moved — or none at all — is ``ok``. Kept free
     of tmux so it is unit-testable against captured panes (no mocks). Rows are
     sorted by agent name for stable output.
+
+    THREE verdicts. A pane that could not be READ on the decisive (second)
+    capture yields :data:`VERDICT_UNKNOWN` — never ``ok``. The session can vanish
+    between list and capture, tmux can be pointed at the wrong server, a pane can
+    be unreadable for any number of reasons, and in every one of them we learned
+    NOTHING about that agent's auth. Reporting OK there would be an instrument
+    announcing good news about a thing it never observed — the precise failure
+    this command exists to end, and the reason a wedged agent could read ALIVE.
+    ``persist_verdicts`` already refuses to record these rows; the verdict now
+    says so out loud instead of leaving the operator to infer it from an empty
+    ``captured`` field he cannot see in the table.
     """
     rows: list[dict] = []
     for name in sorted(captures):
@@ -108,11 +137,19 @@ def evaluate_agents(
         probe1, _ = evaluate(pane1, None)
         probe2, stuck = evaluate(pane2, probe_to_state(probe1))
         present = probe2.present or probe1.present
-        verdict = "auth_failed" if stuck else "ok"
+        captured = pane2 is not None
+        if not captured:
+            verdict = VERDICT_UNKNOWN
+        elif stuck:
+            verdict = VERDICT_AUTH_FAILED
+        else:
+            verdict = VERDICT_OK
         note = ""
-        if verdict == "ok" and present:
+        if not captured:
+            note = "pane could not be read — NO evidence, which is not health"
+        elif verdict == VERDICT_OK and present:
             note = "banner seen but moving (working/quoting)"
-        elif not probe2.prompt_found and pane2 is not None:
+        elif not probe2.prompt_found:
             note = "no prompt line found"
         rows.append(
             {
@@ -206,7 +243,7 @@ def persist_verdicts(rows: list[dict], *, db_path=None) -> int:
             [
                 {
                     "name": r["agent"],
-                    "auth_failed": r.get("verdict") == "auth_failed",
+                    "auth_failed": r.get("verdict") == VERDICT_AUTH_FAILED,
                     "banner": r.get("banner"),
                     "reason": r.get("reason") or "",
                     "note": r.get("note") or "",
@@ -233,12 +270,12 @@ def _render_table(rows: list[dict]) -> None:
     table.add_column("banner")
     table.add_column("note", overflow="fold")
     for r in rows:
-        failed = r["verdict"] == "auth_failed"
-        status = "AUTH-FAILED" if failed else "OK"
-        style = "red" if failed else "green"
+        # UNKNOWN is yellow, not green: it is the absence of a reading, and it
+        # must never look like a clean bill of health at a glance.
+        label, style = _VERDICT_STYLE.get(r["verdict"], ("UNKNOWN", "yellow"))
         table.add_row(
             r["agent"],
-            f"[{style}]{status}[/{style}]",
+            f"[{style}]{label}[/{style}]",
             r.get("reason") or "-",
             r.get("remedy") or "-",
             r["banner"] or "-",
@@ -297,11 +334,30 @@ def auth_status(ctx: click.Context, as_json: bool, interval: float) -> None:
     captures = {name: (run1.get(name), run2.get(name)) for name in run1}
     rows = diagnose_agents(evaluate_agents(captures))
     persist_verdicts(rows)
-    stuck = [r for r in rows if r["verdict"] == "auth_failed"]
+    stuck = [r for r in rows if r["verdict"] == VERDICT_AUTH_FAILED]
+    unread = [r for r in rows if r["verdict"] == VERDICT_UNKNOWN]
     if use_json:
-        click.echo(json_mod.dumps({"agents": rows, "auth_failed": len(stuck)}, indent=2))
+        click.echo(
+            json_mod.dumps(
+                {
+                    "agents": rows,
+                    "auth_failed": len(stuck),
+                    "unknown": len(unread),
+                },
+                indent=2,
+            )
+        )
     else:
         _render_table(rows)
+        # Say the unreadable ones OUT LOUD. Their rows are yellow above, but a
+        # count is what stops "no red on screen" from being read as "fleet fine"
+        # — we did not check these agents, and silence would imply we had.
+        if unread:
+            console.print(
+                f"[yellow]{len(unread)} agent(s) could NOT be read "
+                f"({', '.join(r['agent'] for r in unread)}) — UNKNOWN, not OK: "
+                f"nothing was observed about their auth[/yellow]"
+            )
         if stuck:
             console.print(
                 f"[red]{len(stuck)} agent(s) cannot authenticate: "

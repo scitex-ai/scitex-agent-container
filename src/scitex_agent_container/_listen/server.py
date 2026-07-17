@@ -64,7 +64,6 @@ async def health(_request: Request) -> JSONResponse:
 from ._agents_list import list_agents  # noqa: E402,F401
 
 
-
 async def agent_status(request: Request) -> JSONResponse:
     name = request.path_params["name"]
     try:
@@ -129,9 +128,7 @@ async def _annotate_status_reachability(
             exc,
         )
         return {**body, "inbox_subscribers": None, "inbox_reachable": UNKNOWN}
-    return annotate_reachability(
-        body, subscriber_counts=counts, local_host=local_host
-    )
+    return annotate_reachability(body, subscriber_counts=counts, local_host=local_host)
 
 
 # --- extracted handlers re-imported for routes + back-compat ---------------
@@ -237,12 +234,6 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # :func:`agent_card` falls back to the synthesised card for nodes
 # that are not YAML-backed. That fall-back is added to the existing
 # handler below.
-from ._node_channel import (  # noqa: E402
-    _forward_to_remote,  # noqa: F401  (re-exported for tests)
-    node_inbox_stream,
-    node_message_send,
-)
-
 # ``agent_delete`` (the DELETE /agents/<name> lifecycle handler) was
 # extracted into ``_agent_delete`` (server.py hit the per-file line cap);
 # re-imported here so route registration (:func:`_v1_agent_routes`) and
@@ -256,7 +247,11 @@ from ._agent_delete import agent_delete  # noqa: E402
 # restart on the bare host (manage-gated by check_lineage_acl). Lives in
 # its own module to keep server.py under the per-file line cap.
 from ._agent_restart import agent_restart  # noqa: E402
-
+from ._node_channel import (  # noqa: E402
+    _forward_to_remote,  # noqa: F401  (re-exported for tests)
+    node_inbox_stream,
+    node_message_send,
+)
 
 # --- App factory -----------------------------------------------------------
 
@@ -354,6 +349,15 @@ def create_app(
     # (rather than the silently-ineffective per-container copy).
     from ._acl_routes import acl_block, acl_grant, acl_unblock
 
+    # Arbitrary host-command bypass for developer + researcher agents (operator
+    # directive 2026-07-01). Bearer-authed by the outer middleware; a group gate
+    # inside the handler refuses non-eligible callers with 403. Every invocation
+    # is appended to runtime/logs/host_exec.log.
+    # ``host_exec_inflight`` reports what host_exec is running right now, so a
+    # caller facing a slow endpoint can read the cause instead of inferring it
+    # from an empty body (INCIDENT 2026-07-17).
+    from ._host_exec import host_exec, host_exec_inflight
+
     # Interim card-event delivery (scitex-todo escalation, P1). The board
     # POSTs here (loopback, host-wide bearer) INSTEAD of a containerized
     # agent's unreachable ``turn_url``; ``notify`` publishes the body into
@@ -361,12 +365,6 @@ def create_app(
     # a subscribed (containerized) agent receives it. Bearer-gated by the
     # ``BearerAuthMiddleware`` below (not in its ``PUBLIC_PATHS``).
     from ._notify import notify
-
-    # Arbitrary host-command bypass for developer + researcher agents (operator
-    # directive 2026-07-01). Bearer-authed by the outer middleware; a group gate
-    # inside the handler refuses non-eligible callers with 403. Every invocation
-    # is appended to runtime/logs/host_exec.log.
-    from ._host_exec import host_exec
 
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
@@ -376,6 +374,7 @@ def create_app(
         Route("/v1/acl/block", acl_block, methods=["POST"]),
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
         Route("/v1/host_exec", host_exec, methods=["POST"]),
+        Route("/v1/host_exec/inflight", host_exec_inflight, methods=["GET"]),
     ]
     routes += _v1_agent_routes("/agents")
     # Q4 (lead a2a c8b64f298b8a...): on listen startup, persist every

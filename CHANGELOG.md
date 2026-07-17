@@ -6,6 +6,71 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Inert-feature detector (`_jobs_audit`) — a declaration with no live
+  counterpart now fails a REQUIRED gate.** Four features shipped in one night
+  (2026-07-17) with PRs, tests and ADRs, and none of them ever executed:
+  `sac agents twin` (every derived spec unloadable), the auth `screen` verdict
+  (computed, persisted nowhere), `restart.policy` (no enforcer in ~93 specs),
+  and `auto-merge-to-develop` (0 runs since 07-09). `_jobs_plugin.py`'s own
+  docstring had already named the pathology — *"shipped but scheduled nowhere,
+  it was an inert alarm"* — which is the point: we diagnosed it in a comment
+  and kept doing it. A postmortem in a comment is not a countermeasure.
+
+  The detector checks two half-pair forms deterministically and reports three
+  states (`LIVE` / `INERT` / **`UNKNOWN`** — "I cannot tell" is never "inert",
+  because a false INERT that gets a working feature deleted is worse than the
+  disease):
+  - a JobSpec declared but unreachable via the real `discover_jobs()` — which
+    swallows a raising provider with a mere `logging.warning`, so ONE bad spec
+    silently drops all four of sac's timers;
+  - a declared `kind` no consumer can see, or a consumer filtering on a kind
+    outside `ALLOWED_KINDS` (one that can never match anything, ever).
+
+  It runs in `pytest-matrix-on-ubuntu-py{3.11,3.12,3.13}`, a required status
+  check on `develop` and `main` — deliberately NOT in `quality-audit`, whose
+  every step is `continue-on-error: true` and therefore could never go red. A
+  checker nobody runs is just the fifth instance of the disease.
+
+  NOT covered, stated plainly: declared-vs-**deployed** (whether a timer is
+  actually installed and enabled on the fleet host) is unanswerable from CI —
+  the suite runs in a SIF with no access to the host's `systemctl --user`, and
+  answering it from the JobSpec *source* is the exact trap that produced a P0
+  diagnosis off a 4-day-stale schedule. Out of scope beats answered wrongly.
+
+### Fixed
+
+- **Every `sac dev` job verb was inert, and had been for weeks.**
+  `_dev_jobs.py` passed the CLI GROUP NAME straight through as the JobSpec
+  KIND filter, so `sac dev systemd list` asked for `kind="systemd"` — a value
+  `JobSpec.validate()` rejects at construction (`ALLOWED_KINDS` is
+  `{service,timer,cron}` since scitex-dev #153). All four of sac's real timers
+  are `kind="timer"`, so the command printed "No sac systemd-kind jobs." and
+  exited 0, forever. `sac dev daemon` was deader still: it filtered a
+  never-legal kind AND delegated to `scitex-dev ecosystem daemon`, which is
+  not an `ecosystem` subcommand at all. The group is removed; a long-running
+  job is `kind="service"`, installed via the `systemd` group.
+
+  The group→kind mapping is now `GROUP_KINDS`, a module-level SSOT that
+  mirrors scitex-dev's own selection (`_jobs_cron.py` takes `cron`;
+  `_jobs_systemd.py` takes `timer` + `service`), and the audit IMPORTS it
+  rather than restating it — a checker that asserts its own opinion of what
+  production ought to do is itself a dangling declaration.
+  (Card `sac-dev-systemd-group-queries-dead-kind-20260716`, found 2026-07-16
+  by watching it fail in production, deferred with a workaround; `docs/
+  worktree-gc.md` had been telling operators to route around the broken
+  wrapper.)
+
+- **The fixture that hid it.** `test__dev_jobs.py` installed a hand-rolled
+  fake `scitex_dev.jobs` whose `_Job` dataclass defaulted to `kind="systemd"`
+  — a shape no real JobSpec can have — so 13 tests asserted in green that
+  `sac dev systemd list` shows `sac.accounts-refresh` while production showed
+  nothing. Identical in kind to the twin suite's 29 green tests over a
+  `spec.env` shape v3 validation rejects. The tests now drive the REAL
+  `scitex_dev.jobs` with REAL `JobSpec` objects, and skip rather than invent a
+  stand-in when the contract is absent.
+
 ## [0.21.22] - 2026-07-17
 
 **The version number was itself the bug.** develop carried 21 merged PRs

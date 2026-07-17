@@ -1,17 +1,47 @@
 name: auto-merge-to-develop
-# Merge green PRs that TARGET develop, the moment their checks complete.
-# GitHub reads check_suite-triggered workflows from the DEFAULT branch (main),
-# so this file lives on main but acts ONLY on PRs whose base is develop.
-# codecov + readthedocs checks are ignored (advisory). Fail-safe: if a merge
-# is blocked by branch policy the PR simply stays open.
+# Merge green PRs that TARGET develop.
+#
+# *** WHY THERE IS A CRON HERE — READ BEFORE REMOVING IT ***
+# This workflow STOPPED FIRING ON 2026-07-09. Not "failed" — STOPPED. Its newest
+# run is 2026-07-09T23:10:04Z (event=check_suite); there are ZERO runs after it,
+# and the workflow was `active` the whole time with the file present on main and
+# allow_auto_merge=true. 37 of the 49 repos carrying this workflow saw their last
+# run inside one ~2-hour window that same day, so whatever happened was
+# org/platform-level, not a per-repo config change.
+# 38 PRs were stranded green-and-unmerged across the fleet as a result.
+#
+# The failure mode is the important part: a workflow that is never TRIGGERED
+# leaves NO RUN RECORD, so there is nothing to go red, nothing to alert on, and
+# nothing to notice. It was silent for 8 DAYS while every agent kept reading
+# "CI is green" as "my PR will land". That is `reference-evidence-that-could-not-
+# have-disagreed` in its purest form: green CI cannot disagree with "this will
+# merge", because CI does not observe the merge.
+#
+# The mechanism that killed the check_suite event is UNPROVEN. (In sac every
+# auto-merge run on 07-08/07-09 corresponds 1:1 within 1-3 SECONDS to a codecov
+# check-suite completion, and codecov went silent at exactly 2026-07-09T23:10:03Z
+# — but scitex-hub fired 344 times off github-actions suites with ZERO codecov
+# suites, which refutes the tidy story.) So this fix DELIBERATELY DOES NOT DEPEND
+# ON THE MECHANISM: a cron tick is delivered by GitHub's scheduler and does not
+# need any app, any check suite, or any event to arrive. Whatever broke the
+# event, the sweep outlives it.
+#
+# *** THE RUN HISTORY IS THE HEARTBEAT. *** That is half the value, not a
+# side-effect. A check_suite event that never arrives is invisible; a SCHEDULED
+# run that never happens is a VISIBLE GAP in this workflow's run list. The next
+# 8-day silence should be one glance loud. So: do NOT add an `if:` that skips the
+# whole job on schedule, and do NOT make the job exit in a way that leaves no run
+# record. A boring green run every 15 minutes IS the product.
+#
+# GitHub reads schedule- AND check_suite-triggered workflows from the DEFAULT
+# branch (main), so this file lives on main but acts ONLY on PRs whose base is
+# develop. codecov + readthedocs checks are ignored (advisory). Fail-safe: if a
+# merge is blocked by branch policy the PR simply stays open.
 #
 # *** THIS FILE TAKES EFFECT ONLY ONCE IT REACHES main. ***
-# Because check_suite workflows are read from the DEFAULT branch, editing this
-# file on develop changes NOTHING at runtime until develop is promoted to main.
-# Until that promotion the version of this workflow ACTUALLY EXECUTING is
-# whatever main holds — i.e. still the ubuntu-latest one. That is a property of
-# GitHub's event model, not an escape hatch: the tree is correct now, the
-# runtime follows at the next develop→main promotion.
+# Editing it on develop changes NOTHING at runtime until develop is promoted to
+# main. Until that promotion the version ACTUALLY EXECUTING is whatever main
+# holds. That is a property of GitHub's event model, not an escape hatch.
 #
 # RUNNER (operator rule 2026-07-14, absolute, no exceptions): NO GitHub-hosted
 # runners anywhere in this repo. If Spartan misbehaves, that is OURS to fix —
@@ -29,14 +59,38 @@ name: auto-merge-to-develop
 # decides WHETHER TO AUTO-MERGE — precisely the code where a subtle bug merges
 # a red PR. So: keep the battle-tested logic byte-for-byte, and BOOTSTRAP `gh`
 # instead. The version is pinned (no moving refs).
+#
+# NOTE: `jq` is NOT assumed to exist on the bare node either — every filter below
+# goes through `gh --jq` (gh embeds its own jq). Do not introduce a bare `jq`.
 on:
+  schedule:
+    # Every ~15 min, deliberately OFF the top of the hour: GitHub queues all
+    # :00 crons fleet-wide and drops/delays the overflow, so an on-the-hour
+    # schedule is the least reliable one you can pick.
+    - cron: "7,22,37,52 * * * *"
+  # Legacy fast path — merge the moment checks complete. Dead since 2026-07-09
+  # (see header); kept because if the event ever comes back it costs nothing and
+  # cuts merge latency to seconds. The cron is what we actually rely on.
   check_suite:
     types: [completed]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what WOULD be merged, merge nothing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
   pull-requests: write
+
+# One sweep at a time per repo. Two concurrent sweeps would race on the
+# one-merge-per-run budget and could land two PRs against the same unverified
+# base — the exact thing the budget exists to prevent. Queue, never cancel:
+# cancelling a run mid-merge is how you get a half-applied merge.
+concurrency:
+  group: auto-merge-to-develop-${{ github.repository }}
+  cancel-in-progress: false
 
 env:
   # Pinned, not `latest`: a moving ref is an unreviewed binary on a persistent
@@ -45,9 +99,11 @@ env:
 
 jobs:
   automerge:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.check_suite.conclusion == 'success' }}
+    # schedule + workflow_dispatch always run (the heartbeat must leave a
+    # record). check_suite still only acts on a successful suite.
+    if: ${{ github.event_name != 'check_suite' || github.event.check_suite.conclusion == 'success' }}
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Ensure the gh CLI exists (the bare Spartan node has none)
         # $GITHUB_PATH only affects SUBSEQUENT steps, so this must be its own
@@ -77,27 +133,184 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.check_suite.head_sha }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          # *** 8-DAY-OLD GREEN IS NOT TODAY'S GREEN. ***
+          # Every stranded PR's checks ran against a base that has since moved.
+          # Merging N of them back-to-back means each merge invalidates the next
+          # one's evidence, and this fleet has already been burned by exactly
+          # that (`feedback-pr-green-is-not-develop-green`: adding tests re-rolls
+          # xdist distribution and surfaces OTHER PRs' latent races — the merger
+          # reveals the bug, it does not author it).
+          # So: at most ONE merge per run. Combined with the develop-health gate
+          # below and a 15-minute tick, the drain becomes "merge one, wait for
+          # develop's post-merge CI, then the next" — enforced by the system
+          # instead of by a human babysitting a loop. Raising this above 1 means
+          # merging onto a base whose CI has not run yet. Don't.
+          MAX_MERGES: "1"
         run: |
           set -uo pipefail
+
+          # ---------------------------------------------------------------
+          # BASE-BRANCH SCOPE: develop ONLY. main is deliberately EXCLUDED.
+          # ---------------------------------------------------------------
+          # (scitex-io#126 targets main and this workflow has never handled it.
+          # Naming the decision instead of leaving it implicit:)
+          #   1. main is the DEFAULT branch — the branch GitHub reads THIS FILE
+          #      from. A sweep able to merge into main could rewrite its own
+          #      merge policy with no human in the loop. Automation that can edit
+          #      its own rules is not a sweep, it is a foothold.
+          #   2. develop -> main is a RELEASE act with a deliberate ceremony in
+          #      this fleet (`chore/promote-vX.Y.Z`). Auto-merging into main would
+          #      silently bypass the cadence releases are actually run by.
+          # PRs targeting main are therefore LISTED LOUDLY (so they cannot rot
+          # unseen the way the last 8 days did) and NOT merged.
+          merges=0
+
+          # ---------------------------------------------------------------
+          # GATE: develop must be SETTLED and GREEN before anything lands.
+          # ---------------------------------------------------------------
+          dev_sha=$(gh api "repos/$REPO/commits/develop" --jq .sha 2>/dev/null || echo "")
+          if [ -z "$dev_sha" ]; then
+            echo "::warning::cannot resolve develop's head — merging nothing this tick (fail-safe)"
+            exit 0
+          fi
+          echo "develop head: $dev_sha"
+
+          dev_bad=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
+            [ .check_runs[]
+              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+              | select(.status == "completed")
+              | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")
+            ] | length' 2>/dev/null || echo "")
+          dev_busy=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
+            [ .check_runs[]
+              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+              | select(.status != "completed")
+            ] | length' 2>/dev/null || echo "")
+          dev_total=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
+            [ .check_runs[]
+              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+            ] | length' 2>/dev/null || echo "")
+
+          # THREE STATES, NOT TWO. "I could not read develop's health" is NOT
+          # "develop is green" — collapsing an unknown into a pole is the
+          # `reference-binary-where-ternary-was-needed` bug. An unreadable gate
+          # merges nothing and says so.
+          if [ -z "$dev_bad" ] || [ -z "$dev_busy" ] || [ -z "$dev_total" ]; then
+            echo "::warning::could not read develop's check state — merging nothing this tick (fail-safe)"
+            exit 0
+          fi
+
+          if [ "$dev_busy" -gt 0 ]; then
+            echo "develop CI still in flight ($dev_busy running) — the next tick is the wait. Merging nothing."
+            exit 0
+          fi
+          if [ "$dev_bad" -gt 0 ]; then
+            echo "::error::develop is RED ($dev_bad failing non-advisory checks on $dev_sha). Refusing to merge onto a broken base — fix develop first. This run is red ON PURPOSE: a stalled drain must be visible."
+            exit 1
+          fi
+          if [ "$dev_total" -eq 0 ]; then
+            # Absence of evidence is not evidence of green. Say so out loud
+            # rather than silently treating "no checks" as "all good".
+            echo "note: develop head has NO non-advisory check runs — no red signal to honour, proceeding"
+          else
+            echo "develop is green ($dev_total non-advisory checks, 0 failing) — sweep may proceed"
+          fi
+
+          # ---------------------------------------------------------------
+          # Collect candidate PRs.
+          # ---------------------------------------------------------------
           if [ -n "${HEAD_SHA:-}" ]; then
             prs=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[] | select(.state=="open") | .number' 2>/dev/null || true)
           else
-            prs=$(gh pr list --repo "$REPO" --base develop --state open --json number --jq '.[].number' 2>/dev/null || true)
+            # --limit is LOAD-BEARING: `gh pr list` silently defaults to 30 and
+            # truncates with no marker. sac alone holds 36 open PRs against
+            # develop, so the default would have silently hidden six of them —
+            # the same silent-undercount shape as the bug this file exists to
+            # fix. Do not remove it.
+            #
+            # OLDEST-FIRST is also load-bearing. `gh pr list` returns
+            # NEWEST-first, and with a one-merge-per-run budget a repo that keeps
+            # producing fresh green PRs would push the oldest one down the list
+            # forever — a starvation bug that looks exactly like the outage we
+            # are fixing (a green PR that never lands, with nobody noticing).
+            # FIFO cannot starve.
+            prs=$(gh pr list --repo "$REPO" --base develop --state open --limit 200 \
+                    --json number,createdAt --jq 'sort_by(.createdAt) | .[].number' 2>/dev/null || true)
           fi
           [ -z "${prs:-}" ] && { echo "no open PRs"; exit 0; }
+
           for pr in $prs; do
+            if [ "$merges" -ge "$MAX_MERGES" ]; then
+              echo "budget spent (MAX_MERGES=$MAX_MERGES) — remaining PRs wait for the next tick. This is the pacing, not a failure."
+              break
+            fi
+
             base=$(gh pr view "$pr" --repo "$REPO" --json baseRefName --jq .baseRefName 2>/dev/null || echo "")
+            if [ "$base" = "main" ]; then
+              echo "::warning::#$pr targets main — OUT OF SCOPE BY DESIGN (see header). It needs a deliberate human merge; it will never drain from here."
+              continue
+            fi
             [ "$base" = "develop" ] || { echo "skip #$pr (base=$base, not develop)"; continue; }
+
             draft=$(gh pr view "$pr" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null || echo true)
-            [ "$draft" = "true" ] && continue
+            [ "$draft" = "true" ] && { echo "skip #$pr (draft)"; continue; }
+
             pending=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup --jq '
               [ .statusCheckRollup[]
                 | select(((.name // .context // "") | ascii_downcase | test("codecov|readthedocs")) | not)
                 | (.conclusion // .state // "")
                 | select(. != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "") ] | length' 2>/dev/null || echo 1)
-            if [ "$pending" = "0" ]; then
-              gh pr merge "$pr" --repo "$REPO" --merge --admin --delete-branch && echo "MERGED #$pr -> develop" || echo "blocked #$pr"
-            else
+            if [ "$pending" != "0" ]; then
               echo "PR #$pr not green ($pending) — skip"
+              continue
+            fi
+
+            # -------------------------------------------------------------
+            # mergeStateStatus IS COMPUTED LAZILY — handle it or undercount.
+            # -------------------------------------------------------------
+            # GitHub starts the mergeability computation when asked and answers
+            # UNKNOWN until it finishes. A bulk `gh pr list --json
+            # mergeStateStatus` returned UNKNOWN for 34 PRs during this bug's
+            # investigation; re-asking each one INDIVIDUALLY surfaced 14 MORE
+            # stranded PRs — a single-pass read UNDERCOUNTS BY ~40%. So: ask
+            # per-PR, and poll until it settles.
+            merge_state="UNKNOWN"
+            for _ in 1 2 3 4 5 6; do
+              merge_state=$(gh pr view "$pr" --repo "$REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || echo "UNKNOWN")
+              [ -n "$merge_state" ] && [ "$merge_state" != "UNKNOWN" ] && break
+              sleep 3
+            done
+
+            case "$merge_state" in
+              DIRTY)
+                # A stale PR that no longer merges cleanly is a FINDING, not an
+                # obstacle to force through. Rebasing someone else's branch
+                # unattended is how you silently break their work.
+                echo "::warning::#$pr no longer merges cleanly (DIRTY) — needs a rebase by its owner. Not forcing."
+                continue ;;
+              UNKNOWN)
+                # DO NOT `continue` HERE. Treating UNKNOWN as "not mergeable"
+                # would silently drop a green PR — rebuilding this bug's exact
+                # signature (everyone believes it will land; it quietly doesn't)
+                # INSIDE ITS OWN FIX. Fall through and let the merge attempt
+                # decide: a failed merge is loud, a skipped PR is silent.
+                echo "::warning::#$pr mergeStateStatus never settled after 6 polls — attempting the merge anyway (a loud failure beats a silent skip)" ;;
+              *) ;;
+            esac
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRY RUN: would merge #$pr -> develop (mergeStateStatus=$merge_state)"
+              merges=$((merges + 1))
+              continue
+            fi
+
+            if gh pr merge "$pr" --repo "$REPO" --merge --admin --delete-branch; then
+              echo "MERGED #$pr -> develop"
+              merges=$((merges + 1))
+            else
+              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose."
             fi
           done
+
+          echo "sweep complete: $merges merge(s) this run"
