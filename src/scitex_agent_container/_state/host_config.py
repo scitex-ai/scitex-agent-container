@@ -19,7 +19,7 @@ YAML shape::
       mba:     { ssh: ywatanabe@mba.local }
       spartan: { ssh: ywatanabe@spartan-login1, via: [mba] }
       bm198:   { ssh: bm198, via: [mba, spartan] }
-      nas:     { ssh: admin@192.168.11.22 }
+      nas:     { ssh: admin@192.168.11.22, reverse_ssh: ywata-note-win }
 
     lead:                           # ADR-0013 Phase 1 — agent→lead push inbox.
       name: lead                    # Target name on the lead's `sac listen`
@@ -116,6 +116,9 @@ class PeerSpec:
     ``ssh`` are present, the explicit ``ssh`` is retained verbatim as a
     static fallback — Phase 2 will decide the precedence rule. See
     :class:`ResolveSpec` for the field shape.
+
+    ``reverse_ssh`` names the PEER's ssh route back to the master; the
+    push-config renderer falls back to the master's name when empty.
     """
 
     name: str
@@ -123,6 +126,7 @@ class PeerSpec:
     via: tuple[str, ...] = ()  # ssh ProxyJump chain by peer name
     env_preamble: tuple[str, ...] = ()  # remote shell snippets joined by &&
     resolve: ResolveSpec | None = None  # dispatch-time target resolution
+    reverse_ssh: str = ""  # peer→master ssh target (sac host push-config)
 
     @classmethod
     def from_dict(cls, spec: dict, *, name: str = "<anonymous>") -> "PeerSpec":
@@ -147,6 +151,7 @@ class PeerSpec:
             via=tuple(str(x) for x in via_raw),
             env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
             resolve=_parse_resolve(name, spec.get("resolve")),
+            reverse_ssh=str(spec.get("reverse_ssh") or ""),
         )
 
     def jump_chain(self, peers: dict[str, "PeerSpec"]) -> list[str]:
@@ -340,20 +345,11 @@ def load(path: Path | None = None) -> Config:
         raise ValueError(f"config.yaml: 'peers' must be a mapping: {p}")
     peers: PeersMap = PeersMap()
     for name, spec in peers_raw.items():
-        if not isinstance(spec, dict):
-            raise ValueError(
-                f"config.yaml: peer '{name}' must be a mapping with ssh:/via:"
-            )
-        via_raw = spec.get("via") or []
-        if not isinstance(via_raw, list):
-            raise ValueError(f"config.yaml: peer '{name}' via: must be a list")
-        peers[str(name)] = PeerSpec(
-            name=str(name),
-            ssh=str(spec.get("ssh") or ""),
-            via=tuple(str(x) for x in via_raw),
-            env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
-            resolve=_parse_resolve(name, spec.get("resolve")),
-        )
+        # One parser for the per-peer schema: ``PeerSpec.from_dict`` is
+        # the same code path unit tests drive, so file-load and direct
+        # construction can never drift apart (and the schema — including
+        # ``reverse_ssh`` — is defined in exactly one place).
+        peers[str(name)] = PeerSpec.from_dict(spec, name=str(name))
 
     lead = _parse_lead(raw.get("lead"), source_path=p)
 

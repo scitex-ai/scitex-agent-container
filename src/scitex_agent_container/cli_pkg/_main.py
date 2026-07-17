@@ -71,9 +71,10 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Diagnostics", ["doctor", "ports", "provenance"]),
+    ("Host hygiene", ["worktree"]),
+    ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["mcp", "list-python-apis", "skills", "versions"]),
+    ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -96,6 +97,12 @@ class _MainGroup(LazyGroup):
         "event": f"{_PKG}.event_group:event_group",
         "image": f"{_PKG}.image_group:image_group",
         "skills": f"{_PKG}.skills_group:skills_group",
+        # Git-worktree hygiene (repo-scoped, not agent-scoped): report +
+        # reap PROVABLY-safe stale worktrees, alarm on a repo still over
+        # its cap. The permanent countermeasure to worktree sprawl
+        # (incident-worktree-sprawl-permanent-gc-20260710 — one repo hit
+        # 105 worktrees and helped trigger a host load-spike).
+        "worktree": f"{_PKG}.worktree_group:worktree_group",
         # `accounts` is a top-level noun — the credential store is fleet-wide,
         # not agent-scoped. Reuses the underlying `account` click group;
         # `accounts` is just the plural surface name.
@@ -106,6 +113,10 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Read WHY a CI run is red as cheaply as its status word — fetch
+        # the failing run's log once, print only the failing test IDs +
+        # assertion lines (or the ##[error] setup annotation).
+        "ci": f"{_PKG}.ci_group:ci_group",
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
         "ports": f"{_PKG}.ports_cmds:ports",
@@ -119,6 +130,11 @@ class _MainGroup(LazyGroup):
         # underneath.
         "pytest": f"{_PKG}.spartan_pytest:pytest_group",
         # Top-level standalone
+        # In-container self-orientation: identity / placement / execution /
+        # role / how-to, from the sac-injected env + the (bind-visible)
+        # spec.yaml. Honest UNKNOWN for underivable facts; never prints
+        # secret values.
+        "whoami": f"{_PKG}._whoami:whoami",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
@@ -288,14 +304,17 @@ class _MainGroup(LazyGroup):
         "a2a": "A2A protocol — generic agent-to-agent surface (no fleet deps).",
         "mcp": "MCP (Model Context Protocol) server commands.",
         "peer": "Outbound A2A calls into other agents' POST /v1/turn endpoint.",
+        "whoami": "Who am I? In-container identity, placement, execution, role, how-to.",
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
         "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
+        "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
+        "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }

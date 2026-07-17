@@ -28,7 +28,15 @@ from typing import Any
 
 __all__ = ["liveness_payload", "print_liveness"]
 
-_VERDICT_COLOUR = {"alive": "green", "dead": "red", "unknown": "yellow"}
+# wedged = present but NOT working — magenta, distinct from unknown's yellow so
+# a "known-stuck, needs a restart" reads apart from a "we could not tell". It is
+# NOT red: red is DEAD (destroyable), and a wedged agent must never be destroyed.
+_VERDICT_COLOUR = {
+    "alive": "green",
+    "dead": "red",
+    "unknown": "yellow",
+    "wedged": "magenta",
+}
 
 
 def liveness_payload(name: str, config: Any) -> dict:

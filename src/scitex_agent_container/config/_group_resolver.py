@@ -66,6 +66,7 @@ __all__ = [
     "group_from_labels",
     "groups_mesh",
     "is_developer_group",
+    "is_privileged_group",
     "is_mesh_group",
     "is_research_group",
     "resolve_group",
@@ -320,6 +321,22 @@ def is_research_group(group: str | None) -> bool:
     if not group:
         return False
     return str(group).strip().lower() == RESEARCHER_GROUP
+
+
+def is_privileged_group(group: str | None) -> bool:
+    """Return True iff ``group`` is the privileged group.
+
+    Case-insensitive on the resolved group name. ``None`` / empty →
+    False. Mirrors :func:`is_developer_group` on the same group-name
+    source of truth (:data:`PRIVILEGED_GROUP`). Used by the spawn ACL
+    gate (operator ruling 2026-07-16: the spawn denial for a
+    privileged-group agent — dotfiles, groups [privileged, infra] —
+    "is a sac bug"; the nominally strongest group could not spawn
+    while developer/researcher could).
+    """
+    if not group:
+        return False
+    return str(group).strip().lower() == PRIVILEGED_GROUP
 
 
 def is_mesh_group(group: str | None) -> bool:
