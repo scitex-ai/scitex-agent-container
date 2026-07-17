@@ -169,9 +169,10 @@ def dev_group() -> None:
     """Developer / maintainer plumbing (CI secrets, scheduled jobs, etc.)."""
 
 
-# Federated scheduled-job subcommands (`sac dev {cron,daemon,systemd}`)
-# delegate to scitex-dev's ecosystem aggregator. Kept in their own module
-# to hold this file under the per-file line cap; attached at import time.
+# Federated scheduled-job subcommands (`sac dev {cron,systemd}`, derived
+# from `_dev_jobs.GROUP_KINDS`) delegate to scitex-dev's ecosystem
+# aggregator. Kept in their own module to hold this file under the
+# per-file line cap; attached at import time.
 from ._dev_jobs import register_dev_jobs_commands
 
 register_dev_jobs_commands(dev_group)
