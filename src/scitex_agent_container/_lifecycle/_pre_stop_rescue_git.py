@@ -3,8 +3,14 @@
 Extracted from the orchestrator to keep both files under the per-file
 line cap. The orchestrator
 (:mod:`_lifecycle._pre_stop_rescue`) owns the policy (which roots to
-walk, when to skip, when to push vs tarball); this module owns the
-how (subprocess wrappers, branch detection, diff-tarball writing).
+walk, when to skip, when to tarball); this module owns the how
+(subprocess wrappers, branch detection, diff-tarball writing).
+
+There is deliberately NO push primitive here. The rescue is a LOCAL
+save and nothing more — see the "never publishes" contract in
+:mod:`_lifecycle._pre_stop_rescue`. A push helper in this module would
+be a loaded gun: the orchestrator is one call away from it, and the
+whole point is that no code path can publish on the agent's behalf.
 
 No mocks. Real subprocesses against real git worktrees.
 """
@@ -25,7 +31,6 @@ __all__ = [
     "is_dirty",
     "is_git_worktree",
     "move_dirty_to_side_branch",
-    "push_branch",
     "rescue_branch_name",
     "write_diff_tarball",
 ]
@@ -132,8 +137,8 @@ def move_dirty_to_side_branch(
     the dirty tree THERE with the stable rescue message.
 
     On success the caller is left standing ON the rescue branch (HEAD =
-    the rescue commit) so a subsequent ``push_branch`` / diff-tarball
-    captures the right commit; the caller MUST call ``checkout_branch``
+    the rescue commit) so a subsequent diff-tarball captures the right
+    commit; the caller MUST call ``checkout_branch``
     to return to the protected branch — which then reverts to a clean,
     ff-able tree since all the work is now committed on the side branch.
 
@@ -155,18 +160,6 @@ def move_dirty_to_side_branch(
     return (True, rescue_branch, "")
 
 
-def push_branch(path: Path, branch: str, *, timeout: float) -> tuple[bool, str]:
-    """Push ``branch`` to ``origin`` with ``--force-with-lease -u``."""
-    rc, _, err = _run(
-        ["git", "push", "--force-with-lease", "-u", "origin", branch],
-        cwd=path,
-        timeout=timeout,
-    )
-    if rc != 0:
-        return (False, err.strip() or "push failed")
-    return (True, "")
-
-
 def write_diff_tarball(
     path: Path,
     *,
@@ -179,9 +172,12 @@ def write_diff_tarball(
     """Write a ``.tar.gz`` bundling the worktree's last-commit patch + manifest.
 
     Lands under ``<rescue_root>/<safe-branch>-<timestamp>.tar.gz``.
-    Used as the fallback when ``push_branch`` couldn't ship the work
-    upstream. Returns the written path on success, ``None`` on
-    failure (logged once, never raised).
+    Used as the fallback when the rescue COMMIT could not land — then
+    the tarball is the only copy of the dirty tree. (It is no longer a
+    push fallback: the rescue does not push, and a commit that landed
+    is already durable on the bind-mounted host disk.) Returns the
+    written path on success, ``None`` on failure (logged once, never
+    raised).
     """
     rescue_root.mkdir(parents=True, exist_ok=True)
     safe_branch = branch.replace("/", "-") or "_detached"
