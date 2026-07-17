@@ -118,13 +118,22 @@ openai = [
     "openai-agents>=0.17.4",
 ]
 dev = [
-    # 0.17.12 floor: scitex-dev 0.16.0 introduced a TypeError in
-    # `_check_bridge_pattern` that fires through `ecosystem audit-all`
-    # and reds the `test_audit_all_clean` gate on this package. Fixed
-    # upstream by 0.17.12 (proj-scitex-todo 720-test suite confirmed
-    # clean on 0.17.12). Revert the floor to >=0.14.0 only if 0.17.12+
-    # is later proved to regress the rule corpus we depend on.
-    "scitex-dev>=0.17.12",  # tests/results/ accepted as a known tests subdir (PS-302)
+    # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
+    # first gained its `path=` parameter in 0.31.1 (verified against the
+    # published wheels: 0.31.0 has NEITHER `path=` NOR the CWD-git-root
+    # fallback; 0.31.1 has both). tests/develop/test_audit.py passes
+    # `path=` so the audit grades THIS checkout instead of resolving a
+    # tree by guessing — whose last resort is a `~/proj/<name>` guess that
+    # lands on the operator's real dev checkout on the Spartan runner.
+    # Below 0.31.1 that call raises TypeError, and on 0.31.0-and-older the
+    # home-disk guess is the ONLY fallback (no CWD net at all).
+    #
+    # Prior 0.17.12 floor, still subsumed: scitex-dev 0.16.0 introduced a
+    # TypeError in `_check_bridge_pattern` that fires through `ecosystem
+    # audit-all` and reds the `test_audit_all_clean` gate; fixed by
+    # 0.17.12. Also: tests/results/ accepted as a known tests subdir
+    # (PS-302).
+    "scitex-dev>=0.31.1",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
