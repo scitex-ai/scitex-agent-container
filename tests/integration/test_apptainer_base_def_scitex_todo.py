@@ -1,4 +1,10 @@
-"""Static contract: ``apptainer-base.def`` must install scitex-todo[mcp].
+"""Static contract: ``apptainer-base.def`` must install scitex-cards[mcp].
+
+Package renamed scitex-todo -> scitex-cards (2026-07-16, migration S1-S3).
+The wheel ships BOTH console scripts (``scitex-todo`` and ``scitex-cards``)
+and the ``scitex_todo`` import shim, so the runtime claims below — the
+``.mcp.json`` entry invoking ``scitex-todo mcp start`` — stay true with the
+new dist installed. What this file pins is the DIST the .def installs.
 
 P3a-1.5 (operator directive ``feedback_scitex_todo_single_shared_store``,
 lead a2a ``5c0c1fe32a9a43888e01151d6fc0fb9e``): every sac-launched
@@ -57,8 +63,9 @@ _BASE_DEF = (
 # cannot express "or stricter" is not a guard; it is a ratchet welded shut.
 _WIP_GATE_MIN_VERSION = (0, 8, 0)
 
-# The quoted requirement token naming scitex-todo, e.g. "scitex-todo[mcp]>=0.9.4".
-_SCITEX_TODO_REQ_RE = re.compile(r'"(?P<req>[^"]*\bscitex-todo\b[^"]*)"')
+# The quoted requirement token naming the board package (renamed
+# scitex-cards 2026-07-16), e.g. "scitex-cards[mcp]==0.16.0".
+_SCITEX_TODO_REQ_RE = re.compile(r'"(?P<req>[^"]*\bscitex-cards\b[^"]*)"')
 # That requirement's lower bound (the first of >=, == or ~=).
 _FLOOR_RE = re.compile(r"(?:>=|==|~=)\s*(?P<version>\d+(?:\.\d+)*)")
 
@@ -112,10 +119,10 @@ def test_uv_pip_install_block_mentions_scitex_todo(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
     # Act
-    present = "scitex-todo" in block
+    present = "scitex-cards" in block
     # Assert
     assert present, (
-        f"scitex-todo missing from uv pip install in apptainer-base.def:\n{block}"
+        f"scitex-cards missing from uv pip install in apptainer-base.def:\n{block}"
     )
 
 
@@ -123,10 +130,10 @@ def test_uv_pip_install_block_carries_mcp_extra(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
     # Act
-    present = "scitex-todo[mcp]" in block
+    present = "scitex-cards[mcp]" in block
     # Assert
     assert present, (
-        "scitex-todo install must carry the [mcp] extra (pulls fastmcp>=2.0)"
+        "scitex-cards install must carry the [mcp] extra (pulls fastmcp>=2.0)"
         f" in apptainer-base.def:\n{block}"
     )
 
@@ -147,7 +154,7 @@ def test_uv_pip_install_block_pins_scitex_todo_minimum_version(
     floor = _requirement_floor(requirement)
     # Assert
     assert floor is not None, (
-        "scitex-todo install must carry a version specifier (>=, == or ~=)"
+        "scitex-cards install must carry a version specifier (>=, == or ~=)"
         f" in apptainer-base.def; got {requirement!r} in:\n{block}"
     )
 
@@ -178,12 +185,12 @@ def test_scitex_todo_floor_is_at_least_the_wip_gate_capability(
 @pytest.mark.parametrize(
     "requirement",
     [
-        "scitex-todo[mcp]>=0.8.0",  # exactly the capability floor
-        "scitex-todo[mcp]>=0.8",  # the same floor, written short
-        "scitex-todo[mcp]>=0.9.4",  # today's floor
-        "scitex-todo[mcp]>=0.9.4,<1.0",  # a floor with an upper bound
-        "scitex-todo[mcp]==0.9.8",  # an exact pin
-        "scitex-todo[mcp]>=1.0",  # a future major
+        "scitex-cards[mcp]>=0.8.0",  # exactly the capability floor
+        "scitex-cards[mcp]>=0.8",  # the same floor, written short
+        "scitex-cards[mcp]>=0.9.4",  # today's floor
+        "scitex-cards[mcp]>=0.9.4,<1.0",  # a floor with an upper bound
+        "scitex-cards[mcp]==0.9.8",  # an exact pin
+        "scitex-cards[mcp]>=1.0",  # a future major
     ],
 )
 def test_requirement_floor_accepts_the_capability_floor_or_stricter(
@@ -200,9 +207,9 @@ def test_requirement_floor_accepts_the_capability_floor_or_stricter(
 @pytest.mark.parametrize(
     "requirement",
     [
-        "scitex-todo[mcp]",  # unpinned — the drift that started this
-        "scitex-todo[mcp]>=0.3.0",  # the stale floor the old guard froze
-        "scitex-todo[mcp]>=0.7.50",  # the version the live SIFs shipped
+        "scitex-cards[mcp]",  # unpinned — the drift that started this
+        "scitex-cards[mcp]>=0.3.0",  # the stale floor the old guard froze
+        "scitex-cards[mcp]>=0.7.50",  # the version the live SIFs shipped
     ],
 )
 def test_requirement_floor_rejects_unpinned_or_pre_wip_gate(requirement: str) -> None:
