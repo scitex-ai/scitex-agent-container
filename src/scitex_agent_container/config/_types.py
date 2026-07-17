@@ -74,6 +74,21 @@ class ClaudeSpec:
     continue_max_age_minutes: int | None = None
     # Explicit session ID to pass to --resume. Only used when session="resume".
     resume_id: str = ""
+    # Fork the resumed session instead of continuing it in place —
+    # ``claude --fork-session`` ("When resuming, create a new session ID
+    # instead of reusing the original"; only meaningful with ``--resume`` /
+    # ``--continue``) and its SDK twin ``ClaudeAgentOptions(fork_session=)``.
+    # Set by ``_lifecycle._twin.seed_twin_from_parent`` on a twin's FIRST boot
+    # so the twin inherits the parent's conversation but writes to a session of
+    # its OWN from turn one, rather than adopting the parent's session id.
+    fork_session: bool = False
+    # Pin the session id of THIS conversation — ``claude --session-id <uuid>``
+    # / ``ClaudeAgentOptions(session_id=)``. Must be a well-formed UUID
+    # (validator-enforced). Paired with ``fork_session`` for a twin, whose id
+    # is derived deterministically from its agent name
+    # (``_twin_identity.twin_session_uuid``), making the session addressable
+    # from the name alone. Empty = let claude allocate one.
+    session_id: str = ""
     auto_accept: bool = True
     # Saved-account name (from ``sac account list``) whose credential
     # snapshot this agent runs on. ``""`` = the host's live

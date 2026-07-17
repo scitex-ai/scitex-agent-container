@@ -59,6 +59,30 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--fork-session",
+        action="store_true",
+        default=False,
+        help=(
+            "Fork the resumed session into a NEW session id instead of "
+            "continuing it in place. Forwarded to "
+            "ClaudeAgentOptions(fork_session=True). Only meaningful "
+            "alongside a resume; applied to the FIRST launch only (a "
+            "supervised resume-retry must not re-fork)."
+        ),
+    )
+    p.add_argument(
+        "--session-id",
+        type=str,
+        default=None,
+        help=(
+            "Pin this conversation's session id (must be a valid UUID). "
+            "Forwarded to ClaudeAgentOptions(session_id=...). Paired with "
+            "--fork-session to fork into a caller-chosen id; a twin's is "
+            "derived from its agent name (uuid5), so its session is "
+            "addressable from the name alone."
+        ),
+    )
+    p.add_argument(
         "--a2a-port",
         type=int,
         default=None,
@@ -169,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             tick_seconds=args.tick_seconds,
             mission=args.mission,
             resume_session_id=args.resume_session_id,
+            fork_session=args.fork_session,
+            session_id=args.session_id,
             print_stream=args.print_stream,
             a2a_host=args.a2a_host,
             a2a_port=args.a2a_port,

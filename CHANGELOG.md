@@ -6,6 +6,48 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — `sac agents twin` was inert; two defects in `derive_twin_spec`
+
+Both demonstrated against the real on-disk `scitex-tex` spec, and both
+invisible to the 29 passing twin tests because the fixture modelled a spec
+shape the validator rejects and the suite never ran the validator — tests
+written to match the implementation's assumption cannot disagree with it.
+
+- **Twin specs were unloadable.** The identity env was written to the
+  top-level `spec.env`, which v3 validation rejects ("move it to
+  `spec.apptainer.env`"). Every twin derived from a v3-valid parent produced a
+  spec that could not load — so it never started, never received
+  `SAC_TWIN_PARENT`, and `seed_twin_from_parent` (triggered solely by that
+  var) never ran. Now written to `spec.apptainer.env`, which reaches both
+  `config.env` and the container's `--env`.
+- **The parent's identity was re-injected through inherited `raw_args`.** Real
+  specs pin identity as `raw_args: [--env, SCITEX_TODO_AGENT_ID=<parent>]`,
+  and `build_run_argv` appends `raw_args` after every curated `--env`, so a
+  twin would author as its parent. `derive_twin_spec` now scrubs identity
+  `--env` pairs from inherited `raw_args`, leaving all other raw_args verbatim.
+
+### Added — twin refinements (ADR-0019 amendment)
+
+- **`--fork-session`.** A twin's first boot now resumes its parent's live
+  session via the supported `claude --resume <parent> --fork-session
+  --session-id <derived>` (SDK: the same via `ClaudeAgentOptions`) instead of
+  seeding its live session to the parent's uuid. The transcript copy remains —
+  separate container homes mean `--resume` needs a local transcript; the fork
+  only handles the id. New validated `spec.claude.fork_session` /
+  `spec.claude.session_id` carry it to both the `tui` and `claude-agent-sdk`
+  runtimes.
+- **`--tag` → deterministic ids.** `sac agents twin <parent> --tag <slug>` ⇒
+  `<parent>-forked-<tag>`, with the session uuid derived `uuid5(<twin-id>)`.
+  Re-running a tag targets the SAME twin instead of minting `-2`/`-3`. On all
+  four surfaces (Python API, CLI, `agent_twin` MCP tool, `33_twin-spawning`
+  skill).
+- **Boot identity gate.** `assert_twin_identity` refuses to boot a twin whose
+  `SCITEX_TODO_AGENT_ID` is missing, is its parent's, or is not its own name —
+  the inherited transcript claims the parent's identity far more persuasively
+  than a prompt can deny it. Agent identity is gated (env carries it); card
+  ownership stays a prompt-level rule (`add_task` has no env default for the
+  owner), per ADR-0019's line.
+
 ## [0.21.22] - 2026-07-17
 
 **The version number was itself the bug.** develop carried 21 merged PRs

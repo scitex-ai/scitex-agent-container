@@ -33,8 +33,14 @@ from ._session_state import (
 )
 from ._session_supervisor_helpers import (
     _drain_failed_inbox as _drain_failed_inbox,
+)
+from ._session_supervisor_helpers import (
     _maybe_compact as _maybe_compact,
+)
+from ._session_supervisor_helpers import (
     _resume_candidate as _resume_candidate,
+)
+from ._session_supervisor_helpers import (
     _wake_on_inbound as _wake_on_inbound,
 )
 from ._session_tasks import (
@@ -64,6 +70,8 @@ async def run_conversation(
     inbox: "asyncio.Queue",
     resume_session_id: str | None,
     stop: asyncio.Event,
+    fork_session: bool = False,
+    session_id: str | None = None,
     print_stream: bool = False,
     max_restarts: int = 0,
     restart_backoff_s: float = 1.0,
@@ -209,6 +217,23 @@ async def run_conversation(
         stderr_capture = StderrCapture()
         attempt_extra = dict(sdk_extra) if sdk_extra else {}
         attempt_extra["stderr"] = stderr_capture.callback
+        # Session FORK — the SDK peers of ``claude --fork-session`` /
+        # ``--session-id``, threaded through the documented ``extra`` seam
+        # (both are real ClaudeAgentOptions fields). Used by a twin's FIRST
+        # boot to inherit its parent's conversation while writing to a session
+        # of its own.
+        #
+        # FIRST ATTEMPT ONLY, and that guard is load-bearing: attempt>0 is the
+        # supervisor's resume-RECOVERY walking ``session_id_history`` after a
+        # rejected resume. Re-forking there would fight the recovery (each
+        # retry forking a fresh thread), and re-pinning the SAME ``session_id``
+        # would ask claude to create an id that attempt 0 may have already
+        # created. Recovery must resume plainly.
+        if attempt == 0:
+            if fork_session:
+                attempt_extra["fork_session"] = True
+            if session_id:
+                attempt_extra["session_id"] = session_id
         try:
             options = build_sdk_options_fn(
                 name,

@@ -594,3 +594,46 @@ def test_tui_inner_argv_default_claudespec_is_fresh_no_continue_flag():
     argv = build_inner_argv(cfg, tui=True)
     # Assert
     assert "-c" not in _exec_tail_tokens(argv)
+
+
+# ─── _agent_runner_argv: session fork (SDK peer of the TUI's fork flags) ──
+
+_SDK_FORK_UUID = "fe612a87-4091-5db2-a9c8-ddb2ab6ad430"
+
+
+def test_agent_runner_argv_forwards_fork_session():
+    # Arrange — a twin inherits its parent's runtime, so the SDK path must
+    # fork identically to the TUI one (88/97 fleet specs are tui, 9 are sdk).
+    cfg = AgentConfig(
+        name="p-forked-t",
+        runtime="claude-agent-sdk",
+        claude=ClaudeSpec(model="haiku", fork_session=True),
+    )
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--fork-session" in argv
+
+
+def test_agent_runner_argv_forwards_session_id():
+    # Arrange
+    cfg = AgentConfig(
+        name="p-forked-t",
+        runtime="claude-agent-sdk",
+        claude=ClaudeSpec(model="haiku", session_id=_SDK_FORK_UUID),
+    )
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert argv[argv.index("--session-id") + 1] == _SDK_FORK_UUID
+
+
+def test_agent_runner_argv_has_no_fork_flags_by_default():
+    # Arrange — every non-twin agent's argv must be unchanged.
+    cfg = AgentConfig(
+        name="plain", runtime="claude-agent-sdk", claude=ClaudeSpec(model="haiku")
+    )
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--fork-session" not in argv and "--session-id" not in argv

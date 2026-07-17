@@ -168,6 +168,65 @@ def validate_claude(spec: dict) -> list[str]:
                     "the SDK/CLI, so the pin would be lost without this check."
                 )
 
+    errors.extend(_validate_fork(claude_block))
+    return errors
+
+
+def _validate_fork(claude_block: dict) -> list[str]:
+    """Validate ``spec.claude.fork_session`` / ``session_id`` (the fork pair).
+
+    ``claude --session-id <uuid>`` documents "must be a valid UUID", and
+    ``--fork-session`` documents "use with --resume or --continue" — so a
+    malformed id or a fork with nothing to fork FROM are both config errors
+    the CLI/SDK would only reveal at boot, inside a container, as a dead
+    session. Fail loud at validate time naming the bad value instead.
+    """
+    from ._session_continuity import SESSION_RESUME, wants_continue
+
+    errors: list[str] = []
+
+    fork_session = claude_block.get("fork_session")
+    if fork_session is not None and not isinstance(fork_session, bool):
+        errors.append(
+            "spec.claude.fork_session must be a boolean, got "
+            f"{type(fork_session).__name__}"
+        )
+        fork_session = None
+
+    session_id = claude_block.get("session_id")
+    if session_id is not None:
+        if not isinstance(session_id, str):
+            errors.append(
+                "spec.claude.session_id must be a string, got "
+                f"{type(session_id).__name__}"
+            )
+        elif session_id.strip():
+            try:
+                uuid.UUID(session_id.strip())
+            except (ValueError, AttributeError, TypeError):
+                errors.append(
+                    f"spec.claude.session_id '{session_id}' is not a valid "
+                    "UUID. `claude --session-id` requires a well-formed UUID "
+                    "(e.g. '123e4567-e89b-12d3-a456-426614174000'); a twin's "
+                    "is derived from its agent name via uuid5 "
+                    "(_twin_identity.twin_session_uuid)."
+                )
+
+    # --fork-session forks the session being RESUMED/CONTINUED; with a fresh
+    # session there is nothing to fork, and claude ignores the flag — the
+    # operator-visible symptom would be a twin that silently did not inherit.
+    if fork_session:
+        session = claude_block.get("session")
+        resolved = str(session or "").strip().lower()
+        if not (wants_continue(session) or resolved == SESSION_RESUME):
+            errors.append(
+                "spec.claude.fork_session requires spec.claude.session to be "
+                f"'continue' or '{SESSION_RESUME}', got {session!r}. "
+                "`--fork-session` only works with `--resume`/`--continue`: "
+                "it forks the session being resumed, so with a fresh session "
+                "there is nothing to fork and the flag is silently ignored."
+            )
+
     return errors
 
 

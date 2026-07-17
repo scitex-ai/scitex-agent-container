@@ -107,11 +107,20 @@ def _schedule_ttl_stop(twin_name: str, ttl_seconds: int) -> str:
 @click.command(name="twin")
 @click.argument("parent", type=str, shell_complete=agent_name_complete)
 @click.option(
+    "--tag",
+    type=str,
+    default=None,
+    help="Descriptive slug -> the DETERMINISTIC twin id <parent>-forked-<tag> "
+    "(e.g. --tag review-pr-712). Preferred: re-running the same tag targets "
+    "the SAME twin instead of minting a new one. Excludes --name.",
+)
+@click.option(
     "--name",
     "twin_name",
     type=str,
     default=None,
-    help="Twin agent name (default: <parent>-twin, bumped to -2/-3 if taken).",
+    help="Explicit twin agent name. Excludes --tag. Omit both for the legacy "
+    "default <parent>-twin, bumped to -2/-3 if taken.",
 )
 @click.option(
     "--task",
@@ -156,6 +165,7 @@ def _schedule_ttl_stop(twin_name: str, ttl_seconds: int) -> str:
 )
 def twin(
     parent: str,
+    tag: str | None,
     twin_name: str | None,
     task: str | None,
     persist: bool,
@@ -169,24 +179,32 @@ def twin(
     The twin inherits PARENT's live conversation at birth (a fork of its
     session) and then diverges. PARENT is never touched. Repo / workdir /
     image / binds / model are inherited verbatim; the twin gets its own
-    name, a fresh a2a port, ``session: continue`` (seeded from the parent at
-    first boot), and the identity-split env (``SCITEX_TODO_AGENT_ID`` = twin,
-    ``SAC_TWIN_PARENT`` = parent).
+    name, a fresh a2a port, and the identity-split env
+    (``SCITEX_TODO_AGENT_ID`` = twin, ``SAC_TWIN_PARENT`` = parent). At first
+    boot the host resumes PARENT's live session with ``--fork-session``, so
+    the twin carries the context but writes to a session of its own.
 
     \b
     Examples:
-      # ephemeral triage twin, inherits context, auto-stops in 30m
-      sac agents twin neurovista --task "audit the failing figures" --ttl 30m
+      # ephemeral triage twin, deterministic id, auto-stops in 30m
+      sac agents twin neurovista --tag figure-audit --ttl 30m \\
+          --task "audit the failing figures"
 
       # persistent writer companion sitting beside the parent
-      sac agents twin neurovista --name neurovista-writer --persist \\
+      sac agents twin neurovista --tag writer --persist \\
           --task "draft the results section"
 
-    Identity contract (enforced by the boot-kick + the twin skill): the
-    twin AUTHORS scitex-todo writes under its own name, but card OWNERSHIP
-    stays with PARENT — the twin passes assignee=$SAC_TWIN_PARENT on every
-    card write. scitex-todo cannot default owner=parent from env, so this
-    is a hard rule, not an env guarantee.
+    Prefer --tag: the id is DETERMINISTIC (<parent>-forked-<tag>), so
+    re-running the same tag targets the SAME twin rather than minting
+    <parent>-twin-2, -3, ... — and you can stop/delete it by a name you
+    already know, with no lookup.
+
+    Identity contract: the twin AUTHORS scitex-todo writes under its own
+    name — verified at boot, which REFUSES to start a twin whose injected
+    identity is missing or is its parent's. But card OWNERSHIP stays with
+    PARENT: the twin passes assignee=$SAC_TWIN_PARENT on every card write.
+    scitex-todo cannot default owner=parent from env, so ownership is a hard
+    rule carried by the boot-kick + the twin skill, not an env guarantee.
     """
     from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
 
@@ -198,8 +216,9 @@ def twin(
         sys.exit(code)
 
     if persist and ttl:
-        _fail("--persist and --ttl are mutually exclusive (a persistent twin "
-              "has no TTL).")
+        _fail(
+            "--persist and --ttl are mutually exclusive (a persistent twin has no TTL)."
+        )
     ttl_seconds = _parse_ttl(ttl) if ttl else None
 
     # Resolve parent spec + twin name and derive the inline twin doc (the
@@ -207,7 +226,12 @@ def twin(
     # unknown parent or a taken explicit --name.
     try:
         resolved_name, doc = prepare_twin_spawn(
-            parent, twin_name=twin_name, task=task, persist=persist, role=role
+            parent,
+            twin_name=twin_name,
+            tag=tag,
+            task=task,
+            persist=persist,
+            role=role,
         )
     except TwinSeedError as exc:
         _fail(str(exc))
@@ -242,16 +266,21 @@ def twin(
         ttl_note = _schedule_ttl_stop(resolved_name, ttl_seconds)
 
     if as_json:
-        click.echo(json.dumps({
-            "status": "ok" if rc == 0 else "error",
-            "twin": resolved_name,
-            "parent": parent,
-            "persist": persist,
-            "ttl_seconds": ttl_seconds,
-            "returncode": rc,
-            "ttl_note": ttl_note,
-            "result": result,
-        }, ensure_ascii=False))
+        click.echo(
+            json.dumps(
+                {
+                    "status": "ok" if rc == 0 else "error",
+                    "twin": resolved_name,
+                    "parent": parent,
+                    "persist": persist,
+                    "ttl_seconds": ttl_seconds,
+                    "returncode": rc,
+                    "ttl_note": ttl_note,
+                    "result": result,
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
         if rc == 0:
             lifetime = "persistent" if persist else "ephemeral"

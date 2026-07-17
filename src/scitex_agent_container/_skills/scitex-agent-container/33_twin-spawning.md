@@ -15,16 +15,39 @@ its own main loop.
 
 ```bash
 # ephemeral triage twin — inherits context, auto-stops after 30m
-sac agents twin neurovista --task "audit the failing figures" --ttl 30m
+sac agents twin neurovista --tag figure-audit --ttl 30m \
+    --task "audit the failing figures"
 
 # persistent writer companion sitting beside the parent
-sac agents twin neurovista --name neurovista-writer --persist \
+sac agents twin neurovista --tag writer --persist \
     --task "draft the results section"
 ```
 
 An agent can spawn **its own** twin from inside its container via the MCP
-tool `agent_twin(parent="<self>", task="...", persist=False)` — it brokers
-to the host exactly like `agent_spawn`.
+tool `agent_twin(parent="<self>", tag="...", task="...", persist=False)` —
+it brokers to the host exactly like `agent_spawn`.
+
+## Name your twin with `--tag` (use this, not `--name`)
+
+`--tag <slug>` derives the **deterministic** id `<parent>-forked-<tag>`:
+
+| | `--tag figure-audit` | `--name` / neither |
+|---|---|---|
+| id | `neurovista-forked-figure-audit` | `neurovista-writer` / `neurovista-twin` |
+| re-run the same command | targets the **SAME** twin (fails loud if it exists) | `--name`: fails loud. Neither: **mints `-twin-2`, `-3`, …** |
+| addressable | yes — you can compute the id from parent+tag | needs a lookup |
+
+**Why it is the default advice:** the bare `<parent>-twin` default bumps to
+`-2`/`-3` on every re-run, so a retried command silently mints a *new agent*
+each time. We already carry ~170 worktrees; a second sprawl source is not
+affordable. A deterministic id also reads as what it is — lineage + mission —
+which is the opposite of an opaque `claude/agent-<hash>`, and it lets you
+`sac agents stop/delete <parent>-forked-<tag>` from a name you already know.
+
+A tag is a lowercase slug (`review-pr-712`, `figures`), max 40 chars; anything
+else fails loud rather than being sanitised (the id becomes a directory name,
+an a2a address and a tmux session name). `--tag` and `--name` are mutually
+exclusive.
 
 ## What you get
 
@@ -34,12 +57,13 @@ overridden:
 
 | Field | Twin value | Why |
 |---|---|---|
-| name | `<parent>-twin` (or `--name`, bumped `-2`/`-3` if taken) | its own identity |
-| `claude.session` | `continue` (marker seeded host-side) | inherit at first boot; continue own session on restart |
+| name | `<parent>-forked-<tag>` (`--tag`; or `--name`; else `<parent>-twin` bumped `-2`/`-3`) | its own identity — deterministic, below |
+| `claude.session` | `continue`; first boot forks off the parent host-side | inherit at first boot; continue own session on restart |
 | `restart.policy` | `never` (ephemeral) / `always` (`--persist`) | lifetime, below |
 | `a2a.port` | `auto` | a fresh sidecar port — never the parent's |
-| `env.SCITEX_TODO_AGENT_ID` | the twin | writes authored as the twin |
-| `env.SAC_TWIN_PARENT` | the parent | the owner-convention value (below) |
+| `apptainer.env.SCITEX_TODO_AGENT_ID` | the twin | writes authored as the twin (**gated at boot**) |
+| `apptainer.env.SAC_TWIN_PARENT` | the parent | the owner-convention value (below) |
+| identity `--env` in `raw_args` | scrubbed | inherited raw_args are appended AFTER the curated env, so the parent's id would win |
 | channels | telegrammer dropped, `server:sac` kept | two agents must not fight one bot's getUpdates slot |
 
 ## When to use a twin — the three cases
@@ -76,7 +100,14 @@ settings — nothing about twinning implies short-lived.
 The operator's ask: a twin's writes should be attributed to the **twin's**
 name ("分身の名前で書いて欲しい"). So `SCITEX_TODO_AGENT_ID` is set to the
 twin — its scitex-todo `created_by` / comment author / actor are the twin.
-That part is automatic.
+That part is automatic, and it is **gated**: the host REFUSES to boot a twin
+whose injected id is missing, is its parent's, or is not its own name.
+
+Why a gate and not just a prompt: the twin boots **into the parent's
+transcript**, where the parent says "I am \<parent\>" in its own voice,
+hundreds of turns deep. That outweighs any single prompt line — on 2026-07-03
+two agents believed they were one identity. Env is the only channel that
+outranks the transcript, so identity is enforced there, not asked for.
 
 **But scitex-todo card OWNERSHIP must stay with the PARENT — and this
 CANNOT be enforced from env.** Verified against `scitex_todo._store`:
@@ -101,13 +132,20 @@ coordinate results back to the parent via a2a or a parent-owned card.
 start, `_lifecycle._twin.seed_twin_from_parent` runs BEFORE the runtime
 launches:
 
+0. **gates the twin's identity** — refuses to boot if `SCITEX_TODO_AGENT_ID`
+   is missing, is the parent's, or is not the twin's own name (below);
 1. resolves the parent's **current** (possibly forked) session uuid from
    `<parent-state>/session_id`;
 2. copies the parent's transcript
    (`runtime/<parent>/home/.claude/projects/<enc>/<uuid>.jsonl`) into the
-   twin's container-home projects store, mirroring the project subdir;
-3. seeds the twin's session marker to that uuid so `session: continue`
-   resumes the copied transcript (TUI `-c` / the SDK marker).
+   twin's container-home projects store, mirroring the project subdir —
+   parent and twin have **separate** container homes and `--resume` reads the
+   *local* projects store, so this copy is the cross-home transport;
+3. points that first launch at `claude --resume <parent-uuid> --fork-session
+   --session-id <derived>` (SDK: the same three via `ClaudeAgentOptions`), so
+   the twin inherits the conversation but **writes to a session of its own**
+   from turn one instead of adopting the parent's session id. The derived id
+   is `uuid5(<twin-id>)` — computable from the twin's name alone.
 
 This is **first-boot only** (keyed on the twin having no session marker yet):
 on later restarts the twin `continue`s its OWN diverged session — a pinned

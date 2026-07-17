@@ -53,6 +53,25 @@ def _home_has_resumable_conversation(config: "AgentConfig"):
     return has, home
 
 
+def _fork_argv(claude_spec: "object") -> list[str]:
+    """Return the ``--fork-session`` / ``--session-id`` flags for a resume.
+
+    Callers MUST only use this when the argv already carries ``-c`` or
+    ``--resume``: claude documents both flags as resume-only, and a
+    ``--fork-session`` on a fresh session is silently ignored rather than
+    rejected. Emitted independently — ``--session-id`` alone is a legitimate
+    "pin this conversation's id", and ``--fork-session`` alone is a
+    legitimate "fork to some new id, I don't care which".
+    """
+    argv: list[str] = []
+    if bool(getattr(claude_spec, "fork_session", False)):
+        argv.append("--fork-session")
+    session_id = str(getattr(claude_spec, "session_id", "") or "").strip()
+    if session_id:
+        argv += ["--session-id", session_id]
+    return argv
+
+
 def _tui_runner_argv(
     config: "AgentConfig",
     *,
@@ -133,10 +152,12 @@ def _tui_runner_argv(
     from ..config._session_continuity import SESSION_RESUME, wants_continue
 
     session_mode = str(getattr(claude_spec, "session", "") or "").strip().lower()
+    resuming = False
     if wants_continue(getattr(claude_spec, "session", None)):
         has_history, home = _home_has_resumable_conversation(config)
         if has_history:
             argv.append("-c")
+            resuming = True
         else:
             import logging
 
@@ -163,6 +184,18 @@ def _tui_runner_argv(
         resume_id = str(getattr(claude_spec, "resume_id", "") or "").strip()
         if resume_id:
             argv += ["--resume", resume_id]
+            resuming = True
+    # Session FORK — ``--fork-session`` ("When resuming, create a new session
+    # ID instead of reusing the original") + ``--session-id <uuid>`` pin the
+    # resumed conversation into a NEW, caller-chosen session. Gated on
+    # ``resuming``: both flags only mean anything alongside ``-c``/``--resume``
+    # (claude's own help says so), and emitting ``--fork-session`` with a fresh
+    # session would be silently ignored — the operator-visible symptom of which
+    # is a twin that appears to boot fine but inherited nothing.
+    # Set by ``_lifecycle._twin.seed_twin_from_parent`` on a twin's first boot:
+    # inherit the parent's conversation, write to a session of its own.
+    if resuming:
+        argv += _fork_argv(claude_spec)
     # One ``--mcp-config`` per value (P0 fix 2026-06-15, operator-reported):
     # ``claude --help`` documents ``--mcp-config <configs...>`` as accepting
     # multiple space-separated values after a single flag, but the real

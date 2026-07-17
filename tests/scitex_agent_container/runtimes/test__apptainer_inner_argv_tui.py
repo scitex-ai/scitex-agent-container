@@ -58,3 +58,81 @@ def test_resume_without_id_omits_resume_flag():
     argv = _tui_runner_argv(cfg)
     # Assert
     assert "--resume" not in argv
+
+
+# ─── session fork (--fork-session / --session-id) ─────────────────────────
+
+_FORK_PARENT_UUID = "123e4567-e89b-12d3-a456-426614174000"
+_FORK_NEW_UUID = "fe612a87-4091-5db2-a9c8-ddb2ab6ad430"
+
+
+def _fork_cfg(**claude_kw) -> AgentConfig:
+    """A resume-mode config carrying the fork pair (what a twin's first boot
+    looks like after ``seed_twin_from_parent`` overrides the in-memory spec)."""
+    return AgentConfig(
+        name="p-forked-t",
+        runtime="tui",
+        claude=ClaudeSpec(model="haiku", **claude_kw),
+    )
+
+
+def test_tui_argv_forks_the_resumed_parent_session():
+    # Arrange — the shape ADR-0019's amendment prescribes.
+    cfg = _fork_cfg(
+        session="resume",
+        resume_id=_FORK_PARENT_UUID,
+        fork_session=True,
+        session_id=_FORK_NEW_UUID,
+    )
+    # Act
+    argv = _tui_runner_argv(cfg)
+    # Assert
+    assert "--fork-session" in argv
+
+
+def test_tui_argv_pins_the_forked_session_id():
+    # Arrange
+    cfg = _fork_cfg(
+        session="resume",
+        resume_id=_FORK_PARENT_UUID,
+        fork_session=True,
+        session_id=_FORK_NEW_UUID,
+    )
+    # Act
+    argv = _tui_runner_argv(cfg)
+    # Assert
+    assert argv[argv.index("--session-id") + 1] == _FORK_NEW_UUID
+
+
+def test_tui_argv_forks_from_the_parents_uuid():
+    # Arrange — resume names the PARENT's session; the fork writes elsewhere.
+    cfg = _fork_cfg(
+        session="resume",
+        resume_id=_FORK_PARENT_UUID,
+        fork_session=True,
+        session_id=_FORK_NEW_UUID,
+    )
+    # Act
+    argv = _tui_runner_argv(cfg)
+    # Assert
+    assert argv[argv.index("--resume") + 1] == _FORK_PARENT_UUID
+
+
+def test_tui_argv_omits_fork_flags_on_a_fresh_session():
+    # Arrange — claude documents both flags as resume-only, and SILENTLY
+    # ignores --fork-session on a fresh session; emitting them anyway would
+    # make a twin look booted while having inherited nothing.
+    cfg = _fork_cfg(session="fresh", fork_session=True, session_id=_FORK_NEW_UUID)
+    # Act
+    argv = _tui_runner_argv(cfg)
+    # Assert
+    assert "--fork-session" not in argv and "--session-id" not in argv
+
+
+def test_tui_argv_has_no_fork_flags_by_default():
+    # Arrange — a plain resume must be untouched by this feature.
+    cfg = _fork_cfg(session="resume", resume_id=_FORK_PARENT_UUID)
+    # Act
+    argv = _tui_runner_argv(cfg)
+    # Assert
+    assert "--fork-session" not in argv and "--session-id" not in argv

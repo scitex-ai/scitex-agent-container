@@ -127,6 +127,8 @@ def parse_claude(spec: dict) -> ClaudeSpec:
         session=session,
         continue_max_age_minutes=continue_max_age,
         resume_id=str(raw.get("resume_id", "") or ""),
+        fork_session=bool(raw.get("fork_session", False)),
+        session_id=str(raw.get("session_id", "") or ""),
         auto_accept=raw.get("auto_accept", True),
         account=str(raw.get("account", "") or ""),
         credentials_file=str(raw.get("credentials_file", "") or ""),

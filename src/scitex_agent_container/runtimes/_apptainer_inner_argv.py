@@ -216,6 +216,20 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         "--restart-backoff-s",
         str(_resolve_restart_backoff_s(config)),
     ]
+    # Session FORK (``spec.claude.fork_session`` / ``session_id``) — the SDK
+    # peers of ``claude --fork-session`` / ``--session-id``, forwarded to
+    # ClaudeAgentOptions by the runner. Set by
+    # ``_lifecycle._twin.seed_twin_from_parent`` on a twin's FIRST boot so the
+    # twin inherits its parent's conversation but writes to a session of its
+    # own from turn one. Kept at parity with the TUI builder's ``_fork_argv``:
+    # a twin must behave identically on either runtime.
+    claude_fork = getattr(config, "claude", None)
+    if claude_fork is not None:
+        if bool(getattr(claude_fork, "fork_session", False)):
+            runner_argv.append("--fork-session")
+        forked_id = str(getattr(claude_fork, "session_id", "") or "").strip()
+        if forked_id:
+            runner_argv += ["--session-id", forked_id]
     # startup_prompts -> claude SDK mission via --mission. NO fallback
     # from startup_commands; that field is shell-exec only (see
     # build_inner_argv wrapper).
