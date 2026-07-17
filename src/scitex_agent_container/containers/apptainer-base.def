@@ -361,7 +361,18 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-cards UNPINNED (reverses the ==0.16.0 exact pin, 2026-07-17).
+    # scitex-cards: FLOOR (>=0.16.0), not an exact pin (was ==0.16.0). 2026-07-17.
+    #
+    # A floor is not a pin, and the difference is the whole point: `==` freezes
+    # the fleet at one version forever; `>=` states a CAPABILITY REQUIREMENT and
+    # lets the resolver take the newest that satisfies it. The integration guard
+    # `test_uv_pip_install_block_pins_scitex_todo_minimum_version` demands a
+    # specifier for exactly this reason, and it caught my first attempt, which
+    # dropped the specifier entirely — that is the ONE thing neither the pin nor
+    # the floor allows, because an unversioned requirement (its own words) "takes
+    # whatever happens to be newest on the bake day and then freezes it into every
+    # downstream layer." Unpinning is not the same as unversioning. The guard was
+    # right; I was wrong.
     # THIS layer is the one that matters: most agent specs boot sac-base.sif
     # directly and the :scitex layer INHERITS this venv, so whatever lands
     # here is what the whole fleet runs.
@@ -398,7 +409,7 @@ From: ubuntu:24.04
     # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]" \
+        "scitex-cards[mcp]>=0.16.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------

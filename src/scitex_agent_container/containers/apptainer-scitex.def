@@ -163,8 +163,15 @@ From: ./sac-base.sif
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
         #
-        # scitex-cards — UNPINNED, and ``-U`` so it actually re-resolves over
-        # the version base baked. This reverses the ==0.16.0 pin (2026-07-17).
+        # scitex-cards — FLOOR (>=0.16.0) + ``-U``, replacing the ==0.16.0 pin
+        # (2026-07-17). The two halves do different jobs and BOTH are needed:
+        # the floor states the capability requirement (and satisfies the
+        # integration guard); ``-U`` is what actually re-resolves to the newest
+        # published, because a floor the inherited venv ALREADY satisfies is a
+        # no-op — that is the 2026-07-12 fleet-drift, where the layer froze on
+        # whatever base baked and shipped 0.7.50 for days.
+        # Floor alone = frozen. ``-U`` alone (unversioned) = the guard's stated
+        # failure mode. Together = always-latest, with a capability floor.
         #
         #   The pin was defensive: a moving ref once nearly baked scitex-todo
         #   0.13.4's ~171s-per-write regression into the fleet image, so the
@@ -198,7 +205,7 @@ From: ./sac-base.sif
         # satisfied never re-resolved, and the layer froze on base's build
         # for days). ``-U`` forces the upgrade this layer exists to deliver.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards[mcp]"
+            "scitex-cards[mcp]>=0.16.0"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -235,7 +242,7 @@ From: ./sac-base.sif
         # satisfied requirement is a no-op and the layer silently freezes on
         # base's build (the 2026-07-12 fleet-drift).
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards[mcp]"
+            "scitex-cards[mcp]>=0.16.0"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
