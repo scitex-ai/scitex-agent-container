@@ -60,6 +60,30 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # P3a-2 — scitex-todo single shared store (operator directive
     # feedback_scitex_todo_single_shared_store).
     "~/.scitex/todo:/home/agent/.scitex/todo:rw",
+    # S6 store migration (scitex-todo -> scitex-cards). Same shape and same
+    # reason as the todo bind above, and the reason is NOT obvious: the store
+    # resolver keys off the AGENT's $HOME=/home/agent, so host-side reach is
+    # not enough. An agent whose spec binds the operator's ENTIRE home rw
+    # still cannot resolve ~/.scitex/cards — the data is present and
+    # unreachable at the same time, because the resolver never looks there.
+    # Measured 2026-07-16 by scitex-cards: `db import` SUCCEEDED into the
+    # container overlay and reported success, because /home/agent/.scitex/todo
+    # was a bind but /home/agent/.scitex itself was overlay-local.
+    #
+    # NARROW ON PURPOSE — do NOT widen to "~/.scitex". That parent also holds
+    # ~/.scitex/agent-container/accounts (the credential store); a one-line
+    # widening would expose it to every agent. One bind per store; each new
+    # store pays its own explicit line. That cost is the feature.
+    #
+    # Skip-if-missing applies (see default_binds_for_host): on a host with no
+    # ~/.scitex/cards this entry is a SILENT no-op — safe, but NOT a signal.
+    # Verify a rollout by comparing dev:inode from INSIDE a booted container
+    # against the host; never by reading the argv, which cannot tell a bind
+    # that landed from one that was skipped.
+    # Piloted per-agent first (dotfiles e2b72e8a, scitex-cards spec); its
+    # in-container stat confirmed one directory / two names before this went
+    # fleet-wide.
+    "~/.scitex/cards:/home/agent/.scitex/cards:rw",
     # 2026-06-13 STOPGAP (lead a2a b6f3916c) — bind the host's working
     # ``scitex_agent_container`` source over the in-SIF install so
     # agents pick up new CLI surface (e.g., ``sac pytest spartan run``
