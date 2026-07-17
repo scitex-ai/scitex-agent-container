@@ -6,8 +6,59 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.22] - 2026-07-17
+
+**The version number was itself the bug.** develop carried 21 merged PRs
+(#704–#725) while `pyproject.toml` still read `0.21.21` — a number ALREADY
+PUBLISHED on PyPI, with DIFFERENT CONTENT. So the installed package and the
+source tree agreed on the STRING and disagreed on the CODE, and every
+instrument built to catch exactly that — `pip show`, `sac --version`,
+`scitex-dev ecosystem check-versions` — compared the two, found them equal,
+and reported agreement. All of them were wrong. A stale install and a current
+one were INDISTINGUISHABLE by any check we had, which is the operator's
+complaint stated precisely: 「どれがどれだかわかりにくい」 — you cannot tell
+which is which. The remedy is not a better checker, it is a spent number: bump
+and release aggressively, because a version that has been published can never
+mean anything else again.
+
+Measured while cutting this release, and the reason it is urgent: the master
+host's venv reported `0.21.21` from its `.dist-info` while its `site-packages`
+had `_hostsync` but NO `_reconcile` (#724) and NO `_maintenance` (#722) — a
+tree matching no released version at all. Verification is by SYMBOL, never by
+version string.
+
 ### Added
 
+- **`sac agents reconcile` — the enforcer of "should be running => is
+  running" (#724).** sac could observe drift and name it, but nothing closed
+  the loop: an agent that should have been up simply stayed down until a human
+  noticed. The verb makes the declared fleet state authoritative, with budgets
+  and alarms so a reconcile pass cannot stampede the fleet.
+- **`sac worktree gc` — permanent worktree-sprawl GC + cap alarm (#722).**
+  Agent worktrees accumulated without bound; the GC reclaims them and the cap
+  alarm fires before sprawl becomes an outage.
+- **`sac whoami` + launch-time `CLAUDE.md` orientation (#717).** An agent
+  could not reliably answer WHO it was or WHERE it ran, so it guessed —
+  and guessed wrong.
+- **`sac host push-config` — master-SSOT generated peer client configs
+  (ADR-0021) (#718)**, with **bearer tokens riding the same guarded one-way
+  channel (#721)** rather than growing a second path to the same hosts.
+- **Cross-host liveness — a remote agent is probed ON ITS HOST (#708),** with
+  `sac agents attach` reaching a remote agent over ssh (#707), the master
+  showing remote-dispatched agents as running-on-peer via live probe (#710),
+  and a multihop probe with honest UNKNOWN + spec-derived account (#711).
+  Absence of evidence is reported as UNKNOWN, never as DEAD.
+- **`sac ci why` — extract the real CI failure cheaply (#714).** Inverts the
+  price of diagnosis: the answer costs a command instead of a log crawl.
+- **WEDGED verdict state (#715).** A screen instrument, so an auth-dead agent
+  sitting in a healthy tmux session can never read ALIVE. A PID is not a pulse.
+- **`startup_commands` rejects unguarded `rm -rf $VAR` (#713)** — a
+  195-repo landmine, defused at config-validation time.
+- **ADR-0020: cross-host (Spartan) agent placement + a2a runbook (#706).**
+- **Scheduling for the `sac host sync` drift detector, routed to a SEEN
+  scitex-todo card (#716)** — a detector nobody reads is not a detector. (The
+  `sac host sync` verb below shipped in 0.21.21 but was left filed under
+  *Unreleased* by that release; #716 adds its scheduler.)
 - **`sac host sync` — the centre can finally say WHICH CODE runs on a peer, and
   drift stops being silent.** sac could already LAUNCH an agent on Spartan but had
   no way to control the code version there, and nothing announced the difference:
@@ -59,6 +110,32 @@ versioning follows [SemVer](https://semver.org/).
   free. Credential distribution deliberately does NOT ride along yet; when it is
   decided it should use this same guarded one-way channel rather than growing a
   second path to the same hosts.
+
+### Fixed
+
+- **A remote tmux probe must not use a login shell (#709).** `ssh peer bash -lc
+  "tmux has-session"` returned rc=1 and `open terminal failed: not a terminal`
+  against a LIVE session — the login profile poisoned the exit code, so a
+  healthy remote agent read DEAD. The probe now calls tmux directly.
+- **A stale heartbeat must not outvote a live tmux-DEAD on one instrument
+  (#705).** Two readings of the same syscall are one witness, not two.
+- **`sac whoami` renders underivable facts as a placeholder shape, not the word
+  UNKNOWN (#719)** — "UNKNOWN" is a value a field can legitimately hold, so it
+  could not be distinguished from an answer.
+- **The privileged group may spawn (#720)** — operator ruling; the strongest
+  group was absent from the spawn allowlist.
+- **Wedged threads are joined at teardown so a straggler decrement cannot cross
+  into the next test (#723).** The escaped thread landed its decrement in an
+  unrelated test, which then failed for reasons that were nowhere in its own
+  code — a race that made CI a liar rather than a gate.
+
+### Changed
+
+- **`uv` is pinned at all six `setup-uv` call sites (#725).** Every one
+  installed `latest`, so CI silently re-rolled its own toolchain on someone
+  else's release schedule — a green run proved nothing about tomorrow's.
+- **`scitex-todo` pinned to `0.13.5` in the base + scitex container defs
+  (#704).**
 
 ## [0.21.21] - 2026-07-15
 
