@@ -163,37 +163,49 @@ From: ./sac-base.sif
         #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
         #
-        # scitex-todo — PINNED ==0.13.5 (was ``-P scitex-todo`` + a >=0.9.4
-        # floor). Base pins the SAME exact version, and this layer inherits
-        # base's /opt/venv-sac, so an exact ``==`` that base already satisfies
-        # is a correct no-op — there is nothing to re-resolve and no drift to
-        # fix, which is why the ``--upgrade-package scitex-todo`` flag that
-        # used to force re-resolution is GONE.
+        # scitex-cards — FLOOR (>=0.16.0) + ``-U``, replacing the ==0.16.0 pin
+        # (2026-07-17). The two halves do different jobs and BOTH are needed:
+        # the floor states the capability requirement (and satisfies the
+        # integration guard); ``-U`` is what actually re-resolves to the newest
+        # published, because a floor the inherited venv ALREADY satisfies is a
+        # no-op — that is the 2026-07-12 fleet-drift, where the layer froze on
+        # whatever base baked and shipped 0.7.50 for days.
+        # Floor alone = frozen. ``-U`` alone (unversioned) = the guard's stated
+        # failure mode. Together = always-latest, with a capability floor.
         #
-        #   Why a pin, not the old ``-P latest``: ``-P`` re-resolved
-        #   scitex-todo to the NEWEST published on every :scitex rebuild.
-        #   That fixed the 2026-07-12 fleet-drift — a ``>=`` floor the
-        #   inherited version already satisfied is a NO-OP, so the layer
-        #   could freeze on whatever :base baked (it shipped 0.7.50 for days).
-        #   But ``-P latest`` is a MOVING ref: a rebuild once 0.13.4 was
-        #   latest would have baked its ~171s-per-write store-rewrite
-        #   regression into the fleet image (vs ~4.5s on 0.13.5) — the board
-        #   dies the moment the image lands. An exact pin trades auto-
-        #   currency for reproducibility + safety: the baked version is
-        #   deterministic and bumps are DELIBERATE (measure a timed write,
-        #   then raise the pin in BOTH layers). 0.13.5 = the measured-good
-        #   version (scitex-todo owner, 2026-07-15).
+        #   The pin was defensive: a moving ref once nearly baked scitex-todo
+        #   0.13.4's ~171s-per-write regression into the fleet image, so the
+        #   recipe froze the version to the measured-good one. It worked. It
+        #   also made a routine bake pointless — the whole point of baking on
+        #   a schedule is to pick up new code, and a pinned recipe rebuilds a
+        #   byte-identical image forever while reporting success.
         #
-        #   ``[mcp]`` extra stays: it pulls fastmcp for the in-container
-        #   ``scitex-todo mcp start`` path. Section 2b re-asserts the WIP-gate
-        #   symbol BY SYMBOL, so a pin to a version that dropped it dies at
-        #   bake rather than shipping silently.
+        #   Operator ruling, 2026-07-17: 「pin 止めしてたら routine 焼きする
+        #   意味ないですからね」 and, on the regression that motivated the pin:
+        #   「scitex-cards が悪いならそれを直さなくてはいけないのでは？なぜ定期
+        #   焼きを止めるって発想になる？」 — correct, and it relocates the fix.
+        #   A package that ships a write-time regression is caught by THAT
+        #   package's CI. Freezing the image to dodge someone else's bug puts
+        #   the workaround in the wrong repo and quietly makes the whole fleet
+        #   stale to protect against one hypothetical bad release.
+        #
+        #   What stays true: PUBLISHED PyPI only, never a git branch ref (the
+        #   operator's hard requirement). Unpinned != unpublished. And
+        #   section 2b still asserts the shim BY SYMBOL, so a release that
+        #   drops it dies at bake instead of shipping — which is the honest
+        #   protection: verify the artifact, do not freeze the input.
         uv pip install --python /opt/venv-sac/bin/python \
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0" \
-            "scitex-cards[mcp]==0.16.0"
+            "scitex-cv>=0.2.0"
+        # Separate invocation with -U: an exact-version sibling in the same
+        # resolve would be a no-op against base's inherited venv (the
+        # 2026-07-12 fleet-drift: a floor the inherited version already
+        # satisfied never re-resolved, and the layer froze on base's build
+        # for days). ``-U`` forces the upgrade this layer exists to deliver.
+        uv pip install --python /opt/venv-sac/bin/python -U \
+            "scitex-cards[mcp]>=0.16.0"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -221,16 +233,16 @@ From: ./sac-base.sif
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0"
-        # scitex-todo — PINNED ==0.13.5 in its OWN invocation (pip's
-        # equivalent of the uv branch above). Was ``--upgrade`` + a >=0.9.4
-        # floor to force re-resolution over base's inherited venv; with an
-        # exact pin that base ALSO carries there is nothing to re-resolve, so
-        # ``--upgrade`` is dropped. Kept as a SEPARATE command anyway so the
-        # exact scitex-todo pin cannot reach into the providers' resolution
-        # above. See the uv branch for why a pin replaced ``-P latest`` (the
-        # 0.13.x ~171s-per-write regression a moving ref would have baked).
-        /opt/venv-sac/bin/pip install --no-cache-dir \
-            "scitex-cards[mcp]==0.16.0"
+        # scitex-cards — UNPINNED + ``--upgrade``, mirroring the uv branch
+        # above (see it for the operator's 2026-07-17 ruling and why the
+        # regression that motivated the pin belongs to the shipping package's
+        # CI, not to this recipe). Stays a SEPARATE invocation so its resolve
+        # cannot reach into the providers' above, and ``--upgrade`` is what
+        # actually moves it past whatever version base baked — without it a
+        # satisfied requirement is a no-op and the layer silently freezes on
+        # base's build (the 2026-07-12 fleet-drift).
+        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
+            "scitex-cards[mcp]>=0.16.0"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
