@@ -331,8 +331,12 @@ if terminal:
 
 # Exactly one installed distribution may claim each name. Two (an
 # orphaned .dist-info left by a partial reinstall) is the failure mode
-# that lets the reported version diverge from the code.
-for name in ("scitex-todo", "scitex-agent-container"):
+# that lets the reported version diverge from the code. The card-store
+# dist is ``scitex-cards`` since the rename — a clean bake has ZERO
+# ``scitex-todo`` .dist-info (the shim MODULE ships inside scitex-cards),
+# so pinning the OLD name here would fail every clean bake (measured:
+# 2026-07-17 Spartan base bake ts 2026-0717-182108).
+for name in ("scitex-cards", "scitex-agent-container"):
     dists = [
         dist
         for dist in md.distributions()

@@ -469,8 +469,13 @@ from scitex_todo._throughput import WIP_STATUSES
 from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
 
 # Printed for the BUILD LOG only — these numbers are NOT the gate.
-print("scitex-todo reported version :", md.version("scitex-todo"))
-print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+# ``scitex-cards`` is the DIST name since the 2026-07-16 rename (#734
+# flipped the install pin but left this line at the old name, so the
+# first CLEAN bake died on PackageNotFoundError — 2026-07-17 Spartan
+# bake ts 2026-0717-182108; earlier master bakes passed only because a
+# pre-rename base left an old scitex-todo .dist-info lingering).
+print("scitex-cards reported version:", md.version("scitex-cards"))
+print("scitex-cards WIP_STATUSES    :", sorted(WIP_STATUSES))
 print("sac reported version         :", md.version("scitex-agent-container"))
 print(
     "sac overlay auto-provision   :",
@@ -492,8 +497,10 @@ if terminal:
 
 # Exactly one installed distribution may claim each name. Two (an
 # orphaned .dist-info left by a partial reinstall) is the failure mode
-# that lets the reported version diverge from the code.
-for name in ("scitex-todo", "scitex-agent-container"):
+# that lets the reported version diverge from the code. The card-store
+# dist is ``scitex-cards`` since the rename — a clean bake has ZERO
+# ``scitex-todo`` .dist-info (the shim MODULE ships inside scitex-cards).
+for name in ("scitex-cards", "scitex-agent-container"):
     dists = [
         dist
         for dist in md.distributions()

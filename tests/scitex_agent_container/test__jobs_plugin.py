@@ -7,6 +7,9 @@ entry-point group match the federated contract:
   ``--all --include-active --sync-active-login`` every 2h (the SOLE
   refresher; see the ``--skip-active`` note below).
 * ``sac.host-sync-check`` — the hourly READ-ONLY peer drift detector.
+* ``sac.spartan-sif-bake`` — the daily remote SIF bake on the Spartan
+  lease + pull/verify/atomic-swap on the master (operator directive
+  2026-07-17: bake on Spartan, rsync here, zero master CPU).
 * ``sac.worktree-gc`` — the daily worktree GC.
 * ``sac.fleet-reconcile`` — the 5-minute enforcer of "should be running ⇒
   is running". Its pins matter more than most: ``restart.policy`` in ~93
@@ -46,15 +49,15 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_four_jobs() -> None:
-    # Arrange — call the registered provider. Four: accounts-refresh, the
-    # host-sync-check drift alarm, the daily worktree GC, and the
-    # fleet-reconcile enforcer. `sac listen` is still NOT federated (see the
-    # module docstring and the absence-pin below).
+def test_provider_returns_five_jobs() -> None:
+    # Arrange — call the registered provider. Five: accounts-refresh, the
+    # host-sync-check drift alarm, the daily Spartan SIF bake, the daily
+    # worktree GC, and the fleet-reconcile enforcer. `sac listen` is still
+    # NOT federated (see the module docstring and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 4
+    assert len(jobs) == 5
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -306,3 +309,54 @@ def test_fleet_reconcile_timeout_outlives_a_capped_pass() -> None:
     job = _job("sac.fleet-reconcile")
     # Assert
     assert job.timeout_sec == 300
+
+
+def test_spartan_sif_bake_job_name_is_package_prefixed() -> None:
+    # Arrange — the daily remote SIF bake (operator directive 2026-07-17:
+    # bake on Spartan, rsync to the master, zero master CPU).
+    # Act
+    job = _job("sac.spartan-sif-bake")
+    # Assert
+    assert job.name == "sac.spartan-sif-bake"
+
+
+def test_spartan_sif_bake_job_kind_is_timer() -> None:
+    # Arrange — a periodic systemd --user timer (daily), so kind="timer".
+    # A bad kind makes `ecosystem up` silently drop sac's WHOLE provider.
+    # Act
+    job = _job("sac.spartan-sif-bake")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_spartan_sif_bake_command_is_the_confirmed_form() -> None:
+    # Arrange — `sac image bake-remote` REFUSES to run without --yes
+    # (exit 2), mirroring `sac image build`'s non-interactive gate. A
+    # scheduled command missing --yes would fail every single night —
+    # a timer that fires and does nothing, the inert-feature shape.
+    # Act
+    job = _job("sac.spartan-sif-bake")
+    # Assert
+    assert job.command == "sac image bake-remote --yes"
+
+
+def test_spartan_sif_bake_cadence_is_daily() -> None:
+    # Arrange — the SIF is a point-in-time snapshot of @develop; daily is
+    # the freshness the operator asked for (定期焼き), and skip-if-unchanged
+    # keeps no-change days at one ssh round-trip instead of a multi-GB
+    # transfer.
+    # Act
+    job = _job("sac.spartan-sif-bake")
+    # Assert
+    assert job.on_unit_active_sec == "1d"
+
+
+def test_spartan_sif_bake_timeout_outlives_two_bakes_and_a_pull() -> None:
+    # Arrange — two full bakes (base + scitex) plus a multi-GB pull on a
+    # slow link must fit; the per-leg ssh timeout is 7200s, so the unit
+    # cap must exceed the worst legitimate chain or the timer kills its
+    # own successful runs.
+    # Act
+    job = _job("sac.spartan-sif-bake")
+    # Assert
+    assert job.timeout_sec == 14_400
