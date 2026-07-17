@@ -16,7 +16,7 @@ hand-rolling a private copy:
    hard-coded, so it stays self-consistent if the zone is ever changed.
 
 2. :func:`format_relative_until` — render the time REMAINING until a
-   future timestamp as ``in 4h05m`` / ``in 2d 3h`` / ``now``. Used by
+   future timestamp as ``in 4h05m`` / ``in 2d08h`` / ``now``. Used by
    the usage-bars block of ``sac accounts list`` for the per-window
    reset hints: the operator wants "how long until the window resets"
    (relative), not the absolute wall clock of the reset instant.
@@ -53,7 +53,9 @@ def _jst_tzinfo() -> tzinfo:
         from zoneinfo import ZoneInfo
 
         return ZoneInfo(_JST_IANA)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
         return timezone(timedelta(hours=9), "JST")
 
 
@@ -107,12 +109,14 @@ def format_jst(value: str | datetime | None, *, empty: str = "-") -> str:
 
 
 def _humanize_until(seconds: int) -> str:
-    """Render a positive second delta as ``in 2d 3h`` / ``in 4h05m`` / ``in 7m``.
+    """Render a positive second delta as ``in 2d08h`` / ``in 4h05m`` / ``in 7m``.
 
     Picks the two most-significant units so the hint stays compact:
-    days+hours beyond a day, hours+minutes within a day (zero-padded
-    minutes so ``4h05m`` stays fixed-width), bare minutes under the hour.
-    A non-positive delta (reset already due) renders ``now``.
+    days+hours beyond a day, hours+minutes within a day — the lesser
+    unit zero-padded (``2d08h`` / ``4h05m``, operator mockup 2026-07-17)
+    so the hints stay fixed-width and the usage bars they precede align
+    in a column — bare minutes under the hour. A non-positive delta
+    (reset already due) renders ``now``.
     """
     if seconds <= 0:
         return "now"
@@ -120,7 +124,7 @@ def _humanize_until(seconds: int) -> str:
     hours, rem = divmod(rem, 3600)
     minutes = rem // 60
     if days:
-        return f"in {days}d {hours}h"
+        return f"in {days}d{hours:02d}h"
     if hours:
         return f"in {hours}h{minutes:02d}m"
     if minutes:
@@ -134,7 +138,7 @@ def format_relative_until(
     now: datetime | None = None,
     empty: str = "",
 ) -> str:
-    """Render the time remaining until ``value`` as ``in 4h05m`` / ``in 2d 3h``.
+    """Render the time remaining until ``value`` as ``in 4h05m`` / ``in 2d08h``.
 
     Args:
         value: A FUTURE ISO-8601 string / datetime (e.g. a rolling-window
@@ -145,7 +149,7 @@ def format_relative_until(
         empty: What to return for ``None`` / empty / unparseable input.
 
     Returns:
-        ``"in 4h05m"`` (< 1 day), ``"in 2d 3h"`` (>= 1 day), ``"in 7m"``
+        ``"in 4h05m"`` (< 1 day), ``"in 2d08h"`` (>= 1 day), ``"in 7m"``
         (< 1 hour), ``"now"`` (already due), else ``empty``.
     """
     dt = _coerce_dt(value)
