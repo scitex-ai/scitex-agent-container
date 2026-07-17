@@ -17,7 +17,10 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg._auth_status import evaluate_agents, persist_verdicts
+from scitex_agent_container.cli_pkg._auth_status import (
+    evaluate_agents,
+    persist_verdicts,
+)
 from scitex_agent_container.cli_pkg.agent_group import agent_group
 
 # Wedged: banner directly above the prompt, identical on both reads → frozen.
@@ -44,13 +47,46 @@ def test_evaluate_agents_marks_clean_pane_ok():
     assert row["verdict"] == "ok"
 
 
-def test_evaluate_agents_uncapturable_agent_is_ok_and_uncaptured():
+def test_evaluate_agents_uncapturable_agent_is_UNKNOWN_never_ok():
+    """A pane we could not READ is UNKNOWN — absence of evidence, not health.
+
+    This test previously asserted ``("ok", False)`` — it encoded the bug as the
+    expected behaviour and stayed green while `sac agents auth-status` printed OK
+    for agents it had never observed. An instrument reporting good news about a
+    thing it did not look at is the same false-green that let a wedged agent read
+    ALIVE; the verdict must be the third state.
+    """
     # Arrange
     captures = {"gone": (None, None)}
     # Act
     row = evaluate_agents(captures)[0]
     # Assert
-    assert (row["verdict"], row["captured"]) == ("ok", False)
+    assert (row["verdict"], row["captured"]) == ("unknown", False)
+
+
+def test_evaluate_agents_unreadable_second_pane_is_UNKNOWN():
+    """Corroboration needs the DECISIVE read: run 1 alone cannot yield a verdict.
+
+    A session that vanishes between the two captures produced one pane and then
+    nothing. Without the second read there is no frozen/moving judgement to make,
+    so the honest answer is UNKNOWN rather than a verdict invented from run 1.
+    """
+    # Arrange
+    captures = {"vanished": (_OK, None)}
+    # Act
+    row = evaluate_agents(captures)[0]
+    # Assert
+    assert (row["verdict"], row["captured"]) == ("unknown", False)
+
+
+def test_unknown_row_note_says_no_evidence_not_health():
+    """The row must carry WHY it is unknown, not just that it is."""
+    # Arrange
+    captures = {"gone": (None, None)}
+    # Act
+    note = evaluate_agents(captures)[0]["note"]
+    # Assert
+    assert "could not be read" in note
 
 
 def test_evaluate_agents_sorts_rows_by_agent_name():
