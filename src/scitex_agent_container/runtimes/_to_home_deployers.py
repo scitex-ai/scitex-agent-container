@@ -30,6 +30,7 @@ from pathlib import Path
 from ..config import AgentConfig
 from ._mcp_merge import merge_mcp_json
 from ._mcp_reliability import inject_always_load
+from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
 from ._to_home_errors import WorkspaceMcpMergeError
 from ._to_home_text import (
     END_MARKER,
@@ -165,6 +166,7 @@ def _deploy_mcp_merge(
         merged = merge_mcp_json(base_doc, overlay_doc)
     else:
         merged = overlay_doc
+    _drop_unrequested_telegrammer(merged, config=config, dst=dst)
     # Cold-start race fix (fleet incident 2026-07-06): stamp ``alwaysLoad:true``
     # onto the critical stdio MCP servers so Claude Code BLOCKS on startup until
     # they connect (capped at MCP_TIMEOUT) instead of racing the slow fastmcp
@@ -172,6 +174,63 @@ def _deploy_mcp_merge(
     inject_always_load(merged)
     dst.write_text(json.dumps(merged, indent=2) + "\n")
     logger.info("to_home: deep-merged .mcp.json %s -> %s", rel, dst)
+
+
+def _drop_unrequested_telegrammer(
+    merged: dict,
+    *,
+    config: AgentConfig | None,
+    dst: Path,
+) -> None:
+    """Remove the telegrammer MCP unless the spec ASKED for its channel.
+
+    The shared baseline ``.mcp.json`` carries claude-code-telegrammer for every
+    agent, and the union above faithfully preserves it. But ``spec.claude.channels``
+    only gates the ``--dangerously-load-development-channels`` FLAG — it never
+    gated the SERVER. So an agent whose spec says nothing about Telegram still
+    got a telegrammer MCP, whose config expands ``${CCT_BOT_TOKEN}`` /
+    ``${CCT_AGENT_ID}`` from the shell env at runtime.
+
+    That stayed invisible while those vars were empty. It stopped being invisible
+    on 2026-07-17, when direnv began loading each project's ``.envrc`` in the
+    agent's shell: three scitex-cards UI agents working in ``~/proj/scitex-todo``
+    picked up that project's ``CCT_BOT_TOKEN`` **and its CCT_AGENT_ID**, came up
+    announcing themselves as ``scitex-todo``, and fought over the scitex-todo
+    steward's bot (Telegram allows exactly one poller per token, so the three of
+    them stole the connection from each other in a loop).
+
+    The token half is a leak; the IDENTITY half is the real defect — an ambient
+    file made whoever ``cd``-ed into a directory *become* another agent. Neither
+    is the ``.envrc``'s fault: a project file may reasonably describe its own bot.
+    The fault is that the SPEC was not the authority over what the agent runs.
+    So the gate belongs here, at the last point where the agent's real MCP set is
+    decided, and it is keyed on the spec — the SSoT — not on whether some env var
+    happens to be populated.
+
+    Absent config (``None``) leaves the doc untouched: the baseline deploy has no
+    spec to consult, and an agent's own pass always follows. Silently stripping a
+    server on a config-less pass would be a fallback, and a wrong one.
+    """
+    if config is None:
+        return
+    servers = merged.get("mcpServers")
+    if not isinstance(servers, dict) or _TELEGRAMMER_MCP_KEY not in servers:
+        return
+    claude_spec = getattr(config, "claude", None)
+    channels = list(getattr(claude_spec, "channels", None) or [])
+    if any(str(c).strip() == _TELEGRAMMER_CHANNEL for c in channels):
+        return
+    servers.pop(_TELEGRAMMER_MCP_KEY, None)
+    logger.info(
+        "to_home: dropped %r MCP for agent %r — its spec does not request %r "
+        "(the server would otherwise poll whatever CCT_BOT_TOKEN the shell "
+        "environment happened to carry, under whatever CCT_AGENT_ID came with "
+        "it). Add the channel to spec.claude.channels to keep it. -> %s",
+        _TELEGRAMMER_MCP_KEY,
+        getattr(config, "name", "?"),
+        _TELEGRAMMER_CHANNEL,
+        dst,
+    )
 
 
 def _deploy_tight_perm_file(
