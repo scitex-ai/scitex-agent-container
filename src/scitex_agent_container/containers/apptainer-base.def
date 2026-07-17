@@ -394,7 +394,7 @@ From: ubuntu:24.04
     # path resolves it through the bundled tree's own metadata.
     uv pip install --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
-        "scitex-todo[mcp]==0.13.5" \
+        "scitex-cards[mcp]==0.16.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------

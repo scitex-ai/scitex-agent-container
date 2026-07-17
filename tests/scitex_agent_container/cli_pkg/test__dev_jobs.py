@@ -1,11 +1,28 @@
-"""Tests for ``sac dev {cron,daemon,systemd}`` federated-job commands.
+"""Tests for ``sac dev {cron,systemd}`` federated-job commands.
 
-No-mocks (PA-306): the production seam is the lazy ``from scitex_dev.jobs
-import jobs_of_kind`` inside ``_dev_jobs``. We drive that seam by
-installing a real, hand-rolled ``scitex_dev.jobs`` module into
-``sys.modules`` (present-case) or by forcing its import to fail
-(degrade-case) — exercising the exact code path production hits when the
-installed scitex-dev does / does not ship the jobs contract.
+WHY THIS FILE WAS REWRITTEN — it is the fixture that hid the bug.
+
+It used to install a hand-rolled fake ``scitex_dev.jobs`` module into
+``sys.modules``, whose ``_Job`` dataclass defaulted to ``kind="systemd"``.
+No real JobSpec can have that kind: ``ALLOWED_KINDS`` is
+``{service,timer,cron}`` and ``JobSpec.validate()`` raises on anything
+else at construction. So the suite asserted, in green, that ``sac dev
+systemd list`` shows ``sac.accounts-refresh`` — while in production that
+command printed "No sac systemd-kind jobs." and exited 0, because the
+group name was being passed straight through as the kind filter and all
+four of sac's real timers are ``kind="timer"``.
+
+A fake whose shape no real object can have does not test the production
+path; it tests the fake. That is the same failure as the twin-spawning
+suite (29 green tests over a ``spec.env`` shape v3 validation rejects) and
+it is why these tests now drive the REAL ``scitex_dev.jobs`` with REAL
+``JobSpec`` objects. If the contract is not installed, the file skips —
+it does not invent a stand-in.
+
+No mocks (PA-306). The one seam still injected is ``_ecosystem_delegate``,
+which would otherwise shell out to a real ``scitex-dev`` subprocess and
+mutate the host's crontab/units; the delegation ARGUMENTS are the thing
+under test there, and they are captured, not faked.
 
 AAA marker comments; one assertion per test.
 """
@@ -13,57 +30,19 @@ AAA marker comments; one assertion per test.
 from __future__ import annotations
 
 import sys
-import types
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Iterator
 
+import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.dev_group import dev_group
+jobs_mod = pytest.importorskip(
+    "scitex_dev.jobs",
+    reason="installed scitex-dev predates the scitex_dev.jobs contract",
+)
 
-
-@dataclass
-class _Job:
-    name: str
-    schedule: str
-    command: str
-    description: str
-    kind: str = "systemd"
-    on_boot_sec: str | None = None
-    on_unit_active_sec: str | None = None
-    timeout_sec: int | None = None
-
-
-def _sac_systemd_job() -> _Job:
-    return _Job(
-        name="sac.accounts-refresh",
-        schedule="0 */2 * * *",
-        command="sac accounts refresh --all --skip-active",
-        description="Headless OAuth refresh.",
-        kind="systemd",
-        on_unit_active_sec="2h",
-    )
-
-
-@contextmanager
-def _jobs_present(jobs: list[_Job]) -> Iterator[None]:
-    """Install a real fake ``scitex_dev.jobs`` exposing ``jobs_of_kind``."""
-    mod = types.ModuleType("scitex_dev.jobs")
-
-    def jobs_of_kind(kind: str) -> list[_Job]:
-        return [j for j in jobs if j.kind == kind]
-
-    mod.jobs_of_kind = jobs_of_kind  # type: ignore[attr-defined]
-    saved = sys.modules.get("scitex_dev.jobs")
-    sys.modules["scitex_dev.jobs"] = mod
-    try:
-        yield
-    finally:
-        if saved is None:
-            del sys.modules["scitex_dev.jobs"]
-        else:
-            sys.modules["scitex_dev.jobs"] = saved
+from scitex_agent_container.cli_pkg._dev_jobs import GROUP_KINDS  # noqa: E402
+from scitex_agent_container.cli_pkg.dev_group import dev_group  # noqa: E402
 
 
 @contextmanager
@@ -81,41 +60,101 @@ def _jobs_absent() -> Iterator[None]:
 
 
 # ---------------------------------------------------------------------------
-# list — present case
+# list — against the REAL provider and the REAL taxonomy
 # ---------------------------------------------------------------------------
 
 
-def test_systemd_list_shows_only_sac_jobs() -> None:
-    # Arrange — one sac systemd job + a foreign systemd job that must NOT show.
-    foreign = _Job("other.thing", "0 * * * *", "do", "x", kind="systemd")
-    with _jobs_present([_sac_systemd_job(), foreign]):
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["systemd", "list"])
-    # Assert — sac's job is listed, the foreign one filtered out.
-    assert (
-        "sac.accounts-refresh" in result.output and "other.thing" not in result.output
-    )
+def test_systemd_list_shows_sacs_real_timers() -> None:
+    # Arrange — the regression that matters: sac's four jobs are all
+    # kind="timer", and `ecosystem systemd` selects timer+service. This
+    # command listed NOTHING for weeks while the old fake made it green.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list"])
+    # Assert
+    assert "sac.accounts-refresh" in result.output
 
 
-def test_systemd_list_exit_zero_when_present() -> None:
+def test_systemd_list_shows_every_declared_sac_job() -> None:
+    # Arrange — all four, not just the one a pinning test happens to name.
+    from scitex_agent_container._jobs_plugin import provide_jobs
+
+    expected = [j.name for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]]
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list"])
+    # Assert
+    assert all(name in result.output for name in expected)
+
+
+def test_systemd_list_exit_zero() -> None:
     # Arrange
-    with _jobs_present([_sac_systemd_job()]):
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["systemd", "list"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list"])
     # Assert
     assert result.exit_code == 0
 
 
-def test_cron_list_empty_when_sac_has_no_cron_jobs() -> None:
-    # Arrange — sac only has a systemd job.
-    with _jobs_present([_sac_systemd_job()]):
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["cron", "list"])
+def test_systemd_list_filters_out_foreign_jobs() -> None:
+    # Arrange — scitex-dev's own built-in jobs are discoverable too; only
+    # sac.* may show here.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
     # Assert
-    assert "No sac cron-kind jobs." in result.output
+    import json as _json
+
+    assert all(j["name"].startswith("sac.") for j in _json.loads(result.output))
+
+
+def test_systemd_list_json_reports_the_real_kind() -> None:
+    # Arrange — the JSON surfaces `kind` precisely so a future taxonomy
+    # drift is visible rather than silently filtered to nothing.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
+    # Assert
+    import json as _json
+
+    assert {j["kind"] for j in _json.loads(result.output)} == {"timer"}
+
+
+def test_cron_list_is_empty_because_sac_declares_no_cron_jobs() -> None:
+    # Arrange — a TRUE empty (sac has no kind="cron" job), unlike the
+    # systemd group's old empty, which was a bug wearing the same output.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["cron", "list"])
+    # Assert
+    assert "No sac cron jobs." in result.output
+
+
+# ---------------------------------------------------------------------------
+# the dead group stays dead
+# ---------------------------------------------------------------------------
+
+
+def test_there_is_no_daemon_group() -> None:
+    # Arrange — `sac dev daemon` was dead in BOTH halves: it filtered
+    # kind="daemon" (never legal, so always zero jobs) AND delegated to
+    # `scitex-dev ecosystem daemon`, which is not an ecosystem subcommand
+    # at all. A long-running job is kind="service", via the systemd group.
+    groups = dev_group.commands
+    # Act
+    present = "daemon" in groups
+    # Assert
+    assert present is False
+
+
+def test_job_groups_are_exactly_the_group_kinds_ssot() -> None:
+    # Arrange — the CLI surface is derived from GROUP_KINDS, so a group can
+    # never again exist without a declared kind filter behind it.
+    expected = set(GROUP_KINDS)
+    # Act
+    present = {g for g in expected if g in dev_group.commands}
+    # Assert
+    assert present == expected
 
 
 # ---------------------------------------------------------------------------
@@ -156,111 +195,68 @@ def test_install_degrades_when_jobs_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# verb consistency with scitex-dev ecosystem aggregator
-#
-# Canonical verbs per job-kind (scitex-dev ecosystem):
-#   cron    → list / install / uninstall
-#   systemd → list / install / uninstall
-#   daemon  → list / exec   (a daemon is *run*, not "installed")
+# verb consistency with the scitex-dev ecosystem aggregator
 # ---------------------------------------------------------------------------
 
 
-def _verbs_of(kind: str) -> set[str]:
-    """The leaf subcommand names exposed under ``sac dev <kind>``."""
-    grp = dev_group.commands[kind]
+def _verbs_of(group: str) -> set[str]:
+    """The leaf subcommand names exposed under ``sac dev <group>``."""
+    grp = dev_group.commands[group]
     return set(grp.commands)  # type: ignore[attr-defined]
 
 
 def test_cron_verbs_are_list_install_uninstall() -> None:
     # Arrange
-    kind = "cron"
+    group = "cron"
     # Act
-    verbs = _verbs_of(kind)
+    verbs = _verbs_of(group)
     # Assert
     assert verbs == {"list", "install", "uninstall"}
 
 
 def test_systemd_verbs_are_list_install_uninstall() -> None:
     # Arrange
-    kind = "systemd"
+    group = "systemd"
     # Act
-    verbs = _verbs_of(kind)
+    verbs = _verbs_of(group)
     # Assert
     assert verbs == {"list", "install", "uninstall"}
 
 
-def test_daemon_verbs_are_list_exec() -> None:
-    # Arrange — daemon is run, not installed: list + exec, no
-    # install/uninstall (matches scitex-dev ecosystem daemon).
-    kind = "daemon"
-    # Act
-    verbs = _verbs_of(kind)
-    # Assert
-    assert verbs == {"list", "exec"}
-
-
-def test_daemon_has_no_install_verb() -> None:
-    # Arrange
-    kind = "daemon"
-    # Act
-    verbs = _verbs_of(kind)
-    # Assert — explicit: the wrong install/uninstall verbs are gone.
-    assert "install" not in verbs and "uninstall" not in verbs
-
-
-def test_daemon_exec_takes_positional_name_argument() -> None:
-    # Arrange — exec mirrors `scitex-dev ecosystem daemon exec <name>`.
-    exec_cmd = dev_group.commands["daemon"].commands["exec"]  # type: ignore[attr-defined]
-    # Act
-    arg_names = [p.name for p in exec_cmd.params if p.param_type_name == "argument"]
-    # Assert
-    assert arg_names == ["name"]
-
-
-def _sac_daemon_job() -> _Job:
-    return _Job(
-        name="sac.watcher",
-        schedule="-",
-        command="sac listen --forever",
-        description="Long-running sac watcher.",
-        kind="daemon",
-    )
-
-
-def test_daemon_exec_delegates_to_scitex_dev_with_positional_name() -> None:
-    # Arrange — capture the (kind, verb, name) the exec verb delegates with.
+def test_install_delegates_to_the_matching_ecosystem_group() -> None:
+    # Arrange — capture the (group, verb, name) tuples install delegates
+    # with, rather than shelling out to a real scitex-dev that would
+    # rewrite the host's systemd units.
     import scitex_agent_container.cli_pkg._dev_jobs as dj
 
     captured: list[tuple] = []
     original = dj._ecosystem_delegate
-    dj._ecosystem_delegate = lambda *a, **k: (captured.append(a) or 0)  # type: ignore[assignment]
+    dj._ecosystem_delegate = lambda *a, **k: captured.append(a) or 0  # type: ignore[assignment]
     try:
-        with _jobs_present([_sac_daemon_job()]):
-            runner = CliRunner()
-            # Act
-            runner.invoke(dev_group, ["daemon", "exec", "sac.watcher"])
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["systemd", "install", "-y"])
     finally:
         dj._ecosystem_delegate = original  # type: ignore[assignment]
-    # Assert — delegated as (kind="daemon", verb="exec", name="sac.watcher").
-    assert captured == [("daemon", "exec", "sac.watcher")]
+    # Assert — every delegation targets `ecosystem systemd install`.
+    assert captured and all(a[:2] == ("systemd", "install") for a in captured)
 
 
-def test_daemon_exec_rejects_unknown_job() -> None:
-    # Arrange — only sac.watcher exists.
-    with _jobs_present([_sac_daemon_job()]):
+def test_install_delegates_once_per_declared_timer() -> None:
+    # Arrange — the count is the point: a group that silently matched zero
+    # jobs delegated zero times and still exited 0.
+    import scitex_agent_container.cli_pkg._dev_jobs as dj
+    from scitex_agent_container._jobs_plugin import provide_jobs
+
+    expected = len([j for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]])
+    captured: list[tuple] = []
+    original = dj._ecosystem_delegate
+    dj._ecosystem_delegate = lambda *a, **k: captured.append(a) or 0  # type: ignore[assignment]
+    try:
         runner = CliRunner()
         # Act
-        result = runner.invoke(dev_group, ["daemon", "exec", "does.not.exist"])
-    # Assert — clean ClickException, not a delegated run.
-    assert result.exit_code != 0 and "unknown sac daemon job" in result.output
-
-
-def test_daemon_exec_degrades_when_jobs_absent() -> None:
-    # Arrange
-    with _jobs_absent():
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["daemon", "exec", "sac.watcher"])
+        runner.invoke(dev_group, ["systemd", "install", "-y"])
+    finally:
+        dj._ecosystem_delegate = original  # type: ignore[assignment]
     # Assert
-    text = (result.output or "") + (getattr(result, "stderr", "") or "")
-    assert "requires scitex-dev>=" in text
+    assert len(captured) == expected
