@@ -12,10 +12,9 @@ tree, that is silent loss of work.
 
 PR #369 (``feat(lifecycle): fleet-default pre-stop rescue for dirty
 worktrees``) closes the destruction window on the *write* side by
-auto-committing + pushing dirty worktrees on capsule stop. Once a
-worktree is rescued + pushed, its branch is durable on the remote and
-the on-disk worktree IS safe to reap. This module is the *read* side
-of that pair: a small, mock-free predicate that the dotfiles janitor
+auto-committing dirty worktrees on capsule stop. This module is the
+*read* side of that pair: a small, mock-free predicate that the
+dotfiles janitor
 and the future ``sac janitor`` CLI call before invoking
 ``git worktree prune`` (or ``git worktree remove``), so the prune-bug
 window from lead-learnings/19 cannot re-open.
@@ -61,11 +60,13 @@ def is_safe_to_reap(path: Path) -> bool:
       potential loss-of-work and disqualifies the worktree.
     * ``git -C <path> rev-list develop..HEAD`` is empty — ``HEAD``
       is not ahead of ``develop``. A worktree that IS ahead has
-      commits not yet on ``develop`` and must not be reaped
-      (it pairs with the PR #369 pre-stop rescue: rescued +
-      pushed branches typically land via PR onto ``develop``, at
-      which point ``develop..HEAD`` becomes empty and reaping is
-      safe).
+      commits not yet on ``develop`` and must not be reaped. This
+      is what pairs the predicate with the PR #369 pre-stop rescue,
+      and it carries MORE weight since the rescue stopped pushing
+      (2026-07-17): a rescue commit now exists ONLY on local disk,
+      so ``develop..HEAD`` being non-empty is the sole thing
+      standing between it and a janitor. Reaping stays blocked
+      until the work lands on ``develop`` via PR.
 
     Any error — subprocess failure, missing ``git``, unreadable
     path, ``develop`` not present, etc. — returns ``False``. The

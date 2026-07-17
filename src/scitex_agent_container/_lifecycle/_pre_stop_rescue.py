@@ -1,4 +1,4 @@
-"""Fleet-default pre-stop rescue — commit + push dirty worktrees before stop.
+"""Fleet-default pre-stop rescue — commit dirty worktrees LOCALLY before stop.
 
 Operator priority (lead a2a ``efa48850daf248ed9fe3ae5232677b2b``): make
 restart cheap. Before this module, ``sac agents stop`` would happily
@@ -8,23 +8,46 @@ Operator-declared ``pre_stop`` hooks could rescue it, but no fleet
 default shipped, so every agent had to opt in by spec edit (the
 band-aid the operator explicitly dislikes).
 
-This module is the SAC-side auto-rescue. It runs once per
-``agent_stop`` call, BEFORE the operator's ``pre_stop`` hooks fire,
-walks every git worktree under the agent's work roots, and for each
-DIRTY worktree:
+*** THE RESCUE NEVER PUBLISHES. ***
+
+Operator ruling, 2026-07-17 (「プッシュはなしじゃない？」, after
+「やりかけで落ちてしまったなら仕方ないじゃん…潔くやり直すのも良い」):
+this module saves work LOCALLY and stops there. It does not push, and
+there is no push primitive in ``_pre_stop_rescue_git`` to reach for.
+
+Why the push had to go — it published on the agent's behalf, at the one
+moment the agent could not review the result:
+
+* It ran NO tests. ``git add -A`` → commit → push, with no concept of
+  whether the code so much as imports. That is how red code reached
+  origin (operator: 「テストが赤いまま公開？どうやって？」).
+* It used ``--force-with-lease``, which every agent is hook-banned from
+  running by hand. A stop hook is not an exemption.
+* It protected BRANCHES, not TREES, and the walk has no ownership
+  model: a foreign worktree parked on a topic branch (another agent's
+  in-flight work, in a checkout this agent merely shares) got committed
+  and force-pushed with no guard anywhere in its path. Observed
+  2026-07-17: a stopping agent force-pushed a peer's ``feat/`` branch.
+
+Nothing is lost by dropping it. ``workdir`` is a host bind mount, so a
+LOCAL commit already survives the restart that motivated this module —
+the push was never what made the work durable.
+
+It runs once per ``agent_stop`` call, BEFORE the operator's
+``pre_stop`` hooks fire, walks every git worktree under the agent's
+work roots, and for each DIRTY worktree:
 
 * On a NON-protected topic branch: commits the dirty changes locally
-  with a stable rescue message and pushes the branch to its tracking
-  remote.
+  with a stable rescue message.
 * On a PROTECTED branch (``develop`` / ``main`` / ``master`` /
   ``release/*``): carries the dirty tree onto a dedicated
-  ``rescue/<agent>-<utc>`` side-branch, commits + pushes it THERE, and
+  ``rescue/<agent>-<utc>`` side-branch, commits it THERE, and
   returns the checkout to the protected branch with a clean tree — so
   the protected branch NEVER gains a local-only commit that would
   diverge it from origin and break ``git pull --ff-only`` + the
   deploy-freshness cron (the root cause this module was hardened to
   prevent, fleet-wide 2026-07).
-* On push failure (offline / no remote): writes a diff-tarball under
+* On COMMIT failure: writes a diff-tarball under
   ``<state_dir>/rescue/<branch>-<utc>.tar.gz`` so the next start can
   re-apply. The dirty work is never dropped.
 
@@ -60,7 +83,6 @@ from ._pre_stop_rescue_git import (
     is_dirty,
     is_git_worktree,
     move_dirty_to_side_branch,
-    push_branch,
     write_diff_tarball,
 )
 
@@ -118,26 +140,29 @@ def rescue_worktree(
     rescue_root: Path,
     timeout: float,
 ) -> dict[str, object]:
-    """Run the rescue sequence on a single git worktree.
+    """Run the rescue sequence on a single git worktree. Never pushes.
 
     Returns a dict with: ``path``, ``branch``, ``committed``,
-    ``pushed``, ``tarball`` (Path or None), ``protected``,
-    ``rescue_branch`` (str; the ``rescue/`` side-branch used on a
-    protected branch, else ``""``), ``error``. NEVER raises.
+    ``tarball`` (Path or None), ``protected``, ``rescue_branch`` (str;
+    the ``rescue/`` side-branch used on a protected branch, else
+    ``""``), ``error``. NEVER raises.
 
-    On a NON-protected topic branch the dirty tree is committed in place
-    and pushed (existing behavior). On a PROTECTED branch (``develop`` /
-    ``main`` / ``master`` / ``release/*``) the dirty tree is instead
-    carried onto a fresh ``rescue/<agent>-<ts>`` side-branch, committed +
-    pushed there, and the checkout is returned to the protected branch
-    with a clean tree — so the protected branch NEVER gains a local-only
-    commit and stays ``git pull --ff-only`` friendly.
+    On a NON-protected topic branch the dirty tree is committed in
+    place. On a PROTECTED branch (``develop`` / ``main`` / ``master`` /
+    ``release/*``) the dirty tree is instead carried onto a fresh
+    ``rescue/<agent>-<ts>`` side-branch, committed there, and the
+    checkout is returned to the protected branch with a clean tree — so
+    the protected branch NEVER gains a local-only commit and stays
+    ``git pull --ff-only`` friendly.
+
+    The result deliberately has NO ``pushed`` key: the rescue does not
+    publish (see the module docstring). A permanently-``False`` field
+    would read as a capability that merely happens to be off.
     """
     result: dict[str, object] = {
         "path": path,
         "branch": "",
         "committed": False,
-        "pushed": False,
         "tarball": None,
         "protected": False,
         "rescue_branch": "",
@@ -162,7 +187,7 @@ def rescue_worktree(
             rescue_root=rescue_root,
             timeout=timeout,
         )
-    # --- non-protected topic branch: commit in place + push -----------
+    # --- non-protected topic branch: commit in place, LOCAL ONLY ------
     ok_commit, commit_msg = commit_dirty(
         path, agent_name=agent_name, timestamp=timestamp, timeout=timeout
     )
@@ -170,19 +195,6 @@ def rescue_worktree(
     if not ok_commit:
         result["error"] = commit_msg
         # Even when commit fails, write a tarball so work survives.
-        result["tarball"] = write_diff_tarball(
-            path,
-            rescue_root=rescue_root,
-            branch=branch,
-            agent_name=agent_name,
-            timestamp=timestamp,
-            timeout=timeout,
-        )
-        return result
-    ok_push, push_err = push_branch(path, branch, timeout=timeout)
-    result["pushed"] = ok_push
-    if not ok_push:
-        result["error"] = push_err
         result["tarball"] = write_diff_tarball(
             path,
             rescue_root=rescue_root,
@@ -206,12 +218,13 @@ def _rescue_protected(
 ) -> dict[str, object]:
     """Rescue a dirty tree that sits on a PROTECTED branch, without polluting it.
 
-    Carries the tree onto a ``rescue/<agent>-<ts>`` side-branch, commits
-    + pushes it there, then returns the checkout to ``branch`` so the
-    protected ref is unchanged from origin (``ff-only`` pull still
-    works). Falls back to the diff-tarball if the side-branch can't be
-    created / committed / pushed — the dirty work is never dropped. The
-    protected branch is restored on EVERY path.
+    Carries the tree onto a ``rescue/<agent>-<ts>`` side-branch and
+    commits it there — LOCALLY; the side-branch is never pushed — then
+    returns the checkout to ``branch`` so the protected ref is unchanged
+    from origin (``ff-only`` pull still works). Falls back to the
+    diff-tarball if the side-branch can't be created or committed — the
+    dirty work is never dropped. The protected branch is restored on
+    EVERY path.
     """
     ok_side, rescue_branch, side_err = move_dirty_to_side_branch(
         path, agent_name=agent_name, timestamp=timestamp, timeout=timeout
@@ -233,22 +246,8 @@ def _rescue_protected(
         checkout_branch(path, branch, timeout=timeout)
         return result
     # Work is committed on the rescue side-branch; protected HEAD untouched.
+    # The side-branch stays LOCAL — it is a save, not a publication.
     result["committed"] = True
-    ok_push, push_err = push_branch(path, rescue_branch, timeout=timeout)
-    result["pushed"] = ok_push
-    if not ok_push:
-        # Offline / no remote: keep the local rescue branch AND drop a
-        # tarball so the work survives even if that branch is pruned.
-        # HEAD is still the rescue commit here, so the tarball captures it.
-        result["error"] = push_err
-        result["tarball"] = write_diff_tarball(
-            path,
-            rescue_root=rescue_root,
-            branch=rescue_branch,
-            agent_name=agent_name,
-            timestamp=timestamp,
-            timeout=timeout,
-        )
     # ALWAYS return to the protected branch so its ref equals origin's and
     # ``git pull --ff-only`` keeps working.
     ok_back, back_err = checkout_branch(path, branch, timeout=timeout)
@@ -316,7 +315,6 @@ def rescue_worktrees_for_agent(
                     "path": candidate,
                     "branch": "",
                     "committed": False,
-                    "pushed": False,
                     "tarball": None,
                     "protected": False,
                     "rescue_branch": "",
@@ -374,14 +372,13 @@ def run_pre_stop_rescue(config) -> None:
         log.warning("pre-stop rescue: unexpected failure (%r); skipping", exc)
         return
     committed = sum(1 for r in results if r.get("committed"))
-    pushed = sum(1 for r in results if r.get("pushed"))
     tarballed = sum(1 for r in results if r.get("tarball"))
     skipped = sum(1 for r in results if r.get("error"))
     log.info(
-        "pre-stop rescue: agent=%s committed=%d pushed=%d tarballed=%d skipped=%d",
+        "pre-stop rescue: agent=%s committed=%d tarballed=%d skipped=%d "
+        "(local only — the rescue never pushes)",
         getattr(config, "name", "?"),
         committed,
-        pushed,
         tarballed,
         skipped,
     )
