@@ -275,9 +275,8 @@ sac mcp list-tools                        # MCP introspection
 sac skills list / get                     # bundled agent-facing skills
 
 # Federated scheduled jobs (delegates to scitex-dev ecosystem)
-sac dev systemd list / install / uninstall    # generate ~/.config/systemd/user/sac.*
-sac dev cron    list / install / uninstall    # crontab entries
-sac dev daemon  list / install / uninstall    # interactive daemons
+sac dev systemd list / install / uninstall    # kind=timer|service -> ~/.config/systemd/user/sac.*
+sac dev cron    list / install / uninstall    # kind=cron -> crontab entries
 
 # State db / registry / events
 sac db query / show / clean / export / import / migrate / tick   # state.db inspection
