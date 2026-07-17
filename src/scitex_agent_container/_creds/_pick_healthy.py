@@ -84,6 +84,11 @@ from ._quota_rank import (
     is_expiring_7d,
     pick_ranked,
 )
+from ._spend_policy import (
+    POLICY_BURN,
+    POLICY_SPREAD,
+    validate_7d_policy,
+)
 
 # Health states for one account's snapshot. Mirrors
 # :class:`_account.creds_sync.Freshness` but anchored on a *name* so the
@@ -271,6 +276,7 @@ def pick_healthy_account(
     blocked_5h_pct: float = _BLOCKED_5H_PCT,
     expiring_horizon_s: float = EXPIRING_7D_HORIZON_S,
     spread_key: str | None = None,
+    policy: str = POLICY_SPREAD,
 ) -> str:
     """Return the stored-account name an agent should run on right now.
 
@@ -351,6 +357,13 @@ def pick_healthy_account(
         "best" one. ``None`` / empty keeps the legacy single-winner
         ordering. The same key always maps to the same account while
         quota tiers are unchanged (no churn across restarts).
+    policy
+        The 7d spend policy (:mod:`._spend_policy`). ``POLICY_SPREAD``
+        (default) is the behaviour above, unchanged. ``POLICY_BURN``
+        (opt-in; activation gated on the fleet reconciler) prefers the
+        HIGHEST 7d usage among 5h-unblocked fresh accounts, tie-break
+        soonest 7d reset — and a near-capped 7d ``preferred`` is a
+        reason to STAY (drain it), never to rotate off.
 
     Returns
     -------
@@ -366,6 +379,7 @@ def pick_healthy_account(
         blocked/near-capped (quota is a preference, freshness is the
         gate).
     """
+    validate_7d_policy(policy)
     _home = home if home is not None else Path.home()
 
     if candidates is None:
@@ -461,6 +475,10 @@ def pick_healthy_account(
                     horizon_s=expiring_horizon_s,
                 )
             )
+            # POLICY_BURN inverts the 7d rule: a near-capped pin is a
+            # reason to STAY and drain it, never to rotate off.
+            if policy == POLICY_BURN:
+                near_capped = False
             if not blocked_now and not near_capped:
                 return pref
 
@@ -480,6 +498,7 @@ def pick_healthy_account(
         near_cap_pct=near_cap_pct,
         blocked_5h_pct=blocked_5h_pct,
         expiring_horizon_s=expiring_horizon_s,
+        policy=policy,
     )
 
 

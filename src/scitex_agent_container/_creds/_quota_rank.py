@@ -73,11 +73,20 @@ from __future__ import annotations
 import hashlib
 import math
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
 from .._account.quota_cache import read_quota_entry
+from ._spend_policy import (
+    ENV_7D_POLICY_SUFFIX,
+    POLICY_BURN,
+    POLICY_SPREAD,
+    VALID_7D_POLICIES,
+    coerce_epoch,
+    pick_burn,
+    resolve_7d_policy,
+    validate_7d_policy,
+)
 
 # 7d-utilisation threshold above which an account is "near-capped —
 # avoid unless no better fresh alternative". See _pick_healthy's module
@@ -126,6 +135,12 @@ EXPIRING_MIN_HEADROOM_PCT = 2.0
 # docstring). Weight ∝ headroom keeps each account's share bounded by
 # the capacity it actually has.
 EXPIRING_WEIGHT_BOOST = 4.0
+
+# The 7d SPEND POLICY layer (POLICY_SPREAD / POLICY_BURN, the env
+# resolver, and the burn ordering) lives in :mod:`._spend_policy`
+# (512-line module limit) and is re-exported here — see that module's
+# docstring for the operator's 2026-07-17 ruling and the reconciler
+# gate on flipping the default to burn.
 
 
 def _coerce_pct(value: object) -> float | None:
@@ -192,30 +207,8 @@ def account_7d_usage(
     )
 
 
-def _coerce_epoch(value: object) -> float | None:
-    """Return *value* as epoch seconds, or ``None`` if unparseable.
-
-    Tolerant on purpose — the quota cache stores the reset stamp as the
-    upstream ISO-8601 string (``reset_at_7d``), but tests and callers
-    find raw epoch floats easier to reason about, so both are accepted.
-    A naive (tz-less) ISO stamp is read as UTC, matching
-    :func:`cli_pkg._account_list_format._coerce_dt`.
-    """
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    # stx-allow: fallback (reason: a malformed cache timestamp must degrade to
-    # "reset unknown" — i.e. the pre-existing behaviour — never crash a boot.)
-    try:
-        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp()
+# Epoch coercion for the reset stamps lives in ._spend_policy
+# (coerce_epoch, imported above) — shared with the burn ordering.
 
 
 def account_7d_reset_at(
@@ -233,11 +226,11 @@ def account_7d_reset_at(
     rather than assume "unknown reset" means "resets now".
     """
     if reset_7d is not None:
-        return _coerce_epoch(reset_7d.get(name))
+        return coerce_epoch(reset_7d.get(name))
     entry = read_quota_entry(account=name, cache_path=quota_cache_path)
     if entry is None:
         return None
-    return _coerce_epoch(entry.get("reset_at_7d"))
+    return coerce_epoch(entry.get("reset_at_7d"))
 
 
 def is_expiring_7d(
@@ -308,6 +301,7 @@ def pick_ranked(
     near_cap_pct: float = NEAR_CAP_7D_PCT,
     blocked_5h_pct: float = BLOCKED_5H_PCT,
     expiring_horizon_s: float = EXPIRING_7D_HORIZON_S,
+    policy: str = POLICY_SPREAD,
 ) -> str:
     """Return the best account among *names* (all token-fresh, non-empty).
 
@@ -315,10 +309,25 @@ def pick_ranked(
     % or ``None`` (unknown). ``reset_7d`` maps each name to its 7d-window
     reset stamp (ISO string or epoch seconds; ``None``/absent = unknown).
     See the module docstring for the tier rules; this never raises on
-    quota state (fail-loud for "nothing fresh" lives in the caller).
+    quota state (fail-loud for "nothing fresh" lives in the caller —
+    only an invalid ``policy`` raises here).
 
-    Expiring capacity (see :func:`is_expiring_7d`) enters the ranking in
-    exactly two places, and NOWHERE else:
+    ``policy`` selects the 7d spend rule (operator ruling 2026-07-17 —
+    see the policy block above the constants):
+
+    * :data:`POLICY_SPREAD` (default) — the historical behaviour,
+      unchanged: demote near-capped 7d accounts, spread by headroom.
+    * :data:`POLICY_BURN` — tier only on ``(blocked_now, d7 unknown)``
+      (near-cap is a reason to PICK, not to avoid), then prefer the
+      HIGHEST 7d usage, tie-break by SOONEST 7d reset, then candidate
+      order. Deterministic on purpose: ``spread_key`` is IGNORED —
+      burn-to-zero deliberately concentrates the fleet on the
+      perishable bucket until it blocks, which is the opposite of
+      spreading.
+
+    Under :data:`POLICY_SPREAD`, expiring capacity (see
+    :func:`is_expiring_7d`) enters the ranking in exactly two places,
+    and NOWHERE else:
 
     1. it SUPPRESSES the ``near_capped`` demotion — quota that is about
        to be deleted is expiring, not scarce, so the account competes on
@@ -327,21 +336,32 @@ def pick_ranked(
        no-spread order) — we spend what is about to vanish before we
        spend a reserve that persists.
 
-    ``blocked_now`` (the 5h window) is untouched and still dominates
-    both: an account that cannot serve a request *now* is never picked
-    over one that can, however soon its weekly budget refreshes.
+    ``blocked_now`` (the 5h window) dominates under BOTH policies: an
+    account that cannot serve a request *now* is never picked over one
+    that can, however soon its weekly budget refreshes.
 
     With no ``reset_7d`` data (a cache predating the field) every
     account reads "reset unknown" → ``is_expiring_7d`` is ``False``
-    everywhere → this function behaves EXACTLY as it did before.
+    everywhere → the spread policy behaves EXACTLY as it did before
+    (and burn falls back to pure highest-7d-usage ordering).
     """
+    validate_7d_policy(policy)
     _now = now if now is not None else time.time()
     _resets: Mapping[str, object] = reset_7d if reset_7d is not None else {}
+
+    if policy == POLICY_BURN:
+        return pick_burn(
+            names,
+            usage_5h,
+            usage_7d,
+            _resets,
+            blocked_5h_pct=blocked_5h_pct,
+        )
 
     def expiring(name: str) -> bool:
         return is_expiring_7d(
             usage_7d.get(name),
-            _coerce_epoch(_resets.get(name)),
+            coerce_epoch(_resets.get(name)),
             _now,
             horizon_s=expiring_horizon_s,
         )
@@ -394,13 +414,18 @@ def pick_ranked(
 
 __all__ = [
     "BLOCKED_5H_PCT",
+    "ENV_7D_POLICY_SUFFIX",
     "EXPIRING_7D_HORIZON_S",
     "EXPIRING_MIN_HEADROOM_PCT",
     "EXPIRING_WEIGHT_BOOST",
     "NEAR_CAP_7D_PCT",
+    "POLICY_BURN",
+    "POLICY_SPREAD",
+    "VALID_7D_POLICIES",
     "account_5h_usage",
     "account_7d_reset_at",
     "account_7d_usage",
     "is_expiring_7d",
     "pick_ranked",
+    "resolve_7d_policy",
 ]
