@@ -119,12 +119,13 @@ def test_relative_hours_minutes_shape():
 
 
 def test_relative_days_hours_shape():
-    # Arrange — +2d3h from now (the operator's 7d example).
+    # Arrange — +2d3h from now (the operator's 7d example; zero-padded
+    # hours per his 2026-07-17 mockup "in 2d08h" so hints stay fixed-width).
     value = "2026-07-14T03:00:00+00:00"
     # Act
     rendered = format_relative_until(value, now=_NOW)
     # Assert
-    assert rendered == "in 2d 3h"
+    assert rendered == "in 2d03h"
 
 
 def test_relative_minutes_only_under_one_hour():

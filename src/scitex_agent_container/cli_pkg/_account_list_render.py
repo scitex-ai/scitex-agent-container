@@ -183,7 +183,8 @@ def rolling_legend_line() -> str:
     """
     return (
         "Legend: 5h = rolling 5-hour window; 7d = rolling 7-day window. "
-        "(in Xh Ym / in Xd Yh next to the % is the time until the next reset.)"
+        "(in XhYYm / in XdYYh after the window label is the time until "
+        "the next reset.)"
     )
 
 

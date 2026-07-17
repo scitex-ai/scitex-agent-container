@@ -12,10 +12,11 @@ percentages; the table holds only what the bars cannot express"):
    credentials; untouched by the 2026-07-11 redesign).
 2. The Stored-accounts table — exactly ``Account | Status | Last
    Update`` (:func:`._account_list_render.render_stored_table`).
-3. The usage-bars block — per-account 5h/7d bars, each percentage
-   carrying its compact relative reset hint (``29% (in 4h05m)`` /
-   ``66% (in 2d 3h)``), plus the rolling-window legend when a row has
-   no cached reset timestamps
+3. The usage-bars block — one 3-line block per account (operator
+   mockup 2026-07-17): the account name, then one line per window with
+   the relative reset hint BEFORE the bar (``5h (in 4h05m) [..] (29%)``),
+   a blank line between accounts; plus the rolling-window legend when a
+   row has no cached reset timestamps
    (:mod:`._account_usage_bars` / :func:`._account_list_render.rolling_legend_line`).
 4. The one-line fleet 7-day capacity-used figure.
 
@@ -57,10 +58,10 @@ def account_list(as_json: bool, refresh: bool) -> None:
     (operator directive 2026-07-11): the Stored-accounts table is
     exactly Account | Status | Last Update — the status cell carries
     the live token TTL (``VALID +2h26m``) — while the monospace
-    usage-bars block below it owns the 5h/7d percentages, each with
-    its compact relative reset hint (``29% (in 4h05m)`` /
-    ``66% (in 2d 3h)``), followed by a single fleet 7-day
-    capacity-used line.
+    usage-bars block below it owns the 5h/7d percentages, one 3-line
+    block per account with the relative reset hint before each bar
+    (``5h (in 4h05m) [..] (29%)``; operator mockup 2026-07-17),
+    followed by a single fleet 7-day capacity-used line.
 
     \b
     Fleet 7d capacity used

@@ -6,24 +6,34 @@ scan across accounts. This module adds two purely-additive, purely-pure
 (no I/O, no clock beyond an injectable ``now``) surfaces the CLI prints
 BELOW the existing table:
 
-1. A monospace **usage-bars block** — one fixed-width horizontal bar per
-   window (5h short window + 7d window) per account, so utilisation is
-   visible at a glance and the bars line up vertically across accounts.
-   Since the 2026-07-11 dedupe directive ("the bars own the
-   percentages; the table holds only what the bars cannot express")
-   each percentage also carries a compact per-window reset hint. The
-   operator (2026-07-13) wants that hint to read as the time REMAINING
-   until the window resets — relative, not an absolute wall-clock —
-   ``(in 4h05m)`` for the 5h window, ``(in 2d 3h)`` for the 7d window::
+1. A monospace **usage-bars block** — one 3-line BLOCK per account
+   (operator mockup 2026-07-17, verbatim spec: 「usage bars のところ
+   ちゃんとスペース取って書いてみたらどうでしょうか？」): the account
+   name, then ONE line per window (5h, then 7d), a blank line between
+   accounts. The one-line-per-account layout it replaces crammed both
+   windows' bars + percentages + reset hints into ~120 chars and
+   wrapped on a normal terminal. Since the 2026-07-11 dedupe directive
+   the bars own the percentages; the per-window reset hint reads as the
+   time REMAINING until the window resets (operator 2026-07-13 —
+   relative, not a wall clock) and sits BEFORE the bar, right after the
+   window label — deliberate (operator 2026-07-17): it foregrounds the
+   time-to-reset the credential picker reasons about::
 
-       wyusuuke-gmail-com   5h [██████░░░░░░░░░░░░░░]  29% (in 4h05m)   7d [█████████████░░░░░░░]  66% (in 2d 3h)
-       ywatanabe-scitex-ai  5h [███░░░░░░░░░░░░░░░░░]  14%              7d [███░░░░░░░░░░░░░░░░░]  15% (in 5d 0h)
+       Usage bars (5h / 7d out of 100%):
+       - wyusuuke-gmail-com
+         5h (in 4h05m) [██████░░░░░░░░░░░░░░] (29%)
+         7d (in 2d03h) [█████████████░░░░░░░] (66%)
+
+       - ywatanabe-scitex-ai
+         5h            [███░░░░░░░░░░░░░░░░░] (14%)
+         7d (in 5d00h) [███░░░░░░░░░░░░░░░░░] (15%)
 
    A bar for an account with no cached usage renders a same-width
    ``[      no data       ]`` placeholder rather than crashing; a
-   window with no cached ``reset_at`` renders no hint (the missing
-   5h hint is space-padded so the 7d bars stay vertically aligned).
-   The relative hints are rendered by the shared
+   window with no cached ``reset_at`` renders no hint, space-padded to
+   the block-wide hint column so every bar (both windows, every
+   account) starts at the same column and scans vertically. The
+   relative hints are rendered by the shared
    :func:`~._timefmt.format_relative_until` (SSOT with the JST wall-clock
    helper used by the ``Since`` line).
 
@@ -111,11 +121,11 @@ def render_usage_bar(pct: float | None, *, width: int = _DEFAULT_BAR_WIDTH) -> s
     return "[" + _BAR_FILL * filled + _BAR_EMPTY * (width - filled) + "]"
 
 
-def _pct_label(pct: float | None) -> str:
-    """Right-justified 4-char percentage label: ``100%`` / ``  0%`` / ``   ?``."""
+def _pct_paren(pct: float | None) -> str:
+    """Trailing percentage label: ``(29%)`` for a number, ``(?)`` for unknown."""
     if pct is None:
-        return "   ?"
-    return f"{int(round(max(0.0, min(100.0, float(pct)))))}%".rjust(4)
+        return "(?)"
+    return f"({int(round(max(0.0, min(100.0, float(pct)))))}%)"
 
 
 def _wrap_hint(hint: str) -> str:
@@ -123,38 +133,58 @@ def _wrap_hint(hint: str) -> str:
     return f"({hint})" if hint else ""
 
 
-def render_usage_bar_line(
-    label: str,
-    pct_5h: float | None,
-    pct_7d: float | None,
+def render_window_line(
+    window: str,
+    pct: float | None,
     *,
-    label_width: int,
+    hint: str,
+    hint_width: int,
     width: int = _DEFAULT_BAR_WIDTH,
-    hint_5h: str = "",
-    hint_7d: str = "",
-    hint_5h_width: int = 0,
 ) -> str:
-    """One aligned account line, operator-example shape:
+    """One per-window line of an account block, operator-mockup shape:
 
-    ``<label>  5h [..]  29% (in 4h05m)   7d [..]  66% (in 2d 3h)``
+    ``  5h (in 4h05m) [██████░░░░░░░░░░░░░░] (29%)``
 
-    ``hint_5h`` / ``hint_7d`` are pre-wrapped display strings (e.g.
-    ``(in 4h05m)``) or ``""`` when the window has no cached reset.
-    ``hint_5h_width`` is the block-level max width of the 5h hints; a
-    row whose own hint is shorter (or missing) pads with spaces so the
-    ``7d`` bars stay vertically aligned across accounts. The trailing
-    7d hint needs no padding — nothing follows it.
+    The reset hint comes BEFORE the bar, right after the window label —
+    deliberate (operator 2026-07-17): it foregrounds the time-to-reset
+    the credential picker reasons about. ``hint`` is the pre-wrapped
+    display string (``(in 4h05m)``) or ``""`` when the window has no
+    cached reset; ``hint_width`` is the block-level max hint width and
+    every line pads its hint to it, so the bars of BOTH windows of
+    EVERY account start at the same column. ``hint_width == 0`` (no row
+    in the block has any cached reset) omits the hint column entirely.
     """
-    bar5 = render_usage_bar(pct_5h, width=width)
-    bar7 = render_usage_bar(pct_7d, width=width)
-    seg_5h = f"5h {bar5} {_pct_label(pct_5h)}"
-    pad_5h = max(hint_5h_width, len(hint_5h))
-    if pad_5h:
-        seg_5h += f" {hint_5h.ljust(pad_5h)}"
-    seg_7d = f"7d {bar7} {_pct_label(pct_7d)}"
-    if hint_7d:
-        seg_7d += f" {hint_7d}"
-    return f"  {label.ljust(label_width)}  {seg_5h}   {seg_7d}"
+    parts = [f"  {window}"]
+    if hint_width > 0:
+        parts.append(hint.ljust(max(hint_width, len(hint))))
+    parts.append(render_usage_bar(pct, width=width))
+    parts.append(_pct_paren(pct))
+    return " ".join(parts)
+
+
+def render_account_block(
+    row: "AccountRow",
+    *,
+    hint_5h: str,
+    hint_7d: str,
+    hint_width: int,
+    width: int = _DEFAULT_BAR_WIDTH,
+) -> list[str]:
+    """The 3-line block for one account (operator mockup 2026-07-17):
+
+    ``- <name>`` then one :func:`render_window_line` per window
+    (5h first, then 7d). The caller inserts the blank line BETWEEN
+    accounts and supplies the block-level ``hint_width``.
+    """
+    return [
+        f"- {row.name}",
+        render_window_line(
+            "5h", row.used_pct_5h, hint=hint_5h, hint_width=hint_width, width=width
+        ),
+        render_window_line(
+            "7d", row.used_pct_7d, hint=hint_7d, hint_width=hint_width, width=width
+        ),
+    ]
 
 
 def render_usage_bars_block(
@@ -163,15 +193,17 @@ def render_usage_bars_block(
     width: int = _DEFAULT_BAR_WIDTH,
     now: datetime | None = None,
 ) -> str:
-    """Render the full usage-bars block (header + one line per account).
+    """Render the full usage-bars block (header + one 3-line block per account).
 
-    Each line carries the compact per-window reset hints as the time
-    REMAINING until the window resets (``(in 4h05m)`` for 5h,
-    ``(in 2d 3h)`` for 7d), computed from the row's ``reset_at_5h`` /
-    ``reset_at_7d`` via the shared :func:`~._timefmt.format_relative_until`
-    (operator 2026-07-13: relative time-until-reset, not an absolute
-    wall-clock). The 5h hints are padded to one block-level width so
-    mixed hint/no-hint rows keep the 7d bars vertically aligned.
+    Operator mockup 2026-07-17 — one account per block, one line per
+    window, a blank line between accounts (the single ~120-char line it
+    replaces wrapped on a normal terminal). Each window line carries its
+    compact reset hint (``(in 4h05m)`` / ``(in 2d03h)``) BEFORE the bar,
+    computed from the row's ``reset_at_5h`` / ``reset_at_7d`` via the
+    shared :func:`~._timefmt.format_relative_until` (operator
+    2026-07-13: relative time-until-reset, not an absolute wall-clock).
+    All hints share one block-level column width so every bar starts at
+    the same column and the bars scan vertically.
 
     ``now`` is an injection seam for the current instant (tests pass a
     fixed value); it defaults to real wall-clock time.
@@ -182,26 +214,24 @@ def render_usage_bars_block(
     row_list = list(rows)
     if not row_list:
         return ""
-    label_width = max(len(r.name) for r in row_list)
     hints_5h = [
         _wrap_hint(format_relative_until(r.reset_at_5h, now=now)) for r in row_list
     ]
     hints_7d = [
         _wrap_hint(format_relative_until(r.reset_at_7d, now=now)) for r in row_list
     ]
-    hint_5h_width = max(len(h) for h in hints_5h)
+    hint_width = max(len(h) for h in (*hints_5h, *hints_7d))
     lines = ["Usage bars (5h / 7d out of 100%):"]
-    for r, hint_5h, hint_7d in zip(row_list, hints_5h, hints_7d):
-        lines.append(
-            render_usage_bar_line(
-                r.name,
-                r.used_pct_5h,
-                r.used_pct_7d,
-                label_width=label_width,
-                width=width,
+    for index, (r, hint_5h, hint_7d) in enumerate(zip(row_list, hints_5h, hints_7d)):
+        if index:
+            lines.append("")
+        lines.extend(
+            render_account_block(
+                r,
                 hint_5h=hint_5h,
                 hint_7d=hint_7d,
-                hint_5h_width=hint_5h_width,
+                hint_width=hint_width,
+                width=width,
             )
         )
     return "\n".join(lines)
@@ -250,7 +280,8 @@ def fleet_capacity_used_line(rows: Iterable["AccountRow"]) -> str:
 __all__ = [
     "fleet_7d_capacity_used",
     "fleet_capacity_used_line",
+    "render_account_block",
     "render_usage_bar",
-    "render_usage_bar_line",
     "render_usage_bars_block",
+    "render_window_line",
 ]

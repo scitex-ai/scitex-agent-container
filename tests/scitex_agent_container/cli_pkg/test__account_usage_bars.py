@@ -15,9 +15,10 @@ from scitex_agent_container.cli_pkg._account_list_render import AccountRow
 from scitex_agent_container.cli_pkg._account_usage_bars import (
     fleet_7d_capacity_used,
     fleet_capacity_used_line,
+    render_account_block,
     render_usage_bar,
-    render_usage_bar_line,
     render_usage_bars_block,
+    render_window_line,
 )
 
 # ---------------------------------------------------------------------------
@@ -107,91 +108,91 @@ def test_render_usage_bar_clamps_over_100():
 
 
 # ---------------------------------------------------------------------------
-# render_usage_bar_line / block — alignment across accounts
+# render_window_line / render_account_block — operator mockup 2026-07-17:
+#   - <account>
+#     5h (in 1h07m) [....................] (NN%)
+#     7d (in 2d08h) [....................] (NN%)
+# Reset hint BEFORE the bar (right after the window label); percent after
+# the bar; hints padded to one block-level column so the bars align.
 # ---------------------------------------------------------------------------
 
 
-def test_render_usage_bar_line_shows_5h_window():
+def test_render_window_line_hint_before_bar():
     # Arrange
-    label = "acct"
+    hint = "(in 4h05m)"
     # Act
-    line = render_usage_bar_line(label, 14.0, 99.0, label_width=10, width=20)
+    line = render_window_line("5h", 29.0, hint=hint, hint_width=10, width=20)
+    # Assert — operator mockup: label, then hint, THEN the bar.
+    assert line.startswith("  5h (in 4h05m) [")
+
+
+def test_render_window_line_percent_after_bar():
+    # Arrange
+    hint = "(in 4h05m)"
+    # Act
+    line = render_window_line("5h", 29.0, hint=hint, hint_width=10, width=20)
+    # Assert — operator mockup: the percent trails the bar, parenthesised.
+    assert line.endswith("] (29%)")
+
+
+def test_render_window_line_pads_missing_hint_to_column():
+    # Arrange — a sibling row in the block has a 10-char hint.
+    with_hint = render_window_line(
+        "5h", 29.0, hint="(in 4h05m)", hint_width=10, width=20
+    )
+    # Act
+    without_hint = render_window_line("5h", 14.0, hint="", hint_width=10, width=20)
+    # Assert — the bar starts at the same column in both lines.
+    assert with_hint.index("[") == without_hint.index("[")
+
+
+def test_render_window_line_omits_hint_column_when_block_hintless():
+    # Arrange — hint_width == 0: no row in the block has any cached reset.
+    # Act
+    line = render_window_line("5h", 14.0, hint="", hint_width=0, width=20)
+    # Assert — no fabricated hint column; the bar follows the label.
+    assert line.startswith("  5h [")
+
+
+def test_render_window_line_unknown_pct_renders_question_mark():
+    # Arrange
+    pct = None
+    # Act
+    line = render_window_line("7d", pct, hint="", hint_width=0, width=20)
     # Assert
-    assert "5h [" in line and "14%" in line
+    assert line.endswith("] (?)")
 
 
-def test_render_usage_bar_line_shows_7d_window():
+def test_render_account_block_first_line_is_dashed_name():
     # Arrange
-    label = "acct"
+    row = AccountRow(
+        name="acct",
+        freshness_state="VALID",
+        freshness_hours=2.0,
+        used_pct_5h=14.0,
+        used_pct_7d=99.0,
+        snapshot_as_of=None,
+    )
     # Act
-    line = render_usage_bar_line(label, 14.0, 99.0, label_width=10, width=20)
+    block = render_account_block(row, hint_5h="", hint_7d="", hint_width=0, width=20)
     # Assert
-    assert "7d [" in line and "99%" in line
+    assert block[0] == "- acct"
 
 
-# ---------------------------------------------------------------------------
-# 2026-07-11 dedupe directive — the bars own the reset hints (moved off the
-# Stored-accounts table). Operator's verbatim example shape:
-#   ... 5h [..]  29% (in 4h05m)   7d [..]  66% (in 2d 3h)
-# ---------------------------------------------------------------------------
-
-
-def test_render_usage_bar_line_appends_5h_reset_hint():
-    # Arrange — pre-wrapped hints as the block passes them.
-    label = "acct"
-    # Act
-    line = render_usage_bar_line(
-        label,
-        29.0,
-        66.0,
-        label_width=10,
-        width=20,
-        hint_5h="(in 4h05m)",
-        hint_7d="(in 2d 3h)",
-    )
-    # Assert — operator's verbatim 5h shape.
-    assert "29% (in 4h05m)" in line
-
-
-def test_render_usage_bar_line_appends_7d_reset_hint():
+def test_render_account_block_is_5h_then_7d():
     # Arrange
-    label = "acct"
-    # Act
-    line = render_usage_bar_line(
-        label,
-        29.0,
-        66.0,
-        label_width=10,
-        width=20,
-        hint_5h="(in 4h05m)",
-        hint_7d="(in 2d 3h)",
-    )
-    # Assert — operator's verbatim 7d shape.
-    assert "66% (in 2d 3h)" in line
-
-
-def test_render_usage_bar_line_without_hints_has_no_parens():
-    """No cached reset → no fabricated hint; the line stays hint-free."""
-    # Arrange
-    label = "acct"
-    # Act
-    line = render_usage_bar_line(label, 14.0, 99.0, label_width=10, width=20)
-    # Assert
-    assert "(" not in line
-
-
-def test_render_usage_bar_line_pads_missing_5h_hint_to_block_width():
-    """A hint-less row pads the 5h slot so the 7d bars stay aligned."""
-    # Arrange — a sibling row in the block has a 10-char 5h hint.
-    with_hint = render_usage_bar_line(
-        "aa", 29.0, 66.0, label_width=4, width=20, hint_5h="(in 4h05m)", hint_5h_width=10
+    row = AccountRow(
+        name="acct",
+        freshness_state="VALID",
+        freshness_hours=2.0,
+        used_pct_5h=14.0,
+        used_pct_7d=99.0,
+        snapshot_as_of=None,
     )
     # Act
-    without_hint = render_usage_bar_line(
-        "bbbb", 14.0, 15.0, label_width=4, width=20, hint_5h="", hint_5h_width=10
-    )
-    # Assert — "7d [" starts at the same column in both lines.
-    assert with_hint.index("7d [") == without_hint.index("7d [")
+    block = render_account_block(row, hint_5h="", hint_7d="", hint_width=0, width=20)
+    # Assert — one line per window, 5h first (operator mockup order).
+    assert block[1].startswith("  5h ") and block[2].startswith("  7d ")
 
 
 def test_render_usage_bars_block_empty_rows_is_empty_string():
@@ -225,14 +226,33 @@ def _two_bar_rows() -> list[AccountRow]:
     ]
 
 
-def test_render_usage_bars_block_lines_are_length_aligned():
+def test_render_usage_bars_block_marks_each_account_with_dash():
     # Arrange
     rows = _two_bar_rows()
     # Act
     block = render_usage_bars_block(rows, width=20)
-    data_lines = [ln for ln in block.splitlines() if "5h [" in ln]
-    # Assert — every data line has identical width (monospace aligned).
-    assert len({len(ln) for ln in data_lines}) == 1
+    markers = [ln for ln in block.splitlines() if ln.startswith("- ")]
+    # Assert — one "- <name>" marker per account (operator mockup).
+    assert markers == ["- wyusuuke-gmail-com", "- ywata1989-gmail-com"]
+
+
+def test_render_usage_bars_block_blank_line_between_accounts():
+    # Arrange
+    rows = _two_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=20)
+    # Assert — exactly one separator between the two account blocks.
+    assert block.splitlines().count("") == 1
+
+
+def test_render_usage_bars_block_hintless_rows_share_bar_column():
+    # Arrange — no row has a cached reset → no hint column at all.
+    rows = _two_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=20)
+    starts = {ln.index("[") for ln in block.splitlines() if "[" in ln}
+    # Assert — every bar starts at the same column (scans vertically).
+    assert len(starts) == 1, f"bars misaligned: {starts}\n{block}"
 
 
 def test_render_usage_bars_block_no_data_row_renders_placeholder():
@@ -268,7 +288,7 @@ def _hinted_bar_rows() -> list[AccountRow]:
             used_pct_5h=29.0,
             used_pct_7d=66.0,
             snapshot_as_of=None,
-            # From _HINT_NOW: +4h05m → "in 4h05m"; +2d3h → "in 2d 3h".
+            # From _HINT_NOW: +4h05m → "in 4h05m"; +2d3h → "in 2d03h".
             reset_at_5h="2026-07-12T04:05:00+00:00",
             reset_at_7d="2026-07-14T03:00:00+00:00",
         ),
@@ -283,35 +303,57 @@ def _hinted_bar_rows() -> list[AccountRow]:
     ]
 
 
-def test_render_usage_bars_block_carries_5h_reset_hint():
-    """Block-level: ``reset_at_5h`` renders the operator's ``29% (in 4h05m)``."""
+def test_render_usage_bars_block_5h_hint_precedes_bar():
+    """Block-level: ``reset_at_5h`` renders ``5h (in 4h05m) [`` (hint first)."""
     # Arrange
     rows = _hinted_bar_rows()
     # Act
     block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
     # Assert
-    assert "29% (in 4h05m)" in block
+    assert "5h (in 4h05m) [" in block
 
 
-def test_render_usage_bars_block_carries_7d_reset_hint():
-    """Block-level: ``reset_at_7d`` renders the operator's ``66% (in 2d 3h)``."""
+def test_render_usage_bars_block_7d_hint_precedes_bar():
+    """Block-level: ``reset_at_7d`` renders ``7d (in 2d03h) [`` (hint first)."""
     # Arrange
     rows = _hinted_bar_rows()
     # Act
     block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
     # Assert
-    assert "66% (in 2d 3h)" in block
+    assert "7d (in 2d03h) [" in block
 
 
-def test_render_usage_bars_block_aligns_7d_bars_across_mixed_hints():
-    """A hint-less row pads its 5h slot — 7d bars align across the block."""
+def test_render_usage_bars_block_aligns_bars_across_mixed_hints():
+    """A hint-less row pads its hint slot — every bar starts at one column."""
     # Arrange
     rows = _hinted_bar_rows()
     # Act
     block = render_usage_bars_block(rows, width=20, now=_HINT_NOW)
-    starts = {ln.index("7d [") for ln in block.splitlines() if "7d [" in ln}
-    # Assert — one distinct start column means the 7d bars line up.
-    assert len(starts) == 1, f"7d bars misaligned across rows: {starts}\n{block}"
+    starts = {ln.index("[") for ln in block.splitlines() if "[" in ln}
+    # Assert — one distinct start column means the bars line up.
+    assert len(starts) == 1, f"bars misaligned across rows: {starts}\n{block}"
+
+
+def test_render_usage_bars_block_matches_operator_mockup_exactly():
+    """The whole block, verbatim — the operator's 2026-07-17 layout spec."""
+    # Arrange
+    rows = _hinted_bar_rows()
+    # Act
+    block = render_usage_bars_block(rows, width=12, now=_HINT_NOW)
+    # Assert — one account per block, hint before bar, percent after,
+    # blank line between accounts, bars in one column.
+    assert block == "\n".join(
+        [
+            "Usage bars (5h / 7d out of 100%):",
+            "- wyusuuke-gmail-com",
+            "  5h (in 4h05m) [███░░░░░░░░░] (29%)",
+            "  7d (in 2d03h) [████████░░░░] (66%)",
+            "",
+            "- ywata1989-gmail-com",
+            "  5h            [██░░░░░░░░░░] (14%)",
+            "  7d            [██░░░░░░░░░░] (15%)",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
