@@ -135,6 +135,11 @@ class _MainGroup(LazyGroup):
         # spec.yaml. Honest UNKNOWN for underivable facts; never prints
         # secret values.
         "whoami": f"{_PKG}._whoami:whoami",
+        # The never-stop-when-task-remains actuator: a Claude Code Stop hook that converts a
+        # stop-with-work-remaining into TAKING the next board item. Not a
+        # poller — it fires at turn end, which is the moment the agent would
+        # otherwise go idle holding claimed work.
+        "never-stop-when-task-remains": f"{_PKG}.never_stop_when_task_remains_cmds:never_stop_when_task_remains",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
