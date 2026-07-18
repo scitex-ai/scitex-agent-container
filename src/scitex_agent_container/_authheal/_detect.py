@@ -47,6 +47,7 @@ __all__ = [
     "DetectionOutcome",
     "Roster",
     "capture_live_panes",
+    "capture_live_panes_once",
     "detect_login_expired",
     "registered_agents",
 ]
@@ -190,3 +191,24 @@ def capture_live_panes(
     time.sleep(max(0.0, interval))
     run2 = {_agent_of(s): _capture(s) for s in sessions}
     return {name: (run1.get(name), run2.get(name)) for name in run1}
+
+
+def capture_live_panes_once() -> "dict[str, str | None]":
+    """Capture every live ``tui-<agent>`` pane ONCE — ``{agent: pane_or_None}``.
+
+    The live seam for the NEAR-PROMPT discriminator
+    (:mod:`._nearprompt`), which judges the CURRENT UI state and so needs
+    exactly one reading. Deliberately not :func:`capture_live_panes`: a second
+    capture exists only to be compared against the first, and it is precisely
+    that comparison — the freeze test — that misclassifies an animating-but-
+    wedged agent as healthy. Taking one reading is not a shortcut here, it is
+    the correction.
+
+    Reuses the same tmux enumeration + capture as ``sac agents auth-status``, so
+    both commands see the same fleet on the same tmux server. An uncapturable
+    pane is ``None``, the honest "could not read" that the discriminator maps to
+    UNKNOWN — never to a false LOGIN-REQUIRED and never to a false OK.
+    """
+    from ..cli_pkg._auth_status import _agent_of, _capture, _list_tui_sessions
+
+    return {_agent_of(s): _capture(s) for s in _list_tui_sessions()}
