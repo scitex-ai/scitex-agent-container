@@ -100,15 +100,23 @@ def agent_stop(
     except Exception:
         traceback.print_exc()
 
-    # Fleet-default pre-stop rescue (operator priority, lead a2a
-    # efa48850daf248ed9fe3ae5232677b2b). Commits + pushes every dirty
-    # worktree (or diff-tarballs them on protected/push-failure) before
-    # the agent dies, so restart never silently loses uncommitted work.
-    # NEVER raises — bounded by RESCUE_GRACE_SECONDS; whatever finished
-    # before the budget elapsed is preserved.
-    from ._pre_stop_rescue import run_pre_stop_rescue
-
-    run_pre_stop_rescue(config)
+    # NOTE — there is deliberately NO auto-commit here. The fleet-default
+    # pre-stop rescue that used to run at this point was ABOLISHED
+    # (operator ruling 2026-07-19, 「rescue 一切やめましょう」). Stopping an
+    # agent now leaves a dirty worktree DIRTY; the work stays on disk
+    # (``workdir`` is a host bind mount, so it survives the restart) and
+    # the agent re-reviews it on the next start.
+    #
+    # Why it went, so nobody re-adds it: its "never publishes" contract
+    # was enforced against the WRONG VERB. It blocked ``push`` but not
+    # ``merge`` — on a topic branch it committed IN PLACE, and that
+    # commit then rode the branch's ordinary PR merge into ``develop``.
+    # A rescue commit that reached ``main`` that way carried nine
+    # ``mode 160000`` gitlinks with no ``.gitmodules`` and broke
+    # ``actions/checkout`` on every workflow run (fixed in PR #769).
+    # A broad ``git add -A`` over an agent's dirty tree sweeps up
+    # whatever happens to be sitting in it — that is not a save, it is a
+    # lottery. Regression guard: ``tests/.../test__stop_no_rescue.py``.
 
     # Pre-stop hooks
     # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)
