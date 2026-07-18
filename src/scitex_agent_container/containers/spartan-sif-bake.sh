@@ -235,7 +235,7 @@ BUILD_RC=$?
 # Same doctrine as the .def's %post gate: symbols, never version strings.
 # ---------------------------------------------------------------------------
 STEP="gate"
-# The probe body below is a VERBATIM copy of containers/sif-symbol-probe.py
+# The probe body below is a VERBATIM copy of containers/sif_symbol_probe.py
 # (the master-side verify runs that file against the pulled SIF). A unit
 # test asserts the two stay in lockstep — edit both together.
 PROBE="$WORKDIR/state/probe.py"

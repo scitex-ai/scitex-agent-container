@@ -308,7 +308,7 @@ def test_bake_script_never_calls_sbatch() -> None:
 
 
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:
-    # Arrange — the remote gate is a heredoc copy of sif-symbol-probe.py
+    # Arrange — the remote gate is a heredoc copy of sif_symbol_probe.py
     # (the remote host has no wheel). If the two drift, the master could
     # accept an artifact the remote gated differently — LOCKSTEP is
     # enforced here rather than promised in a comment.

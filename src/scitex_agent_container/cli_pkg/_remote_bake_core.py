@@ -42,7 +42,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _CONTAINERS_ASSETS = Path(__file__).resolve().parent.parent / "containers"
 BAKE_SCRIPT = _CONTAINERS_ASSETS / "spartan-sif-bake.sh"
-SYMBOL_PROBE = _CONTAINERS_ASSETS / "sif-symbol-probe.py"
+SYMBOL_PROBE = _CONTAINERS_ASSETS / "sif_symbol_probe.py"
 
 LAYERS = ("base", "scitex")
 
@@ -305,7 +305,7 @@ def pull_and_publish(
             f"symbol probe missing from wheel: {SYMBOL_PROBE}",
         )
     with tempfile.TemporaryDirectory(prefix="sac-sif-probe-") as td:
-        probe = Path(td) / "sif-symbol-probe.py"
+        probe = Path(td) / "sif_symbol_probe.py"
         shutil.copy2(SYMBOL_PROBE, probe)
         proc = _run(
             [
