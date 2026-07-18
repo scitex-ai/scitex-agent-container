@@ -6,6 +6,111 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.25] - 2026-07-18
+
+### Added
+
+- **A fleet-default env layer — ONE variable can now reach every agent without
+  editing N specs in another repo** (`runtimes/_fleet_env.py`, PR #754). Before
+  this the only path from config to container env was `spec.env`, so a
+  fleet-wide flag meant editing every spec — and the specs live in the dotfiles
+  repo, not here, which is why fleet-wide flags never happened. Precedence,
+  lowest → highest: `FLEET_DEFAULT_ENV` (sac's declared data) → `config.yaml`
+  `spec.fleet_default_env` (operator, host scope) → `spec.env` (per-agent,
+  **always wins**). Unlike `_layer_merge.deep_merge_layers`, which RAISES on a
+  scalar collision (correct for `to_home` peer layers, where each key is owned
+  by exactly one layer), a collision here is the feature: a default exists in
+  order to be overridden, so this follows the `_envrc` cascade idiom and logs
+  overrides at INFO instead. The defaults are DATA — no sac logic names a
+  consumer, and per-agent opt-out needs no new mechanism (set the key in
+  `spec.env`, or `""` to neutralise). Seeded with `SCITEX_CARDS_DUAL_WRITE=1`
+  and `SCITEX_CARDS_READ_BACKEND=sqlite`.
+
+- **`auth-heal` is declared as a `kind="timer"` JobSpec (`sac.heal-agent-auth`)
+  instead of a hand-written crontab line** (PR #753). The cron line was
+  temporary BY CONSTRUCTION: `~/.dotfiles/src/.cron/copy_crontab` installs the
+  tracked manifest WHOLESALE, so any line absent from `.crontab_list` is erased
+  on its next run — and auth-heal has no line in that manifest at all, which is
+  why the wrapper exporting `SAC_SECRETS_ENVRC` kept reverting. `kind="timer"`
+  materialises a systemd `--user` timer with `Persistent=true`, so a window
+  missed while the host slept fires on resume — the property a crontab line
+  never had, and the one a laptop fleet needs most. Both `ExecStart` tokens are
+  absolute, because a systemd `--user` unit's minimal PATH would otherwise
+  resolve the script's `#!/usr/bin/env python3` to the SYSTEM python rather
+  than the 3.11 venv the fleet runs on. **DEPLOY GATE:** this overlaps
+  `sac.restart-login-expired-agents`, which reimplements this job's `scan_tui`
+  natively. Declaring both is safe — a JobSpec is inert until `ecosystem up`
+  installs it — but only ONE may ever be ENABLED, or two restarters with
+  independent debounce state run on one fleet. Documented on both specs and
+  pinned by a test.
+
+### Fixed
+
+- **The bake shipped pre-#742 sac through four consecutive green builds — three
+  defects, all closed** (`apptainer-base.def` / `apptainer-scitex.def`, PR
+  #752). (1) `%files` NESTING, the root cause: apptainer copies INTO an
+  existing destination dir, so a base that already baked
+  `/opt/scitex-agent-container-src` made the scitex layer's copy land nested,
+  leaving the OUTER stale tree as the one uv built (measured in-image:
+  outer=1edf17d0 pre-#742, nested=1e4870fd #742, installed=1edf17d0). Now
+  flattened deterministically, then fail-loud if still nested. (2) PIP FLAGS
+  PASSED TO UV — `--no-cache-dir` / `--force-reinstall` are pip spellings that
+  uv does not honour as cache-bypass, so it reinstalled a cached stale wheel
+  (the cache is keyed on name+version, and sac's version does not advance
+  per-commit); uv's lever is `--reinstall-package`, which the recipe's own
+  comment already named and never applied. (3) CONTENT-ASSERT FALSE-GREEN — it
+  resolved the installed tree via `scitex_agent_container.__file__`, which
+  during `%post` can point at the STAGED tree, comparing it to itself and
+  passing regardless; now resolved from sysconfig purelib and fail-loud when
+  sac is absent from site-packages or both operands resolve to one directory.
+
+- **The build-time freshness gate compares shared `.py` CONTENT, not whole-tree
+  set equality** (PR #751). PR #749's gate hashed the whole installed `.py`
+  tree and required it to equal the staged-source tree-hash. That is a set
+  equality and it false-positived: the installed package tree legitimately
+  differs AS A SET from the source tree (the wheel excludes/relocates some
+  `.py`), so a CORRECT build still FAILED — the bake was right, the assert
+  lied, and it blocked EVERY bake. Now a per-file intersection compare: key
+  each tree's `.py` by its package-relative path, compare content only for
+  files present in BOTH, and ignore files in only one tree (packaging
+  set-difference, not staleness). A real stale wheel still trips it, and a
+  misalignment guard fails loudly below 50 shared files.
+
+- **The pre-stop rescue only commits worktrees it OWNS** (PR #747). On a SHARED
+  checkout (the scitex-cards lane runs 4 agents over one physical checkout)
+  `.git` / `.worktrees` / `git worktree list` are shared, so the rescue walked
+  peers' worktrees and committed them under the stopping agent's identity
+  (observed 2026-07-17: chat committed gui's tree). The push half was already
+  removed in #743; this closes the residual local mis-attribution. The
+  ownership marker lives OUT of the working tree at `<git-dir>/sac-owner` so
+  `git add -A` can never stage it; the `WorktreeCreate` hook stamps it, and a
+  three-state `_ownership_allows()` gate DEFAULT-DENIES every `.worktrees/*`
+  child whose owner mismatches OR is absent.
+
+- **The `scitex-todo` → `scitex-cards` rename is finished at the surfaces the
+  operator actually sees** (PR #754). Contracts with the deployed `.mcp.json`
+  keep dual-name tolerance on purpose — a live fleet is rolled one agent at a
+  time and that file is not sac's to flip, so a hard rename would classify
+  every not-yet-migrated agent's HEALTHY board MCP as absent and manufacture a
+  false alarm: `_mcp/_healthcheck.py` gains `SERVER_ALIASES` (a legacy key
+  still resolves, reported under the canonical name) and
+  `runtimes/_mcp_reliability.py` carries both spellings. Free-form display
+  strings (`_listen/_card_event_delivery.py`, `_listen/_notify.py`) are
+  straight flips. `BASE_REQUIRED_SKILLS` is deliberately NOT changed — it names
+  a skill directory that only exists under the old name, and flipping it would
+  put a nonexistent skill into every agent's CLAUDE.md.
+
+- **A bot-less agent no longer ships a `claude-code-telegrammer` MCP entry that
+  fails every boot** (`prune_tokenless_telegrammer_mcp`, PR #754). The shared
+  baseline `.mcp.json` declares the telegrammer for every agent, so an agent
+  with no bot launched it with an empty token, cct correctly refused, and the
+  panel carried a permanent failed row — fail-loud that is right for a
+  MISCONFIGURED agent and wrong for a deliberately bot-less one, and once the
+  entry exists the two are indistinguishable. Wired into
+  `_to_home.deploy_to_home` AFTER `ensure_cct_bot_token`; the ordering is
+  load-bearing and is asserted end-to-end rather than in a unit test that would
+  pass even with the call at the wrong point.
+
 ## [0.21.24] - 2026-07-18
 
 ### Added
