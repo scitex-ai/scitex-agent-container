@@ -1,0 +1,24 @@
+
+← cct · REDACTED: あれ？
+
+● Login expired · Please run /login
+
+✻ Crunched for 1s
+
+← cct · REDACTED: (photo) まだ変わってない [attachment kind=photo file_id=REDACTED…
+
+● Login expired · Please run /login
+
+✻ Cooked for 0s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+  Start or continue. Scan your scitex-todo card slice, resume any in-flight or
+  assigned work (hold idle if none), then report readiness. Follow CLAUDE.md
+  + your skills; don't restate, don't invent scope.Read and follow
+  /home/ywatanabe/.claude/commands/constitution.md.
+────────────────────────────────────────────────────────────────────────────────
+  [Opus 4.8 (1M context) | Max] │ grant git:(develop*)
+  Context █████████░ 86% (in: 2, cache: 857k) │ Usage █░░░░░░░░░ 12% (2h 59m /…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+                                                                            /rc

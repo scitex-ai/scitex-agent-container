@@ -13,7 +13,14 @@ real cases from the 2026-07-12 live verification:
     moving → OK.
 
 Plus the real captured pane fixture (``auth_error_head-mba_v2.1.114.txt``) so
-the matcher is proven against Anthropic's actual rendering, not a guess.
+the matcher is proven against Anthropic's actual rendering, not a guess, and
+``auth_wedged_grant_20260718.txt`` — a second real capture, of an agent still
+wedged 6 minutes after a restart — as a WEDGED-agent regression guard.
+
+The Unicode-whitespace section guards a false NEGATIVE rather than a false
+positive: the TUI substitutes U+00A0 for ASCII spaces (visible in the ``❯``
+prompt gap of every captured fixture here), and a substitution INSIDE an auth
+phrase defeats the start-anchored literal match, hiding a wedged agent.
 
 No mocks: every case is a pure function call on captured pane text.
 """
@@ -38,6 +45,24 @@ _REAL_PANE = (
     / "pane_states"
     / "auth_error_head-mba_v2.1.114.txt"
 )
+
+# Real captured pane of the wedged ``grant`` agent (2026-07-18 22:26:19), taken
+# ~6 minutes after its 22:20:14 restart. The operator poked it twice and got the
+# banner both times; the banner is the non-chrome line DIRECTLY above the prompt
+# and only the 0s-turn spinner follows it. Telegram chat id / attachment file_id
+# are redacted — the auth-relevant structure is verbatim, including the real
+# NBSP the TUI renders as the ``❯`` prompt gap.
+_WEDGED_PANE = (
+    Path(__file__).parents[2]
+    / "fixtures"
+    / "pane_states"
+    / "auth_wedged_grant_20260718.txt"
+)
+
+# U+00A0 NON-BREAKING SPACE — the variant Claude's Ink TUI is CAPTURED emitting
+# where an ASCII space is expected (the ``❯`` prompt gap in every fixture here,
+# and the gap after the ``⎿`` result marker in the head-mba pane).
+NBSP = " "
 
 # --------------------------------------------------------------------------
 # Fixtures — captured-pane shapes (verbatim TUI rendering).
@@ -223,6 +248,74 @@ def test_banner_kind_ignores_rate_limit_429():
 
 
 # --------------------------------------------------------------------------
+# banner_kind — Unicode-whitespace normalisation (ported from
+# ``--ecc-state-detection--normalize-text`` in emacs-claude-code).
+#
+# ``_MARKERS`` already strips a LEADING NBSP, so a NBSP in the left decoration
+# has always worked. A NBSP INSIDE the phrase does not: ``startswith`` compares
+# against ASCII-spaced literals, so "Login<NBSP>expired" matched nothing and a
+# wedged agent would be invisible to the watchdog.
+# --------------------------------------------------------------------------
+
+
+def test_banner_kind_matches_nbsp_inside_login_expired():
+    # Arrange
+    line = "● Login" + NBSP + "expired · Please run /login"
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind == "Login expired"
+
+
+def test_banner_kind_matches_nbsp_inside_please_run_login():
+    # Arrange
+    line = "  ⎿  Please" + NBSP + "run /login"
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind == "Please run /login"
+
+
+def test_banner_kind_matches_nbsp_inside_api_error_401():
+    # Arrange
+    line = "  API" + NBSP + 'Error: 401 {"type":"error"}'
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind == "API Error: 4xx"
+
+
+def test_banner_kind_matches_ideographic_space_in_left_decoration():
+    # Arrange — U+3000 is NOT in ``_MARKERS``, so stripping alone leaves it
+    # leading and the start-anchored match fails; normalisation must run FIRST.
+    line = "⎿　Please run /login"
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind == "Please run /login"
+
+
+def test_banner_kind_normalisation_does_not_widen_into_prose():
+    # Arrange — CONTROL: proves the fix was not "achieved" by loosening the
+    # start-anchored match into a substring search.
+    line = '● figrecipe died in a "Login expired" loop'
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind is None
+
+
+def test_banner_kind_normalisation_still_ignores_nbsp_rate_limit_429():
+    # Arrange — CONTROL: normalising the API-error branch must not widen it
+    # onto 429, which a restart does not fix.
+    line = "  API" + NBSP + "Error: 429 rate_limit"
+    # Act
+    kind = banner_kind(line)
+    # Assert
+    assert kind is None
+
+
+# --------------------------------------------------------------------------
 # probe_pane — near-prompt tail membership + distance.
 # --------------------------------------------------------------------------
 
@@ -279,6 +372,26 @@ def test_probe_real_captured_fixture_banner_within_tail():
     probe = probe_pane(pane)
     # Assert
     assert probe.distance is not None and probe.distance <= TAIL_LINES
+
+
+def test_probe_wedged_grant_pane_flags_banner_at_distance_zero():
+    # Arrange — regression guard for a WEDGED agent, not a healthy one: in this
+    # capture the banner is the last non-chrome line before the prompt.
+    pane = _WEDGED_PANE.read_text(encoding="utf-8")
+    # Act
+    probe = probe_pane(pane)
+    # Assert
+    assert (probe.present, probe.distance, probe.banner) == (True, 0, "Login expired")
+
+
+def test_probe_wedged_grant_pane_prompt_gap_is_a_real_nbsp():
+    # Arrange — documents WHY normalisation is needed: the production TUI emits
+    # U+00A0 where an ASCII space is expected.
+    lines = _WEDGED_PANE.read_text(encoding="utf-8").splitlines()
+    # Act
+    prompt_line = lines[P.prompt_line_index("\n".join(lines))]
+    # Assert
+    assert prompt_line == "❯" + NBSP
 
 
 # --------------------------------------------------------------------------
