@@ -207,7 +207,11 @@ def _post_notify(
     runs in the producer's synchronous dispatch context. Any transport /
     HTTP error is logged LOUD and returns False — the caller continues to
     the next target (one bad delivery must not abort the rest)."""
-    payload = {"agent": agent, "body": body, "from_agent": "scitex-todo"}
+    # Free-form provenance label — rendered into the notification's
+    # ``meta.source`` bracket the operator reads. Not a lookup key and not
+    # ACL-bearing (this POST authenticates with a bearer), so the rename is a
+    # straight flip with no transitional tolerance needed.
+    payload = {"agent": agent, "body": body, "from_agent": "scitex-cards"}
     if card_id:
         payload["card_id"] = card_id
     data = json.dumps(payload).encode("utf-8")
@@ -232,7 +236,9 @@ def _post_notify(
         detail = ""
         try:
             detail = exc.read().decode("utf-8", "replace")[:300]
-        except Exception:  # stx-allow: fallback (reason: error-body read is diagnostic only)
+        except (
+            Exception
+        ):  # stx-allow: fallback (reason: error-body read is diagnostic only)
             pass
         logger.warning(
             "card_event_delivery: /v1/notify for agent=%s failed HTTP %s: %s",
@@ -326,9 +332,7 @@ def _deliver_to_targets(
     """POST to each target; tolerate per-target failure. Return success count."""
     delivered = 0
     for agent in targets:
-        if _post_notify(
-            base_url, bearer, agent=agent, body=body, card_id=card_id
-        ):
+        if _post_notify(base_url, bearer, agent=agent, body=body, card_id=card_id):
             delivered += 1
     return delivered
 

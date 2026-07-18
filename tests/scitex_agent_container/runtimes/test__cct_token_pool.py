@@ -17,6 +17,7 @@ collide with the fixtures.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -29,6 +30,7 @@ from scitex_agent_container.runtimes._cct_token_pool import (
     _default_agent_id,
     _slot_candidates,
     ensure_cct_bot_token,
+    prune_tokenless_telegrammer_mcp,
 )
 
 _SECRETS_VAR = "SAC_SECRETS_ENVRC"
@@ -563,3 +565,116 @@ def test_workdir_cannot_influence_the_slot_at_all():
     c = _slot_candidates("grant", "")
     # Assert: location is not an input to identity. Full stop.
     assert a == b == c
+
+
+# ---------------------------------------------------------------------------
+# prune_tokenless_telegrammer_mcp — card
+# sac-omit-telegram-mcp-when-no-cct-bot-token-20260702.
+#
+# The shared baseline .mcp.json declares claude-code-telegrammer for EVERY
+# agent. An agent with no bot therefore launches it with an empty token, cct
+# refuses to start, and the operator's MCP panel carries a permanent "failed"
+# row. No token -> no entry -> nothing to fail. Real files on tmp_path.
+# ---------------------------------------------------------------------------
+
+_TELEGRAMMER = "claude-code-telegrammer"
+
+
+def _write_mcp_json(dest: Path, servers: dict) -> Path:
+    mcp = dest / ".mcp.json"
+    mcp.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    return mcp
+
+
+def _telegrammer_entry() -> dict:
+    return {
+        _TELEGRAMMER: {"command": "cct", "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"}}
+    }
+
+
+def _servers_in(mcp: Path) -> dict:
+    return json.loads(mcp.read_text())["mcpServers"]
+
+
+def test_tokenless_agent_loses_the_telegrammer_entry(tmp_path: Path) -> None:
+    # Arrange — a materialised home with the entry and an env with NO token.
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("SOME_OTHER=1\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_tokened_agent_keeps_the_telegrammer_entry(tmp_path: Path) -> None:
+    # Arrange — a real (non-empty) token in the materialised env.
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=123:abc\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER in _servers_in(mcp)
+
+
+def test_empty_token_value_counts_as_no_token(tmp_path: Path) -> None:
+    """An empty assignment is exactly the case cct fails loudly on."""
+    # Arrange
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_pruning_leaves_other_servers_untouched(tmp_path: Path) -> None:
+    """Only the telegrammer entry may be removed."""
+    # Arrange
+    servers = {**_telegrammer_entry(), "scitex-cards": {"command": "scitex-cards"}}
+    mcp = _write_mcp_json(tmp_path, servers)
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert "scitex-cards" in _servers_in(mcp)
+
+
+def test_prune_reports_whether_it_removed_the_entry(tmp_path: Path) -> None:
+    # Arrange
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is True
+
+
+def test_missing_mcp_json_is_a_noop(tmp_path: Path) -> None:
+    # Arrange — nothing materialised yet.
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is False
+
+
+def test_malformed_mcp_json_is_left_untouched(tmp_path: Path) -> None:
+    """The .mcp.json deploy owns JSON fail-loud; pruning must not mask it."""
+    # Arrange
+    mcp = tmp_path / ".mcp.json"
+    mcp.write_text("{not json")
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert mcp.read_text() == "{not json"
+
+
+def test_absent_telegrammer_entry_is_a_noop(tmp_path: Path) -> None:
+    # Arrange — an agent whose config never declared it.
+    _write_mcp_json(tmp_path, {"scitex-cards": {"command": "scitex-cards"}})
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is False
