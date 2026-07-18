@@ -28,6 +28,7 @@ import sys
 
 import click
 
+from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_restart
 from ..._state.host_config import load as _load_host_config
 from ...config import load_config
@@ -35,12 +36,6 @@ from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
 from ._dispatch import try_dispatch_remote
 from ._host_routing import spec_host_fallback_peer
-from ._selection import (
-    _enumerate_fleet,
-    _enumerate_running,
-    bulk_selection_options,
-    resolve_selection,
-)
 
 # Cross-host dispatch + host-listen bypass live in ``_restart_remote``.
 # Re-exported here so existing imports (tests included) keep resolving.
@@ -50,7 +45,12 @@ from ._restart_remote import (  # noqa: F401
     _restart_via_host_bypass,
     _should_try_host_bypass,
 )
-
+from ._selection import (
+    _enumerate_fleet,
+    _enumerate_running,
+    bulk_selection_options,
+    resolve_selection,
+)
 
 
 def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
@@ -92,6 +92,10 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
                 f"[green]Agent '{name}' fresh-restarted via host listen[/green]"
             )
         return out, bool(out["restarted"])
+    # Set when the start leg no-op'd over a live agent instead of cycling it;
+    # surfaced as ``reason``/``hint`` on the envelope so a FAILED restart is
+    # diagnosable without reading stderr.
+    no_op_reason: str | None = None
     # stx-allow: fallback (reason: config resolution, cross-host ssh dispatch, or
     # agent_restart can raise if the agent is not running or the session cannot be
     # found; an error envelope is cleaner than an unhandled traceback)
@@ -170,7 +174,21 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
             # must NOT be read as "the restart failed" — inventing a false
             # FAILURE is just the mirror of the false SUCCESS we are fixing,
             # and would be equally misleading.
-            restarted = agent_restart(name) is not False
+            #
+            # A restart's contract is that the process CYCLED. The start
+            # leg's idempotent "already running -> no-op" branch satisfies
+            # `is not False` while having launched NOTHING, so it must be
+            # reported as a FAILED restart (incident 2026-07-12,
+            # scitex-storage: the API answered `{"restarted": true}` over
+            # an agent whose pid never changed, and a caller counting rc=0
+            # marked an unrestarted agent as rolled). `outcome_kind`
+            # returns None for a plain True/False/None, so this is safe on
+            # any older or hand-rolled start result.
+            _result = agent_restart(name)
+            restarted = _result is not False
+            if outcome_kind(_result) == KIND_ALREADY_RUNNING:
+                restarted = False
+                no_op_reason = KIND_ALREADY_RUNNING
         except RuntimeError as exc:
             if not _should_try_host_bypass(exc):
                 raise
@@ -196,9 +214,33 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
                 console.print(_json.dumps(envelope))
             return out, brokered
         out = {"name": name, "restarted": restarted, "dispatched": False}
+        if no_op_reason is not None:
+            # Name the no-op explicitly. Without this the envelope is
+            # `{"restarted": false}` with no cause, which reads as the
+            # generic start-leg failure below and sends the operator to
+            # the wrong recovery (kill-session + --fresh) for an agent
+            # that is in fact perfectly healthy and simply never cycled.
+            out["reason"] = no_op_reason
+            out["hint"] = (
+                f"the agent was already running and the start leg no-op'd, "
+                f"so NOTHING was restarted — it is still the OLD process on "
+                f"its OLD credentials. Force the cycle with: "
+                f"sac agents start {name} -y --force"
+            )
         if not as_json:
             if restarted:
                 console.print(f"[green]Agent '{name}' restarted[/green]")
+            elif no_op_reason is not None:
+                console.print(
+                    f"[red]Agent '{name}' NOT restarted — it was already "
+                    f"running and the start leg no-op'd, so nothing cycled. "
+                    f"It is still the OLD process on its OLD credentials."
+                    f"[/red]"
+                )
+                console.print(
+                    f"[yellow]Force the cycle with:\n"
+                    f"  sac agents start {name} -y --force[/yellow]"
+                )
             else:
                 console.print(
                     f"[red]Agent '{name}' NOT restarted — the stop ran but the "

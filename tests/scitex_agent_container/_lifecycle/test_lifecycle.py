@@ -28,6 +28,10 @@ from typing import Any, Iterator
 import pytest
 
 from scitex_agent_container._lifecycle import lifecycle as lc
+from scitex_agent_container._lifecycle._start_outcome import (
+    KIND_ALREADY_RUNNING,
+    outcome_kind,
+)
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config
 
@@ -461,8 +465,21 @@ def test_agent_start_idempotent_when_already_running(
         sleep_fn=_no_sleep,
         liveness_verifier=lambda _cfg, _rt: True,
     )
-    # Assert: returns success and never calls start.
-    assert ok is True and runtime.start_calls == []
+    # Assert: returns success, says WHY, and never calls start.
+    #
+    # `bool(ok)`, not `ok is True`: the no-op branch now returns the tagged
+    # `NOOP_ALREADY_RUNNING` (an int subclass) rather than the `True`
+    # SINGLETON, so identity no longer holds while truthiness — the actual
+    # contract this test names — does. This is STRICTER than the old
+    # assertion, not looser: it additionally pins WHICH branch produced the
+    # success, a distinction the bare `True` made impossible and whose
+    # absence let a restart report success over an agent that never cycled
+    # (incident 2026-07-12). See :mod:`._lifecycle._start_outcome`.
+    assert (
+        bool(ok) is True
+        and outcome_kind(ok) == KIND_ALREADY_RUNNING
+        and runtime.start_calls == []
+    )
 
 
 def test_agent_start_force_restarts_when_already_running(
