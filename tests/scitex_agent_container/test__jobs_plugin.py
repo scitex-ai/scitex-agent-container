@@ -46,16 +46,41 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_five_jobs() -> None:
-    # Arrange — call the registered provider. Five: accounts-refresh, the
+@pytest.fixture
+def sac_bin_override():
+    """Set a REAL ``$SAC_BIN`` for the duration of one test, then restore it.
+
+    A genuine environment mutation, not a patched lookup: the production code
+    reads ``os.environ`` itself, so this exercises the real resolution path.
+    Teardown restores the prior value exactly (including its absence), so the
+    suite cannot leak a fake sac path into any later test.
+    """
+    import os
+
+    key = "SAC_BIN"
+    sentinel = "/opt/elsewhere/bin/sac"
+    previous = os.environ.get(key)
+    os.environ[key] = sentinel
+    try:
+        yield sentinel
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
+def test_provider_returns_six_jobs() -> None:
+    # Arrange — call the registered provider. Six: accounts-refresh, the
     # host-sync-check drift alarm, the daily worktree GC, the fleet-reconcile
-    # enforcer (dead/no-session corpses), and the restart-login-expired-agents
-    # timer (live-session-but-auth-dead agents). `sac listen` is still NOT
-    # federated (see the module docstring and the absence-pin below).
+    # enforcer (dead/no-session corpses), the restart-login-expired-agents
+    # timer (live-session-but-auth-dead agents), and sync-pr-cards (one board
+    # card per open PR). `sac listen` is still NOT federated (see the module
+    # docstring and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 5
+    assert len(jobs) == 6
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -365,3 +390,129 @@ def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
     job = _job("sac.restart-login-expired-agents")
     # Assert
     assert isinstance(job, jobs_mod.JobSpec)
+
+
+# ---------------------------------------------------------------------------
+# sac.sync-pr-cards — one board card per OPEN pull request, so the backlog is
+# TRACKABLE. Named verb+object so the derived units read
+# `sac.sync-pr-cards.timer` / `.service`.
+#
+# The gap it fills is narrow and was unowned: scitex-todo's stale-active sweep
+# ALREADY nudges the owner of any untouched open card, but it can only nudge
+# about cards that EXIST. An un-carded PR is invisible to it — which is how 35
+# open PRs accumulated until 31 were force-closed BY HAND on 2026-07-18. sac
+# supplies the FACT; scitex-todo supplies the reminder. Do not add nudge logic
+# to sac: two nudgers with independent state is the double-supervisor class.
+# ---------------------------------------------------------------------------
+
+
+def test_sync_pr_cards_job_name_is_package_prefixed() -> None:
+    # Arrange — the card-per-open-PR sweep.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.name == "sac.sync-pr-cards"
+
+
+def test_sync_pr_cards_job_kind_is_timer() -> None:
+    # Arrange — a periodic systemd --user timer, so kind="timer". A wrong kind
+    # raises at construction and `ecosystem up` then silently DROPS sac's whole
+    # provider (provider-isolated, WARN-only) — taking the OAuth refresh, the
+    # drift check, the worktree GC and BOTH fleet enforcers down with it.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_sync_pr_cards_command_is_the_applying_form() -> None:
+    # Arrange — a scheduled DRY-RUN would print a report nobody reads while the
+    # backlog kept growing untracked (the same reasoning as the worktree GC).
+    # The safety here is not withholding --apply: the destructive operation
+    # (completing a card) is gated on a PROVEN-readable fetch instead.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.command.endswith("pr sync-cards --apply")
+
+
+def test_sync_pr_cards_command_uses_an_absolute_sac_path() -> None:
+    # Arrange — THE deploy hazard this pins. Five sac installs were measured on
+    # this host on 2026-07-18 (0.21.24 / 0.21.22 / 0.21.21 / 0.21.11 / none),
+    # and which one a bare `sac` resolves to depends on the invocation form.
+    # systemd units get a minimal PATH that is NOT the operator's login PATH,
+    # so a bare `sac` in a unit can silently execute months-old code while
+    # reporting the same success. A bare name is not a stable reference.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.command.startswith("/")
+
+
+def test_sac_bin_prefers_an_explicit_override(sac_bin_override) -> None:
+    # Arrange — the override exists so a host that installs sac elsewhere is
+    # not forced onto the hard-coded release path. Resolved PER CALL against
+    # the REAL environment, so an env var set after import still wins (a module
+    # constant would bake it — the trap _state.state_paths documents paying
+    # for, where a fixture set $HOME and silently did nothing).
+    from scitex_agent_container._jobs_plugin import sac_bin
+
+    # Act
+    resolved = sac_bin()
+    # Assert
+    assert resolved == sac_bin_override
+
+
+def test_sac_bin_override_reaches_the_jobspec_command(sac_bin_override) -> None:
+    # Arrange — the override must actually flow into the MATERIALISED unit, not
+    # merely be resolvable in isolation. This is the leg that would catch
+    # sac_bin() being called at import (and thus frozen) rather than per call.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.command == f"{sac_bin_override} pr sync-cards --apply"
+
+
+def test_sync_pr_cards_cadence_is_thirty_minutes() -> None:
+    # Arrange — the cadence IS the window a new PR stays untracked. It only has
+    # to beat the shelf life (days) by a wide margin, and a no-op pass is one
+    # `gh pr list` per repo, so 30min is generous while staying gentle on the
+    # GitHub API.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.on_unit_active_sec == "30min"
+
+
+def test_sync_pr_cards_timeout_outlives_a_large_backlog() -> None:
+    # Arrange — one `gh pr list` per repo plus a card upsert per open PR. A
+    # pass killed at this timeout is SAFE (each write is independent and
+    # idempotent, and completion is gated on a readable fetch so a truncated
+    # pass can never mass-complete cards), but it must still comfortably exceed
+    # a normal pass.
+    # Act
+    job = _job("sac.sync-pr-cards")
+    # Assert
+    assert job.timeout_sec == 600
+
+
+def test_provider_does_not_federate_a_pr_expiry_job() -> None:
+    # Arrange — ABSENCE PIN, and it is deliberate. The 3-day PR shelf life is a
+    # FLEET-WIDE rule (operator, 2026-07-18: 「3日ルールは全てのレポジトリで共通
+    # です」) owned by scitex-dev as a shared primitive, under the standing rule
+    # that dev holds primitives and leaves consume them.
+    #
+    # sac declaring its own expiry timer would FORK that primitive: two repos
+    # hand-rolling "what does stale mean" makes the fleet's answer depend on
+    # which tool you asked. An earlier draft of this branch DID declare it and
+    # implement the logic; both were removed rather than left as a placeholder,
+    # because a scheduled job calling a primitive that does not exist is a red
+    # timer, and "we'll swap it later" is how this host ended up with five
+    # differently-versioned sac installs.
+    #
+    # Unpin this ONLY when consuming dev's primitive — never to reintroduce a
+    # sac-local staleness decision. See _prlifecycle/_expiry_seam.py.
+    # Act
+    names = [spec.name for spec in provide_jobs()]
+    # Assert
+    assert "sac.close-expired-prs" not in names

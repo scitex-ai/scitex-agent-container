@@ -71,7 +71,7 @@ COMMAND_CATEGORIES = [
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
-    ("Host hygiene", ["worktree"]),
+    ("Host hygiene", ["worktree", "pr"]),
     ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
@@ -103,6 +103,12 @@ class _MainGroup(LazyGroup):
         # (incident-worktree-sprawl-permanent-gc-20260710 — one repo hit
         # 105 worktrees and helped trigger a host load-spike).
         "worktree": f"{_PKG}.worktree_group:worktree_group",
+        # Pull-request lifecycle (repo-scoped, not agent-scoped): one board
+        # card per open PR so the backlog is TRACKABLE at all. A PR with no
+        # card is invisible to the fleet, which is how 35 open PRs accumulated
+        # unnoticed until 31 were force-closed BY HAND on 2026-07-18. Facts
+        # only — scitex-todo's stale-active sweep owns the nudging.
+        "pr": f"{_PKG}.pr_group:pr_group",
         # `accounts` is a top-level noun — the credential store is fleet-wide,
         # not agent-scoped. Reuses the underlying `account` click group;
         # `accounts` is just the plural surface name.
@@ -315,6 +321,7 @@ class _MainGroup(LazyGroup):
         "ports": "List the ports sac/scitex uses, with live status.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
+        "pr": "Pull-request lifecycle: one board card per open PR, so nothing rots unseen.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
         "print-shell-completion": "Print the shell-completion eval line (no install).",
     }

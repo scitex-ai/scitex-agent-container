@@ -12,16 +12,76 @@ the moment ``discover_jobs()`` actually calls it.
 
 from __future__ import annotations
 
+import os
+import shutil
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.jobs import JobSpec
 
+#: Explicit override for WHICH ``sac`` a scheduled job runs.
+SAC_BIN_ENV = "SAC_BIN"
+
+#: The current release install on the fleet host. Five sac installs were
+#: measured here on 2026-07-18 — 0.21.24 / 0.21.22 / 0.21.21 / 0.21.11 / none —
+#: and WHICH ONE a bare ``sac`` resolves to depends on the invocation form
+#: (login shell, systemd's minimal PATH, tmux, in-container). This one is the
+#: release.
+DEFAULT_SAC_BIN = "/home/ywatanabe/.env-3.11/bin/sac"
+
+
+def sac_bin() -> str:
+    """The ``sac`` a scheduled job should run. Resolved PER CALL, never cached.
+
+    A bare ``sac`` in a JobSpec is NOT a stable reference: with five installs
+    on one host at four different versions, "run sac" names whichever the unit's
+    PATH happens to reach — so a timer can silently execute code months older
+    than the one whose behaviour was tested. systemd units get a minimal PATH
+    that is not the operator's login PATH, which makes the drift invisible
+    rather than merely possible.
+
+    Precedence: ``$SAC_BIN`` → the measured release path if it EXISTS →
+    ``which sac`` → bare ``"sac"``. The last rung is a genuine fallback for a
+    host that has none of the above, and is the only case where the ambiguity
+    above is accepted (there is nothing better to name).
+
+    Resolved per call, not at import: a module-level constant would bake the
+    env var before a test could set it — the trap :mod:`._state.state_paths`
+    documents having paid for.
+    """
+    override = os.environ.get(SAC_BIN_ENV)
+    if override:
+        return override
+    if os.path.exists(DEFAULT_SAC_BIN):
+        return DEFAULT_SAC_BIN
+    return shutil.which("sac") or "sac"
+
 
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Five jobs today:
+    Six jobs today. Note that ``sac.sync-pr-cards`` (the newest) uses an
+    ABSOLUTE command path via :func:`sac_bin`, while the five older jobs still
+    spell a bare ``sac``. That divergence is not an oversight — it is a
+    deliberate non-drive-by: five sac installs at four versions were measured
+    on this host on 2026-07-18, so the bare form is a real hazard for all of
+    them, but changing the older five's commands is a behaviour change to
+    running timers that belongs in its own PR with its own verification.
+
+    * ``sac.sync-pr-cards`` (``kind="timer"``) — one scitex-todo card per OPEN
+      pull request, keyed by PR number so it is idempotent, completed when the
+      PR merges or closes. It builds NO nudge logic: scitex-todo's stale-active
+      sweep already nudges the owner of any untouched open card, so a second
+      nudger would only race it. sac owns the PR FACTS; scitex-todo owns the
+      reminder. That split is why this job is narrow — the gap it fills is that
+      an un-carded PR is invisible to the nudge rail entirely, which is how 35
+      open PRs accumulated until 31 were force-closed by hand.
+
+      TRI-STATE, and that is the point: if the PR list cannot be fetched the
+      pass reports UNKNOWN and exits 2 rather than seeing an empty list and
+      reporting a clean board. It also refuses to COMPLETE any card on such a
+      pass — completion is inferred from a PR's absence, so a blind pass would
+      otherwise complete every card at once.
 
     * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
       "should be running ⇒ is running". Restarts agents whose tmux session
@@ -271,6 +331,65 @@ def provide_jobs() -> "list[JobSpec]":
             # the next tick still honours the debounce for anything bounced.
             timeout_sec=300,
         ),
+        JobSpec(
+            name="sac.sync-pr-cards",
+            schedule="*/30 * * * *",  # every 30min (cron form; timer cadence below)
+            command=f"{sac_bin()} pr sync-cards --apply",
+            description=(
+                "Upserts ONE scitex-todo card per OPEN pull request (title, "
+                "author, age, draft state, CI status), keyed by PR number so it "
+                "is idempotent, and completes the card when the PR merges or "
+                "closes. Feeds FACTS only — scitex-todo's stale-active sweep "
+                "already owns nudging, so this deliberately builds none. "
+                "TRI-STATE: if the PR list cannot be read (gh unauthenticated / "
+                "offline / rate-limited) it reports UNKNOWN and exits 2, and "
+                "touches no card — an unreadable backlog is NOT an empty one."
+            ),
+            kind="timer",
+            # THE POINT OF THIS JOB is that nobody has to remember. The
+            # operator's diagnosis of the 2026-07-18 backlog was three failures
+            # —「カードになってないか追跡できてない、催促できてないのも悪い」—
+            # and the FIRST is the one nothing owned: a PR with no card is
+            # invisible to the fleet, so the nudge rail that already exists has
+            # nothing to nudge about. 35 PRs accumulated that way and 31 were
+            # force-closed BY HAND. Unschedule this and that returns.
+            #
+            # 30min: the window a new PR stays untracked. The cadence only has
+            # to beat the shelf life (days) by a wide margin, and a no-op pass
+            # is one `gh pr list` per repo — so this is already generous while
+            # staying gentle on the GitHub API.
+            on_boot_sec="10min",
+            on_unit_active_sec="30min",
+            # One `gh pr list` per repo plus one card upsert per open PR. The
+            # pathological pass is a large backlog on a slow API. A pass killed
+            # at this timeout is SAFE: every card write is independent and
+            # idempotent, so the next tick simply redoes what it missed — and
+            # card COMPLETION is gated on a readable fetch, so a truncated pass
+            # can never mass-complete cards.
+            timeout_sec=600,
+        ),
+        # NO `sac.close-expired-prs` JOB — deliberately, and this absence is
+        # load-bearing.
+        #
+        # The 3-day PR shelf life is a FLEET-WIDE rule (operator, 2026-07-18:
+        # 「3日ルールは全てのレポジトリで共通です」) that scitex-dev owns as a
+        # shared primitive, under the standing rule that dev holds primitives
+        # and leaves consume them. sac implementing its own staleness decision
+        # would FORK that primitive — two repos hand-rolling "what does stale
+        # mean" is the exact failure mode being corrected, and the fleet's
+        # answer would then depend on which tool you asked.
+        #
+        # An earlier draft of this branch DID declare the timer and implement
+        # the logic. Both were removed rather than left as a placeholder: a
+        # scheduled job calling a primitive that does not exist is a red timer,
+        # and "we'll swap it for the real one later" is how this host ended up
+        # with five differently-versioned sac installs.
+        #
+        # See `_prlifecycle/_expiry_seam.py` for the consumption contract sac
+        # will hold dev's primitive to (dry-run default; the intent-registry
+        # write must SUCCEED before any close proceeds; scheduled
+        # materialisation; tri-state verdict). Tracking card:
+        # `sac-pr-expiry-consume-dev-primitive`, blocked on scitex-dev.
     ]
 
 
