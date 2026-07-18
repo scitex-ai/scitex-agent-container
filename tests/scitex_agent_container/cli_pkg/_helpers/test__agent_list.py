@@ -110,9 +110,15 @@ def _write_valid_spec(
     *,
     capabilities: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    groups: list[str] | None = None,
 ) -> Path:
-    """Write a minimal real v3 spec.yaml; optionally with labels."""
+    """Write a minimal real v3 spec.yaml; optionally with labels.
+
+    ``groups`` is authored as a YAML FLOW LIST (``groups: [a, b]``) —
+    the real fleet convention, and deliberately NOT the CSV string the
+    abolished ``tags`` label used. A filter that assumed a string would
+    pass a test that faked one, so the fixture writes the real shape.
+    """
     dir_.mkdir(parents=True, exist_ok=True)
     spec = dir_ / "spec.yaml"
     lines = ["apiVersion: scitex-agent-container/v3", "kind: Agent"]
@@ -121,8 +127,8 @@ def _write_valid_spec(
         label_lines.append(f'    capabilities: "{capabilities}"')
     if machine is not None:
         label_lines.append(f'    machine: "{machine}"')
-    if tags is not None:
-        label_lines.append(f'    tags: "{tags}"')
+    if groups is not None:
+        label_lines.append(f"    groups: [{', '.join(groups)}]")
     if label_lines:
         # ``cfg.labels`` is sourced from ``metadata.labels`` by the v3 loader.
         lines.append("metadata:")
@@ -375,65 +381,81 @@ def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# tags filter — a free-form, multi-value lifecycle/status label (e.g.
-# "active-development"), deliberately separate from the ACL-gated `groups`
-# label (config._group_resolver) and from `capabilities` (what an agent can
-# do, not its current work status). Mirrors the capability-filter tests.
+# group filter — `metadata.labels.groups`, the ONLY classification field
+# (operator decision 2026-07-19). Replaces the abolished `tags` label, whose
+# every value duplicated a group the same spec already carried. Read through
+# the SSOT multi-value reader `config._group_resolver.all_named_groups`, so a
+# YAML LIST is matched natively — the abolished `tags` matcher read a CSV
+# STRING and would not have worked here.
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_with_tags_filter_includes_matching_agent(tmp_path):
-    # Arrange — real spec with labels.tags="active-development, researcher".
-    spec = _write_valid_spec(tmp_path / "x", tags="active-development, researcher")
+def test_get_data_with_group_filter_includes_matching_agent(tmp_path):
+    # Arrange — real spec with labels.groups: [active, researcher].
+    spec = _write_valid_spec(tmp_path / "x", groups=["active", "researcher"])
     entries = [
         {"name": "x", "screen": "s", "started_at": "ts", "config": str(spec)},
     ]
     registry = _FakeRegistry(entries)
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        out = get_agent_list_data(registry, tags="active-development")
+        out = get_agent_list_data(registry, group="active")
     # Assert
-    assert len(out) == 1 and out[0]["name"] == "x"
+    assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_tags_filter_excludes_non_matching_agent(tmp_path):
+def test_get_data_with_group_filter_excludes_non_matching_agent(tmp_path):
     # Arrange
-    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+    spec = _write_valid_spec(tmp_path / "x", groups=["researcher"])
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        out = get_agent_list_data(registry, tags="active-development")
+        out = get_agent_list_data(registry, group="active")
     # Assert
     assert out == []
 
 
-def test_get_data_with_tags_filter_matches_any_of_multiple_wanted_values(tmp_path):
-    # Arrange — caller passes two comma-separated wanted tags; agent has one.
-    spec = _write_valid_spec(tmp_path / "x", tags="researcher")
+def test_get_data_with_group_filter_matches_any_of_multiple_wanted_values(tmp_path):
+    # Arrange — caller passes two comma-separated groups; agent is in one.
+    spec = _write_valid_spec(tmp_path / "x", groups=["researcher"])
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        out = get_agent_list_data(registry, tags="active-development,researcher")
-    # Assert — OR-match: any overlap between wanted and carried tags is a hit.
-    assert len(out) == 1 and out[0]["name"] == "x"
+        out = get_agent_list_data(registry, group="active,researcher")
+    # Assert — OR-match: any overlap between wanted and carried groups hits.
+    assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_tags_filter_untagged_agent_is_excluded(tmp_path):
-    # Arrange — agent has no tags label at all.
+def test_get_data_with_group_filter_matches_a_non_first_group(tmp_path):
+    # Arrange — `active` is NOT the first element. The ACL resolver reduces a
+    # spec to its FIRST group; selection must use the MULTI-value read instead,
+    # or every real fleet spec (groups: [developer, active]) would be missed.
+    spec = _write_valid_spec(tmp_path / "x", groups=["developer", "active"])
+    entries = [{"name": "x", "config": str(spec)}]
+    registry = _FakeRegistry(entries)
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, group="active")
+    # Assert
+    assert [r["name"] for r in out] == ["x"]
+
+
+def test_get_data_with_group_filter_ungrouped_agent_is_excluded(tmp_path):
+    # Arrange — agent has no groups label at all.
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
-        out = get_agent_list_data(registry, tags="active-development")
+        out = get_agent_list_data(registry, group="active")
     # Assert
     assert out == []
 
 
-def test_get_data_without_tags_filter_includes_untagged_agent(tmp_path):
-    # Arrange — no --tags passed at all: the filter must be a pure no-op.
+def test_get_data_without_group_filter_includes_ungrouped_agent(tmp_path):
+    # Arrange — no --group passed at all: the filter must be a pure no-op.
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
@@ -441,13 +463,13 @@ def test_get_data_without_tags_filter_includes_untagged_agent(tmp_path):
     with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
         out = get_agent_list_data(registry)
     # Assert
-    assert len(out) == 1 and out[0]["name"] == "x"
+    assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_tags_filter_includes_matching_defined_agent(tmp_path):
+def test_get_data_with_group_filter_includes_matching_defined_agent(tmp_path):
     # Arrange — defined-on-disk (not registered) agent; the second filter
-    # site (the disk-merge loop) must apply the SAME tags matching.
-    spec = _write_valid_spec(tmp_path / "ondisk", tags="active-development")
+    # site (the disk-merge loop) must apply the SAME group matching.
+    spec = _write_valid_spec(tmp_path / "ondisk", groups=["developer", "active"])
     registry = _FakeRegistry([])
 
     def _discover() -> list[tuple[str, Path]]:
@@ -455,14 +477,40 @@ def test_get_data_with_tags_filter_includes_matching_defined_agent(tmp_path):
 
     # Act
     with _swap_discover(_discover):
-        out = get_agent_list_data(registry, tags="active-development")
+        out = get_agent_list_data(registry, group="active")
     # Assert
     assert any(r["name"] == "ondisk" for r in out)
 
 
-def test_get_data_with_tags_filter_excludes_non_matching_defined_agent(tmp_path):
-    # Arrange — same disk-merge loop, non-matching tag this time.
-    spec = _write_valid_spec(tmp_path / "ondisk", tags="researcher")
+def test_get_data_group_filter_selects_what_the_tags_filter_used_to_select(tmp_path):
+    """MIGRATION EQUIVALENCE — `--group active` == the old `--tags active-development`.
+
+    The abolition rests on the claim that `tags` carried no information
+    `groups` did not: all 16 fleet specs carrying `tags: "active-development"`
+    ALSO carried `active` in `groups:`. This pins the consequence — the
+    replacement filter returns the SAME agents the removed one did — so the
+    migration cannot silently narrow or widen the fleet view.
+    """
+    # Arrange — two agents in the real fleet shape (the tagged one carried
+    # groups: [developer, active]), and one deliberately outside the cohort.
+    tagged = _write_valid_spec(tmp_path / "figrecipe", groups=["developer", "active"])
+    other = _write_valid_spec(tmp_path / "dormant", groups=["developer"])
+    registry = _FakeRegistry(
+        [
+            {"name": "figrecipe", "config": str(tagged)},
+            {"name": "dormant", "config": str(other)},
+        ]
+    )
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+        out = get_agent_list_data(registry, group="active")
+    # Assert — exactly the formerly-tagged agent, not the whole developer set.
+    assert [r["name"] for r in out] == ["figrecipe"]
+
+
+def test_get_data_with_group_filter_excludes_non_matching_defined_agent(tmp_path):
+    # Arrange — same disk-merge loop, non-matching group this time.
+    spec = _write_valid_spec(tmp_path / "ondisk", groups=["researcher"])
     registry = _FakeRegistry([])
 
     def _discover() -> list[tuple[str, Path]]:
@@ -470,7 +518,7 @@ def test_get_data_with_tags_filter_excludes_non_matching_defined_agent(tmp_path)
 
     # Act
     with _swap_discover(_discover):
-        out = get_agent_list_data(registry, tags="active-development")
+        out = get_agent_list_data(registry, group="active")
     # Assert
     assert out == []
 
@@ -1234,7 +1282,12 @@ def test_runtime_account_for_reads_per_agent_oauth_email(tmp_path):
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / ".credentials.json").write_text(
         _json.dumps(
-            {"claudeAiOauth": {"accessToken": "sk-ant-x", "expiresAt": 9_999_999_999_000}}
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-x",
+                    "expiresAt": 9_999_999_999_000,
+                }
+            }
         )
     )
     (home / ".claude.json").write_text(
