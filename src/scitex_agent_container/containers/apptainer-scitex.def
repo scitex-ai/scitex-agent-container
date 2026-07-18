@@ -133,6 +133,33 @@ From: ./sac-base.sif
     # conditionality is a RUNTIME concern (`spec.provider: openai` env
     # injection + `openai_session` executor routing — openai-compat-3).
     # Floor mirrors pyproject.toml's ``[openai]`` extra; keep in lockstep.
+
+    # ---- %files NESTING GUARD (INCIDENT 2026-07-18) ---------------------
+    # apptainer %files copies INTO an existing destination directory (plain
+    # ``cp dir existing_dir/`` semantics). A BASE image that already baked
+    # /opt/scitex-agent-container-src therefore makes THIS layer's copy land
+    # NESTED at /opt/scitex-agent-container-src/scitex-agent-container-src/,
+    # leaving the OUTER (stale, base-era) tree as the one uv actually builds.
+    # Three consecutive scitex-only bakes shipped pre-#742 sac exactly this
+    # way while reporting rc=0: the staged source was correct and simply one
+    # level too deep. Flatten deterministically — promote the nested tree.
+    if [ -d /opt/scitex-agent-container-src/scitex-agent-container-src ]; then
+        echo "INFO: %files nested the staged source (destination pre-existed); flattening."
+        rm -rf /opt/.sac-src-fresh
+        mv /opt/scitex-agent-container-src/scitex-agent-container-src /opt/.sac-src-fresh
+        rm -rf /opt/scitex-agent-container-src
+        mv /opt/.sac-src-fresh /opt/scitex-agent-container-src
+    fi
+    # FAIL LOUD — never build from a shape we do not understand.
+    if [ -d /opt/scitex-agent-container-src/scitex-agent-container-src ]; then
+        echo "FATAL: staged source still nested after flatten — refusing to build." >&2
+        exit 1
+    fi
+    if [ ! -f /opt/scitex-agent-container-src/pyproject.toml ]; then
+        echo "FATAL: staged source has no pyproject.toml — wrong tree staged." >&2
+        exit 1
+    fi
+
     if command -v uv >/dev/null; then
         uv pip install --python /opt/venv-sac/bin/python \
             black flake8 \
@@ -142,15 +169,20 @@ From: ./sac-base.sif
             "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
-        # --no-cache-dir forces a REBUILD from the %files-staged source, not a
-        # reuse of uv's built-wheel cache. That cache is keyed on (name,
-        # version) — NOT on content — and sac's version does NOT advance
-        # per-commit, so without it uv serves a byte-identical STALE wheel from
-        # a prior bake and --force-reinstall merely reinstalls THAT stale wheel
-        # (it reinstalls but does not rebuild). Only --no-cache-dir rebuilds, so
-        # the staged source actually ships. Mirrors the pip-fallback below.
-        uv pip install --no-cache-dir --python /opt/venv-sac/bin/python \
-            --force-reinstall --no-deps \
+        # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
+        # ``--force-reinstall`` are PIP flags. uv does not honour them as a
+        # cache-bypass/rebuild, so it reinstalls a byte-identical STALE wheel it
+        # already built — its built-wheel cache is keyed on (name, version), NOT
+        # content, and sac's version does not advance per-commit. uv's own lever
+        # is ``--reinstall-package <pkg>``, which IMPLIES ``--refresh-package``:
+        # it REBUILDS that package from the staged source, bypassing the cached
+        # wheel. Measured: bakes carrying the pip-flag form shipped pre-#742 sac
+        # while reporting rc=0. ``--no-cache`` is uv's OWN cache-disable (pip
+        # spells it --no-cache-dir) — belt, not the mechanism. Keep the command
+        # starting with ``uv pip install``: the def contract tests locate this
+        # block with startswith("uv pip install"), so an env-var prefix hides it.
+        uv pip install --no-cache --python /opt/venv-sac/bin/python \
+            --reinstall-package scitex-agent-container --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
         # pinned to PUBLISHED PyPI floors (reproducible — NOT a moving git
@@ -345,10 +377,25 @@ failures = []
 # Set-differences (wheel excludes data files) are NOT staleness and are
 # ignored — comparing whole-tree hashes false-positives on them. Generic
 # on purpose: it names no feature, so a rename or decoupling never breaks it.
-import hashlib as _hashlib, pathlib as _pathlib
-import scitex_agent_container as _sac
-_installed_root = _pathlib.Path(_sac.__file__).parent
+import hashlib as _hashlib, pathlib as _pathlib, sysconfig as _sysconfig
+# Resolve the INSTALLED tree from this interpreter's OWN site-packages, never
+# via ``scitex_agent_container.__file__`` (INCIDENT 2026-07-18): during %post
+# the staged source can be importable, in which case __file__ points at the
+# STAGED tree, the gate compares that tree to ITSELF, and it passes no matter
+# how stale the real install is. It false-greened a pre-#742 image exactly so.
+_installed_root = _pathlib.Path(_sysconfig.get_paths()["purelib"]) / "scitex_agent_container"
 _staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
+# A gate that cannot distinguish its two operands is blind — say so, loudly.
+if not _installed_root.is_dir():
+    failures.append(
+        "content assert cannot find the INSTALLED sac at %s — sac is not "
+        "installed into site-packages; the gate has nothing to verify." % _installed_root
+    )
+elif _installed_root.resolve() == _staged_root.resolve():
+    failures.append(
+        "content assert operands are the SAME directory (%s) — installed and "
+        "staged resolve identically, so the comparison proves nothing." % _installed_root
+    )
 def _rel_shas(root):
     out = {}
     for p in root.rglob("*.py"):
