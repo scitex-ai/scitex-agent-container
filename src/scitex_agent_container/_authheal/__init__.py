@@ -12,20 +12,32 @@ Surfaced as ``sac agents restart-login-expired`` and the federated
 already restarts these agents, and two restarters on one fleet is the
 double-supervisor class.
 
-TWO DISCRIMINATORS LIVE HERE, AND THE NEWER ONE IS STRICTLY WIDER
-    ``restart-login-expired`` (:mod:`._pass`) flags an agent only when its
-    banner is DISTANCE-FROZEN across two captures. That test calls an agent
-    HEALTHY whenever its pane still moves, so an animating-but-wedged agent — a
-    spinner, a clock, a countdown, a reflowing redraw — is missed, and those are
-    the agents the operator then restarts by hand.
+THE BANNER DETECTORS HERE PRODUCE FALSE POSITIVES — READ THIS FIRST
+    Proven on a real captured pane (checked in as
+    ``tests/.../specimen_grant_20260718_alive_false_positive.log``): on
+    2026-07-18 ``grant`` was reported AUTH-FAILED by ``auth-status`` and STUCK
+    by ``auth-heal`` while it was ALIVE and working — answering a ping, reading
+    files, running shell commands, finishing a background publish.
 
-    ``restart-login-required`` (:mod:`._nearprompt`, :mod:`._restart_pass`) is
-    the correction: it keeps the anti-prose defence but takes it from the
-    NEAR-PROMPT geometry of a SINGLE capture — is the banner the current UI
-    state, or is it scrollback text? — so animation cannot hide a wedge. It
-    restarts through the operator's own verified ``sac agents restart -y
-    <name>`` and writes every verdict, reason, pane, command, exit code, stdout
-    and stderr to a log (:mod:`._journal`).
+    The mechanism is not scrollback: both detectors capture the VISIBLE screen
+    only (``capture-pane -p``, no ``-S``). It is that a TRAILING BANNER means
+    "the last thing this agent RENDERED was a banner", which is not "this agent
+    is broken NOW". An agent that hit a 401, recovered and went idle renders
+    nothing further, so the banner stays on screen indefinitely.
+
+    The "frozen across two runs" hardening INVERTS: an idle agent's pane does
+    not change, so a stale banner on a healthy idle agent looks maximally
+    frozen. Freeze corroborates idleness — the one property the wedged and the
+    recovered-idle agent share — and reports the confusion confidently.
+
+    :mod:`._positional` is the proposed replacement (the operator's rule): a
+    banner ABOVE the last startup marker is HISTORY, one BELOW it is CURRENT.
+    :mod:`._liveness` adds the only non-invasive positive evidence of life — did
+    the pane change. Both are REPORT-ONLY, surfaced as ``sac agents auth-audit``.
+
+    NO AUTOMATED RESTARTER SHIPS FROM THIS PACKAGE until that audit is clean
+    across the fleet AND a true-positive pane has been captured. ``auth-heal``
+    logged 167 auto-restarts in 7 days on this signal.
 """
 
 from __future__ import annotations
@@ -40,14 +52,7 @@ from ._detect import (
     registered_agents,
 )
 from ._journal import Journal, log_path
-from ._nearprompt import (
-    VERDICT_LOGIN_REQUIRED,
-    VERDICT_OK,
-    VERDICT_UNKNOWN,
-    Finding,
-    classify_pane,
-    classify_panes,
-)
+from ._liveness import DEFAULT_OBSERVE_S, Liveness, corroborate
 from ._pass import (
     DEFAULT_PASS_CAP,
     AgentReport,
@@ -55,32 +60,41 @@ from ._pass import (
     auth_heal_pass,
     history_path,
 )
-from ._restart_cmd import RestartResult, restart_command, run_sac_restart
-from ._restart_pass import restart_login_required_pass
+from ._positional import (
+    ALIVE,
+    DEAD,
+    STARTUP_MARKER,
+    UNKNOWN,
+    PositionalVerdict,
+    classify_positional,
+)
+from ._specimen import Specimen, capture_specimen, specimen_path
 
 __all__ = [
+    "ALIVE",
+    "DEAD",
     "DEFAULT_INTERVAL",
+    "DEFAULT_OBSERVE_S",
     "DEFAULT_PASS_CAP",
-    "VERDICT_LOGIN_REQUIRED",
-    "VERDICT_OK",
-    "VERDICT_UNKNOWN",
+    "STARTUP_MARKER",
+    "UNKNOWN",
     "AgentReport",
     "DetectionOutcome",
-    "Finding",
     "Journal",
+    "Liveness",
     "PassOutcome",
-    "RestartResult",
+    "PositionalVerdict",
     "Roster",
+    "Specimen",
     "auth_heal_pass",
     "capture_live_panes",
     "capture_live_panes_once",
-    "classify_pane",
-    "classify_panes",
+    "capture_specimen",
+    "classify_positional",
+    "corroborate",
     "detect_login_expired",
     "history_path",
     "log_path",
     "registered_agents",
-    "restart_command",
-    "restart_login_required_pass",
-    "run_sac_restart",
+    "specimen_path",
 ]

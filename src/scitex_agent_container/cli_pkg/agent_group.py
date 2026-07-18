@@ -127,21 +127,17 @@ from ._agents_restart_login_expired import (  # noqa: E402
 )
 
 _register_restart_login_expired(agent_group)
-# `restart-login-required` — the WIDER discriminator. `restart-login-expired`
-# requires the banner FROZEN across two captures, so it calls healthy any agent
-# whose pane still moves — and an agent can be thoroughly wedged while its
-# spinner ticks or its pane reflows. Those are the ones the operator has been
-# restarting by hand. This verb keeps the anti-prose defence but takes it from
-# the NEAR-PROMPT geometry of a SINGLE capture (banner pinned above the input
-# prompt = current UI state; banner up in scrollback = an agent quoting it), so
-# animation cannot hide a wedge. Restarts via the operator's own verified
-# `sac agents restart -y <name>` subprocess and logs every verdict, reason,
-# pane, argv, exit code, stdout and stderr — refusing to act if it cannot log.
-from ._agents_restart_login_required import (  # noqa: E402
-    register as _register_restart_login_required,
-)
+# `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
+# pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
+# is the last thing an agent RENDERED, not proof it is broken now, so an agent
+# that 401'd, recovered and went idle stays flagged forever (verified live
+# 2026-07-18 on `grant`, whose capture is checked in as a regression fixture).
+# The frozen-across-two-runs hardening makes it worse, because an idle pane is
+# maximally frozen. This verb counts those false positives; it NEVER restarts
+# anything, and no automated restarter ships until its count is zero fleet-wide.
+from ._agents_auth_audit import register as _register_auth_audit  # noqa: E402
 
-_register_restart_login_required(agent_group)
+_register_auth_audit(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
