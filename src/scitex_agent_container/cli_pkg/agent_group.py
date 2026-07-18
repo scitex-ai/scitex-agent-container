@@ -127,6 +127,16 @@ from ._agents_restart_login_expired import (  # noqa: E402
 )
 
 _register_restart_login_expired(agent_group)
+# `state` — the ONE state shape, returned for every agent, always. Each signal
+# is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
+# instead of by whatever subset each call site happened to hold. It exists
+# because `auth-status` and `list`, asked minutes apart on one host, returned
+# DIFFERENT POPULATIONS and neither could notice. An agent it cannot read gets
+# an all-None ROW rather than vanishing, and every reading is archived with its
+# RAW pane captures so a verdict can be re-examined rather than merely believed.
+from ._agents_state import register as _register_agents_state  # noqa: E402
+
+_register_agents_state(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
