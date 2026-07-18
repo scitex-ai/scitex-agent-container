@@ -95,6 +95,22 @@ from ._account_refresh_skip import (
     ),
 )
 @click.option(
+    "--push-to",
+    "push_to",
+    default=None,
+    metavar="PEER",
+    help=(
+        "After a SUCCESSFUL refresh, copy each freshly-rotated snapshot to "
+        "PEER at the IDENTICAL absolute path, mode 0600 (read back off the "
+        "peer and asserted). PEER is a key under peers: in "
+        "~/.scitex/agent-container/config.yaml — the same table `sac host "
+        "list` shows. OPT-IN: a peer is a DIFFERENT filesystem, so agents "
+        "running there bind a copy of the snapshot that nothing on that box "
+        "ever refreshes, and they silently 401 within one token lifetime. A "
+        "failed push fails the run (non-zero exit) — never a silent success."
+    ),
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -109,6 +125,7 @@ def account_refresh(
     min_ttl_hours: float,
     force: bool,
     sync_active_login_flag: bool,
+    push_to: str | None,
     as_json: bool,
 ) -> None:
     """Mint a fresh access_token from the stored refresh_token, headlessly.
@@ -149,6 +166,22 @@ def account_refresh(
     into the live file (backup -> atomic replace -> verify-or-restore) so a
     single-use refresh_token rotation never strands the live session.
 
+    ``--push-to PEER`` (opt-in) closes the SAME staleness hole for agents
+    on a REMOTE peer. The single-refresher model above only reaches agents
+    that share this machine's filesystem; a peer (Spartan) is a different
+    box, and its own copy of the snapshot is refreshed by nothing, so its
+    agents silently 401 within one access-token lifetime. With this flag,
+    each snapshot that ACTUALLY rotated in this run (skipped-fresh and
+    failed accounts are never pushed) is copied to the peer's IDENTICAL
+    absolute path. The file must land mode 0600, and the mode is READ BACK
+    off the peer and asserted — an OAuth token must never be world-readable
+    on a shared HPC filesystem. Nothing is published before it verifies,
+    and a failed push fails the run (non-zero exit): a silent push failure
+    would recreate exactly the invisible staleness the flag exists to kill.
+    PEER is resolved through sac's existing peer table (``sac host list``);
+    an unknown peer is rejected BEFORE any refresh, so a typo never costs a
+    single-use refresh_token rotation.
+
     \b
     Examples:
       $ sac accounts refresh work
@@ -156,6 +189,7 @@ def account_refresh(
       $ sac accounts refresh --all --skip-active
       $ sac accounts refresh --all --include-active   # legacy timer mode
       $ sac accounts refresh --all --sync-active-login  # daemon mode
+      $ sac accounts refresh --all --push-to spartan    # keep a peer fresh
       $ sac accounts refresh --all --json
     """
     import json as _json
@@ -194,6 +228,19 @@ def account_refresh(
             err=True,
         )
         raise SystemExit(2)
+
+    # Resolve --push-to BEFORE any refresh runs. A refresh CONSUMES the
+    # single-use OAuth refresh_token, so discovering a typo'd peer name
+    # afterwards would have cost a rotation for nothing.
+    push_transport = None
+    if push_to:
+        from .._account.snapshot_push import UnknownPeerError, resolve_peer_transport
+
+        try:
+            push_transport = resolve_peer_transport(push_to)
+        except UnknownPeerError as exc:
+            click.echo(f"error: {exc}", err=True)
+            raise SystemExit(2) from exc
 
     home = Path.home()
     store = _store_path(None, home)
@@ -361,6 +408,17 @@ def account_refresh(
                         err=True,
                     )
 
+    # Peer push (opt-in). Runs AFTER the refresh loop so it carries only
+    # the snapshots that actually rotated, and BEFORE the results are
+    # rendered so --json and the human table both report the push outcome.
+    push_failed = False
+    if push_to:
+        from ._account_refresh_push import push_refreshed_snapshots
+
+        push_failed = push_refreshed_snapshots(
+            results, push_to, transport=push_transport
+        )
+
     if as_json:
         click.echo(_json.dumps(results, ensure_ascii=False, indent=2))
     else:
@@ -391,13 +449,16 @@ def account_refresh(
     alert_failed_refreshes(results)
 
     # Exit non-zero when EVERY *attempted* account failed (skipped-fresh
-    # accounts don't count), OR when an active-login sync failed loud.
+    # accounts don't count), when an active-login sync failed loud, OR when
+    # a --push-to peer push failed. A push that failed silently would leave
+    # the peer's agents running on a snapshot nothing refreshes — the exact
+    # invisible-staleness bug the flag exists to kill — so it is loud.
     # --all with mixed results is still a useful partial success.
     attempted = [r for r in results if not r.get("skipped")]
     all_attempted_failed = bool(attempted) and not any(
         r.get("success") for r in attempted
     )
-    if all_attempted_failed or sync_failed:
+    if all_attempted_failed or sync_failed or push_failed:
         raise SystemExit(1)
 
 

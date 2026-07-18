@@ -18,8 +18,13 @@ Canonical pool convention (pre-existing, now first-class):
   On the fleet host that is the operator's
   ``~/.bash.d/secrets/010_scitex/01_claude-code-telegrammer.src``, wired
   into ``sac-listen.service`` via ``Environment=SAC_SECRETS_ENVRC=...``.
-* One slot per PROJECT (per-project bot ⇒ no Telegram 409 single-poller
-  combat): ``CCT_BOT_TOKEN_PAPER_SCITEX_CLEW``, ``CCT_BOT_TOKEN_TODO``, …
+* One slot per BOT, named for the agent that owns it:
+  ``CCT_BOT_TOKEN_PAPER_SCITEX_CLEW``, ``CCT_BOT_TOKEN_TODO``, …
+  This used to read "one slot per PROJECT (per-project bot ⇒ no Telegram 409
+  single-poller combat)". That justification was self-refuting: it assumed one
+  agent per project, and the moment a project had siblings the scheme written
+  to PREVENT 409 combat GUARANTEED it — every sibling resolved to the same
+  slot and took the same bot. A slot belongs to an agent, not to a directory.
 
 Resolution order for an agent (first hit wins):
 
@@ -30,9 +35,11 @@ Resolution order for an agent (first hit wins):
    slot override for names that don't map mechanically (e.g. ``SAC``).
    When set, ONLY that slot is tried (fail-loud on a typo, no silent
    mechanical fallback).
-3. Mechanical candidates derived from the workdir basename (the project)
-   then the agent name: upper-snake of the base, plus the same with a
-   leading ``scitex-`` prefix stripped (``scitex-todo`` → ``TODO``).
+3. Mechanical candidates derived from the AGENT NAME: upper-snake, plus the
+   same with a leading ``scitex-`` stripped (``scitex-todo`` → ``TODO``).
+   The workdir is NOT consulted — see :func:`_slot_candidates` for the
+   2026-07-17 incident and the operator's ruling. A directory names a
+   PROJECT, never an agent.
 
 On a hit the token is appended to ``$HOME/.env`` (``chmod 0600``) — the
 SAME carrier the ``.envrc`` fold uses, so the container receives it via
@@ -90,16 +97,61 @@ def _upper_snake(text: str) -> str:
 def _slot_candidates(name: str, workdir: str) -> list[str]:
     """Ordered, deduped mechanical slot candidates for an agent.
 
-    Workdir basename first (the bot is per-PROJECT), then the agent name;
-    each base contributes its upper-snake form plus the same with a leading
-    ``scitex-``/``scitex_`` prefix stripped (the pool names the core scitex
-    packages by their short slot: ``TODO``, ``DEV``, …).
+    Derived from the AGENT NAME **only**. The upper-snake form, plus the same
+    with a leading ``scitex-``/``scitex_`` stripped (the pool names the core
+    scitex packages by their short slot: ``TODO``, ``DEV``, …).
+
+    ``workdir`` is accepted and deliberately IGNORED — see below. The parameter
+    stays for call-site compatibility and as a visible marker that ignoring it
+    is a decision, not an oversight.
+
+    *** A DIRECTORY NAMES A PROJECT, NEVER AN AGENT. ***
+
+    This used to try the WORKDIR BASENAME first, on the reasoning that the bot
+    is per-project. That reasoning holds only while a project has exactly one
+    agent, and it does not degrade gracefully when that stops being true: the
+    second agent in a repo does not collide with the first, it *becomes* the
+    first. Identity computed from location means one repo = one identity = one
+    agent, structurally, and no configuration can avoid it.
+
+    Operator, 2026-07-17, naming the root after three of my wrong diagnoses:
+    「問題はアイデンティティをプロジェクトルートに紐づけてしまっているから一つの
+    レポジトリから一つが立ち上がっていること」 and, on the sibling `.envrc` that
+    exported the same facts: 「Cctの場合はエージェント単位なので.envrcに含めては
+    いけなかった」.
+
+    That night's three symptoms were one root wearing three coats: a stolen bot,
+    forged card authorship, and fork collision. This function was offender #1's
+    mechanism — the `.envrc` and sac were making the identical mistake, and I
+    spent the evening blaming the file while shipping the rule.
+
+    MEASURED BLAST RADIUS of this change (12 live agents, dry-run before the
+    edit): 9 unchanged — their workdir basename already equals their agent name,
+    so both rules agree. Three differ, and in every case the OLD rule was the
+    wrong one:
+      * scitex-cards / scitex-cards-chat — workdir ~/proj/scitex-todo, so the
+        old rule tried ``TODO`` FIRST. ``CCT_BOT_TOKEN_TODO`` exists in the pool
+        and ``..._CARDS`` does not, so had their spec requested the channel, sac
+        would have handed them the scitex-todo STEWARD's bot. Not hypothetical:
+        the exact theft that actually happened via the `.envrc` route. After this
+        change they resolve to ``CARDS``/``CARDS_CHAT``, which are unregistered —
+        so they correctly get NO token and the existing fail-loud WARNING fires.
+        Having no bot is the right answer for an agent with no bot.
+      * scitex-hub — workdir ~/proj/scitex-cloud, so the old rule tried
+        ``SCITEX_CLOUD``/``CLOUD`` before ``SCITEX_HUB``/``HUB``. Neither cloud
+        slot exists, so it fell through to the correct one by luck. The resolved
+        slot is unchanged; what changes is that it can no longer be stolen by
+        registering a ``CLOUD`` bot.
+    So: no agent loses a bot it should have; two agents lose the ability to take
+    one that was never theirs.
+
+    An agent whose project genuinely owns the bot and whose name does not match
+    the slot uses the explicit ``spec.apptainer.env: CCT_BOT_TOKEN_SLOT``
+    override — a DECLARED mapping in the spec, which is the point: identity is
+    stated, never inferred from where the process happens to stand.
     """
     bases: list[str] = []
-    wd = (workdir or "").strip()
-    if wd:
-        bases.append(Path(wd).expanduser().name)
-    if name and name not in bases:
+    if name:
         bases.append(name)
     candidates: list[str] = []
     for base in bases:
@@ -134,30 +186,36 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 def _pool_env() -> dict[str, str]:
     """The pool: ``CCT_BOT_TOKEN_*`` vars from the launching env, overlaid
-    with the ``SAC_SECRETS_ENVRC`` secret files (daemon-start path).
+    with the secret files (daemon-start path).
 
-    Reuses :func:`._envrc._capture_env` + the shared preamble so the pool
-    read has EXACTLY the same semantics as the ``.envrc`` fold's secret
-    resolution. Falls back to the plain process env when no secret file is
-    configured/present, and degrades to the process env (rather than
-    failing the deploy) if a listed secret file cannot be sourced — the
-    caller's missing-token ERROR then names the pool source anyway.
+    Resolves the secret files via :func:`._envrc.resolve_secret_files`, which
+    honours an explicit ``SAC_SECRETS_ENVRC`` AND — the 2026-07-18 class fix —
+    falls back to the canonical ``$HOME`` default pool when the var is unset, so
+    a cron / raw-ssh / federated-timer restart that never had the var exported
+    still finds the bot token instead of folding (and STRIPPING) it. Sourced in
+    a strict bash with the same ``set -a`` semantics as the ``.envrc`` fold.
+    Falls back to the plain process env when no secret file resolves, and
+    degrades to the process env (rather than failing the deploy) if a resolved
+    secret file cannot be sourced — the caller's missing-token WARNING then
+    names the pool source anyway.
     """
-    from ._envrc import EnvrcEvalError, _capture_env, _secrets_preamble_lines
+    import shlex
 
-    preamble = _secrets_preamble_lines()
-    if not preamble:
+    from ._envrc import EnvrcEvalError, _capture_env, resolve_secret_files
+
+    files = resolve_secret_files()
+    if not files:
         return dict(os.environ)
+    preamble = [f". {shlex.quote(str(p))}" for p in files]
     try:
         return _capture_env(
             "\n".join(["set -a", *preamble, "set +a", "env -0"]), Path.cwd()
         )
     except EnvrcEvalError as exc:  # stx-allow: fallback (reason: pool read must not abort deploy; missing token is reported loudly by the caller)
         _logger().warning(
-            "cct pool: failed to source %s=%s (%s); falling back to the "
+            "cct pool: failed to source %s (%s); falling back to the "
             "launching process env only.",
-            _SECRETS_ENVRC_VAR,
-            os.environ.get(_SECRETS_ENVRC_VAR, ""),
+            _pool_source_label(),
             exc,
         )
         return dict(os.environ)
@@ -168,9 +226,19 @@ def _pool_source_label() -> str:
     raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
     if raw:
         return f"{_SECRETS_ENVRC_VAR}={raw}"
+    # Class fix (2026-07-18): an unset var no longer means an empty pool — the
+    # resolver falls back to the canonical ``$HOME`` default. Report THAT so the
+    # missing-token WARN names where sac actually looked, not a pool it stopped
+    # limiting itself to.
+    from ._envrc import resolve_secret_files
+
+    defaults = resolve_secret_files()
+    if defaults:
+        joined = ":".join(str(p) for p in defaults)
+        return f"{_SECRETS_ENVRC_VAR} unset — using the canonical default pool {joined}"
     return (
-        f"{_SECRETS_ENVRC_VAR} is UNSET — pool limited to the launching "
-        "process environment"
+        f"{_SECRETS_ENVRC_VAR} is UNSET and no canonical default pool files were "
+        "found — pool limited to the launching process environment"
     )
 
 
@@ -232,9 +300,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
         value = pool.get(f"{_POOL_PREFIX}{slot}", "")
         if value:
             existing[_TOKEN_VAR] = value
-            existing.setdefault(
-                _AGENT_ID_VAR, _default_agent_id(agent_name, workdir)
-            )
+            existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
             _write_env_file(env_file, existing)
             _logger().info(
                 "cct: resolved bot token for agent %r from pool slot "
@@ -276,14 +342,30 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
 
 
 def _default_agent_id(agent_name: str, workdir: str) -> str:
-    """Default telegram identity: the PROJECT (workdir basename) — matching
-    the per-project ``.envrc`` convention — falling back to the agent name.
+    """The agent's telegram identity: **its own name**. Always.
+
+    ``workdir`` is accepted and deliberately IGNORED (see
+    :func:`_slot_candidates` for the full reasoning and the operator's ruling).
+
+    This is the more dangerous half of the same bug, and it was the harder one
+    to see because the old docstring described it as a feature: "the PROJECT
+    (workdir basename) — matching the per-project ``.envrc`` convention". sac
+    was not merely vulnerable to the `.envrc` anti-pattern; it had DELIBERATELY
+    COPIED it, and said so in prose. An agent working in ``~/proj/scitex-todo``
+    was assigned ``CCT_AGENT_ID = "scitex-todo"`` by sac itself — the exact
+    impersonation, from this function, with no `.envrc` in the path at all.
+
+    A slot is a resource and stealing one is loud (Telegram 409s until someone
+    notices). An IDENTITY is a claim, and a wrong one is silent: it produces no
+    error, only a wrong author, and a forged author is indistinguishable from a
+    real one after the fact. So this default must be the one thing that cannot
+    be borrowed from the surroundings.
+
+    Found by grepping every consumer of the workdir-derived rule rather than
+    stopping at the first — the reported instance is a sample, not the
+    population. Fixing only ``_slot_candidates`` would have left the identity
+    itself still keyed on location, which is the part that actually matters.
     """
-    wd = (workdir or "").strip()
-    if wd:
-        base = Path(wd).expanduser().name
-        if base:
-            return base
     return agent_name
 
 

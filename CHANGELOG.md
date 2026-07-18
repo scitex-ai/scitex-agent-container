@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.23] - 2026-07-18
+
 ### Added
 
 - **Inert-feature detector (`_jobs_audit`) — a declaration with no live
@@ -40,6 +42,28 @@ versioning follows [SemVer](https://semver.org/).
   diagnosis off a 4-day-stale schedule. Out of scope beats answered wrongly.
 
 ### Fixed
+
+- **The pre-stop rescue no longer pushes — it saves work LOCALLY and stops
+  there** (`_pre_stop_rescue`, PR #743). The fleet-default autosave that runs
+  on `sac agents stop` force-pushed worktrees it did not own, under the
+  stopping agent's identity, with no test gate. Observed 2026-07-17: a stopping
+  agent force-pushed a peer's `feat/` branch to the shared remote (bytes a peer
+  never reviewed, published under a name that never saw them); separately, two
+  `rescue:` commits reached `origin/develop`. Operator ruling 2026-07-17
+  (「プッシュはなしじゃない？」): the rescue commits locally — in place on a
+  topic branch, onto a `rescue/<agent>-<ts>` side-branch on a protected branch
+  — and never pushes either. `push_branch()` is **deleted** (function + both
+  call sites), so the ban is structural, not conventional: no code path is one
+  edit away from publishing again. `workdir` is a host bind mount, so the local
+  commit already survives the restart this module exists to make cheap — the
+  push was never what made the work durable. Two regression guards
+  (`test_rescue_never_pushes_*`) exercise the rescue against a REAL reachable
+  origin and assert nothing lands on it, so a reintroduced push goes red — the
+  observe-don't-assert acceptance test the earlier #578 lacked. NOT covered:
+  why two rescue commits reached `origin/develop` on 2026-07-13 stays open
+  (narrowed to a drift/propagation question, not a broken guard — the guard
+  fires correctly in current code); removing the push kills the irreversible
+  harm regardless of that answer.
 
 - **Every `sac dev` job verb was inert, and had been for weeks.**
   `_dev_jobs.py` passed the CLI GROUP NAME straight through as the JobSpec

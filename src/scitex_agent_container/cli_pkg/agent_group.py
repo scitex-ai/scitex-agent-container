@@ -59,6 +59,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "stop",
                 "restart",
                 "reconcile",
+                "restart-login-expired",
                 "rename",
                 "delete",
                 "forget",
@@ -113,6 +114,19 @@ agent_group.add_command(_rebind(_restart_impl, "restart"))
 from ._agents_reconcile import register as _register_reconcile  # noqa: E402
 
 _register_reconcile(agent_group)
+# `restart-login-expired` — the SIBLING enforcer. `reconcile` restarts DEAD
+# (no tmux session) agents; this restarts LIVE ones wedged behind a frozen
+# "Login expired" banner, which reconcile explicitly leaves alone (touching a
+# live session destroys context). Detection is READ-ONLY + 2-run-corroborated;
+# the restart is rate-limited like reconcile and goes through the pool-loading
+# start path so it cannot strip CCT/Telegram tokens. DEPLOY GATE: the scheduled
+# `sac.restart-login-expired-agents` timer must NOT be enabled on a host until
+# that host's auth-heal.py `scan_tui` cron is retired (double-supervisor risk).
+from ._agents_restart_login_expired import (  # noqa: E402
+    register as _register_restart_login_expired,
+)
+
+_register_restart_login_expired(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board

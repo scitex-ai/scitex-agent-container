@@ -1,10 +1,17 @@
 """Tests for ``_lifecycle/_pre_stop_rescue`` — fleet-default rescue pass.
 
 Operator priority (lead a2a ``efa48850daf248ed9fe3ae5232677b2b``): make
-restart cheap. Walks the agent's worktrees, commits dirty changes,
-pushes to non-protected branches, falls back to diff-tarballs when
-push isn't possible — all bounded by a 60s grace timeout so the
-rescue can never wedge a restart.
+restart cheap. Walks the agent's worktrees and commits dirty changes
+LOCALLY — on a topic branch in place, on a protected branch onto a
+``rescue/`` side-branch — falling back to a diff-tarball only when the
+commit itself fails, all bounded by a 60s grace timeout so the rescue
+can never wedge a restart.
+
+*** The rescue NEVER pushes *** (operator ruling 2026-07-17,
+「プッシュはなしじゃない？」). ``test_rescue_never_pushes_*`` below are
+the regression guards: they exercise the rescue against a REAL origin
+and assert nothing ever lands on it. If someone re-introduces a push,
+those go RED — which is the whole point of writing them.
 
 STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — real ``tmp_path``
 git repos exercised through real ``git`` invocations.
@@ -199,12 +206,40 @@ def test_rescue_worktree_commits_dirty_changes(
     assert result["committed"] is True
 
 
-def test_rescue_worktree_writes_tarball_when_no_remote(
+def test_rescue_worktree_no_remote_still_commits_locally(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange — the repo has no ``origin`` remote configured, so push
-    # MUST fail and the diff-tarball fallback MUST land.
+    # Arrange — no ``origin`` remote at all. Before 2026-07-17 this
+    # forced the push to fail and a diff-tarball to land. The rescue no
+    # longer pushes, so a missing remote is not a failure mode: the
+    # LOCAL commit is the save, and it is durable on the host bind.
     repo = _init_repo(tmp_path / "repo")
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    result = rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260613T000000Z",
+        rescue_root=rescue_root,
+        timeout=10.0,
+    )
+    # Assert
+    assert result["committed"] is True and result["tarball"] is None
+
+
+def test_rescue_worktree_writes_tarball_when_commit_fails(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — a real pre-commit hook that refuses. ``commit_dirty``
+    # does not pass ``--no-verify``, so ``git commit`` genuinely exits
+    # non-zero and the dirty tree is left UNCOMMITTED. That is the one
+    # case where the tarball is the only copy of the work, and it must
+    # land. (No mock: the hook is a real file git really executes.)
+    repo = _init_repo(tmp_path / "repo")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
     _make_dirty(repo)
     rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
     # Act
@@ -219,10 +254,10 @@ def test_rescue_worktree_writes_tarball_when_no_remote(
     assert isinstance(result.get("tarball"), Path) and Path(result["tarball"]).is_file()
 
 
-def test_rescue_worktree_protected_branch_skips_push(
+def test_rescue_worktree_protected_branch_is_flagged_protected(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange — branch=main is denylisted; commit lands but push doesn't.
+    # Arrange — branch=main is denylisted.
     repo = _init_repo(tmp_path / "repo", branch="main")
     _make_dirty(repo)
     rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
@@ -235,7 +270,7 @@ def test_rescue_worktree_protected_branch_skips_push(
         timeout=10.0,
     )
     # Assert
-    assert result["pushed"] is False and result["protected"] is True
+    assert result["protected"] is True
 
 
 def test_rescue_worktree_protected_branch_still_commits(
@@ -272,11 +307,7 @@ def test_rescue_worktree_clean_worktree_no_op(
         timeout=10.0,
     )
     # Assert
-    assert (
-        result["committed"] is False
-        and result["pushed"] is False
-        and result["tarball"] is None
-    )
+    assert result["committed"] is False and result["tarball"] is None
 
 
 def test_rescue_worktree_non_repo_returns_error(tmp_path: Path) -> None:
@@ -383,9 +414,15 @@ def test_rescue_for_agent_respects_grace_budget(
 def test_rescue_for_agent_rescue_dir_named_correctly(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange — make sure the rescue dir lands under ``state_dir/rescue/``
-    # (the documented operator path so they can find the diff-tarballs).
+    # Arrange — the rescue dir must land under ``state_dir/rescue/`` (the
+    # documented operator path for diff-tarballs). Since the rescue no
+    # longer pushes, a tarball is written ONLY when the commit itself
+    # fails — so force that with a real pre-commit hook exiting non-zero,
+    # which is exactly the case the operator needs to find on disk.
     workdir = _init_repo(tmp_path / "wd")
+    hook = workdir / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
     _make_dirty(workdir)
     state_dir = tmp_path / "state"
     # Act
@@ -500,9 +537,7 @@ def test_rescue_protected_develop_work_preserved_on_rescue_branch(
         timeout=15.0,
     )
     # Assert — the rescue branch's tip carries the dirty content.
-    content = _git_out(
-        ["show", f"{result['rescue_branch']}:README.md"], cwd=repo
-    )
+    content = _git_out(["show", f"{result['rescue_branch']}:README.md"], cwd=repo)
     assert "rescue-target" in content
 
 
@@ -525,10 +560,13 @@ def test_rescue_protected_develop_rescue_branch_named_by_convention(
     assert result["rescue_branch"] == "rescue/agent-x-20260709T000000Z"
 
 
-def test_rescue_protected_develop_pushes_rescue_branch_to_origin(
+def test_rescue_never_pushes_protected_rescue_branch_to_origin(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange
+    # Arrange — a REAL origin is present and reachable, so a push WOULD
+    # succeed if the code attempted one. This is the regression guard for
+    # the operator's no-push ruling: the rescue side-branch must exist
+    # locally but must NOT appear on origin.
     repo = _init_repo_with_origin(tmp_path / "repo", tmp_path / "remote.git")
     _make_dirty(repo)
     rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
@@ -540,19 +578,46 @@ def test_rescue_protected_develop_pushes_rescue_branch_to_origin(
         rescue_root=rescue_root,
         timeout=15.0,
     )
-    # Assert — the rescue branch actually landed on origin.
+    # Assert — origin does NOT carry the rescue branch (nothing pushed).
     remote_heads = _git_out(
         ["ls-remote", "--heads", "origin", str(result["rescue_branch"])],
         cwd=repo,
     )
-    assert remote_heads.strip() != ""
+    assert remote_heads.strip() == ""
 
 
-def test_rescue_protected_develop_no_remote_writes_tarball(
+def test_rescue_never_pushes_topic_branch_to_origin(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange — develop but NO origin: push MUST fail, tarball MUST land,
-    # develop MUST stay pristine (no local-only commit vs its init tip).
+    # Arrange — a topic branch with a REAL reachable origin. A foreign
+    # worktree parked on a topic branch is exactly the case that got a
+    # peer's work force-pushed (observed 2026-07-17). The rescue commit
+    # lands locally; origin's topic branch must stay at its init tip.
+    repo = _init_repo_with_origin(
+        tmp_path / "repo", tmp_path / "remote.git", branch="feature/topic"
+    )
+    tip_before = _git_out(["ls-remote", "origin", "feature/topic"], cwd=repo).split()[0]
+    _make_dirty(repo)
+    rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
+    # Act
+    rescue_worktree(
+        repo,
+        agent_name="agent-x",
+        timestamp="20260709T000000Z",
+        rescue_root=rescue_root,
+        timeout=15.0,
+    )
+    # Assert — origin's topic branch is unmoved (the local commit never shipped).
+    tip_after = _git_out(["ls-remote", "origin", "feature/topic"], cwd=repo).split()[0]
+    assert tip_after == tip_before
+
+
+def test_rescue_protected_develop_no_remote_commits_to_side_branch(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — develop, NO origin. Since the rescue no longer pushes, a
+    # missing remote is not a failure: the side-branch commit is the save
+    # and no tarball is needed (the commit succeeded).
     repo = _init_repo(tmp_path / "repo", branch="develop")
     _make_dirty(repo)
     rescue_root = tmp_path / "state" / RESCUE_DIR_NAME
@@ -564,8 +629,8 @@ def test_rescue_protected_develop_no_remote_writes_tarball(
         rescue_root=rescue_root,
         timeout=15.0,
     )
-    # Assert — work still captured on disk despite no remote.
-    assert isinstance(result.get("tarball"), Path) and Path(result["tarball"]).is_file()
+    # Assert — committed on the side-branch, no tarball fallback triggered.
+    assert result["committed"] is True and result["tarball"] is None
 
 
 def test_rescue_protected_develop_no_remote_keeps_develop_clean(
@@ -605,9 +670,7 @@ def test_rescue_protected_develop_no_remote_preserves_on_rescue_branch(
         timeout=15.0,
     )
     # Assert — the local rescue branch still carries the dirty content.
-    content = _git_out(
-        ["show", f"{result['rescue_branch']}:README.md"], cwd=repo
-    )
+    content = _git_out(["show", f"{result['rescue_branch']}:README.md"], cwd=repo)
     assert "rescue-target" in content
 
 
