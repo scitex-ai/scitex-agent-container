@@ -1163,3 +1163,98 @@ def test_build_run_argv_passes_raw_args_overlay_through_verbatim(tmp_path) -> No
     )
     # Assert — exactly the operator's own `=`-joined token, once.
     assert argv.count(f"--overlay={overlay}/") == 1
+
+
+# ---------------------------------------------------------------------------
+# Fleet-default env layer (_fleet_env) as it reaches the rendered argv.
+#
+# The dict-level precedence is covered in test__fleet_env.py. These assert the
+# part that actually reaches the container: the ``--env K=V`` flags. A merge
+# that is right in a dict and wrong in the argv is still a broken feature.
+# ---------------------------------------------------------------------------
+
+
+_ENV_SPEC = """\
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: t
+    sac-builtin: "off"
+spec:
+  runtime: tui
+  host: ${{HOSTNAME}}
+  workdir: /tmp/agt-work
+  apptainer:
+    image: /x.sif
+    binds: []
+{env_block}
+  health:
+    enabled: true
+    interval: 60
+  restart:
+    policy: on-failure
+    max_retries: 3
+  claude:
+    model: claude-opus-4-8[1m]
+"""
+
+
+def _env_values(argv: list[str], key: str) -> list[str]:
+    """Every ``--env`` value emitted for ``key``, in argv order."""
+    return [
+        argv[i + 1].split("=", 1)[1]
+        for i, tok in enumerate(argv[:-1])
+        if tok == "--env" and argv[i + 1].startswith(f"{key}=")
+    ]
+
+
+def _argv_for_env(tmp_path: Path, env_block: str) -> list[str]:
+    """Build a real argv from a real spec carrying ``spec.apptainer.env``."""
+    spec = _write_spec(tmp_path, _ENV_SPEC.format(env_block=env_block))
+    return build_run_argv(
+        load_config(str(spec)),
+        state_dir=tmp_path / "state",
+        sif_path=Path("/img/sac.sif"),
+        tui=True,
+    )
+
+
+def test_fleet_default_env_reaches_the_built_argv(tmp_path) -> None:
+    # Arrange — a spec that declares NO env of its own.
+    env_block = ""
+    # Act
+    argv = _argv_for_env(tmp_path, env_block)
+    # Assert — the fleet default arrived without the spec asking for it.
+    assert _env_values(argv, "SCITEX_CARDS_DUAL_WRITE") == ["1"]
+
+
+def test_spec_env_overrides_fleet_default_in_argv(tmp_path) -> None:
+    """THE precedence rule, at the layer that reaches the container.
+
+    MUTATION-PROOF: reversing the precedence in ``_fleet_env.merge_fleet_env``
+    (applying the defaults AFTER spec.env instead of before) makes this assert
+    read ``1`` and the test FAILS. See the PR body for the recorded run.
+    """
+    # Arrange — the spec claims a key the fleet also defaults.
+    env_block = "    env:\n      SCITEX_CARDS_DUAL_WRITE: '0'"
+    # Act
+    argv = _argv_for_env(tmp_path, env_block)
+    # Assert — the per-agent value won, and it is the ONLY one emitted.
+    assert _env_values(argv, "SCITEX_CARDS_DUAL_WRITE") == ["0"]
+
+
+def test_spec_env_key_not_in_fleet_defaults_still_reaches_argv(tmp_path) -> None:
+    """The pre-existing spec.env path must keep working unchanged.
+
+    The key deliberately avoids a secret-shaped name (``*_KEY``/``*_TOKEN``/…):
+    ``_apptainer_secret_env.redact_secret_env_to_file`` lifts those OUT of argv
+    into the 0600 env-file by design, so a secret-shaped name here would assert
+    the redactor rather than the env layer.
+    """
+    # Arrange
+    env_block = "    env:\n      AGENT_ONLY_FLAG: 'agent-value'"
+    # Act
+    argv = _argv_for_env(tmp_path, env_block)
+    # Assert
+    assert _env_values(argv, "AGENT_ONLY_FLAG") == ["agent-value"]

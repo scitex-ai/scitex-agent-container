@@ -49,8 +49,9 @@ from typing import Callable, Iterable
 
 log = logging.getLogger(__name__)
 
-# Critical MCP servers → the capability surface each one gates. Names match the
-# server keys in the distributed ``.mcp.json``. Logged verbatim at boot.
+# Critical MCP servers → the capability surface each one gates. These are
+# LOOKUP KEYS into the ``.mcp.json`` the fleet deploys — a file sac does NOT
+# emit (it comes from the operator's to_home layers). Logged verbatim at boot.
 CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "scitex-agent-container": (
         "host_exec_local (run host commands)",
@@ -58,10 +59,22 @@ CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
         "db_query / db_show (state DB)",
         "host_exec / host_list (multi-host)",
     ),
-    "scitex-todo": (
+    "scitex-cards": (
         "add_task / update_task / complete_task",
         "list_tasks / comment_task (the fleet task board)",
     ),
+}
+
+# Transitional server-key aliases (package renamed scitex-todo → scitex-cards,
+# 2026-07-16). We report under the PREFERRED key above, but a live fleet is
+# rolled one agent at a time and the ``.mcp.json`` is not ours to flip, so an
+# agent may still declare the server under its OLD key. Accepting both is not a
+# nicety here — it is required for correctness. A hard flip would classify every
+# not-yet-migrated agent's healthy board MCP as absent, and absent means UNKNOWN,
+# which alarms. That is a false alarm manufactured by the rename itself.
+# Drop the old entry once no deployed ``.mcp.json`` declares it.
+SERVER_ALIASES: dict[str, tuple[str, ...]] = {
+    "scitex-cards": ("scitex-todo",),
 }
 
 # Statuses parsed out of ``claude mcp list``.
@@ -109,20 +122,36 @@ def _default_mcp_list_runner() -> str:
     return (proc.stdout or "") + "\n" + (proc.stderr or "")
 
 
-def parse_mcp_status(text: str, servers: Iterable[str]) -> dict[str, str]:
+def parse_mcp_status(
+    text: str,
+    servers: Iterable[str],
+    aliases: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, str]:
     """Classify each ``server`` as connected / failed / unknown from ``claude
     mcp list`` output.
 
     ``claude mcp list`` prints one line per server, e.g.::
 
         scitex-agent-container: sac mcp start  - ✓ Connected
-        scitex-todo: scitex-todo mcp start  - ✗ Failed to connect
+        scitex-cards: scitex-cards mcp start  - ✗ Failed to connect
 
     We match the server name at the start of a line (``name:`` prefix) and read
     a connected/failed marker from that line. Robust to unicode-glyph vs plain
     "Connected"/"Failed" wording. Any server not mentioned → ``unknown``.
+
+    ``aliases`` (default :data:`SERVER_ALIASES`) maps a requested name to OTHER
+    server keys that may carry the same server during a rename roll-out. A line
+    matching any alias resolves to the REQUESTED key, so the caller always reads
+    one canonical name regardless of which spelling the agent's ``.mcp.json``
+    used. Only aliases of names actually requested are consulted, so a caller
+    asking for a legacy name verbatim still gets exactly that name back.
     """
+    alias_map = SERVER_ALIASES if aliases is None else aliases
     result: dict[str, str] = {name: UNKNOWN for name in servers}
+    # requested name → every spelling that counts as that server.
+    candidates: dict[str, tuple[str, ...]] = {
+        name: (name, *alias_map.get(name, ())) for name in result
+    }
     if not text:
         return result
     for raw in text.splitlines():
@@ -133,8 +162,18 @@ def parse_mcp_status(text: str, servers: Iterable[str]) -> dict[str, str]:
         for name in result:
             # Match "<name>:" or "<name> " at the line start (mcp list uses
             # "name: command - status"). Substring fallback covers reformats.
-            if line.startswith(f"{name}:") or line.startswith(f"{name} ") or name in line:
-                if "fail" in low or "✗" in line or "not connect" in low or "error" in low:
+            if any(
+                line.startswith(f"{alias}:")
+                or line.startswith(f"{alias} ")
+                or alias in line
+                for alias in candidates[name]
+            ):
+                if (
+                    "fail" in low
+                    or "✗" in line
+                    or "not connect" in low
+                    or "error" in low
+                ):
                     result[name] = FAILED
                 elif "connect" in low or "✓" in line or "ready" in low:
                     # "failed to connect" already handled above; here it's the
@@ -312,11 +351,15 @@ def run_healthcheck(
             ", ".join(failed),
         )
 
-        name = agent_name or os.environ.get("SAC_NAME") or os.environ.get(
-            "SCITEX_AGENT_CONTAINER_NAME", ""
+        name = (
+            agent_name
+            or os.environ.get("SAC_NAME")
+            or os.environ.get("SCITEX_AGENT_CONTAINER_NAME", "")
         )
         restart_allowed = (
-            allow_restart if allow_restart is not None else not _env_flag(ENV_NO_RESTART)
+            allow_restart
+            if allow_restart is not None
+            else not _env_flag(ENV_NO_RESTART)
         )
         if not restart_allowed or not name:
             return {
@@ -360,6 +403,7 @@ __all__ = [
     "CONNECTED",
     "CRITICAL_CAPABILITIES",
     "FAILED",
+    "SERVER_ALIASES",
     "UNKNOWN",
     "log_capability_surface",
     "parse_mcp_status",

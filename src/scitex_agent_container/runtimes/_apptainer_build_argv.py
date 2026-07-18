@@ -20,12 +20,17 @@ continues to resolve.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ..config import AgentConfig
 from ._apptainer_argv_guard import validate_flag_argv
 from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
+from ._apptainer_quota_cache import (
+    QUOTA_CACHE_CONTAINER_PATH,
+    QUOTA_CACHE_HOST_PATH_DEFAULT,
+    QUOTA_CACHE_HOST_PATH_ENV,
+    _resolve_quota_cache_host_path,
+)
 
 # ----------------------------------------------------------------------
 # Module-level constants (moved from _apptainer_runtime, re-exported
@@ -33,19 +38,9 @@ from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 # ----------------------------------------------------------------------
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 
-# Quota-cache visibility (#16) — see the original docstring in
-# _apptainer_runtime for the full motivation. Host cron refreshes the
-# canonical path every 10 min; the bind is read-only and conditional on
-# the file existing so quota-cron-less hosts (CI, fresh installs)
-# can still launch agents.
-QUOTA_CACHE_HOST_PATH_DEFAULT = "/home/ywatanabe/.scitex/quota-cache.json"
-QUOTA_CACHE_CONTAINER_PATH = "/var/sac/quota-cache.json"
-QUOTA_CACHE_HOST_PATH_ENV = "SAC_QUOTA_CACHE_HOST_PATH"
-
-
-def _resolve_quota_cache_host_path() -> Path:
-    override = os.environ.get(QUOTA_CACHE_HOST_PATH_ENV, "").strip()
-    return Path(override) if override else Path(QUOTA_CACHE_HOST_PATH_DEFAULT)
+# Quota-cache constants + resolver now live in _apptainer_quota_cache (this
+# file sat at the 512-line cap); imported below and re-exported via __all__ so
+# both historical import paths keep resolving.
 
 
 def build_run_argv(
@@ -296,7 +291,11 @@ def build_run_argv(
 
     argv += auth_argv(config, state_dir)
 
-    for key, val in (config.env or {}).items():
+    # Agent env = the FLEET-DEFAULT layer merged UNDER spec.env (spec.env
+    # WINS). See _fleet_env for the precedence rule and why it never raises.
+    from ._fleet_env import effective_env
+
+    for key, val in effective_env(config).items():
         argv += ["--env", f"{key}={val}"]
 
     # Layer-5 of auto-port-allocation + bus auth — forward the

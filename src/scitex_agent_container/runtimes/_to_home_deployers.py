@@ -155,7 +155,7 @@ def _deploy_mcp_merge(
 
     The two-pass overlay deploys the shared baseline ``.mcp.json`` first, then
     each agent's own lands here. Full-overwrite would silently drop the
-    baseline's default servers (sac / scitex-todo / claude-code-telegrammer);
+    baseline's default servers (sac / scitex-cards / claude-code-telegrammer);
     instead we UNION the ``mcpServers`` (baseline ∪ per-agent) via
     :func:`_mcp_merge.merge_mcp_json`. Fail-loud (no silent fallback): an
     unparseable source/destination ``.mcp.json`` raises

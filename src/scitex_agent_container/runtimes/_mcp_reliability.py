@@ -1,8 +1,8 @@
 """Fleet MCP cold-start reliability knobs (incident 2026-07-06).
 
 Root cause (root-caused + verified by the fleet): the agents'
-``scitex-agent-container`` (``sac mcp start``) and ``scitex-todo``
-(``scitex-todo mcp start``) stdio MCP servers INTERMITTENTLY fail to connect
+``scitex-agent-container`` (``sac mcp start``) and ``scitex-cards``
+(``scitex-cards mcp start``) stdio MCP servers INTERMITTENTLY fail to connect
 at Claude Code session start. The server itself starts healthy — the failure
 is a CLIENT-SIDE connect-timing RACE: the heavy ``fastmcp`` import makes the
 stdio server slow to become ready and intermittently exceeds Claude Code's
@@ -36,9 +36,17 @@ from __future__ import annotations
 # Critical stdio MCP servers whose cold-start MUST win the connect race. These
 # names match the server keys in the distributed ``.mcp.json`` (``sac`` is the
 # short alias some baselines use for the scitex-agent-container server).
+#
+# ``inject_always_load`` stamps a name ONLY when it is present in the doc, so
+# listing a name that no ``.mcp.json`` declares costs nothing. That makes both
+# spellings of the renamed board package (scitex-todo → scitex-cards,
+# 2026-07-16) safe to carry at once, which is what a one-agent-at-a-time roll
+# needs: whichever key an agent's config uses, its cold start still blocks. Drop
+# the old entry once no deployed ``.mcp.json`` declares it.
 CRITICAL_MCP_SERVERS: tuple[str, ...] = (
     "scitex-agent-container",
     "sac",
+    "scitex-cards",
     "scitex-todo",
 )
 
