@@ -64,11 +64,22 @@ class TestReportsTheRunningVersion:
         # Assert
         assert source in allowed
 
-    def test_the_running_version_in_this_checkout_is_content_verified(self):
-        # Arrange — this suite runs against the worktree, which is an
-        # editable/source install, so the content probe must be the answer.
-        # If this ever degrades to "metadata" the fossil is back.
-        expected = "content"
+    def test_the_version_is_content_verified_when_the_primitive_is_available(self):
+        # Arrange — the contract is conditional on the checker being present,
+        # and saying so is the whole point.
+        #
+        # This assertion originally read `source == "content"` unconditionally,
+        # on the reasoning that the suite runs against a source checkout. That
+        # was my DEV BOX described as a property of the code: CI installs
+        # scitex-dev from PyPI, whose newest release (0.31.1) ships no
+        # `versioning` module, so `running_version()` correctly falls back and
+        # reports "metadata" — and the test failed the code for being right.
+        # An environment accident asserted as a contract is exactly the shape
+        # of bug this package exists to catch, so it does not get to live in
+        # the tests either.
+        from scitex_agent_container._freshness import available
+
+        expected = "content" if available() else "metadata"
         # Act
         _version, source = running_version()
         # Assert

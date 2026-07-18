@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# File: tests/scitex_agent_container/_freshness/test__consumption.py
+# File: tests/scitex_agent_container/_freshness/test___init__.py
 
 """Does sac ACT on the primitive's verdict, or merely call it?
 
