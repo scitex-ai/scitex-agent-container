@@ -66,6 +66,29 @@ class TestNoOpIsTruthyForBackwardCompatibility:
         # Assert
         assert equal is True
 
+    def test_no_op_is_NOT_identical_to_the_True_singleton(self):
+        """The ONE form that does not survive — pinned, not hidden.
+
+        ``bool`` cannot be subclassed, so no object can ever BE the ``True``
+        singleton; ``result is True`` is therefore the single caller idiom
+        this change breaks. CI caught exactly two call sites
+        (``test_lifecycle.py::test_agent_start_idempotent_when_already_running``
+        and ``test__start_verdict.py::test_an_alive_agent_no_op_returns_success``);
+        both asserted SUCCESS, not object identity, so both were rewritten to
+        ``bool(...)`` plus an ``outcome_kind`` check — strictly stronger than
+        what they asserted before. No production code uses the identity form
+        on a start result.
+
+        This test states that limitation as a fact so the next reader meets
+        it here rather than in a red pipeline.
+        """
+        # Arrange
+        outcome = NOOP_ALREADY_RUNNING
+        # Act
+        identical = outcome is True
+        # Assert
+        assert identical is False
+
 
 class TestNoOpNamesItself:
     """The information the bare ``True`` destroyed is now recoverable."""
