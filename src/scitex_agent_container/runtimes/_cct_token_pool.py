@@ -186,30 +186,36 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 def _pool_env() -> dict[str, str]:
     """The pool: ``CCT_BOT_TOKEN_*`` vars from the launching env, overlaid
-    with the ``SAC_SECRETS_ENVRC`` secret files (daemon-start path).
+    with the secret files (daemon-start path).
 
-    Reuses :func:`._envrc._capture_env` + the shared preamble so the pool
-    read has EXACTLY the same semantics as the ``.envrc`` fold's secret
-    resolution. Falls back to the plain process env when no secret file is
-    configured/present, and degrades to the process env (rather than
-    failing the deploy) if a listed secret file cannot be sourced — the
-    caller's missing-token ERROR then names the pool source anyway.
+    Resolves the secret files via :func:`._envrc.resolve_secret_files`, which
+    honours an explicit ``SAC_SECRETS_ENVRC`` AND — the 2026-07-18 class fix —
+    falls back to the canonical ``$HOME`` default pool when the var is unset, so
+    a cron / raw-ssh / federated-timer restart that never had the var exported
+    still finds the bot token instead of folding (and STRIPPING) it. Sourced in
+    a strict bash with the same ``set -a`` semantics as the ``.envrc`` fold.
+    Falls back to the plain process env when no secret file resolves, and
+    degrades to the process env (rather than failing the deploy) if a resolved
+    secret file cannot be sourced — the caller's missing-token WARNING then
+    names the pool source anyway.
     """
-    from ._envrc import EnvrcEvalError, _capture_env, _secrets_preamble_lines
+    import shlex
 
-    preamble = _secrets_preamble_lines()
-    if not preamble:
+    from ._envrc import EnvrcEvalError, _capture_env, resolve_secret_files
+
+    files = resolve_secret_files()
+    if not files:
         return dict(os.environ)
+    preamble = [f". {shlex.quote(str(p))}" for p in files]
     try:
         return _capture_env(
             "\n".join(["set -a", *preamble, "set +a", "env -0"]), Path.cwd()
         )
     except EnvrcEvalError as exc:  # stx-allow: fallback (reason: pool read must not abort deploy; missing token is reported loudly by the caller)
         _logger().warning(
-            "cct pool: failed to source %s=%s (%s); falling back to the "
+            "cct pool: failed to source %s (%s); falling back to the "
             "launching process env only.",
-            _SECRETS_ENVRC_VAR,
-            os.environ.get(_SECRETS_ENVRC_VAR, ""),
+            _pool_source_label(),
             exc,
         )
         return dict(os.environ)
@@ -220,9 +226,19 @@ def _pool_source_label() -> str:
     raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
     if raw:
         return f"{_SECRETS_ENVRC_VAR}={raw}"
+    # Class fix (2026-07-18): an unset var no longer means an empty pool — the
+    # resolver falls back to the canonical ``$HOME`` default. Report THAT so the
+    # missing-token WARN names where sac actually looked, not a pool it stopped
+    # limiting itself to.
+    from ._envrc import resolve_secret_files
+
+    defaults = resolve_secret_files()
+    if defaults:
+        joined = ":".join(str(p) for p in defaults)
+        return f"{_SECRETS_ENVRC_VAR} unset — using the canonical default pool {joined}"
     return (
-        f"{_SECRETS_ENVRC_VAR} is UNSET — pool limited to the launching "
-        "process environment"
+        f"{_SECRETS_ENVRC_VAR} is UNSET and no canonical default pool files were "
+        "found — pool limited to the launching process environment"
     )
 
 

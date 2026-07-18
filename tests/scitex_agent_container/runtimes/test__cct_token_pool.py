@@ -214,6 +214,52 @@ def test_empty_pool_value_is_treated_as_missing(
 
 
 # ---------------------------------------------------------------------------
+# caller-independent pool: the canonical $HOME default (class fix 2026-07-18)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_home(tmp_path: Path) -> Iterator[Path]:
+    """Point ``$HOME`` at a real temp dir (save/restore) — no monkeypatch.
+
+    So the canonical-default resolver globs THIS dir, never the operator's real
+    ``~/.bash.d/secrets`` — the test stays deterministic on every host.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        yield home
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+def test_pool_resolves_from_canonical_default_when_var_unset(
+    tmp_path: Path, secrets_envrc: None, isolated_home: Path
+) -> None:
+    # Arrange — SAC_SECRETS_ENVRC UNSET (the cron / raw-ssh / federated-timer
+    # case that stripped tokens tonight), but the operator's standardized default
+    # pool file exists under $HOME. The class fix must resolve the token from
+    # there instead of folding it EMPTY — the whole point of the fix.
+    os.environ.pop(_SECRETS_VAR, None)
+    pooldir = isolated_home / ".bash.d" / "secrets" / "010_scitex"
+    pooldir.mkdir(parents=True)
+    (pooldir / "01_cct.src").write_text(
+        "export CCT_BOT_TOKEN_ZZ_DEFAULT=tok-default\n", encoding="utf-8"
+    )
+    dest = tmp_path / "workspace-home"
+    dest.mkdir()
+    # Act — no SAC_SECRETS_ENVRC set anywhere; only the default location has it.
+    ensure_cct_bot_token(_cfg("zz-default"), dest)
+    # Assert — the token is loaded from the canonical default pool, NOT stripped.
+    assert "CCT_BOT_TOKEN=tok-default" in (dest / ".env").read_text()
+
+
+# ---------------------------------------------------------------------------
 # injected .env contents
 # ---------------------------------------------------------------------------
 

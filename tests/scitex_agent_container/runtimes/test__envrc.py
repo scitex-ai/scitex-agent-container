@@ -24,9 +24,67 @@ from scitex_agent_container.runtimes._envrc import (
     eval_envrc_cascade,
     fold_envrc_cascade_into_env,
     fold_envrc_into_env,
+    resolve_secret_files,
 )
 
 _SECRETS_VAR = "SAC_SECRETS_ENVRC"
+
+
+def _seed_default_pool(home: Path, *names: str) -> list[Path]:
+    """Create ``$HOME/.bash.d/secrets/010_scitex/<name>`` real files."""
+    d = home / ".bash.d" / "secrets" / "010_scitex"
+    d.mkdir(parents=True)
+    out: list[Path] = []
+    for n in names:
+        f = d / n
+        f.write_text("# secret\n", encoding="utf-8")
+        out.append(f)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# resolve_secret_files — the caller-independent-pool class fix (2026-07-18)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_secret_files_honours_explicit_var(tmp_path: Path) -> None:
+    # Arrange — an explicit SAC_SECRETS_ENVRC wins verbatim over any default.
+    explicit = tmp_path / "explicit.src"
+    explicit.write_text("# s\n", encoding="utf-8")
+    _seed_default_pool(tmp_path, "01_default.src")
+    env = {"SAC_SECRETS_ENVRC": str(explicit)}
+    # Act
+    files = resolve_secret_files(environ=env, home=tmp_path)
+    # Assert
+    assert files == [explicit]
+
+
+def test_resolve_secret_files_falls_back_to_canonical_default(tmp_path: Path) -> None:
+    # Arrange — the var is UNSET (the cron / raw-ssh / timer case), but the
+    # operator's standardized secret files exist under $HOME.
+    seeded = _seed_default_pool(tmp_path, "01_a.src", "02_b.src")
+    # Act — no SAC_SECRETS_ENVRC in the environment at all.
+    files = resolve_secret_files(environ={}, home=tmp_path)
+    # Assert — the canonical default is loaded (sorted), so the pool is found
+    # even though nobody exported the var.
+    assert files == sorted(seeded)
+
+
+def test_resolve_secret_files_empty_var_uses_default(tmp_path: Path) -> None:
+    # Arrange — a stray blank export is not a real value; treat as unset.
+    seeded = _seed_default_pool(tmp_path, "01_a.src")
+    # Act
+    files = resolve_secret_files(environ={"SAC_SECRETS_ENVRC": ""}, home=tmp_path)
+    # Assert
+    assert files == seeded
+
+
+def test_resolve_secret_files_no_pool_is_a_safe_noop(tmp_path: Path) -> None:
+    # Arrange — no var and no default directory: a host with no pool.
+    # Act
+    files = resolve_secret_files(environ={}, home=tmp_path)
+    # Assert — empty, exactly the pre-fix behaviour (never a raise).
+    assert files == []
 
 
 @pytest.fixture
