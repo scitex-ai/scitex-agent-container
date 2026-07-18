@@ -142,7 +142,14 @@ From: ./sac-base.sif
             "openai-agents>=0.17.4" \
             "scitex[all]" \
             xarray
-        uv pip install --python /opt/venv-sac/bin/python \
+        # --no-cache-dir forces a REBUILD from the %files-staged source, not a
+        # reuse of uv's built-wheel cache. That cache is keyed on (name,
+        # version) — NOT on content — and sac's version does NOT advance
+        # per-commit, so without it uv serves a byte-identical STALE wheel from
+        # a prior bake and --force-reinstall merely reinstalls THAT stale wheel
+        # (it reinstalls but does not rebuild). Only --no-cache-dir rebuilds, so
+        # the staged source actually ships. Mirrors the pip-fallback below.
+        uv pip install --no-cache-dir --python /opt/venv-sac/bin/python \
             --force-reinstall --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
@@ -330,6 +337,35 @@ print(
 
 failures = []
 
+# The version string lies (uv's wheel cache is version-keyed and sac's
+# version does not advance per-commit). File content cannot lie: this
+# compares the INSTALLED sac tree to the STAGED source tree — a stale
+# wheel makes them differ. Generic on purpose: it names no feature, so a
+# rename or decoupling never breaks it.
+import hashlib as _hashlib, pathlib as _pathlib
+import scitex_agent_container as _sac
+_installed_root = _pathlib.Path(_sac.__file__).parent
+_staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
+def _tree_sha(root):
+    h = _hashlib.sha256()
+    for p in sorted(root.rglob("*.py")):
+        h.update(p.relative_to(root).as_posix().encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()
+_di = _tree_sha(_installed_root)
+if _staged_root.is_dir():
+    _ds = _tree_sha(_staged_root)
+    print("installed sac .py tree sha  :", _di[:16])
+    print("staged   sac .py tree sha  :", _ds[:16])
+    if _di != _ds:
+        failures.append(
+            "installed sac (%s) != staged source (%s) — uv served a STALE "
+            "wheel; the fix did NOT ship. Add/verify --no-cache-dir on the "
+            "sac install." % (_di[:12], _ds[:12])
+        )
+else:
+    print("NOTE: staged source not at /opt/scitex-agent-container-src; content assert skipped")
+
 # The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
 # states must never occupy a WIP slot.
 if "in_progress" not in WIP_STATUSES:
@@ -344,7 +380,7 @@ if terminal:
 # Exactly one installed distribution may claim each name. Two (an
 # orphaned .dist-info left by a partial reinstall) is the failure mode
 # that lets the reported version diverge from the code.
-for name in ("scitex-todo", "scitex-agent-container"):
+for name in ("scitex-cards", "scitex-agent-container"):
     dists = [
         dist
         for dist in md.distributions()
@@ -362,7 +398,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
+print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }

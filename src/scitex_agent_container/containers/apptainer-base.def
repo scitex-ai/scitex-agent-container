@@ -407,7 +407,18 @@ From: ubuntu:24.04
     # runtimes/_apptainer_provider.py). The extra's version floor lives
     # in pyproject.toml (SSoT); the bracket syntax on the local source
     # path resolves it through the bundled tree's own metadata.
-    uv pip install --python /opt/venv-sac/bin/python \
+    #
+    # --no-cache-dir forces a REBUILD from the staged source rather than a
+    # reuse of uv's built-wheel cache. That cache is keyed on (name,
+    # version) — NOT on content — and sac's version does NOT advance
+    # per-commit (importlib.metadata reports the last RELEASED version even
+    # for brand-new bundled source). So without this flag uv serves a
+    # byte-identical STALE wheel from a prior bake and the new source never
+    # ships: a green build carrying OLD code. --force-reinstall reinstalls
+    # but REUSES the cached wheel; only --no-cache-dir rebuilds from source.
+    # (Two bakers hit exactly this — the image's _cct_token_pool.py was
+    # byte-identical to the pre-#742 source while the tree was at HEAD.)
+    uv pip install --no-cache-dir --python /opt/venv-sac/bin/python \
         "claude-agent-sdk" \
         "scitex-cards[mcp]>=0.16.0" \
         "/opt/scitex-agent-container-src[openai]"
@@ -473,7 +484,19 @@ import sys
 # `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
 # CANCELLED cards as open and refuses legitimate card creation — the
 # 2026-07-12 fleet-drift incident this gate exists to end.
-from scitex_todo._throughput import WIP_STATUSES
+#
+# Package renamed scitex-cards (2026-07-16): the canonical module is
+# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
+# to the SAME module objects — un-cutover fleet code imports the old
+# name, so the shim working is itself a ship-gate for this image.
+from scitex_cards._throughput import WIP_STATUSES
+
+import scitex_cards
+import scitex_todo  # the transition shim — its absence breaks the fleet
+
+if scitex_todo is not scitex_cards:
+    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
+    sys.exit(1)
 
 # sac #633: auto-provisions a new agent's container overlay root; without
 # it every newly-created agent is stillborn on a raw apptainer FATAL.
@@ -484,8 +507,8 @@ from scitex_todo._throughput import WIP_STATUSES
 from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
 
 # Printed for the BUILD LOG only — these numbers are NOT the gate.
-print("scitex-todo reported version :", md.version("scitex-todo"))
-print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+print("scitex-cards reported version:", md.version("scitex-cards"))
+print("scitex-cards WIP_STATUSES    :", sorted(WIP_STATUSES))
 print("sac reported version         :", md.version("scitex-agent-container"))
 print(
     "sac overlay auto-provision   :",
@@ -493,6 +516,35 @@ print(
 )
 
 failures = []
+
+# The version string lies (uv's wheel cache is version-keyed and sac's
+# version does not advance per-commit). File content cannot lie: this
+# compares the INSTALLED sac tree to the STAGED source tree — a stale
+# wheel makes them differ. Generic on purpose: it names no feature, so a
+# rename or decoupling never breaks it.
+import hashlib as _hashlib, pathlib as _pathlib
+import scitex_agent_container as _sac
+_installed_root = _pathlib.Path(_sac.__file__).parent
+_staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
+def _tree_sha(root):
+    h = _hashlib.sha256()
+    for p in sorted(root.rglob("*.py")):
+        h.update(p.relative_to(root).as_posix().encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()
+_di = _tree_sha(_installed_root)
+if _staged_root.is_dir():
+    _ds = _tree_sha(_staged_root)
+    print("installed sac .py tree sha  :", _di[:16])
+    print("staged   sac .py tree sha  :", _ds[:16])
+    if _di != _ds:
+        failures.append(
+            "installed sac (%s) != staged source (%s) — uv served a STALE "
+            "wheel; the fix did NOT ship. Add/verify --no-cache-dir on the "
+            "sac install." % (_di[:12], _ds[:12])
+        )
+else:
+    print("NOTE: staged source not at /opt/scitex-agent-container-src; content assert skipped")
 
 # The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
 # states must never occupy a WIP slot.
@@ -508,7 +560,7 @@ if terminal:
 # Exactly one installed distribution may claim each name. Two (an
 # orphaned .dist-info left by a partial reinstall) is the failure mode
 # that lets the reported version diverge from the code.
-for name in ("scitex-todo", "scitex-agent-container"):
+for name in ("scitex-cards", "scitex-agent-container"):
     dists = [
         dist
         for dist in md.distributions()
@@ -526,7 +578,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
+print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
