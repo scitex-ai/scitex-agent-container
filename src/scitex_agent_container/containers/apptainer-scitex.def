@@ -161,7 +161,17 @@ From: ./sac-base.sif
     fi
 
     if command -v uv >/dev/null; then
-        uv pip install --python /opt/venv-sac/bin/python \
+        # ``-U`` — A FLOOR ALONE DOES NOT UPGRADE. This layer bakes ONTO a
+        # base image and INHERITS its venv, so every requirement below is
+        # already SATISFIED at whatever version base baked. uv/pip leave a
+        # satisfied requirement alone and exit 0, so without ``-U`` a
+        # rebake silently reships yesterday's ``scitex[all]`` while
+        # reporting success. Unpinning was only half the job: the floor
+        # states the capability requirement, ``-U`` is what actually
+        # re-resolves to the newest published version. A FRESH-base bake
+        # happens to work either way, which is precisely why this went
+        # unnoticed — and why the timer-driven routine bake needs it.
+        uv pip install --python /opt/venv-sac/bin/python -U \
             black flake8 \
             ipython ipdb \
             pytest pytest-cov \
@@ -233,7 +243,10 @@ From: ./sac-base.sif
         #   section 2b still asserts the shim BY SYMBOL, so a release that
         #   drops it dies at bake instead of shipping — which is the honest
         #   protection: verify the artifact, do not freeze the input.
-        uv pip install --python /opt/venv-sac/bin/python \
+        # ``-U`` for the same reason as scitex-cards below: these floors are
+        # ALREADY satisfied by the inherited base venv, so without it the
+        # providers freeze at base's build and a routine rebake is a no-op.
+        uv pip install --python /opt/venv-sac/bin/python -U \
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
@@ -266,8 +279,10 @@ From: ./sac-base.sif
         # the older transitive pins scitex[all] pulls, so the federated
         # install in section 3 can discover every leaf's
         # ``scitex_dev.system_deps`` entry-point. Floors mirror the uv branch
-        # above. Matches this branch's plain ``pip install`` style.
-        /opt/venv-sac/bin/pip install --no-cache-dir \
+        # above, ``--upgrade`` included: a floor the inherited base venv
+        # already satisfies never re-resolves, so without it these providers
+        # freeze at base's build and the routine rebake ships stale.
+        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
