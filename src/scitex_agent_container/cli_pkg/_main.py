@@ -72,7 +72,7 @@ COMMAND_CATEGORIES = [
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Host hygiene", ["worktree"]),
-    ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
+    ("Diagnostics", ["doctor", "ports", "provenance", "auth-events", "ci"]),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -120,6 +120,10 @@ class _MainGroup(LazyGroup):
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
         "ports": f"{_PKG}.ports_cmds:ports",
+        # READ-ONLY auth timeline: this host's auth-event log joined with the
+        # credential rotations the accounts store already audits. Observes
+        # only — auth-heal owns remediation.
+        "auth-events": f"{_PKG}.auth_events_cmds:auth_events",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "provenance": f"{_PKG}.provenance_cmds:provenance",
@@ -318,6 +322,7 @@ class _MainGroup(LazyGroup):
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
+        "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",

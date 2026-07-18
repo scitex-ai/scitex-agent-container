@@ -6,6 +6,44 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A single collected fleet AUTH-EVENT log (`sac auth-events`)**. Operator,
+  2026-07-18: 「サーバーが落とすんだから、ログを取ればいいんじゃないですか？」 — the
+  server is what drops us, so log it. New `_authevents` package: an append-only
+  JSONL rail at `<runtime>/auth-events.jsonl` (beside `auth-heal.log`), one line
+  per auth event, with UTC ISO timestamp, agent, event type, HTTP status,
+  account and free-text detail. It **OBSERVES ONLY** — no detector, no
+  restarter, no remediation; `auth-heal.py` keeps owning that.
+
+  **Attempt and outcome are SEPARATE records, joined by `attempt_id`.** This is
+  the point, not a detail: `auth-heal.log` carried 169 `-> auto-restart` lines
+  over seven days whose `age=` field never reset (one reached 262200s = three
+  days). Each stated an INTENT in the grammar of an EFFECT, and nothing existed
+  that could contradict one. `unresolved_attempts()` now answers "which restarts
+  were attempted and never shown to work" — covering both an outcome that says
+  `succeeded: false` and an outcome that never arrived. The suite
+  mutation-proves the separation: collapsing the two emissions into one combined
+  "restarted" event turns four tests red.
+
+  **The rotation event was never missing — it was unjoined.**
+  `_account._rotation_audit` has recorded every credential rotation to
+  `<accounts-store>/rotation-audit.jsonl` for weeks. Checked against the
+  2026-07-18 incident, the last record before six agents died at ~19:30 JST
+  reads `10:31:28 UTC` — the deaths, to the minute. So this PR adds **no second
+  rotation writer**; `_authevents._timeline` PROJECTS that existing audit at
+  read time, leaving `rotation-audit.jsonl` the single source of truth (and its
+  fingerprint-only security contract intact) while putting rotations and their
+  consequences in one ordered reading.
+
+  Fail-open throughout: every write is best-effort and returns a bool, so an
+  unwritable log can never abort the restart or refresh it observes. Fields are
+  tri-state — an undeterminable account is written as `null`, never guessed and
+  never omitted, since an absent key and an unknown value are different facts.
+  No `http_status` is synthesised from a "Login expired" banner: Claude Code
+  renders ANY 401 that way, sometimes when nothing expired, so a banner is
+  recorded as a banner.
+
 ## [0.21.26] - 2026-07-18
 
 ### Added
