@@ -25,6 +25,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "OWNER_MARKER_NAME",
     "checkout_branch",
     "commit_dirty",
     "current_branch",
@@ -32,8 +33,16 @@ __all__ = [
     "is_git_worktree",
     "move_dirty_to_side_branch",
     "rescue_branch_name",
+    "worktree_owner",
     "write_diff_tarball",
 ]
+
+# Ownership marker filename. Stored in the worktree's PRIVATE gitdir
+# (``<git-dir>/sac-owner``), NEVER in the working tree — see
+# ``worktree_owner`` for why. The stamp is written at worktree-creation
+# time by the ``WorktreeCreate`` hook (``claude_worktree_hooks``); the
+# rescue reads it here to decide OWNERSHIP.
+OWNER_MARKER_NAME: str = "sac-owner"
 
 
 def _run(cmd: list[str], *, cwd: Path, timeout: float) -> tuple[int, str, str]:
@@ -61,6 +70,49 @@ def is_git_worktree(path: Path) -> bool:
     if not path.is_dir():
         return False
     return (path / ".git").exists()
+
+
+def worktree_owner(path: Path, *, timeout: float) -> str | None:
+    """Return the owning agent id stamped at ``<git-dir>/sac-owner``, or None.
+
+    OWNERSHIP is the fix for the shared-checkout mis-attribution bug: the
+    ``scitex-cards`` lane runs four agents over ONE physical checkout (a
+    symlink farm), so its ``.git`` — and therefore ``.worktrees/`` and
+    ``git worktree list`` — is SHARED. A stopping agent's rescue walk sees
+    every peer's worktree and cannot tell them apart from the branch name.
+
+    So each worktree is stamped with its creating agent's id at creation
+    time (``WorktreeCreate`` hook). The stamp lives in the worktree's
+    PRIVATE gitdir — ``<main>/.git/worktrees/<name>/sac-owner`` for a
+    linked worktree, ``<checkout>/.git/sac-owner`` for a primary checkout
+    — resolved here via ``git rev-parse --absolute-git-dir``. That path is
+    OUTSIDE the working tree, so the ``git add -A`` every rescue runs can
+    NEVER stage it (git does not stage anything under ``.git/``).
+
+    Returns the stamped id (stripped) when the marker is present and
+    non-empty; ``None`` when the marker is ABSENT or unreadable, or when
+    the git-dir cannot be resolved. ``None`` means "unknown owner" — the
+    caller DEFAULT-DENIES an unknown owner on a ``.worktrees`` child.
+    NEVER raises.
+    """
+    rc, out, _ = _run(
+        ["git", "rev-parse", "--absolute-git-dir"], cwd=path, timeout=timeout
+    )
+    if rc != 0:
+        return None
+    git_dir = out.strip()
+    if not git_dir:
+        return None
+    marker = Path(git_dir) / OWNER_MARKER_NAME
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (
+        OSError,
+        FileNotFoundError,
+    ):  # stx-allow: fallback (reason: an absent/unreadable marker is "unknown owner", not a crash — the caller default-denies.)
+        return None
+    owner = text.strip()
+    return owner or None
 
 
 def current_branch(path: Path, *, timeout: float) -> str:

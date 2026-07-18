@@ -61,11 +61,12 @@ normally" sentence keeps the signal without the false alarm.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 
-from ._sdk_channels import _TELEGRAMMER_CHANNEL
+from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
 
 # The env-var the telegrammer MCP reads its bot token from (see the shared
 # baseline ``.mcp.json``: ``"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"``).
@@ -369,4 +370,66 @@ def _default_agent_id(agent_name: str, workdir: str) -> str:
     return agent_name
 
 
-__all__ = ["ensure_cct_bot_token"]
+def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
+    """Drop the telegrammer MCP server from ``dest/.mcp.json`` when no token resolved.
+
+    Card ``sac-omit-telegram-mcp-when-no-cct-bot-token-20260702`` (operator
+    decision 2026-07-02, option 1). The SHARED baseline ``.mcp.json`` declares
+    ``claude-code-telegrammer`` for every agent, with ``"CCT_BOT_TOKEN":
+    "${CCT_BOT_TOKEN}"``. An agent that intentionally has NO bot (most library /
+    tool agents) therefore launches that server with an EMPTY token, and
+    claude-code-telegrammer correctly refuses to start on an empty token. The
+    result is a permanent ``✘ failed`` row in the MCP panel — on every agent,
+    forever — which is noise in the one view the operator actually checks.
+
+    That fail-loud is right for a MISCONFIGURED agent and wrong for a
+    deliberately bot-less one. The two cases are indistinguishable once the
+    entry exists, so the fix is to not emit the entry: no token → no server →
+    nothing to fail. An agent WITH a token is untouched.
+
+    Ordering is load-bearing: this must run AFTER :func:`ensure_cct_bot_token`,
+    because that is what resolves a pool token into ``dest/.env``. Running it
+    before would read an env that has not been populated yet and prune the entry
+    from agents that do in fact have a bot.
+
+    Returns True iff the entry was removed (so the caller can log a deploy).
+    Never raises — a malformed ``.mcp.json`` is left exactly as-is for the
+    deploy's own fail-loud JSON handling to report.
+    """
+    mcp_path = dest / ".mcp.json"
+    if not mcp_path.is_file():
+        return False
+    env_file = dest / ".env"
+    env = _read_env_file(env_file) if env_file.is_file() else {}
+    if str(env.get(_TOKEN_VAR, "") or "").strip():
+        return False  # real bot token — keep the server.
+    try:
+        doc = json.loads(mcp_path.read_text() or "{}")
+    except (
+        OSError,
+        json.JSONDecodeError,
+    ) as exc:  # stx-allow: fallback (reason: the .mcp.json deploy owns JSON fail-loud; pruning must not double-report or mask it)
+        _logger().warning(
+            "cct: could not read %s to prune the tokenless telegrammer entry "
+            "(%s); leaving it untouched.",
+            mcp_path,
+            exc,
+        )
+        return False
+    servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+    if not isinstance(servers, dict) or _TELEGRAMMER_MCP_KEY not in servers:
+        return False
+    del servers[_TELEGRAMMER_MCP_KEY]
+    mcp_path.write_text(json.dumps(doc, indent=2) + "\n")
+    _logger().info(
+        "cct: no %s resolved for this agent — omitted the %r MCP server from "
+        "%s so it does not start and fail on an empty token. This is the "
+        "intentional no-bot path, not an error.",
+        _TOKEN_VAR,
+        _TELEGRAMMER_MCP_KEY,
+        mcp_path,
+    )
+    return True
+
+
+__all__ = ["ensure_cct_bot_token", "prune_tokenless_telegrammer_mcp"]

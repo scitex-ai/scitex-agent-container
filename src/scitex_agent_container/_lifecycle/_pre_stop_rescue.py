@@ -23,7 +23,7 @@ moment the agent could not review the result:
   origin (operator: 「テストが赤いまま公開？どうやって？」).
 * It used ``--force-with-lease``, which every agent is hook-banned from
   running by hand. A stop hook is not an exemption.
-* It protected BRANCHES, not TREES, and the walk has no ownership
+* It protected BRANCHES, not TREES, and the walk had no ownership
   model: a foreign worktree parked on a topic branch (another agent's
   in-flight work, in a checkout this agent merely shares) got committed
   and force-pushed with no guard anywhere in its path. Observed
@@ -32,6 +32,30 @@ moment the agent could not review the result:
 Nothing is lost by dropping it. ``workdir`` is a host bind mount, so a
 LOCAL commit already survives the restart that motivated this module —
 the push was never what made the work durable.
+
+*** THE RESCUE ONLY TOUCHES WORKTREES IT OWNS. ***
+
+The push is gone (#743), but a residual harm survived it: on a SHARED
+checkout the LOCAL commit still mis-attributed a peer's tree. The
+``scitex-cards`` lane runs four agents (``scitex-cards`` / ``-chat`` /
+``-gui`` / ``-mobile``) over ONE physical checkout — the workdir is a
+symlink farm onto a single ``scitex-todo`` checkout — so its ``.git``,
+``.worktrees/`` and ``git worktree list`` are SHARED. The walk therefore
+saw every peer's worktree and, since worktrees are branch-named with no
+agent id, could not tell them apart. Observed twice 2026-07-17: agent
+``chat``'s rescue committed agent ``gui``'s in-flight worktree under
+``chat``'s identity.
+
+The fix is an OWNERSHIP MARKER + DEFAULT-DENY. Each subagent worktree is
+stamped at creation (the ``WorktreeCreate`` hook) with its creating
+agent's id, stored OUT of the working tree at ``<git-dir>/sac-owner`` so
+the ``git add -A`` this module runs can NEVER stage it. The walk reads
+that stamp (:func:`_pre_stop_rescue_git.worktree_owner`) and rescues a
+``.worktrees`` child ONLY when the stamp names the stopping agent —
+skipping any child whose owner MISMATCHES or is ABSENT
+(:func:`_ownership_allows`). The unstamped-window cost is bounded: the
+commit-before-idle stop hook already forces dirty subagent worktrees to
+commit, so this rescue is the SECOND net, mattering mainly for CRASHES.
 
 It runs once per ``agent_stop`` call, BEFORE the operator's
 ``pre_stop`` hooks fire, walks every git worktree under the agent's
@@ -83,6 +107,7 @@ from ._pre_stop_rescue_git import (
     is_dirty,
     is_git_worktree,
     move_dirty_to_side_branch,
+    worktree_owner,
     write_diff_tarball,
 )
 
@@ -257,25 +282,61 @@ def _rescue_protected(
     return result
 
 
-def _candidate_roots(workdir: Path) -> Iterable[Path]:
-    """Yield the directories the pass walks for rescue candidates.
+def _candidate_roots(workdir: Path) -> Iterable[tuple[Path, bool]]:
+    """Yield ``(path, is_child)`` for every directory the pass walks.
 
     Per lead refinement (a2a efa48850): cover the subagent
     ``.worktrees/*`` and the legacy ``worktrees/*`` — those are
     exactly what restart kills + what the reap-bug
     (lead-learnings/19) silently destroys.
+
+    ``is_child`` is ``True`` for a ``.worktrees/*`` / ``worktrees/*``
+    subagent worktree and ``False`` for the primary ``workdir`` root.
+    The distinction drives the OWNERSHIP gate in
+    ``rescue_worktrees_for_agent``: children are DEFAULT-DENY (rescued
+    only when their ``sac-owner`` stamp names the stopping agent), while
+    the shared-checkout root keeps its existing conservative handling.
     """
-    yield workdir
+    yield workdir, False
     sub = workdir / ".worktrees"
     if sub.is_dir():
         for child in sorted(sub.iterdir()):
             if child.is_dir():
-                yield child
+                yield child, True
     legacy = workdir / "worktrees"
     if legacy.is_dir():
         for child in sorted(legacy.iterdir()):
             if child.is_dir():
-                yield child
+                yield child, True
+
+
+def _ownership_allows(owner: str | None, agent_name: str, *, is_child: bool) -> bool:
+    """Decide whether the stopping ``agent_name`` may rescue this candidate.
+
+    THREE states, never a boolean collapse of "I don't know" into a pole:
+
+    * ``owner == agent_name`` — positively owned → ALLOW (both children
+      and root).
+    * ``owner`` present but ``!= agent_name`` — a DIFFERENT agent owns
+      this worktree → DENY (both). This is the exact mis-attribution the
+      fix exists to stop: a peer's in-flight tree must never be committed
+      under the stopping agent's identity.
+    * ``owner is None`` (marker ABSENT / unknown) — DEFAULT-DENY for a
+      ``.worktrees`` CHILD (an unstamped peer worktree in the shared
+      checkout is indistinguishable from our own, so we refuse it), but
+      ALLOW for the primary ROOT. The root is the agent's own workdir;
+      denying an unstamped root would REGRESS the ordinary
+      single-checkout agent whose root-level work must still be rescued.
+      The shared-checkout root is protected a different way: it sits on
+      ``develop`` (protected), so ``rescue_worktree`` routes it to a
+      local ``rescue/`` side-branch rather than committing peer work onto
+      the shared branch.
+    """
+    if owner == agent_name:
+        return True
+    if owner is None:
+        return not is_child
+    return False
 
 
 def rescue_worktrees_for_agent(
@@ -303,7 +364,7 @@ def rescue_worktrees_for_agent(
     results: list[dict[str, object]] = []
     deadline = time.monotonic() + grace_seconds
     per_candidate_timeout = max(2.0, grace_seconds / 4.0)
-    for candidate in _candidate_roots(workdir):
+    for candidate, is_child in _candidate_roots(workdir):
         if time.monotonic() >= deadline:
             log.warning(
                 "pre-stop rescue: grace budget elapsed before scanning %s; "
@@ -322,13 +383,49 @@ def rescue_worktrees_for_agent(
                 }
             )
             continue
+        remaining = deadline - time.monotonic()
+        candidate_timeout = min(per_candidate_timeout, remaining)
+        # OWNERSHIP GATE (shared-checkout mis-attribution fix). Read the
+        # worktree's ``sac-owner`` stamp and DEFAULT-DENY a child whose
+        # owner is not the stopping agent (mismatch) OR is absent
+        # (unknown) — a stopping agent must never commit a peer's
+        # in-flight worktree under its own identity. The primary root is
+        # handled conservatively inside ``_ownership_allows`` (an
+        # unstamped own-checkout root is still rescued; a shared-checkout
+        # root on ``develop`` is routed to a local side-branch by
+        # ``rescue_worktree``).
+        owner = worktree_owner(candidate, timeout=candidate_timeout)
+        if not _ownership_allows(owner, agent_name, is_child=is_child):
+            log.info(
+                "pre-stop rescue: skipping %s — owner=%r != stopping agent=%r "
+                "(default-deny; not this agent's worktree)",
+                candidate,
+                owner,
+                agent_name,
+            )
+            results.append(
+                {
+                    "path": candidate,
+                    "branch": "",
+                    "committed": False,
+                    "tarball": None,
+                    "protected": False,
+                    "rescue_branch": "",
+                    "error": (
+                        f"skipped: owner={owner!r} != stopping agent="
+                        f"{agent_name!r} (ownership default-deny)"
+                    ),
+                    "owner": owner,
+                }
+            )
+            continue
         results.append(
             rescue_worktree(
                 candidate,
                 agent_name=agent_name,
                 timestamp=timestamp,
                 rescue_root=rescue_root,
-                timeout=min(per_candidate_timeout, deadline - time.monotonic()),
+                timeout=candidate_timeout,
             )
         )
     return results

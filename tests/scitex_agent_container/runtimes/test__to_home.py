@@ -1359,3 +1359,63 @@ def test_deploy_to_home_remerges_changed_mcp_json_without_conflict(
     # Assert — the deployed .mcp.json reflects the NEW definition (re-derived).
     deployed = json.loads((home / ".mcp.json").read_text())
     assert deployed["mcpServers"]["x"]["command"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# Tokenless-telegrammer prune, END-TO-END through deploy_to_home.
+#
+# The unit tests for prune_tokenless_telegrammer_mcp live in
+# test__cct_token_pool.py. These exist because a correct function wired at the
+# WRONG point in deploy_to_home would still pass those: the prune reads the
+# .mcp.json the walk materialises and the token ensure_cct_bot_token resolves,
+# so it must run after BOTH. Asserting through the real entry-point is what
+# makes the ordering testable rather than merely commented.
+# ---------------------------------------------------------------------------
+
+
+class TestTokenlessTelegrammerPrune:
+    _TELEGRAMMER = "claude-code-telegrammer"
+
+    def _mcp_servers(self, home: Path) -> dict:
+        import json
+
+        return json.loads((home / ".mcp.json").read_text())["mcpServers"]
+
+    def _seed(self, tmp_path: Path):
+        """A to_home carrying the shared baseline's telegrammer entry."""
+        cfg, root = _build_cfg(tmp_path)
+        (root / ".mcp.json").write_text(
+            '{"mcpServers": {"claude-code-telegrammer": '
+            '{"command": "cct", "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"}}, '
+            '"scitex-cards": {"command": "scitex-cards"}}}\n'
+        )
+        return cfg, root
+
+    def test_tokenless_agent_gets_no_telegrammer_entry(self, tmp_path):
+        # Arrange — no .envrc, no pool: nothing can resolve a token.
+        cfg, _root = self._seed(tmp_path)
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert self._TELEGRAMMER not in self._mcp_servers(home)
+
+    def test_tokenless_prune_keeps_the_other_servers(self, tmp_path):
+        # Arrange
+        cfg, _root = self._seed(tmp_path)
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert "scitex-cards" in self._mcp_servers(home)
+
+    def test_agent_with_a_token_keeps_the_telegrammer_entry(self, tmp_path):
+        # Arrange — a real .envrc supplying the token, exactly as a bot-owning
+        # project does; the fold lands it in dest/.env before the prune reads it.
+        cfg, root = self._seed(tmp_path)
+        (root / ".envrc").write_text("export CCT_BOT_TOKEN=123:abc\n")
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert self._TELEGRAMMER in self._mcp_servers(home)

@@ -38,7 +38,7 @@ Request JSON::
     {"agent": "<owner-agent-name>",   # required, non-empty
      "body": "<notification text>",   # required, non-empty
      "card_id": "<card id>",          # optional — rides on the envelope
-     "from_agent": "<sender>"}        # optional — defaults to "scitex-todo"
+     "from_agent": "<sender>"}        # optional — defaults to "scitex-cards"
 
 Response ``200``::
 
@@ -71,9 +71,10 @@ from ..a2a._inbox_bus import Broker, mint_event
 logger = logging.getLogger(__name__)
 
 # Default sender identity stamped on the envelope when the caller does
-# not supply ``from_agent``. The board (scitex-todo) is the canonical
-# producer for this endpoint.
-DEFAULT_NOTIFY_FROM = "scitex-todo"
+# not supply ``from_agent``. The board (scitex-cards) is the canonical
+# producer for this endpoint. Free-form display provenance, not a lookup
+# key — so the rename is a straight flip, no dual-name tolerance needed.
+DEFAULT_NOTIFY_FROM = "scitex-cards"
 
 __all__ = ["notify", "publish_to_agent"]
 

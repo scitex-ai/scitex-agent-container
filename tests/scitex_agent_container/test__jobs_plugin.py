@@ -49,17 +49,18 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_six_jobs() -> None:
-    # Arrange — call the registered provider. Six: accounts-refresh, the
+def test_provider_returns_seven_jobs() -> None:
+    # Arrange — call the registered provider. Seven: accounts-refresh, the
     # host-sync-check drift alarm, the daily worktree GC, the daily Spartan SIF
-    # bake, the fleet-reconcile enforcer (dead/no-session corpses), and the
-    # restart-login-expired-agents timer (live-session-but-auth-dead agents).
-    # `sac listen` is still NOT federated (see the module docstring and the
-    # absence-pin below).
+    # bake, the fleet-reconcile enforcer (dead/no-session corpses), the
+    # restart-login-expired-agents timer (live-session-but-auth-dead agents),
+    # and heal-agent-auth (the incumbent auth-heal.py, migrated off the swept
+    # crontab). `sac listen` is still NOT federated (see the module docstring
+    # and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 6
+    assert len(jobs) == 7
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -420,3 +421,139 @@ def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
     job = _job("sac.restart-login-expired-agents")
     # Assert
     assert isinstance(job, jobs_mod.JobSpec)
+
+
+# ---------------------------------------------------------------------------
+# sac.heal-agent-auth — the INCUMBENT auth healer, migrated off the crontab.
+#
+# The migration is the point. `~/.dotfiles/src/.cron/copy_crontab` installs the
+# tracked manifest WHOLESALE (`git show HEAD:.crontab_list | crontab -`), so a
+# line absent from `.crontab_list` is erased on its next run — and auth-heal has
+# no line in that manifest at all. That is why the wrapper exporting
+# SAC_SECRETS_ENVRC kept reverting: a hand-added crontab line is temporary BY
+# CONSTRUCTION. These tests pin the properties a crontab line could not give it
+# (Persistent=true via kind="timer") and the ones a systemd --user unit would
+# otherwise lose (an absolute, PATH-independent ExecStart).
+#
+# Named verb+object (`heal` + `agent-auth`) like its sibling above, so the
+# derived units read `sac.heal-agent-auth.timer` / `.service` — no "timer" in
+# the name, since systemd's suffix already conveys periodicity.
+# ---------------------------------------------------------------------------
+
+
+def test_heal_agent_auth_job_name_is_package_prefixed() -> None:
+    # Arrange — the incumbent auth healer, now declared rather than hand-cronned.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.name == "sac.heal-agent-auth"
+
+
+def test_heal_agent_auth_job_kind_is_timer() -> None:
+    # Arrange — kind="timer" is what buys `Persistent=true` from scitex-dev's
+    # renderer (a missed window fires on resume — the property the swept crontab
+    # line never had). kind="cron" would materialise the very crontab line this
+    # job exists to escape, and a kind outside {"service","timer","cron"} raises
+    # at construction, silently dropping sac's WHOLE provider.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_heal_agent_auth_cadence_preserves_the_incumbent_ten_minutes() -> None:
+    # Arrange — 10min is the LIVE cadence, not a new choice: runtime/auth-heal.log
+    # ticks 15:20 → 15:30 → 15:40 → 15:50 → 16:00, matching the `*/10` cron line.
+    # Migrating a schedule is the wrong moment to also retune it.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.on_unit_active_sec == "10min"
+
+
+def test_heal_agent_auth_schedule_mirrors_the_retired_cron_expression() -> None:
+    # Arrange — the cron form is kept alongside the timer cadence (as every
+    # sibling does) so the expression the crontab line used stays legible in the
+    # spec, and so `ecosystem cron` could still derive an equivalent line.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.schedule == "*/10 * * * *"
+
+
+def test_heal_agent_auth_interpreter_token_is_absolute() -> None:
+    # Arrange — scitex-dev's `resolve_execstart` passes a head starting with "/"
+    # through VERBATIM. An absolute head is therefore the only form that depends
+    # on neither the ambient PATH nor which interpreter ran `ecosystem up`.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.command.split()[0].startswith("/")
+
+
+def test_heal_agent_auth_script_token_is_absolute() -> None:
+    # Arrange — a systemd --user unit gets a MINIMAL PATH and no meaningful cwd,
+    # so the script argument must be absolute too; a relative path would exec
+    # fine under cron's $HOME cwd and fail as status=127 under systemd.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.command.split()[1].startswith("/")
+
+
+def test_heal_agent_auth_runs_the_venv_python_not_the_system_one() -> None:
+    # Arrange — the script's own `#!/usr/bin/env python3` would resolve to the
+    # SYSTEM python under systemd's minimal PATH, not the 3.11 venv the fleet
+    # runs on. Naming the venv interpreter outright is what carries the "PATH
+    # prefixed with .env-3.11/bin" requirement into a unit that has no PATH.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.command.startswith("/home/ywatanabe/.env-3.11/bin/python ")
+
+
+def test_heal_agent_auth_targets_the_real_auth_heal_entrypoint() -> None:
+    # Arrange — the entrypoint the cron line actually invokes, per the tracked
+    # `~/.scitex/agent-container/bin/README.md` ("run from cron; cron lines live
+    # in ~/.dotfiles/.crontab_list") and corroborated by the live state/log files
+    # that script writes. It takes no arguments — its `main()` has no argparse,
+    # only a `--selftest` branch — so the bare script path is the whole command.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.command.endswith(
+        "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
+    )
+
+
+def test_heal_agent_auth_timeout_outlives_a_restarting_pass() -> None:
+    # Arrange — a no-op tick takes ~2-8s; the worst observed pass (a TUI restart
+    # at 15:30:04 settling by 15:32:08) ~2min. A pass killed here is SAFE (state
+    # is persisted per restart), but the timeout must still outlive a real one.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert job.timeout_sec == 300
+
+
+def test_heal_agent_auth_constructs_as_a_real_jobspec() -> None:
+    # Arrange — construction must not raise (a bad field would drop the whole
+    # provider). Assert it is the canonical contract type, not a look-alike.
+    # Act
+    job = _job("sac.heal-agent-auth")
+    # Assert
+    assert isinstance(job, jobs_mod.JobSpec)
+
+
+def test_heal_agent_auth_and_restart_login_expired_are_both_declared() -> None:
+    # Arrange — declaring both is SAFE and deliberate: a JobSpec is inert until
+    # `ecosystem up` installs it, so version-controlling the incumbent does not
+    # enable it. What must never happen is both being ENABLED — they are the two
+    # implementations of the same TUI heal, with INDEPENDENT debounce state, and
+    # two restarters on one fleet is the documented double-supervisor hazard.
+    # This pins that the choice stays an operator deploy decision rather than
+    # being silently foreclosed by deleting one of them.
+    # Act
+    names = {job.name for job in provide_jobs()}
+    # Assert
+    assert {"sac.heal-agent-auth", "sac.restart-login-expired-agents"} <= names

@@ -61,7 +61,7 @@ import logging
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._cct_token_pool import ensure_cct_bot_token
+from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
@@ -121,7 +121,7 @@ _MARKER_PROTECTED_BASENAMES = frozenset({"CLAUDE.md", "state.md"})
 
 # Files DEEP-MERGED across the two-pass overlay (vs. full overwrite). The
 # shared baseline ``_shared/to_home/.mcp.json`` carries the default MCP servers
-# (sac / scitex-todo / claude-code-telegrammer); a per-agent ``.mcp.json`` must
+# (sac / scitex-cards / claude-code-telegrammer); a per-agent ``.mcp.json`` must
 # UNION its servers with that baseline, not replace it (which would silently
 # drop the defaults). Same-name conflict → fail loud. See :func:`_deploy_mcp_merge`.
 _MCP_MERGE_BASENAMES = frozenset({".mcp.json"})
@@ -291,6 +291,13 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # fatal, token value never logged. Runs AFTER the fold so an explicit
     # .envrc mapping stays authoritative.
     ensure_cct_bot_token(config, dest)
+    # ...and the counterpart: when NO token resolved above, drop the
+    # claude-code-telegrammer entry from the materialised .mcp.json instead of
+    # shipping one that starts, finds an empty token and fails on every boot.
+    # MUST run after ensure_cct_bot_token — that call is what populates the
+    # token this reads. See prune_tokenless_telegrammer_mcp (card
+    # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702).
+    prune_tokenless_telegrammer_mcp(dest)
     # settings.json CASCADE (same precedence order as .envrc): deep-merge each
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
