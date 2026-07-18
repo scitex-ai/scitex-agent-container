@@ -8,6 +8,13 @@ test.
 The load-bearing safety property is that a persistently-failing agent is
 CARDED, never bounced forever: these tests pin the debounce, the hourly cap,
 and the escalation card that replaces an infinite restart loop.
+
+The second load-bearing property is that a pass cannot report a clean fleet it
+did not look at. An agent whose pane will not capture, and a registered agent
+with no session at all, must both leave a VISIBLE report and drive the exit
+code to could-not-determine — while still never being restarted, because an
+unread pane is no evidence of a wedge. Exit 0 is reserved for a roster fully
+accounted for.
 """
 
 from __future__ import annotations
@@ -25,7 +32,7 @@ from scitex_agent_container._reconcile._budget import (
 )
 from scitex_agent_container._reconcile._rule import Verdict
 
-from ._helpers import NOW, Recorder, stuck, transient
+from ._helpers import NOW, OK, Recorder, register_agents, stuck, transient
 
 
 def _seed_history(path: Path, mapping: dict) -> None:
@@ -195,3 +202,124 @@ def test_unreadable_budget_reports_budget_unknown(denied_history, store):
     outcome = _run(stuck("hpc"), denied_history, store, rec)
     # Assert
     assert _verdict(outcome, "hpc") == Verdict.BUDGET_UNKNOWN
+
+
+# --- an agent we did NOT read is REPORTED, never silently dropped ----------
+#
+# The pane of a live agent will not capture, so the pass learns nothing at all
+# about its auth. Producing no report for it made "we checked and it is fine"
+# and "we never looked" the same answer — which is how a wedged agent sat for
+# hours while every pass logged a success.
+
+
+def test_uncapturable_pane_is_reported(history, store):
+    # Arrange — a live session whose pane cannot be read.
+    rec = Recorder()
+    # Act
+    outcome = _run({"scitex-hub": (None, None)}, history, store, rec)
+    # Assert
+    assert _verdict(outcome, "scitex-hub") == Verdict.UNOBSERVED
+
+
+def test_uncapturable_pane_makes_the_pass_could_not_determine(history, store):
+    # Arrange — THE gate. 0 must mean "we accounted for the roster and nothing
+    # is wedged", never "we produced no reports": the second is also what a
+    # pass that observed nothing produces, and while both spelled 0 the timer
+    # recorded ExecMainStatus=0 for every pass that had failed to look.
+    rec = Recorder()
+    # Act
+    outcome = _run({"scitex-hub": (None, None)}, history, store, rec)
+    # Assert
+    assert outcome.exit_code() == 2
+
+
+def test_uncapturable_pane_is_never_restarted(history, store):
+    # Arrange — visible is not the same as actionable. An unread pane is no
+    # evidence of a wedge, so making it loud must not make it restartable.
+    rec = Recorder()
+    # Act
+    _run({"scitex-hub": (None, None)}, history, store, rec)
+    # Assert
+    assert rec.names == []
+
+
+# --- absence is a value: the ROSTER is the population, not the reading -----
+#
+# An agent whose tmux session is GONE can never become a key in a reading built
+# by enumerating live sessions, so it could not be reported as anything at all.
+# The registry is the independent population that makes it visible.
+
+
+def test_registered_agent_with_no_session_is_reported(roster, history, store):
+    # Arrange — scitex-hub is registered; the reading contains only some other,
+    # healthy agent, so nothing in it mentions scitex-hub.
+    register_agents(roster, "scitex-hub")
+    rec = Recorder()
+    # Act
+    outcome = _run({"writer": (OK, OK)}, history, store, rec)
+    # Assert
+    assert _verdict(outcome, "scitex-hub") == Verdict.UNOBSERVED
+
+
+def test_registered_agent_with_no_session_could_not_be_determined(
+    roster, history, store
+):
+    # Arrange
+    register_agents(roster, "scitex-hub")
+    rec = Recorder()
+    # Act
+    outcome = _run({"writer": (OK, OK)}, history, store, rec)
+    # Assert
+    assert outcome.exit_code() == 2
+
+
+def test_registered_agent_with_no_session_is_never_restarted(roster, history, store):
+    # Arrange — a missing session is fleet-reconcile's half of the fleet. This
+    # pass makes it visible; it must not also act on it.
+    register_agents(roster, "scitex-hub")
+    rec = Recorder()
+    # Act
+    _run({"writer": (OK, OK)}, history, store, rec)
+    # Assert
+    assert rec.names == []
+
+
+def test_fully_observed_healthy_roster_exits_clean(roster, history, store):
+    # Arrange — the other half of the gate: 0 must stay REACHABLE, or the exit
+    # code carries no information. Every registered agent has a live pane that
+    # read clean, so this pass genuinely accounted for the whole roster.
+    register_agents(roster, "writer")
+    rec = Recorder()
+    # Act
+    outcome = _run({"writer": (OK, OK)}, history, store, rec)
+    # Assert
+    assert outcome.exit_code() == 0
+
+
+# --- the roster itself is unreadable → still not a clean fleet -------------
+
+
+def test_unreadable_roster_is_reported(history, store, tmp_path):
+    # Arrange — the registry cannot be enumerated, so we do not know which
+    # agents SHOULD have been observed. An empty roster here would silently
+    # certify that nobody is missing.
+    rec = Recorder()
+    # Act
+    outcome = _run(
+        {"writer": (OK, OK)}, history, store, rec, specs_dir=tmp_path / "not-there"
+    )
+    # Assert
+    assert [r.reason for r in outcome.reports] == ["roster-unreadable"]
+
+
+def test_unreadable_roster_makes_the_pass_could_not_determine(history, store, tmp_path):
+    # Arrange — every pane we did read came back clean, which is exactly the
+    # shape that must NOT be allowed to look like a healthy fleet: we cannot
+    # say we observed everyone without knowing who everyone is.
+    rec = Recorder()
+    # Act
+    outcome = _run(
+        {"writer": (OK, OK)}, history, store, rec, specs_dir=tmp_path / "not-there"
+    )
+    # Assert
+    assert outcome.exit_code() == 2

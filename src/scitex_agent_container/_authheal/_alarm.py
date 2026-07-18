@@ -240,6 +240,12 @@ def route_reports_to_cards(
 
     # Recovered-on-their-own: an agent with an open card that is NOT in this
     # pass's reports is no longer login-expired → resolve its stale card.
+    #
+    # An UNOBSERVED agent IS in the reports, so its card survives this sweep.
+    # That is the point: resolving an escalation card on a reading we never
+    # took would be a false all-clear in its most durable form — the board
+    # would say a human had nothing left to look at, on the strength of the
+    # pass having failed to look.
     for name in _carded_agents(store):
         if name in active:
             continue

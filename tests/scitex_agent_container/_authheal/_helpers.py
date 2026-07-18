@@ -10,6 +10,8 @@ signature, never a mock of the thing under test. The corroboration logic
 
 from __future__ import annotations
 
+from pathlib import Path
+
 #: A fixed clock. Every suite injects it, so no test can be flaky on time.
 NOW = 1_800_000_000.0
 
@@ -35,6 +37,20 @@ def transient(*names: str) -> dict:
     agent must NOT be restarted.
     """
     return {n: (STUCK, OK) for n in names}
+
+
+def register_agents(root: Path, *names: str) -> None:
+    """Register each name in a REAL fleet registry dir, as a real spec file.
+
+    The roster enumeration GLOBS ``*/spec.yaml`` and never loads it, so an empty
+    file is a genuine registration rather than a stand-in for one: this is the
+    on-disk shape ``sac agents new`` leaves behind, reduced to the part the
+    roster actually reads. A registered agent with no live pane is what makes
+    absence a value instead of a silence.
+    """
+    for name in names:
+        (root / name).mkdir(parents=True, exist_ok=True)
+        (root / name / "spec.yaml").write_text("")
 
 
 class Recorder:
