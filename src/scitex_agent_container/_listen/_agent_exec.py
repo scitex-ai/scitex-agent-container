@@ -128,6 +128,23 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "'assume_yes' must be a boolean if present"},
             status_code=400,
         )
+    # Silent-degradation fix (incident 2026-07-12, scitex-storage). An
+    # in-SIF RESTART reaches ``agent_start(force=True)``, which brokers
+    # here — and the broker used to DROP the force. This handler then
+    # shelled a plain ``sac agents start <name>``, which saw the agent
+    # already running, took the idempotent no-op branch, printed
+    # "SUCC: <name> started" and exited 0. The caller was told the agent
+    # had been restarted while NOTHING cycled: same pid, same stale
+    # credentials. Honouring the field makes the brokered restart actually
+    # tear the old runtime down. FAIL-LOUD invariant preserved: an ABSENT
+    # field means no force was requested, so an ordinary brokered start
+    # keeps its idempotent behaviour exactly as before.
+    force = body.get("force", False)
+    if not isinstance(force, bool):
+        return JSONResponse(
+            {"error": "'force' must be a boolean if present"},
+            status_code=400,
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -223,6 +240,10 @@ async def agents_start(request: Request) -> JSONResponse:
         inner_argv.append("--one-shot")
     if assume_yes:
         inner_argv.append("--yes")
+    # See the ``force`` validation above: without this the brokered restart
+    # silently degraded into an idempotent no-op that still reported SUCC.
+    if force:
+        inner_argv.append("--force")
     inner_argv.append(name)
     # Single-flight the OAuth-refresh boot window (card
     # sac-multi-start-queue-oauth): concurrent brokered background spawns share
