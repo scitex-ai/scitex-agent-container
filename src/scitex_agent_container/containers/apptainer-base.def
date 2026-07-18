@@ -518,31 +518,41 @@ print(
 failures = []
 
 # The version string lies (uv's wheel cache is version-keyed and sac's
-# version does not advance per-commit). File content cannot lie: this
-# compares the INSTALLED sac tree to the STAGED source tree — a stale
-# wheel makes them differ. Generic on purpose: it names no feature, so a
-# rename or decoupling never breaks it.
+# version does not advance per-commit). File content cannot lie — but the
+# comparison must be SET-AWARE: compare CONTENT of .py files present in
+# BOTH the installed package and the staged source (shared relative
+# paths); a stale wheel makes a shared file's content differ.
+# Set-differences (wheel excludes data files) are NOT staleness and are
+# ignored — comparing whole-tree hashes false-positives on them. Generic
+# on purpose: it names no feature, so a rename or decoupling never breaks it.
 import hashlib as _hashlib, pathlib as _pathlib
 import scitex_agent_container as _sac
 _installed_root = _pathlib.Path(_sac.__file__).parent
 _staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
-def _tree_sha(root):
-    h = _hashlib.sha256()
-    for p in sorted(root.rglob("*.py")):
-        h.update(p.relative_to(root).as_posix().encode())
-        h.update(p.read_bytes())
-    return h.hexdigest()
-_di = _tree_sha(_installed_root)
+def _rel_shas(root):
+    out = {}
+    for p in root.rglob("*.py"):
+        rel = p.relative_to(root).as_posix()
+        out[rel] = _hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
 if _staged_root.is_dir():
-    _ds = _tree_sha(_staged_root)
-    print("installed sac .py tree sha  :", _di[:16])
-    print("staged   sac .py tree sha  :", _ds[:16])
-    if _di != _ds:
+    _inst = _rel_shas(_installed_root)
+    _stg = _rel_shas(_staged_root)
+    _shared = sorted(set(_inst) & set(_stg))
+    print("content-assert shared .py files:", len(_shared))
+    if len(_shared) < 50:
         failures.append(
-            "installed sac (%s) != staged source (%s) — uv served a STALE "
-            "wheel; the fix did NOT ship. Add/verify --no-cache-dir on the "
-            "sac install." % (_di[:12], _ds[:12])
+            "content assert compared only %d shared .py files (expected hundreds) — "
+            "installed/staged package roots may be misaligned; comparison is not meaningful." % len(_shared)
         )
+    else:
+        _mismatch = [rel for rel in _shared if _inst[rel] != _stg[rel]]
+        if _mismatch:
+            failures.append(
+                "installed sac differs from staged source in %d of %d shared .py files "
+                "(e.g. %s) — a STALE wheel shipped; the fix did NOT ship. Verify --no-cache-dir "
+                "on the sac install." % (len(_mismatch), len(_shared), _mismatch[:5])
+            )
 else:
     print("NOTE: staged source not at /opt/scitex-agent-container-src; content assert skipped")
 
