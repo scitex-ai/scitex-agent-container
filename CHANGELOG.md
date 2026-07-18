@@ -6,6 +6,107 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.26] - 2026-07-18
+
+### Added
+
+- **Periodic Spartan-side SIF bake + master pull/verify/atomic-swap (`sac image
+  bake-remote`, `sac.spartan-sif-bake` timer)** (PR #739). Per the operator's
+  2026-07-17 directive: bake fresh SIFs on Spartan and rsync them to the master,
+  so the master gets fresh images without spending its own CPU.
+  `containers/spartan-sif-bake.sh` is wheel-shipped and ssh-piped — nothing is
+  deployed to Spartan — and resolves the standing CPU lease BY NAME, runs
+  `srun --overlap` steps (never `sbatch`, never a login node), and gates on
+  quota (an UNKNOWN quota is a failure, not a pass), the `.def` `%post` gate and
+  an artifact symbol probe. The master leg pulls to a dot-prefixed `.incoming`
+  name, RE-VERIFIES independently (sha256 against the remote sidecar plus the
+  same symbol probe through local `apptainer exec`), then does an atomic
+  double-symlink swap and keep-3 prune. A failed leg leaves the live image
+  untouched and exits non-zero. The bake emits a single machine-readable
+  `SAC_BAKE_RESULT` verdict (BAKED/SKIPPED/FAILED — absence is a distinct
+  NO_RESULT state, not an implied pass). This PR also completes the
+  `scitex-todo` → `scitex-cards` rename inside the `%post` gates: #734 flipped
+  the install pins but left `md.version("scitex-todo")` and the dist-count loop
+  on the old name, so the FIRST CLEAN bake died on `PackageNotFoundError` —
+  earlier master bakes had only passed via a lingering pre-rename `.dist-info`.
+
+- **sac REGISTERS scitex-cards' Stop hook, so an agent cannot sit idle while its
+  board holds runnable work** (PR #755). The invariant: idle-with-work-pending
+  must be unreachable BY DESIGN, not a state detected afterwards and repaired.
+  On 2026-07-18 scitex-hub sat idle at its prompt for 80+ minutes holding 5
+  `in_progress` cards and the OPERATOR noticed it twice; a notification changed
+  nothing, because a stopped agent reads nothing. That is the structural flaw in
+  every notify/sweep design — the repair arrives at the one moment its subject
+  cannot act on it — so the trigger fires at the only instant the agent is still
+  running: turn end. **The ownership boundary is the point of this change.** The
+  first cut parsed scitex-cards' stdout JSON *and* their numbered stderr hints,
+  making their output an API they could not change without breaking us — the
+  exact coupling that was deleted in the other direction when cards' bridge was
+  killed for depending on sac. We removed their dependency on us and then
+  quietly built ours on them. The agreed split: **scitex-cards ships the hook
+  EXECUTABLE** and emits the Stop-hook JSON itself (both ends of that contract
+  are theirs); **sac REGISTERS it** — settings materialisation, deployment to
+  every agent, the de-dupe algebra, the loop guard, fail-open. The parsing layer
+  is gone (−2,115 lines net on the feature's own files); sac now reads only the
+  Claude Code hook protocol, which both sides already target, and forwards their
+  payload verbatim including unknown fields, so cards can evolve their output
+  with no sac release. Three states, never two: allow / runnable / unknown — an
+  exit 2 we merely failed to PARSE is still runnable and still blocks (the exit
+  code already proved work exists); only a genuinely unreadable detector yields
+  unknown, which ALLOWS the stop and logs loudly. Loop guard N=3 on consecutive
+  blocks with an identical opaque block text; on trip it alarms and allows,
+  because an agent that can never end its turn is a worse failure than an idle
+  one.
+
+### Fixed
+
+- **A login-expired pass can no longer report a fleet it never read
+  (`Verdict.UNOBSERVED`)** (PR #758). The detector computed a correct
+  three-state verdict and then threw two of the states away:
+  `detect_login_expired` returned `list[str]`, so `unknown` (pane unreadable)
+  had nowhere to go and was dropped, and `exit_code()` fell through to a bare
+  `return 0`. An empty report therefore meant BOTH "we checked everything and
+  all is well" AND "we observed nothing at all" — and systemd recorded
+  `Result=success ExecMainStatus=0` on every one of those passes. The population
+  was collapsed the same way: `capture_live_panes` built its keys from live tmux
+  sessions, so an agent whose session was gone never became a key and could not
+  be reported as anything — **the enumeration WAS the population, which made
+  absence invisible by construction.** Now a frozen `DetectionOutcome` carries
+  auth_failed / ok / unknown out of the detector in buckets that partition the
+  input (nothing handed in can vanish); `Roster` + `registered_agents()` supply
+  an independent population reusing fleet-reconcile's own registry enumeration
+  rather than a second source of truth, and a registry we cannot enumerate is
+  `readable=False`, never an empty roster — an empty roster would silently
+  certify that nobody is missing. `exit_code()` reserves 0 for "every roster
+  agent was observed and none is wedged"; UNOBSERVED joins BUDGET_UNKNOWN at 2.
+  The alarm no longer resolves an escalation card for an UNOBSERVED agent:
+  clearing a card on a reading we never took is a false all-clear in its most
+  durable form. Only `auth_failed` still authorises a restart.
+
+- **`--force` is propagated end to end, and a no-op restart reports
+  `restarted: false` instead of lying** (PR #756). An in-SIF RESTART could
+  report success over an agent that never cycled. `agent_restart` calls
+  `agent_start(force=True)` precisely because a restart must REPLACE the
+  process, but the in-SIF broker fires BEFORE that force is consulted locally
+  and had no `force` parameter at all, so the flag was silently dropped at the
+  container boundary. The host then ran a plain, unforced
+  `sac agents start <name>`, hit the idempotent "already running → no-op"
+  branch, printed `SUCC: <name> started` and exited 0 — while the API answered
+  `{"restarted": true, "dispatched": false}` over a process whose pid never
+  changed, so a caller counting rc=0 marked an unrestarted agent as rolled.
+  (Observed in the scitex-storage runtime dir, STARTUP_FAILED 2026-07-12,
+  `phase=post_ack_liveness kind=post_ack_no_apptainer_pid exit_code=0`: because
+  no container launched, no `apptainer_pid` was ever written, which is what
+  tripped the post-ack probe.) `force` now crosses every hop through to the host
+  handler's `--force`, emitted only when truthy so a pre-fix host ignores the
+  absent field. The no-op branch returns a tagged `NOOP_ALREADY_RUNNING` that
+  stays truthy — an idempotent `sac agents start` IS a success, and downgrading
+  it would invent the mirror-image lie — but now carries WHY, so a caller whose
+  contract is "the process must have CYCLED" can tell the two apart.
+  `sac agents restart` reports `restarted: false` with
+  `reason: "already-running"`, a hint naming the `--force` recovery, and a
+  non-zero exit.
+
 ## [0.21.25] - 2026-07-18
 
 ### Added
