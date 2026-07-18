@@ -207,32 +207,40 @@ def _try_sdk_default_fallback(name: str, cwd: str) -> str | None:
     return str(target)
 
 
-# Ownership marker filename. MUST match
-# ``scitex_agent_container._lifecycle._pre_stop_rescue_git.OWNER_MARKER_NAME``
-# — this standalone hook cannot import the package, so the constant is
-# duplicated here with a pointer to its authoritative definition.
+# Ownership marker filename. Written into the worktree's PRIVATE gitdir,
+# never the working tree.
 _OWNER_MARKER_NAME = "sac-owner"
 
 
 def _stamp_owner(worktree_path: str) -> None:
     """Stamp the owning agent id into ``<git-dir>/sac-owner`` for this worktree.
 
-    Why OUT of the working tree: the pre-stop rescue runs ``git add -A``
-    on every worktree it commits. An in-tree marker (``.sac-owner``)
-    would be STAGED into that rescue commit — a plausible-but-wrong
-    artifact. The worktree's PRIVATE gitdir (``git rev-parse
-    --absolute-git-dir`` → ``<main>/.git/worktrees/<name>`` for a linked
-    worktree, ``<checkout>/.git`` for a primary checkout) is OUTSIDE the
-    working tree, so git never stages it. The pre-stop rescue reads this
-    stamp and rescues a worktree ONLY when it names the stopping agent
-    (default-deny otherwise) — the shared-checkout mis-attribution fix.
+    *** THIS STAMP CURRENTLY HAS NO CONSUMER. ***
+
+    It existed to feed one gate: the pre-stop rescue's ownership check,
+    which refused to commit a worktree the stopping agent did not own.
+    That rescue was ABOLISHED on 2026-07-19 (operator: 「rescue 一切やめ
+    ましょう」), so nothing reads this file today. It is retained
+    deliberately rather than removed: the write is one cheap
+    out-of-tree file, this hook ships as a baked baseline asset (so
+    changing it means re-baking every agent home), and a durable
+    "which agent created this worktree" record is independently useful
+    for attribution. Do NOT infer from its presence that an ownership
+    gate is enforced anywhere — if you need one, write it and wire it
+    up explicitly.
+
+    Why OUT of the working tree: an in-tree marker (``.sac-owner``)
+    would be staged by any broad ``git add`` an agent runs — a
+    plausible-but-wrong artifact in its commits. The worktree's PRIVATE
+    gitdir (``git rev-parse --absolute-git-dir`` →
+    ``<main>/.git/worktrees/<name>`` for a linked worktree,
+    ``<checkout>/.git`` for a primary checkout) is OUTSIDE the working
+    tree, so git never stages it.
 
     Owner id = ``$SCITEX_TODO_AGENT_ID`` (the agent's board identity,
-    which equals its ``config.name`` — the value the rescue compares
-    against). Best-effort: a failure here must NEVER break worktree
-    creation, whose SDK contract is to echo the path. An empty/unset
-    agent id is left UNSTAMPED — the rescue then default-denies the
-    worktree, which is the safe outcome.
+    which equals its ``config.name``). Best-effort: a failure here must
+    NEVER break worktree creation, whose SDK contract is to echo the
+    path. An empty/unset agent id is left UNSTAMPED.
     """
     owner = os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
     if not owner:
