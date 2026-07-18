@@ -6,9 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-19
+
 ### Added
 
-- **A single collected fleet AUTH-EVENT log (`sac auth-events`)**. Operator,
+- **A single collected fleet AUTH-EVENT log (`sac auth-events`)** (PR #763). Operator,
   2026-07-18: 「サーバーが落とすんだから、ログを取ればいいんじゃないですか？」 — the
   server is what drops us, so log it. New `_authevents` package: an append-only
   JSONL rail at `<runtime>/auth-events.jsonl` (beside `auth-heal.log`), one line
@@ -43,6 +45,117 @@ versioning follows [SemVer](https://semver.org/).
   No `http_status` is synthesised from a "Login expired" banner: Claude Code
   renders ANY 401 that way, sometimes when nothing expired, so a banner is
   recorded as a banner.
+
+- **One state shape for a peer agent — every signal `True`/`False`/`None`
+  (`sac agents state`, `_agentstate`)** (PR #766). Every failure of the
+  2026-07-17/18 fleet incident was an UNKNOWN collapsed into a pole. The signals
+  were never the bug — that night's own restart log already printed
+  `delivery[unknown], process[dead], heartbeat[alive], registry[unknown]`,
+  tri-state and correct — and the verdict collapsed anyway. What was wrong was
+  the COMBINING, hidden at every call site, each folding whatever subset it
+  happened to hold.
+
+  `_spec.py` declares the signal set and which signals are LOAD-BEARING and
+  DECISIVE, so adding a criterion is a spec change rather than an edit at N call
+  sites. `_state.py` is the frozen `AgentState` dataclass: nine flat named
+  predicates, each `Optional[bool]`, plus a per-signal reason map and the RAW
+  captures they were read from — the shape never varies, and a non-bool raises
+  rather than evaluating as a pole. `_assess.py` is THE single pure fold: True =
+  every load-bearing signal healthy; False = one refutes with NO signal unread;
+  None = something load-bearing is unread, and the output NAMES which one.
+  `_journal.py` archives each reading to `<runtime>/agent-state.jsonl` with the
+  full pane captures and the ps line — truncation is MARKED, rotation RENAMES
+  and never condenses, because a verdict cannot be re-examined after the fact
+  but a capture can.
+
+  Two properties are the point. **Silence becomes a value**: a missing agent is
+  an all-`None` row that assesses UNKNOWN, not an absent row that reads as fine
+  — the shape that let scitex-hub sit login-expired unnoticed. And
+  **disagreement becomes visible**: `auth-status` and `list`, asked minutes
+  apart on one host, returned 12 agents and 11, with a live tmux session and a
+  live pid on an agent the registry called `defined`; that is now one row
+  showing `is_tmux_live=True` beside `is_registry_active=False`.
+
+  Mutation-proved, not asserted: collapsing the `if unresolved:` branch in the
+  fold turns 24 tests RED (77 still passing, so the gates are not trivially
+  red). Builds ON #758 rather than duplicating it — `_adapt.states_from_detection`
+  projects its `DetectionOutcome` + `Roster` into this shape, and the suite pins
+  that the projection reproduces the detector's own partition so the two cannot
+  drift.
+
+### Fixed
+
+- **`never-stop-when-task-remains`: exit 2 is not a verdict — gate it on a
+  parseable payload** (PR #768). The hook shelled out to `scitex-cards may-stop`
+  and read exit 2 as "work remains". Exit 2 is ALSO the universal CLI
+  usage-error code, so on any host whose scitex-cards predated the verb, click's
+  `No such command 'may-stop'` exited 2 and was consumed as an affirmative
+  BLOCK — with the usage text forwarded as `reason`, which Claude Code hands
+  back to the agent as its next instruction. Agents were told, repeatedly, that
+  they may not stop because of an error we could not interpret. The fail-open
+  path was never reached: the subprocess did not fail, it answered with a number
+  that meant two different things.
+
+  rc=2 now blocks ONLY when stdout also parses as the expected verdict (a
+  `runnable` key); rc=2 with empty or unparseable stdout is UNKNOWN and fails
+  open, loudly. `reason` is composed strictly from the parsed payload — raw
+  stderr never reaches it, since an unstructured channel carrying deprecation
+  notices and usage errors must not become an instruction. Volatile fields
+  (`idle_seconds`) are excluded so the loop-guard signature is stable and the
+  guard can actually trip; it could not before, because the reason moved every
+  turn.
+
+  A SECOND defect in the opposite direction was found while fixing: `may-stop`
+  answers in its OWN schema (`{agent, runnable, items, idle_seconds}`) with no
+  `decision` key, so `payload.get("decision") == "block"` was false and the gate
+  ALLOWED every stop on hosts where the detector works correctly — the feature
+  was inert wherever it was not harmful. The suite hid this by only ever feeding
+  it hook-protocol JSON the detector never emits; fixtures are now captured from
+  real runs. Diagnostics now report the argv executed, the resolved absolute
+  binary, and the version it claims, and `MIN_CARDS_VERSION` states the floor
+  rather than leaving skew to be discovered by an agent that cannot stop.
+
+- **CI: drop 9 committed `.tmp-audit` gitlinks that made checkout re-clone every
+  run** (PR #769). `develop` and `main` carried nine mode-160000 gitlinks under
+  `.tmp-audit/` with no `.gitmodules`, swept in by the 2026-07-01 rescue autosave
+  commit whose broad `git add` ran over a checkout with an unignored
+  ecosystem-audit scratch dir. A gitlink with no mapping makes `git submodule
+  status` fatal; `actions/checkout` runs that on every job, reads the fatal as
+  "Bad Submodules found", and DELETES AND RE-CLONES the whole workspace — every
+  run, every runner. On self-hosted Spartan runners sharing one filesystem that
+  is not merely slow: it widens the window for the shared-FS races (ESTALE on
+  the toolcache, locked `_temp` file-command files) that actually turn runs red.
+  Verified: a clean checkout of develop reproduced the error byte-for-byte
+  (rc=128); afterwards `git submodule status` exits 0 with no output.
+
+- **Recipes: a floor alone does not upgrade — `-U`/`--upgrade` so the routine
+  bake installs LATEST** (PR #765). Unpinning was only half of "a routine bake
+  must pick up new code". Every requirement in both recipes is already a FLOOR,
+  but a floor that is ALREADY SATISFIED is a no-op: uv/pip leave the installed
+  build in place and exit 0. That is exactly the steady state for the `:scitex`
+  layer, which bootstraps `From: ./sac-base.sif` and therefore INHERITS base's
+  venv with every scitex package already present — so without `-U` a rebake
+  re-resolves nothing, reships yesterday's packages, and reports success. A
+  FRESH-base bake happens to work either way, which is why this went unnoticed.
+  Operator ruling (2026-07-17): 「pin 止めしてたら routine 焼きする意味ないですからね」.
+  The bake now runs on a timer, so the silent no-op was live, not theoretical.
+  Both sac local-source installs are deliberately unchanged (`--reinstall-package`
+  / `--force-reinstall --no-deps` are the stronger, content-correct levers), and
+  the embedded freshness-gate heredoc still hashes identically in both `.def`
+  files.
+
+- **Security: make the creds-watch change key see a same-size token rotation**
+  (PR #761). `creds_watch._signature` returned `(st_mtime, st_size)` — an
+  equality key built from a float-second mtime, so two writes inside one
+  timestamp granule with the same length compare equal and the watcher concludes
+  nothing changed. That is not hypothetical for this file: a rotated token bundle
+  is the SAME LENGTH as its predecessor (measured on this fleet, the live
+  credential and its immediately-preceding `.bak` are both exactly 1102 bytes, as
+  is a backup from four days earlier), so `st_size` cannot see a rotation at all
+  and the timestamp was the only real term. Because a shared-account
+  `refreshToken` is single-use — one rotation invalidates every co-tenant's
+  in-memory token — a watcher that can miss a rotation is a watcher that cannot
+  warn anyone. The key is now `(st_mtime_ns, st_size, st_ino)`.
 
 ## [0.21.26] - 2026-07-18
 
