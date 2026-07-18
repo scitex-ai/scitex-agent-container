@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Five jobs today:
+    Six jobs today:
 
     * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
       "should be running ⇒ is running". Restarts agents whose tmux session
@@ -48,6 +48,25 @@ def provide_jobs() -> "list[JobSpec]":
       duplication described below, one costume over. The crontab is host state a
       PR cannot edit, so the cron retirement is an operator/dotfiles step that
       must land WITH the enable.
+
+    * ``sac.heal-agent-auth`` (``kind="timer"``) — the INCUMBENT auth healer
+      (``~/.scitex/agent-container/bin/auth-heal.py``, every 10min), declared
+      here so it stops living as a hand-written crontab line that a sweep
+      deletes. ``~/.dotfiles/src/.cron/copy_crontab`` installs the tracked
+      manifest WHOLESALE (``git show HEAD:.crontab_list | crontab -``), so
+      anything absent from ``.crontab_list`` is erased on its next run — and
+      auth-heal has NO line in that manifest, which is why the wrapper that
+      exports ``SAC_SECRETS_ENVRC`` kept reverting. A hand-added crontab line
+      is temporary BY CONSTRUCTION; a JobSpec is not. scitex-cards and
+      dotfiles moved their own schedules to systemd ``--user`` timers for the
+      same reason, and scitex-dev's ruling makes the JobSpec plugin the SSoT.
+
+      MUTUALLY EXCLUSIVE WITH ``sac.restart-login-expired-agents`` — enable
+      exactly ONE. This job's ``scan_tui`` is precisely what that timer
+      reimplements natively, so the deploy gate documented below is not
+      lifted by declaring this one; it is made explicit. Declaring both is
+      safe (a JobSpec is inert until ``ecosystem up`` installs it); ENABLING
+      both puts two restarters with INDEPENDENT debounce state on one fleet.
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
@@ -269,6 +288,58 @@ def provide_jobs() -> "list[JobSpec]":
             # restarts, each a stop+settle+start) plus the ~4s capture interval.
             # A pass killed here is SAFE — history is persisted per restart, so
             # the next tick still honours the debounce for anything bounced.
+            timeout_sec=300,
+        ),
+        JobSpec(
+            name="sac.heal-agent-auth",
+            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
+            # ABSOLUTE by design, both tokens. `resolve_execstart` passes a
+            # command whose head starts with "/" through VERBATIM, so this is
+            # the only form that depends on neither the ambient PATH nor which
+            # interpreter ran `ecosystem up`. A systemd --user unit gets a
+            # MINIMAL PATH, so the venv python must be named outright: the
+            # script's own `#!/usr/bin/env python3` would resolve to the SYSTEM
+            # python under systemd, not the 3.11 venv the fleet runs on.
+            command=(
+                "/home/ywatanabe/.env-3.11/bin/python "
+                "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
+            ),
+            description=(
+                "Auth auto-heal for the fleet: scans each agent's session.jsonl "
+                "TAIL for a CURRENT 401/authentication_error and restarts the "
+                "agent so a fresh credential is re-mounted, plus the sibling "
+                "TUI-pane scan (2-run-corroborated) for tmux agents whose "
+                "transcript lives in the container overlay and is invisible to "
+                "the session.jsonl glob. Rate-limited (per-agent debounce, boot "
+                "grace, global cap/hour) and phones the operator instead of "
+                "looping when a restart provably did not fix it. Declared as a "
+                "JobSpec because its crontab line was swept by copy_crontab's "
+                "full-manifest install. MUTUALLY EXCLUSIVE with "
+                "sac.restart-login-expired-agents — enable exactly one."
+            ),
+            kind="timer",
+            # Same taxonomy note as the jobs above: kind must be one of
+            # {"service","timer","cron"} (scitex-dev #153); a wrong kind raises
+            # at construction and `ecosystem up` then silently drops sac's WHOLE
+            # provider.
+            #
+            # 10min preserves the incumbent cadence EXACTLY — not a guess: the
+            # live `runtime/auth-heal.log` ticks 15:20 → 15:30 → 15:40 → 15:50
+            # → 16:00 (2026-07-18), matching the `*/10` cron line. Migrating a
+            # schedule is the wrong moment to also retune it; a cadence change
+            # belongs in its own PR with its own argument.
+            on_boot_sec="5min",
+            on_unit_active_sec="10min",
+            # `Persistent=true` is emitted by scitex-dev's timer renderer for
+            # every kind="timer", so a window missed while the host was asleep
+            # fires on resume — the property a crontab line does NOT have and a
+            # laptop fleet needs most.
+            #
+            # 300s matches the siblings and comfortably outlives a real pass:
+            # a no-op tick takes ~2-8s, and the worst observed pass (a TUI
+            # restart at 15:30:04 settling by 15:32:08) ~2min. A pass killed
+            # here is SAFE — state is persisted per restart, so the next tick
+            # still honours the debounce for anything already bounced.
             timeout_sec=300,
         ),
     ]
