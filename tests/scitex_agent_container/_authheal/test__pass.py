@@ -12,14 +12,16 @@ and the escalation card that replaces an infinite restart loop.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+import pytest
 
 from scitex_agent_container._authheal._alarm import CARD_ID_PREFIX, card_id_for
 from scitex_agent_container._authheal._pass import auth_heal_pass
 from scitex_agent_container._reconcile._budget import (
     DEBOUNCE_S,
     MAX_RESTARTS_PER_AGENT_PER_HOUR,
+    save_history,
 )
 from scitex_agent_container._reconcile._rule import Verdict
 
@@ -27,7 +29,9 @@ from ._helpers import NOW, Recorder, stuck, transient
 
 
 def _seed_history(path: Path, mapping: dict) -> None:
-    path.write_text(json.dumps(mapping))
+    # Seed via the PRODUCTION writer so the file is byte-identical to what a real
+    # pass persists (every seed stamp is inside the 1h window, so none prunes).
+    save_history(path, mapping, now=NOW)
 
 
 def _run(capture, history, store, rec, **over):
@@ -134,7 +138,9 @@ def test_agent_over_the_hourly_cap_is_not_restarted(history, store):
     # the rolling hour and the debounce has since passed; it is STILL wedged.
     # Restarting is not fixing it — a loop is worse than a down agent. Two
     # stamps within the hour, the newest older than the debounce.
-    stamps = [NOW - 3400, NOW - int(DEBOUNCE_S) - 100][:MAX_RESTARTS_PER_AGENT_PER_HOUR]
+    stamps = [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100][
+        :MAX_RESTARTS_PER_AGENT_PER_HOUR
+    ]
     _seed_history(history, {"hpc": stamps})
     rec = Recorder()
     # Act
@@ -145,7 +151,7 @@ def test_agent_over_the_hourly_cap_is_not_restarted(history, store):
 
 def test_agent_over_the_hourly_cap_reports_over_budget(history, store):
     # Arrange
-    _seed_history(history, {"hpc": [NOW - 3400, NOW - int(DEBOUNCE_S) - 100]})
+    _seed_history(history, {"hpc": [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100]})
     rec = Recorder()
     # Act
     outcome = _run(stuck("hpc"), history, store, rec)
@@ -156,14 +162,15 @@ def test_agent_over_the_hourly_cap_reports_over_budget(history, store):
 def test_over_budget_agent_is_escalated_to_a_board_card(history, store):
     # Arrange — the whole point of the cap: instead of bouncing forever, the
     # agent that cannot be healed is handed to a human via an idempotent card.
-    from scitex_todo import list_tasks
-
-    _seed_history(history, {"hpc": [NOW - 3400, NOW - int(DEBOUNCE_S) - 100]})
+    # This ONE test needs the real board writer; skip cleanly where the CI test
+    # SIF has not layered scitex_todo in (the rest of this module does not).
+    scitex_todo = pytest.importorskip("scitex_todo")
+    _seed_history(history, {"hpc": [NOW - 3_400, NOW - int(DEBOUNCE_S) - 100]})
     rec = Recorder()
     # Act
     _run(stuck("hpc"), history, store, rec, alarm=True)
     # Assert — exactly one escalation card, for this agent.
-    ids = [c["id"] for c in list_tasks(store, id_prefix=CARD_ID_PREFIX)]
+    ids = [c["id"] for c in scitex_todo.list_tasks(store, id_prefix=CARD_ID_PREFIX)]
     assert ids == [card_id_for("hpc")]
 
 
