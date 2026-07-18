@@ -111,6 +111,45 @@ def _init_repo_with_origin(
     return root
 
 
+def _porcelain(path: Path) -> str:
+    """Return ``git status --porcelain`` output (stripped) for ``path``."""
+    return _git_out(["status", "--porcelain"], cwd=path).strip()
+
+
+def _stamp_owner_marker(worktree: Path, owner: str) -> None:
+    """Stamp ``<git-dir>/sac-owner = owner`` exactly as the WorktreeCreate hook does.
+
+    Written OUT of the working tree — into the worktree's PRIVATE gitdir
+    (``git rev-parse --absolute-git-dir``) — so ``git add -A`` can NEVER
+    stage it. That out-of-tree property is the whole point of the fix.
+    """
+    git_dir = _git_out(["rev-parse", "--absolute-git-dir"], cwd=worktree).strip()
+    (Path(git_dir) / "sac-owner").write_text(owner + "\n")
+
+
+def _init_shared_checkout(root: Path, *, branch: str = "develop") -> Path:
+    """A shared checkout that gitignores ``.worktrees/`` — the real lane topology.
+
+    Mirrors the ``scitex-cards`` lane: ONE physical checkout whose shared
+    ``.git`` hosts every agent's LINKED worktree under ``.worktrees/``.
+    ``.worktrees/`` + ``worktrees/`` are gitignored (verified against
+    sac's own ``.gitignore``) so the root checkout stays clean with
+    respect to the nested worktrees — exactly like production.
+    """
+    _init_repo(root, branch=branch)
+    (root / ".gitignore").write_text(".worktrees/\nworktrees/\n")
+    _git(["add", ".gitignore"], cwd=root)
+    _git(["commit", "-m", "ignore worktrees", "--quiet"], cwd=root)
+    return root
+
+
+def _add_linked_worktree(checkout: Path, rel: str, *, branch: str) -> Path:
+    """``git worktree add`` a real LINKED worktree under ``checkout`` (shares one .git)."""
+    wt = checkout / rel
+    _git(["worktree", "add", "-q", "-b", branch, str(wt), "HEAD"], cwd=checkout)
+    return wt
+
+
 # ---------------------------------------------------------------------------
 # is_protected_branch — denylist policy
 # ---------------------------------------------------------------------------
@@ -336,9 +375,13 @@ def test_rescue_for_agent_finds_dotworktrees_subagent(
     git_env_save_restore, tmp_path: Path
 ) -> None:
     # Arrange — primary workdir is clean; a .worktrees/agent-foo sibling
-    # carries the dirty work that restart would otherwise destroy.
+    # carries the dirty work that restart would otherwise destroy. The
+    # sub is stamped as owned by the stopping agent (``parent``) so the
+    # ownership gate ALLOWS its rescue (default-deny only skips peers /
+    # unstamped worktrees).
     workdir = _init_repo(tmp_path / "wd")
     sub = _init_repo(workdir / ".worktrees" / "agent-foo")
+    _stamp_owner_marker(sub, "parent")
     _make_dirty(sub)
     state_dir = tmp_path / "state"
     # Act
@@ -355,9 +398,12 @@ def test_rescue_for_agent_finds_dotworktrees_subagent(
 def test_rescue_for_agent_finds_legacy_worktrees_dir(
     git_env_save_restore, tmp_path: Path
 ) -> None:
-    # Arrange — legacy worktrees/legacy-feat carries the dirty work.
+    # Arrange — legacy worktrees/legacy-feat carries the dirty work,
+    # stamped as owned by the stopping agent so the ownership gate allows
+    # its rescue.
     workdir = _init_repo(tmp_path / "wd")
     legacy = _init_repo(workdir / "worktrees" / "legacy-feat")
+    _stamp_owner_marker(legacy, "parent")
     _make_dirty(legacy)
     state_dir = tmp_path / "state"
     # Act
@@ -712,3 +758,88 @@ def test_rescue_nonprotected_topic_branch_leaves_commit_on_that_branch(
     # Assert — HEAD's newest commit is the rescue autosave on feature/topic.
     subject = _git_out(["log", "-1", "--pretty=%s"], cwd=repo)
     assert subject.strip() == "rescue: pre-stop autosave agent-x@20260709T000000Z"
+
+
+# ---------------------------------------------------------------------------
+# OWNERSHIP — shared-checkout mis-attribution fix (stamp + default-deny)
+#
+# The ``scitex-cards`` lane runs four agents over ONE physical checkout, so
+# ``.git`` + ``.worktrees/`` are SHARED. Before the fix, a stopping agent's
+# rescue committed EVERY dirty ``.worktrees`` child — including peers' — under
+# its own identity (observed twice 2026-07-17: chat committed gui's tree).
+# Each worktree is now stamped at creation with its owner id at
+# ``<git-dir>/sac-owner`` (OUT of the working tree); the rescue rescues a
+# child ONLY when the stamp names the stopping agent, default-denying a
+# mismatched OR absent owner.
+# ---------------------------------------------------------------------------
+
+
+def test_rescue_skips_peer_and_unstamped_worktrees_in_shared_checkout(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — SPECIMEN REPRO. One shared checkout; three LINKED worktrees
+    # sharing its .git: wt_a stamped ownerA, wt_b stamped ownerB, wt_c
+    # UNSTAMPED. All three dirty. agentA stops.
+    checkout = _init_shared_checkout(tmp_path / "shared")
+    wt_a = _add_linked_worktree(checkout, ".worktrees/wt-a", branch="feature/a")
+    wt_b = _add_linked_worktree(checkout, ".worktrees/wt-b", branch="feature/b")
+    wt_c = _add_linked_worktree(checkout, ".worktrees/wt-c", branch="feature/c")
+    _stamp_owner_marker(wt_a, "agentA")
+    _stamp_owner_marker(wt_b, "agentB")
+    for wt in (wt_a, wt_b, wt_c):
+        _make_dirty(wt)
+    state_dir = tmp_path / "state"
+    # Act — agentA stops.
+    rescue_worktrees_for_agent(
+        agent_name="agentA", workdir=checkout, state_dir=state_dir
+    )
+    # Assert — ONLY agentA's own worktree was committed (clean now); the
+    # peer's (ownerB) and the unstamped one are SKIPPED (still dirty).
+    assert _porcelain(wt_a) == "" and _porcelain(wt_b) != "" and _porcelain(wt_c) != ""
+
+
+def test_rescue_commits_own_stamped_worktree_default_deny_is_not_deny_all(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — TWIN guard: default-deny must NOT collapse into deny-all.
+    # agentA's OWN stamped, dirty worktree in the shared checkout MUST
+    # still be rescued.
+    checkout = _init_shared_checkout(tmp_path / "shared")
+    wt = _add_linked_worktree(checkout, ".worktrees/mine", branch="feature/mine")
+    _stamp_owner_marker(wt, "agentA")
+    _make_dirty(wt)
+    state_dir = tmp_path / "state"
+    # Act
+    results = rescue_worktrees_for_agent(
+        agent_name="agentA", workdir=checkout, state_dir=state_dir
+    )
+    # Assert — the owned worktree's result records a commit.
+    mine = [r for r in results if Path(r["path"]).samefile(wt)]
+    assert mine and mine[0]["committed"] is True
+
+
+def test_rescue_never_stages_owner_marker_into_commit(
+    git_env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — agentA's own stamped, dirty worktree; the rescue commits
+    # it via ``git add -A``. The stamp lives in the private gitdir, so it
+    # must appear in NO committed path and NO working-tree status entry,
+    # yet still exist on disk (never lost, never staged).
+    checkout = _init_shared_checkout(tmp_path / "shared")
+    wt = _add_linked_worktree(checkout, ".worktrees/mine", branch="feature/mine")
+    _stamp_owner_marker(wt, "agentA")
+    _make_dirty(wt)
+    state_dir = tmp_path / "state"
+    # Act
+    rescue_worktrees_for_agent(
+        agent_name="agentA", workdir=checkout, state_dir=state_dir
+    )
+    # Assert — sac-owner is OUT of the tree: absent from the committed tree
+    # AND from porcelain, but present in the private gitdir.
+    committed_paths = _git_out(["ls-tree", "-r", "--name-only", "HEAD"], cwd=wt)
+    git_dir = _git_out(["rev-parse", "--absolute-git-dir"], cwd=wt).strip()
+    assert (
+        "sac-owner" not in committed_paths
+        and "sac-owner" not in _porcelain(wt)
+        and (Path(git_dir) / "sac-owner").is_file()
+    )

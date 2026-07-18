@@ -13,6 +13,7 @@ a ≥3-word descriptive name, and exactly one assertion.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -246,3 +247,51 @@ class TestWorktreeCreateBaseResolution:
         # the local develop HEAD which has the extra commit).
         new_sha = _git(target, "rev-parse", "HEAD")
         assert new_sha == origin_develop_sha
+
+
+# ---------------------------------------------------------------------------
+# Owner stamp — WRITE half of the shared-checkout mis-attribution fix.
+#
+# The hook stamps the creating agent's id at ``<git-dir>/sac-owner`` (OUT of
+# the working tree) so the pre-stop rescue can rescue ONLY worktrees it owns
+# (default-deny otherwise) on a checkout shared by several agents.
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeCreateOwnerStamp:
+    def test_owner_stamp_written_to_private_gitdir(self, ephemeral_repo: Path) -> None:
+        # Arrange — SCITEX_TODO_AGENT_ID identifies the owning agent; the
+        # hook must stamp it into the worktree's PRIVATE gitdir.
+        payload = _create_payload("stamp-probe", ephemeral_repo)
+        env = {**os.environ, "SCITEX_TODO_AGENT_ID": "stampy-agent"}
+        # Act
+        result = _run_hook(CREATE_SCRIPT, payload, env=env)
+        target = Path(result.stdout.strip())
+        git_dir = _git(target, "rev-parse", "--absolute-git-dir")
+        # Assert — the marker holds the agent id, in the private gitdir.
+        assert (Path(git_dir) / "sac-owner").read_text().strip() == "stampy-agent"
+
+    def test_owner_stamp_is_never_inside_the_working_tree(
+        self, ephemeral_repo: Path
+    ) -> None:
+        # Arrange — the marker MUST live outside the working tree so the
+        # rescue's ``git add -A`` can never stage it.
+        payload = _create_payload("stamp-outside-probe", ephemeral_repo)
+        env = {**os.environ, "SCITEX_TODO_AGENT_ID": "stampy-agent"}
+        # Act
+        result = _run_hook(CREATE_SCRIPT, payload, env=env)
+        target = Path(result.stdout.strip())
+        # Assert — no sac-owner file in the worktree's working directory.
+        assert not (target / "sac-owner").exists()
+
+    def test_no_owner_stamp_when_agent_id_unset(self, ephemeral_repo: Path) -> None:
+        # Arrange — an unset agent id leaves the worktree UNSTAMPED (the
+        # rescue then default-denies it) rather than stamping an empty id.
+        payload = _create_payload("no-stamp-probe", ephemeral_repo)
+        env = {k: v for k, v in os.environ.items() if k != "SCITEX_TODO_AGENT_ID"}
+        # Act
+        result = _run_hook(CREATE_SCRIPT, payload, env=env)
+        target = Path(result.stdout.strip())
+        git_dir = _git(target, "rev-parse", "--absolute-git-dir")
+        # Assert — no marker written.
+        assert not (Path(git_dir) / "sac-owner").exists()

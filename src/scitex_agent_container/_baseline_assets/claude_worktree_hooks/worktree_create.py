@@ -161,9 +161,7 @@ def _try_policy_target(name: str, cwd: str) -> str | None:
     base = _resolve_base(git_root)
 
     if _branch_exists(git_root, branch):
-        ok, _err = _try_git(
-            "worktree", "add", str(target), branch, cwd=git_root
-        )
+        ok, _err = _try_git("worktree", "add", str(target), branch, cwd=git_root)
     else:
         ok, _err = _try_git(
             "worktree", "add", "-b", branch, str(target), base, cwd=git_root
@@ -198,9 +196,7 @@ def _try_sdk_default_fallback(name: str, cwd: str) -> str | None:
         return None
     branch = f"claude/{name}"
     if _branch_exists(git_root, branch):
-        ok, _err = _try_git(
-            "worktree", "add", str(target), branch, cwd=git_root
-        )
+        ok, _err = _try_git("worktree", "add", str(target), branch, cwd=git_root)
     else:
         base = _resolve_base(git_root)
         ok, _err = _try_git(
@@ -209,6 +205,48 @@ def _try_sdk_default_fallback(name: str, cwd: str) -> str | None:
     if not ok or not target.is_dir():
         return None
     return str(target)
+
+
+# Ownership marker filename. MUST match
+# ``scitex_agent_container._lifecycle._pre_stop_rescue_git.OWNER_MARKER_NAME``
+# — this standalone hook cannot import the package, so the constant is
+# duplicated here with a pointer to its authoritative definition.
+_OWNER_MARKER_NAME = "sac-owner"
+
+
+def _stamp_owner(worktree_path: str) -> None:
+    """Stamp the owning agent id into ``<git-dir>/sac-owner`` for this worktree.
+
+    Why OUT of the working tree: the pre-stop rescue runs ``git add -A``
+    on every worktree it commits. An in-tree marker (``.sac-owner``)
+    would be STAGED into that rescue commit — a plausible-but-wrong
+    artifact. The worktree's PRIVATE gitdir (``git rev-parse
+    --absolute-git-dir`` → ``<main>/.git/worktrees/<name>`` for a linked
+    worktree, ``<checkout>/.git`` for a primary checkout) is OUTSIDE the
+    working tree, so git never stages it. The pre-stop rescue reads this
+    stamp and rescues a worktree ONLY when it names the stopping agent
+    (default-deny otherwise) — the shared-checkout mis-attribution fix.
+
+    Owner id = ``$SCITEX_TODO_AGENT_ID`` (the agent's board identity,
+    which equals its ``config.name`` — the value the rescue compares
+    against). Best-effort: a failure here must NEVER break worktree
+    creation, whose SDK contract is to echo the path. An empty/unset
+    agent id is left UNSTAMPED — the rescue then default-denies the
+    worktree, which is the safe outcome.
+    """
+    owner = os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
+    if not owner:
+        return
+    try:
+        git_dir = _run_git("rev-parse", "--absolute-git-dir", cwd=worktree_path)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return
+    if not git_dir:
+        return
+    try:
+        (Path(git_dir) / _OWNER_MARKER_NAME).write_text(owner + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def main() -> int:
@@ -254,6 +292,7 @@ def main() -> int:
 
     policy_path = _try_policy_target(name, cwd)
     if policy_path is not None:
+        _stamp_owner(policy_path)
         print(policy_path)
         return 0
 
@@ -262,6 +301,7 @@ def main() -> int:
     # the prune cron is the implicit cleanup contract.
     fallback_path = _try_sdk_default_fallback(name, cwd)
     if fallback_path is not None:
+        _stamp_owner(fallback_path)
         print(
             f"WorktreeCreate hook: policy target .worktrees/{name} failed; "
             f"falling back to SDK default {fallback_path} so the Agent "
