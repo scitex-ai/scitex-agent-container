@@ -1,15 +1,15 @@
-"""End-to-end tests for ``sac take-next-item`` — the never-stop Stop hook.
+"""End-to-end tests for ``sac never-stop-when-task-remains``.
 
-PA-306 no-mocks. Every test drives the real Click command with a real Stop-
-hook payload on stdin, against a REAL detector executable spawned as a real
-subprocess, with real on-disk loop-guard state. The assertions are made on
-the JSON the hook writes to stdout — i.e. on the exact bytes Claude Code
-parses as its Stop decision.
+PA-306 no-mocks. Every test drives the real Click command with a real
+Stop-hook payload on stdin, against a REAL executable spawned as a real
+subprocess, with real on-disk loop-guard state. Assertions are made on the
+JSON the hook writes to stdout — the exact bytes Claude Code parses as its
+Stop decision.
 
-The contract under test (Claude Code hooks reference, "Stop decision
-control"): exit 0 with ``{"decision": "block", "reason": ...}`` prevents the
-stop and feeds ``reason`` back as the agent's next instruction; exit 0 with
-no stdout allows the stop.
+Contract (Claude Code hooks reference, "Stop decision control"): exit 0 with
+``{"decision": "block", "reason": ...}`` prevents the stop and feeds
+``reason`` back as the agent's next instruction; exit 0 with no stdout
+allows the stop.
 """
 
 from __future__ import annotations
@@ -19,23 +19,23 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from scitex_agent_container._never_stop._loop_guard import MAX_CONSECUTIVE_BLOCKS
-from scitex_agent_container.cli_pkg.never_stop_cmds import take_next_item
+from scitex_agent_container._never_stop_when_task_remains._loop_guard import (
+    MAX_CONSECUTIVE_BLOCKS,
+)
+from scitex_agent_container.cli_pkg.never_stop_when_task_remains_cmds import (
+    never_stop_when_task_remains,
+)
 
-from .._never_stop._fake_detector import (
+from .._never_stop_when_task_remains._fake_detector import (
     clear_identity,
     detector_env,
-    hint_block,
     isolate_runtime,
     missing_detector,
-    runnable_payload,
     write_detector,
 )
 
-_ITEMS = [
-    ("sac-card-1", "in_progress, untouched 3h", "Run the failing test and fix it"),
-    ("sac-card-2", "unread inbox", "Poll your inbox and act on the digest"),
-]
+_REASON = "Do NOT stop — take card-1 next: run the failing test and fix it."
+_HOOK_JSON = json.dumps({"decision": "block", "reason": _REASON})
 
 #: A real Stop-hook payload, shaped as the docs specify.
 _PAYLOAD = json.dumps(
@@ -52,7 +52,7 @@ _PAYLOAD = json.dumps(
 
 def _run(agent: str = "") -> "tuple[int, str]":
     args = ["--agent", agent] if agent else []
-    result = CliRunner().invoke(take_next_item, args, input=_PAYLOAD)
+    result = CliRunner().invoke(never_stop_when_task_remains, args, input=_PAYLOAD)
     return result.exit_code, result.stdout
 
 
@@ -61,7 +61,7 @@ def _decision(stdout: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# exit 0 → the stop is ALLOWED
+# allow
 # ---------------------------------------------------------------------------
 
 
@@ -70,7 +70,7 @@ def test_exit_zero_allows_the_stop(env_save_restore, tmp_path: Path):
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
     # Act
-    code, out = _run("agent-x")
+    _, out = _run("agent-x")
     # Assert
     assert _decision(out).get("decision") is None
 
@@ -97,11 +97,11 @@ def test_allowed_stop_writes_no_stdout(env_save_restore, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# exit 2 → the stop is BLOCKED and CONVERTED into the next item
+# block — their decision, delivered
 # ---------------------------------------------------------------------------
 
 
-def test_exit_two_blocks_the_stop(env_save_restore, tmp_path: Path):
+def test_hook_json_block_reaches_stdout(env_save_restore, tmp_path: Path):
     """THE core invariant: a stop attempted with runnable work is blocked.
 
     Mutation-proved — removing the block from ``_decide.decide`` turns this
@@ -110,8 +110,7 @@ def test_exit_two_blocks_the_stop(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
     _, out = _run("agent-x")
@@ -119,102 +118,69 @@ def test_exit_two_blocks_the_stop(env_save_restore, tmp_path: Path):
     assert _decision(out).get("decision") == "block"
 
 
-def test_block_carries_the_parsed_next_actions(env_save_restore, tmp_path: Path):
+def test_their_reason_is_delivered_verbatim(env_save_restore, tmp_path: Path):
     """Refusing the stop is NOT enough — a refused stop leaves the agent
-    idle. The continuation must hand it the actual next action."""
+    idle. Their reason becomes the agent's next instruction, unmodified."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
     _, out = _run("agent-x")
-    reason = _decision(out).get("reason", "")
     # Assert
-    assert "Run the failing test and fix it" in reason
+    assert _decision(out).get("reason") == _REASON
 
 
-def test_block_carries_every_next_action(env_save_restore, tmp_path: Path):
+def test_unknown_payload_fields_reach_claude_code(env_save_restore, tmp_path: Path):
+    """scitex-cards must be able to evolve their payload without a sac
+    release, so fields sac has never heard of pass straight through."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
+    payload = json.dumps(
+        {"decision": "block", "reason": _REASON, "someFutureField": [1, 2]}
+    )
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=payload)
     )
     # Act
     _, out = _run("agent-x")
-    reason = _decision(out).get("reason", "")
     # Assert
-    assert all(action in reason for _, _, action in _ITEMS)
+    assert _decision(out).get("someFutureField") == [1, 2]
 
 
-def test_block_names_the_cards(env_save_restore, tmp_path: Path):
+def test_transitional_exit_two_blocks_with_their_stderr(
+    env_save_restore, tmp_path: Path
+):
+    """Today's path: an executable that signals by exit code. Its stderr is
+    forwarded as the reason, opaque and unedited."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
-    detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
-    )
+    text = "1. card-a — in_progress — finish the failing test"
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=2, stderr=text))
     # Act
     _, out = _run("agent-x")
-    reason = _decision(out).get("reason", "")
     # Assert
-    assert "sac-card-1" in reason and "sac-card-2" in reason
+    assert _decision(out).get("reason") == text
 
 
-def test_block_reason_is_non_empty(env_save_restore, tmp_path: Path):
+def test_block_reason_is_never_empty(env_save_restore, tmp_path: Path):
     """The docs require ``reason`` whenever ``decision`` is ``block``."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
-    detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
-    )
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=2))
     # Act
     _, out = _run("agent-x")
     # Assert
     assert _decision(out).get("reason", "").strip()
 
 
-def test_block_works_from_stderr_hints_under_store_warnings(
-    env_save_restore, tmp_path: Path
-):
-    # Arrange — no stdout JSON; hints sit below the real warning noise.
-    isolate_runtime(env_save_restore, tmp_path)
-    detector_env(
-        env_save_restore,
-        write_detector(
-            tmp_path, returncode=2, stderr=hint_block(_ITEMS, with_warnings=True)
-        ),
-    )
-    # Act
-    _, out = _run("agent-x")
-    reason = _decision(out).get("reason", "")
-    # Assert
-    assert "Poll your inbox and act on the digest" in reason
-
-
-def test_unparseable_exit_two_still_blocks(env_save_restore, tmp_path: Path):
-    """ "We could not parse it" must not become "nothing to do"."""
-    # Arrange
-    isolate_runtime(env_save_restore, tmp_path)
-    detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout="garbage", stderr="noise"),
-    )
-    # Act
-    _, out = _run("agent-x")
-    # Assert
-    assert _decision(out).get("decision") == "block"
-
-
 # ---------------------------------------------------------------------------
-# fail-open — a broken detector must never wedge the agent
+# fail-open
 # ---------------------------------------------------------------------------
 
 
-def test_missing_detector_allows_the_stop(env_save_restore, tmp_path: Path):
+def test_missing_executable_allows_the_stop(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     missing_detector(env_save_restore, tmp_path)
@@ -224,9 +190,9 @@ def test_missing_detector_allows_the_stop(env_save_restore, tmp_path: Path):
     assert _decision(out).get("decision") is None
 
 
-def test_missing_detector_logs_loudly(env_save_restore, tmp_path: Path):
+def test_missing_executable_logs_loudly(env_save_restore, tmp_path: Path):
     """Fail-open must be VISIBLE — a silent allow is indistinguishable from
-    a clean board, which is exactly the state the incident hid in."""
+    a clean board, which is exactly where the incident hid."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     missing_detector(env_save_restore, tmp_path)
@@ -236,7 +202,7 @@ def test_missing_detector_logs_loudly(env_save_restore, tmp_path: Path):
     assert "FAIL-OPEN" in _decision(out).get("systemMessage", "")
 
 
-def test_crashing_detector_allows_the_stop(env_save_restore, tmp_path: Path):
+def test_crashing_executable_allows_the_stop(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
@@ -249,7 +215,7 @@ def test_crashing_detector_allows_the_stop(env_save_restore, tmp_path: Path):
     assert _decision(out).get("decision") is None
 
 
-def test_crashing_detector_reports_the_exit_code(env_save_restore, tmp_path: Path):
+def test_crashing_executable_reports_the_exit_code(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
@@ -284,23 +250,22 @@ def test_unresolvable_identity_says_so_loudly(env_save_restore, tmp_path: Path):
 
 
 def test_identity_comes_from_env_not_cwd(env_save_restore, tmp_path: Path):
-    """The hook must resolve WHO it is from the agent's own environment."""
+    """The hook resolves WHO it is from the agent's own environment."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     clear_identity(env_save_restore)
     env_save_restore.set("SCITEX_TODO_AGENT_ID", "env-resolved-agent")
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
-    _, out = _run()
+    code, out = _run()
     # Assert
-    assert "env-resolved-agent" in _decision(out).get("reason", "")
+    assert _decision(out).get("decision") == "block"
 
 
 # ---------------------------------------------------------------------------
-# loop guard — alarm instead of re-driving forever
+# loop guard
 # ---------------------------------------------------------------------------
 
 
@@ -319,8 +284,7 @@ def test_repeated_identical_blocks_eventually_allow_the_stop(
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
     _, out = _block_repeatedly(MAX_CONSECUTIVE_BLOCKS + 1)
@@ -332,8 +296,7 @@ def test_loop_guard_alarms_when_it_trips(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
     _, out = _block_repeatedly(MAX_CONSECUTIVE_BLOCKS + 1)
@@ -341,25 +304,11 @@ def test_loop_guard_alarms_when_it_trips(env_save_restore, tmp_path: Path):
     assert "ALARM" in _decision(out).get("systemMessage", "")
 
 
-def test_alarm_names_the_stuck_cards(env_save_restore, tmp_path: Path):
-    # Arrange
-    isolate_runtime(env_save_restore, tmp_path)
-    detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
-    )
-    # Act
-    _, out = _block_repeatedly(MAX_CONSECUTIVE_BLOCKS + 1)
-    # Assert
-    assert "sac-card-1" in _decision(out).get("systemMessage", "")
-
-
 def test_guard_still_blocks_up_to_the_limit(env_save_restore, tmp_path: Path):
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     detector_env(
-        env_save_restore,
-        write_detector(tmp_path, returncode=2, stdout=runnable_payload(_ITEMS)),
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
     )
     # Act
     _, out = _block_repeatedly(MAX_CONSECUTIVE_BLOCKS)
@@ -372,7 +321,7 @@ def test_an_allowed_stop_clears_the_block_history(env_save_restore, tmp_path: Pa
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
     blocking = write_detector(
-        tmp_path, returncode=2, stdout=runnable_payload(_ITEMS), name="blocking"
+        tmp_path, returncode=2, stdout=_HOOK_JSON, name="blocking"
     )
     allowing = write_detector(tmp_path, returncode=0, name="allowing")
     detector_env(env_save_restore, blocking)
@@ -386,21 +335,20 @@ def test_an_allowed_stop_clears_the_block_history(env_save_restore, tmp_path: Pa
     assert _decision(out).get("decision") == "block"
 
 
-def test_changed_work_set_is_progress_and_keeps_blocking(
+def test_changed_reason_is_progress_and_keeps_blocking(
     env_save_restore, tmp_path: Path
 ):
     """Progress resets the counter — an agent working through a queue must
     never be alarmed just for having a long queue."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
+    out = ""
     for idx in range(MAX_CONSECUTIVE_BLOCKS + 2):
-        script = write_detector(
-            tmp_path,
-            returncode=2,
-            stdout=runnable_payload([(f"card-{idx}", "r", f"do thing {idx}")]),
-            name=f"det-{idx}",
+        payload = json.dumps({"decision": "block", "reason": f"take card-{idx}"})
+        detector_env(
+            env_save_restore,
+            write_detector(tmp_path, returncode=2, stdout=payload, name=f"det-{idx}"),
         )
-        detector_env(env_save_restore, script)
         # Act
         _, out = _run("agent-x")
     # Assert
@@ -421,10 +369,7 @@ def test_stdout_is_pure_json_when_blocking(env_save_restore, tmp_path: Path):
     detector_env(
         env_save_restore,
         write_detector(
-            tmp_path,
-            returncode=2,
-            stdout=runnable_payload(_ITEMS),
-            stderr=hint_block(_ITEMS, with_warnings=True),
+            tmp_path, returncode=2, stdout=_HOOK_JSON, stderr="noise on stderr"
         ),
     )
     # Act

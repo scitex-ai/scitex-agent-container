@@ -1,4 +1,4 @@
-"""Tests for ``_never_stop._identity`` — env-only agent resolution.
+"""Tests for ``_never_stop_when_task_remains._identity`` — env-only agent resolution.
 
 PA-306 no-mocks: every test drives real ``os.environ`` through the real
 ``env_save_restore`` fixture, and the cwd tests use a real chdir.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from scitex_agent_container._never_stop._identity import (
+from scitex_agent_container._never_stop_when_task_remains._identity import (
     IDENTITY_ENV_VARS,
     resolve_agent,
 )

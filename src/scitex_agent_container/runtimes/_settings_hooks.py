@@ -15,22 +15,38 @@ from __future__ import annotations
 import re
 
 #: Every hook SAC OWNS and re-injects from ``_HOOKS_CONFIG`` on each
-#: materialise: the event-ring ingest hooks (current ``event ingest`` and the
-#: renamed-away ``ingest-hook-event``) and the never-stop actuator
-#: (``take-next-item``).
+#: materialise, in EVERY spelling it has ever shipped under:
 #:
-#: Ownership is the whole criterion. De-duplication in
-#: :func:`_merge_hooks_blocks` compares WHOLE matcher-groups, so as soon as a
-#: group's contents change — a command renamed, or a second hook added
-#: beside an existing one — the old group is no longer equal to the new one
-#: and BOTH survive. That is how the 2026-06-23 duplicate-ingest incident
-#: happened, and adding the actuator to the Stop group reproduced it exactly
-#: (a second materialise yielded ``take-next-item`` twice). So every
-#: SAC-owned command must be pruned from the merge BASE, not just the one
-#: that broke last time.
+#: * ``event ingest`` — the current event-ring ingest hook.
+#: * ``ingest-hook-event`` — its renamed-away predecessor.
+#: * ``never-stop-when-task-remains`` — the current actuator.
+#: * ``take-next-item`` — the actuator's FIRST released spelling. Retained
+#:   purely as a migration path, and it must not be dropped until no
+#:   deployed agent's ``settings.json`` still carries it.
+#:
+#: Ownership is the whole criterion, and EVERY historical spelling counts.
+#: De-duplication in :func:`_merge_hooks_blocks` compares WHOLE
+#: matcher-groups, so as soon as a group's contents change — a command
+#: renamed, or a second hook added beside an existing one — the old group is
+#: no longer equal to the new one and BOTH survive.
+#:
+#: That has now bitten three times, which is why the list is exhaustive
+#: rather than "the one that broke":
+#:
+#: 1. 2026-06-23: a stale ``ingest-hook-event`` survived beside the renamed
+#:    ``event ingest``; both ran and the old one's deprecation-shim error
+#:    blocked every ``UserPromptSubmit``.
+#: 2. Adding the actuator to the Stop group changed that group, so a second
+#:    materialise emitted the actuator twice.
+#: 3. Renaming ``take-next-item`` to ``never-stop-when-task-remains`` is the
+#:    SAME shape again: to group-equality de-duping a renamed command is a
+#:    NEW command, so an already-deployed agent would keep the old hook AND
+#:    gain the new one — and the old one no longer resolves to a registered
+#:    CLI command, so it would fail loudly on every single turn end.
 _SAC_OWNED_RE = re.compile(
     r"(?:scitex-agent-container|sac)\s+"
-    r"(?:ingest-hook-event|event\s+ingest|take-next-item)\b"
+    r"(?:ingest-hook-event|event\s+ingest"
+    r"|never-stop-when-task-remains|take-next-item)\b"
 )
 
 
@@ -75,8 +91,8 @@ def _strip_stale_sac_ingest_hooks(hooks: object) -> dict:
     <kind>``, both ran, and the deprecated form's loud shim error BLOCKED
     every UserPromptSubmit (proj-scitex-dev 2026-06-23 — the agent received
     Telegram but could not act on it). Then an addition: putting the
-    never-stop actuator in the Stop group changed that group, so a second
-    materialise emitted ``take-next-item`` twice — meaning two detector
+    never-stop-when-task-remains actuator in the Stop group changed that group, so a second
+    materialise emitted ``never-stop-when-task-remains`` twice — meaning two detector
     subprocesses and two loop-guard increments per turn end.
 
     Stripping every SAC-owned command from the merge BASE makes the block

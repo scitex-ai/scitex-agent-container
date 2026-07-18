@@ -126,7 +126,7 @@ _HOOKS_CONFIG = {
                     "type": "command",
                     "command": "scitex-agent-container event ingest stop",
                 },
-                # The never-stop actuator. While the agent's board holds
+                # The never-stop-when-task-remains actuator. While the agent's board holds
                 # runnable work, this CONVERTS the stop into taking the next
                 # item: the completion of one unit of work is the trigger to
                 # pull the next, so "idle with work pending" is unreachable
@@ -140,10 +140,10 @@ _HOOKS_CONFIG = {
                 # the agent sitting there idle — so the hook hands back the
                 # detector's parsed next_action list as the continuation
                 # prompt. Fails OPEN (allows the stop, logs loudly) whenever
-                # the detector cannot be read. See the _never_stop package.
+                # the detector cannot be read. See the _never_stop_when_task_remains package.
                 {
                     "type": "command",
-                    "command": "scitex-agent-container take-next-item",
+                    "command": "scitex-agent-container never-stop-when-task-remains",
                 },
             ],
         }

@@ -1,10 +1,10 @@
-"""``sac take-next-item`` — the Stop hook that converts a stop into work.
+"""``sac never-stop-when-task-remains`` — the Stop hook that converts a stop into work.
 
 Wired into every agent's deployed ``.claude/settings.json`` by
 :mod:`~scitex_agent_container.runtimes.settings_json`::
 
     "Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "scitex-agent-container take-next-item"}
+        {"type": "command", "command": "scitex-agent-container never-stop-when-task-remains"}
     ]}]
 
 Protocol (Claude Code hooks reference, "Stop decision control"): a Stop hook
@@ -28,9 +28,9 @@ import sys
 
 import click
 
-from .._never_stop._decide import decide
-from .._never_stop._detector import probe
-from .._never_stop._identity import resolve_agent
+from .._never_stop_when_task_remains._decide import decide
+from .._never_stop_when_task_remains._detector import probe
+from .._never_stop_when_task_remains._identity import resolve_agent
 
 
 def _drain_stdin() -> dict:
@@ -58,14 +58,14 @@ def _drain_stdin() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-@click.command("take-next-item")
+@click.command("never-stop-when-task-remains")
 @click.option(
     "--agent",
     "agent_flag",
     default="",
     help="Override the agent id resolved from the environment.",
 )
-def take_next_item(agent_flag: str) -> None:
+def never_stop_when_task_remains(agent_flag: str) -> None:
     """Stop hook: take the next runnable board item instead of going idle.
 
     \b
@@ -86,20 +86,22 @@ def take_next_item(agent_flag: str) -> None:
         decision = decide(agent, verdict)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment above)
         print(
-            f"never-stop: gate crashed ({exc!r}); allowing the stop (fail-open)",
+            f"never-stop-when-task-remains: gate crashed ({exc!r}); allowing the stop (fail-open)",
             file=sys.stderr,
         )
         return
 
     if decision.log:
         if payload.get("stop_hook_active"):
-            print("never-stop: (continuing from a prior stop hook)", file=sys.stderr)
+            print(
+                "never-stop-when-task-remains: (continuing from a prior stop hook)",
+                file=sys.stderr,
+            )
         print(decision.log, file=sys.stderr)
 
-    out: dict = {}
-    if decision.block:
-        out["decision"] = "block"
-        out["reason"] = decision.reason
+    # The executable's decision, forwarded verbatim — we add only what sac
+    # owns (the fail-open / alarm systemMessage).
+    out: dict = dict(decision.payload) if decision.block else {}
     if decision.system_message:
         out["systemMessage"] = decision.system_message
 
@@ -108,4 +110,4 @@ def take_next_item(agent_flag: str) -> None:
         sys.stdout.write(json.dumps(out))
 
 
-__all__ = ["take_next_item"]
+__all__ = ["never_stop_when_task_remains"]
