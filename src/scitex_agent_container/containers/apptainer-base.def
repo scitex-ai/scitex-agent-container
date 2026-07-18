@@ -418,8 +418,12 @@ From: ubuntu:24.04
     # ``--refresh-package``: it REBUILDS that package from the staged source,
     # bypassing the cached wheel. Bakes carrying the pip-flag form shipped
     # pre-#742 sac while reporting rc=0 — a green build carrying OLD code.
-    # ``UV_NO_CACHE=1`` is belt-and-braces, not the mechanism.
-    UV_NO_CACHE=1 uv pip install --python /opt/venv-sac/bin/python \
+    # ``--no-cache`` is uv's OWN cache-disable (the pip spelling is
+    # --no-cache-dir); belt-and-braces, not the mechanism. Keep the command
+    # starting with ``uv pip install`` — the base-def contract tests locate
+    # this block with startswith("uv pip install"), so an env-var prefix
+    # (UV_NO_CACHE=1 ...) makes the block invisible to them.
+    uv pip install --no-cache --python /opt/venv-sac/bin/python \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
         "scitex-cards[mcp]>=0.16.0" \

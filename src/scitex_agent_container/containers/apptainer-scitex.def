@@ -177,8 +177,11 @@ From: ./sac-base.sif
         # is ``--reinstall-package <pkg>``, which IMPLIES ``--refresh-package``:
         # it REBUILDS that package from the staged source, bypassing the cached
         # wheel. Measured: bakes carrying the pip-flag form shipped pre-#742 sac
-        # while reporting rc=0. ``UV_NO_CACHE=1`` is belt, not the mechanism.
-        UV_NO_CACHE=1 uv pip install --python /opt/venv-sac/bin/python \
+        # while reporting rc=0. ``--no-cache`` is uv's OWN cache-disable (pip
+        # spells it --no-cache-dir) — belt, not the mechanism. Keep the command
+        # starting with ``uv pip install``: the def contract tests locate this
+        # block with startswith("uv pip install"), so an env-var prefix hides it.
+        uv pip install --no-cache --python /opt/venv-sac/bin/python \
             --reinstall-package scitex-agent-container --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
