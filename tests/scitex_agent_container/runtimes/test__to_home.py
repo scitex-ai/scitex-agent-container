@@ -731,6 +731,91 @@ class TestDeployToHomeFromConfig:
 
 
 # ---------------------------------------------------------------------------
+# Restart re-delivery: a deploy into a dest that ALREADY holds a stale copy
+# of a to_home file must land the CURRENT content — whether the stale copy is
+# a plain OLD file (the common case) or a leftover host-merge SYMLINK pointing
+# at the operator's real host file (which must be REPLACED, never written
+# through). Mirrors the fleet-restart to_home-staleness class.
+# ---------------------------------------------------------------------------
+
+_HOOK_REL = ".claude/hooks/pre-tool-use/deny_edit_on_main_branch.sh"
+_HOST_ENV = "SAC_HOST_CLAUDE_DIR"
+_USER_BASELINE_ENV = "SAC_USER_TO_HOME_BASELINE"
+
+
+class TestDeployRedeliversChangedFilesOnRestart:
+    def test_deploy_overwrites_old_real_file_in_dest(self, tmp_path):
+        # Arrange — dest already holds an OLD real copy of a baseline hook.
+        cfg, root = _build_cfg(tmp_path)
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-v2\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        old = home / _HOOK_REL
+        old.parent.mkdir(parents=True)
+        old.write_text("OLD-v1\n")
+        os.chmod(old, 0o755)
+        # Act — the restart-path materialization.
+        deploy_to_home(cfg, str(home))
+        # Assert — the stale content is replaced with the current source.
+        assert (home / _HOOK_REL).read_text() == "NEW-v2\n"
+
+    def test_deploy_replaces_leftover_hostmerge_symlink_with_real_file(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — developer agent; a prior host-merge left a SYMLINK at the
+        # dest pointing at the operator's real host hook, and the hook has
+        # since moved into the agent baseline (a real source file now exists).
+        env_save_restore.set(_USER_BASELINE_ENV, str(tmp_path / "no-user-baseline"))
+        host_root = tmp_path / "host_claude"
+        host_hook = host_root / "hooks" / "pre-tool-use" / "deny_edit_on_main_branch.sh"
+        host_hook.parent.mkdir(parents=True)
+        host_hook.write_text("HOST-ORIGINAL\n")
+        env_save_restore.set(_HOST_ENV, str(host_root))
+        cfg, root = _build_cfg(tmp_path, labels={"role": "project-maintainer"})
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-baseline\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        stale = home / _HOOK_REL
+        stale.parent.mkdir(parents=True)
+        stale.symlink_to(host_hook)
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert — dest is a REAL file carrying the current baseline content.
+        assert (
+            not (home / _HOOK_REL).is_symlink()
+            and (home / _HOOK_REL).read_text() == "NEW-baseline\n"
+        )
+
+    def test_deploy_over_leftover_symlink_does_not_corrupt_host_file(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — same as above; the danger is writing THROUGH the link.
+        env_save_restore.set(_USER_BASELINE_ENV, str(tmp_path / "no-user-baseline"))
+        host_root = tmp_path / "host_claude"
+        host_hook = host_root / "hooks" / "pre-tool-use" / "deny_edit_on_main_branch.sh"
+        host_hook.parent.mkdir(parents=True)
+        host_hook.write_text("HOST-ORIGINAL\n")
+        env_save_restore.set(_HOST_ENV, str(host_root))
+        cfg, root = _build_cfg(tmp_path, labels={"role": "project-maintainer"})
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-baseline\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        stale = home / _HOOK_REL
+        stale.parent.mkdir(parents=True)
+        stale.symlink_to(host_hook)
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert — the operator's real host file is byte-for-byte untouched.
+        assert host_hook.read_text() == "HOST-ORIGINAL\n"
+
+
+# ---------------------------------------------------------------------------
 # Baseline layer — shared/common to_home overlaid by per-agent to_home.
 #
 # Layout under tmp_path:
