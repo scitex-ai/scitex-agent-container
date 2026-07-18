@@ -408,17 +408,19 @@ From: ubuntu:24.04
     # in pyproject.toml (SSoT); the bracket syntax on the local source
     # path resolves it through the bundled tree's own metadata.
     #
-    # --no-cache-dir forces a REBUILD from the staged source rather than a
-    # reuse of uv's built-wheel cache. That cache is keyed on (name,
-    # version) — NOT on content — and sac's version does NOT advance
-    # per-commit (importlib.metadata reports the last RELEASED version even
-    # for brand-new bundled source). So without this flag uv serves a
-    # byte-identical STALE wheel from a prior bake and the new source never
-    # ships: a green build carrying OLD code. --force-reinstall reinstalls
-    # but REUSES the cached wheel; only --no-cache-dir rebuilds from source.
-    # (Two bakers hit exactly this — the image's _cct_token_pool.py was
-    # byte-identical to the pre-#742 source while the tree was at HEAD.)
-    uv pip install --no-cache-dir --python /opt/venv-sac/bin/python \
+    # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
+    # ``--force-reinstall`` are PIP flags; uv does not honour them as a
+    # cache-bypass/rebuild, so it can reinstall a byte-identical STALE wheel it
+    # already built — its built-wheel cache is keyed on (name, version), NOT
+    # content, and sac's version does not advance per-commit (importlib
+    # .metadata reports the last RELEASED version even for brand-new bundled
+    # source). uv's own lever is ``--reinstall-package <pkg>``, which IMPLIES
+    # ``--refresh-package``: it REBUILDS that package from the staged source,
+    # bypassing the cached wheel. Bakes carrying the pip-flag form shipped
+    # pre-#742 sac while reporting rc=0 — a green build carrying OLD code.
+    # ``UV_NO_CACHE=1`` is belt-and-braces, not the mechanism.
+    UV_NO_CACHE=1 uv pip install --python /opt/venv-sac/bin/python \
+        --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
         "scitex-cards[mcp]>=0.16.0" \
         "/opt/scitex-agent-container-src[openai]"
@@ -525,10 +527,25 @@ failures = []
 # Set-differences (wheel excludes data files) are NOT staleness and are
 # ignored — comparing whole-tree hashes false-positives on them. Generic
 # on purpose: it names no feature, so a rename or decoupling never breaks it.
-import hashlib as _hashlib, pathlib as _pathlib
-import scitex_agent_container as _sac
-_installed_root = _pathlib.Path(_sac.__file__).parent
+import hashlib as _hashlib, pathlib as _pathlib, sysconfig as _sysconfig
+# Resolve the INSTALLED tree from this interpreter's OWN site-packages, never
+# via ``scitex_agent_container.__file__`` (INCIDENT 2026-07-18): during %post
+# the staged source can be importable, in which case __file__ points at the
+# STAGED tree, the gate compares that tree to ITSELF, and it passes no matter
+# how stale the real install is. It false-greened a pre-#742 image exactly so.
+_installed_root = _pathlib.Path(_sysconfig.get_paths()["purelib"]) / "scitex_agent_container"
 _staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
+# A gate that cannot distinguish its two operands is blind — say so, loudly.
+if not _installed_root.is_dir():
+    failures.append(
+        "content assert cannot find the INSTALLED sac at %s — sac is not "
+        "installed into site-packages; the gate has nothing to verify." % _installed_root
+    )
+elif _installed_root.resolve() == _staged_root.resolve():
+    failures.append(
+        "content assert operands are the SAME directory (%s) — installed and "
+        "staged resolve identically, so the comparison proves nothing." % _installed_root
+    )
 def _rel_shas(root):
     out = {}
     for p in root.rglob("*.py"):
