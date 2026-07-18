@@ -49,18 +49,29 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_seven_jobs() -> None:
-    # Arrange — call the registered provider. Seven: accounts-refresh, the
-    # host-sync-check drift alarm, the daily worktree GC, the daily Spartan SIF
-    # bake, the fleet-reconcile enforcer (dead/no-session corpses), the
-    # restart-login-expired-agents timer (live-session-but-auth-dead agents),
-    # and heal-agent-auth (the incumbent auth-heal.py, migrated off the swept
-    # crontab). `sac listen` is still NOT federated (see the module docstring
-    # and the absence-pin below).
+def test_provider_returns_every_expected_job() -> None:
+    # Arrange — pinned by NAME, not by count. An exact-count assertion goes
+    # red on every legitimate addition while saying nothing about WHICH job
+    # moved, so the number gets bumped reflexively and the pin quietly stops
+    # meaning anything. Membership names what actually changed.
+    #
+    # freshness-refresh is the newest: the refresher half of the
+    # version-currency check, without which the CLI's staleness banner has
+    # no cache to read and is silent forever. `sac listen` is still NOT
+    # federated (see the module docstring and the absence-pin below).
     # Act
-    jobs = provide_jobs()
+    names = {job.name for job in provide_jobs()}
     # Assert
-    assert len(jobs) == 7
+    assert names == {
+        "sac.accounts-refresh",
+        "sac.host-sync-check",
+        "sac.worktree-gc",
+        "sac.spartan-sif-bake",
+        "sac.fleet-reconcile",
+        "sac.restart-login-expired-agents",
+        "sac.heal-agent-auth",
+        "sac.freshness-refresh",
+    }
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:

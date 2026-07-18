@@ -33,6 +33,7 @@ where it is the authoritative one.
 
 from __future__ import annotations
 
+import sys as _sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from pathlib import Path
@@ -42,10 +43,12 @@ from ._git import head_sha, repo_root_for_package
 __all__ = [
     "DIST_NAME",
     "baked",
+    "declared_version",
     "format_terse",
     "identity",
     "origin_mismatch",
     "package_dir",
+    "running_version",
 ]
 
 DIST_NAME = "scitex-agent-container"
@@ -130,14 +133,34 @@ def baked() -> dict:
 
 
 def declared_version() -> str:
-    """The version the INSTALLED distribution advertises."""
+    """The version the INSTALLED distribution advertises.
+
+    This is the number that LIES, and it is kept — under a name that says
+    what it is — precisely so the lie can be shown next to the truth. For an
+    editable install it is frozen at ``pip install -e`` time and never moves
+    again, however many times you ``git pull``. Use :func:`running_version`
+    for the answer to "what am I actually executing?".
+    """
     try:
         return _dist_version(DIST_NAME)
     except PackageNotFoundError:  # stx-allow: fallback (reason: running straight off a source tree with nothing installed)
         return baked().get("version") or "0.0.0+unknown"
 
 
-def identity() -> dict:
+def running_version() -> tuple[str | None, str]:
+    """``(version, source)`` for the code actually executing. Never raises.
+
+    Delegates to ``scitex_dev.versioning`` via ``_freshness`` — sac does not
+    reimplement the judgment. When the primitive is unavailable this returns
+    the metadata claim tagged ``"metadata"`` rather than silently passing a
+    fossil off as verified; the tag is what lets the caller say so.
+    """
+    from .._freshness import running_version as _running
+
+    return _running()
+
+
+def identity(*, verify_content: bool = True) -> dict:
     """Resolve the identity of the code that is actually imported.
 
     ``install`` is one of:
@@ -149,16 +172,50 @@ def identity() -> dict:
     * ``wheel``   — an installed/copied tree carrying a build stamp.
     * ``unknown`` — no checkout and no stamp: a tree built before this
       existed, or hand-copied. Says so rather than guessing.
+
+    ``version`` is the RUNNING version, not the declared one. That swap is
+    the point of this function now: on the operator's host five sac installs
+    reported 0.21.24 / 0.21.22 / 0.21.21 / 0.21.11 / none depending on how
+    you invoked it, and his own editable ``.venv`` advertised 0.21.21 while
+    executing current develop, because ``importlib.metadata`` reads a
+    ``.dist-info`` frozen at install time. ``declared`` keeps that claim
+    alongside, so a disagreement between the two is visible rather than
+    merely resolved.
+
+    ``executable`` names the interpreter that answered. Together with
+    ``origin`` it is what makes a currency verdict actionable: "0.21.21 is
+    behind 0.21.24" is unusable when five installs could be speaking.
+
+    ``verify_content=False`` skips the content probe and reports the
+    declared number tagged ``"metadata"``. It exists for callers that need
+    the sub-millisecond path and can tolerate a fossil; the default is the
+    honest answer, because ``--version`` is an explicit request whose whole
+    job is to be right.
     """
     origin = package_dir()
     stamp = baked()
     root = repo_root_for_package(origin)
 
+    if verify_content:
+        version, version_source = running_version()
+    else:
+        version, version_source = None, "metadata"
+    declared = declared_version()
+    if not version:
+        version, version_source = declared, "metadata"
+
+    common = {
+        "version": version,
+        "declared": declared,
+        "version_source": version_source,
+        "executable": _sys.executable,
+    }
+
     if root is not None:
         commit = head_sha(root)
         if commit:
             return {
-                "version": declared_version(),
+                **common,
                 "commit": commit,
                 "commit_source": "git",
                 "code_hash": None,
@@ -170,7 +227,7 @@ def identity() -> dict:
 
     commit = stamp.get("commit")
     return {
-        "version": declared_version(),
+        **common,
         "commit": commit,
         "commit_source": stamp.get("commit_source") if commit else None,
         "code_hash": stamp.get("code_hash"),
@@ -198,18 +255,48 @@ def short_id(info: dict) -> str:
 def format_terse(info: dict) -> str:
     """One line. Keeps click's ``<prog>, version <X.Y.Z>`` prefix intact.
 
-    Scripts that parse the third whitespace field still get the version;
-    everything added is appended after it.
+    Scripts that parse the third whitespace field still get the version —
+    and now they get the RUNNING one, so the habit is no longer a trap.
+
+    Three things are appended, each because its absence caused a real
+    misdiagnosis:
+
+    * ``from <origin>``   — WHICH install is speaking. Five of them on one
+      host reported five different versions.
+    * ``(python <exe>)``  — under WHICH interpreter. Which of the five you
+      get depends on how you invoked sac (login shell, direct argv, systemd,
+      cron), and the interpreter is what distinguishes them.
+    * ``metadata claims <X>`` — shown ONLY when the frozen ``.dist-info``
+      disagrees with the running code. That disagreement IS the bug the
+      operator kept hitting, so it is stated rather than quietly corrected;
+      seeing it once explains every confusing version report that preceded
+      it.
     """
     marker = short_id(info)
     bits = [marker] if marker == "unknown" else [marker, info["install"]]
     built = info.get("built_at")
     if built:
         bits.append(built.split("T")[0])
-    return (
+
+    line = (
         f"{DIST_NAME}, version {info['version']} "
         f"({' '.join(bits)}) from {info['origin']}"
     )
+
+    executable = info.get("executable")
+    if executable:
+        line += f" (python {executable})"
+
+    declared = info.get("declared")
+    if declared and declared != info.get("version"):
+        line += f" [metadata claims {declared} — fossil, ignored]"
+    elif info.get("version_source") == "metadata":
+        # Unverified: say so. An unlabelled number that happens to come
+        # from the fossil path is indistinguishable from a verified one,
+        # and that indistinguishability is the whole problem.
+        line += " [unverified: metadata only]"
+
+    return line
 
 
 # EOF
