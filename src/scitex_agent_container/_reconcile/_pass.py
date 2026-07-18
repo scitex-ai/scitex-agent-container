@@ -34,6 +34,7 @@ from ._rule import MANAGED_POLICIES, Verdict, decide
 __all__ = [
     "AgentReport",
     "PassOutcome",
+    "fleet_agents_dir",
     "fleet_spec_paths",
     "reconcile_pass",
 ]
@@ -103,7 +104,7 @@ class PassOutcome:
         return 0
 
 
-def _fleet_agents_dir() -> Path:
+def fleet_agents_dir() -> Path:
     """The user-scope fleet registry dir (``…/agents``).
 
     Globbed DIRECTLY rather than through :func:`config._resolve.resolve_config`
@@ -112,6 +113,11 @@ def _fleet_agents_dir() -> Path:
     resolve the same fleet whatever directory systemd happens to start it in,
     so it takes the deterministic path, exactly as ``sac agents refresh-acl``
     already does for the same reason.
+
+    Public because :mod:`.._authheal._detect` resolves the SAME roster to find
+    the agents its pane reading failed to account for. Two sweeps of one fleet
+    must never disagree about which agents exist, so they share this accessor
+    rather than each growing their own.
     """
     override = os.environ.get(_AGENTS_DIR_ENV)
     if override:
@@ -127,7 +133,7 @@ def fleet_spec_paths(specs_dir: Path | None = None) -> list[Path]:
     Skips ``_``-prefixed dirs (``_shared``, ``_template_*``, ``_archive``) —
     scaffolding, not fleet agents.
     """
-    root = specs_dir if specs_dir is not None else _fleet_agents_dir()
+    root = specs_dir if specs_dir is not None else fleet_agents_dir()
     if not root.is_dir():
         return []
     return [

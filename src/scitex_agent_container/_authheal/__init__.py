@@ -15,7 +15,14 @@ double-supervisor class.
 
 from __future__ import annotations
 
-from ._detect import DEFAULT_INTERVAL, capture_live_panes, detect_login_expired
+from ._detect import (
+    DEFAULT_INTERVAL,
+    DetectionOutcome,
+    Roster,
+    capture_live_panes,
+    detect_login_expired,
+    registered_agents,
+)
 from ._pass import (
     DEFAULT_PASS_CAP,
     AgentReport,
@@ -28,9 +35,12 @@ __all__ = [
     "DEFAULT_INTERVAL",
     "DEFAULT_PASS_CAP",
     "AgentReport",
+    "DetectionOutcome",
     "PassOutcome",
+    "Roster",
     "auth_heal_pass",
     "capture_live_panes",
     "detect_login_expired",
     "history_path",
+    "registered_agents",
 ]

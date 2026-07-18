@@ -34,6 +34,15 @@ DEPLOY GATE — READ BEFORE ENABLING THE TIMER
     host's ``auth-heal.py`` ``scan_tui`` is retired. See :mod:`.._jobs_plugin`
     and the ``sac agents restart-login-expired`` command help.
 
+WHAT A CLEAN PASS IS ALLOWED TO MEAN
+    A pass reports on the REGISTERED roster, not on whatever its pane reading
+    happened to contain. Every registered agent must leave this pass in exactly
+    one of three states — wedged, observed-and-fine, or UNOBSERVED — and only
+    the wedged ones are ever restarted. That third state is what makes exit 0 a
+    real claim: "we accounted for the whole roster and none of it is wedged",
+    rather than the far weaker "we produced no reports", which is also what a
+    pass that read nothing at all produces.
+
 Every collaborator is an injectable seam with a REAL default, so tests drive the
 whole pass against real panes, a real temp history file and a real scitex-todo
 store — with the one irreversible act (the restart) swapped for a recorder. No
@@ -58,7 +67,12 @@ from .._reconcile._budget import (
 )
 from .._reconcile._rule import Verdict
 from ._alarm import route_reports_to_cards, upsert_heartbeat
-from ._detect import DEFAULT_INTERVAL, capture_live_panes, detect_login_expired
+from ._detect import (
+    DEFAULT_INTERVAL,
+    capture_live_panes,
+    detect_login_expired,
+    registered_agents,
+)
 
 __all__ = [
     "DEFAULT_INTERVAL",
@@ -86,6 +100,11 @@ _BUDGET_VERDICTS = {
 #: Verdicts that mean we ATTEMPTED a restart, so the history must be persisted
 #: before the next agent (a killed pass must not forget what it already bounced).
 _SPENT = (Verdict.RESTARTED, Verdict.FAILED)
+
+#: The report subject used when the ROSTER ITSELF could not be read. Not an
+#: agent — it is the population we failed to establish — and named so that a
+#: cron log says WHICH reading failed instead of showing an unexplained exit 2.
+_ROSTER_SUBJECT = "<fleet-roster>"
 
 
 def history_path() -> Path:
@@ -149,8 +168,22 @@ class PassOutcome:
         return {k: v for k, v in out.items() if v}
 
     def exit_code(self) -> int:
-        """0 clean · 1 something is wedged · 2 we cannot read our own memory."""
-        if self.of(Verdict.BUDGET_UNKNOWN):
+        """0 confirmed-clean · 1 something is wedged · 2 could-not-determine.
+
+        0 is the STRONGEST claim this pass can make, so it is reserved for
+        earning it: EVERY agent in the registered roster was actually observed,
+        and none of them is wedged. It is never the answer to "we produced no
+        reports", because a pass that observed nothing at all produces no
+        reports either — and while those two spelled the same 0, a wedged agent
+        could sit for hours while the timer recorded a healthy tick for each
+        pass that had failed to look at it.
+
+        Anything UNOBSERVED therefore outranks the clean answer and joins
+        BUDGET_UNKNOWN at 2. They are one statement in two costumes — we could
+        not determine the thing this pass exists to determine — and 2 is the
+        code that lets a cron tell that apart from a fleet genuinely healthy.
+        """
+        if self.of(Verdict.BUDGET_UNKNOWN, Verdict.UNOBSERVED):
             return 2
         if self.of(
             Verdict.FAILED,
@@ -224,10 +257,60 @@ def _perform(
     )
 
 
+def _unobserved(name: str, *, live: bool) -> AgentReport:
+    """An agent we took NO reading of — reported, never restarted.
+
+    There are two ways to be unobserved and the detail must say which, because
+    they send the operator to different places: a LIVE session whose pane would
+    not capture (tmux is there, the read failed), versus a registered agent with
+    no session at all (the reading could not even have had a row for it — the
+    shape that let an agent go missing rather than red). Neither is evidence of
+    a wedge, so neither is restarted; neither is evidence of health either, so
+    neither is silently dropped.
+    """
+    if live:
+        return AgentReport(
+            name,
+            Verdict.UNOBSERVED,
+            "pane-unreadable",
+            f"{name} has a live tui- session but its pane could NOT be captured, "
+            f"so nothing was learned about its auth. NOT restarted (absence of "
+            f"evidence is not evidence of a wedge) and NOT counted healthy",
+        )
+    return AgentReport(
+        name,
+        Verdict.UNOBSERVED,
+        "no-session",
+        f"{name} is REGISTERED but has no live tui- session, so this pass could "
+        f"not read it at all. NOT restarted — a missing session is "
+        f"fleet-reconcile's half of the fleet, not ours — but its absence from "
+        f"the reading is not evidence that {name} is healthy",
+    )
+
+
+def _roster_unreadable(detail: str) -> AgentReport:
+    """The ROSTER is the thing we could not read, so no pass can be clean.
+
+    Without it we do not know which agents SHOULD have been observed, so we
+    cannot claim to have observed them all however many panes we did read. The
+    finding is carried as a report of its own rather than a bare exit code, so
+    the reason travels with the verdict to whoever reads the log.
+    """
+    return AgentReport(
+        _ROSTER_SUBJECT,
+        Verdict.UNOBSERVED,
+        "roster-unreadable",
+        f"could not establish which agents SHOULD be running: {detail}. Agents "
+        f"missing from this pass's reading cannot be told apart from agents that "
+        f"do not exist, so this pass cannot report a clean fleet",
+    )
+
+
 def auth_heal_pass(
     *,
     apply: bool = False,
     limit: int = DEFAULT_PASS_CAP,
+    specs_dir: Path | None = None,
     history_file: Path | None = None,
     store: str | None = None,
     alarm: bool = True,
@@ -242,6 +325,13 @@ def auth_heal_pass(
     ``apply=False`` (the default, selected by ``--check``) is a REPORT: it
     detects and decides but restarts nothing. The only board write a dry-run
     makes is this restarter's own heartbeat.
+
+    Parameters
+    ----------
+    specs_dir
+        The fleet registry to read the roster from — the population every
+        report is checked against. Real state, redirectable for tests, exactly
+        as ``reconcile_pass`` takes it.
     """
     now = now if now is not None else time.time()
     now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
@@ -252,7 +342,17 @@ def auth_heal_pass(
     history_file = history_file if history_file is not None else history_path()
     stream = err_stream if err_stream is not None else sys.stderr
 
-    names = detect_login_expired(capture_fn())
+    captures = capture_fn()
+    roster = registered_agents(specs_dir)
+
+    # A REGISTERED agent absent from the capture is missing from our READING of
+    # the fleet, not from the fleet. Seeding it as an explicit (None, None)
+    # turns that absence into a value the matcher classifies as UNKNOWN, rather
+    # than a key that never exists and so can never be reported as anything.
+    observed = dict(captures)
+    for agent in roster.names:
+        observed.setdefault(agent, (None, None))
+    detection = detect_login_expired(observed)
 
     # PROVE we can read (and create) our own memory before acting on it — a
     # budget we cannot read is not a budget (see _reconcile._budget).
@@ -260,7 +360,7 @@ def auth_heal_pass(
     budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
     reports: list[AgentReport] = []
 
-    for name in names:
+    for name in detection.auth_failed:
         report = _perform(
             name,
             budget=budget,
@@ -298,6 +398,15 @@ def auth_heal_pass(
             f"agent(s): {read.detail}",
             file=stream,
         )
+
+    # Now say what we did NOT manage to look at. These reports carry no action
+    # — they are added after every restart decision precisely so they cannot
+    # influence one — and they exist so that an agent this pass never read
+    # leaves a line behind instead of leaving nothing behind.
+    live = set(captures)
+    if not roster.readable:
+        reports.append(_roster_unreadable(roster.detail))
+    reports.extend(_unobserved(name, live=name in live) for name in detection.unknown)
 
     outcome = PassOutcome(reports=tuple(reports), applied=apply)
     alarm_outcome = None

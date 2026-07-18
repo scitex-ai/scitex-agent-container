@@ -73,8 +73,9 @@ class Verdict(str, Enum):
     """What we concluded about ONE agent. Every leg is printed, never silent.
 
     The RULE in this module only ever returns the first five. The remaining
-    verdicts describe what the PASS then DID with a :attr:`RESTART`, and are
-    reachable only from :mod:`._pass`.
+    verdicts are reachable only from a PASS: most describe what it then DID
+    with a :attr:`RESTART`, while :attr:`UNOBSERVED` records the agents it
+    never managed to take a reading of at all.
     """
 
     # --- reachable by the pure rule ---------------------------------------
@@ -92,6 +93,17 @@ class Verdict(str, Enum):
     COOLING_DOWN = "COOLING-DOWN"  # inside the debounce → wait, do not card
     CAPPED = "CAPPED"  # this pass's global cap spent; next pass retries
     BUDGET_UNKNOWN = "BUDGET-UNKNOWN"  # we cannot read our OWN memory → refuse
+
+    # Not a thing a pass DID — a thing it could not do. An agent whose pane
+    # would not capture, or that is registered with no live session at all,
+    # produced no evidence, and no evidence is neither OK nor AUTH-FAILED. It
+    # is therefore never restarted and never counted clean; it is REPORTED, so
+    # that the one agent nobody could read is the one agent nobody can miss.
+    #
+    # Distinct from :attr:`UNKNOWN` above, which is the pure rule's fleet-wide
+    # "the tmux probe was not a sensor from where we stand". This one is
+    # per-agent and per-reading: the probe worked, this agent did not answer.
+    UNOBSERVED = "UNOBSERVED"
 
 
 @dataclass(frozen=True)

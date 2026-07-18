@@ -37,6 +37,10 @@ _STYLE = {
     Verdict.OVER_BUDGET: ("red", "OVER-BUDGET"),
     Verdict.FAILED: ("red", "FAILED"),
     Verdict.BUDGET_UNKNOWN: ("magenta", "BUDGET-UNKNOWN"),
+    # Magenta groups with BUDGET-UNKNOWN rather than with the yellow "wedged"
+    # verdicts, because it says the same thing they do: we could not determine
+    # this, and it is the one colour that must never read as a clean line.
+    Verdict.UNOBSERVED: ("magenta", "UNOBSERVED"),
 }
 
 
@@ -117,7 +121,10 @@ def restart_login_expired(
       two restarters bouncing one fleet is the double-supervisor class. Running
       THIS COMMAND by hand is always safe.
 
-    Exits 0 clean, 1 if something is wedged, 2 if it cannot read its own memory.
+    Exits 0 ONLY when every registered agent was actually observed and none is
+    wedged, 1 if something is wedged, and 2 if anything could not be determined
+    — an unreadable pane, a registered agent with no live session, an
+    unreadable fleet roster, or an unreadable restart history.
     """
     if apply and check:
         raise click.UsageError(
@@ -144,9 +151,14 @@ def restart_login_expired(
         raise SystemExit(code)
 
     mode = "apply" if apply else "check (read-only)"
+    # Count the two populations SEPARATELY. A single total would fold the
+    # agents we could not read into the agents we found wedged, which is the
+    # collapse this command's exit code exists to keep apart.
+    unseen = outcome.of(Verdict.UNOBSERVED)
     console.print(
         f"[bold]sac agents restart-login-expired[/bold]  {mode} — "
-        f"{len(outcome.reports)} corroborated login-expired agent(s)\n"
+        f"{len(outcome.reports) - len(unseen)} corroborated login-expired "
+        f"agent(s), {len(unseen)} NOT observed\n"
     )
     for report in outcome.reports:
         _print_report(report)
@@ -173,6 +185,16 @@ def restart_login_expired(
             f"them:[/red] {', '.join(r.name for r in down)}\n"
             "  Each has a board card. A human needs to look — restarting is not "
             "fixing these (usually a real account problem)."
+        )
+    if unseen:
+        console.print(
+            f"\n[magenta]{len(unseen)} agent(s) were NOT observed:[/magenta] "
+            f"{', '.join(r.name for r in unseen)}\n"
+            "  Nothing was learned about these — they are neither healthy nor "
+            "wedged, and this pass therefore CANNOT report a clean fleet.\n"
+            "  Look at them by hand:\n"
+            "    sac agents auth-status\n"
+            "    sac agents list"
         )
     if outcome.of(Verdict.BUDGET_UNKNOWN):
         console.print(
