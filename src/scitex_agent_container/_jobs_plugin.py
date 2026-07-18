@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Four jobs today:
+    Five jobs today:
 
     * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
       "should be running ⇒ is running". Restarts agents whose tmux session
@@ -29,6 +29,25 @@ def provide_jobs() -> "list[JobSpec]":
       a deliberate stop. See its inline comment: the spec field it enforces
       (``restart.policy``) is dead code without it, and 33 agents once
       stayed dead for hours because of that.
+
+    * ``sac.restart-login-expired-agents`` (``kind="timer"``) — the SIBLING of
+      fleet-reconcile and the exact division of labor: fleet-reconcile owns
+      DEAD/no-session corpses; this owns LIVE-session-but-AUTH-DEAD agents (a
+      frozen "Login expired" banner) that fleet-reconcile explicitly leaves
+      alone, because touching a live session destroys context. Detection is
+      READ-ONLY + 2-run-corroborated; the restart runs through the pool-loading
+      start path (so a timer-driven restart cannot strip an agent's CCT/Telegram
+      token) and is rate-limited exactly like fleet-reconcile.
+
+      DEPLOY GATE — declared here so the mechanism is version-controlled and
+      TESTED, but it MUST NOT be enabled on a host until that host's
+      ``auth-heal.py`` ``scan_tui`` cron is RETIRED. That cron already restarts
+      these agents (2-run-corroborated TUI heal, since 2026-06-01); enabling
+      this timer alongside it puts TWO restarters on one fleet with INDEPENDENT
+      debounce state — the same double-supervisor class as the ``sac.listen``
+      duplication described below, one costume over. The crontab is host state a
+      PR cannot edit, so the cron retirement is an operator/dotfiles step that
+      must land WITH the enable.
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
@@ -216,6 +235,40 @@ def provide_jobs() -> "list[JobSpec]":
             # this timeout is SAFE: the restart history is persisted per
             # restart, not at the end, so the next tick still honours the
             # debounce for anything already bounced.
+            timeout_sec=300,
+        ),
+        JobSpec(
+            name="sac.restart-login-expired-agents",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
+            command="sac agents restart-login-expired --apply",
+            description=(
+                "Restarts LIVE agents wedged behind a frozen 'Login expired' "
+                "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
+                "leaves alone. Detection is READ-ONLY + 2-run-corroborated (a "
+                "banner that moved between the two captures = working, never "
+                "restarted); the restart runs through the pool-loading start "
+                "path (cannot strip CCT tokens) and is rate-limited (30min/agent "
+                "debounce, <=2/agent/hour, <=10/pass); an agent still wedged "
+                "after the cap gets a scitex-todo card, not an endless bounce. "
+                "DEPLOY GATE: do NOT enable until the host's auth-heal.py "
+                "scan_tui cron is retired (double-supervisor risk)."
+            ),
+            # Same taxonomy note as the jobs above: kind must be one of
+            # {"service","timer","cron"} (scitex-dev #153); a periodic
+            # systemd --user timer is ``kind="timer"`` with the cadence in
+            # ``on_unit_active_sec``. A wrong kind raises at construction and
+            # ``ecosystem up`` then silently drops sac's WHOLE provider.
+            kind="timer",
+            # 5min matched to fleet-reconcile so the two enforcers sweep on the
+            # same beat rather than harmonising into one; it is the window a
+            # wedged agent stays wedged. A no-op pass is one `tmux list-sessions`
+            # plus two pane captures ~4s apart.
+            on_boot_sec="5min",
+            on_unit_active_sec="5min",
+            # Mirrors fleet-reconcile: bounds the pathological pass (`--limit`
+            # restarts, each a stop+settle+start) plus the ~4s capture interval.
+            # A pass killed here is SAFE — history is persisted per restart, so
+            # the next tick still honours the debounce for anything bounced.
             timeout_sec=300,
         ),
     ]

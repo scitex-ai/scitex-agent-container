@@ -46,15 +46,16 @@ def _job(name: str):
     return match
 
 
-def test_provider_returns_four_jobs() -> None:
-    # Arrange — call the registered provider. Four: accounts-refresh, the
-    # host-sync-check drift alarm, the daily worktree GC, and the
-    # fleet-reconcile enforcer. `sac listen` is still NOT federated (see the
-    # module docstring and the absence-pin below).
+def test_provider_returns_five_jobs() -> None:
+    # Arrange — call the registered provider. Five: accounts-refresh, the
+    # host-sync-check drift alarm, the daily worktree GC, the fleet-reconcile
+    # enforcer (dead/no-session corpses), and the restart-login-expired-agents
+    # timer (live-session-but-auth-dead agents). `sac listen` is still NOT
+    # federated (see the module docstring and the absence-pin below).
     # Act
     jobs = provide_jobs()
     # Assert
-    assert len(jobs) == 4
+    assert len(jobs) == 5
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -306,3 +307,61 @@ def test_fleet_reconcile_timeout_outlives_a_capped_pass() -> None:
     job = _job("sac.fleet-reconcile")
     # Assert
     assert job.timeout_sec == 300
+
+
+# ---------------------------------------------------------------------------
+# sac.restart-login-expired-agents — the SIBLING enforcer. fleet-reconcile
+# owns dead/no-session corpses; this timer owns the OTHER half fleet-reconcile
+# explicitly leaves alone: a LIVE tmux session whose Claude cannot authenticate
+# (a frozen "Login expired" banner), which only a restart clears. Named
+# verb+object so the derived units read `sac.restart-login-expired-agents
+# .timer` / `.service` — no "timer" in the name (systemd's suffix already
+# conveys periodicity; embedding it would double to `.timer.timer`).
+# ---------------------------------------------------------------------------
+
+
+def test_restart_login_expired_job_name_is_package_prefixed() -> None:
+    # Arrange — the auto-restarter for auth-dead-but-live agents.
+    # Act
+    job = _job("sac.restart-login-expired-agents")
+    # Assert
+    assert job.name == "sac.restart-login-expired-agents"
+
+
+def test_restart_login_expired_job_kind_is_timer() -> None:
+    # Arrange — a periodic systemd --user timer, so kind="timer". A wrong kind
+    # raises at construction and `ecosystem up` then silently DROPS sac's whole
+    # provider (provider-isolated, WARN-only) — taking the OAuth refresh, the
+    # drift check, the worktree GC AND the fleet-reconcile enforcer down too.
+    # Act
+    job = _job("sac.restart-login-expired-agents")
+    # Assert
+    assert job.kind == "timer"
+
+
+def test_restart_login_expired_command_is_the_applying_form() -> None:
+    # Arrange — a scheduled DRY-RUN would detect wedged agents and heal none.
+    # The whole point is `--apply`. Detection stays read-only; the restart is
+    # the only mutation.
+    # Act
+    job = _job("sac.restart-login-expired-agents")
+    # Assert
+    assert job.command == "sac agents restart-login-expired --apply"
+
+
+def test_restart_login_expired_cadence_is_five_minutes() -> None:
+    # Arrange — the cadence IS the window a login-expired agent stays wedged,
+    # matched to fleet-reconcile so the two enforcers sweep on the same beat.
+    # Act
+    job = _job("sac.restart-login-expired-agents")
+    # Assert
+    assert job.on_unit_active_sec == "5min"
+
+
+def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
+    # Arrange — construction must not raise (a bad field would drop the whole
+    # provider). Assert it is the canonical contract type, not a look-alike.
+    # Act
+    job = _job("sac.restart-login-expired-agents")
+    # Assert
+    assert isinstance(job, jobs_mod.JobSpec)
