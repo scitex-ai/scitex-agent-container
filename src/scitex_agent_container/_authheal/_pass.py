@@ -59,6 +59,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .._authevents import log_restart_attempted, log_restart_outcome
 from .._reconcile._budget import (
     DEFAULT_PASS_CAP,
     Budget,
@@ -73,6 +74,7 @@ from ._detect import (
     detect_login_expired,
     registered_agents,
 )
+from ._observe import observe_wedge
 
 __all__ = [
     "DEFAULT_INTERVAL",
@@ -204,8 +206,19 @@ def _perform(
     now: float,
     restart_fn: Callable[[str], bool],
     budget_detail: str,
+    account: str | None = None,
+    event_log: Path | None = None,
 ) -> AgentReport:
-    """Turn a corroborated login-expired agent into what we actually did."""
+    """Turn a corroborated login-expired agent into what we actually did.
+
+    Emits the ATTEMPT and the OUTCOME to the auth-event log as two SEPARATE
+    records (see :mod:`.._authevents`). They are deliberately not merged: this
+    function is the exact place where intent and effect diverge — ``restart_fn``
+    can raise, or return False, or return True over an agent that is still
+    wedged — and a single "restarted" line cannot express that divergence. The
+    emission is fail-open on both sides; a log that cannot be written must not
+    cost us the restart.
+    """
     base = f"{name} is login-expired (corroborated: a system auth banner frozen above its prompt across two captures)"
     if budget is None:
         # We could not read our OWN restart memory, so the debounce and the
@@ -233,15 +246,53 @@ def _perform(
             f"{base} — would restart (dry-run/--check: nothing was done; re-run "
             f"with --apply to actually restart)",
         )
+    # The ATTEMPT is recorded BEFORE the act, so a restart that hangs, or that
+    # takes this process down with it, still leaves its intent on the record.
+    attempt_id = log_restart_attempted(
+        agent=name,
+        account=account,
+        detail=f"{base} — restarting to re-mount a live credential",
+        path=event_log,
+        now=now,
+        extra={"source": "sac.restart-login-expired"},
+    )
     # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the wedged fleet still needs recovering; the failure is carded and reported)
     try:
         ok = restart_fn(name)
     except Exception as exc:
         budget.record(name, now)  # a restart we ATTEMPTED still spends budget
+        log_restart_outcome(
+            agent=name,
+            attempt_id=attempt_id,
+            succeeded=False,
+            account=account,
+            detail=f"restart RAISED and the agent was not recovered: {exc}",
+            path=event_log,
+            now=now,
+        )
         return AgentReport(
             name, Verdict.FAILED, "restart-raised", f"{base}; restart FAILED: {exc}"
         )
     budget.record(name, now)
+    # The OUTCOME is a separate record carrying the same attempt_id. Note what
+    # ``succeeded`` claims and what it does not: the restart CALL reported
+    # success. Whether the agent is actually authenticating again is decided by
+    # the NEXT pass's reading, not by this line — which is why the attempt is
+    # never retro-edited and the two records always both stand.
+    log_restart_outcome(
+        agent=name,
+        attempt_id=attempt_id,
+        succeeded=bool(ok),
+        account=account,
+        detail=(
+            "restart call reported success (re-observation by a later pass is "
+            "what confirms the wedge actually cleared)"
+            if ok
+            else "restart ran but reported FAILURE — the agent is still wedged"
+        ),
+        path=event_log,
+        now=now,
+    )
     if ok:
         return AgentReport(
             name,
@@ -319,12 +370,15 @@ def auth_heal_pass(
     capture_fn: Callable[[], dict] | None = None,
     interval: float = DEFAULT_INTERVAL,
     err_stream: Any = None,
+    event_log: Path | None = None,
 ) -> PassOutcome:
     """Run ONE login-expired auto-restart pass over the live TUI fleet.
 
     ``apply=False`` (the default, selected by ``--check``) is a REPORT: it
     detects and decides but restarts nothing. The only board write a dry-run
-    makes is this restarter's own heartbeat.
+    makes is this restarter's own heartbeat — and, since 2026-07-18, the
+    auth-event records of what it OBSERVED. Observing is not acting: a dry run
+    that saw a wedge really did see it, and that sighting is worth keeping.
 
     Parameters
     ----------
@@ -332,6 +386,12 @@ def auth_heal_pass(
         The fleet registry to read the roster from — the population every
         report is checked against. Real state, redirectable for tests, exactly
         as ``reconcile_pass`` takes it.
+    event_log
+        Override for the shared auth-event log (:mod:`.._authevents`). ``None``
+        resolves the real runtime-dir path per call. This pass EMITS to that
+        log and never reads it back: the log is a record for humans and later
+        queries, never an input to this pass's decisions. Wiring it as an input
+        would make the restarter's own history its evidence about itself.
     """
     now = now if now is not None else time.time()
     now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
@@ -361,6 +421,12 @@ def auth_heal_pass(
     reports: list[AgentReport] = []
 
     for name in detection.auth_failed:
+        # WHAT WE SAW, recorded before anything we do about it and regardless
+        # of whether we are allowed to act — a wedge observed under --check, or
+        # while cooling down, is the same fact as one observed before a
+        # restart, and only the unbroken series of sightings can show that a
+        # wedge outlived its remedy.
+        account = observe_wedge(name, specs_dir=specs_dir, event_log=event_log, now=now)
         report = _perform(
             name,
             budget=budget,
@@ -368,6 +434,8 @@ def auth_heal_pass(
             now=now,
             restart_fn=restart_fn,
             budget_detail=read.detail,
+            account=account,
+            event_log=event_log,
         )
         reports.append(report)
         # PERSIST THE MOMENT WE SPEND BUDGET, never only at the end: a pass
