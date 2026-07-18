@@ -6,6 +6,79 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.24] - 2026-07-18
+
+### Added
+
+- **`sac agents restart-login-expired` + a `sac.restart-login-expired-agents`
+  timer — federated auto-restart for LIVE agents wedged behind a frozen "Login
+  expired" banner** (PR #748). This is the half `sac.fleet-reconcile` leaves
+  alone (reconcile only touches DEAD / no-session corpses). Detection is
+  READ-ONLY and 2-run-corroborated (reuses the `sac agents auth-status`
+  matcher, so a banner that MOVED between the two captures counts as working
+  and is never restarted); restart goes through the pool-loading
+  `agent_restart` path under reconcile's exact rate limits (30-min/agent
+  debounce, <=2/agent/hour, <=10/pass); an agent still wedged after the cap
+  gets an idempotent scitex-todo escalation card, never an infinite bounce. New
+  `_authheal/` package (`_detect`/`_pass`/`_alarm`) with its own history file
+  so the two restarters' debounces stay independent. **DEPLOY GATE:** the timer
+  is PR-only and must NOT be enabled on a host until that host's legacy
+  `auth-heal.py` `scan_tui` is retired — enabling both is a double-supervisor.
+  Documented in `_jobs_plugin`, `_pass`, and the CLI help.
+
+- **A guarded, fail-soft `direnv allow` is appended to every agent's default
+  `startup_commands`** (PR #745). `load_v3` (the single `load_config`
+  chokepoint) appends
+  `command -v direnv >/dev/null 2>&1 && [ -f "$PWD/.envrc" ] && direnv allow "$PWD" || true`,
+  so a project's non-secret `.envrc` surfaces in-container fleet-wide and is
+  VISIBLE in the spec (`AgentConfig.startup_commands`) rather than buried in
+  launch code. `$PWD` is the agent workdir at run time (the `bash -lc` wrapper
+  inherits apptainer's `--pwd`, and no `cd` is emitted first). The guard skips
+  silently when direnv is absent or the workdir has no `.envrc`; the trailing
+  `|| true` never breaks boot; it is idempotent (a spec that already runs
+  `direnv allow` is not doubled) and appended, not prepended, so an authored
+  `startup_commands[0]` keeps its position. Secrets/identity stay
+  sac-direct-injected and are never routed through direnv.
+
+### Fixed
+
+- **The bake pipeline now ships the staged source, not a stale uv wheel**
+  (`apptainer-base.def` / `apptainer-scitex.def`, PR #749). uv's built-wheel
+  cache is keyed on (name, version), and sac's metadata version does not
+  advance per-commit, so the sac-source install could serve a byte-identical
+  STALE wheel from a prior bake instead of rebuilding the newly staged tree
+  (two independent bakers confirmed a green build shipping pre-#742 code).
+  `--no-cache-dir` on the sac install forces a fresh build from source; a
+  generic installed-vs-staged content assert (sha256 of the installed vs staged
+  `.py` trees) folds into both freshness gates and fails the build if they
+  differ, naming no feature so a rename never breaks it; and base.def's gate is
+  migrated off the old `scitex-todo` dist name onto `scitex-cards` (now a
+  metadata-only shim), fixing a `PackageNotFoundError` and the latent twin bug
+  in scitex.def's dist-count loop.
+
+- **The CCT bot-token pool no longer folds EMPTY on a caller with
+  `SAC_SECRETS_ENVRC` unset** (PR #748, class fix). `sac start`/`restart`
+  TRUSTED the caller's env for the token pool, so a cron / raw-ssh /
+  federated-timer restart with the var unset stripped Telegram tokens (the root
+  cause of the 2026-07-17 CCT token-stripping incident).
+  `runtimes/_envrc.resolve_secret_files` now falls back to the canonical
+  `$HOME/.bash.d/secrets/010_scitex/*.src` default (the same the listen-unit
+  installer computes) when the var is unset, and `_cct_token_pool._pool_env`
+  uses it — so ANY caller re-resolves the token, fixing the whole class rather
+  than just the timer.
+
+- **A `to_home` deploy now replaces a leftover symlink destination instead of
+  writing THROUGH it** (`_clear_readonly_dst`, PR #746). For a symlink dst the
+  clear step used to leave the link untouched, so `shutil.copy2` /
+  `Path.write_text` followed it: a leftover host-merge link corrupted the
+  operator's real host file with agent-interpolated content, and a dangling
+  link made `copy2` raise `FileNotFoundError` and abort the deploy. This is the
+  unguarded sibling of the same-file guard added for INCIDENT 2026-07-02
+  (`_dst_resolves_to_source`, which only covered a link pointing back at the
+  SOURCE). `_clear_readonly_dst` now UNLINKS a symlink dst so the write lands a
+  real, hermetic file; the legitimate symlink-back-to-source case is still
+  short-circuited earlier. Regression covered with real files (no mocks).
+
 ## [0.21.23] - 2026-07-18
 
 ### Added
