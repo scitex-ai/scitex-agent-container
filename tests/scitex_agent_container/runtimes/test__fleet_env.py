@@ -249,3 +249,113 @@ def test_flag_value_is_rendered_verbatim(value: str) -> None:
     flags = fleet_env_flags(config, defaults={})
     # Assert
     assert flags[1] == f"K={value}"
+
+
+# ----------------------------------------------------------------------
+# Board identity — BOTH names for the transition window, and the loud
+# validator that refuses an unexpanded ``${VAR}`` (INCIDENT 2026-07-19:
+# seven cards stored ``created_by='${SCITEX_CARDS_AGENT_ID}'``).
+# ----------------------------------------------------------------------
+
+
+def test_starting_an_agent_exports_the_current_board_identity_name() -> None:
+    """scitex-cards reads SCITEX_CARDS_AGENT_ID; sac injected only the old name."""
+    # Arrange
+    config = SimpleNamespace(env={"SCITEX_TODO_AGENT_ID": "scitex-agent-container"})
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["SCITEX_CARDS_AGENT_ID"] == "scitex-agent-container"
+
+
+def test_starting_an_agent_still_exports_the_legacy_board_identity_name() -> None:
+    """Both, not a swap — installed scitex-cards versions differ across the fleet."""
+    # Arrange
+    config = SimpleNamespace(env={"SCITEX_TODO_AGENT_ID": "scitex-agent-container"})
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["SCITEX_TODO_AGENT_ID"] == "scitex-agent-container"
+
+
+def _rejection_message(config: SimpleNamespace) -> str:
+    """The error ``effective_env`` raises for ``config``, or ``""`` if it did not.
+
+    Keeps the rejection tests at ONE assertion each (STX-TQ007 counts a
+    ``pytest.raises`` block as an assertion, so pairing it with an assert on
+    the message would be two).
+    """
+    try:
+        effective_env(config, defaults={})
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+def test_an_unexpanded_substitution_value_is_rejected_loudly() -> None:
+    """A ``${VAR}`` that never expanded is a non-answer; it must never be stored."""
+    # Arrange
+    config = SimpleNamespace(env={"SCITEX_CARDS_AGENT_ID": "${SCITEX_CARDS_AGENT_ID}"})
+    # Act
+    message = _rejection_message(config)
+    # Assert
+    assert "SCITEX_CARDS_AGENT_ID" in message
+
+
+def test_the_rejection_error_quotes_the_offending_value() -> None:
+    # Arrange
+    config = SimpleNamespace(env={"ANY_KEY": "${SOMETHING}"})
+    # Act
+    message = _rejection_message(config)
+    # Assert
+    assert "${SOMETHING}" in message
+
+
+def test_a_normal_board_identity_value_passes_through_unchanged() -> None:
+    """CONTROL — the validator must reject non-answers, not everything."""
+    # Arrange
+    config = SimpleNamespace(env={"SCITEX_TODO_AGENT_ID": "scitex-agent-container"})
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["SCITEX_TODO_AGENT_ID"] == "scitex-agent-container"
+
+
+def test_a_normal_unrelated_value_passes_through_unchanged() -> None:
+    """CONTROL — an ordinary value with no ``${`` is untouched."""
+    # Arrange
+    config = SimpleNamespace(env={"PLAIN": "scitex-agent-container"})
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["PLAIN"] == "scitex-agent-container"
+
+
+def test_raw_args_declared_identity_is_mirrored_to_the_current_name() -> None:
+    """Most specs declare the identity ONLY in raw_args, never in spec.env."""
+    # Arrange
+    config = SimpleNamespace(
+        env={},
+        apptainer=SimpleNamespace(
+            raw_args=["--env", "SCITEX_TODO_AGENT_ID=scitex-dev"]
+        ),
+    )
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["SCITEX_CARDS_AGENT_ID"] == "scitex-dev"
+
+
+def test_raw_args_identity_wins_over_the_spec_env_identity() -> None:
+    """apptainer --env is last-wins and raw_args are appended AFTER spec.env."""
+    # Arrange
+    config = SimpleNamespace(
+        env={"SCITEX_TODO_AGENT_ID": "from-spec-env"},
+        apptainer=SimpleNamespace(
+            raw_args=["--env", "SCITEX_TODO_AGENT_ID=from-raw-args"]
+        ),
+    )
+    # Act
+    merged = effective_env(config, defaults={})
+    # Assert
+    assert merged["SCITEX_CARDS_AGENT_ID"] == "from-raw-args"
