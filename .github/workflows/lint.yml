@@ -26,7 +26,7 @@ name: lint
 # if a python HAD existed. Two independent breakages, one fix.
 #
 # THE FIX is the pattern the org-level reusables already run GREEN on
-# spartan-cpu (scitex-plt / scitex-scholar / scitex-todo / scitex-ssh):
+# spartan-cpu (scitex-plt / scitex-scholar / scitex-cards / scitex-ssh):
 # astral-sh/setup-uv (a JS action — runs fine on self-hosted, same class as
 # actions/checkout) + `uv venv --python 3.12`, which fetches uv's OWN managed
 # CPython into the workspace. That sidesteps "no python on the node" AND

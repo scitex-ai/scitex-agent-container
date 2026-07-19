@@ -93,14 +93,16 @@ def test_probe_imports_scitex_cards() -> None:
     assert "scitex_cards" in imported
 
 
-def test_probe_imports_the_scitex_todo_shim() -> None:
-    # Arrange — scitex_todo must resolve to the scitex_cards shim inside the SIF;
-    # the probe imports it so it can prove the two are the same module tree.
+def test_probe_does_not_import_the_legacy_scitex_todo_shim() -> None:
+    # Arrange — sac is fully cut over to scitex_cards, so the bake gate must not
+    # depend on the wheel's transitional scitex_todo alias: gating on an alias we
+    # no longer use would fail every bake the day scitex-cards drops it. This
+    # goes RED if the shim import is reintroduced here.
     source = _probe_source()
     # Act
     imported = _imported_names(source)
     # Assert
-    assert "scitex_todo" in imported
+    assert "scitex_todo" not in imported
 
 
 def test_probe_checks_the_wip_statuses_symbol() -> None:

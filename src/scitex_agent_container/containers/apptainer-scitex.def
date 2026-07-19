@@ -328,13 +328,13 @@ From: ./sac-base.sif
     # The counterpart of the :base layer's section-6c gate, re-run HERE
     # because this layer inherits base's venv and then mutates it: the
     # scitex[all] resolve, the sac force-reinstall and the provider install
-    # above can each move scitex-todo, so base passing its gate proves
+    # above can each move scitex-cards, so base passing its gate proves
     # nothing about what THIS image ships. Guard the artefact you ship.
     #
     # Asserts BY SYMBOL, never by version string — a duplicate/orphaned
     # .dist-info freezes what importlib.metadata reports while the live
     # code differs (open incident), so "the SIF says 0.9.4" is not
-    # evidence. ``scitex_todo._throughput.WIP_STATUSES`` (scitex-todo #356,
+    # evidence. ``scitex_cards._throughput.WIP_STATUSES`` (scitex-cards #356,
     # first released in 0.8.0) is the WIP gate's status set: it must
     # contain ``in_progress`` and no terminal state. A stale bake dies on
     # the import; a regressed one dies on the membership checks.
@@ -372,23 +372,21 @@ import sys
 # Both imports ARE staleness probes: each raises ImportError (unhandled →
 # non-zero exit → dead build) on a stale bake, naming the missing symbol.
 
-# scitex-todo #356 (first released in 0.8.0): the WIP gate must count
+# scitex-cards #356 (first released in 0.8.0): the WIP gate must count
 # `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
 # CANCELLED cards as open and refuses legitimate card creation — the
 # 2026-07-12 fleet-drift incident this gate exists to end.
 #
-# Package renamed scitex-cards (2026-07-16): the canonical module is
-# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
-# to the SAME module objects — un-cutover fleet code imports the old
-# name, so the shim working is itself a ship-gate for this image.
+# Package renamed scitex-cards (2026-07-16). This gate used to also import
+# the wheel's pre-rename module alias and assert it resolved to scitex_cards. sac no
+# longer imports that alias anywhere, so gating the bake on it would gate on
+# an alias we do not use — and would fail the bake the day scitex-cards
+# drops it. The staleness probe is unchanged: this import raises ImportError
+# (unhandled → non-zero exit → dead build) on a stale bake, and WIP_STATUSES
+# is checked for `in_progress` below.
 from scitex_cards._throughput import WIP_STATUSES
 
-import scitex_cards
-import scitex_todo  # the transition shim — its absence breaks the fleet
-
-if scitex_todo is not scitex_cards:
-    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
-    sys.exit(1)
+import scitex_cards  # noqa: F401
 
 # sac #633: auto-provisions a new agent's container overlay root; without
 # it every newly-created agent is stillborn on a raw apptainer FATAL.
@@ -495,7 +493,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
+print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }

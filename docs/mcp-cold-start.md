@@ -2,8 +2,8 @@
 
 ## The incident (2026-07-06)
 
-Agents' `scitex-agent-container` (`sac mcp start`) and `scitex-todo`
-(`scitex-todo mcp start`) **stdio** MCP servers intermittently fail to connect at
+Agents' `scitex-agent-container` (`sac mcp start`) and `scitex-cards`
+(`scitex-cards mcp start`) **stdio** MCP servers intermittently fail to connect at
 Claude Code session start — per-agent and racy (some agents connect, others do
 not). The servers start healthy and write nothing to stdout; the failure is a
 **client-side cold-start connect-timing race**:

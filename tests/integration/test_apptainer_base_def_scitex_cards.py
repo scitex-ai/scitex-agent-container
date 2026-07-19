@@ -1,24 +1,23 @@
 """Static contract: ``apptainer-base.def`` must install scitex-cards[mcp].
 
-Package renamed scitex-todo -> scitex-cards (2026-07-16, migration S1-S3).
-The wheel ships BOTH console scripts (``scitex-todo`` and ``scitex-cards``)
-and the ``scitex_todo`` import shim, so the runtime claims below — the
-``.mcp.json`` entry invoking ``scitex-todo mcp start`` — stay true with the
-new dist installed. What this file pins is the DIST the .def installs.
+The package was renamed scitex-todo -> scitex-cards (2026-07-16, migration
+S1-S3). The wheel still ships the old ``scitex-todo`` console script and
+``scitex_todo`` import shim as transition aliases, but sac no longer depends
+on either: what this file pins is the DIST the .def installs, under its
+canonical name.
 
 P3a-1.5 (operator directive ``feedback_scitex_todo_single_shared_store``,
 lead a2a ``5c0c1fe32a9a43888e01151d6fc0fb9e``): every sac-launched
-agent must be able to attach the scitex-todo MCP and write to the
+agent must be able to attach the scitex-cards MCP and write to the
 shared store. The MCP wiring (P3a) lands a ``.mcp.json`` entry that
-invokes ``scitex-todo mcp start`` — but that only works when
-``scitex-todo`` is on PATH inside the SIF. The ``[mcp]`` extra pulls
-in fastmcp>=2.0 (the FastMCP server backing
-``scitex_todo._mcp_server:mcp``) without which ``mcp start`` exits
-with a missing-extra hint.
+invokes ``mcp start`` — but that only works when the console script is
+on PATH inside the SIF. The ``[mcp]`` extra pulls in fastmcp>=2.0 (the
+FastMCP server backing ``scitex_cards._mcp_server:mcp``) without which
+``mcp start`` exits with a missing-extra hint.
 
-This test pins both requirements as code: drop scitex-todo or its
+This test pins both requirements as code: drop scitex-cards or its
 ``[mcp]`` extra from the .def and CI yells before a SIF rebuild
-ships an agent that can't reach its shared todo store.
+ships an agent that can't reach its shared card store.
 
 The sibling ``test_apptainer_scitex_def_libxcb.py`` sets the same
 contract pattern at the :scitex layer; this file enforces the
@@ -40,11 +39,11 @@ _BASE_DEF = (
 )
 
 # The capability floor the fleet actually depends on: the WIP-gate fix
-# (scitex-todo #356, first released in 0.8.0) — the gate counts ``in_progress``
+# (scitex-cards #356, first released in 0.8.0) — the gate counts ``in_progress``
 # ONLY. Below it, every agent's WIP gate counts DEFERRED + CANCELLED cards as
 # open and refuses legitimate card creation. The .def's section-6c gate asserts
 # that capability BY SYMBOL at build time
-# (``scitex_todo._throughput.WIP_STATUSES``); this guard keeps the DECLARED
+# (``scitex_cards._throughput.WIP_STATUSES``); this guard keeps the DECLARED
 # floor at-or-above it, so the declared floor and the asserted symbol cannot
 # drift apart.
 #
@@ -65,7 +64,7 @@ _WIP_GATE_MIN_VERSION = (0, 8, 0)
 
 # The quoted requirement token naming the board package (renamed
 # scitex-cards 2026-07-16), e.g. "scitex-cards[mcp]==0.16.0".
-_SCITEX_TODO_REQ_RE = re.compile(r'"(?P<req>[^"]*\bscitex-cards\b[^"]*)"')
+_SCITEX_CARDS_REQ_RE = re.compile(r'"(?P<req>[^"]*\bscitex-cards\b[^"]*)"')
 # That requirement's lower bound (the first of >=, == or ~=).
 _FLOOR_RE = re.compile(r"(?:>=|==|~=)\s*(?P<version>\d+(?:\.\d+)*)")
 
@@ -92,9 +91,9 @@ def _uv_pip_install_block(text: str) -> str:
     return " ".join(out)
 
 
-def _scitex_todo_requirement(block: str) -> str:
-    """Return the scitex-todo requirement token, or ``""`` when absent."""
-    match = _SCITEX_TODO_REQ_RE.search(block)
+def _scitex_cards_requirement(block: str) -> str:
+    """Return the scitex-cards requirement token, or ``""`` when absent."""
+    match = _SCITEX_CARDS_REQ_RE.search(block)
     return match.group("req") if match else ""
 
 
@@ -111,11 +110,11 @@ def _requirement_floor(requirement: str) -> tuple[int, ...] | None:
 
 
 # ---------------------------------------------------------------------------
-# scitex-todo install line is present + carries the [mcp] extra
+# scitex-cards install line is present + carries the [mcp] extra
 # ---------------------------------------------------------------------------
 
 
-def test_uv_pip_install_block_mentions_scitex_todo(base_def_text: str) -> None:
+def test_uv_pip_install_block_mentions_scitex_cards(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
     # Act
@@ -143,13 +142,13 @@ def test_uv_pip_install_block_carries_mcp_extra(base_def_text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_uv_pip_install_block_pins_scitex_todo_minimum_version(
+def test_uv_pip_install_block_pins_scitex_cards_minimum_version(
     base_def_text: str,
 ) -> None:
     # Arrange — an UNVERSIONED requirement takes whatever happens to be newest
     # on the bake day and then freezes it into every downstream layer.
     block = _uv_pip_install_block(base_def_text)
-    requirement = _scitex_todo_requirement(block)
+    requirement = _scitex_cards_requirement(block)
     # Act
     floor = _requirement_floor(requirement)
     # Assert
@@ -159,19 +158,19 @@ def test_uv_pip_install_block_pins_scitex_todo_minimum_version(
     )
 
 
-def test_scitex_todo_floor_is_at_least_the_wip_gate_capability(
+def test_scitex_cards_floor_is_at_least_the_wip_gate_capability(
     base_def_text: str,
 ) -> None:
-    # Arrange — below the WIP-gate fix (scitex-todo #356, first released in
+    # Arrange — below the WIP-gate fix (scitex-cards #356, first released in
     # 0.8.0) every agent's WIP gate counts DEFERRED + CANCELLED cards as open.
     block = _uv_pip_install_block(base_def_text)
-    floor = _requirement_floor(_scitex_todo_requirement(block))
+    floor = _requirement_floor(_scitex_cards_requirement(block))
     # Act
     meets_capability = floor is not None and floor >= _WIP_GATE_MIN_VERSION
     # Assert
     assert meets_capability, (
-        "scitex-todo floor must be at-or-above the WIP-gate capability "
-        f"{'.'.join(str(p) for p in _WIP_GATE_MIN_VERSION)} (scitex-todo #356);"
+        "scitex-cards floor must be at-or-above the WIP-gate capability "
+        f"{'.'.join(str(p) for p in _WIP_GATE_MIN_VERSION)} (scitex-cards #356);"
         f" apptainer-base.def declares {floor}:\n{block}"
     )
 
