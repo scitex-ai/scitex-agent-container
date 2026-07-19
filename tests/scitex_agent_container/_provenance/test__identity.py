@@ -87,8 +87,13 @@ class TestFormatTerse:
         # Act
         line = format_terse(info)
 
-        # Assert
-        assert line.endswith(f"from {origin}")
+        # Assert — `endswith` was the original form, but the line now also
+        # names the INTERPRETER after the origin (and the fossil metadata
+        # claim when there is one), because naming the install alone did not
+        # disambiguate five sac installs on one host. Containment is the
+        # durable assertion; the origin is still there and still last among
+        # the path fields.
+        assert f"from {origin}" in line
 
     def test_the_line_carries_the_commit(self):
         # Arrange

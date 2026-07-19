@@ -21,7 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Seven jobs today:
+    Eight jobs today:
+
+    * ``sac.freshness-refresh`` (``kind="timer"``) — the REFRESHER half of
+      the version-currency check. The CLI's startup banner reads a cached
+      JSON file and nothing else (no network on the hot path), so this is
+      what puts an answer in that file; unscheduled, the banner has nothing
+      to read and is silent forever, which reads exactly like "everything is
+      fine". A check nobody schedules is not a check.
 
     * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
       "should be running ⇒ is running". Restarts agents whose tmux session
@@ -275,6 +282,34 @@ def provide_jobs() -> "list[JobSpec]":
             # ssh timeout inside the command is 7200s, so 4h bounds the
             # whole chain without ever hanging forever.
             timeout_sec=14_400,
+        ),
+        JobSpec(
+            name="sac.freshness-refresh",
+            schedule="7 * * * *",  # hourly (cron form; timer cadence below)
+            command="sac freshness refresh",
+            description=(
+                "Publishes the version-currency verdict to the cache that "
+                "every `sac` invocation reads. Runs the real checks (PyPI, "
+                "git tags, gh release runs, systemd running-vs-installed, "
+                "symbol probes) via scitex-dev's `versioning` primitive and "
+                "writes the result atomically. This is the half that pays "
+                "the network cost, so the CLI hot path never does — without "
+                "it the startup banner has nothing to read and stays "
+                "permanently silent."
+            ),
+            kind="timer",
+            # Hourly against the primitive's 24h cache TTL: 24 consecutive
+            # misses before the banner falls silent, so a laptop that is shut
+            # most of the day still has a trustworthy answer. Faster buys
+            # nothing — releases are not more frequent than hourly — and each
+            # pass makes real network calls.
+            on_boot_sec="25min",
+            on_unit_active_sec="1h",
+            # Generous on purpose, matching the primitive's own 30s per-source
+            # timeouts: a busy host must not be mistaken for a broken one, and
+            # a manufactured UNKNOWN is exactly the failure mode. Nothing is
+            # waiting on this run.
+            timeout_sec=300,
         ),
         JobSpec(
             name="sac.fleet-reconcile",

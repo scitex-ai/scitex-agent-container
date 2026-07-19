@@ -72,7 +72,10 @@ COMMAND_CATEGORIES = [
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Host hygiene", ["worktree"]),
-    ("Diagnostics", ["doctor", "ports", "provenance", "auth-events", "ci"]),
+    (
+        "Diagnostics",
+        ["doctor", "ports", "provenance", "freshness", "auth-events", "ci"],
+    ),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -127,6 +130,11 @@ class _MainGroup(LazyGroup):
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "provenance": f"{_PKG}.provenance_cmds:provenance",
+        # Is the loaded code CURRENT? (`provenance` answers "which code",
+        # this answers "is it what shipped".) Thin rendering over
+        # scitex-dev's `versioning` primitive — sac owns the constants and
+        # the symbol registry, dev owns every verdict.
+        "freshness": f"{_PKG}.freshness_cmds:freshness",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
         # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
@@ -464,6 +472,21 @@ def cli_entry_point() -> None:
     otherwise.
     """
     import sys
+
+    # The staleness banner, in front of the command the operator types
+    # every day. Operator, 2026-07-14: "Comments and READMEs are meaningless
+    # if nobody reads them. If you're not on the latest version, that itself
+    # should emit a warning." So the control lives where the attention
+    # already is, not in a document.
+    #
+    # It is safe on the hot path because it reads ONE small cached JSON file
+    # written by `sac freshness refresh` — no network, no subprocess — and
+    # because every failure path inside it ends in silence. It warns only on
+    # a positively-STALE cached finding: a missing, expired or corrupt cache
+    # is UNKNOWN, and UNKNOWN says nothing at all.
+    from .._freshness import warn_once
+
+    warn_once()
 
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing
