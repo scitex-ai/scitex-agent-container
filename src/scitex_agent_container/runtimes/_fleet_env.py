@@ -195,9 +195,26 @@ def effective_env(
 
     The entry-point :func:`._apptainer_build_argv.build_run_argv` calls in
     place of iterating ``config.env`` directly. Returns fleet defaults merged
-    under ``config.env`` (``spec.env`` wins), ready to render as ``--env K=V``.
+    under ``config.env`` (``spec.env`` wins), then the board-identity alias
+    (:mod:`._board_identity_env`) is applied so a value declared under either
+    ``SCITEX_TODO_AGENT_ID`` or ``SCITEX_CARDS_AGENT_ID`` — in ``spec.env`` or
+    in ``apptainer.raw_args`` — is mirrored onto BOTH names for the
+    scitex-cards rename transition window (INCIDENT 2026-07-19: cards were
+    written with the literal, unexpanded ``${SCITEX_CARDS_AGENT_ID}`` as
+    their author because sac injected only the old name — 7 rows when first
+    reported, 15 a few hours later, since every new card added one).
+
+    Every value — not just the identity vars — is validated: an env value
+    that still looks like an unexpanded ``${VAR}`` substitution raises
+    :class:`._board_identity_env.UnexpandedEnvValueError` here rather than
+    being stored three layers downstream in someone else's database.
     """
-    return merge_fleet_env(getattr(config, "env", None), defaults=defaults)
+    from ._board_identity_env import apply_board_identity_alias
+
+    merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
+    apptainer = getattr(config, "apptainer", None)
+    raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
+    return apply_board_identity_alias(merged, raw_args=raw_args)
 
 
 def fleet_env_flags(
