@@ -257,11 +257,17 @@ echo "build: layer=$LAYER ts=$TS cpus=$CPUS (log: $BUILD_LOG)"
 # NOT persist across nodes or lease re-allocations, so some bakes re-pull
 # base layers. A cache miss costs minutes. A consistency race costs a
 # silently unpublished image and a whole debugging session. Take the miss.
+#
+# ONE VARIABLE, so the invariant is greppable rather than implied: both
+# APPTAINER_TMPDIR and APPTAINER_CACHEDIR derive from BUILD_SCRATCH, so they
+# cannot drift onto different filesystems by an edit to one of them. A test
+# asserts they share this parent AND that the parent is under /tmp.
+BUILD_SCRATCH="/tmp/sac-sif-bake-$USER"
 "$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 --cpus-per-task="$CPUS" \
     --job-name="sac-sif-bake-$LAYER" \
     --chdir="$CTX" \
-    --export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER",APPTAINER_CACHEDIR="/tmp/sac-sif-bake-$USER/cache" \
-    bash -c "mkdir -p /tmp/sac-sif-bake-$USER/cache && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
+    --export=ALL,APPTAINER_TMPDIR="$BUILD_SCRATCH/tmp",APPTAINER_CACHEDIR="$BUILD_SCRATCH/cache" \
+    bash -c "mkdir -p \"$BUILD_SCRATCH/tmp\" \"$BUILD_SCRATCH/cache\" && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
     < /dev/null 2>&1 | tee "$BUILD_LOG"
 BUILD_RC=$?
 [ "$BUILD_RC" -eq 0 ] || fail "apptainer-build" "rc=$BUILD_RC (log: $BUILD_LOG)"
