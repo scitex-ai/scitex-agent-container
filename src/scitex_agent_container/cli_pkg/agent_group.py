@@ -156,6 +156,20 @@ _register_auth_audit(agent_group)
 from ._agents_state import register as _register_agents_state  # noqa: E402
 
 _register_agents_state(agent_group)
+# `deliver` — a send that reports whether it actually landed. `send` (above)
+# resumes a recorded Claude session and is the right tool when the target has
+# one; measured on the live host, only a handful of agents do, so for the TUI
+# population it cannot deliver at all. A bare `tmux send-keys` into a session
+# that does not exist prints "can't find pane" to a stderr nobody reads and
+# exits 0 — which is how hours of coordination went to a session that had never
+# existed, every message reported as delivered. This verb resolves and PROVES
+# the target, confirms arrival by an injected token matched against a FLATTENED
+# pane (a prose grep already returned 0 for a message that had arrived), and
+# confirms SUBMISSION — the step that was missing, since text can sit unsent in
+# the composer forever while the agent looks idle.
+from ._agents_deliver import register as _register_agents_deliver  # noqa: E402
+
+_register_agents_deliver(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board
