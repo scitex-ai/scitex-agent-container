@@ -47,6 +47,22 @@ logs/
 .pytest-tmp/
 .scitex/clew/
 
+# Ecosystem-audit scratch: peer scitex-* repos are CLONED in here, so every
+# entry is a NESTED GIT REPO. Ignoring it is load-bearing, not tidiness.
+#
+# A broad `git add -A` over an un-ignored .tmp-audit/ does not add files —
+# git records each nested repo as a GITLINK (mode 160000). With no .gitmodules
+# to map them, `git submodule status` then dies with
+#     fatal: no submodule mapping found in .gitmodules for path '.tmp-audit/<x>'
+# and that is a command actions/checkout runs on EVERY job: it reads the fatal
+# as "Bad Submodules found", abandons the incremental path, and DELETES AND
+# RE-CLONES the entire workspace on every run, on every runner.
+#
+# That is exactly what happened here: the rescue autosave commit 37d83977
+# (2026-07-01) swept 9 such gitlinks onto develop and main. Keep this rule so
+# no future broad `git add` can re-commit them.
+.tmp-audit/
+
 # Sphinx-generated AST cache — not part of the published HTML
 # (CI in docs.yml strips this before committing _sphinx_html/)
 _sphinx_html/.doctrees/

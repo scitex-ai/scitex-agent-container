@@ -423,7 +423,18 @@ From: ubuntu:24.04
     # starting with ``uv pip install`` — the base-def contract tests locate
     # this block with startswith("uv pip install"), so an env-var prefix
     # (UV_NO_CACHE=1 ...) makes the block invisible to them.
-    uv pip install --no-cache --python /opt/venv-sac/bin/python \
+    #
+    # ``-U`` — a FLOOR ALONE DOES NOT UPGRADE. This layer bootstraps from
+    # ubuntu:24.04, so its venv is normally fresh and ``-U`` is a no-op
+    # here; it is load-bearing for the ``--sandbox`` mutate-and-re-bake
+    # flow documented at the top of this file, where the venv already
+    # exists and an already-satisfied floor would leave the OLD build in
+    # place while exiting 0. It also keeps this line honest against its
+    # counterpart in apptainer-scitex.def, where the inherited-venv case
+    # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
+    # weaken ``--reinstall-package``: that stays the stronger lever for
+    # sac's own rebuild-from-staged-source.
+    uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
         "scitex-cards[mcp]>=0.16.0" \

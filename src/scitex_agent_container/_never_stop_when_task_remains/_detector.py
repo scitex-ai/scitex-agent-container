@@ -21,13 +21,26 @@ same knot tied the other way round.
 What this module DOES read is the **Claude Code hook protocol**, which is
 owned by Claude Code and is the shared standard both sides already target:
 
-* stdout that parses as a JSON object → **passed through verbatim**.
-* exit 0 with nothing usable → allow the stop.
-* exit 2 with nothing usable → block, with the executable's **raw stderr**
-  as an opaque reason string. We do not interpret that text, only forward
-  it. (This is the transitional path: today only ``scitex-cards may-stop``
-  exists, which signals via exit codes rather than emitting hook JSON.)
+* stdout carrying a hook-protocol object (it has ``decision``) → **passed
+  through verbatim**.
+* exit 0 → allow the stop.
+* exit 2 **plus** a parseable verdict on stdout (it has ``runnable``) →
+  block, with a reason composed from THAT PAYLOAD.
+* exit 2 with nothing parseable on stdout → ``UNKNOWN``.
 * anything else → ``UNKNOWN``.
+
+A RESULT IS ONLY ADMISSIBLE IF WE CAN PARSE IT
+----------------------------------------------
+An exit code on its own is not an answer. Exit 2 is both "work remains" and
+the universal CLI usage-error code, so a host whose scitex-cards predates
+``may-stop`` exits 2 with click's ``No such command`` on stderr. Treating
+that as an affirmative block turned "I could not determine whether you may
+stop" into "you may NOT stop" — UNKNOWN collapsed into the blocking pole,
+the one direction this gate must never fail in — and then handed the usage
+text back to the agent as its next instruction.
+
+So: only a payload we can actually read counts as a verdict, and only the
+detector's own words may become a ``reason``. Raw stderr never does.
 
 THREE STATES, NEVER TWO
 -----------------------
@@ -40,7 +53,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -60,8 +75,34 @@ UNKNOWN = "unknown"
 _DEFAULT_CMD = "scitex-cards may-stop"
 _CMD_ENV = "SAC_MAY_STOP_CMD"
 
+#: THE COMPATIBILITY FLOOR — the scitex-cards version that first provides
+#: :data:`_DEFAULT_CMD`'s verb. Declared here so the skew is STATED rather
+#: than discovered at runtime by an agent that cannot stop.
+#:
+#: Treat this as a signpost, not an oracle, and prefer the OBSERVED version
+#: that :func:`_provenance` reports. It is contested: scitex-cards report the
+#: verb shipped in 0.17.0, yet a clean non-editable install reporting 0.16.2
+#: answers `may-stop` correctly — so at least one version STRING in this
+#: ecosystem does not match the code behind it. That is exactly why the
+#: failure log below prints what the binary ACTUALLY reports instead of
+#: trusting this constant.
+MIN_CARDS_VERSION = "0.17.0"
+
 #: Seconds before we give up on the executable and fail open.
 _TIMEOUT_S = 15.0
+
+#: The key that marks stdout as a CLAUDE CODE hook-protocol payload.
+_DECISION_KEY = "decision"
+
+#: The key that marks stdout as the detector's own verdict — THE SHAPE WE
+#: EXPECT. ``may-stop`` answers with one JSON line carrying ``runnable`` and,
+#: when work remains, ``items[]``.
+_RUNNABLE_KEY = "runnable"
+
+#: Bounds on the composed reason, so a runaway board cannot produce a
+#: megabyte-long instruction.
+_MAX_REASON_ITEMS = 20
+_MAX_ITEM_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -160,8 +201,154 @@ def _invoke(argv: list[str]) -> _Run:
     )
 
 
+#: Bound on the version probe. It runs only on a FAILURE path, never on the
+#: hot path.
+#:
+#: MEASURED, not guessed: ``scitex-cards --version`` takes 3.3-4.1s cold on a
+#: loaded host, because the CLI does import-time work before click's eager
+#: ``--version`` short-circuits. An earlier 5s budget looked generous and
+#: silently timed out under load, reporting ``version: unknown`` for a binary
+#: that answers perfectly well — a diagnostic that lies about the one fact it
+#: exists to establish is worse than no diagnostic at all.
+_VERSION_TIMEOUT_S = 10.0
+
+#: A version-shaped token, e.g. the ``0.16.2`` in "scitex-cards, version
+#: 0.16.2". We extract ONLY this rather than quoting the banner, so a CLI that
+#: answers ``--version`` with a usage error cannot smuggle its prose into a
+#: message that reaches the agent.
+_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)?[0-9A-Za-z.+-]*")
+
+
+def _reported_version(exe: str) -> str:
+    """What ``exe`` claims its version is, or ``"unknown"``. Never raises."""
+    try:
+        proc = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=_VERSION_TIMEOUT_S,
+            check=False,
+        )
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: a diagnostic must never become a second failure)
+        return "unknown"
+    match = _VERSION_RE.search(f"{proc.stdout or ''}\n{proc.stderr or ''}")
+    return match.group(0) if match else "unknown"
+
+
+def _provenance(argv: list[str]) -> str:
+    """Name WHICH BINARY answered, where it lives, and what version it claims.
+
+    ``Error: No such command 'may-stop'`` says a verb is missing but NOT WHICH
+    SIDE is stale — the caller naming a verb that never existed, or a callee
+    too old to have it. Three agents investigated that one string on the night
+    this was written, and one concluded the caller was wrong and filed a card
+    proposing we change our default command; the truth was the opposite. The
+    error names the verb but never the version that lacks it.
+
+    So whenever we cannot get an answer, we say exactly who we asked. That
+    turns a multi-agent investigation into one line of log.
+    """
+    exe = argv[0] if argv else ""
+    resolved = shutil.which(exe) if exe else None
+    return (
+        f"asked: {shlex.join(argv)}; resolved: {resolved or 'NOT FOUND on PATH'}; "
+        f"reports version: {_reported_version(exe) if exe else 'unknown'}; "
+        f"this command needs scitex-cards >= {MIN_CARDS_VERSION}"
+    )
+
+
+#: Why an exit 2 carrying no parseable verdict is UNKNOWN. Names the
+#: overwhelmingly likely cause, because it is the fleet's STEADY STATE rather
+#: than an edge case: a host whose scitex-cards predates the verb answers with
+#: click's usage error — which also exits 2.
+#:
+#: The child's own output is deliberately NOT quoted here. This text reaches
+#: the agent and the operator, and CLI error text read back as an instruction
+#: is precisely the defect this guard exists to prevent. The provenance line
+#: appended by :func:`_provenance` is more actionable than the bytes anyway:
+#: it names WHICH binary answered and WHAT version it claims to be.
+_UNREADABLE_EXIT_TWO = (
+    "hook executable exited 2 but printed no verdict we could parse on "
+    "stdout, so we could not tell whether work remains. The usual cause is "
+    "that this host's scitex-cards predates the `may-stop` verb, whose usage "
+    "error also exits 2."
+)
+
+
+def _compose_reason(payload: dict, agent: str) -> str:
+    """Build the agent's next instruction from the DETECTOR-AUTHORED verdict.
+
+    Sourced strictly from the parsed stdout payload — never from stderr. The
+    ``reason`` is handed back to Claude as its next instruction, so anything
+    that reaches it must be something the detector deliberately said. stderr
+    is an unstructured channel that carries deprecation notices, library
+    warnings, and (the bug this replaced) CLI usage errors; forwarding it
+    verbatim is how "No such command" became an agent's marching orders.
+
+    Deliberately omits volatile fields such as ``idle_seconds``: the loop
+    guard digests this text to detect "no progress", so a value that moves
+    every turn would mean the guard could never trip.
+    """
+    lines: list[str] = []
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            parts = [
+                str(item[key]).strip()
+                for key in ("card_id", "reason", "next_action")
+                if isinstance(item.get(key), (str, int, float))
+                and str(item[key]).strip()
+            ]
+            if parts:
+                lines.append(" — ".join(parts)[:_MAX_ITEM_CHARS])
+            if len(lines) >= _MAX_REASON_ITEMS:
+                break
+
+    who = agent or "this agent"
+    if not lines:
+        return (
+            f"The runnable-work check reports that work remains on {who}'s "
+            "board, but listed no items. Do not stop — inspect your board and "
+            "take the next item."
+        )
+    numbered = "\n".join(f"{n}. {text}" for n, text in enumerate(lines, 1))
+    return (
+        f"{len(lines)} runnable item(s) on {who}'s board — an agent does not "
+        f"stop while the board holds work:\n{numbered}"
+    )
+
+
 def probe(agent: str) -> Verdict:
-    """Run the hook executable for ``agent`` and classify. Never raises."""
+    """Run the hook executable for ``agent`` and classify. Never raises.
+
+    EXIT 2 IS A BORROWED SIGNAL — GATE IT ON THE PAYLOAD
+    ----------------------------------------------------
+    The detector signals "work remains" with exit 2, which is also the
+    UNIVERSAL usage-error code (click, argparse, most CLIs). So any missing,
+    renamed, or not-yet-shipped verb IMPERSONATES A POSITIVE RESULT: the
+    process exits 2 and we would read a failure to answer as an affirmative
+    "you may not stop". We therefore keep accepting 2 for compatibility but
+    require a parseable verdict on stdout alongside it.
+
+    If the protocol ever gains a distinct code, a value outside the
+    conventional range (e.g. 10) would remove the ambiguity at the source and
+    is the recommended direction — but the exit codes are scitex-cards' to
+    choose, so this side does not change them unilaterally.
+
+    THE GENERAL RULE: a hook that calls a NEW verb needs a guarded fallback,
+    because THE FLEET ALWAYS RUNS OLDER THAN THE PUBLISHED VERSION. ``may-stop``
+    was published and correct; the deployed SIF simply predated it, which made
+    the missing-verb path the steady state rather than an edge case. The verb
+    is not the lesson — the skew is, and it recurs on every rename and every
+    new verb. Note the shape of the trap: the caller was RIGHT, and the error
+    text still read as if it were wrong, which is why :func:`_provenance`
+    reports who was actually asked.
+    """
     if not agent:
         return Verdict(
             state=UNKNOWN,
@@ -172,42 +359,55 @@ def probe(agent: str) -> Verdict:
             ),
         )
 
-    run = _invoke(detector_argv(agent))
+    argv = detector_argv(agent)
+    run = _invoke(argv)
 
     if run.failure:
-        return Verdict(state=UNKNOWN, detail=run.failure, returncode=run.returncode)
+        return Verdict(
+            state=UNKNOWN,
+            detail=f"{run.failure}. {_provenance(argv)}",
+            returncode=run.returncode,
+        )
 
     payload = _hook_json(run.stdout)
-    if payload is not None:
-        # The executable spoke the hook protocol. Forward it untouched — the
-        # decision is entirely theirs to make and ours to deliver.
-        state = BLOCK if payload.get("decision") == "block" else ALLOW
+
+    # (1) The executable spoke the CLAUDE CODE hook protocol outright. Forward
+    # it untouched — the decision is theirs to make and ours to deliver.
+    if payload is not None and _DECISION_KEY in payload:
+        state = BLOCK if payload.get(_DECISION_KEY) == "block" else ALLOW
         return Verdict(state=state, payload=payload, returncode=run.returncode)
 
+    # (2) exit 0 — a definite "nothing runnable".
     if run.returncode == 0:
         return Verdict(state=ALLOW, returncode=0)
 
+    # (3) exit 2 — "work remains", but ONLY when a verdict we can PARSE came
+    # with it. An exit code alone is not an answer: click exits 2 for a usage
+    # error too, so on any host whose scitex-cards predates `may-stop`,
+    # "work remains" and "No such command" are literally the same number.
     if run.returncode == 2:
-        # Transitional exit-code signalling. stderr is forwarded as opaque
-        # text — we never interpret it, so its format stays theirs.
-        reason = (run.stderr or "").strip()
+        if payload is None or _RUNNABLE_KEY not in payload:
+            return Verdict(
+                state=UNKNOWN,
+                detail=f"{_UNREADABLE_EXIT_TWO} {_provenance(argv)}",
+                returncode=2,
+            )
+        if not payload.get(_RUNNABLE_KEY):
+            # They answered, and the answer was "nothing runnable".
+            return Verdict(state=ALLOW, returncode=2)
         return Verdict(
             state=BLOCK,
-            reason=reason
-            or (
-                "The runnable-work check reported that work remains, but said "
-                "nothing further. Do not stop — inspect your board and take "
-                "the next item."
-            ),
+            payload={"decision": "block", "reason": _compose_reason(payload, agent)},
             returncode=2,
         )
 
-    tail = (run.stderr or run.stdout or "").strip().splitlines()
+    # (4) Any other exit code is UNKNOWN by contract. Their output is not
+    # quoted here either, for the reason given at _UNREADABLE_EXIT_TWO.
     return Verdict(
         state=UNKNOWN,
         detail=(
-            f"hook executable exited {run.returncode} (expected 0 or 2)"
-            + (f": {tail[-1][:300]}" if tail else "")
+            f"hook executable exited {run.returncode} (expected 0 or 2) and "
+            f"printed no verdict we could parse. {_provenance(argv)}"
         ),
         returncode=run.returncode,
     )

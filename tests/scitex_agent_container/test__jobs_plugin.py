@@ -7,7 +7,7 @@ entry-point group match the federated contract:
   ``--all --include-active --sync-active-login`` every 2h (the SOLE
   refresher; see the ``--skip-active`` note below).
 * ``sac.host-sync-check`` — the hourly READ-ONLY peer drift detector.
-* ``sac.spartan-sif-bake`` — the daily remote SIF bake on the Spartan
+* ``sac.spartan-sif-bake`` — the every-10-minutes remote SIF bake on the Spartan
   lease + pull/verify/atomic-swap on the master (operator directive
   2026-07-17: bake on Spartan, rsync here, zero master CPU).
 * ``sac.worktree-gc`` — the daily worktree GC.
@@ -335,7 +335,7 @@ def test_spartan_sif_bake_job_name_is_package_prefixed() -> None:
 
 
 def test_spartan_sif_bake_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer (daily), so kind="timer".
+    # Arrange — a periodic systemd --user timer (*/10), so kind="timer".
     # A bad kind makes `ecosystem up` silently drop sac's WHOLE provider.
     # Act
     job = _job("sac.spartan-sif-bake")
@@ -384,15 +384,18 @@ def test_spartan_sif_bake_command_is_the_confirmed_form() -> None:
     assert job.command == "sac image bake-remote --yes"
 
 
-def test_spartan_sif_bake_cadence_is_daily() -> None:
-    # Arrange — the SIF is a point-in-time snapshot of @develop; daily is
-    # the freshness the operator asked for (定期焼き), and skip-if-unchanged
-    # keeps no-change days at one ssh round-trip instead of a multi-GB
-    # transfer.
+def test_spartan_sif_bake_cadence_is_every_10_minutes() -> None:
+    # Arrange — the SIF is a point-in-time snapshot of @develop, and at our
+    # release rate a day-old one is mostly wrong. 30min was the operator's
+    # stated FLOOR (「最低でも30分に1回」), not his target — he asked why it was
+    # only every 30 and said even 1min would be fine — so this pins the
+    # cadence he wants. skip-if-unchanged keeps a no-change tick at one ssh
+    # round-trip instead of a multi-GB transfer, and the script's `flock -n`
+    # single-flights the overlaps a 10min interval necessarily causes.
     # Act
     job = _job("sac.spartan-sif-bake")
     # Assert
-    assert job.on_unit_active_sec == "1d"
+    assert job.on_unit_active_sec == "10min"
 
 
 def test_spartan_sif_bake_timeout_outlives_two_bakes_and_a_pull() -> None:

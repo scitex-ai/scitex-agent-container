@@ -91,8 +91,8 @@ def provide_jobs() -> "list[JobSpec]":
       ``--check`` in the CLI, so this scheduled command is read-only by
       construction.
 
-    * ``sac.spartan-sif-bake`` (``kind="timer"``) — the DAILY remote SIF
-      bake + pull. Operator directive (2026-07-17, verbatim): 「sif は最新版を
+    * ``sac.spartan-sif-bake`` (``kind="timer"``) — the EVERY-10-MINUTES
+      remote SIF bake + pull. Operator directive (2026-07-17, verbatim): 「sif は最新版を
       定期焼きにしましょう。spartan 側で。それでこちらには定期的に rsync する形で。
       cpu は使わずに新しいものが得られると思います。」 The bake runs as an
       ``srun --overlap`` step inside the standing Spartan CPU lease
@@ -100,8 +100,8 @@ def provide_jobs() -> "list[JobSpec]":
       master then PULLS the gated artifact via rsync-over-ssh,
       re-verifies it locally (sha256 + apptainer-exec symbol probe) and
       only then atomically swaps the live ``sac-<layer>.sif`` symlinks.
-      Keep-3 rotation on both sides. A source-unchanged day is a cheap
-      SKIPPED verdict — the daily cadence buys freshness, not transfers.
+      Keep-3 rotation on both sides. A source-unchanged run is a cheap
+      SKIPPED verdict — the */10 cadence buys freshness, not transfers.
 
     * ``sac.worktree-gc`` (``kind="timer"``) — the DAILY worktree GC,
       ``sac worktree gc --apply --all``. Agent-tool worktrees auto-clean
@@ -241,10 +241,10 @@ def provide_jobs() -> "list[JobSpec]":
         ),
         JobSpec(
             name="sac.spartan-sif-bake",
-            schedule="0 3 * * *",  # daily 03:00 (cron form; timer cadence below)
+            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
             command="sac image bake-remote --yes",
             description=(
-                "Daily SIF refresh with zero master CPU: bake sac-base + "
+                "10-minute SIF refresh with zero master CPU: bake sac-base + "
                 "sac-scitex on the standing Spartan CPU lease (srun "
                 "--overlap into the job resolved BY NAME, never sbatch), "
                 "gate at build time (.def %post symbol gate) AND on the "
@@ -254,20 +254,29 @@ def provide_jobs() -> "list[JobSpec]":
                 "file) and only then atomically swap both live "
                 "sac-<layer>.sif symlinks + keep-3 rotate locally. A "
                 "failed leg leaves the live image untouched and exits "
-                "non-zero; a source-unchanged day is a loud SKIPPED, not "
+                "non-zero; a source-unchanged run is a loud SKIPPED, not "
                 "a transfer."
             ),
             kind="timer",
-            # Daily: the image is a point-in-time snapshot of @develop —
-            # a day-old SIF is exactly the staleness window the operator
-            # accepted when asking for 定期焼き; anything faster mostly
-            # moves multi-GB files for no content change (skip-if-
-            # unchanged makes those days cheap, but the bake itself is
-            # 30-60 min of lease CPU). 03:00 keeps the transfer off
-            # interactive hours; 30min after boot clears the login/auth
-            # settling window.
+            # 10min: the image is a point-in-time snapshot of @develop, and at
+            # our release rate a DAY-old SIF is mostly wrong. 30min was read
+            # off the operator's 「最低でも30分に1回」 — but that was his FLOOR,
+            # not his target (「なんで三十分に一回だけなの？」; 「例えば1分に1回焼いても
+            # 全く問題ないです」), so the cadence is set to what he wants, not to
+            # the minimum he would tolerate.
+            #
+            # Cheap by construction, which is what makes a 10min tick sane: a
+            # source-unchanged run is a SKIPPED verdict (check a git ref, one
+            # ssh round-trip, no transfer), so only a real @develop change ever
+            # costs a bake. A bake takes 8-30min, so at */10 most ticks land
+            # while one is still running — the script's `flock -n` makes those
+            # exit "already-running" immediately instead of piling up, which is
+            # exactly what that lock is for. The operator has separately
+            # accepted overlap outright (the swap is an atomic symlink flip at
+            # the end). Steady state: skip, skip, skip, … one real bake when
+            # something changed, the rest of that window bouncing off the lock.
             on_boot_sec="30min",
-            on_unit_active_sec="1d",
+            on_unit_active_sec="10min",
             # Two full bakes (base ~15-25min + scitex ~10-20min) plus a
             # multi-GB pull on a slow link fit comfortably; the per-leg
             # ssh timeout inside the command is 7200s, so 4h bounds the

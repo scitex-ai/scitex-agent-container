@@ -1056,3 +1056,60 @@ def test_container_workdir_is_rejected():
     errors = validate_raw(raw, path="<test>")
     # Assert
     assert [e for e in errors if "container_workdir has been REMOVED" in e]
+
+
+# ---------------------------------------------------------------------------
+# metadata.labels.tags — ABOLISHED (operator decision 2026-07-19).
+#
+# `groups:` is the only classification field. Every one of the 16 fleet
+# specs that carried `tags: "active-development"` ALSO carried `active`
+# inside `groups:`, so `tags` carried ZERO information `groups` did not
+# already carry — pure duplication, i.e. the SSoT violation constitution
+# §1 forbids. Rejected LOUDLY (no silent-accept transition window, per
+# constitution §2 no-silent-fallbacks): a silently-ignored field is how
+# dead fields survive for months.
+# ---------------------------------------------------------------------------
+
+
+def _labels_spec(labels: dict) -> dict:
+    """A minimal valid v3 raw spec carrying ``metadata.labels``."""
+    return {**_BASE, "metadata": {"labels": labels}}
+
+
+def test_labels_tags_is_rejected():
+    # Arrange — the abolished classification field.
+    raw = _labels_spec({"tags": "active-development"})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "metadata.labels.tags" in e]
+
+
+def test_labels_tags_rejection_points_at_groups():
+    # Arrange — the rejection must hand the operator the replacement field.
+    raw = _labels_spec({"tags": "active-development"})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    bad = [e for e in errors if "metadata.labels.tags" in e]
+    # Assert
+    assert "groups" in bad[0]
+
+
+def test_labels_tags_rejection_names_the_offending_file():
+    # Arrange — an operator fixing 16 specs needs to know WHICH one failed.
+    raw = _labels_spec({"tags": "active-development"})
+    # Act
+    errors = validate_raw(raw, path="/agents/figrecipe/spec.yaml")
+    bad = [e for e in errors if "metadata.labels.tags" in e]
+    # Assert
+    assert "/agents/figrecipe/spec.yaml" in bad[0]
+
+
+def test_labels_groups_only_is_accepted():
+    # Arrange — CONTROL: the surviving field must still validate cleanly,
+    # so the rejection above cannot "pass" by rejecting every spec.
+    raw = _labels_spec({"groups": ["developer", "active"]})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "metadata.labels" in e]
