@@ -35,8 +35,8 @@ BAKE_SCRIPT = (
 
 # The pre-fix export line, verbatim, for the mutation controls.
 _FIXED_EXPORT = (
-    '--export=ALL,APPTAINER_TMPDIR="$BUILD_SCRATCH/tmp"'
-    ',APPTAINER_CACHEDIR="$BUILD_SCRATCH/cache"'
+    '--export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER/tmp"'
+    ',APPTAINER_CACHEDIR="/tmp/sac-sif-bake-$USER/cache"'
 )
 _SPLIT_EXPORT = (
     '--export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER"'

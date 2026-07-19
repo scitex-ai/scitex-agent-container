@@ -258,16 +258,21 @@ echo "build: layer=$LAYER ts=$TS cpus=$CPUS (log: $BUILD_LOG)"
 # base layers. A cache miss costs minutes. A consistency race costs a
 # silently unpublished image and a whole debugging session. Take the miss.
 #
-# ONE VARIABLE, so the invariant is greppable rather than implied: both
-# APPTAINER_TMPDIR and APPTAINER_CACHEDIR derive from BUILD_SCRATCH, so they
-# cannot drift onto different filesystems by an edit to one of them. A test
-# asserts they share this parent AND that the parent is under /tmp.
-BUILD_SCRATCH="/tmp/sac-sif-bake-$USER"
+# BOTH PATHS SPELLED OUT IN FULL, sharing one parent — deliberately NOT a
+# shell variable. A variable assigned on the line above would live OUTSIDE
+# this block, and the stdin-guard harness extracts each srun invocation IN
+# ISOLATION to prove it does not swallow the script tail. An unset variable
+# there makes the block fail early for the wrong reason, so the control test
+# can no longer tell a guarded block from an unguarded one.
+# Keep every path this block needs INSIDE the block.
+#
+# The invariant a test pins: both paths share the SAME parent, and that
+# parent is under node-local /tmp. Editing one without the other breaks it.
 "$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 --cpus-per-task="$CPUS" \
     --job-name="sac-sif-bake-$LAYER" \
     --chdir="$CTX" \
-    --export=ALL,APPTAINER_TMPDIR="$BUILD_SCRATCH/tmp",APPTAINER_CACHEDIR="$BUILD_SCRATCH/cache" \
-    bash -c "mkdir -p \"$BUILD_SCRATCH/tmp\" \"$BUILD_SCRATCH/cache\" && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
+    --export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER/tmp",APPTAINER_CACHEDIR="/tmp/sac-sif-bake-$USER/cache" \
+    bash -c "mkdir -p /tmp/sac-sif-bake-$USER/tmp /tmp/sac-sif-bake-$USER/cache && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
     < /dev/null 2>&1 | tee "$BUILD_LOG"
 BUILD_RC=$?
 [ "$BUILD_RC" -eq 0 ] || fail "apptainer-build" "rc=$BUILD_RC (log: $BUILD_LOG)"
