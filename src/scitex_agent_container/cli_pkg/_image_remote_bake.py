@@ -35,6 +35,8 @@ The chain, per layer (each leg three-state and loud — see
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
+from importlib import metadata
 from pathlib import Path
 
 import click
@@ -46,6 +48,22 @@ from ._remote_bake_core import (
     RemoteBakeOutcome,
     parse_bake_result,
 )
+
+
+def _first_line(text: str) -> str:
+    """First non-blank line — the headline summary of a multi-line reason."""
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return "(no reason given)"
+
+
+def _installed_version() -> str:
+    """Version of the sac actually imported here (never a hardcoded value)."""
+    try:
+        return metadata.version("scitex-agent-container")
+    except metadata.PackageNotFoundError:  # pragma: no cover - source checkout
+        return "unknown"
 
 
 def run_remote_bake(
@@ -64,6 +82,22 @@ def run_remote_bake(
     script = script_path or core.BAKE_SCRIPT
     if not script.is_file():
         raise click.ClickException(f"bake script missing from wheel: {script}")
+    # PREFLIGHT — the script we are ABOUT TO PIPE is the one that runs, and
+    # it is read off the INSTALLED wheel, not the checkout. PR #771's fix
+    # lived in develop for a full day while every bake still ran the
+    # pre-fix bytes from a cache-hit wheel under an unchanged version
+    # string. Refuse to spend an hour of lease on a script we can already
+    # see is broken, and say exactly which file and which lines.
+    source = script.read_text(encoding="utf-8")
+    offenders = core.unguarded_srun_invocations(source)
+    if offenders:
+        return RemoteBakeOutcome(
+            verdict=BakeVerdict.FAILED,
+            layer=layer,
+            detail=core.stale_bake_script_error(
+                script=script, offenders=offenders, version=_installed_version()
+            ),
+        )
     args = [
         "ssh",
         "-o",
@@ -107,9 +141,31 @@ def run_remote_bake(
             verdict=BakeVerdict.NO_RESULT,
             layer=layer,
             detail=(
-                f"ssh rc={proc.returncode} contradicts verdict {outcome.verdict.value}"
+                f"ssh rc={proc.returncode} contradicts verdict "
+                f"{outcome.verdict.value}\n"
+                + core.describe_remote_failure(
+                    verdict=BakeVerdict.NO_RESULT,
+                    script=script,
+                    ssh_rc=proc.returncode,
+                    stdout=proc.stdout or "",
+                    stderr=proc.stderr or "",
+                )
             ),
         )
+    if outcome.verdict in (BakeVerdict.FAILED, BakeVerdict.NO_RESULT):
+        # Carry the EVIDENCE, not just the label. The remote's exit status
+        # and the tail of its stderr are the whole diagnosis, and both were
+        # being thrown away here — which is how six silent runs went by
+        # with nothing to read but the word FAILED.
+        described = core.describe_remote_failure(
+            verdict=outcome.verdict,
+            script=script,
+            ssh_rc=proc.returncode,
+            stdout=proc.stdout or "",
+            stderr=proc.stderr or "",
+        )
+        remote_reason = outcome.detail or "(remote gave no reason)"
+        return replace(outcome, detail=f"{remote_reason}\n{described}")
     return outcome
 
 
@@ -207,6 +263,11 @@ def image_bake_remote(
         containers_dir = Path.home() / ".scitex" / "agent-container" / "containers"
 
     failures: list[str] = []
+    # One-line-per-failure summaries for the headline. The full reason is
+    # multi-line by design (remote stderr, remedy), and a headline that
+    # ends at the colon is unreadable in a journal: `bake-remote FAILED:`
+    # matched a grep and told the reader NOTHING.
+    failure_heads: list[str] = []
     for layer in layers:
         click.echo(f"=== bake-remote: layer={layer} host={host} ===")
         try:
@@ -221,13 +282,17 @@ def image_bake_remote(
                 timeout=ssh_timeout,
             )
         except subprocess.TimeoutExpired:
-            failures.append(
+            failure_heads.append(
                 f"{layer}: remote bake exceeded --ssh-timeout={ssh_timeout}s"
             )
+            failures.append(failure_heads[-1])
             click.echo(failures[-1], err=True)
             continue
         if outcome.verdict in (BakeVerdict.FAILED, BakeVerdict.NO_RESULT):
-            failures.append(f"{layer}: bake {outcome.verdict.value} ({outcome.detail})")
+            failure_heads.append(
+                f"{layer}: bake {outcome.verdict.value} — {_first_line(outcome.detail)}"
+            )
+            failures.append(f"{layer}: bake {outcome.verdict.value}\n{outcome.detail}")
             click.echo(failures[-1], err=True)
             continue
         click.echo(f"bake: {outcome.verdict.value} {outcome.sif}")
@@ -238,10 +303,16 @@ def image_bake_remote(
         )
         click.echo(f"publish: {pull.verdict.value} — {pull.detail}")
         if pull.verdict is PullVerdict.FAILED:
+            failure_heads.append(
+                f"{layer}: publish FAILED — {_first_line(pull.detail)}"
+            )
             failures.append(f"{layer}: publish FAILED ({pull.detail})")
 
     if failures:
-        click.echo("bake-remote FAILED:", err=True)
+        # The headline itself names what broke. Anything less makes the
+        # whole message invisible to the grep that a tired operator at
+        # 03:00 actually runs.
+        click.echo(f"bake-remote FAILED: {'; '.join(failure_heads)}", err=True)
         for f in failures:
             click.echo(f"  - {f}", err=True)
         raise SystemExit(1)

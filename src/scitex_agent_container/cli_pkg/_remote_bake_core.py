@@ -92,6 +92,126 @@ class RemoteBakeOutcome:
                 )
 
 
+def _logical_lines(script_text: str) -> list[tuple[int, str]]:
+    """Split shell source into logical lines, merging ``\\`` continuations.
+
+    An ``srun`` invocation in the bake script spans several physical lines
+    and its guard sits on the first of them, so a per-physical-line check
+    would read every continuation line as an unguarded srun step.
+    """
+    physical = script_text.splitlines()
+    merged: list[tuple[int, str]] = []
+    index = 0
+    while index < len(physical):
+        start = index + 1
+        block = [physical[index]]
+        while block[-1].rstrip().endswith("\\") and index + 1 < len(physical):
+            index += 1
+            block.append(physical[index])
+        merged.append((start, "\n".join(block)))
+        index += 1
+    return merged
+
+
+def unguarded_srun_invocations(script_text: str) -> list[tuple[int, str]]:
+    """``"$SRUN"`` invocations that do not carry slurm's ``--input=none``.
+
+    This is the machine-checkable form of the STDIN RULE documented at the
+    top of ``containers/spartan-sif-bake.sh``. That script is DELIVERED ON
+    STDIN (``bash -l -s --`` over ssh), so bash reads it from a
+    non-seekable pipe; an srun without this guard forwards the unread
+    REMAINDER OF THE SCRIPT to the compute node, bash finds EOF where the
+    next line should be, and exits **0** — build done, nothing published,
+    no verdict line at all. Measured: seven dead bakes, 2026-07-17..19
+    (PR #771).
+
+    Returns ``(line_number, invocation)`` per offender so a caller can NAME
+    them instead of merely reporting that something is wrong.
+    """
+    offenders: list[tuple[int, str]] = []
+    for lineno, command in _logical_lines(script_text):
+        if command.lstrip().startswith("#"):
+            continue
+        if '"$SRUN"' not in command:
+            continue
+        if "--input=none" in command:
+            continue
+        offenders.append((lineno, command.strip()))
+    return offenders
+
+
+def stale_bake_script_error(
+    *, script: Path, offenders: list[tuple[int, str]], version: str
+) -> str:
+    """Explain a pre-#771 bake script found at RUN time, and what to do.
+
+    A merged fix is not a deployed fix. The version string cannot reveal
+    this: a wheel cache keyed on ``(name, version)`` serves the stale build
+    under the SAME version, so only the file's bytes can answer. This is
+    why the fix was verified by re-running the bake and the bake failed the
+    same way — the run never saw the new script.
+    """
+    numbers = ", ".join(str(lineno) for lineno, _ in offenders)
+    return (
+        "REFUSING to bake: the script this sac is about to pipe to the remote "
+        f"is missing srun's `--input=none` stdin guard on line(s) {numbers}.\n"
+        f"    offending file : {script}\n"
+        f"    installed sac  : {version}\n"
+        "An unguarded srun eats the rest of this script off the ssh pipe; bash "
+        "then hits EOF and exits 0, leaving a .partial that nothing renames and "
+        "no SAC_BAKE_RESULT line (seven dead bakes, 2026-07-17..19).\n"
+        "So the INSTALLED wheel predates PR #771 even when the checkout does "
+        "not. Redeploy the wheel, then re-run:\n"
+        "    pip install --force-reinstall --no-deps --no-cache-dir <checkout>\n"
+        "Then confirm the BYTES changed — the version string cannot tell you, "
+        "it is identical across a cache hit:\n"
+        f"    grep -c -- --input=none {script}    # must be > 0"
+    )
+
+
+def _tail(text: str, max_lines: int) -> str:
+    """Last ``max_lines`` non-blank lines of ``text`` (evidence, not noise)."""
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-max_lines:])
+
+
+def describe_remote_failure(
+    *,
+    verdict: BakeVerdict,
+    script: Path,
+    ssh_rc: int,
+    stdout: str,
+    stderr: str,
+    max_lines: int = 8,
+) -> str:
+    """Compose a bake failure reason that can be ACTED on.
+
+    "An error that only states what broke is half-written — say what to do
+    about it, and name the offending file, value, or version." A bare
+    ``bake FAILED`` survived six silent runs precisely because it carried
+    neither the remote's exit status nor one line of its stderr.
+    """
+    parts = [f"remote bake {verdict.value} (ssh rc={ssh_rc}, script={script})"]
+    last_stdout = _tail(stdout, 1)
+    if last_stdout:
+        parts.append(f"  last remote stdout : {last_stdout}")
+    remote_stderr = _tail(stderr, max_lines)
+    if remote_stderr:
+        indented = "\n".join(f"      {line}" for line in remote_stderr.splitlines())
+        parts.append(f"  last remote stderr :\n{indented}")
+    else:
+        parts.append("  last remote stderr : (empty — the remote said nothing)")
+    if verdict is BakeVerdict.NO_RESULT:
+        parts.append(
+            "  meaning            : the script reached no verdict — it DIED "
+            "mid-flight. A remote that logged 'Build complete' and then stopped "
+            "without SAC_BAKE_RESULT is the stdin-eating-srun signature; check "
+            "that the INSTALLED bake script still carries --input=none "
+            "(a merged fix is not a deployed fix)."
+        )
+    return "\n".join(parts)
+
+
 def parse_bake_result(output: str, *, layer: str) -> RemoteBakeOutcome:
     """Parse the LAST ``SAC_BAKE_RESULT={...}`` line of the remote output.
 
@@ -347,8 +467,11 @@ __all__ = [
     "RemoteBakeOutcome",
     "SIF_RE",
     "SYMBOL_PROBE",
+    "describe_remote_failure",
     "parse_bake_result",
     "prune_local",
     "pull_and_publish",
+    "stale_bake_script_error",
     "swap_live_symlinks",
+    "unguarded_srun_invocations",
 ]

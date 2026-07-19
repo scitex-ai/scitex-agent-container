@@ -6,6 +6,44 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-07-19
+
+### Fixed
+
+- **The SIF bake ran a script the fix had never reached** (follow-up to PR #771).
+  #771 correctly identified that an unguarded `srun` was eating the bake script
+  off its own stdin, and added `--input=none` to all three `srun` calls. The next
+  real bake failed *identically* — build complete, `.partial` left, no
+  `SAC_BAKE_RESULT`, and `bake-remote FAILED:` with nothing after the colon.
+
+  The script that ran was never the fixed one. `sac image bake-remote` pipes the
+  script off the **installed wheel**, and the installed wheel still held pre-#771
+  bytes: `grep -c -- --input=none` on it returned **0**, with all three `srun`
+  calls unguarded at lines 223, 266 and 279. Its version read `0.22.0` — and so
+  did the checkout, because the version was never bumped when #771 merged. A
+  wheel cache keyed on `(name, version)` had served the stale build straight back
+  through a `--force-reinstall`. **The version string could not tell the two
+  apart; only the bytes could.**
+
+  Three changes, because each half failed on its own:
+
+  - `version` is bumped to `0.22.1`, so the cache key moves with the fix. A
+    merged fix that cannot reach a machine is not deployed.
+  - `run_remote_bake` now **preflights the script it is about to pipe**
+    (`unguarded_srun_invocations`) and refuses to bake when a guard is missing,
+    naming the offending file, the installed version, the exact line numbers and
+    the cache-busting reinstall that fixes it — instead of spending an hour of
+    standing lease producing another orphan `.partial`.
+  - Bake failures now **carry their evidence**. `bake-remote FAILED:` composes a
+    self-contained headline (a bare colon is invisible to the grep an operator
+    actually runs), and the reason carries the remote's exit status, the last
+    line of its stdout and the tail of its stderr. Previously `run_remote_bake`
+    discarded `returncode` and `stderr` entirely, so a failure that knew it had
+    failed could not say why. That is how this bug survived six silent runs.
+
+  Verified against the real artifact: the new preflight, run on the actual stale
+  script still installed on the master, reports all three unguarded calls.
+
 ## [0.22.0] - 2026-07-19
 
 ### Added

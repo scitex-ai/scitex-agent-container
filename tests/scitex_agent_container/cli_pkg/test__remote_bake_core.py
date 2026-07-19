@@ -334,3 +334,186 @@ def test_bake_script_emits_the_three_state_verdict_contract() -> None:
     )
     # Assert
     assert verdicts_present
+
+
+# ---------------------------------------------------------------------------
+# The stdin-guard PREFLIGHT (measured 2026-07-19)
+#
+# PR #771 added `--input=none` to every srun in the bake script, and the very
+# next bake failed identically: build done, `.partial` left, no
+# SAC_BAKE_RESULT. The script the run PIPED came off the INSTALLED wheel,
+# whose bytes still predated #771 — the wheel cache is keyed on
+# (name, version) and the version had not moved, so a reinstall served the
+# stale build back under the same number. A merged fix is not a deployed fix,
+# and the version string cannot tell the two apart. Only the bytes can, so
+# the caller now reads them before spending an hour of lease.
+# ---------------------------------------------------------------------------
+_GUARDED_SRUN = (
+    '"$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 \\\n'
+    '    --job-name="sac-sif-bake-$LAYER" \\\n'
+    '    bash -c "build" < /dev/null\n'
+)
+
+_UNGUARDED_SRUN = (
+    '"$SRUN" --jobid="$JID" --overlap --ntasks=1 \\\n'
+    '    --job-name="sac-sif-bake-$LAYER" \\\n'
+    '    bash -c "build" < /dev/null\n'
+)
+
+
+def test_an_srun_without_input_none_is_reported_as_an_offender() -> None:
+    # Arrange
+    script = f"set -uo pipefail\n{_UNGUARDED_SRUN}"
+    # Act
+    offenders = core.unguarded_srun_invocations(script)
+    # Assert
+    assert len(offenders) == 1
+
+
+def test_an_unguarded_srun_is_reported_with_its_line_number() -> None:
+    # Arrange — naming the LINE is the point: "something is wrong" is what
+    # the old failure said, and it cost six silent runs.
+    script = f"set -uo pipefail\n{_UNGUARDED_SRUN}"
+    # Act
+    offenders = core.unguarded_srun_invocations(script)
+    # Assert
+    assert offenders[0][0] == 2
+
+
+def test_a_guarded_srun_is_not_an_offender() -> None:
+    # Arrange
+    script = f"set -uo pipefail\n{_GUARDED_SRUN}"
+    # Act
+    offenders = core.unguarded_srun_invocations(script)
+    # Assert
+    assert offenders == []
+
+
+def test_continuation_lines_of_a_guarded_srun_are_not_separate_offenders() -> None:
+    # Arrange — the guard sits on the FIRST physical line of a multi-line
+    # invocation, so a per-physical-line check would flag the continuations
+    # and cry wolf on a correct script.
+    script = f"set -uo pipefail\n{_GUARDED_SRUN}{_GUARDED_SRUN}"
+    # Act
+    offenders = core.unguarded_srun_invocations(script)
+    # Assert
+    assert offenders == []
+
+
+def test_a_commented_out_srun_is_not_an_offender() -> None:
+    # Arrange — the script's own STDIN RULE header quotes srun invocations
+    # in prose; documentation must not read as a defect.
+    script = '# "$SRUN" --jobid="$JID" would eat this file\n'
+    # Act
+    offenders = core.unguarded_srun_invocations(script)
+    # Assert
+    assert offenders == []
+
+
+def test_stale_bake_script_error_names_the_offending_file() -> None:
+    # Arrange
+    script = Path("/opt/venv/lib/python3.11/site-packages/x/spartan-sif-bake.sh")
+    # Act
+    message = core.stale_bake_script_error(
+        script=script, offenders=[(240, '"$SRUN" --jobid=1')], version="0.22.0"
+    )
+    # Assert
+    assert str(script) in message
+
+
+def test_stale_bake_script_error_names_the_installed_version() -> None:
+    # Arrange — the version is the value that LIED, so it must be quoted
+    # back at the reader rather than trusted.
+    # Act
+    message = core.stale_bake_script_error(
+        script=Path("/x/bake.sh"), offenders=[(240, "srun")], version="0.22.0"
+    )
+    # Assert
+    assert "0.22.0" in message
+
+
+def test_stale_bake_script_error_states_the_remedy() -> None:
+    # Arrange — "say what to do about it": a cache-busting reinstall is the
+    # only thing that moves the bytes when the version has not moved.
+    # Act
+    message = core.stale_bake_script_error(
+        script=Path("/x/bake.sh"), offenders=[(240, "srun")], version="0.22.0"
+    )
+    # Assert
+    assert "--no-cache-dir" in message
+
+
+def test_describe_remote_failure_carries_the_remote_exit_status() -> None:
+    # Arrange
+    # Act
+    message = core.describe_remote_failure(
+        verdict=BakeVerdict.FAILED,
+        script=Path("/x/bake.sh"),
+        ssh_rc=17,
+        stdout="",
+        stderr="",
+    )
+    # Assert
+    assert "ssh rc=17" in message
+
+
+def test_describe_remote_failure_carries_the_tail_of_remote_stderr() -> None:
+    # Arrange — the remote's own words are the diagnosis; throwing them
+    # away is what made `bake-remote FAILED:` unreadable.
+    stderr = "\n".join(f"line-{n}" for n in range(1, 21))
+    # Act
+    message = core.describe_remote_failure(
+        verdict=BakeVerdict.FAILED,
+        script=Path("/x/bake.sh"),
+        ssh_rc=1,
+        stdout="",
+        stderr=stderr,
+    )
+    # Assert
+    assert "line-20" in message
+
+
+def test_describe_remote_failure_reports_the_last_remote_stdout_line() -> None:
+    # Arrange — "Build complete: ...partial" as the LAST word out of the
+    # remote is the whole fingerprint of the stdin-eating srun.
+    stdout = "starting\nINFO: Build complete: /store/sac-base-x.sif.partial\n"
+    # Act
+    message = core.describe_remote_failure(
+        verdict=BakeVerdict.NO_RESULT,
+        script=Path("/x/bake.sh"),
+        ssh_rc=0,
+        stdout=stdout,
+        stderr="",
+    )
+    # Assert
+    assert "Build complete" in message
+
+
+def test_describe_remote_failure_says_so_when_remote_stderr_was_empty() -> None:
+    # Arrange — silence must render as SILENCE, never as an empty string
+    # the reader mistakes for "nothing was wrong".
+    # Act
+    message = core.describe_remote_failure(
+        verdict=BakeVerdict.FAILED,
+        script=Path("/x/bake.sh"),
+        ssh_rc=1,
+        stdout="",
+        stderr="",
+    )
+    # Assert
+    assert "the remote said nothing" in message
+
+
+def test_no_result_failure_says_what_to_check() -> None:
+    # Arrange — NO_RESULT means the script DIED; the reader needs to be
+    # pointed at the installed script, which is where the answer was.
+    # Act
+    message = core.describe_remote_failure(
+        verdict=BakeVerdict.NO_RESULT,
+        script=Path("/x/bake.sh"),
+        ssh_rc=0,
+        stdout="",
+        stderr="",
+    )
+    # Assert
+    assert "--input=none" in message
