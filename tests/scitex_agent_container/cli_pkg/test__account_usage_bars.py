@@ -176,7 +176,7 @@ def test_render_account_block_first_line_is_dashed_name():
     # Act
     block = render_account_block(row, hint_5h="", hint_7d="", hint_width=0, width=20)
     # Assert
-    assert block[0] == "- acct"
+    assert block[0] == "- claude-code:acct"
 
 
 def test_render_account_block_is_5h_then_7d():
@@ -208,7 +208,7 @@ def _two_bar_rows() -> list[AccountRow]:
     """Two accounts with different-length names for alignment tests."""
     return [
         AccountRow(
-            name="wyusuuke-gmail-com",
+            name="alpha-example-com",
             freshness_state="VALID",
             freshness_hours=2.0,
             used_pct_5h=0.0,
@@ -216,7 +216,7 @@ def _two_bar_rows() -> list[AccountRow]:
             snapshot_as_of=None,
         ),
         AccountRow(
-            name="ywata1989-gmail-com",
+            name="beta-example-com",
             freshness_state="VALID",
             freshness_hours=2.0,
             used_pct_5h=14.0,
@@ -233,7 +233,10 @@ def test_render_usage_bars_block_marks_each_account_with_dash():
     block = render_usage_bars_block(rows, width=20)
     markers = [ln for ln in block.splitlines() if ln.startswith("- ")]
     # Assert — one "- <name>" marker per account (operator mockup).
-    assert markers == ["- wyusuuke-gmail-com", "- ywata1989-gmail-com"]
+    assert markers == [
+        "- claude-code:alpha-example-com",
+        "- claude-code:beta-example-com",
+    ]
 
 
 def test_render_usage_bars_block_blank_line_between_accounts():
@@ -282,7 +285,7 @@ def _hinted_bar_rows() -> list[AccountRow]:
     """One row with both resets cached, one with neither (mixed block)."""
     return [
         AccountRow(
-            name="wyusuuke-gmail-com",
+            name="alpha-example-com",
             freshness_state="VALID",
             freshness_hours=2.4,
             used_pct_5h=29.0,
@@ -293,7 +296,7 @@ def _hinted_bar_rows() -> list[AccountRow]:
             reset_at_7d="2026-07-14T03:00:00+00:00",
         ),
         AccountRow(
-            name="ywata1989-gmail-com",
+            name="beta-example-com",
             freshness_state="VALID",
             freshness_hours=2.0,
             used_pct_5h=14.0,
@@ -345,11 +348,11 @@ def test_render_usage_bars_block_matches_operator_mockup_exactly():
     assert block == "\n".join(
         [
             "Usage bars (5h / 7d out of 100%):",
-            "- wyusuuke-gmail-com",
+            "- claude-code:alpha-example-com",
             "  5h (in 4h05m) [███░░░░░░░░░] (29%)",
             "  7d (in 2d03h) [████████░░░░] (66%)",
             "",
-            "- ywata1989-gmail-com",
+            "- claude-code:beta-example-com",
             "  5h            [██░░░░░░░░░░] (14%)",
             "  7d            [██░░░░░░░░░░] (15%)",
         ]

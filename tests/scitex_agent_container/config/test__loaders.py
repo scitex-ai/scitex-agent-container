@@ -570,11 +570,11 @@ def test_load_config_injects_claude_agent_account_when_spec_pins_account(
     tmp_path: Path,
 ):
     # Arrange
-    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "wyusuuke-gmail-com"}})
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "alpha-example-com"}})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "wyusuuke-gmail-com"
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "alpha-example-com"
 
 
 def test_load_config_omits_claude_agent_account_when_unpinned(tmp_path: Path):
@@ -593,13 +593,11 @@ def test_load_config_strips_whitespace_from_account_before_injection(
     # Arrange — defensive trim so a spec with a stray newline / space
     # does not leak into the quota-cache lookup (which uses a strict
     # ``split('-')[0] == short`` match — a leading space would break it).
-    p = _v3_yaml(
-        tmp_path, "trimmed", {"claude": {"account": "  ywata1989-gmail-com  "}}
-    )
+    p = _v3_yaml(tmp_path, "trimmed", {"claude": {"account": "  beta-example-com  "}})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "ywata1989-gmail-com"
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "beta-example-com"
 
 
 # ---------------------------------------------------------------------------

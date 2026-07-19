@@ -782,7 +782,7 @@ def representative_full_status() -> dict:
         "last_tool_name": "Bash",
         "current_task": "Bash: git status",
         "current_tool": "Bash",
-        "account_email": "ywata1989@gmail.com",
+        "account_email": "beta@example.com",
         "skills_loaded": [
             "orochi-agent-startup-protocol",
             "orochi-fleet-communication-discipline",

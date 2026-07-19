@@ -25,7 +25,7 @@ def register_mint_token_command(group: click.Group) -> None:
         "--account",
         "account_label",
         required=True,
-        help="Stored account slug to mint from (e.g. wyusuuke-gmail-com).",
+        help="Stored account slug to mint from (e.g. alpha-example-com).",
     )
     def account_mint_token(account_label: str) -> None:
         """Mint an ACCESS-ONLY credential artifact (refresh_token stripped).
@@ -41,7 +41,7 @@ def register_mint_token_command(group: click.Group) -> None:
 
         \b
         Examples:
-          $ sac accounts mint-token --account wyusuuke-gmail-com
+          $ sac accounts mint-token --account alpha-example-com
         """
         import json as _json
         import sys

@@ -237,13 +237,13 @@ def test_a_known_account_is_recorded_verbatim(event_log: Path) -> None:
     log_auth_failure_observed(
         agent=agent,
         detail="banner",
-        account="ywata1989-gmail-com",
+        account="beta-example-com",
         path=event_log,
         now=NOW,
     )
 
     # Assert
-    assert read_auth_events(event_log)[0].account == "ywata1989-gmail-com"
+    assert read_auth_events(event_log)[0].account == "beta-example-com"
 
 
 def test_http_status_is_null_when_none_was_observed(event_log: Path) -> None:

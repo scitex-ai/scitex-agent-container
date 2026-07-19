@@ -93,29 +93,29 @@ def test_default_log_path_under_runtime_logs(_isolate_home: Path) -> None:
 def test_run_sync_once_saves_store_for_valid_live(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 def test_run_sync_once_logs_saved_action(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert "saved wyusuuke-gmail-com" in log.getvalue()
+    assert "saved alpha-example-com" in log.getvalue()
 
 
 def test_run_sync_once_logs_invalid_without_raising(_isolate_home: Path) -> None:
     # Arrange — expired live cred: the watcher must log, not crash.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
@@ -126,12 +126,12 @@ def test_run_sync_once_logs_invalid_without_raising(_isolate_home: Path) -> None
 def test_run_sync_once_does_not_save_for_expired_live(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert not _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert not _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -143,12 +143,12 @@ def test_watch_poll_initial_sync_writes_store(_isolate_home: Path) -> None:
     # Arrange — valid live cred; zero poll iterations means only the
     # initial sync runs.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     watch_poll(log, home=home, iterations=0, sleep_fn=lambda _s: None)
     # Assert
-    assert _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 def test_watch_poll_resyncs_after_live_cred_change(_isolate_home: Path) -> None:
@@ -158,27 +158,27 @@ def test_watch_poll_resyncs_after_live_cred_change(_isolate_home: Path) -> None:
     home = _isolate_home
     first_ms = int((time.time() + 3_600) * 1_000)
     second_ms = int((time.time() + 9_999) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", first_ms)
+    _write_live(home, "alpha@example.com", first_ms)
     log = io.StringIO()
 
     def _mutate_on_first_poll(_seconds: float) -> None:
-        _write_live(home, "wyusuuke@gmail.com", second_ms)
+        _write_live(home, "alpha@example.com", second_ms)
 
     # Act
     watch_poll(home=home, log=log, iterations=1, sleep_fn=_mutate_on_first_poll)
     # Assert — the store now holds the SECOND (fresher) expiry.
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     assert json.loads(snap.read_text())["claudeAiOauth"]["expiresAt"] == second_ms
 
 
 def test_watch_poll_logs_change_detected_on_mutation(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
 
     def _mutate(_seconds: float) -> None:
-        _write_live(home, "wyusuuke@gmail.com", int((time.time() + 9_999) * 1_000))
+        _write_live(home, "alpha@example.com", int((time.time() + 9_999) * 1_000))
 
     # Act
     watch_poll(home=home, log=log, iterations=1, sleep_fn=_mutate)
@@ -191,7 +191,7 @@ def test_watch_poll_no_change_does_not_log_change_detected(
 ) -> None:
     # Arrange — sleep_fn leaves the file untouched, so no change fires.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     watch_poll(home=home, log=log, iterations=2, sleep_fn=lambda _s: None)

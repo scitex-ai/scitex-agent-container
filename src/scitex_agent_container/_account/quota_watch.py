@@ -48,7 +48,7 @@ def _select_next_account(
     or ABSENT is NEVER selected, even when its usage reads 0.0%.
 
     This is the fix for the 2026-07-06 rotation bug: the selector rotated
-    the live account to the EXPIRED account ``ywata1989-gmail-com`` purely
+    the live account to the EXPIRED account ``alpha-example-com`` purely
     because its usage read 0.0%, handing the fleet a dead token. Freshness
     now gates the candidate set before quota ordering.
 
@@ -252,9 +252,7 @@ def survival_mode_check(
             "survival_mode": False,
             "account_count": count,
             "quota_5h_pct": q5,
-            "message": (
-                f"ok: {count} account(s), 5h quota={q5}%"
-            ),
+            "message": (f"ok: {count} account(s), 5h quota={q5}%"),
         }
     except Exception as exc:
         return {

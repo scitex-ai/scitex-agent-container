@@ -118,15 +118,15 @@ The historical `--skip-active` skip-set (union of the host-active login via `_re
 
 ```
 [skip-active] excluding active account 'ywatanabe-gmail-com'.
-[skip-active] excluding pinned-running account 'wyusuuke-gmail-com' (refresh-token rotation race guard).
-[skip-active] excluding pinned-running account 'ywatanabe-scitex-ai' (refresh-token rotation race guard).
+[skip-active] excluding pinned-running account 'alpha-example-com' (refresh-token rotation race guard).
+[skip-active] excluding pinned-running account 'researcher-example-org' (refresh-token rotation race guard).
 ```
 
 Implementation: `cli_pkg/_account_refresh.py::account_refresh` (CLI wiring — `--include-active`/`--skip-active`/`--sync-active-login` are mutually-exclusive-gated), `_collect_pinned_running_accounts(home)` (reads `~/.scitex/agent-container/runtime/registry/*.json` directly to avoid the `Registry` class's import-time `REGISTRY_DIR` freeze under pytest fixtures).
 
 ## 5. The watch-live daemon — keeps the sac store fresh
 
-`sac accounts watch-live` runs `inotifywait -m ~/.claude/` for `close_write|moved_to|create` on `.credentials.json`; atomically copies each event into the matching sac-store path (slug-map e.g. `wyusuuke@gmail.com` → `wyusuuke-gmail-com`).
+`sac accounts watch-live` runs `inotifywait -m ~/.claude/` for `close_write|moved_to|create` on `.credentials.json`; atomically copies each event into the matching sac-store path (slug-map e.g. `alpha@example.com` → `alpha-example-com`).
 
 Non-negotiables:
 

@@ -28,7 +28,7 @@ from scitex_agent_container._account.mint_token import (
 _ACCESS = "oat-test-access"
 _REFRESH_SENTINEL = "oat-test-refresh"
 _SCOPES = ["user:inference", "user:profile"]
-_LABEL = "wyusuuke-gmail-com"
+_LABEL = "alpha-example-com"
 
 
 def _write_account(
@@ -207,9 +207,7 @@ def test_mint_expired_account_raises(store, tmp_path):
     _write_account(store, "stale", expires_at_ms=int((now_s - 3600) * 1000))
 
     def _call():
-        mint_access_only_artifact(
-            "stale", store_dir=store, home=tmp_path, now=now_s
-        )
+        mint_access_only_artifact("stale", store_dir=store, home=tmp_path, now=now_s)
 
     # Act
     action = _call

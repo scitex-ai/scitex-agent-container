@@ -60,10 +60,10 @@ What `--skip-active` did NOT skip: any account **pinned by a running agent** tha
 So on a host with three Max accounts where:
 
 * Operator's interactive `claude` is logged in as `ywatanabe-gmail-com`.
-* `proj-neurovista` is pinned to `wyusuuke-gmail-com`.
+* `proj-neurovista` is pinned to `alpha-example-com`.
 * `clew` is pinned to `ywatanabe-scitex-ai`.
 
-Every 2h the cron rotated **both** `wyusuuke-gmail-com` and `ywatanabe-scitex-ai`'s refresh-tokens. The in-container CLIs for neurovista and clew were holding the **previous** refresh-tokens in memory (fact 2 above), so their next rotation attempt — when their access-token expired ~1h later — used a refresh-token Anthropic had already invalidated when the cron rotated it.
+Every 2h the cron rotated **both** `alpha-example-com` and `ywatanabe-scitex-ai`'s refresh-tokens. The in-container CLIs for neurovista and clew were holding the **previous** refresh-tokens in memory (fact 2 above), so their next rotation attempt — when their access-token expired ~1h later — used a refresh-token Anthropic had already invalidated when the cron rotated it.
 
 → 401 storm, recurring on the 2h cron boundary, indistinguishable from a working credential to anyone reading the snapshot file (which the cron had just rewritten with brand-new tokens).
 
@@ -135,7 +135,7 @@ See `docs/deploy-runbook.md` for the surface-by-surface deploy table. The merged
 
 **What gets better.**
 
-* The 2h-cyclic 401 storm on pinned agents is closed structurally. Verified empirically: PR #299 force-probe at deploy time named all three pinned-running accounts in the operator's fleet (wyusuuke-gmail-com / ywatanabe-scitex-ai / ywata1989-gmail-com); the 19:35 cron cycle on 2026-06-03 passed with zero new 401 on the pinned neurovista agent.
+* The 2h-cyclic 401 storm on pinned agents is closed structurally. Verified empirically: PR #299 force-probe at deploy time named all three pinned-running accounts in the operator's fleet (alpha-example-com / ywatanabe-scitex-ai / beta-example-com); the 19:35 cron cycle on 2026-06-03 passed with zero new 401 on the pinned neurovista agent.
 * The single-source-of-truth model becomes meaningfully single. Before #262 the snapshot existed but was authoritative for **nobody** in a pinned-agent deployment (the agent wrote to its per-agent copy, the cron wrote to the snapshot, neither could see the other). After #262 + #299 the snapshot is what the in-container CLI binds to AND what the cron leaves alone when it's in use.
 * The in-container CLI's in-memory cache stops being a foot-gun for sac itself. (It still IS one for any out-of-band rotator. The skip-set extension is what prevents sac from being its own out-of-band rotator.)
 

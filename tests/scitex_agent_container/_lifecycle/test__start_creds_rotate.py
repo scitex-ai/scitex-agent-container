@@ -126,13 +126,13 @@ def test_pinned_expired_agent_rotates_to_healthy_account(_isolate_home: Path) ->
     # Arrange — pinned is EXPIRED, sibling is fresh.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(60))
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     cfg = _make_config("alpha", account="ywatanabe-scitex-ai")
     log = io.StringIO()
     # Act
     _rotate_to_healthy_account(cfg, log_stream=log)
     # Assert
-    assert cfg.claude.account == "wyusuuke-gmail-com"
+    assert cfg.claude.account == "alpha-example-com"
 
 
 def test_pinned_rotation_emits_a_one_line_notice_to_log_stream(
@@ -141,7 +141,7 @@ def test_pinned_rotation_emits_a_one_line_notice_to_log_stream(
     # Arrange
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(60))
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     cfg = _make_config("alpha", account="ywatanabe-scitex-ai")
     log = io.StringIO()
     # Act
@@ -149,9 +149,7 @@ def test_pinned_rotation_emits_a_one_line_notice_to_log_stream(
     # Assert — the operator must see WHICH agent and HOW the account moved.
     msg = log.getvalue()
     assert (
-        "alpha" in msg
-        and "ywatanabe-scitex-ai" in msg
-        and "wyusuuke-gmail-com" in msg
+        "alpha" in msg and "ywatanabe-scitex-ai" in msg and "alpha-example-com" in msg
     )
 
 
@@ -166,8 +164,8 @@ def test_pinned_all_expired_raises_no_healthy_account_error(
     # Arrange — every stored snapshot expired.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(60))
-    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(60))
-    _write_snapshot(home, "ywata1989-gmail-com", _past_ms(60))
+    _write_snapshot(home, "alpha-example-com", _past_ms(60))
+    _write_snapshot(home, "beta-example-com", _past_ms(60))
     cfg = _make_config("alpha", account="ywatanabe-scitex-ai")
     # Act
     ctx = pytest.raises(NoHealthyAccountError)
