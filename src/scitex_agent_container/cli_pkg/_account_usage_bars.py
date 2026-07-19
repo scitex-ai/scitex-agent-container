@@ -20,11 +20,11 @@ BELOW the existing table:
    time-to-reset the credential picker reasons about::
 
        Usage bars (5h / 7d out of 100%):
-       - wyusuuke-gmail-com
+       - alpha-example-com
          5h (in 4h05m) [██████░░░░░░░░░░░░░░] (29%)
          7d (in 2d03h) [█████████████░░░░░░░] (66%)
 
-       - ywatanabe-scitex-ai
+       - researcher-example-org
          5h            [███░░░░░░░░░░░░░░░░░] (14%)
          7d (in 5d00h) [███░░░░░░░░░░░░░░░░░] (15%)
 
@@ -177,7 +177,7 @@ def render_account_block(
     accounts and supplies the block-level ``hint_width``.
     """
     return [
-        f"- {row.name}",
+        f"- {row.provider}:{row.name}",
         render_window_line(
             "5h", row.used_pct_5h, hint=hint_5h, hint_width=hint_width, width=width
         ),

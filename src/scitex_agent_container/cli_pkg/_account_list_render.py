@@ -8,7 +8,8 @@ This module now holds the THREE pieces that need on-disk state:
 
 1. :class:`AccountRow` — pre-resolved row dataclass (pure data; the
    formatting helpers live in :mod:`._account_list_format`).
-2. :func:`render_stored_table` — turn rows into a ``rich.table.Table``.
+2. :func:`render_stored_table` — turn provider-aware rows into a
+   ``rich.table.Table``.
 3. :func:`usage_for_account`, :func:`build_stored_rows`,
    :func:`build_stored_json` — fetch / shape the data the CLI command
    feeds into the renderer or the JSON path.
@@ -25,8 +26,8 @@ Layout note (operator directive 2026-07-11): the Stored-accounts table
 and the usage-bars block below it used to DUPLICATE the 5h%/7d%
 numbers. The rule now is "the bars own the percentages; the table
 holds only what the bars cannot express" — so the table is exactly
-``Account | Status | Last Update`` (the ID column was renamed
-``Account``; the Email column was dropped because IDs are
+``Provider | Account | Status | Last Update`` (provider is part of identity;
+the Email column was dropped because IDs are
 email-derived slugs, and the Plan column was dropped outright), while
 the per-window reset hints (relative ``in Xh Ym`` / ``in Xd Yh``,
 2026-06-09 gripe #2 + 2026-07-13 relative switch) moved from the
@@ -76,7 +77,7 @@ class AccountRow:
     Attributes
     ----------
     name
-        Account ID (stored slug, e.g. ``ywatanabe-scitex-ai``; the
+        Account ID (stored slug, e.g. ``researcher-example-org``; the
         slugs are email-derived, which is why the table needs no
         separate Email column).
     freshness_state
@@ -103,6 +104,7 @@ class AccountRow:
     snapshot_as_of: str | None
     reset_at_5h: str | None = None
     reset_at_7d: str | None = None
+    provider: str = "claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +113,10 @@ class AccountRow:
 
 
 def _fmt_status(state: str, hours: float | None) -> str:
-    if state == "ABSENT" or hours is None:
+    if state == "ABSENT":
         return "ABSENT"
+    if hours is None:
+        return state
     return f"{state} {format_ttl_live(hours)}"
 
 
@@ -133,7 +137,7 @@ def render_stored_table(
     """Build a ``rich.table.Table`` for the Stored-accounts block.
 
     Columns (left-to-right):
-      Account | Status | Last Update
+      Provider | Account | Status | Last Update
 
     Operator directive 2026-07-11: the table holds ONLY what the
     usage-bars block below it cannot express — the account slug, the
@@ -148,11 +152,13 @@ def render_stored_table(
     ``datetime.now``.
     """
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    table.add_column("Provider")
     table.add_column("Account", style="bold")
     table.add_column("Status")
     table.add_column("Last Update")
     for r in rows:
         table.add_row(
+            r.provider,
             r.name,
             _fmt_status(r.freshness_state, r.freshness_hours),
             _fmt_last_update_cell(r.snapshot_as_of, now=now),
@@ -301,6 +307,7 @@ def build_stored_rows(
                 snapshot_as_of=usage.get("as_of") or usage.get("fetched_at"),
                 reset_at_5h=usage.get("reset_at_5h"),
                 reset_at_7d=usage.get("reset_at_7d"),
+                provider="claude-code",
             )
         )
     return rows
@@ -322,6 +329,8 @@ def build_stored_json(accounts: list[dict], *, refresh: bool = False) -> list[di
     stored: list[dict] = []
     for acct in accounts:
         entry = dict(acct)
+        entry["provider"] = "claude-code"
+        entry["qualified_id"] = f"claude-code:{acct['name']}"
         entry.update(read_account_plan(acct["name"]))
         fresh = account_freshness(acct["name"])
         entry["freshness"] = fresh.state
@@ -331,16 +340,76 @@ def build_stored_json(accounts: list[dict], *, refresh: bool = False) -> list[di
     return stored
 
 
+def openai_account_name(meta: dict) -> str:
+    """Derive the stable, human account slug used in provider-qualified IDs."""
+    import re
+
+    source = (
+        meta.get("gateway_alias")
+        or meta.get("email_address")
+        or meta.get("account_id")
+        or "active"
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", str(source).lower()).strip("-")
+    return slug or "active"
+
+
+def build_openai_row(meta: dict) -> AccountRow | None:
+    """Project the active Codex login into the provider-aware account table."""
+    if not meta:
+        return None
+    return AccountRow(
+        name=openai_account_name(meta),
+        provider="openai",
+        freshness_state="CONFIGURED",
+        freshness_hours=None,
+        used_pct_5h=None,
+        used_pct_7d=None,
+        snapshot_as_of=meta.get("last_refresh"),
+    )
+
+
+def build_openai_rows(accounts: list[dict]) -> list[AccountRow]:
+    """Project all gateway-configured Codex logins into account rows."""
+    return [row for meta in accounts if (row := build_openai_row(meta)) is not None]
+
+
+def build_provider_accounts_json(
+    stored: list[dict], openai_meta: dict | list[dict]
+) -> list[dict]:
+    """Build the collision-free cross-provider identity list for JSON users."""
+    accounts = [dict(item) for item in stored]
+    openai_accounts = openai_meta if isinstance(openai_meta, list) else [openai_meta]
+    for meta in openai_accounts:
+        if not meta:
+            continue
+        name = openai_account_name(meta)
+        accounts.append(
+            {
+                "provider": "openai",
+                "name": name,
+                "qualified_id": f"openai:{name}",
+                "active": True,
+                "metadata": dict(meta),
+            }
+        )
+    return accounts
+
+
 __all__ = [
     "AccountRow",
     "build_stored_json",
     "build_stored_rows",
+    "build_openai_row",
+    "build_openai_rows",
+    "build_provider_accounts_json",
     "format_as_of_short",
     "format_dt_local",
     "format_snapshot_age",
     "format_ttl_live",
     "local_timezone",
     "needs_rolling_legend",
+    "openai_account_name",
     "render_stored_table",
     "render_stored_table_to_str",
     "rolling_legend_line",

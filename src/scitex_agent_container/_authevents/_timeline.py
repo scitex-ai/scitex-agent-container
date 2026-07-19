@@ -9,7 +9,7 @@ THE ROTATION EVENT WAS NEVER MISSING — IT WAS UNJOINED
     before six agents died reads::
 
         {"timestamp_utc": "2026-07-18T10:31:28.316535+00:00",
-         "event": "refresh", "from_account": "ywata1989-gmail-com", ...
+         "event": "refresh", "from_account": "alpha-example-com", ...
          "reason": "single-use refresh_token rotated (headless access-token
                     refresh)", "pid": 830472}
 

@@ -35,6 +35,14 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": None,
         "auth_token_env": None,
     },
+    # Local scitex-genai bridge: Claude Code remains the harness while the
+    # gateway translates Anthropic Messages to the ChatGPT Codex transport.
+    # Account discovery, stickiness, quota ranking, and failover live in the
+    # gateway; sac only points the harness at its authenticated endpoint.
+    "codex": {
+        "base_url": "http://127.0.0.1:18765",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
+    },
     "deepseek": {
         "base_url": "https://api.deepseek.com/anthropic",
         "auth_token_env": "DEEPSEEK_API_KEY",

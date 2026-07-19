@@ -1,0 +1,43 @@
+# Codex subscription backend with Claude Code as the unchanged harness.
+#
+# Host prerequisites:
+#   pip install 'scitex-agent-container[codex]'
+#   sac accounts sync-openai
+#   export SCITEX_GENAI_GATEWAY_API_KEY="<local gateway key>"
+#   scitex-genai-gateway --host 127.0.0.1 --port 18765
+#
+# The gateway discovers accounts/openai/*, including a one-account store. Every
+# new session still uses its normal rotation selector. Never put OAuth tokens
+# or the gateway key here.
+
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  runtime: apptainer
+  host: ${HOSTNAME}
+  workdir: /home/agent/work
+
+  apptainer:
+    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    binds: []
+
+  # Do not set top-level `spec.provider: openai`; that selects a different
+  # harness. The nested provider below keeps Claude Code and changes only its
+  # model endpoint.
+  claude:
+    provider: codex
+    model: gpt-5.6-sol
+    flags:
+      - --dangerously-skip-permissions
+      - --effort=medium
+
+  health:
+    enabled: true
+    interval: 60
+
+  restart:
+    policy: on-failure
+    max_retries: 3
+
+# EOF

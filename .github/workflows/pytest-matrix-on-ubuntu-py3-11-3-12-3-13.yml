@@ -46,6 +46,10 @@ env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   test:
     # DO NOT RENAME without updating branch protection in the same change.
@@ -75,7 +79,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # THE SAME SCRIPT THE RELEASE GATE RUNS. exec-in-sif.sh apptainer-execs
       # the shared read-only ci-cpu.sif (which bakes python 3.11/3.12/3.13 at
@@ -95,11 +99,14 @@ jobs:
       - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
 
-      # codecov is a JS action — runs fine on the self-hosted runner (same class
-      # as actions/checkout).
+      # OIDC avoids a repository upload token while still authenticating every
+      # upload. Codecov has not activated this repository yet, so keep its
+      # explicit upload failure visible without overriding a green test suite.
       - name: Upload coverage to Codecov
         if: always() && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          use_oidc: true
+          fail_ci_if_error: true

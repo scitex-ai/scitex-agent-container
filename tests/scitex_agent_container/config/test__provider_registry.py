@@ -42,6 +42,18 @@ def test_resolve_provider_returns_dict_for_known_deepseek():
     }
 
 
+def test_resolve_provider_returns_local_codex_gateway():
+    # Arrange
+    name = "codex"
+    # Act
+    entry = resolve_provider(name)
+    # Assert
+    assert entry == {
+        "base_url": "http://127.0.0.1:18765",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
+    }
+
+
 def test_resolve_provider_returns_none_for_unknown_name():
     # Arrange
     name = "this-provider-does-not-exist"
@@ -70,9 +82,9 @@ def test_resolve_provider_returns_copy_not_shared_reference():
     assert PROVIDERS["deepseek"]["base_url"] != "mutated"
 
 
-def test_list_providers_includes_mimo_and_deepseek():
+def test_list_providers_includes_registered_backends():
     # Arrange
-    expected = {"mimo", "deepseek", "anthropic", "xiaomi"}
+    expected = {"mimo", "deepseek", "anthropic", "codex", "xiaomi"}
     # Act
     names = set(list_providers())
     # Assert

@@ -240,9 +240,9 @@ def test_burn_on_the_observed_20260717_pool_state():
     # (5h 10/3/25, 7d 11/3/25, resets +2d8h/+4d3h/+3d18h). Under the
     # corrected rule usage DOMINATES and reset only tie-breaks, so the
     # winner is the FULLEST 7d bucket — ywatanabe-scitex-ai at 25% —
-    # not the soonest-resetting wyusuuke (that was the pre-correction
+    # not the soonest-resetting alpha (that was the pre-correction
     # ordering).
-    names = ["wyusuuke-gmail-com", "ywata1989-gmail-com", "ywatanabe-scitex-ai"]
+    names = ["alpha-example-com", "beta-example-com", "ywatanabe-scitex-ai"]
     u5 = {names[0]: 10.0, names[1]: 3.0, names[2]: 25.0}
     u7 = {names[0]: 11.0, names[1]: 3.0, names[2]: 25.0}
     resets = {

@@ -32,8 +32,8 @@ def _write_cache(tmp_path: Path) -> Path:
             {
                 "written_at": 1.0,
                 "accounts": {
-                    "wyusuuke@gmail.com": {
-                        "short": "wyusuuke",
+                    "alpha@example.com": {
+                        "short": "alpha",
                         "h5": 100.0,
                         "d7": 60.0,
                         "ttl_h": 7.9,
@@ -50,7 +50,7 @@ def test_account_5h_usage_reads_h5_field_from_cache(tmp_path: Path) -> None:
     # Arrange
     cache = _write_cache(tmp_path)
     # Act
-    pct = account_5h_usage("wyusuuke-gmail-com", quota_cache_path=cache)
+    pct = account_5h_usage("alpha-example-com", quota_cache_path=cache)
     # Assert
     assert pct == 100.0
 
@@ -59,7 +59,7 @@ def test_account_7d_usage_reads_d7_field_from_cache(tmp_path: Path) -> None:
     # Arrange
     cache = _write_cache(tmp_path)
     # Act
-    pct = account_7d_usage("wyusuuke-gmail-com", quota_cache_path=cache)
+    pct = account_7d_usage("alpha-example-com", quota_cache_path=cache)
     # Assert
     assert pct == 60.0
 
@@ -68,7 +68,7 @@ def test_account_5h_usage_returns_none_when_cache_missing(tmp_path: Path) -> Non
     # Arrange
     missing = tmp_path / "no-such-cache.json"
     # Act
-    pct = account_5h_usage("wyusuuke-gmail-com", quota_cache_path=missing)
+    pct = account_5h_usage("alpha-example-com", quota_cache_path=missing)
     # Assert
     assert pct is None
 
@@ -78,8 +78,8 @@ def test_account_5h_usage_override_bypasses_cache(tmp_path: Path) -> None:
     cache = _write_cache(tmp_path)  # says 100 — override must win
     # Act
     pct = account_5h_usage(
-        "wyusuuke-gmail-com",
-        usage_5h={"wyusuuke-gmail-com": 3.0},
+        "alpha-example-com",
+        usage_5h={"alpha-example-com": 3.0},
         quota_cache_path=cache,
     )
     # Assert
@@ -188,33 +188,33 @@ def test_pick_ranked_spread_weights_toward_more_7d_headroom() -> None:
 #
 # The operator's LIVE account table, 2026-07-14 (`sac accounts list`):
 #
-#   wyusuuke-gmail-com   5h 28%   7d 67%  (resets in 5d 14h)
-#   ywata1989-gmail-com  5h  0%   7d 90%  (resets in 9h06m)
+#   alpha-example-com   5h 28%   7d 67%  (resets in 5d 14h)
+#   beta-example-com  5h  0%   7d 90%  (resets in 9h06m)
 #   ywatanabe-scitex-ai  5h  0%   7d 90%  (resets in 6 MINUTES)
 #
 # ywatanabe-scitex-ai holds 10% of a 7-day Max-20x window that is about
 # to be DELETED. The reset-blind ranker scored it identically to a 90%
 # account with 6 days left, demoted both as "near-capped", and picked
-# wyusuuke — binning the 10%. 「毎回 90%で10%捨ててる」
+# alpha — binning the 10%. 「毎回 90%で10%捨ててる」
 # ---------------------------------------------------------------------------
 
 _NOW = 1_780_000_000.0
 _HOUR = 3600.0
 
-_LIVE = ["wyusuuke-gmail-com", "ywata1989-gmail-com", "ywatanabe-scitex-ai"]
+_LIVE = ["alpha-example-com", "beta-example-com", "ywatanabe-scitex-ai"]
 _LIVE_5H = {
-    "wyusuuke-gmail-com": 28.0,
-    "ywata1989-gmail-com": 0.0,
+    "alpha-example-com": 28.0,
+    "beta-example-com": 0.0,
     "ywatanabe-scitex-ai": 0.0,
 }
 _LIVE_7D = {
-    "wyusuuke-gmail-com": 67.0,
-    "ywata1989-gmail-com": 90.0,
+    "alpha-example-com": 67.0,
+    "beta-example-com": 90.0,
     "ywatanabe-scitex-ai": 90.0,
 }
 _LIVE_RESET = {
-    "wyusuuke-gmail-com": _NOW + 5 * 24 * _HOUR + 14 * _HOUR,  # 5d 14h
-    "ywata1989-gmail-com": _NOW + 9 * _HOUR + 6 * 60.0,  # 9h06m
+    "alpha-example-com": _NOW + 5 * 24 * _HOUR + 14 * _HOUR,  # 5d 14h
+    "beta-example-com": _NOW + 9 * _HOUR + 6 * 60.0,  # 9h06m
     "ywatanabe-scitex-ai": _NOW + 6 * 60.0,  # 6 MINUTES
 }
 
@@ -235,7 +235,7 @@ def test_pick_ranked_bins_expiring_quota_when_reset_is_unknown() -> None:
     # Act
     picked = pick_ranked(_LIVE, _LIVE_5H, _LIVE_7D, now=_NOW)
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_ranked_routes_fleet_to_the_expiring_account_on_the_spread_path() -> None:
@@ -256,7 +256,7 @@ def test_pick_ranked_routes_fleet_to_the_expiring_account_on_the_spread_path() -
 
 
 def test_pick_ranked_spread_never_routes_to_the_far_out_reserve() -> None:
-    # Arrange — ywata1989 is at 90% with 9h left: a genuine weekly reserve.
+    # Arrange — beta is at 90% with 9h left: a genuine weekly reserve.
     # It must stay demoted even while the fleet drains the expiring account.
     fleet = [f"agent-{i}" for i in range(60)]
     # Act
@@ -267,18 +267,18 @@ def test_pick_ranked_spread_never_routes_to_the_far_out_reserve() -> None:
         for key in fleet
     ]
     # Assert
-    assert picks.count("ywata1989-gmail-com") == 0
+    assert picks.count("beta-example-com") == 0
 
 
 def test_pick_ranked_still_avoids_a_near_capped_account_resetting_far_out() -> None:
-    # Arrange — ywata1989 is ALSO at 90%, but its window has 9h left: a
+    # Arrange — beta is ALSO at 90%, but its window has 9h left: a
     # genuine reserve, not expiring capacity. Drop the truly-expiring
     # account so the reserve is the only near-capped candidate left.
-    names = ["wyusuuke-gmail-com", "ywata1989-gmail-com"]
+    names = ["alpha-example-com", "beta-example-com"]
     # Act
     picked = pick_ranked(names, _LIVE_5H, _LIVE_7D, reset_7d=_LIVE_RESET, now=_NOW)
     # Assert — avoiding a real reserve stays correct.
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_ranked_keeps_avoiding_expiring_account_blocked_on_5h() -> None:
@@ -290,8 +290,11 @@ def test_pick_ranked_keeps_avoiding_expiring_account_blocked_on_5h() -> None:
     reset_7d = {"acct-expiring": _NOW + 300.0, "acct-reserve": _NOW + 6 * 24 * _HOUR}
     # Act
     picked = pick_ranked(
-        ["acct-expiring", "acct-reserve"], usage_5h, usage_7d,
-        reset_7d=reset_7d, now=_NOW,
+        ["acct-expiring", "acct-reserve"],
+        usage_5h,
+        usage_7d,
+        reset_7d=reset_7d,
+        now=_NOW,
     )
     # Assert
     assert picked == "acct-reserve"
@@ -469,6 +472,6 @@ def test_account_7d_reset_at_is_none_for_a_cache_without_the_field(
     # still parse; the picker just degrades to its reset-unaware ranking.
     cache = _write_cache(tmp_path)
     # Act
-    reset_at = account_7d_reset_at("wyusuuke-gmail-com", quota_cache_path=cache)
+    reset_at = account_7d_reset_at("alpha-example-com", quota_cache_path=cache)
     # Assert
     assert reset_at is None

@@ -83,6 +83,24 @@ def test_list_accounts_returns_each_saved_account_name(
     assert name in listed_names
 
 
+def test_list_accounts_skips_openai_provider_namespace(tmp_path: Path) -> None:
+    # Arrange
+    provider_home = (
+        tmp_path
+        / ".scitex"
+        / "agent-container"
+        / "accounts"
+        / "openai"
+        / "example-account"
+    )
+    provider_home.mkdir(parents=True)
+    provider_home.joinpath("auth.json").write_text("{}")
+    # Act
+    accounts = list_accounts(home=tmp_path)
+    # Assert
+    assert accounts == []
+
+
 # ---------------------------------------------------------------------------
 # metadata layout — lives inside per-account dir, never at the sibling path
 # ---------------------------------------------------------------------------

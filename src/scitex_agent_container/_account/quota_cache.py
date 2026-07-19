@@ -159,8 +159,8 @@ def read_quota_entry(
     if not dirname:
         return None
     # First dash-segment is the email local-part per operator's stated
-    # convention (``ywata1989-gmail-com`` → ``ywata1989``,
-    # ``ywatanabe-scitex-ai`` → ``ywatanabe``).
+    # convention (``alpha-example-com`` → ``alpha``,
+    # ``researcher-example-org`` → ``researcher``).
     short = dirname.split("-", 1)[0]
     if not short:
         return None

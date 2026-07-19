@@ -347,7 +347,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
 
     # CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.
-    # Propagate the per-agent account dir-name (e.g. "ywata1989-gmail-com")
+    # Propagate the per-agent account dir-name (e.g. "alpha-example-com")
     # into the container so:
     #   - claude-code-telegrammer enriches its outbound signature with
     #     the live quota for THIS account (PR-A reads this env);

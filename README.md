@@ -46,7 +46,7 @@
 |---|---|
 | 1 | **Declarative agents.** One `spec.yaml` per agent — the file IS the agent (dir-as-SSoT, no hidden state). Reproducible across hosts, version-controlled, diff-reviewable. [`spec-reference.md`](docs/spec-reference.md). |
 | 2 | **Rootless Apptainer isolation.** Runs where cloud sandboxes (E2B, Modal, etc.) can't — HPC login nodes, on-prem clusters, fully air-gapped boxes. No root, no daemon, no Docker socket. Hardened by default with `--containall` ([`isolation.md`](docs/isolation.md)). |
-| 3 | **LLM-agnostic & on-prem capable.** Default: Anthropic OAuth. Alternative: any Anthropic-API-compatible endpoint (DeepSeek, MiMo / Xiaomi, your own LiteLLM / vLLM-with-Anthropic-shim gateway) via a one-line `spec.claude.provider:` knob. Data, code, and inference can stay entirely on your network. |
+| 3 | **Switchable backend, stable Claude Code harness.** Default: Anthropic OAuth. Alternatives include Codex/ChatGPT subscriptions through scitex-genai, DeepSeek, MiMo/Xiaomi, or any Anthropic-compatible endpoint via one `spec.claude.provider:` knob. Claude Code's TUI, hooks, skills, channels, flags, and `CLAUDE.md` stay in place. |
 | 4 | **Fleet ops out of the box.** A2A push (`POST /v1/turn` per agent, native), health & heartbeat, restart policies, multi-account credential rotation with auto-quota-watch, MCP + CLI + Python surface, cross-host orchestration via `sac fleet`. |
 | 5 | **AGPL-3.0.** Research-freedom license — infrastructure stays open, modifications stay shareable. The [Four Freedoms for Research](#four-freedoms-for-research) below. |
 
@@ -124,7 +124,7 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 ### Tutorial
 
-[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones. Pre-baked agent specs live in [`examples/agents/`](examples/agents/) (`hello-agent`, `minimal-agent`, `full-agent`, `deepseek-agent`, `proxy-agent`).
+[`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones. Pre-baked agent specs live in [`examples/agents/`](examples/agents/) (`hello-agent`, `minimal-agent`, `full-agent`, `codex-agent`, `deepseek-agent`, `proxy-agent`).
 
 ### Models
 
@@ -138,7 +138,14 @@ Pick the model per agent under `spec.claude.model`:
 
 Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`.
 
-**Non-Anthropic backend?** Set `spec.claude.provider: deepseek` (or `mimo` / `xiaomi`) for the bundled registry entries, or pass a dict `{ base_url: "...", auth_token_env: "..." }` for any Anthropic-API-compatible endpoint — LiteLLM, a self-hosted vLLM exposing an Anthropic shim, or any in-house gateway. See [`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for a complete spec. **[Full model + provider reference →](docs/spec-reference.md)**
+**Non-Anthropic backend?** Set `spec.claude.provider: codex` with a GPT model
+to use the local scitex-genai ChatGPT-subscription gateway while retaining the
+Claude Code harness. Other bundled entries are `deepseek`, `mimo`, and
+`xiaomi`; a dict `{ base_url: "...", auth_token_env: "..." }` accepts any
+Anthropic-compatible endpoint. Codex setup and multi-account configuration are
+documented in [`docs/credentials.md`](docs/credentials.md). See
+[`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for the
+generic provider shape. **[Full model + provider reference →](docs/spec-reference.md)**
 
 ## How it works
 

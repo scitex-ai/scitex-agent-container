@@ -309,7 +309,7 @@ class _MainGroup(LazyGroup):
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
-        "accounts": "Manage stored Claude Code accounts for credential rotation.",
+        "accounts": "Inspect provider accounts and manage Claude credentials.",
         "db": "Inspect and maintain the sac state database (state.db).",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",

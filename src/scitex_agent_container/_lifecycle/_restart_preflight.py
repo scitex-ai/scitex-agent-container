@@ -28,7 +28,7 @@ Root cause (verified against the code):
   ``VALID``), so a restart can SWAP onto a stale-but-unexpired snapshot
   the running container was never using. The incident log shows exactly
   this swap ("selected credentials_files pool entry: account
-  ywata1989-gmail-com ...").
+  alpha-example-com ...").
 
 The fix here is the SAFETY NET the one-way trip was missing: BEFORE the
 stop, resolve the credential the SUCCESSOR container would launch on
@@ -279,9 +279,7 @@ def probe_credential_usable(
     return True, kind, reason
 
 
-def assert_successor_auth_usable(
-    config: AgentConfig, *, opener: Any = None
-) -> None:
+def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> None:
     """PRE-STOP auth pre-flight — raise iff the successor credential is dead.
 
     ``config`` MUST already be account-rotated (as ``agent_start`` leaves it

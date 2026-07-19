@@ -33,8 +33,8 @@ def _write_cache(tmp_path: Path, payload: dict) -> Path:
 SAMPLE = {
     "written_at": 1.0,
     "accounts": {
-        "wyusuuke@gmail.com": {
-            "short": "wyusuuke",
+        "alpha@example.com": {
+            "short": "alpha",
             "h5": 17.0,
             "d7": 3.0,
             "ttl_h": 7.74,
@@ -59,14 +59,12 @@ def test_account_quota_human_emits_compact_line(
 ) -> None:
     # Arrange
     env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, SAMPLE)))
-    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "wyusuuke-gmail-com")
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["quota"])
     # Assert — exact format documented in the docstring (compact, eye-parseable).
-    assert (
-        result.output.strip() == "account=wyusuuke 5h=17 percent 7d=3 percent ttl=7.74h"
-    )
+    assert result.output.strip() == "account=alpha 5h=17 percent 7d=3 percent ttl=7.74h"
 
 
 def test_account_quota_human_exits_zero_on_success(
@@ -74,7 +72,7 @@ def test_account_quota_human_exits_zero_on_success(
 ) -> None:
     # Arrange
     env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, SAMPLE)))
-    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "wyusuuke-gmail-com")
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["quota"])
@@ -87,14 +85,14 @@ def test_account_quota_json_emits_deterministic_shape(
 ) -> None:
     # Arrange
     env_save_restore.set("SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, SAMPLE)))
-    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "wyusuuke-gmail-com")
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["quota", "--json"])
     payload = json.loads(result.output)
     # Assert — exact keys the in-agent consumer can rely on.
     assert payload == {
-        "account": "wyusuuke",
+        "account": "alpha",
         "used_pct_5h": 17.0,
         "used_pct_7d": 3.0,
         "token_ttl_hours": 7.74,
@@ -104,7 +102,7 @@ def test_account_quota_json_emits_deterministic_shape(
 _ROUNDING_PAYLOAD = {
     "accounts": {
         "x@y.z": {
-            "short": "wyusuuke",
+            "short": "alpha",
             "h5": 8.6,
             "d7": 2.4,
             "ttl_h": 1.0,
@@ -128,7 +126,7 @@ def test_account_quota_human_rounds_percentage_field(
     env_save_restore.set(
         "SAC_QUOTA_CACHE_PATH", str(_write_cache(tmp_path, _ROUNDING_PAYLOAD))
     )
-    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "wyusuuke-gmail-com")
+    env_save_restore.set("CLAUDE_AGENT_ACCOUNT", "alpha-example-com")
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["quota"])
