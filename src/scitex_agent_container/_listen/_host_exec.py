@@ -63,11 +63,16 @@ Hence the guards below, in the order they catch things:
    delay this handler and this handler cannot drain the pool. The bound covers
    dispatch + exec, so it holds even when the child never starts. This is the
    guard that would have prevented the outage; the child timeout could not.
-2. PROCESS-GROUP KILL — ``start_new_session=True`` puts the child in its own
-   process group and the timeout path kills the GROUP. ``subprocess.run``'s
-   own timeout only SIGKILLs the direct child; measured, a grandchild
-   (``bash -c 'sleep 60 & cat'``) SURVIVED and kept running. Killing the pid
-   alone leaves the grandchildren that are usually the actual problem.
+2. PROCESS-GROUP KILL, SIGTERM FIRST — ``start_new_session=True`` puts the
+   child in its own process group and the timeout path kills the GROUP.
+   ``subprocess.run``'s own timeout only SIGKILLs the direct child; measured, a
+   grandchild (``bash -c 'sleep 60 & cat'``) SURVIVED and kept running. Killing
+   the pid alone leaves the grandchildren that are usually the actual problem.
+   The group gets SIGTERM plus a bounded grace BEFORE the SIGKILL: SIGKILL is
+   uncatchable, so a bare one skipped the child's own cleanup and stranded
+   ``.git/index.lock`` files on shared checkouts (INCIDENT 2026-07-18 — one
+   lock broke the once-a-minute pull sweep for 83 minutes). See
+   ``_TERM_GRACE_S``.
 3. ``stdin=DEVNULL`` — no child invoked here can block on stdin (``git``
    without ``-F <file>``, an ssh passphrase prompt, ``apt``, a pager,
    ``read``). Measured: a stdin-reading child gets EOF in 0.02s instead of
@@ -104,7 +109,12 @@ from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
 from ._acl import deny_response, resolve_group_name
-from ._host_exec_child import _POST_KILL_DRAIN_S, ChildOutcome, _run_child
+from ._host_exec_child import (
+    _POST_KILL_DRAIN_S,
+    _TERM_GRACE_S,
+    ChildOutcome,
+    _run_child,
+)
 from ._host_exec_inflight import (
     InflightExec,
     host_exec_inflight,
@@ -135,9 +145,14 @@ _DEFAULT_TIMEOUT_S: float = 300.0
 # WATCHDOG deadline (enforced on the event loop by ``run_blocking``). The
 # watchdog only fires when the child timeout ITSELF failed to return — an
 # unkillable D-state child, or a drain that outlived _POST_KILL_DRAIN_S. It
-# must exceed the drain ceiling or it would pre-empt the orderly path that can
+# must exceed the whole orderly teardown or it would pre-empt the path that can
 # still report the child's partial output.
-_WATCHDOG_MARGIN_S: float = _POST_KILL_DRAIN_S + 10.0
+#
+# DERIVED, never hardcoded: the orderly timeout path now costs the SIGTERM
+# grace (added for the stranded-index.lock incident, 2026-07-18) PLUS the drain
+# ceiling. Writing this as a literal is how the watchdog would silently start
+# pre-empting the teardown the next time either constant is retuned.
+_WATCHDOG_MARGIN_S: float = _TERM_GRACE_S + _POST_KILL_DRAIN_S + 10.0
 
 
 def _audit_log_path() -> Path:
