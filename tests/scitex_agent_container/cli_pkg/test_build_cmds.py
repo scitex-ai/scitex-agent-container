@@ -248,6 +248,28 @@ def test_check_all_dependencies_present_prints_ready_marker(tmp_path, subprocess
     assert "Ready to deploy" in result.output
 
 
+def test_check_tui_runtime_probes_apptainer_not_tui(tmp_path, subprocess_shim):
+    # Arrange
+    spec = _write_spec(
+        tmp_path, _MINIMAL_VALID_SPEC.replace("runtime: apptainer", "runtime: tui")
+    )
+    subprocess_shim.install("apptainer", exit=0, stdout="apptainer version x.y")
+    subprocess_shim.install("python3", exit=0, stdout="Python 3.11.0")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert (
+        result.exit_code,
+        "apptainer:" in result.output,
+        "tui not found" in result.output,
+    ) == (
+        0,
+        True,
+        False,
+    )
+
+
 def test_check_with_apptainer_missing_from_path_exits_one(tmp_path, subprocess_shim):
     # Arrange — keep only the shim dir on PATH, then remove apptainer from it.
     spec = _write_spec(tmp_path)
