@@ -100,9 +100,11 @@ jobs:
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
 
       # OIDC avoids a repository upload token while still authenticating every
-      # upload. Keep failures fatal so a broken coverage path is visible.
+      # upload. Codecov has not activated this repository yet, so keep its
+      # explicit upload failure visible without overriding a green test suite.
       - name: Upload coverage to Codecov
         if: always() && matrix.python-version == '3.12'
+        continue-on-error: true
         uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
