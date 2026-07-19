@@ -20,6 +20,7 @@ from ._acl_validation import validate_phase3_acl
 # back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
+from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
 
 # spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1
@@ -256,6 +257,10 @@ def validate_raw(raw: dict, path: str) -> list[str]:
             "the metadata.name field and ensure the YAML lives at "
             "<name>/<name>.yaml."
         )
+
+    # metadata.labels — abolished classification fields (``tags``, removed
+    # 2026-07-19 in favour of the ``groups`` SSoT). See _labels_validation.
+    errors.extend(validate_labels(metadata, path))
 
     # spec
     spec = raw.get("spec")
