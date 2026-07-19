@@ -180,21 +180,40 @@ def apply_board_identity_alias(
     *,
     raw_args: Iterable[Any] | None = None,
 ) -> dict[str, str]:
-    """Mirror the board identity onto BOTH env names. Returns a NEW dict.
+    """Ensure the CANONICAL board identity is set. Returns a NEW dict.
 
-    The EFFECTIVE identity is resolved the way apptainer resolves it, so the
-    mirror can never disagree with what the container actually receives:
+    ASYMMETRIC BY DESIGN — reads both names, writes only the new one.
+
+    The identity is READ from either spelling, because specs are mid-migration
+    and many still declare only the legacy name. It is WRITTEN only as
+    :data:`BOARD_ID_ENV`. sac must never re-introduce the legacy name: the
+    operator is removing ``SCITEX_TODO_*`` from the specs entirely
+    (2026-07-19), and an injector that helpfully mirrored it back would
+    silently undo that migration one launch at a time — the deleted variable
+    would keep reappearing and nobody would understand why.
+
+    So this function is also the MIGRATION BRIDGE: a spec that still declares
+    only the legacy name still gets a working canonical identity, which is
+    what lets the legacy name be deleted from specs incrementally instead of
+    in one flag-day sweep.
+
+    Verified before narrowing (2026-07-19): scitex-cards 0.17.0 resolves from
+    :data:`BOARD_ID_ENV` alone and emits no deprecation warning, so dropping
+    the legacy write costs nothing against the installed fleet.
+
+    The EFFECTIVE identity is resolved the way apptainer resolves it, so what
+    is written can never disagree with what the container actually receives:
     ``raw_args`` are appended to the argv AFTER the ``--env`` flags rendered
     from ``env`` (see ``_apptainer_build_argv.build_run_argv``), and apptainer
     ``--env`` is last-wins — so a ``raw_args``-declared identity OVERRIDES the
     one in ``spec.env``. That is why ``raw_args`` is consulted here at all:
-    for most of the fleet the identity is declared ONLY there, and an alias
-    derived from ``spec.env`` alone would mirror a value the agent never runs
-    with (or mirror nothing).
+    for most of the fleet the identity is declared ONLY there, and a value
+    derived from ``spec.env`` alone would mirror an identity the agent never
+    runs with (or mirror nothing).
 
-    An identity already declared explicitly under either name is never
-    clobbered — the mirror only FILLS IN a name that is absent. Both names are
-    validated, so a ``${...}`` identity fails here instead of reaching a card.
+    An identity already declared explicitly is never clobbered — this only
+    FILLS IN the canonical name when it is absent. Every value is validated,
+    so a ``${...}`` identity fails here instead of reaching a card.
     """
     merged = reject_unexpanded_env(env)
     from_raw = raw_args_env(raw_args)
@@ -210,18 +229,17 @@ def apply_board_identity_alias(
     if not identity:
         return merged
 
-    for name in (BOARD_ID_ENV, LEGACY_BOARD_ID_ENV):
-        if name in from_raw or (merged.get(name) or "").strip():
-            continue
-        merged[name] = identity
-        logger.info(
-            "board_identity: injected %s=%s (transition window: sac sets BOTH "
-            "%s and %s with the same value)",
-            name,
-            identity,
-            BOARD_ID_ENV,
-            LEGACY_BOARD_ID_ENV,
-        )
+    if BOARD_ID_ENV in from_raw or (merged.get(BOARD_ID_ENV) or "").strip():
+        return merged
+
+    merged[BOARD_ID_ENV] = identity
+    logger.info(
+        "board_identity: injected %s=%s (derived from the legacy %s, which is "
+        "read but deliberately NOT written back)",
+        BOARD_ID_ENV,
+        identity,
+        LEGACY_BOARD_ID_ENV,
+    )
     return merged
 
 

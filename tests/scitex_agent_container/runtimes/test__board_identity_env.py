@@ -242,23 +242,35 @@ def test_the_legacy_name_is_mirrored_onto_the_current_name() -> None:
     assert out[BOARD_ID_ENV] == "scitex-agent-container"
 
 
-def test_the_current_name_is_mirrored_onto_the_legacy_name() -> None:
-    """A spec that already migrated must not strand pre-rename scitex-cards."""
+def test_the_legacy_name_is_never_written_back() -> None:
+    """sac must not resurrect the name the operator is deleting from specs.
+
+    The operator is removing ``SCITEX_TODO_*`` from the specs entirely
+    (2026-07-19). An injector that mirrored it back would undo that migration
+    one launch at a time: the deleted variable would keep reappearing and
+    nobody would be able to see why. Reading it stays supported; writing it
+    does not.
+    """
     # Arrange
     env = {BOARD_ID_ENV: "scitex-agent-container"}
     # Act
     out = apply_board_identity_alias(env)
     # Assert
-    assert out[LEGACY_BOARD_ID_ENV] == "scitex-agent-container"
+    assert LEGACY_BOARD_ID_ENV not in out
 
 
-def test_both_names_carry_exactly_the_same_value() -> None:
+def test_a_legacy_only_spec_still_gets_the_canonical_name() -> None:
+    """The migration bridge: legacy-only specs keep working while they migrate.
+
+    This is what allows the legacy name to be deleted from specs incrementally
+    rather than in a single flag-day sweep across every agent.
+    """
     # Arrange
     env = {LEGACY_BOARD_ID_ENV: "worker-telegrammer-orochi"}
     # Act
     out = apply_board_identity_alias(env)
     # Assert
-    assert out[BOARD_ID_ENV] == out[LEGACY_BOARD_ID_ENV]
+    assert out[BOARD_ID_ENV] == "worker-telegrammer-orochi"
 
 
 def test_an_explicit_current_name_is_not_clobbered() -> None:
