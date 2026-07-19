@@ -45,7 +45,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .prompts import prompt_line_index
+from .prompts import normalize_tui_whitespace, prompt_line_index
 
 __all__ = [
     "AuthProbe",
@@ -135,10 +135,17 @@ def banner_kind(line: str) -> str | None:
     volatile ``request_id`` / timestamp / 401 JSON body embedded in the banner
     does not defeat the cross-run frozen comparison (a wedged ``/loop`` agent
     re-renders the SAME banner with a NEW request id every wakeup).
+
+    Unicode whitespace is normalised BEFORE the marker strip (see
+    :func:`prompts.normalize_tui_whitespace`). Order matters: ``_MARKERS``
+    strips a leading NBSP but NOT the other Unicode spaces, so normalising
+    first is what lets an exotic space in the LEFT DECORATION be stripped at
+    all. Normalising the phrase side too keeps the comparison symmetric, so a
+    stray NBSP pasted into ``_AUTH_STARTS`` cannot silently stop matching.
     """
-    s = _strip_markers(line)
+    s = _strip_markers(normalize_tui_whitespace(line))
     for phrase in _AUTH_STARTS:
-        if s.startswith(phrase):
+        if s.startswith(normalize_tui_whitespace(phrase)):
             return phrase
     if _API_AUTH_RE.match(s):
         return "API Error: 4xx"
