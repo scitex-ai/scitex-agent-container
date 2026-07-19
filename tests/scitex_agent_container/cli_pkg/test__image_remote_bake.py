@@ -180,3 +180,83 @@ def test_missing_wheel_script_is_a_loud_click_error() -> None:
 
     with pytest.raises(click.ClickException):
         _call()
+
+
+# ---------------------------------------------------------------------------
+# The stdin-guard PREFLIGHT — no seam needed, and that is the point: an
+# unguarded script is refused BEFORE any ssh happens, so an hour of standing
+# lease is not spent on a script we can already read as broken.
+# ---------------------------------------------------------------------------
+_UNGUARDED_SCRIPT = (
+    "#!/usr/bin/env bash\n"
+    "set -uo pipefail\n"
+    'SRUN="$(command -v srun)"\n'
+    '"$SRUN" --jobid="$JID" --overlap --ntasks=1 apptainer build a b < /dev/null\n'
+)
+
+
+def _bake_with_script(script: Path):
+    return mod.run_remote_bake(
+        host="spartan",
+        layer="base",
+        lease_name="lease",
+        remote_workdir="/w",
+        branch="develop",
+        retain=3,
+        force=False,
+        timeout=60,
+        script_path=script,
+    )
+
+
+def test_preflight_refuses_a_script_whose_srun_lacks_the_stdin_guard(
+    tmp_path: Path,
+) -> None:
+    # Arrange — this is the exact shape that ran in production on
+    # 2026-07-19 while develop already carried the fix.
+    script = tmp_path / "spartan-sif-bake.sh"
+    script.write_text(_UNGUARDED_SCRIPT, encoding="utf-8")
+    # Act
+    outcome = _bake_with_script(script)
+    # Assert
+    assert outcome.verdict is BakeVerdict.FAILED
+
+
+def test_preflight_refusal_names_the_offending_script(tmp_path: Path) -> None:
+    # Arrange — naming the FILE is what turns "it failed again" into a fix;
+    # the stale bytes live at a path nobody was looking at.
+    script = tmp_path / "spartan-sif-bake.sh"
+    script.write_text(_UNGUARDED_SCRIPT, encoding="utf-8")
+    # Act
+    outcome = _bake_with_script(script)
+    # Assert
+    assert str(script) in outcome.detail
+
+
+def test_preflight_refusal_reports_the_offending_line_number(tmp_path: Path) -> None:
+    # Arrange
+    script = tmp_path / "spartan-sif-bake.sh"
+    script.write_text(_UNGUARDED_SCRIPT, encoding="utf-8")
+    # Act
+    outcome = _bake_with_script(script)
+    # Assert
+    assert "line(s) 4" in outcome.detail
+
+
+def test_first_line_summarises_a_multi_line_reason() -> None:
+    # Arrange — the headline takes the first line so that
+    # `bake-remote FAILED:` can never again print nothing after the colon.
+    reason = "remote bake NO_RESULT (ssh rc=0)\n  last remote stdout : x\n"
+    # Act
+    head = mod._first_line(reason)
+    # Assert
+    assert head == "remote bake NO_RESULT (ssh rc=0)"
+
+
+def test_first_line_of_an_empty_reason_still_says_something() -> None:
+    # Arrange — an absent reason must render as a statement of absence,
+    # never as the empty string that started this whole investigation.
+    # Act
+    head = mod._first_line("")
+    # Assert
+    assert head == "(no reason given)"
