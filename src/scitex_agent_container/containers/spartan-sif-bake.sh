@@ -237,11 +237,42 @@ echo "build: layer=$LAYER ts=$TS cpus=$CPUS (log: $BUILD_LOG)"
 # than redirected: a redirect leaves the channel silent for ~20 minutes, and
 # the master's journal gets the full bake log as a bonus. pipefail makes the
 # captured rc srun's, not tee's.
+#
+# ONE FILESYSTEM RULE — TMPDIR *AND* CACHEDIR ARE BOTH NODE-LOCAL.
+# CACHEDIR used to point at "$WORKDIR/apptainer-cache", i.e. GPFS, while
+# TMPDIR was node-local: ONE build straddling TWO filesystems with different
+# consistency semantics. GPFS on this cluster has a documented read-after-
+# write consistency race — the same root cause as the CI-runner _work/_temp
+# incident, which produced "Missing file at path ..." and "Unknown system
+# error -116" (ESTALE) with no clean error and no exit signal.
+#
+# 2026-07-19: two bakes died at DIFFERENT points (one after "Build complete",
+# one mid-apt), each with no error, no signal and no SAC_BAKE_RESULT line.
+# A deterministic control-flow bug dies in the SAME place every run; a
+# filesystem race dies wherever it happens to be. Disk space was NOT the
+# cause and is refuted with numbers: GPFS had 2.0T / 2.8M inodes free, node
+# /tmp 3.3T of 3.5T free, /dev/shm 1008G free.
+#
+# THE TRADE, stated so nobody "optimises" it back: a node-local cache does
+# NOT persist across nodes or lease re-allocations, so some bakes re-pull
+# base layers. A cache miss costs minutes. A consistency race costs a
+# silently unpublished image and a whole debugging session. Take the miss.
+#
+# BOTH PATHS SPELLED OUT IN FULL, sharing one parent — deliberately NOT a
+# shell variable. A variable assigned on the line above would live OUTSIDE
+# this block, and the stdin-guard harness extracts each srun invocation IN
+# ISOLATION to prove it does not swallow the script tail. An unset variable
+# there makes the block fail early for the wrong reason, so the control test
+# can no longer tell a guarded block from an unguarded one.
+# Keep every path this block needs INSIDE the block.
+#
+# The invariant a test pins: both paths share the SAME parent, and that
+# parent is under node-local /tmp. Editing one without the other breaks it.
 "$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 --cpus-per-task="$CPUS" \
     --job-name="sac-sif-bake-$LAYER" \
     --chdir="$CTX" \
-    --export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER",APPTAINER_CACHEDIR="$WORKDIR/apptainer-cache" \
-    bash -c "mkdir -p /tmp/sac-sif-bake-$USER && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
+    --export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER/tmp",APPTAINER_CACHEDIR="/tmp/sac-sif-bake-$USER/cache" \
+    bash -c "mkdir -p /tmp/sac-sif-bake-$USER/tmp /tmp/sac-sif-bake-$USER/cache && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
     < /dev/null 2>&1 | tee "$BUILD_LOG"
 BUILD_RC=$?
 [ "$BUILD_RC" -eq 0 ] || fail "apptainer-build" "rc=$BUILD_RC (log: $BUILD_LOG)"

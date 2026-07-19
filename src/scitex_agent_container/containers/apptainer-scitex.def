@@ -256,8 +256,28 @@ From: ./sac-base.sif
         # 2026-07-12 fleet-drift: a floor the inherited version already
         # satisfied never re-resolved, and the layer froze on base's build
         # for days). ``-U`` forces the upgrade this layer exists to deliver.
+        # TEMPORARY SHA PIN (2026-07-19) — NOT the steady state. Remove and
+        # restore the floor the moment scitex-cards >=0.17.2 is ON PyPI.
+        #
+        # WHY: PyPI's latest is 0.17.0, and 0.17.0 DESTROYS CARD DATABASES.
+        # Its store resolution accepts an explicit YAML path that does not
+        # exist and a bundled-example fallback; a YAML->sqlite sync then wrote
+        # the example's single card over 2142 real ones (2026-07-19, recovered
+        # from backup). Baking the PyPI floor pins that version into every
+        # agent image, so every agent restarting onto it reproduces the loss.
+        #
+        # WHY NOT JUST BUMP THE FLOOR: 0.17.1 DOES NOT EXIST AS AN ARTIFACT.
+        # Its tag points at a commit predating the fix, so every publish run
+        # since 2026-07-18T14:02 failed. Tag, version bump and release notes
+        # all exist; nothing was ever uploaded. A floor of >=0.17.1 would
+        # therefore resolve to nothing installable — the record exists, the
+        # thing does not.
+        #
+        # The fix IS on develop and verified there by scitex-cards (the
+        # example runs clean with no $SCITEX_CARDS_DB). Operator chose the SHA
+        # pin over waiting a CI cycle (2026-07-19, "a").
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards[mcp]>=0.16.0"
+            "scitex-cards[mcp] @ git+https://github.com/scitex-ai/scitex-cards@dcb3d5b086f752cf85ffcc48b2a3e1894ec8b82a"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -295,8 +315,12 @@ From: ./sac-base.sif
         # actually moves it past whatever version base baked — without it a
         # satisfied requirement is a no-op and the layer silently freezes on
         # base's build (the 2026-07-12 fleet-drift).
+        # TEMPORARY SHA PIN — mirrors the uv branch above; see it for the full
+        # reason. Short version: PyPI's 0.17.0 destroys card databases and
+        # 0.17.1 was never actually published, so the floor cannot express
+        # "the fixed version". Restore the floor once >=0.17.2 is on PyPI.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards[mcp]>=0.16.0"
+            "scitex-cards[mcp] @ git+https://github.com/scitex-ai/scitex-cards@dcb3d5b086f752cf85ffcc48b2a3e1894ec8b82a"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
