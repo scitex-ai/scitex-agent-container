@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
+  is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
+  pending work under `[Unreleased]` while the declared version is one the
+  CHANGELOG has already shipped.
+
+  This is the third occurrence. `v0.21.22` was released to "stop the version lie
+  (21 PRs shipped under a spent number)". `v0.22.1` was released because #771's
+  `srun` fix never reached the machine — the installed wheel still held pre-#771
+  bytes, `grep -c -- --input=none` returned 0, and its version read `0.22.0`
+  *because the version was never bumped when #771 merged*. Both were repaired by
+  hand, and neither left anything behind that would notice a third time.
+
+  The third time arrived hours after the second: PR #782 merged 1691 lines and a
+  new `[codex]` extra onto `develop` while `pyproject.toml` still read `0.22.1`,
+  a version already published to PyPI. Installs key their build-wheel cache on
+  `(name, version)` rather than on content, so `--force-reinstall` is free to
+  serve the published wheel back, report success, and ship none of the new work.
+  The version string cannot distinguish the two; only the bytes can.
+
+  The guard is file-only — no network, no git, no tags — so it cannot flake on
+  the GPFS-backed runners that have been dropping `_work/_temp` files out from
+  under `actions/checkout`. It ships with controls that exercise the predicate
+  against the incident state and its bumped counterpart, because a check that has
+  never been observed to go red is a hope with a docstring on it.
+
 ### Added
 
 - Add `spec.claude.provider: codex` for keeping Claude Code as the harness
