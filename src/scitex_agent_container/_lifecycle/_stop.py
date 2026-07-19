@@ -100,15 +100,29 @@ def agent_stop(
     except Exception:
         traceback.print_exc()
 
-    # Fleet-default pre-stop rescue (operator priority, lead a2a
-    # efa48850daf248ed9fe3ae5232677b2b). Commits + pushes every dirty
-    # worktree (or diff-tarballs them on protected/push-failure) before
-    # the agent dies, so restart never silently loses uncommitted work.
-    # NEVER raises — bounded by RESCUE_GRACE_SECONDS; whatever finished
-    # before the budget elapsed is preserved.
-    from ._pre_stop_rescue import run_pre_stop_rescue
-
-    run_pre_stop_rescue(config)
+    # PRE-STOP RESCUE REMOVED — operator ruling 2026-07-19: 「rescue 一切やめましょう」.
+    #
+    # It committed every dirty worktree before an agent died. Its git module
+    # claimed a "never publishes" contract, enforced by shipping no push
+    # primitive. That contract was enforced against the WRONG VERB and was
+    # false in production: the rescue commits onto whatever branch the agent
+    # is currently on, and when that is a feature branch the commit rides a
+    # normal PR merge straight into develop. Measured on 2026-07-19:
+    #
+    #   git log origin/develop --grep='^rescue' | wc -l   ->  7
+    #   5340014c -> fix/restart-preflight-auth-before-stop      (feature branch)
+    #   1042139e -> feat/a2a-default-communicate-and-role-visibility
+    #
+    # One of those (37d83977, ancestor of BOTH develop and main) committed
+    # nine mode-160000 gitlinks under .tmp-audit/ with no .gitmodules, which
+    # broke actions/checkout on every CI run of every workflow until PR #769
+    # removed them. The same pollution sits in seven other repos, because a
+    # broad `git add` of a dirty worktree sweeps up whatever happens to be in
+    # it — audit scratch, nested clones, .worktrees/.
+    #
+    # A dirty worktree now simply STAYS dirty across a stop. That is the
+    # intended behaviour: losing uncommitted scratch is cheaper than silently
+    # publishing it.
 
     # Pre-stop hooks
     # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)

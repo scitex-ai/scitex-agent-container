@@ -31,6 +31,8 @@ from .._never_stop_when_task_remains._fake_detector import (
     detector_env,
     isolate_runtime,
     missing_detector,
+    runnable_verdict,
+    stale_cards_detector,
     write_detector,
 )
 
@@ -149,30 +151,130 @@ def test_unknown_payload_fields_reach_claude_code(env_save_restore, tmp_path: Pa
     assert _decision(out).get("someFutureField") == [1, 2]
 
 
-def test_transitional_exit_two_blocks_with_their_stderr(
-    env_save_restore, tmp_path: Path
-):
-    """Today's path: an executable that signals by exit code. Its stderr is
-    forwarded as the reason, opaque and unedited."""
+def test_a_real_runnable_verdict_blocks_the_stop(env_save_restore, tmp_path: Path):
+    """THE CONTROL for the fix below.
+
+    Uses the shape ``may-stop`` ACTUALLY emits — its own verdict schema,
+    carrying ``runnable``/``items`` and no ``decision`` key. The suite
+    previously exercised only hook-protocol JSON, which the detector never
+    sends, so this path was entirely untested in the direction that matters.
+    Without this test, "never block at all" would pass as a fix.
+    """
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
-    text = "1. card-a — in_progress — finish the failing test"
-    detector_env(env_save_restore, write_detector(tmp_path, returncode=2, stderr=text))
+    detector_env(
+        env_save_restore,
+        write_detector(tmp_path, returncode=2, stdout=runnable_verdict()),
+    )
     # Act
     _, out = _run("agent-x")
     # Assert
-    assert _decision(out).get("reason") == text
+    assert _decision(out).get("decision") == "block"
+
+
+def test_block_reason_is_composed_from_their_verdict(env_save_restore, tmp_path: Path):
+    """Refusing the stop is NOT enough — a refused stop leaves the agent
+    idle. The instruction must name the work, in the detector's own words."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(
+        env_save_restore,
+        write_detector(
+            tmp_path,
+            returncode=2,
+            stdout=runnable_verdict(
+                items=[{"card_id": "card-42", "next_action": "land the fix"}]
+            ),
+        ),
+    )
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "card-42" in _decision(out)["reason"]
 
 
 def test_block_reason_is_never_empty(env_save_restore, tmp_path: Path):
     """The docs require ``reason`` whenever ``decision`` is ``block``."""
     # Arrange
     isolate_runtime(env_save_restore, tmp_path)
-    detector_env(env_save_restore, write_detector(tmp_path, returncode=2))
+    detector_env(
+        env_save_restore,
+        write_detector(tmp_path, returncode=2, stdout=runnable_verdict(items=[])),
+    )
     # Act
     _, out = _run("agent-x")
     # Assert
     assert _decision(out).get("reason", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# THE LIVE DEFECT — a host whose scitex-cards predates `may-stop`
+#
+# `may-stop` shipped in scitex-cards 0.16.2; the fleet's SIF baked 0.16.1, so
+# this is the STEADY STATE, not an edge case. Click exits 2 for a usage
+# error, which is the same code the protocol uses for "work remains", so a
+# failure to answer was being read as an affirmative "you may NOT stop" — and
+# the usage text was handed to the agent as its next instruction.
+# ---------------------------------------------------------------------------
+
+
+def test_stale_cards_usage_error_allows_the_stop(env_save_restore, tmp_path: Path):
+    """ "I could not tell" must never be served as "you may NOT stop"."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, stale_cards_detector(tmp_path))
+    # Act
+    _, out = _run("dotfiles")
+    # Assert
+    assert _decision(out).get("decision") is None
+
+
+def test_stale_cards_usage_error_emits_no_reason(env_save_restore, tmp_path: Path):
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, stale_cards_detector(tmp_path))
+    # Act
+    _, out = _run("dotfiles")
+    # Assert
+    assert "reason" not in _decision(out)
+
+
+def test_stale_cards_usage_text_never_reaches_the_agent(
+    env_save_restore, tmp_path: Path
+):
+    """The exact strings from the reported artifact, asserted on the exact
+    bytes the hook writes — the only thing Claude Code actually reads."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, stale_cards_detector(tmp_path))
+    # Act
+    _, out = _run("dotfiles")
+    # Assert
+    assert "No such command" not in out and "Usage:" not in out
+
+
+def test_stale_cards_fail_open_is_loud(env_save_restore, tmp_path: Path):
+    """A silent allow is indistinguishable from a clean board — which is
+    exactly where a fleet-wide breakage would hide."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, stale_cards_detector(tmp_path))
+    # Act
+    _, out = _run("dotfiles")
+    # Assert
+    assert "FAIL-OPEN" in _decision(out).get("systemMessage", "")
+
+
+def test_stale_cards_message_names_the_actionable_cause(
+    env_save_restore, tmp_path: Path
+):
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, stale_cards_detector(tmp_path))
+    # Act
+    _, out = _run("dotfiles")
+    # Assert
+    assert "predates the `may-stop` verb" in _decision(out).get("systemMessage", "")
 
 
 # ---------------------------------------------------------------------------

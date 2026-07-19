@@ -10,8 +10,9 @@ Two watch backends, picked at runtime:
 
 * **inotify** via the ``inotifywait`` binary when it is on ``$PATH`` —
   event-driven, zero idle CPU.
-* **poll** fallback otherwise — stat the file's ``mtime``/``size`` on a
-  short interval.
+* **poll** fallback otherwise — stat the file on a short interval and
+  compare a ``(mtime_ns, size, ino)`` change key (see
+  :func:`_signature` for why all three terms are load-bearing).
 
 Both call the same engine, so behaviour is identical; only the
 wake-up mechanism differs. Each sync attempt is logged (stderr by
@@ -87,13 +88,47 @@ def run_sync_once(
         _emit(log, f"up-to-date {result.store_name} (email={result.email})")
 
 
-def _signature(path: Path) -> tuple[float, int] | None:
-    """Return ``(mtime, size)`` of ``path``, or ``None`` if absent."""
+def _signature(path: Path) -> tuple[int, int, int] | None:
+    """Return the change-detection key ``(mtime_ns, size, ino)``, or ``None``.
+
+    :func:`watch_poll` compares this tuple for EQUALITY, so any change it
+    cannot represent is a rotation the watcher never reports — and a
+    missed rotation is a missed warning, because a shared-account
+    ``refreshToken`` is single-use: one rotation invalidates every
+    co-tenant's in-memory token.
+
+    Each term covers a different way two consecutive writes can look
+    identical:
+
+    * ``st_mtime_ns`` — the raw integer, NOT the ``st_mtime`` float it
+      replaces. ``st_mtime`` is a lossy conversion: at a 2026 epoch a
+      double's ulp is ~477 ns, so two writes closer together than that
+      collapse to the same value.
+    * ``st_size`` — the only discriminator left on a filesystem with
+      coarse (whole-second) timestamps, where ``st_mtime_ns`` is
+      nanosecond-TYPED but not nanosecond-ACCURATE and its low digits
+      are simply zero.
+    * ``st_ino`` — moves whenever the file is REPLACED rather than
+      rewritten. Both credential writers we control
+      (``active_login_write.sync_active_login`` and
+      ``creds_sync._atomic_copy``) write a tmp file then ``os.replace``
+      it, so the inode moves on exactly the rotation where the other two
+      terms are least helpful: measured on this fleet a rotated token
+      bundle is the SAME LENGTH as its predecessor (1102 bytes across
+      successive rotations), so ``st_size`` alone cannot see a rotation.
+
+    Limitation, stated rather than papered over: inode numbers are
+    RECYCLED — on ext4 a freed inode is handed straight back to the next
+    allocation — so this is a strengthening, not a guarantee. A collision
+    now requires the same timestamp granule AND an identical size AND a
+    recycled inode simultaneously, which is far less reachable than any
+    single term but is not impossible.
+    """
     try:
         st = path.stat()
     except OSError:  # stx-allow: fallback (reason: file may not exist yet — None signals "no live cred", caller treats it as unchanged-absent)
         return None
-    return (st.st_mtime, st.st_size)
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
 
 
 def watch_poll(
@@ -108,8 +143,11 @@ def watch_poll(
     """Poll the live credential and sync on every change.
 
     Runs an initial sync, then watches the file signature
-    (``mtime``+``size``) every ``interval`` seconds, syncing whenever it
-    changes. ``iterations`` caps the number of poll cycles (``None`` =
+    (:func:`_signature` — ``mtime_ns``+``size``+``ino``) every
+    ``interval`` seconds, syncing whenever it changes. A term dropped
+    from that key is a rotation this loop silently misses, so each one
+    is covered by its own mutation test.
+    ``iterations`` caps the number of poll cycles (``None`` =
     forever); the cap makes the loop smoke-testable against a tmp file.
     ``sleep_fn`` is injected so a test can drive the loop without real
     sleeps.
