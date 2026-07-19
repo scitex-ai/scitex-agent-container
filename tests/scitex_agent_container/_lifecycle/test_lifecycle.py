@@ -1139,6 +1139,11 @@ def _stop_with_prune(
     ss = importlib.reload(
         importlib.import_module("scitex_agent_container._runners._session_state")
     )
+    # Registered HERE, in the shared helper, so both callers are covered by
+    # construction. Their old per-test `finally` blocks dropped the env var and
+    # THEN reloaded, which re-derived DEFAULT_STATE_ROOT from the real $HOME
+    # and left it there for every later test in the worker.
+    env_save_restore.reload_after_restore(ss)
     spec = _write_spec(tmp_path, name=name, restart_block=restart_block)
     registry.add(name, str(spec), f"cld-{name}")
     state_dir = ss.state_dir_for(name)
@@ -1161,22 +1166,16 @@ def test_agent_stop_prune_removes_ephemeral_runtime_dir(
     restart_block = (
         "  restart:\n    policy: never\n    max_retries: 3\n    prune_on_stop: true\n"
     )
-    try:
-        # Act — never-policy agent that opted in via prune_on_stop.
-        state_dir = _stop_with_prune(
-            tmp_path,
-            registry,
-            env_save_restore,
-            name="cap",
-            restart_block=restart_block,
-        )
-        # Assert
-        assert not state_dir.exists()
-    finally:
-        env_save_restore.delete("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
-        importlib.reload(
-            importlib.import_module("scitex_agent_container._runners._session_state")
-        )
+    # Act — never-policy agent that opted in via prune_on_stop.
+    state_dir = _stop_with_prune(
+        tmp_path,
+        registry,
+        env_save_restore,
+        name="cap",
+        restart_block=restart_block,
+    )
+    # Assert
+    assert not state_dir.exists()
 
 
 def test_agent_stop_prune_keeps_persistent_runtime_dir(
@@ -1187,22 +1186,16 @@ def test_agent_stop_prune_keeps_persistent_runtime_dir(
     restart_block = (
         "  restart:\n    policy: always\n    max_retries: 3\n    prune_on_stop: true\n"
     )
-    try:
-        # Act
-        state_dir = _stop_with_prune(
-            tmp_path,
-            registry,
-            env_save_restore,
-            name="coord",
-            restart_block=restart_block,
-        )
-        # Assert
-        assert state_dir.exists()
-    finally:
-        env_save_restore.delete("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
-        importlib.reload(
-            importlib.import_module("scitex_agent_container._runners._session_state")
-        )
+    # Act
+    state_dir = _stop_with_prune(
+        tmp_path,
+        registry,
+        env_save_restore,
+        name="coord",
+        restart_block=restart_block,
+    )
+    # Assert
+    assert state_dir.exists()
 
 
 def test_agent_stop_yaml_gone_with_force_succeeds(
