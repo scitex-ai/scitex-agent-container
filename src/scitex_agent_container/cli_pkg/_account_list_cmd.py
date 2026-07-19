@@ -82,7 +82,10 @@ def account_list(as_json: bool, refresh: bool) -> None:
     """
     import json as _json
 
-    from .._account.codex_account import read_codex_accounts_metadata
+    from .._account.codex_account import (
+        CodexAccountSyncError,
+        read_codex_accounts_metadata,
+    )
     from .._account.credentials import read_credentials_metadata
     from .._state.account_store import list_accounts
     from ._account_list_render import (
@@ -103,7 +106,27 @@ def account_list(as_json: bool, refresh: bool) -> None:
     from .status_cmds import _format_claude_account_block
 
     accounts = list_accounts()
-    openai_accounts = read_codex_accounts_metadata()
+    # An UNREADABLE OpenAI store must not delete the Claude view. This command is
+    # the operator's primary credential instrument and is reached most often
+    # DURING an incident, which is exactly when a store is half-written, revoked,
+    # or logged out. `read_codex_accounts_metadata` raises for every such state
+    # once the store root exists (and `sac accounts sync-openai` creates it
+    # permanently), so an unguarded call here took the whole command down —
+    # including `--json`, which sits below this line. The Claude reads on this
+    # same path have always been exception-tolerant; the provider axis has to
+    # meet that contract, not lower it.
+    #
+    # Degrade to a THIRD state rather than to absence. `[]` with no error means
+    # "no OpenAI accounts", which is a true and useful answer; `[]` because the
+    # read failed is a different fact, and rendering them identically would tell
+    # the operator their store is empty when it is broken.
+    # stx-allow: fallback (reason: unreadable OpenAI store degrades to an error row; the Claude view must survive it)
+    openai_error: str | None = None
+    try:
+        openai_accounts = read_codex_accounts_metadata()
+    except CodexAccountSyncError as exc:
+        openai_accounts = []
+        openai_error = str(exc)
     openai_meta = openai_accounts[0] if openai_accounts else {}
 
     if as_json:
@@ -119,6 +142,7 @@ def account_list(as_json: bool, refresh: bool) -> None:
                     "active": active,
                     "openai": openai_meta,
                     "openai_accounts": openai_accounts,
+                    "openai_error": openai_error,
                     "stored": stored_json,
                     "accounts": build_provider_accounts_json(
                         stored_json, openai_accounts
@@ -140,6 +164,14 @@ def account_list(as_json: bool, refresh: bool) -> None:
     for line in lines:
         console.print(line)
     if lines:
+        console.print("")
+
+    if openai_error is not None:
+        console.print(f"[yellow]OpenAI accounts UNREADABLE:[/yellow] {openai_error}")
+        console.print(
+            "[dim]The Claude accounts below are unaffected. "
+            "Repair with: sac accounts sync-openai[/dim]"
+        )
         console.print("")
 
     for openai_account in openai_accounts:

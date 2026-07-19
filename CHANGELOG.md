@@ -8,6 +8,36 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **An unreadable OpenAI store deleted the Claude account view.** `sac accounts
+  list` called `read_codex_accounts_metadata()` unguarded, on the line *above*
+  both the `--json` branch and the Claude credential block. That function raises
+  `CodexAccountSyncError` — a bare `RuntimeError`, so click prints a traceback and
+  exits 1 — for every degraded state of the OpenAI store once its root directory
+  exists, and `sac accounts sync-openai` creates that root permanently on first
+  use. An OpenAI-side problem therefore took down the operator's primary
+  credential instrument: no table, no TTLs, no usage bars, and a non-zero exit for
+  anything parsing `--json`.
+
+  The states that trigger it are ordinary, not exotic: a ChatGPT logout (rewrites
+  `auth.json` to `{}`), a store root left holding no `*/auth.json`, a truncated
+  write, a file owned by another uid, or an api-key-mode `auth.json` — a
+  legitimate auth mode that carries no decodable JWT claims. One broken member of
+  an otherwise healthy pool raises for the whole pool. And the command is reached
+  most often *during* a credential incident, which is exactly when the store is
+  most likely to be in one of those states.
+
+  The Claude reads on that same path were always exception-tolerant; the provider
+  axis had quietly lowered the contract. It now degrades to a **third state**
+  rather than to absence: an absent store stays `[]` with `openai_error: null`,
+  while an unreadable one is `[]` plus the message, surfaced as an `openai_error`
+  key in `--json` and an `OpenAI accounts UNREADABLE:` line in human output.
+  Collapsing the two would have traded a loud failure for a quiet wrong answer —
+  telling the operator their store is empty when it is broken.
+
+  Mutation-proven rather than merely green: with the guard removed, 6 of the 10
+  new tests fail; the 4 that still pass are the healthy-store and absent-store
+  controls, which must not depend on it.
+
 - **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
   is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
   pending work under `[Unreleased]` while the declared version is one the
