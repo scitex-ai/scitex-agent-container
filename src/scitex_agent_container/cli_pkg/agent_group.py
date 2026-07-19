@@ -127,6 +127,25 @@ from ._agents_restart_login_expired import (  # noqa: E402
 )
 
 _register_restart_login_expired(agent_group)
+# `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
+# pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
+# is the last thing an agent RENDERED, not proof it is broken now, so an agent
+# that 401'd, recovered and went idle stays flagged forever (verified live
+# 2026-07-18 on `grant`, whose capture is checked in as a regression fixture).
+# The frozen-across-two-runs hardening makes it worse, because an idle pane is
+# maximally frozen. This verb counts those false positives; it NEVER restarts
+# anything.
+#
+# It does NOT gate the restarter. An earlier draft of this comment said no
+# automated restarter ships until the false-positive count is zero fleet-wide;
+# the operator overruled that on 2026-07-19 — restarting a healthy agent is
+# cheap, and withholding the mechanism costs more than the occasional wasted
+# restart. The defect worth fixing is the PERMANENT case, where one healthy
+# agent is restarted every cycle forever because a historical banner never
+# leaves the pane. A tail window fixes that; a gate on this count would not.
+from ._agents_auth_audit import register as _register_auth_audit  # noqa: E402
+
+_register_auth_audit(agent_group)
 # `state` — the ONE state shape, returned for every agent, always. Each signal
 # is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
 # instead of by whatever subset each call site happened to hold. It exists
