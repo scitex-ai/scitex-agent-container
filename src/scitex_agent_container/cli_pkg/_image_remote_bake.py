@@ -68,10 +68,15 @@ def run_remote_bake(
         "ssh",
         "-o",
         "BatchMode=yes",
-        # A bake is a long-lived channel; without keepalives an idle NAT
-        # dropped the FIRST live run's session mid-build (2026-07-17
-        # 18:21) and the verdict was lost. Keepalives + the remote tee
-        # keep the controller attached for the whole chain.
+        # A bake is a long-lived (~1h) channel, so keep the controller
+        # attached rather than relying on an idle NAT's goodwill.
+        # NOTE: these keepalives were originally added believing an idle
+        # drop was what lost the runs of 2026-07-17..19. It was not — the
+        # channel was healthy and ssh exited 0 every time; an unguarded
+        # `srun` on the remote was EATING THIS SCRIPT off the same stdin
+        # pipe (see the STDIN RULE in containers/spartan-sif-bake.sh).
+        # They are kept because a long channel wants them anyway, not
+        # because they fix anything.
         "-o",
         "ServerAliveInterval=30",
         "-o",

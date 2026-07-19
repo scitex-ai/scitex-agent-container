@@ -42,6 +42,23 @@
 #     wrong contents).
 #   * keep-N rotation prunes ONLY older timestamped SIFs, never the live
 #     symlink target, and logs every pruned name (no silent deletion).
+#
+# STDIN RULE — EVERY srun IN THIS FILE MUST CARRY `--input=none` AND
+# `< /dev/null`. This script is DELIVERED ON STDIN (`bash -l -s --` over
+# ssh, above), so bash is reading the script text from fd 0 — a
+# non-seekable pipe holding the UNREAD REMAINDER OF THIS FILE. srun
+# forwards its own stdin to the launched task by default, so an unguarded
+# srun READS THE REST OF THIS SCRIPT and hands it to the compute node.
+# Bash then finds EOF where the next line should be and exits **0**: no
+# error, no signal, no FATAL, no SAC_BAKE_RESULT. Five consecutive bakes
+# (2026-07-17..19) built a SIF and died exactly this way, leaving five
+# .partial files and zero published images; an earlier reading blamed an
+# idle-connection drop and added ssh keepalives, which cannot help — the
+# connection was healthy and ssh exited 0 every time. Measured A/B on the
+# lease, single variable: without --input=none every line after the srun
+# vanished; with it, all of them came back. Do not remove either guard,
+# and never redirect fd 0 for the SHELL (`exec 0</dev/null` would discard
+# the rest of this file) — guard each srun instead.
 set -uo pipefail
 
 # ---------------------------------------------------------------------------
@@ -212,20 +229,20 @@ FINAL_SIF="$LAYER_DIR/sac-$LAYER-$TS.sif"
 PARTIAL_SIF="$FINAL_SIF.partial"
 BUILD_LOG="$LAYER_DIR/sac-$LAYER.build-$TS.log"
 echo "build: layer=$LAYER ts=$TS cpus=$CPUS (log: $BUILD_LOG)"
+# --input=none IS LOAD-BEARING — see the STDIN RULE at the top of this file.
+# Without it srun ate the rest of this script and five consecutive bakes
+# (2026-07-17..19) built a SIF and then died right here, silently, at rc 0.
+#
 # The build output is TEE'd (remote store log AND the ssh channel) rather
-# than redirected: a redirect leaves the channel silent for ~20 minutes,
-# and the FIRST live run (2026-07-17 18:21) lost its ssh session to an
-# idle-connection drop exactly that way — the orphaned srun finished the
-# build but nobody was left to emit the verdict. A busy channel plus the
-# caller's ServerAlive keepalives keeps the controller attached, and the
-# master's journal gets the full bake log as a bonus. pipefail makes the
+# than redirected: a redirect leaves the channel silent for ~20 minutes, and
+# the master's journal gets the full bake log as a bonus. pipefail makes the
 # captured rc srun's, not tee's.
-"$SRUN" --jobid="$JID" --overlap --ntasks=1 --cpus-per-task="$CPUS" \
+"$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 --cpus-per-task="$CPUS" \
     --job-name="sac-sif-bake-$LAYER" \
     --chdir="$CTX" \
     --export=ALL,APPTAINER_TMPDIR="/tmp/sac-sif-bake-$USER",APPTAINER_CACHEDIR="$WORKDIR/apptainer-cache" \
     bash -c "mkdir -p /tmp/sac-sif-bake-$USER && exec \"$APPTAINER\" build --force \"$PARTIAL_SIF\" \"$CTX/apptainer-$LAYER.def\"" \
-    2>&1 | tee "$BUILD_LOG"
+    < /dev/null 2>&1 | tee "$BUILD_LOG"
 BUILD_RC=$?
 [ "$BUILD_RC" -eq 0 ] || fail "apptainer-build" "rc=$BUILD_RC (log: $BUILD_LOG)"
 [ -f "$PARTIAL_SIF" ] || fail "no-artifact" "build rc=0 but $PARTIAL_SIF missing"
@@ -263,10 +280,12 @@ from scitex_agent_container.runtimes._apptainer_overlay import (
 
 print("OK: artifact symbol probe passed")
 PYEOF
-"$SRUN" --jobid="$JID" --overlap --ntasks=1 \
+# --input=none: see the STDIN RULE at the top of this file. The probe is a
+# FILE argument; this task has no use for stdin.
+"$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 \
     --job-name="sac-sif-gate-$LAYER" \
     "$APPTAINER" exec --bind "$WORKDIR" "$PARTIAL_SIF" \
-    /opt/venv-sac/bin/python "$PROBE"
+    /opt/venv-sac/bin/python "$PROBE" < /dev/null
 GATE_RC=$?
 [ "$GATE_RC" -eq 0 ] || fail "gate-failed" "rc=$GATE_RC — artifact is stale/wrong; NOT published"
 
@@ -276,7 +295,10 @@ GATE_RC=$?
 # name, and the symlink never points at a partial.
 # ---------------------------------------------------------------------------
 STEP="publish"
-SHA256="$("$SRUN" --jobid="$JID" --overlap --ntasks=1 sha256sum "$PARTIAL_SIF" | awk '{print $1}')"
+# --input=none: see the STDIN RULE at the top of this file. sha256sum reads
+# the FILE argument, never stdin.
+SHA256="$("$SRUN" --input=none --jobid="$JID" --overlap --ntasks=1 \
+    sha256sum "$PARTIAL_SIF" < /dev/null | awk '{print $1}')"
 [ -n "$SHA256" ] || fail "sha256-unknown"
 mv -f "$PARTIAL_SIF" "$FINAL_SIF" || fail "publish-rename"
 echo "$SHA256  $(basename "$FINAL_SIF")" > "$FINAL_SIF.sha256" || fail "publish-sha-sidecar"
