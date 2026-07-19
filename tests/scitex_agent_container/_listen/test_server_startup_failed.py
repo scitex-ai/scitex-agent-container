@@ -62,18 +62,24 @@ def isolated_env(tmp_path: Path, env_save_restore):
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
+    # Pytest finalizes inner-first (LIFO): this fixture's teardown runs BEFORE
+    # ``env_save_restore`` restores the env, so a reload HERE would re-bind
+    # ``DEFAULT_STATE_ROOT`` to our tmp_path again.
+    #
+    # This used to be worked around by popping the env keys first and then
+    # reloading. That reasoning came from a pre-floor world and is now WRONG:
+    # with the keys popped there is no ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR``
+    # at all, so the reload re-derives ``DEFAULT_STATE_ROOT`` from the
+    # operator's REAL $HOME rather than from the sandbox floor
+    # tests/conftest.py installs. The module was left "cached with the right
+    # defaults" only in the sense that they were the defaults of a machine, not
+    # of this test run — every later test in the worker then wrote to
+    # ~/.scitex/agent-container/runtime while still passing.
+    #
+    # Correct ordering is to reload on the FAR side of the env restore, which
+    # is exactly what ``reload_after_restore`` exists to do.
+    env_save_restore.reload_after_restore(ss)
     yield tmp_path
-    # Pytest finalizes inner-first (LIFO): this fixture's teardown runs
-    # BEFORE ``env_save_restore`` restores the env. So we have to pop
-    # the env keys ourselves before reloading — otherwise the reload
-    # re-binds ``DEFAULT_STATE_ROOT`` to our tmp_path again. After we
-    # reload, ``env_save_restore`` will set the env back to its
-    # original (pre-test) values, but the module is already cached
-    # with the right defaults.
-    os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
-    os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
-    os.environ.pop("HOME", None)
-    importlib.reload(ss)
 
 
 @pytest.fixture
