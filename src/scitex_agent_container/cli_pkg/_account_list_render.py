@@ -151,7 +151,7 @@ def render_stored_table(
     the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
-    table = Table(title="Accounts", title_justify="left", show_lines=False)
+    table = Table(title="Stored accounts", title_justify="left", show_lines=False)
     table.add_column("Provider")
     table.add_column("Account", style="bold")
     table.add_column("Status")

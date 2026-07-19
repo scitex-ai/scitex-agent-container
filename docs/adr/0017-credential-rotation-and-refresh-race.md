@@ -59,7 +59,7 @@ What `--skip-active` did NOT skip: any account **pinned by a running agent** tha
 
 So on a host with three Max accounts where:
 
-* Operator's interactive `claude` is logged in as `ywatanabe-gmail-com`.
+* Operator's interactive `claude` is logged in as `researcher-example-org`.
 * `proj-neurovista` is pinned to `alpha-example-com`.
 * `clew` is pinned to `ywatanabe-scitex-ai`.
 

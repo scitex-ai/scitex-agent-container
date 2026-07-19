@@ -117,7 +117,7 @@ A federated systemd-user timer fires `sac accounts refresh --all --include-activ
 The historical `--skip-active` skip-set (union of the host-active login via `_resolve_active_account_name` and every account pinned by a running local agent via `_collect_pinned_running_accounts`, post-PR #299, commit `dea298d`) still exists and is still tested, but is now an explicit opt-in rather than the timer's default:
 
 ```
-[skip-active] excluding active account 'ywatanabe-gmail-com'.
+[skip-active] excluding active account 'researcher-example-org'.
 [skip-active] excluding pinned-running account 'alpha-example-com' (refresh-token rotation race guard).
 [skip-active] excluding pinned-running account 'researcher-example-org' (refresh-token rotation race guard).
 ```
