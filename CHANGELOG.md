@@ -6,6 +6,52 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The fleet-default pre-stop rescue is ABOLISHED** (operator, 2026-07-19:
+  「rescue 一切やめましょう」). `_lifecycle/_pre_stop_rescue.py` and
+  `_lifecycle/_pre_stop_rescue_git.py` are archived to `.old/`, the call site
+  in `_lifecycle/_stop.agent_stop` is gone, and stopping an agent now leaves a
+  dirty worktree exactly as dirty as it found it.
+
+  **Its central contract was enforced against the wrong verb.** The module
+  docstring promised "no code path can publish on the agent's behalf" and
+  there was deliberately no push primitive — yet rescue commits are reachable
+  from `origin/develop` today. The leak was never a push. On a NON-protected
+  topic branch the rescue committed IN PLACE; that branch later became a PR
+  and was merged normally, carrying the rescue commit into `develop`. A
+  no-push guard cannot stop a commit riding a legitimate merge. Verified with
+  `git branch -a --contains`: `5340014c` sits on
+  `fix/restart-preflight-auth-before-stop` and `1042139e` on
+  `feat/a2a-default-communicate-and-role-visibility` — feature branches, not
+  the `rescue/` side-branches the design assumed.
+
+  **The damage was real.** Rescue commit `37d83977` (2026-07-01), an ancestor
+  of both `develop` and `main`, committed nine `mode 160000` gitlinks under
+  `.tmp-audit/` with no `.gitmodules`, breaking `actions/checkout` on every
+  run of every workflow until PR #769 removed them. That is the generic
+  failure, not bad luck: a broad `git add -A` over an agent's dirty tree
+  sweeps up whatever happens to be sitting in it.
+
+  **Nothing else depended on it.** `_state/worktree_safety.is_safe_to_reap`
+  independently refuses to reap any worktree whose `git status --porcelain` is
+  non-empty, so the lead-learnings/19 prune-destruction window stays closed
+  without the rescue; the rescue only ever changed whether the work was
+  already committed, never whether the janitor could destroy it. Uncommitted
+  work also still survives a restart on its own — `workdir` is a host bind
+  mount.
+
+  Regression guard: `tests/scitex_agent_container/_lifecycle/test__stop_no_rescue.py`
+  asserts HEAD is unmoved across a stop with a dirty topic-branch worktree
+  (RED against the pre-removal code), with controls that the stop still
+  succeeds and the runtime still tears down.
+
+  The `<git-dir>/sac-owner` stamp written by the `WorktreeCreate` baseline
+  hook is **retained but now has no consumer** — its only reader was the
+  rescue's ownership gate. Kept because the write is one cheap out-of-tree
+  file and the hook is a baked baseline asset; its docstring now says plainly
+  that no ownership gate is enforced anywhere.
+
 ### Added
 
 - Add `spec.claude.provider: codex` for keeping Claude Code as the harness

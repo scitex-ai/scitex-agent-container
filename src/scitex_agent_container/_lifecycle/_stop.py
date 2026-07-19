@@ -123,6 +123,14 @@ def agent_stop(
     # A dirty worktree now simply STAYS dirty across a stop. That is the
     # intended behaviour: losing uncommitted scratch is cheaper than silently
     # publishing it.
+    #
+    # Regression guard: tests/scitex_agent_container/_lifecycle/
+    # test__stop_no_rescue.py asserts HEAD is UNMOVED across a stop with a
+    # dirty TOPIC-branch worktree. The topic branch is the load-bearing
+    # detail — a protected branch was already routed to a rescue/ side
+    # branch, so a test on develop would have passed against the old code
+    # and proved nothing. Confirmed RED pre-removal (HEAD moved 6d58b671 ->
+    # f579e2a3). The modules themselves are archived under .old/.
 
     # Pre-stop hooks
     # stx-allow: fallback (reason: hook commands may reference paths or env vars absent at stop time; force-stop must continue regardless)

@@ -7,15 +7,22 @@ absent. Container-created worktrees record a path inside the container
 namespace (e.g. ``/work/.worktrees/...``), which the host process does
 NOT see, so the host concludes the worktree is orphaned and prunes
 it — discarding the linked ``HEAD``, ``index``, and any unmerged
-branch state along with it. Combined with a not-yet-rescued dirty
-tree, that is silent loss of work.
+branch state along with it. Combined with a dirty tree, that is silent
+loss of work.
 
-PR #369 (``feat(lifecycle): fleet-default pre-stop rescue for dirty
-worktrees``) closes the destruction window on the *write* side by
-auto-committing dirty worktrees on capsule stop. This module is the
-*read* side of that pair: a small, mock-free predicate that the
-dotfiles janitor
-and the future ``sac janitor`` CLI call before invoking
+This module is now the SOLE defence against that window, and it is
+sufficient on its own. A pre-stop rescue used to auto-commit dirty
+worktrees on capsule stop (PR #369) and this predicate was described as
+the *read* side of that pair; the rescue was ABOLISHED on 2026-07-19
+(operator: 「rescue 一切やめましょう」) because its topic-branch commits
+rode PR merges into ``develop``. Nothing is weakened by its absence:
+the predicate below independently refuses to reap ANY dirty worktree,
+so an uncommitted tree still cannot be pruned. The rescue only ever
+changed whether the work was already committed — never whether the
+janitor was allowed to destroy it.
+
+The predicate is a small, mock-free check that the dotfiles janitor and
+the future ``sac janitor`` CLI call before invoking
 ``git worktree prune`` (or ``git worktree remove``), so the prune-bug
 window from lead-learnings/19 cannot re-open.
 
@@ -60,13 +67,12 @@ def is_safe_to_reap(path: Path) -> bool:
       potential loss-of-work and disqualifies the worktree.
     * ``git -C <path> rev-list develop..HEAD`` is empty — ``HEAD``
       is not ahead of ``develop``. A worktree that IS ahead has
-      commits not yet on ``develop`` and must not be reaped. This
-      is what pairs the predicate with the PR #369 pre-stop rescue,
-      and it carries MORE weight since the rescue stopped pushing
-      (2026-07-17): a rescue commit now exists ONLY on local disk,
-      so ``develop..HEAD`` being non-empty is the sole thing
-      standing between it and a janitor. Reaping stays blocked
-      until the work lands on ``develop`` via PR.
+      commits not yet on ``develop`` and must not be reaped. Since
+      the pre-stop rescue was abolished (2026-07-19) nothing
+      auto-commits an agent's work any more, so the porcelain check
+      above is what protects UNCOMMITTED work and this check is what
+      protects LOCAL-ONLY COMMITS the agent made itself. Reaping
+      stays blocked until the work lands on ``develop`` via PR.
 
     Any error — subprocess failure, missing ``git``, unreadable
     path, ``develop`` not present, etc. — returns ``False``. The
