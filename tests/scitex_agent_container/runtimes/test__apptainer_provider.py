@@ -20,6 +20,7 @@ from pathlib import Path  # noqa: F401  # used in string annotation on line ~179
 import pytest
 
 from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
+from scitex_agent_container.config._parsers._claude import _parse_provider
 from scitex_agent_container.runtimes._apptainer_provider import (
     ProviderEnvError,
     provider_active,
@@ -263,6 +264,46 @@ def test_flags_inject_anthropic_model_from_spec_when_set(env_save_restore):
     env = _env_dict(provider_env_flags(cfg))
     # Assert
     assert env["ANTHROPIC_MODEL"] == "deepseek-chat"
+
+
+def test_codex_provider_injects_gateway_endpoint_key_and_model(env_save_restore):
+    # Arrange
+    env_save_restore.set("SCITEX_GENAI_GATEWAY_API_KEY", "gateway-test-key")
+    provider = _parse_provider({"provider": "codex"})
+    cfg = AgentConfig(
+        name="codex-agent",
+        runtime="apptainer",
+        workdir="/tmp/codex-wd",
+        claude=ClaudeSpec(model="gpt-5.6-sol", provider=provider),
+    )
+    # Act
+    env = _env_dict(provider_env_flags(cfg))
+    # Assert
+    assert env == {
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:18765",
+        "SAC_ANTHROPIC_API_KEY": "gateway-test-key",
+        "ANTHROPIC_API_KEY": "gateway-test-key",
+        "CLAUDE_CONFIG_DIR": "/tmp/sac-codex-agent-provider-cfg",
+        "ANTHROPIC_MODEL": "gpt-5.6-sol",
+    }
+
+
+def test_codex_provider_fails_loud_without_gateway_key(env_save_restore, tmp_path):
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.delete("SCITEX_GENAI_GATEWAY_API_KEY")
+    provider = _parse_provider({"provider": "codex"})
+    cfg = AgentConfig(
+        name="codex-agent",
+        runtime="apptainer",
+        workdir="/tmp/codex-wd",
+        claude=ClaudeSpec(model="gpt-5.6-sol", provider=provider),
+    )
+    # Act
+    ctx = pytest.raises(ProviderEnvError, match="SCITEX_GENAI_GATEWAY_API_KEY")
+    # Assert
+    with ctx:
+        provider_env_flags(cfg)
 
 
 def test_flags_omit_anthropic_model_when_spec_model_empty(env_save_restore):

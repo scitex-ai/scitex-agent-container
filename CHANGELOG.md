@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add `spec.claude.provider: codex` for keeping Claude Code as the harness
+  while routing model calls through scitex-genai's ChatGPT Codex subscription
+  gateway. The new `[codex]` extra installs the gateway, and `sac accounts
+  list` discovers provider-qualified accounts from SAC's OpenAI store.
+
+- Add `sac accounts sync-openai` and show collected OpenAI Codex/ChatGPT
+  accounts without exposing tokens or API keys. The combined table and JSON
+  account list distinguish identities such as `openai:person-example-com` and
+  `claude-code:person-example-com` while preserving existing JSON fields.
+
 ## [0.22.1] - 2026-07-19
 
 ### Fixed
@@ -43,7 +55,6 @@ versioning follows [SemVer](https://semver.org/).
 
   Verified against the real artifact: the new preflight, run on the actual stale
   script still installed on the master, reports all three unguarded calls.
-
 ## [0.22.0] - 2026-07-19
 
 ### Added
@@ -1017,12 +1028,12 @@ artifact**, so a ghost is now a RED release rather than a silent success.
   `sac accounts list` at the time of the report:
 
   ```
-  wyusuuke-gmail-com   5h 28%   7d 67%  (resets in 5d 14h)
-  ywata1989-gmail-com  5h  0%   7d 90%  (resets in 9h06m)
+  alpha-example-com   5h 28%   7d 67%  (resets in 5d 14h)
+  beta-example-com  5h  0%   7d 90%  (resets in 9h06m)
   ywatanabe-scitex-ai  5h  0%   7d 90%  (resets in 6 MINUTES)   <- 10% about to evaporate
   ```
 
-  The picker sent every agent to `wyusuuke` (67%), so `ywatanabe-scitex-ai`'s
+  The picker sent every agent to `alpha` (67%), so `ywatanabe-scitex-ai`'s
   remaining **10% of a 7-day window was deleted unused six minutes later**
   (operator: 「毎回 90%で10%捨ててる」 — we bin it every cycle).
 
@@ -1052,7 +1063,7 @@ artifact**, so a ghost is now a RED release rather than a silent success.
 
   On the table above the expiring account goes from **0 of 60 agents to 37 of 60**,
   while the 9h-away reserve stays correctly avoided (**0 of 60**) and the fleet
-  still spreads (23 of 60 to `wyusuuke`).
+  still spreads (23 of 60 to `alpha`).
 
   Bounded against a 429 (the risk of routing onto a 90% account): the 5h window
   remains the supreme, untouched gate; an account with <2% of its weekly window

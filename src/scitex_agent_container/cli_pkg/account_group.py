@@ -15,7 +15,7 @@ import click
 
 @click.group("account")
 def account() -> None:
-    """Manage stored Claude Code accounts for credential rotation."""
+    """Inspect provider accounts and manage Claude credential rotation."""
 
 
 # Credential auto-sync substrate (sync-live / watch-live) lives in its
@@ -24,6 +24,10 @@ def account() -> None:
 from ._account_sync_live import register_sync_live_commands
 
 register_sync_live_commands(account)
+
+from ._account_sync_openai import register_sync_openai_command
+
+register_sync_openai_command(account)
 
 
 @account.command("save")
@@ -352,10 +356,10 @@ def account_quota(json_out: bool, strict: bool) -> None:
     \b
     Examples:
       $ sac account quota
-      account=wyusuuke 5h=17 percent 7d=3 percent ttl=7.74h
+      account=alpha 5h=17 percent 7d=3 percent ttl=7.74h
 
       $ sac account quota --json
-      {"account":"wyusuuke","used_pct_5h":17.0,"used_pct_7d":3.0,"token_ttl_hours":7.74}
+      {"account":"alpha","used_pct_5h":17.0,"used_pct_7d":3.0,"token_ttl_hours":7.74}
     """
     import json as _json
     import sys
