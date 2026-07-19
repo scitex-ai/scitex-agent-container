@@ -137,18 +137,31 @@ def _probe_local(cfg) -> bool | None:
         return None
 
 
-def _label_list_contains(labels: dict, label_key: str, wanted: str) -> bool:
-    """True iff any comma-separated ``wanted`` token is in ``labels[label_key]``.
+def _label_group_matches(labels: dict, wanted: str) -> bool:
+    """True iff the spec's ``groups`` name ANY comma-separated ``wanted`` value.
 
-    Mirrors the existing ``capabilities`` matching (comma-separated in YAML,
-    ``value in list`` membership), generalised so both ``--capability`` and
-    ``--tags`` share one comparison instead of two near-identical copies.
-    Also OR-matches when the CALLER passes multiple comma-separated wanted
-    values (``--tags active-development,researcher``): true if the agent
-    carries ANY of them.
+    Replaces the pre-2026-07-19 ``tags``-label matcher. ``tags:`` was
+    ABOLISHED (operator decision) because every spec carrying it also
+    carried the same classification inside ``groups:`` — pure duplication.
+    ``groups`` is now the only classification field.
+
+    NOT a rename of the old string matcher: ``tags`` was authored as a
+    CSV STRING (``tags: "active-development"``) while ``groups`` is a YAML
+    LIST (``groups: [developer, active]``), so the old ``.split(",")``
+    read would not work here. Group reading is delegated to
+    :func:`config._group_resolver.all_named_groups` — the SSOT MULTI-value
+    reader that ``sac agents start --group`` already trusts — which
+    honours the plural list, the singular ``group`` string, and a
+    defensively-authored bare string alike.
+
+    Matching is case-insensitive / whitespace-trimmed (mirroring
+    ``_start_group_filter.resolve_group_targets``) and OR-shaped: a caller
+    passing ``--group developer,researcher`` matches an agent in EITHER.
     """
-    have = {c.strip() for c in labels.get(label_key, "").split(",") if c.strip()}
-    want = {w.strip() for w in wanted.split(",") if w.strip()}
+    from ...config._group_resolver import all_named_groups
+
+    have = {g.strip().lower() for g in all_named_groups(labels)}
+    want = {w.strip().lower() for w in wanted.split(",") if w.strip()}
     return bool(have & want)
 
 
@@ -156,7 +169,7 @@ def get_agent_list_data(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    group: str | None = None,
     remote_probe_timeout_s: float = 2.0,
     max_parallel_probes: int = 8,
     running_only: bool = False,
@@ -179,13 +192,17 @@ def get_agent_list_data(
         capability: If set, only include agents whose ``capabilities`` label
             contains this value (comma-separated matching).
         machine: If set, only include agents whose ``machine`` label matches.
-        tags: If set, only include agents whose ``tags`` label (comma-
-            separated in YAML, e.g. ``tags: "active-development"``) contains
-            ANY of the given comma-separated values — a free-form, multi-
-            value lifecycle/status marker, deliberately separate from
-            ``groups`` (which is ACL-gated and singular-effective; see
-            ``config._group_resolver``) and from ``capabilities`` (what an
-            agent can do, not its current work status).
+        group: If set, only include agents whose spec names ANY of the
+            given comma-separated groups in ``metadata.labels.groups``
+            (or the singular ``.group``). Replaces the abolished ``tags``
+            filter (operator decision 2026-07-19): ``groups`` is the only
+            classification field, so the lifecycle/status marker that used
+            to live in ``tags`` (e.g. ``active-development``) is now the
+            ``active`` group. Read via the SSOT multi-value reader
+            ``config._group_resolver.all_named_groups``, so an agent in
+            several groups is reachable by ANY of them — the same cut
+            ``sac agents start --group`` uses, NOT the singular-effective
+            ACL resolution.
         remote_probe_timeout_s: Per-agent SSH probe timeout for the
             ``is_running`` check. Short by default (2s) so the list
             command doesn't block indefinitely when the remote host is
@@ -260,7 +277,7 @@ def get_agent_list_data(
             ]
             if capability not in caps:
                 continue
-        if tags and not _label_list_contains(labels, "tags", tags):
+        if group and not _label_group_matches(labels, group):
             continue
 
         prep = {
@@ -443,7 +460,7 @@ def get_agent_list_data(
         running_only=running_only,
         capability=capability,
         machine=machine,
-        tags=tags,
+        group=group,
         status_probe=remote_status_probe,
         run_ssh=remote_run_ssh,
     )
@@ -461,7 +478,7 @@ def get_agent_list_data(
             display_host=display_host,
             capability=capability,
             machine=machine,
-            tags=tags,
+            group=group,
             running_only=running_only,
         )
     )

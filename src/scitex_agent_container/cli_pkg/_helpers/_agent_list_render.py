@@ -153,13 +153,13 @@ def print_agent_list_json(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    group: str | None = None,
 ) -> None:
     """Print agent list as JSON."""
     from ._agent_list import get_agent_list_data
 
     data = get_agent_list_data(
-        registry, capability=capability, machine=machine, tags=tags
+        registry, capability=capability, machine=machine, group=group
     )
     click.echo(json_mod.dumps(data, indent=2))
 
@@ -234,7 +234,7 @@ def print_agent_list(
     registry: Registry,
     capability: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    group: str | None = None,
     *,
     verbose: bool = False,
     show_all: bool = False,
@@ -261,7 +261,7 @@ def print_agent_list(
         registry,
         capability=capability,
         machine=machine,
-        tags=tags,
+        group=group,
         running_only=not (verbose or show_all),
     )
     if not data:

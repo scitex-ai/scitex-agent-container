@@ -97,7 +97,7 @@ def defined_agent_rows(
     display_host: str,
     capability: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    group: str | None = None,
     running_only: bool = False,
 ) -> list[dict]:
     """Rows for agents DEFINED on disk but absent from the registry.
@@ -153,7 +153,7 @@ def defined_agent_rows(
             ]
             if capability not in caps:
                 continue
-        if tags and not _al._label_list_contains(labels, "tags", tags):
+        if group and not _al._label_group_matches(labels, group):
             continue
         # FIX (no double-parse): a spec that ``load_config`` accepted is
         # valid ⇒ "defined". Only RE-VALIDATE the ones that FAILED to load,
@@ -324,7 +324,7 @@ def remote_instance_rows(
     running_only: bool = False,
     capability: str | None = None,
     machine: str | None = None,
-    tags: str | None = None,
+    group: str | None = None,
     instances_oracle: Callable[[], list[dict]] | None = None,
     status_probe: Callable[[str, str], str] | None = None,
     run_ssh: Callable[[list[str]], int] | None = None,
@@ -411,7 +411,7 @@ def remote_instance_rows(
             ]
             if capability not in caps:
                 continue
-        if tags and not _al._label_list_contains(labels, "tags", tags):
+        if group and not _al._label_group_matches(labels, group):
             continue
         candidates.append(
             {
