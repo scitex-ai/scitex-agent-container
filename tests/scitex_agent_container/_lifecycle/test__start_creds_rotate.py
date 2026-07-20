@@ -41,6 +41,28 @@ def _isolate_home(tmp_path: Path) -> Iterator[Path]:
             os.environ["HOME"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _isolate_quota_cache(tmp_path: Path) -> Iterator[None]:
+    """Point the quota-cache reader at a nonexistent tmp file.
+
+    Agent containers bind the LIVE fleet ``/var/sac/quota-cache.json`` (the
+    reader's default). Without this these boot tests would read real fleet
+    utilisation AND, since the fail-loud gate keys off cache PRESENCE, the live
+    bind would make an un-injected pick trip the gate. An absent override keeps
+    them hermetic (no cache present → freshness-only degrade) — quota reaches
+    the picker only through the ``usage_*`` injection seams.
+    """
+    saved = os.environ.get("SAC_QUOTA_CACHE_PATH")
+    os.environ["SAC_QUOTA_CACHE_PATH"] = str(tmp_path / "absent-quota-cache.json")
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_QUOTA_CACHE_PATH", None)
+        else:
+            os.environ["SAC_QUOTA_CACHE_PATH"] = saved
+
+
 def _write_snapshot(home: Path, name: str, expires_at_ms: int) -> None:
     path = (
         home / ".scitex" / "agent-container" / "accounts" / name / ".credentials.json"
