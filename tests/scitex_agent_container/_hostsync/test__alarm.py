@@ -1,34 +1,45 @@
-"""Tests for ``_hostsync._alarm`` — drift verdict → SEEN scitex-todo card.
+"""Tests for ``_hostsync._alarm`` — drift verdict → a record in sac's own log.
 
-PA-306: no ``unittest.mock``. Real :class:`SyncResult` / :class:`PeerSyncReport`
-objects and a REAL temporary scitex-todo store (``tmp_path/tasks.yaml``);
-the routing calls the real ``scitex_todo`` writer and each test reads the
-card back through the real ``scitex_todo`` reader.
+PA-306: no ``unittest.mock``, no monkeypatching. Real :class:`SyncResult` /
+:class:`PeerSyncReport` objects and a REAL temporary JSONL event log
+(``tmp_path/sac-events.jsonl``) passed through the module's own ``path=``
+seam; every assertion reads the bytes back through the production
+:func:`read_events`.
 
 The behaviours that matter:
 
-* drift → an upserted BLOCKING-YOU card (``status=blocked`` /
-  ``blocker=operator-decision``) NAMING the peer,
-* a second drift run UPDATES in place (never duplicates),
-* a clean run RESOLVES the peer's card (a fixed drift stops shouting),
-* UNKNOWN is carded too but labelled UNKNOWN — never rendered as clean,
-* re-drift after a clear REOPENS the card.
+* drift → a DEGRADED record NAMING the peer and its concrete drift class,
+* a second drift run records AGAIN (an ongoing problem is an ongoing fact —
+  a rail that mentions a stale peer once then goes quiet is indistinguishable
+  from a rail that died),
+* a clean run RECORDS THE RECOVERY of a previously drifted peer, once,
+* UNDETERMINED is its own event — never rendered as clean,
+* re-drift after a recovery records again,
+* recording is a SIDE rail: an unwritable log is reported, never raised.
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 """
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._hostsync import route_reports_to_cards
-from scitex_agent_container._hostsync._alarm import card_id_for
+from scitex_agent_container._events import (
+    SUBJECT_DEGRADED,
+    SUBJECT_RECOVERED,
+    SUBJECT_UNKNOWN,
+    read_events,
+)
+from scitex_agent_container._hostsync import record_reports
+from scitex_agent_container._hostsync._alarm import SUBSYSTEM
 from scitex_agent_container._hostsync._model import GraphState, PeerSyncReport
 from scitex_agent_container._hostsync._sync import Outcome, SyncResult
 
-scitex_todo = pytest.importorskip("scitex_todo")
+#: A fixed clock, so no test can be flaky on time.
+NOW = 1_800_000_000.0
 
 
 def _behind(peer: str = "spartan", behind: int = 4) -> SyncResult:
@@ -70,115 +81,160 @@ def _unreachable(peer: str = "nas") -> SyncResult:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> str:
-    """A real (initially absent) scitex-todo store path — no mocks."""
-    return str(tmp_path / "tasks.yaml")
+def events(tmp_path: Path) -> Path:
+    """A real (initially absent) sac event-log path — no mocks."""
+    return tmp_path / "sac-events.jsonl"
 
 
-def test_drift_upserts_a_blocking_you_card(store):
+@pytest.fixture
+def unwritable(tmp_path: Path):
+    """An event-log path the REAL writer genuinely cannot write. No mocks.
+
+    The parent dir is read-only, so the append fails the way it would on a
+    broken host — the world says no; nothing is injected.
+    """
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    try:
+        yield readonly / "sac-events.jsonl"
+    finally:
+        readonly.chmod(0o755)
+
+
+def _kinds(events: Path) -> list[str]:
+    return [e.event for e in read_events(events, subsystem=SUBSYSTEM)]
+
+
+def test_drift_records_a_degraded_event(events):
     # Arrange — one peer 4 commits behind the centre.
     # Act
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Assert — it lands on the board's BLOCKING-YOU seen surface.
-    blocking = scitex_todo.list_tasks(store, blocking_me=True)
-    assert [t["id"] for t in blocking] == [card_id_for("spartan")]
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert
+    assert _kinds(events) == [SUBJECT_DEGRADED]
 
 
-def test_drift_card_names_the_peer(store):
+def test_the_drift_record_names_the_peer(events):
     # Arrange
     # Act
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Assert — never silent: the operator must see WHICH peer.
-    card = scitex_todo.get_task(store, card_id_for("spartan"))
-    assert "spartan" in card["title"]
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert — never silent: a reader must see WHICH peer.
+    assert read_events(events)[0].subject == "spartan"
 
 
-def test_drift_card_names_the_concrete_drift(store):
-    # Arrange — behind is the concrete drift class; the card must say so.
+def test_the_drift_record_names_the_concrete_drift(events):
+    # Arrange — "behind" is the concrete drift class; the record must say so.
     # Act
-    route_reports_to_cards([_behind("spartan", behind=4)], store=store)
+    record_reports([_behind("spartan", behind=4)], path=events, now=NOW)
     # Assert
-    card = scitex_todo.get_task(store, card_id_for("spartan"))
-    assert "behind" in card["note"].lower()
+    assert read_events(events)[0].verdict == "behind"
 
 
-def test_second_drift_run_updates_not_duplicates(store):
-    # Arrange — first run creates the card.
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Act — a second drift run must UPDATE in place, not add a twin.
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Assert — exactly one card exists for the peer.
-    assert len(scitex_todo.list_tasks(store)) == 1
+def test_the_drift_record_carries_the_target(events):
+    # Arrange — fields are queryable; a sentence is not. ``target`` is what a
+    # reader joins on when asking which peers were stale at a given hour.
+    # Act
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert
+    assert read_events(events)[0].raw["target"] == "origin/develop"
 
 
-def test_clean_run_resolves_the_drift_card(store):
-    # Arrange — the peer drifted, so a card exists.
-    route_reports_to_cards([_behind("spartan")], store=store)
+def test_the_drift_record_labels_the_subject_a_peer(events):
+    # Arrange — a peer is not an agent; the subject_kind keeps the populations
+    # apart in one shared log.
+    # Act
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert
+    assert read_events(events)[0].subject_kind == "peer"
+
+
+def test_a_second_drift_run_records_again(events):
+    # Arrange — first run records the drift.
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Act — the peer is STILL stale; an ongoing problem is an ongoing fact.
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_DEGRADED]
+
+
+def test_a_clean_run_records_the_recovery(events):
+    # Arrange — the peer drifted, so a degraded record exists.
+    record_reports([_behind("spartan")], path=events, now=NOW)
     # Act — the peer is now current with the centre.
-    route_reports_to_cards([_current("spartan")], store=store)
-    # Assert — a fixed drift stops shouting (off the BLOCKING-YOU view).
-    assert scitex_todo.list_tasks(store, blocking_me=True) == []
+    record_reports([_current("spartan")], path=events, now=NOW)
+    # Assert — a fixed drift stops shouting, and says so once.
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_RECOVERED]
 
 
-def test_clean_run_marks_the_card_done(store):
-    # Arrange
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Act
-    route_reports_to_cards([_current("spartan")], store=store)
-    # Assert
-    card = scitex_todo.get_task(store, card_id_for("spartan"))
-    assert card["status"] == "done"
-
-
-def test_clean_peer_without_prior_card_is_a_noop(store):
+def test_a_clean_peer_without_prior_drift_records_nothing(events):
     # Arrange — a peer that is current and was NEVER drifted.
     # Act
-    route_reports_to_cards([_current("spartan")], store=store)
-    # Assert — no phantom card is created just to resolve it.
-    assert not Path(store).exists() or scitex_todo.list_tasks(store) == []
+    record_reports([_current("spartan")], path=events, now=NOW)
+    # Assert — a well fleet does not write a record per peer per tick.
+    assert not events.exists()
 
 
-def test_undetermined_peer_gets_a_card(store):
+def test_an_undetermined_peer_is_recorded(events):
     # Arrange — an unreachable peer. UNKNOWN must be surfaced, not swallowed.
     # Act
-    route_reports_to_cards([_unreachable("nas")], store=store)
+    record_reports([_unreachable("nas")], path=events, now=NOW)
     # Assert
-    assert scitex_todo.get_task(store, card_id_for("nas"))["id"] == card_id_for("nas")
+    assert _kinds(events) == [SUBJECT_UNKNOWN]
 
 
-def test_undetermined_card_is_labelled_unknown(store):
+def test_an_undetermined_peer_is_never_recorded_clean(events):
     # Arrange — "I could not look" must never read as "I looked, it's fine".
     # Act
-    route_reports_to_cards([_unreachable("nas")], store=store)
+    record_reports([_unreachable("nas")], path=events, now=NOW)
     # Assert
-    card = scitex_todo.get_task(store, card_id_for("nas"))
-    assert "UNKNOWN" in card["title"]
+    assert SUBJECT_RECOVERED not in _kinds(events)
 
 
-def test_route_buckets_drift_and_unknown_separately(store):
+def test_the_record_buckets_drift_and_unknown_separately(events):
     # Arrange — a drifted peer AND an unreachable peer in one run.
     # Act
-    outcome = route_reports_to_cards(
-        [_behind("spartan"), _unreachable("nas")], store=store
+    outcome = record_reports(
+        [_behind("spartan"), _unreachable("nas")], path=events, now=NOW
     )
     # Assert — drift and unknown are distinct buckets (three-state honest).
-    assert (outcome.drifted, outcome.undetermined) == (("spartan",), ("nas",))
+    assert (outcome.degraded, outcome.unknown) == (("spartan",), ("nas",))
 
 
-def test_route_reports_the_cleared_peer(store):
-    # Arrange — drift first so there is a card to clear.
-    route_reports_to_cards([_behind("spartan")], store=store)
+def test_the_recovered_peer_is_reported_to_the_caller(events):
+    # Arrange — drift first so there is something to recover from.
+    record_reports([_behind("spartan")], path=events, now=NOW)
     # Act
-    outcome = route_reports_to_cards([_current("spartan")], store=store)
+    outcome = record_reports([_current("spartan")], path=events, now=NOW)
     # Assert
-    assert outcome.cleared == ("spartan",)
+    assert outcome.recovered == ("spartan",)
 
 
-def test_redrift_after_clear_reopens_the_card(store):
-    # Arrange — drift, then fixed (card resolved).
-    route_reports_to_cards([_behind("spartan")], store=store)
-    route_reports_to_cards([_current("spartan")], store=store)
-    # Act — the peer drifts AGAIN; the alarm must re-fire, not stay silent.
-    route_reports_to_cards([_behind("spartan")], store=store)
-    # Assert — the card is back on the BLOCKING-YOU view.
-    assert len(scitex_todo.list_tasks(store, blocking_me=True)) == 1
+def test_redrift_after_a_recovery_records_again(events):
+    # Arrange — drift, then fixed (recovery recorded).
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    record_reports([_current("spartan")], path=events, now=NOW)
+    # Act — the peer drifts AGAIN; the rail must re-fire, not stay silent.
+    record_reports([_behind("spartan")], path=events, now=NOW)
+    # Assert
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_RECOVERED, SUBJECT_DEGRADED]
+
+
+def test_an_unwritable_log_does_not_raise(events, unwritable):
+    # Arrange — recording is a SIDE rail: it must never crash the read-only
+    # check that feeds it.
+    # Act
+    outcome = record_reports(
+        [_behind("spartan")], path=unwritable, now=NOW, err_stream=io.StringIO()
+    )
+    # Assert — recorded as failed, not raised.
+    assert outcome.failed == ("spartan",)
+
+
+def test_an_unwritable_log_is_printed_loudly(events, unwritable):
+    # Arrange — a failure nobody hears is the anti-pattern this whole rail
+    # exists to fix, so the side rail still SHOUTS on stderr.
+    stream = io.StringIO()
+    # Act
+    record_reports([_behind("spartan")], path=unwritable, now=NOW, err_stream=stream)
+    # Assert
+    assert "FAILED to record" in stream.getvalue()

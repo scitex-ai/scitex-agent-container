@@ -19,7 +19,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._events import read_events
+from scitex_agent_container._events import (
+    EVENT_LOG_ENV,
+    SUBJECT_DEGRADED,
+    read_events,
+)
 from scitex_agent_container.cli_pkg._host_sync import host_sync
 
 _REPO = "/data/gpfs/projects/punim0264/ywatanabe/scitex-agent-container"
@@ -150,29 +154,29 @@ def test_alarm_without_check_is_a_usage_error(cfg_path):
     assert result.exit_code == 2
 
 
-def test_alarm_records_a_stale_peer_as_degraded(
+def test_alarm_records_an_event_for_a_stale_peer(
     cfg_path, subprocess_shim, env_save_restore, tmp_path
 ):
-    # Arrange — a real temp event log, redirected via the documented env
-    # var, and a peer 4 commits behind the centre.
+    # Arrange — a real temp event log, redirected via the documented env var,
+    # and a peer 4 commits behind the centre.
     log = tmp_path / "sac-events.jsonl"
-    env_save_restore.set("SAC_EVENT_LOG", str(log))
+    env_save_restore.set(EVENT_LOG_ENV, str(log))
     subprocess_shim.install(
         "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
     )
     # Act — the exact read-only check+alarm form the timer runs.
     CliRunner().invoke(host_sync, ["--check", "spartan", "--alarm"])
-    # Assert — the shout is DURABLE: spartan is recorded degraded.
-    recorded = [(e.event, e.subject) for e in read_events(log)]
-    assert recorded == [("subject-degraded", "spartan")]
+    # Assert — the shout is DURABLE: spartan's drift is in sac's own log.
+    degraded = read_events(log, subsystem="host-sync", event=SUBJECT_DEGRADED)
+    assert [e.subject for e in degraded] == ["spartan"]
 
 
 def test_alarm_is_read_only_and_runs_no_merge(
     cfg_path, subprocess_shim, env_save_restore, tmp_path
 ):
-    # Arrange — a drifted peer plus a redirected event log so nothing
-    # touches the real one.
-    env_save_restore.set("SAC_EVENT_LOG", str(tmp_path / "sac-events.jsonl"))
+    # Arrange — a drifted peer plus a redirected event log so nothing touches
+    # the real one.
+    env_save_restore.set(EVENT_LOG_ENV, str(tmp_path / "sac-events.jsonl"))
     subprocess_shim.install(
         "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
     )

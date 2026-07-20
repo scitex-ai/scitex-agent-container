@@ -243,9 +243,8 @@ def alert_failed_refreshes(
         dirty = True
         alerted.append(name)
         print(
-            f"  {name:20s}  ALERTED operator (lead blocker rail / "
-            "scitex-todo help card; deduped until this account refreshes "
-            "OK again)",
+            f"  {name:20s}  RECORDED in sac's event log + pushed at the lead "
+            "blocker rail; deduped until this account refreshes OK again",
             file=stream,
         )
 
