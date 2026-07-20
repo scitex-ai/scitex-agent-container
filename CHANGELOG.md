@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-20
+
 ### Changed
 
 - **sac records its own operational events, and no longer writes into a
@@ -38,6 +40,22 @@ versioning follows [SemVer](https://semver.org/).
   `tests/scitex_agent_container/test__card_package_boundary.py` enforces the
   boundary with an AST scan asserting the importer set EXACTLY equals the two
   files still permitted, so both a new import and a stale allowance go red.
+
+### Fixed
+
+- **The account picker booted an agent onto a quota-exhausted account when the
+  quota cache was empty.** It collapsed UNKNOWN quota into "OK" (constitution
+  §2 — unknown is a third state, never a pole), kept a blind pin, and read
+  `5h=? 7d=?` — on 2026-07-20 scitex-cards could not run after a plain restart
+  because the picker kept selecting the exhausted pinned account.
+  `pick_healthy_account` gains `require_quota_evidence`: a blind pin rotates off
+  toward a known-headroom account, and a fully-blind pick fails loud with an
+  actionable `sac accounts refresh-quota-cache` hint. The boot preflight gates
+  it on `quota_cache_present()`, so a host WITH a cache whose populator produced
+  nothing fails loud, while a cache-LESS host (fresh install / CI /
+  quota-cron-less Spartan node) still degrades to freshness-only and boots — the
+  documented never-block invariant is preserved. The health-probing layer moved
+  to `_creds/_account_health.py` (behaviour-neutral extraction).
 
 ## [0.23.0] - 2026-07-20
 
