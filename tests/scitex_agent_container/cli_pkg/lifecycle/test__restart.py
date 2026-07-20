@@ -47,6 +47,43 @@ def _isolate_home(tmp_path):
             os.environ["HOME"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_root(tmp_path):
+    """Pin the runtime root at a real, EMPTY, per-test directory.
+
+    ``restart`` now reads the target's identity-of-run from
+    ``<runtime-root>/<agent>/instance_id`` to verify its own postcondition,
+    so the runtime root is live input to every test in this file — and
+    ``runtime_base_dir()`` resolves it from
+    ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` first, falling back to ``$HOME``.
+    Isolating ``$HOME`` alone is therefore NOT enough: a sibling test that
+    sets the env var and does not restore it (or a production value left in
+    the ambient env) silently redirects these tests at the REAL fleet's
+    runtime dir. That is not hypothetical — running this file as part of the
+    whole ``cli_pkg/lifecycle`` directory made ``test_happy_path_exits_zero``
+    read agent ``alpha``'s genuine instance_id and correctly report that a
+    no-op restart cycled nothing, while the same test passed in isolation.
+
+    Pinning it here makes the ambient environment irrelevant in BOTH
+    directions: the legacy happy-path tests get a guaranteed-empty root (no
+    marker either side → the verdict abstains → their historical success is
+    preserved), and no test can ever touch the operator's real runtime dir.
+    """
+    from scitex_agent_container._runtime_paths import RUNTIME_DIR_ENV
+
+    root = tmp_path / "runtime-root"
+    root.mkdir(parents=True, exist_ok=True)
+    saved = os.environ.get(RUNTIME_DIR_ENV)
+    os.environ[RUNTIME_DIR_ENV] = str(root)
+    try:
+        yield root
+    finally:
+        if saved is None:
+            os.environ.pop(RUNTIME_DIR_ENV, None)
+        else:
+            os.environ[RUNTIME_DIR_ENV] = saved
+
+
 @contextmanager
 def _swap(name: str, fn: Callable) -> Iterator[None]:
     saved = getattr(restart_mod, name)
@@ -1135,21 +1172,9 @@ def test_in_sif_without_a_listen_url_names_the_missing_env_var(
 
 
 @pytest.fixture
-def runtime_root(tmp_path):
-    """Relocate the runtime root to a real, test-owned directory."""
-    from scitex_agent_container._runtime_paths import RUNTIME_DIR_ENV
-
-    root = tmp_path / "runtime"
-    root.mkdir()
-    saved = os.environ.get(RUNTIME_DIR_ENV)
-    os.environ[RUNTIME_DIR_ENV] = str(root)
-    try:
-        yield root
-    finally:
-        if saved is None:
-            os.environ.pop(RUNTIME_DIR_ENV, None)
-        else:
-            os.environ[RUNTIME_DIR_ENV] = saved
+def runtime_root(_isolate_runtime_root):
+    """The per-test runtime root, named for tests that write markers into it."""
+    return _isolate_runtime_root
 
 
 def _write_run_marker(root, name: str, value: str) -> None:
