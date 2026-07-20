@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-20
+
 ### Fixed
 
 - **`sac agents restart` inside a container reported success while restarting
