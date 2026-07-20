@@ -28,6 +28,14 @@ EXACT MATCH, IN BOTH DIRECTIONS
     it. A new import fails the test — and so does quietly fixing one of the
     known two without removing it from the list, because a stale allowance is
     how an empty list eventually becomes a long one again.
+
+WHY IT LIVES IN tests/integration/
+    It asserts a CROSS-PACKAGE property of the whole source tree rather than
+    the behaviour of any one module, so it has no ``src/`` counterpart to
+    mirror and does not belong under ``tests/scitex_agent_container/``. It
+    sits beside ``test_cross_package_imports.py`` — the positive gate listing
+    the cross-package imports sac DOES have — as that gate's negative
+    counterpart.
 """
 
 from __future__ import annotations
