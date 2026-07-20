@@ -125,6 +125,9 @@ def tmp_registry(tmp_path, env_save_restore) -> Path:
     import scitex_agent_container._state.registry as _reg
 
     importlib.reload(_reg)
+    # Undo the reload once the env is back — otherwise ``REGISTRY_DIR`` stays
+    # pinned at this test's (soon-deleted) tmp dir for the rest of the worker.
+    env_save_restore.reload_after_restore(_reg)
     saved_registry_cls = pc.Registry
     pc.Registry = _reg.Registry  # type: ignore[assignment]
     try:

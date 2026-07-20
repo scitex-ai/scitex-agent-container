@@ -25,6 +25,17 @@ def isolated_runtime(tmp_path: Path, env_save_restore):
     """Redirect the runtime root + reload ``_session_state`` so
     ``DEFAULT_STATE_ROOT`` picks up the redirected value. Real reload,
     no monkeypatch.
+
+    THE RELOAD MUST BE UNDONE. ``env_save_restore`` puts the ENV VAR back, but
+    ``DEFAULT_STATE_ROOT`` is a MODULE CONSTANT baked at import — so without the
+    second reload it stays pinned at THIS test's tmp dir (which pytest then
+    deletes) for the remainder of the xdist worker's session, and every later
+    test in that worker reads a dangling root out of the process global.
+
+    ``reload_after_restore`` puts that reload on the correct side of the env
+    restore (``env_save_restore`` tears down AFTER this fixture, since we depend
+    on it, so reloading in our own ``finally`` would re-derive the tmp path we
+    are trying to forget).
     """
     root = tmp_path / "runtime"
     root.mkdir()
@@ -32,6 +43,7 @@ def isolated_runtime(tmp_path: Path, env_save_restore):
     import scitex_agent_container._runners._session_state as _ss
 
     importlib.reload(_ss)
+    env_save_restore.reload_after_restore(_ss)
     return root
 
 
