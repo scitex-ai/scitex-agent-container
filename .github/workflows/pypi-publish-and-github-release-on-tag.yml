@@ -108,6 +108,21 @@ jobs:
       # inside the SIF, then `python -m build` → dist/. fail-loud on empty dist.
       - name: Build wheel + sdist in the CI SIF (apptainer exec)
         run: bash .github/ci/exec-in-sif.sh build-in-sif.sh 3.12
+      - name: Assert the built wheel carries the tagged version (belt; never trust the version string)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          V="${VERSION#v}"
+          # A wheel whose baked version != the tag is the ghost-tag-at-birth /
+          # stale-(name,version)-wheel-cache edge — make it RED here, before
+          # publish, not a caught ghost after a partial upload.
+          if ! ls dist/*"${V}"*.whl >/dev/null 2>&1; then
+            echo "::error::no wheel in dist/ carries the tagged version ${V} — built version != tag."
+            ls -la dist/ || true
+            exit 1
+          fi
+          echo "OK: dist/ contains a wheel for the tagged version ${V}."
       # upload-artifact is a JS action — runs fine on the self-hosted runner.
       - uses: actions/upload-artifact@v4
         with:

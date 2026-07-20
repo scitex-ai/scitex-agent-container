@@ -6,6 +6,27 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Merge->release automation: `autobump-release-sweep.yaml`.** A state-driven
+  scheduled sweep (mirroring `auto-merge-to-develop.yaml`'s proven shape) that
+  auto-bumps the patch version and cuts a release on every merge-to-develop —
+  the automation of the manual `bump pyproject + promote CHANGELOG -> PR ->
+  merge -> tag -> push tag` ritual. It advances the version every release so
+  uv's `(name, version)` wheel-cache key changes (no stale-wheel reuse — the
+  root-cause fix, not the by-symbol workaround). Loop-safety is STRUCTURAL
+  (repository state, not event guards): an untagged version is re-tagged, never
+  re-incremented. It gates on develop's post-merge all-green check state, fires
+  the EXISTING release pipeline via `workflow_dispatch` (no bot token / PAT —
+  github.token is used throughout; a github.token tag push does not fire
+  `on: push`, so the release is dispatched explicitly), and runs every tick as a
+  continuous ghost-tag monitor (tag present but PyPI not serving => off-rail
+  Telegram alarm + re-dispatch). Bump/CHANGELOG logic is the tested, dependency-
+  free `.github/ci/autobump.py` (unit-tested in `tests/develop/test_autobump.py`).
+  SHIPS DISARMED: every mutation is gated behind the repo Actions Variable
+  `AUTOBUMP_ENABLED == 'true'`, and the file only executes once on `main` — so
+  merging it changes nothing until the operator deliberately arms it.
+
 ### Changed
 
 - **Start / start-failure log output is now readable, not a run-on wall**
