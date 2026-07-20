@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from scitex_agent_container._events import read_events
 from scitex_agent_container.cli_pkg._host_sync import host_sync
 
 _REPO = "/data/gpfs/projects/punim0264/ywatanabe/scitex-agent-container"
@@ -149,31 +150,29 @@ def test_alarm_without_check_is_a_usage_error(cfg_path):
     assert result.exit_code == 2
 
 
-def test_alarm_writes_a_card_for_a_stale_peer(
+def test_alarm_records_a_stale_peer_as_degraded(
     cfg_path, subprocess_shim, env_save_restore, tmp_path
 ):
-    # Arrange — a real temp board, redirected via the documented env var,
-    # and a peer 4 commits behind the centre.
-    scitex_todo = pytest.importorskip("scitex_todo")
-    store = str(tmp_path / "board.yaml")
-    env_save_restore.set("SCITEX_TODO_TASKS_YAML_SHARED", store)
+    # Arrange — a real temp event log, redirected via the documented env
+    # var, and a peer 4 commits behind the centre.
+    log = tmp_path / "sac-events.jsonl"
+    env_save_restore.set("SAC_EVENT_LOG", str(log))
     subprocess_shim.install(
         "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
     )
     # Act — the exact read-only check+alarm form the timer runs.
     CliRunner().invoke(host_sync, ["--check", "spartan", "--alarm"])
-    # Assert — the shout is SEEN: a card for spartan is on the board.
-    ids = [t["id"] for t in scitex_todo.list_tasks(store, blocking_me=True)]
-    assert ids == ["host-sync-drift-spartan"]
+    # Assert — the shout is DURABLE: spartan is recorded degraded.
+    recorded = [(e.event, e.subject) for e in read_events(log)]
+    assert recorded == [("subject-degraded", "spartan")]
 
 
 def test_alarm_is_read_only_and_runs_no_merge(
     cfg_path, subprocess_shim, env_save_restore, tmp_path
 ):
-    # Arrange — a drifted peer plus a redirected board so nothing touches
-    # the real store.
-    pytest.importorskip("scitex_todo")
-    env_save_restore.set("SCITEX_TODO_TASKS_YAML_SHARED", str(tmp_path / "board.yaml"))
+    # Arrange — a drifted peer plus a redirected event log so nothing
+    # touches the real one.
+    env_save_restore.set("SAC_EVENT_LOG", str(tmp_path / "sac-events.jsonl"))
     subprocess_shim.install(
         "ssh", stdout=_marker_block(head="aaa111", target_sha="bbb222", behind=4)
     )
