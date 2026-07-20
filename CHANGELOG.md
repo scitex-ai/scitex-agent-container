@@ -8,6 +8,48 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **`sac agents restart` inside a container reported success while restarting
+  nothing.** The plain restart path decided whether to broker to the host's
+  `sac listen` by INSPECTING AN EXCEPTION MESSAGE: it fell back only when the
+  local restart raised an error containing the literal substring
+  `"not found in registry"`. Local resolution has two legs — a registry row OR a
+  resolvable spec — and specs are bind-mounted into every container, so the spec
+  leg succeeded, nothing raised, the handler was never consulted, and the restart
+  ran locally inside the SIF where it cannot touch the host's tmux session. It
+  then printed `Agent 'x' restarted` and exited 0. The broker fired only for
+  agents that did not exist at all. Measured: restarting a real agent from a
+  container returned rc=0 with no `POST /agents/<name>/restart` in the host
+  listen log and the target's pid unchanged 70 minutes later.
+
+  Two faults, one refactor. Gating control flow on a substring of an error
+  message is fragile (a reword silently disables the broker) and it INVERTS the
+  logic (the fallback requires a failure that the silent success prevents).
+  Both the plain and the `--fresh` path — which used a second, different
+  predicate — now ask one readable question, `must_broker_to_host()`: *am I
+  inside an apptainer SIF?* That is the same rule the start path already uses,
+  and the same one the host's restart handler assumes when it strips the SIF env
+  markers from the child it shells. In a SIF with no reachable listen the restart
+  FAILS LOUD; there is deliberately no fall-through to the local no-op.
+
+- **A restart that changed nothing no longer reports success.** `rc=0` meant
+  "the call returned", never "the state changed" — the exit code was
+  byte-identical between the no-op and a real restart. A locally-performed
+  restart now captures the agent's identity-of-run
+  (`<runtime-dir>/<agent>/instance_id`, a uuid7 minted at launch) before and
+  after, and refuses to report success unless it CHANGED. The verdict is a
+  ternary, never a binary: `true` (a new run exists), `false` (the run is
+  unchanged, or gone entirely — both definitive, we held the before-evidence),
+  and `null` (no marker either side — no evidence, so the verdict abstains
+  rather than inventing a failure). It rides the `--json` envelope as
+  `verified` / `verified_reason` / `run_before` / `run_after`; a brokered
+  restart relays the HOST's verdict rather than re-deriving one it cannot see.
+
+- **Restart routing is now logged.** Whether a restart was handled locally or
+  brokered — and why — is appended as JSONL to
+  `<runtime-dir>/logs/restart_decision.log` before any work starts, plus an
+  outcome line after. Previously the fact that no request had been sent anywhere
+  was recorded nowhere: the listen log can only show what ARRIVED.
+
 - **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
   is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
   pending work under `[Unreleased]` while the declared version is one the
