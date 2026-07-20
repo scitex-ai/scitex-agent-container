@@ -294,3 +294,45 @@ def _isolate_state_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             os.environ.pop(_STATE_DB_KEY, None)
         else:
             os.environ[_STATE_DB_KEY] = saved_env
+
+
+# ---------------------------------------------------------------------------
+# sac event log isolation
+# ---------------------------------------------------------------------------
+
+_EVENT_LOG_KEY = "SAC_EVENT_LOG"
+_event_log_seq = itertools.count()
+
+
+# Same shape and the same reason as `_isolate_state_db` above. sac's alarm
+# rails record to an append-only event log whose path is resolved PER CALL
+# from this env var, and several of them default ON (the worktree GC alarms
+# under `--apply`; the reconcile and auth-heal passes record every pass). Any
+# test that exercises one of those paths without this fixture appends to the
+# OPERATOR'S REAL LOG — quietly, because the rail is deliberately fail-open.
+#
+# Per-TEST, not per-session: the rails also keep small "currently degraded"
+# state files BESIDE the log, so a shared log would let one test's remembered
+# degraded subject suppress the next test's degraded record — a cross-test
+# dependency that would only ever show up as a mystifying order-dependent
+# failure under `-p randomly`.
+@pytest.fixture(autouse=True, scope="function")
+def _isolate_event_log(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Point this test's sac event log at a private tmp file."""
+    # Computed but deliberately NOT created: the rail mkdirs its parent on
+    # first real write, so a test that records nothing leaves no dir behind.
+    log = (
+        tmp_path_factory.getbasetemp()
+        / "sac-events"
+        / f"t{next(_event_log_seq)}"
+        / "sac-events.jsonl"
+    )
+    saved = os.environ.get(_EVENT_LOG_KEY)
+    os.environ[_EVENT_LOG_KEY] = str(log)
+    try:
+        yield log
+    finally:
+        if saved is None:
+            os.environ.pop(_EVENT_LOG_KEY, None)
+        else:
+            os.environ[_EVENT_LOG_KEY] = saved
