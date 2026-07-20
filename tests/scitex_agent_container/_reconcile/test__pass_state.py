@@ -29,9 +29,12 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
-from scitex_agent_container._reconcile._alarm import STATE_CARD_ID
+from scitex_agent_container._events import (
+    SELF_IMPAIRED,
+    SELF_RECOVERED,
+    read_events,
+)
+from scitex_agent_container._reconcile._alarm import SUBSYSTEM
 from scitex_agent_container._reconcile._rule import Verdict
 from tests.scitex_agent_container._reconcile._fleet import (
     Recorder,
@@ -41,7 +44,14 @@ from tests.scitex_agent_container._reconcile._fleet import (
     write_spec,
 )
 
-scitex_todo = pytest.importorskip("scitex_todo")
+
+def _kinds(events) -> list[str]:
+    """The self-state events this pass recorded, in order."""
+    return [
+        e.event
+        for e in read_events(events, subsystem=SUBSYSTEM)
+        if e.event in (SELF_IMPAIRED, SELF_RECOVERED)
+    ]
 
 
 # --- an unreadable BUDGET halts restarts and ALARMS -------------------------
@@ -56,7 +66,7 @@ scitex_todo = pytest.importorskip("scitex_todo")
 # reconciler.
 
 
-def test_unreadable_budget_restarts_nothing(registry, db_path, store, tmp_path):
+def test_unreadable_budget_restarts_nothing(registry, db_path, events, tmp_path):
     # Arrange — a corpse, and a history we are forbidden to read.
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -70,7 +80,7 @@ def test_unreadable_budget_restarts_nothing(registry, db_path, store, tmp_path):
             registry,
             db_path,
             denied / "hist.json",
-            store,
+            events,
             apply=True,
             restart_fn=recorder,
             err_stream=io.StringIO(),
@@ -81,7 +91,7 @@ def test_unreadable_budget_restarts_nothing(registry, db_path, store, tmp_path):
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_is_reported_per_agent(registry, db_path, store, tmp_path):
+def test_unreadable_budget_is_reported_per_agent(registry, db_path, events, tmp_path):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -94,7 +104,7 @@ def test_unreadable_budget_is_reported_per_agent(registry, db_path, store, tmp_p
             registry,
             db_path,
             denied / "hist.json",
-            store,
+            events,
             apply=True,
             err_stream=io.StringIO(),
         )
@@ -104,7 +114,7 @@ def test_unreadable_budget_is_reported_per_agent(registry, db_path, store, tmp_p
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_raises_a_state_card(registry, db_path, store, tmp_path):
+def test_unreadable_budget_records_self_impaired(registry, db_path, events, tmp_path):
     # Arrange — a reconciler that quietly does nothing is exactly the
     # "renewal mechanism that cannot report its own failure" class. It must
     # ALARM, not no-op.
@@ -119,17 +129,17 @@ def test_unreadable_budget_raises_a_state_card(registry, db_path, store, tmp_pat
             registry,
             db_path,
             denied / "hist.json",
-            store,
+            events,
             apply=True,
             err_stream=io.StringIO(),
         )
         # Assert
-        assert scitex_todo.get_task(store, STATE_CARD_ID)["id"] == STATE_CARD_ID
+        assert _kinds(events) == [SELF_IMPAIRED]
     finally:
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_is_loud(registry, db_path, store, tmp_path):
+def test_unreadable_budget_is_loud(registry, db_path, events, tmp_path):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -143,7 +153,7 @@ def test_unreadable_budget_is_loud(registry, db_path, store, tmp_path):
             registry,
             db_path,
             denied / "hist.json",
-            store,
+            events,
             apply=True,
             err_stream=stream,
         )
@@ -153,7 +163,7 @@ def test_unreadable_budget_is_loud(registry, db_path, store, tmp_path):
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_exits_two(registry, db_path, store, tmp_path):
+def test_unreadable_budget_exits_two(registry, db_path, events, tmp_path):
     # Arrange — being blind about our OWN state must not exit 0 and let a
     # cron log it as a healthy tick.
     write_spec(registry, "alpha")
@@ -167,7 +177,7 @@ def test_unreadable_budget_exits_two(registry, db_path, store, tmp_path):
             registry,
             db_path,
             denied / "hist.json",
-            store,
+            events,
             apply=True,
             err_stream=io.StringIO(),
         )
@@ -177,7 +187,7 @@ def test_unreadable_budget_exits_two(registry, db_path, store, tmp_path):
         denied.chmod(0o755)
 
 
-def test_corrupt_budget_restarts_nothing(registry, db_path, history, store):
+def test_corrupt_budget_restarts_nothing(registry, db_path, history, events):
     # Arrange — a corrupt history means we HAVE a memory and cannot parse
     # it. Treating that as "nothing restarted" disarms the budget just as
     # thoroughly as a permission error.
@@ -190,7 +200,7 @@ def test_corrupt_budget_restarts_nothing(registry, db_path, history, store):
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         restart_fn=recorder,
         err_stream=io.StringIO(),
@@ -199,24 +209,27 @@ def test_corrupt_budget_restarts_nothing(registry, db_path, history, store):
     assert recorder.names == []
 
 
-def test_readable_budget_resolves_the_state_card(registry, db_path, history, store):
-    # Arrange — the state was unreadable once, so a card exists.
+def test_readable_budget_records_self_recovered(registry, db_path, history, events):
+    # Arrange — the state was unreadable once, so an impairment is on record.
     write_spec(registry, "alpha")
     ghost("alpha")
     history.write_text("{corrupt")
-    run_pass(registry, db_path, history, store, apply=True, err_stream=io.StringIO())
+    run_pass(registry, db_path, history, events, apply=True, err_stream=io.StringIO())
     history.unlink()
-    # Act — the state is readable again; a fixed problem must stop shouting.
-    run_pass(registry, db_path, history, store, apply=True)
+    # Act — the state is readable again; a fixed problem must say so, once.
+    run_pass(registry, db_path, history, events, apply=True)
     # Assert
-    assert scitex_todo.get_task(store, STATE_CARD_ID)["status"] == "done"
+    assert _kinds(events) == [SELF_IMPAIRED, SELF_RECOVERED]
 
 
-def test_healthy_pass_raises_no_state_card(registry, db_path, history, store):
-    # Arrange — a normal first run must not alarm about its own state.
+def test_a_healthy_pass_records_no_self_state(registry, db_path, history, events):
+    # Arrange — a normal first run must not alarm about its own state, AND
+    # must not assert its own health either: the pass runs every five minutes
+    # forever, so a per-tick "I am fine" would both flood the log and empty
+    # ``self-recovered`` of meaning.
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    run_pass(registry, db_path, history, store, apply=True)
+    run_pass(registry, db_path, history, events, apply=True)
     # Assert
-    assert STATE_CARD_ID not in [t["id"] for t in scitex_todo.list_tasks(store)]
+    assert _kinds(events) == []

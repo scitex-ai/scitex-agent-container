@@ -3,22 +3,18 @@
 INCIDENT 2026-07-10: refresh failures reached only the journal; nothing
 paged the operator. These tests drive the REAL CLI against a real
 on-disk account store whose credentials lack a refresh_token (a genuine
-no-network failure path) and verify the alarm chain runs: the lead rail
-is unconfigured in the sandbox, so delivery falls through to the
-scitex-todo help card written into a sandboxed shared store — exactly
-the production fallback order.
+no-network failure path) and verify the alarm chain runs end to end.
 
-No-mocks (PA-306): real store, real CLI, real scitex-todo store file.
-AAA marker comments; one assertion per test.
+The chain's first leg is the DURABLE RECORD in sac's own event log, and
+it is the leg that decides the outcome: the lead ``blocker`` push on top
+is best-effort and is unconfigured in this sandbox (no ``lead:`` block),
+which must NOT stop the account being marked alerted. That is the whole
+point of the split — a fleet with nowhere to push must not re-page on
+every one of the timer's ~12 daily runs.
 
-The whole module requires the OPTIONAL ``scitex_todo`` peer (the
-fallback delivery leg under test) — leaf CI does not install it, so we
-skip there, exactly like ``tests/integration/test_cross_package_imports``
-does for peer modules; the fleet hosts and the umbrella CI (every peer
-installed) run it. Without the peer, the chain ends in the documented
-"ALERT DELIVERY FAILED — every alert rail failed" stderr path (verified
-in CI run 29106433698) instead of a delivered card, so the
-delivered-path assertions below cannot hold there.
+No-mocks (PA-306), no monkeypatching: real account store, real CLI, a
+real temp JSONL event log redirected through the documented
+``SAC_EVENT_LOG`` env var. AAA marker comments; one assertion per test.
 """
 
 from __future__ import annotations
@@ -30,21 +26,22 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-pytest.importorskip("scitex_todo", reason="alarm fallback leg needs scitex-todo")
-
+from scitex_agent_container._events import (
+    EVENT_LOG_ENV,
+    SUBJECT_DEGRADED,
+    read_events,
+)
 from scitex_agent_container._state.account_store import save_account
 from scitex_agent_container.cli_pkg.account_group import account
 
 
 @pytest.fixture(autouse=True)
 def sandbox_env(tmp_path, env_save_restore):
-    """Isolate HOME + every store-resolution env the alarm chain reads."""
+    """Isolate HOME + every path-resolution env the alarm chain reads."""
     home = tmp_path / "home"
     home.mkdir()
     env_save_restore.set("HOME", str(home))
-    env_save_restore.set(
-        "SCITEX_TODO_TASKS_YAML_SHARED", str(tmp_path / "todo-tasks.yaml")
-    )
+    env_save_restore.set(EVENT_LOG_ENV, str(tmp_path / "sac-events.jsonl"))
     env_save_restore.delete("SCITEX_DIR")
     env_save_restore.delete("SAC_NAME")
     env_save_restore.delete("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
@@ -86,20 +83,23 @@ def test_failed_refresh_prints_alerted_operator_line(
     assert "ALERTED operator" in result.output
 
 
-def test_failed_refresh_upserts_help_card_into_todo_store(
+def test_failed_refresh_records_the_account_in_the_event_log(
     sandbox_env: Path, tmp_path: Path
 ) -> None:
-    # Arrange — the sandbox has no lead: block, so delivery falls
-    # through to the scitex-todo help-card rail (the production
-    # fallback), landing in the sandboxed shared store.
+    # Arrange — the sandbox has no ``lead:`` block, so the push leg fails
+    # for real. The DURABLE RECORD is what must survive that, because it
+    # is the only leg that owes nothing to another host being reachable.
     _seed_stale_account_without_refresh_token(sandbox_env, "stale-acct")
     runner = CliRunner()
     # Act
     runner.invoke(account, ["refresh", "--all"])
-    # Assert — the canonical BLOCKING-YOU card exists for the account.
-    assert "help-accounts-refresh-stale-acct-waiting" in (
-        tmp_path / "todo-tasks.yaml"
-    ).read_text()
+    # Assert
+    degraded = read_events(
+        tmp_path / "sac-events.jsonl",
+        subsystem="accounts-refresh",
+        event=SUBJECT_DEGRADED,
+    )
+    assert [e.subject for e in degraded] == ["stale-acct"]
 
 
 def test_second_run_does_not_realert_for_same_dead_account(
