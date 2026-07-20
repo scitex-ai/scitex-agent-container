@@ -252,18 +252,27 @@ def build_a2a_metadata() -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # Writer side — the POPULATOR that produces the aggregate quota-cache.json
-# the reader above consumes. The reader's DEFAULT_QUOTA_CACHE_PATH
-# (/var/sac/quota-cache.json) is the *in-container* bind target; the writer
-# runs on the HOST (via `sac accounts refresh-quota-cache`, typically a cron)
-# and writes the canonical host file ``~/.scitex/quota-cache.json`` that the
-# apptainer runtime binds into each agent at the in-container path. Both ends
-# honour the ``SAC_QUOTA_CACHE_PATH`` override so host-side readers/writers and
-# tests can co-locate on one path.
-DEFAULT_HOST_QUOTA_CACHE_SUBPATH = Path(".scitex") / "quota-cache.json"
+# the reader above consumes. Its default MUST be the SAME path the reader's
+# first candidate resolves to (``HOST_RUNTIME_CACHE_SUBPATH``), or the two
+# silently diverge: a prior split (writer → legacy ~/.scitex/quota-cache.json,
+# reader → runtime) meant `sac accounts refresh-quota-cache` wrote a file the
+# picker never read, so the picker stayed BLIND and the fail-loud boot gate's
+# own actionable hint ("run refresh-quota-cache") could not clear the block
+# (2026-07-20 incident: `sac-restart scitex-dev` hard-failed and the documented
+# fix did nothing). Writer default == reader first candidate == apptainer bind
+# is the SSOT that makes that hint actually work. ``SAC_QUOTA_CACHE_PATH``
+# overrides both ends so host readers/writers and tests co-locate on one path.
+DEFAULT_HOST_QUOTA_CACHE_SUBPATH = HOST_RUNTIME_CACHE_SUBPATH
 
 
 def default_host_cache_path(home: Path | None = None) -> Path:
-    """Canonical HOST path the populator writes (``~/.scitex/quota-cache.json``)."""
+    """Canonical HOST path the populator writes.
+
+    ``~/.scitex/agent-container/runtime/quota-cache.json`` — the SAME path
+    :func:`host_cache_candidates` returns first (the reader) and the apptainer
+    bind resolves to, so a plain ``sac accounts refresh-quota-cache`` populates
+    exactly the file the boot picker reads.
+    """
     _home = home if home is not None else Path.home()
     return _home / DEFAULT_HOST_QUOTA_CACHE_SUBPATH
 

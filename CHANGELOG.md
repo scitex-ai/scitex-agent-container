@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The v0.24.0 quota fail-loud hard-blocked `sac agents restart` and its own
+  documented fix did nothing.** The boot picker reads the RUNTIME
+  `~/.scitex/agent-container/runtime/quota-cache.json`, but `sac accounts
+  refresh-quota-cache` defaulted to the LEGACY `~/.scitex/quota-cache.json` — so
+  when the picker went blind (a transient stale-cache window), its error told
+  the operator to run `refresh-quota-cache`, which populated a file the picker
+  never read, leaving the restart hard-blocked (2026-07-20: `sac-restart
+  scitex-dev`). The populator's default and the apptainer bind now resolve to
+  the SAME runtime path the reader reads first, so the fail-loud's actionable
+  hint actually clears the block. A path-SSOT test (`test_quota_cache_path_ssot`)
+  pins writer-default == reader-first-candidate == bind so a re-split goes red.
+
 ## [0.24.0] - 2026-07-20
 
 ### Changed
