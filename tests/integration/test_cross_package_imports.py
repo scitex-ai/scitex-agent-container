@@ -20,6 +20,8 @@ import pytest
 
 # ===== AUTO-GENERATED: cross-package imports =====
 CROSS_PACKAGE_IMPORTS = [
+    "scitex_cards",
+    "scitex_cards._throughput",
     "scitex_config",
     "scitex_config._ecosystem",
     "scitex_container",
@@ -30,10 +32,10 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_dev.linter._rules._base",
     "scitex_dev.linter._rules._lookup",
     "scitex_dev.linter.checker",
+    "scitex_dev.versioning",
     "scitex_logging",
     "scitex_notification",
     "scitex_todo",
-    "scitex_todo._help_wait",
 ]
 # ===== END AUTO-GENERATED =====
 

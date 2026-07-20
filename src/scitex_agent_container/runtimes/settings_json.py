@@ -56,6 +56,15 @@ from pathlib import Path
 
 from ..config import AgentConfig
 
+# The Claude ``hooks``-block algebra lives in its own module (pure dict->dict,
+# no config/filesystem dependency). Re-exported here because callers — and
+# tests — import these names through ``settings_json``.
+from ._settings_hooks import (  # noqa: F401
+    _exclude_hooks,
+    _merge_hooks_blocks,
+    _strip_stale_sac_ingest_hooks,
+)
+
 logger = logging.getLogger(__name__)
 
 # Keys managed by this module — cleanup removes exactly these.
@@ -116,7 +125,26 @@ _HOOKS_CONFIG = {
                 {
                     "type": "command",
                     "command": "scitex-agent-container event ingest stop",
-                }
+                },
+                # The never-stop-when-task-remains actuator. While the agent's board holds
+                # runnable work, this CONVERTS the stop into taking the next
+                # item: the completion of one unit of work is the trigger to
+                # pull the next, so "idle with work pending" is unreachable
+                # by design rather than a state something notices later and
+                # repairs. (Incident 2026-07-18: an agent sat idle at its
+                # prompt for 80+ minutes holding 5 in_progress cards, and the
+                # OPERATOR noticed it twice; a notification was sent and
+                # changed nothing, because a stopped agent reads nothing.)
+                #
+                # Blocking alone would not be enough — a refused stop leaves
+                # the agent sitting there idle — so the hook hands back the
+                # detector's parsed next_action list as the continuation
+                # prompt. Fails OPEN (allows the stop, logs loudly) whenever
+                # the detector cannot be read. See the _never_stop_when_task_remains package.
+                {
+                    "type": "command",
+                    "command": "scitex-agent-container never-stop-when-task-remains",
+                },
             ],
         }
     ],
@@ -140,123 +168,6 @@ def _load_settings_dict(path: Path) -> dict:
     ):  # stx-allow: fallback (reason: malformed JSON tolerated)
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def _merge_hooks_blocks(base: object, overlay: object) -> dict:
-    """Per-event deep-merge of two Claude ``hooks`` blocks.
-
-    Concatenates each event's matcher-groups (``base`` first, then
-    ``overlay``), de-duping identical groups so repeated runs stay
-    idempotent. Preserves baseline hooks (e.g. a project's honest-grounding
-    Stop gate / lint PostToolUse) instead of clobbering them with the
-    overlay. Non-list event values in ``overlay`` replace the base entry.
-    A non-dict ``base`` is treated as empty.
-    """
-    merged: dict = {}
-    if isinstance(base, dict):
-        merged = {
-            ev: list(groups) for ev, groups in base.items() if isinstance(groups, list)
-        }
-    if isinstance(overlay, dict):
-        for ev, groups in overlay.items():
-            if not isinstance(groups, list):
-                merged[ev] = groups
-                continue
-            dest = merged.setdefault(ev, [])
-            for grp in groups:
-                if grp not in dest:
-                    dest.append(grp)
-    return merged
-
-
-def _strip_stale_sac_ingest_hooks(hooks: object) -> dict:
-    """Drop SAC's OWN event-ring ingest hooks from an existing hooks block.
-
-    SAC owns these hooks and re-injects the CURRENT form from ``_HOOKS_CONFIG``
-    on every materialise. ``_merge_hooks_blocks`` preserves baseline hooks by
-    concatenating + de-duping IDENTICAL groups — but a renamed command is not
-    identical to its predecessor, so a stale ``scitex-agent-container
-    ingest-hook-event <kind>`` survived ALONGSIDE the new ``… event ingest
-    <kind>``. Both then ran, and the deprecated form's loud ``'sac
-    ingest-hook-event' was renamed`` shim error BLOCKED every UserPromptSubmit
-    (proj-scitex-dev 2026-06-23 — the agent received Telegram but could not act
-    on it). Stripping every prior-form SAC ingest hook (old ``ingest-hook-event``
-    OR any ``event ingest``) from the merge BASE makes the block idempotent
-    across the rename. Non-SAC baseline hooks (the ``_shared`` honest-grounding
-    Stop gate, the lint PostToolUse) never match the pattern and are preserved;
-    a group that mixes SAC + non-SAC hooks keeps only its non-SAC entries.
-    """
-    import re
-
-    sac_ingest = re.compile(
-        r"(?:scitex-agent-container|sac)\s+(?:ingest-hook-event|event\s+ingest)\b"
-    )
-    if not isinstance(hooks, dict):
-        return {}
-    cleaned: dict = {}
-    for ev, groups in hooks.items():
-        if not isinstance(groups, list):
-            cleaned[ev] = groups
-            continue
-        kept_groups: list = []
-        for grp in groups:
-            hk_list = grp.get("hooks") if isinstance(grp, dict) else None
-            if not isinstance(hk_list, list):
-                kept_groups.append(grp)
-                continue
-            kept_hooks = [
-                hk
-                for hk in hk_list
-                if not (
-                    isinstance(hk, dict)
-                    and isinstance(hk.get("command"), str)
-                    and sac_ingest.search(hk["command"])
-                )
-            ]
-            if kept_hooks:
-                kept_groups.append({**grp, "hooks": kept_hooks})
-            # else: a purely SAC-ingest group → drop it entirely
-        if kept_groups:
-            cleaned[ev] = kept_groups
-    return cleaned
-
-
-def _exclude_hooks(hooks: object, patterns: list[str]) -> dict:
-    """Drop any hook whose command CONTAINS one of ``patterns`` (substring).
-
-    The operator opt-out: after seeing the full materialized hook set via
-    `sac agents explain`, a spec's ``exclude_hooks`` switches specific ones off
-    (e.g. ``report_to_lead_on_stop`` once the lead is retired). A group emptied
-    of all hooks is removed; non-matching hooks and non-hook groups survive.
-    Shares the shape of :func:`_strip_stale_sac_ingest_hooks`.
-    """
-    if not isinstance(hooks, dict):
-        return {}
-    cleaned: dict = {}
-    for ev, groups in hooks.items():
-        if not isinstance(groups, list):
-            cleaned[ev] = groups
-            continue
-        kept_groups: list = []
-        for grp in groups:
-            hk_list = grp.get("hooks") if isinstance(grp, dict) else None
-            if not isinstance(hk_list, list):
-                kept_groups.append(grp)
-                continue
-            kept = [
-                hk
-                for hk in hk_list
-                if not (
-                    isinstance(hk, dict)
-                    and isinstance(hk.get("command"), str)
-                    and any(p in hk["command"] for p in patterns)
-                )
-            ]
-            if kept:
-                kept_groups.append({**grp, "hooks": kept})
-        if kept_groups:
-            cleaned[ev] = kept_groups
-    return cleaned
 
 
 def _mcp_server_names(config: AgentConfig, workdir: str) -> list[str]:

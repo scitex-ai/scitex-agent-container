@@ -179,24 +179,24 @@ def test_unpinned_config_resolves_to_no_credential(_isolate_home: Path) -> None:
 def test_account_config_resolves_to_its_snapshot(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    snap = _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    snap = _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act
     path, label = resolve_successor_credential(cfg)
     # Assert
-    assert path == snap and label == "wyusuuke-gmail-com"
+    assert path == snap and label == "alpha-example-com"
 
 
 def test_credentials_file_config_resolves_to_parent_slug(_isolate_home: Path) -> None:
     # Arrange — a collapsed pool sets spec.claude.credentials_file.
     home = _isolate_home
-    snap = _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    snap = _write_snapshot(home, "beta-example-com", _future_ms())
     cfg = AgentConfig(name="alpha")
     cfg.claude.credentials_file = str(snap)
     # Act
     path, label = resolve_successor_credential(cfg)
     # Assert — label is the account slug (parent dir), per the fleet layout.
-    assert label == "ywata1989-gmail-com"
+    assert label == "beta-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +218,8 @@ def test_unpinned_config_is_a_noop_even_with_a_rejecting_opener(
 def test_rejected_grant_raises_restart_preflight_abort(_isolate_home: Path) -> None:
     # Arrange — snapshot unexpired by TIMESTAMP, but the refresh is rejected.
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act
     ctx = pytest.raises(RestartPreflightAbort)
     # Assert — the confirmed one-way-restart incident class.
@@ -232,11 +232,11 @@ def test_abort_message_names_the_account_and_the_refresh_remedy(
 ) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act — actionable: names the account + the exact remedy command.
     ctx = pytest.raises(
-        RestartPreflightAbort, match=r"wyusuuke-gmail-com.*sac accounts refresh"
+        RestartPreflightAbort, match=r"alpha-example-com.*sac accounts refresh"
     )
     # Assert
     with ctx:
@@ -246,8 +246,8 @@ def test_abort_message_names_the_account_and_the_refresh_remedy(
 def test_abort_message_confirms_the_container_is_left_up(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act — the operator must know the running agent was NOT torn down.
     ctx = pytest.raises(RestartPreflightAbort, match="LEFT UP")
     # Assert
@@ -259,9 +259,9 @@ def test_abort_message_contains_no_token_value(_isolate_home: Path) -> None:
     # Arrange — a distinctive refresh_token that must NEVER leak into the error.
     home = _isolate_home
     _write_snapshot(
-        home, "wyusuuke-gmail-com", _future_ms(), refresh="rt-MUST-NOT-APPEAR"
+        home, "alpha-example-com", _future_ms(), refresh="rt-MUST-NOT-APPEAR"
     )
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    cfg = _account_config("alpha", "alpha-example-com")
     captured = ""
     # Act
     try:
@@ -275,8 +275,8 @@ def test_abort_message_contains_no_token_value(_isolate_home: Path) -> None:
 def test_successful_refresh_does_not_raise(_isolate_home: Path) -> None:
     # Arrange — the refresh chain WORKS; the successor is safe to launch.
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act
     result = assert_successor_auth_usable(cfg, opener=_ok_opener())
     # Assert — a healthy successor must never block the restart.
@@ -286,8 +286,8 @@ def test_successful_refresh_does_not_raise(_isolate_home: Path) -> None:
 def test_successful_refresh_heals_the_snapshot_expiry(_isolate_home: Path) -> None:
     # Arrange — a near-expiry snapshot whose refresh still works.
     home = _isolate_home
-    snap = _write_snapshot(home, "wyusuuke-gmail-com", _future_ms(120))
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    snap = _write_snapshot(home, "alpha-example-com", _future_ms(120))
+    cfg = _account_config("alpha", "alpha-example-com")
     before = json.loads(snap.read_text())["claudeAiOauth"]["expiresAt"]
     # Act — the probe-refresh atomically persists a fresh token block.
     assert_successor_auth_usable(cfg, opener=_ok_opener(expires_in=3600))
@@ -299,8 +299,8 @@ def test_successful_refresh_heals_the_snapshot_expiry(_isolate_home: Path) -> No
 def test_moved_endpoint_fails_open(_isolate_home: Path) -> None:
     # Arrange — HTTP 404 (endpoint moved) is TRANSPORT, not a dead token.
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act — MUST NOT raise: blocking a healthy restart is worse than the bug.
     result = assert_successor_auth_usable(cfg, opener=_moved_opener())
     # Assert
@@ -310,8 +310,8 @@ def test_moved_endpoint_fails_open(_isolate_home: Path) -> None:
 def test_network_error_fails_open(_isolate_home: Path) -> None:
     # Arrange — a raw network failure must never block a restart.
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act
     result = assert_successor_auth_usable(cfg, opener=_network_opener())
     # Assert
@@ -322,8 +322,8 @@ def test_missing_refresh_token_fails_open(_isolate_home: Path) -> None:
     # Arrange — no refresh_token: unrefreshable, but this is NOT the
     # proven-rejected class, so fail OPEN (never block a restart).
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms(), refresh=None)
-    cfg = _account_config("alpha", "wyusuuke-gmail-com")
+    _write_snapshot(home, "alpha-example-com", _future_ms(), refresh=None)
+    cfg = _account_config("alpha", "alpha-example-com")
     # Act — no refresh_token → returns before any POST (opener never fires).
     result = assert_successor_auth_usable(cfg, opener=_reject_opener())
     # Assert

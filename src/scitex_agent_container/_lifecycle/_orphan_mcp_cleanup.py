@@ -31,7 +31,7 @@ Hard guarantees:
   * NEVER raises. Orphan cleanup is best-effort defence; a wedged
     psutil import / a permission-denied process must NOT block start.
     The caller proceeds whether this returns ``[]`` or a populated
-    list. This is the same defensive contract as ``run_pre_stop_rescue``.
+    list.
   * No mocks in tests. The cleanup uses real :mod:`psutil` with a
     real process-iterator seam so tests can drive synthetic process
     snapshots without monkeypatching ``psutil`` internals.

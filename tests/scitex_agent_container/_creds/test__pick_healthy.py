@@ -97,9 +97,9 @@ def test_account_health_returns_valid_for_unexpired_snapshot(
 ) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms(7200))
+    _write_snapshot(home, "alpha-example-com", _future_ms(7200))
     # Act
-    h = account_health("wyusuuke-gmail-com", home=home)
+    h = account_health("alpha-example-com", home=home)
     # Assert
     assert h.state == "VALID"
 
@@ -107,9 +107,9 @@ def test_account_health_returns_valid_for_unexpired_snapshot(
 def test_account_health_returns_expired_for_past_expiry(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(60))
+    _write_snapshot(home, "alpha-example-com", _past_ms(60))
     # Act
-    h = account_health("wyusuuke-gmail-com", home=home)
+    h = account_health("alpha-example-com", home=home)
     # Assert
     assert h.state == "EXPIRED"
 
@@ -121,7 +121,7 @@ def test_account_health_returns_absent_when_snapshot_missing(
     home = _isolate_home
     # (no snapshot written)
     # Act
-    h = account_health("ywata1989-gmail-com", home=home)
+    h = account_health("beta-example-com", home=home)
     # Assert
     assert h.state == "ABSENT"
 
@@ -135,11 +135,11 @@ def test_pick_returns_preferred_when_preferred_is_healthy(_isolate_home: Path) -
     # Arrange
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
     )
     # Assert
@@ -157,30 +157,30 @@ def test_pick_rotates_to_healthy_when_preferred_is_expired(
     # Arrange
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(60))
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
     )
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_rotates_when_preferred_snapshot_absent(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # ywatanabe-scitex-ai snapshot deliberately missing
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
     )
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_falls_back_to_first_healthy_in_alphabetic_order(
@@ -189,16 +189,16 @@ def test_pick_falls_back_to_first_healthy_in_alphabetic_order(
     # Arrange — preferred missing; two healthy candidates, ensure
     # deterministic pick (alphabetic).
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com", "ywata1989-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com", "beta-example-com"],
         home=home,
     )
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -209,15 +209,15 @@ def test_pick_falls_back_to_first_healthy_in_alphabetic_order(
 def test_pick_with_none_preferred_returns_first_healthy(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         None,
-        candidates=["ywatanabe-scitex-ai", "ywata1989-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "beta-example-com"],
         home=home,
     )
     # Assert
-    assert picked == "ywata1989-gmail-com"
+    assert picked == "beta-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +229,8 @@ def test_pick_raises_when_every_candidate_is_expired(_isolate_home: Path) -> Non
     # Arrange — all three accounts expired (the "all capped" worst case).
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(120))
-    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(120))
-    _write_snapshot(home, "ywata1989-gmail-com", _past_ms(120))
+    _write_snapshot(home, "alpha-example-com", _past_ms(120))
+    _write_snapshot(home, "beta-example-com", _past_ms(120))
     # Act
     ctx = pytest.raises(NoHealthyAccountError)
     # Assert
@@ -239,8 +239,8 @@ def test_pick_raises_when_every_candidate_is_expired(_isolate_home: Path) -> Non
             "ywatanabe-scitex-ai",
             candidates=[
                 "ywatanabe-scitex-ai",
-                "wyusuuke-gmail-com",
-                "ywata1989-gmail-com",
+                "alpha-example-com",
+                "beta-example-com",
             ],
             home=home,
         )
@@ -260,7 +260,7 @@ def test_pick_error_message_names_every_candidate_state(_isolate_home: Path) -> 
     # Arrange
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _past_ms(60))
-    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(60))
+    _write_snapshot(home, "alpha-example-com", _past_ms(60))
     # Act — the message must let the operator see which accounts are
     # stale so they know which to `claude /login`.
     ctx = pytest.raises(NoHealthyAccountError, match=r"ywatanabe-scitex-ai")
@@ -268,7 +268,7 @@ def test_pick_error_message_names_every_candidate_state(_isolate_home: Path) -> 
     with ctx:
         pick_healthy_account(
             "ywatanabe-scitex-ai",
-            candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+            candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
             home=home,
         )
 
@@ -283,11 +283,11 @@ def test_pick_discovers_candidates_from_store_when_unspecified(
 ) -> None:
     # Arrange — only one valid snapshot on disk; picker must auto-discover it.
     home = _isolate_home
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     # Act
     picked = pick_healthy_account("ywatanabe-scitex-ai", home=home)
     # Assert
-    assert picked == "ywata1989-gmail-com"
+    assert picked == "beta-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -300,11 +300,11 @@ def test_account_health_dataclass_carries_name_state_and_hours(
 ) -> None:
     # Arrange
     home = _isolate_home
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms(3600))
+    _write_snapshot(home, "alpha-example-com", _future_ms(3600))
     # Act
-    h = account_health("wyusuuke-gmail-com", home=home)
+    h = account_health("alpha-example-com", home=home)
     # Assert
-    assert isinstance(h, AccountHealth) and h.name == "wyusuuke-gmail-com"
+    assert isinstance(h, AccountHealth) and h.name == "alpha-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -321,25 +321,25 @@ def test_pick_prefers_fresh_candidate_with_most_headroom(_isolate_home: Path) ->
     # headroom (lowest usage). No pinned preference.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         None,
         candidates=[
             "ywatanabe-scitex-ai",
-            "wyusuuke-gmail-com",
-            "ywata1989-gmail-com",
+            "alpha-example-com",
+            "beta-example-com",
         ],
         home=home,
         usage_7d={
             "ywatanabe-scitex-ai": 50.0,
-            "wyusuuke-gmail-com": 10.0,
-            "ywata1989-gmail-com": 80.0,
+            "alpha-example-com": 10.0,
+            "beta-example-com": 80.0,
         },
     )
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_avoids_near_capped_preferred_for_fresh_low_usage(
@@ -349,16 +349,16 @@ def test_pick_avoids_near_capped_preferred_for_fresh_low_usage(
     # alternative exists.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
-        usage_7d={"ywatanabe-scitex-ai": 95.0, "wyusuuke-gmail-com": 12.0},
+        usage_7d={"ywatanabe-scitex-ai": 95.0, "alpha-example-com": 12.0},
     )
     # Assert
-    assert picked == "wyusuuke-gmail-com"
+    assert picked == "alpha-example-com"
 
 
 def test_pick_keeps_preferred_when_fresh_and_has_headroom(_isolate_home: Path) -> None:
@@ -366,13 +366,13 @@ def test_pick_keeps_preferred_when_fresh_and_has_headroom(_isolate_home: Path) -
     # another fresh account has LOWER usage, churn is minimised: keep pref.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
-        usage_7d={"ywatanabe-scitex-ai": 40.0, "wyusuuke-gmail-com": 10.0},
+        usage_7d={"ywatanabe-scitex-ai": 40.0, "alpha-example-com": 10.0},
     )
     # Assert
     assert picked == "ywatanabe-scitex-ai"
@@ -386,12 +386,12 @@ def test_pick_falls_back_to_freshness_only_when_quota_cache_absent(
     # freshness-only behavior (first fresh candidate in order).
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     missing_cache = home / "no-such-quota-cache.json"
     # Act
     picked = pick_healthy_account(
         None,
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
         usage_7d=None,
         quota_cache_path=missing_cache,
@@ -409,13 +409,13 @@ def test_pick_keeps_preferred_when_its_usage_unknown_despite_known_alt(
     # churn rather than rotating on incomplete data.
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
-        usage_7d={"wyusuuke-gmail-com": 10.0},  # preferred deliberately absent
+        usage_7d={"alpha-example-com": 10.0},  # preferred deliberately absent
     )
     # Assert
     assert picked == "ywatanabe-scitex-ai"
@@ -430,25 +430,25 @@ def test_pick_returns_least_used_fresh_when_all_near_capped(
     # nothing-fresh case).
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         None,
         candidates=[
             "ywatanabe-scitex-ai",
-            "wyusuuke-gmail-com",
-            "ywata1989-gmail-com",
+            "alpha-example-com",
+            "beta-example-com",
         ],
         home=home,
         usage_7d={
             "ywatanabe-scitex-ai": 99.0,
-            "wyusuuke-gmail-com": 96.0,
-            "ywata1989-gmail-com": 91.0,
+            "alpha-example-com": 96.0,
+            "beta-example-com": 91.0,
         },
     )
     # Assert
-    assert picked == "ywata1989-gmail-com"
+    assert picked == "beta-example-com"
 
 
 def test_pick_ignores_quota_when_only_capped_account_is_fresh(
@@ -459,13 +459,13 @@ def test_pick_ignores_quota_when_only_capped_account_is_fresh(
     # token (freshness is the gate; quota only orders the fresh set).
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _past_ms(120))
+    _write_snapshot(home, "alpha-example-com", _past_ms(120))
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
-        usage_7d={"ywatanabe-scitex-ai": 98.0, "wyusuuke-gmail-com": 5.0},
+        usage_7d={"ywatanabe-scitex-ai": 98.0, "alpha-example-com": 5.0},
     )
     # Assert
     assert picked == "ywatanabe-scitex-ai"
@@ -481,12 +481,12 @@ def test_pick_ignores_quota_when_only_capped_account_is_fresh(
 
 
 def _write_three_fresh(home: Path) -> None:
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
-    _write_snapshot(home, "ywata1989-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
+    _write_snapshot(home, "beta-example-com", _future_ms())
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
 
 
-_THREE = ["wyusuuke-gmail-com", "ywata1989-gmail-com", "ywatanabe-scitex-ai"]
+_THREE = ["alpha-example-com", "beta-example-com", "ywatanabe-scitex-ai"]
 
 
 def test_pick_rotates_off_preferred_at_5h_cap_despite_7d_headroom(
@@ -499,17 +499,17 @@ def test_pick_rotates_off_preferred_at_5h_cap_despite_7d_headroom(
     _write_three_fresh(home)
     # Act
     picked = pick_healthy_account(
-        "wyusuuke-gmail-com",
+        "alpha-example-com",
         candidates=_THREE,
         home=home,
         usage_5h={
-            "wyusuuke-gmail-com": 100.0,
-            "ywata1989-gmail-com": 0.0,
+            "alpha-example-com": 100.0,
+            "beta-example-com": 0.0,
             "ywatanabe-scitex-ai": 0.0,
         },
         usage_7d={
-            "wyusuuke-gmail-com": 60.0,
-            "ywata1989-gmail-com": 25.0,
+            "alpha-example-com": 60.0,
+            "beta-example-com": 25.0,
             "ywatanabe-scitex-ai": 2.0,
         },
     )
@@ -530,18 +530,18 @@ def test_pick_skips_5h_blocked_candidate_with_best_7d_headroom(
         candidates=_THREE,
         home=home,
         usage_5h={
-            "wyusuuke-gmail-com": 0.0,
-            "ywata1989-gmail-com": 0.0,
+            "alpha-example-com": 0.0,
+            "beta-example-com": 0.0,
             "ywatanabe-scitex-ai": 97.0,
         },
         usage_7d={
-            "wyusuuke-gmail-com": 60.0,
-            "ywata1989-gmail-com": 25.0,
+            "alpha-example-com": 60.0,
+            "beta-example-com": 25.0,
             "ywatanabe-scitex-ai": 2.0,
         },
     )
     # Assert
-    assert picked == "ywata1989-gmail-com"
+    assert picked == "beta-example-com"
 
 
 def test_pick_returns_least_weekly_used_when_every_account_5h_blocked(
@@ -558,13 +558,13 @@ def test_pick_returns_least_weekly_used_when_every_account_5h_blocked(
         candidates=_THREE,
         home=home,
         usage_5h={
-            "wyusuuke-gmail-com": 100.0,
-            "ywata1989-gmail-com": 96.0,
+            "alpha-example-com": 100.0,
+            "beta-example-com": 96.0,
             "ywatanabe-scitex-ai": 99.0,
         },
         usage_7d={
-            "wyusuuke-gmail-com": 60.0,
-            "ywata1989-gmail-com": 25.0,
+            "alpha-example-com": 60.0,
+            "beta-example-com": 25.0,
             "ywatanabe-scitex-ai": 2.0,
         },
     )
@@ -580,14 +580,14 @@ def test_pick_keeps_preferred_when_its_5h_usage_unknown(
     # account: keep the preferred (only rotate on KNOWN bad quota).
     home = _isolate_home
     _write_snapshot(home, "ywatanabe-scitex-ai", _future_ms())
-    _write_snapshot(home, "wyusuuke-gmail-com", _future_ms())
+    _write_snapshot(home, "alpha-example-com", _future_ms())
     # Act
     picked = pick_healthy_account(
         "ywatanabe-scitex-ai",
-        candidates=["ywatanabe-scitex-ai", "wyusuuke-gmail-com"],
+        candidates=["ywatanabe-scitex-ai", "alpha-example-com"],
         home=home,
-        usage_5h={"wyusuuke-gmail-com": 0.0},  # preferred deliberately absent
-        usage_7d={"ywatanabe-scitex-ai": 40.0, "wyusuuke-gmail-com": 10.0},
+        usage_5h={"alpha-example-com": 0.0},  # preferred deliberately absent
+        usage_7d={"ywatanabe-scitex-ai": 40.0, "alpha-example-com": 10.0},
     )
     # Assert
     assert picked == "ywatanabe-scitex-ai"
@@ -618,8 +618,8 @@ def test_pick_with_spread_key_is_deterministic_per_agent(
             home=home,
             usage_5h={n: 0.0 for n in _THREE},
             usage_7d={
-                "wyusuuke-gmail-com": 95.0,
-                "ywata1989-gmail-com": 25.0,
+                "alpha-example-com": 95.0,
+                "beta-example-com": 25.0,
                 "ywatanabe-scitex-ai": 2.0,
             },
             spread_key="claude-code-telegrammer",
@@ -640,8 +640,8 @@ def test_pick_spread_distributes_fleet_across_eligible_accounts(
     home = _isolate_home
     _write_three_fresh(home)
     usage_7d = {
-        "wyusuuke-gmail-com": 95.0,  # near-capped — out of the tier
-        "ywata1989-gmail-com": 25.0,
+        "alpha-example-com": 95.0,  # near-capped — out of the tier
+        "beta-example-com": 25.0,
         "ywatanabe-scitex-ai": 2.0,
     }
     # Act
@@ -657,7 +657,7 @@ def test_pick_spread_distributes_fleet_across_eligible_accounts(
         for i in range(12)
     }
     # Assert
-    assert picks == {"ywata1989-gmail-com", "ywatanabe-scitex-ai"}
+    assert picks == {"beta-example-com", "ywatanabe-scitex-ai"}
 
 
 def test_pick_spread_never_selects_a_5h_blocked_account(
@@ -674,13 +674,13 @@ def test_pick_spread_never_selects_a_5h_blocked_account(
             candidates=_THREE,
             home=home,
             usage_5h={
-                "wyusuuke-gmail-com": 100.0,
-                "ywata1989-gmail-com": 0.0,
+                "alpha-example-com": 100.0,
+                "beta-example-com": 0.0,
                 "ywatanabe-scitex-ai": 0.0,
             },
             usage_7d={
-                "wyusuuke-gmail-com": 60.0,
-                "ywata1989-gmail-com": 25.0,
+                "alpha-example-com": 60.0,
+                "beta-example-com": 25.0,
                 "ywatanabe-scitex-ai": 2.0,
             },
             spread_key=f"agent-{i}",
@@ -688,4 +688,4 @@ def test_pick_spread_never_selects_a_5h_blocked_account(
         for i in range(12)
     ]
     # Assert
-    assert "wyusuuke-gmail-com" not in picks
+    assert "alpha-example-com" not in picks

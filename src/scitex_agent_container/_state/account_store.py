@@ -99,7 +99,7 @@ def list_accounts(
     for account_dir in sorted(p for p in store.iterdir() if p.is_dir()):
         # Skip non-account subdirs (e.g. `_rotations/` holding
         # auth-rotation telemetry NDJSON files keyed by email).
-        if account_dir.name.startswith("_"):
+        if account_dir.name.startswith("_") or account_dir.name == "openai":
             continue
         meta_file = account_dir / _METADATA_FILENAME
         # stx-allow: fallback (reason: individual account dir may be corrupt or unreadable; skipping it keeps the rest of the list intact)
@@ -364,9 +364,7 @@ def switch_account(
         if resolved_from is None:
             # Best-effort: label the outgoing account from the live login.
             resolved_from = _read_active_account_email(_home)
-        to_token_fp = _read_access_token_fingerprint(
-            account_dir / ".credentials.json"
-        )
+        to_token_fp = _read_access_token_fingerprint(account_dir / ".credentials.json")
         log_rotation_event(
             store=store,
             event=event,

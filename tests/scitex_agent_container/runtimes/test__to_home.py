@@ -731,6 +731,91 @@ class TestDeployToHomeFromConfig:
 
 
 # ---------------------------------------------------------------------------
+# Restart re-delivery: a deploy into a dest that ALREADY holds a stale copy
+# of a to_home file must land the CURRENT content — whether the stale copy is
+# a plain OLD file (the common case) or a leftover host-merge SYMLINK pointing
+# at the operator's real host file (which must be REPLACED, never written
+# through). Mirrors the fleet-restart to_home-staleness class.
+# ---------------------------------------------------------------------------
+
+_HOOK_REL = ".claude/hooks/pre-tool-use/deny_edit_on_main_branch.sh"
+_HOST_ENV = "SAC_HOST_CLAUDE_DIR"
+_USER_BASELINE_ENV = "SAC_USER_TO_HOME_BASELINE"
+
+
+class TestDeployRedeliversChangedFilesOnRestart:
+    def test_deploy_overwrites_old_real_file_in_dest(self, tmp_path):
+        # Arrange — dest already holds an OLD real copy of a baseline hook.
+        cfg, root = _build_cfg(tmp_path)
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-v2\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        old = home / _HOOK_REL
+        old.parent.mkdir(parents=True)
+        old.write_text("OLD-v1\n")
+        os.chmod(old, 0o755)
+        # Act — the restart-path materialization.
+        deploy_to_home(cfg, str(home))
+        # Assert — the stale content is replaced with the current source.
+        assert (home / _HOOK_REL).read_text() == "NEW-v2\n"
+
+    def test_deploy_replaces_leftover_hostmerge_symlink_with_real_file(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — developer agent; a prior host-merge left a SYMLINK at the
+        # dest pointing at the operator's real host hook, and the hook has
+        # since moved into the agent baseline (a real source file now exists).
+        env_save_restore.set(_USER_BASELINE_ENV, str(tmp_path / "no-user-baseline"))
+        host_root = tmp_path / "host_claude"
+        host_hook = host_root / "hooks" / "pre-tool-use" / "deny_edit_on_main_branch.sh"
+        host_hook.parent.mkdir(parents=True)
+        host_hook.write_text("HOST-ORIGINAL\n")
+        env_save_restore.set(_HOST_ENV, str(host_root))
+        cfg, root = _build_cfg(tmp_path, labels={"role": "project-maintainer"})
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-baseline\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        stale = home / _HOOK_REL
+        stale.parent.mkdir(parents=True)
+        stale.symlink_to(host_hook)
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert — dest is a REAL file carrying the current baseline content.
+        assert (
+            not (home / _HOOK_REL).is_symlink()
+            and (home / _HOOK_REL).read_text() == "NEW-baseline\n"
+        )
+
+    def test_deploy_over_leftover_symlink_does_not_corrupt_host_file(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — same as above; the danger is writing THROUGH the link.
+        env_save_restore.set(_USER_BASELINE_ENV, str(tmp_path / "no-user-baseline"))
+        host_root = tmp_path / "host_claude"
+        host_hook = host_root / "hooks" / "pre-tool-use" / "deny_edit_on_main_branch.sh"
+        host_hook.parent.mkdir(parents=True)
+        host_hook.write_text("HOST-ORIGINAL\n")
+        env_save_restore.set(_HOST_ENV, str(host_root))
+        cfg, root = _build_cfg(tmp_path, labels={"role": "project-maintainer"})
+        src = root / _HOOK_REL
+        src.parent.mkdir(parents=True)
+        src.write_text("NEW-baseline\n")
+        os.chmod(src, 0o755)
+        home = tmp_path / "home"
+        stale = home / _HOOK_REL
+        stale.parent.mkdir(parents=True)
+        stale.symlink_to(host_hook)
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert — the operator's real host file is byte-for-byte untouched.
+        assert host_hook.read_text() == "HOST-ORIGINAL\n"
+
+
+# ---------------------------------------------------------------------------
 # Baseline layer — shared/common to_home overlaid by per-agent to_home.
 #
 # Layout under tmp_path:
@@ -1274,3 +1359,63 @@ def test_deploy_to_home_remerges_changed_mcp_json_without_conflict(
     # Assert — the deployed .mcp.json reflects the NEW definition (re-derived).
     deployed = json.loads((home / ".mcp.json").read_text())
     assert deployed["mcpServers"]["x"]["command"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# Tokenless-telegrammer prune, END-TO-END through deploy_to_home.
+#
+# The unit tests for prune_tokenless_telegrammer_mcp live in
+# test__cct_token_pool.py. These exist because a correct function wired at the
+# WRONG point in deploy_to_home would still pass those: the prune reads the
+# .mcp.json the walk materialises and the token ensure_cct_bot_token resolves,
+# so it must run after BOTH. Asserting through the real entry-point is what
+# makes the ordering testable rather than merely commented.
+# ---------------------------------------------------------------------------
+
+
+class TestTokenlessTelegrammerPrune:
+    _TELEGRAMMER = "claude-code-telegrammer"
+
+    def _mcp_servers(self, home: Path) -> dict:
+        import json
+
+        return json.loads((home / ".mcp.json").read_text())["mcpServers"]
+
+    def _seed(self, tmp_path: Path):
+        """A to_home carrying the shared baseline's telegrammer entry."""
+        cfg, root = _build_cfg(tmp_path)
+        (root / ".mcp.json").write_text(
+            '{"mcpServers": {"claude-code-telegrammer": '
+            '{"command": "cct", "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"}}, '
+            '"scitex-cards": {"command": "scitex-cards"}}}\n'
+        )
+        return cfg, root
+
+    def test_tokenless_agent_gets_no_telegrammer_entry(self, tmp_path):
+        # Arrange — no .envrc, no pool: nothing can resolve a token.
+        cfg, _root = self._seed(tmp_path)
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert self._TELEGRAMMER not in self._mcp_servers(home)
+
+    def test_tokenless_prune_keeps_the_other_servers(self, tmp_path):
+        # Arrange
+        cfg, _root = self._seed(tmp_path)
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert "scitex-cards" in self._mcp_servers(home)
+
+    def test_agent_with_a_token_keeps_the_telegrammer_entry(self, tmp_path):
+        # Arrange — a real .envrc supplying the token, exactly as a bot-owning
+        # project does; the fold lands it in dest/.env before the prune reads it.
+        cfg, root = self._seed(tmp_path)
+        (root / ".envrc").write_text("export CCT_BOT_TOKEN=123:abc\n")
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert self._TELEGRAMMER in self._mcp_servers(home)

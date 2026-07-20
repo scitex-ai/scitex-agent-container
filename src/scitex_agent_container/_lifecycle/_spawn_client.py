@@ -228,8 +228,7 @@ def _http_error_message(child_name: str, status: int, parsed: Any) -> str:
             f"check_spawn ACL denied this caller. Server said: {parsed!r}"
         )
     return (
-        f"spawn of {child_name!r} rejected: listen returned HTTP "
-        f"{status} ({parsed!r})"
+        f"spawn of {child_name!r} rejected: listen returned HTTP {status} ({parsed!r})"
     )
 
 
@@ -246,6 +245,7 @@ def request_spawn(
     foreground: bool = False,
     one_shot: bool = False,
     assume_yes: bool = False,
+    force: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -311,6 +311,26 @@ def request_spawn(
         at the top of the call chain. This does NOT weaken the
         human-at-a-TTY default-refuse safety net — it only lets the
         brokered/automated path assert consent that was already given.
+    force
+        Forwarded as ``force: true`` in the POST body when set. The host
+        listen's ``/agents`` handler appends ``--force`` to its inner
+        ``sac agents start`` argv, so a still-running agent is TORN DOWN
+        and replaced instead of hitting the idempotent "already running →
+        no-op" branch.
+
+        Silent-degradation fix (incident 2026-07-12, scitex-storage): a
+        RESTART issued from inside a SIF reaches ``agent_start(force=True)``,
+        which brokers to the host — and before this field existed, ``force``
+        was DROPPED at that boundary. The host then ran a plain
+        ``sac agents start <name>``, saw the agent already up, no-op'd,
+        printed "SUCC: <name> started" and exited 0. The restart reported
+        success while nothing whatsoever cycled: same process, same pid,
+        same stale credentials. Because no NEW container was launched, no
+        ``apptainer_pid`` file appeared either, which is what tripped the
+        listen's ``post_ack_no_apptainer_pid`` probe.
+
+        Back-compat: only emitted when truthy, so a pre-fix host simply
+        ignores the absent field and behaves exactly as before.
 
     Returns
     -------
@@ -353,6 +373,13 @@ def request_spawn(
     # one_shot above — pre-fix brokers simply ignore an absent field.
     if assume_yes:
         body["assume_yes"] = True
+    # Silent-degradation fix (incident 2026-07-12): carry the caller's
+    # ``force`` across the broker boundary. Dropping it turned an in-SIF
+    # RESTART into a plain host-side start that no-op'd over the live agent
+    # and still reported success. Same truthy-only back-compat rationale as
+    # the fields above.
+    if force:
+        body["force"] = True
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"

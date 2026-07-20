@@ -16,8 +16,8 @@ Fail-loud contract (no silent fallbacks): an EXPIRED or ABSENT live
 credential is a hard error (:class:`LiveCredInvalidError`), never a
 silent save of a stale token.
 
-The store-name is the account email slugified (``wyusuuke@gmail.com`` →
-``wyusuuke-gmail-com``), matching the layout the rest of sac already uses
+The store-name is the account email slugified (``alpha@example.com`` →
+``alpha-example-com``), matching the layout the rest of sac already uses
 on disk.
 
 Identity guard (2026-07)
@@ -99,9 +99,9 @@ def slugify_email(email: str) -> str:
     """Map an account email to its on-disk store-name.
 
     ``@`` and ``.`` collapse to ``-`` and the result is lower-cased,
-    matching the existing layout (``wyusuuke@gmail.com`` →
-    ``wyusuuke-gmail-com``, ``ywatanabe@scitex.ai`` →
-    ``ywatanabe-scitex-ai``).
+    matching the existing layout (``alpha@example.com`` →
+    ``alpha-example-com``, ``researcher@example.org`` →
+    ``researcher-example-org``).
     """
     return email.strip().lower().replace("@", "-").replace(".", "-")
 
@@ -432,7 +432,9 @@ def sync_live(
             from_token_fp=from_token_fp,
             to_token_fp=_read_access_token_fingerprint(snapshot),
         )
-    except Exception:  # stx-allow: fallback (reason: audit is best-effort; never fail the sync on it)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: audit is best-effort; never fail the sync on it)
         pass
 
     return SyncResult(

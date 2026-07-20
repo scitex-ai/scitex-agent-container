@@ -21,13 +21,15 @@ import yaml
 
 from scitex_agent_container.config import load_config
 from scitex_agent_container.config._loaders import (
+    DEFAULT_DIRENV_ALLOW_COMMAND,
     DEFAULT_STARTUP_PROMPT,
     _parse_env_files,
     _resolve_python_venv,
     _resolve_venv,
+    _with_default_direnv_allow,
     compose_effective_name,
 )
-from scitex_agent_container.config._types import HostsSpec
+from scitex_agent_container.config._types import HostsSpec, StartupCommand
 
 
 @pytest.fixture(autouse=True)
@@ -568,11 +570,11 @@ def test_load_config_injects_claude_agent_account_when_spec_pins_account(
     tmp_path: Path,
 ):
     # Arrange
-    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "wyusuuke-gmail-com"}})
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "alpha-example-com"}})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "wyusuuke-gmail-com"
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "alpha-example-com"
 
 
 def test_load_config_omits_claude_agent_account_when_unpinned(tmp_path: Path):
@@ -591,13 +593,11 @@ def test_load_config_strips_whitespace_from_account_before_injection(
     # Arrange — defensive trim so a spec with a stray newline / space
     # does not leak into the quota-cache lookup (which uses a strict
     # ``split('-')[0] == short`` match — a leading space would break it).
-    p = _v3_yaml(
-        tmp_path, "trimmed", {"claude": {"account": "  ywata1989-gmail-com  "}}
-    )
+    p = _v3_yaml(tmp_path, "trimmed", {"claude": {"account": "  beta-example-com  "}})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "ywata1989-gmail-com"
+    assert cfg.env["CLAUDE_AGENT_ACCOUNT"] == "beta-example-com"
 
 
 # ---------------------------------------------------------------------------
@@ -799,3 +799,98 @@ def test_load_config_rejects_banned_local_host_at_load_time(
     # Assert
     with pytest.raises(ValueError, match="BANNED"):
         _do()
+
+
+# ---------------------------------------------------------------------------
+# Default direnv-allow startup command (operator directive, Telegram 2862 /
+# card sac-auto-direnv-allow-at-agent-start-guarded-20260717). sac appends a
+# GUARDED + FAIL-SOFT + IDEMPOTENT `direnv allow` to EVERY agent's
+# startup_commands so a project's non-secret .envrc surfaces in-container,
+# fleet-wide and VISIBLE in the materialized spec. Secrets/identity stay
+# sac-direct-injected (never routed through direnv).
+# ---------------------------------------------------------------------------
+
+
+def test_default_direnv_allow_command_has_guarded_fail_soft_shape() -> None:
+    # Arrange — the exact guarded, fail-soft form (guard on direnv + .envrc,
+    # trailing `|| true` so a failed allow never breaks boot; $PWD is the
+    # agent workdir the inner bash -lc inherits from apptainer --pwd).
+    expected = (
+        'command -v direnv >/dev/null 2>&1 && [ -f "$PWD/.envrc" ] '
+        '&& direnv allow "$PWD" || true'
+    )
+    # Act
+    actual = DEFAULT_DIRENV_ALLOW_COMMAND
+    # Assert
+    assert actual == expected
+
+
+def test_with_default_direnv_allow_appends_to_empty_list() -> None:
+    # Arrange — a spec authoring no startup_commands.
+    incoming: list[StartupCommand] = []
+    # Act
+    out = _with_default_direnv_allow(incoming)
+    # Assert
+    assert [c.command for c in out] == [DEFAULT_DIRENV_ALLOW_COMMAND]
+
+
+def test_with_default_direnv_allow_appends_after_authored_commands() -> None:
+    # Arrange — an authored bootstrap command must keep position 0.
+    incoming = [StartupCommand(command="echo hi")]
+    # Act
+    out = _with_default_direnv_allow(incoming)
+    # Assert
+    assert [c.command for c in out] == ["echo hi", DEFAULT_DIRENV_ALLOW_COMMAND]
+
+
+def test_with_default_direnv_allow_is_idempotent_when_already_present() -> None:
+    # Arrange — a spec that already runs `direnv allow` must not be doubled.
+    incoming = [StartupCommand(command='direnv allow "$PWD"')]
+    # Act
+    out = _with_default_direnv_allow(incoming)
+    # Assert
+    assert out == incoming
+
+
+def test_load_config_appends_direnv_allow_when_no_startup_commands(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a bare spec (no startup_commands) loaded through the real API.
+    p = _v3_yaml(tmp_path, "direnv-bare", {})
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert [c.command for c in cfg.startup_commands] == [DEFAULT_DIRENV_ALLOW_COMMAND]
+
+
+def test_load_config_keeps_authored_startup_command_and_appends_direnv_allow(
+    tmp_path: Path,
+) -> None:
+    # Arrange — an authored startup command stays first; direnv-allow is last.
+    p = _v3_yaml(
+        tmp_path,
+        "direnv-authored",
+        {"startup_commands": [{"command": "echo hello"}]},
+    )
+    # Act
+    cfg = load_config(p)
+    # Assert
+    assert [c.command for c in cfg.startup_commands] == [
+        "echo hello",
+        DEFAULT_DIRENV_ALLOW_COMMAND,
+    ]
+
+
+def test_load_config_does_not_duplicate_authored_direnv_allow(
+    tmp_path: Path,
+) -> None:
+    # Arrange — a spec whose author already wrote a `direnv allow` command.
+    p = _v3_yaml(
+        tmp_path,
+        "direnv-idempotent",
+        {"startup_commands": [{"command": 'direnv allow "$PWD"'}]},
+    )
+    # Act
+    cfg = load_config(p)
+    # Assert — exactly one direnv-allow, no sac-appended duplicate.
+    assert sum("direnv allow" in c.command for c in cfg.startup_commands) == 1

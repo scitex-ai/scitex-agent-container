@@ -46,12 +46,20 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 def _run_hook(
-    script: Path, payload: dict, cwd: Path | None = None
+    script: Path,
+    payload: dict,
+    cwd: Path | None = None,
+    env: dict | None = None,
 ) -> subprocess.CompletedProcess:
     """Invoke the hook script with the given JSON payload on stdin.
 
     Returns the completed process so individual tests can assert on
     returncode / stdout / stderr without retrying or coupling.
+
+    ``env`` (when given) fully REPLACES the subprocess environment —
+    the owner-stamp tests use it to pin ``SCITEX_TODO_AGENT_ID`` (or to
+    prove its absence) deterministically, independent of the runner's
+    ambient value. When ``None`` the child inherits the parent env.
     """
     return subprocess.run(
         [sys.executable, str(script)],
@@ -59,6 +67,7 @@ def _run_hook(
         capture_output=True,
         text=True,
         cwd=str(cwd) if cwd else None,
+        env=env,
     )
 
 

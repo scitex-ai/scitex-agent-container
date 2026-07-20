@@ -42,9 +42,9 @@ def _write_settings_json(home: Path, data: dict) -> None:
 _HAPPY_CLAUDE_JSON = {
     "oauthAccount": {
         "accountUuid": "uuid-123",
-        "emailAddress": "ywata1989@gmail.com",
+        "emailAddress": "beta@example.com",
         "organizationUuid": "org-uuid",
-        "organizationName": "ywata1989@gmail.com's Organization",
+        "organizationName": "beta@example.com's Organization",
         "billingType": "stripe_subscription",
         "accountCreatedAt": "2025-05-01T00:00:00Z",
         "subscriptionCreatedAt": "2025-05-30T19:59:34Z",
@@ -92,8 +92,8 @@ def happy_path_result(tmp_path: Path) -> dict:
 @pytest.mark.parametrize(
     "key,expected",
     [
-        ("email_address", "ywata1989@gmail.com"),
-        ("organization_name", "ywata1989@gmail.com's Organization"),
+        ("email_address", "beta@example.com"),
+        ("organization_name", "beta@example.com's Organization"),
         ("display_name", "Yusuke"),
         ("billing_type", "stripe_subscription"),
         ("subscription_created_at", "2025-05-30T19:59:34Z"),

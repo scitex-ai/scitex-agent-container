@@ -92,7 +92,7 @@ def mint_access_only_artifact(
     """Mint the wrapped ``{artifact, meta}`` access-only envelope.
 
     Reads the CURRENT stored ``.credentials.json`` for ``account`` (a
-    store slug, e.g. ``wyusuuke-gmail-com``), gates on health, strips the
+    store slug, e.g. ``alpha-example-com``), gates on health, strips the
     refresh_token, and returns the distributable envelope. The returned
     dict is safe to serialise to stdout — it contains the accessToken
     (by design) but NEVER the refreshToken.
@@ -126,9 +126,7 @@ def mint_access_only_artifact(
     if not account_dir.is_dir():
         available = [a.get("name", "?") for a in list_accounts(store_dir, _home)]
         avail_str = ", ".join(sorted(available)) if available else "(none)"
-        raise MintError(
-            f"unknown account '{account}' — available labels: {avail_str}"
-        )
+        raise MintError(f"unknown account '{account}' — available labels: {avail_str}")
 
     # --- EXCLUSIVE-STRICT health gate --------------------------------------
     health = account_health(account, store_dir=store_dir, home=_home, now=now_s)

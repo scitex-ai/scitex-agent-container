@@ -166,14 +166,16 @@ def _format_claude_account_block(meta: dict) -> list[str]:
     help="Fleet view: filter by machine label.",
 )
 @click.option(
-    "--tags",
-    "-t",
+    "--group",
+    "-g",
     default=None,
-    help="Fleet view: filter by tags label (comma-separated in YAML; "
-    "matches if the agent carries ANY of the given comma-separated "
-    "values). A free-form lifecycle/status marker, e.g. "
-    "'active-development' -- separate from --capability (what an agent "
-    "can do) and from the ACL group label (metadata.labels.groups).",
+    help="Fleet view: filter by group membership (metadata.labels.groups, "
+    "or the singular .group). Matches if the agent's spec names ANY of "
+    "the given comma-separated groups -- e.g. --group active. Replaces "
+    "the removed --tags flag: 'groups' is the only classification field "
+    "(operator decision 2026-07-19), so the 'active-development' tag is "
+    "now the 'active' group. Separate from --capability (what an agent "
+    "can do, not which cohort it is in).",
 )
 @click.option(
     "--verbose",
@@ -229,7 +231,7 @@ def status(
     terse: bool,
     capability: str | None,
     machine: str | None,
-    tags: str | None,
+    group: str | None,
     verbose: bool,
     show_all: bool,
     with_snapshot: bool,
@@ -239,7 +241,7 @@ def status(
     """Show agent status.
 
     Without ``NAME``: fleet view — every registered agent in a table,
-    optionally filtered by ``--capability`` / ``--machine`` / ``--tags``.
+    optionally filtered by ``--capability`` / ``--machine`` / ``--group``.
 
     With ``NAME``: rich per-agent payload (registry entry + config-derived
     fields + resource snapshot).
@@ -250,7 +252,7 @@ def status(
       $ sac agent status orchestrator               # rich per-agent
       $ sac agent status --json                     # fleet view, JSON
       $ sac agent status --capability HPC           # fleet view, filtered
-      $ sac agent status --tags active-development  # fleet view, by tag
+      $ sac agent status --group active            # fleet view, by group
     """
     use_json = _json_flag(ctx, as_json) or terse
     registry = Registry()
@@ -386,7 +388,7 @@ def status(
                             registry,
                             capability=capability,
                             machine=machine,
-                            tags=tags,
+                            group=group,
                         ),
                     },
                     indent=2,
@@ -397,7 +399,7 @@ def status(
                 registry,
                 capability=capability,
                 machine=machine,
-                tags=tags,
+                group=group,
                 verbose=verbose,
                 show_all=show_all,
             )

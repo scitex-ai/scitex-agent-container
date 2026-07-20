@@ -8,14 +8,14 @@ import time via :func:`register_list_command` (same pattern as
 Human-output layout (operator directive 2026-07-11 — "the bars own the
 percentages; the table holds only what the bars cannot express"):
 
-1. The single-account "Claude Code account" header block (active
-   credentials; untouched by the 2026-07-11 redesign).
-2. The Stored-accounts table — exactly ``Account | Status | Last
-   Update`` (:func:`._account_list_render.render_stored_table`).
-3. The usage-bars block — per-account 5h/7d bars, each percentage
-   carrying its compact relative reset hint (``29% (in 4h05m)`` /
-   ``66% (in 2d 3h)``), plus the rolling-window legend when a row has
-   no cached reset timestamps
+1. Active Claude Code and OpenAI Codex account blocks, when present.
+2. The combined accounts table — exactly ``Provider | Account | Status |
+   Last Update`` (:func:`._account_list_render.render_stored_table`).
+3. The usage-bars block — one 3-line block per account (operator
+   mockup 2026-07-17): the account name, then one line per window with
+   the relative reset hint BEFORE the bar (``5h (in 4h05m) [..] (29%)``),
+   a blank line between accounts; plus the rolling-window legend when a
+   row has no cached reset timestamps
    (:mod:`._account_usage_bars` / :func:`._account_list_render.rolling_legend_line`).
 4. The one-line fleet 7-day capacity-used figure.
 
@@ -54,13 +54,13 @@ def account_list(as_json: bool, refresh: bool) -> None:
     """List stored accounts and show the currently active one.
 
     The human view splits its two surfaces without duplication
-    (operator directive 2026-07-11): the Stored-accounts table is
-    exactly Account | Status | Last Update — the status cell carries
-    the live token TTL (``VALID +2h26m``) — while the monospace
-    usage-bars block below it owns the 5h/7d percentages, each with
-    its compact relative reset hint (``29% (in 4h05m)`` /
-    ``66% (in 2d 3h)``), followed by a single fleet 7-day
-    capacity-used line.
+    (operator directive 2026-07-11): the accounts table is exactly
+    Provider | Account | Status | Last Update — the status cell carries
+    the live token TTL (``VALID +2h26m``) for Claude accounts — while the monospace
+    usage-bars block below it owns the 5h/7d percentages, one 3-line
+    block per account with the relative reset hint before each bar
+    (``5h (in 4h05m) [..] (29%)``; operator mockup 2026-07-17),
+    followed by a single fleet 7-day capacity-used line.
 
     \b
     Fleet 7d capacity used
@@ -82,15 +82,19 @@ def account_list(as_json: bool, refresh: bool) -> None:
     """
     import json as _json
 
+    from .._account.codex_account import read_codex_accounts_metadata
     from .._account.credentials import read_credentials_metadata
     from .._state.account_store import list_accounts
     from ._account_list_render import (
+        build_openai_rows,
+        build_provider_accounts_json,
         build_stored_json,
         build_stored_rows,
         needs_rolling_legend,
         render_stored_table,
         rolling_legend_line,
     )
+    from ._account_openai import format_openai_account_block
     from ._account_usage_bars import (
         fleet_capacity_used_line,
         render_usage_bars_block,
@@ -99,6 +103,8 @@ def account_list(as_json: bool, refresh: bool) -> None:
     from .status_cmds import _format_claude_account_block
 
     accounts = list_accounts()
+    openai_accounts = read_codex_accounts_metadata()
+    openai_meta = openai_accounts[0] if openai_accounts else {}
 
     if as_json:
         # stx-allow: fallback (reason: malformed credentials JSON tolerated)
@@ -106,11 +112,17 @@ def account_list(as_json: bool, refresh: bool) -> None:
             active = read_credentials_metadata()
         except (OSError, _json.JSONDecodeError):
             active = {}
+        stored_json = build_stored_json(accounts, refresh=refresh)
         click.echo(
             _json.dumps(
                 {
                     "active": active,
-                    "stored": build_stored_json(accounts, refresh=refresh),
+                    "openai": openai_meta,
+                    "openai_accounts": openai_accounts,
+                    "stored": stored_json,
+                    "accounts": build_provider_accounts_json(
+                        stored_json, openai_accounts
+                    ),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -130,13 +142,22 @@ def account_list(as_json: bool, refresh: bool) -> None:
     if lines:
         console.print("")
 
-    if not accounts:
+    for openai_account in openai_accounts:
+        openai_lines = format_openai_account_block(openai_account)
+        for line in openai_lines:
+            console.print(line)
+        if openai_lines:
+            console.print("")
+
+    rows = build_stored_rows(accounts, refresh=refresh)
+    all_rows = rows + build_openai_rows(openai_accounts)
+    if not all_rows:
         click.echo(
-            "No accounts stored. Use: scitex-agent-container account save <name>"
+            "No accounts stored or active. Use: "
+            "scitex-agent-container account save <name>"
         )
         return
-    rows = build_stored_rows(accounts, refresh=refresh)
-    console.print(render_stored_table(rows))
+    console.print(render_stored_table(all_rows))
     # Operator directive 2026-07-11: the bars own the percentages AND
     # their reset hints; the table above holds only what the bars
     # cannot express. Emitted via click.echo (NOT console.print) so

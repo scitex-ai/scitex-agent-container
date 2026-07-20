@@ -21,7 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Four jobs today:
+    Eight jobs today:
+
+    * ``sac.freshness-refresh`` (``kind="timer"``) — the REFRESHER half of
+      the version-currency check. The CLI's startup banner reads a cached
+      JSON file and nothing else (no network on the hot path), so this is
+      what puts an answer in that file; unscheduled, the banner has nothing
+      to read and is silent forever, which reads exactly like "everything is
+      fine". A check nobody schedules is not a check.
 
     * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
       "should be running ⇒ is running". Restarts agents whose tmux session
@@ -30,6 +37,44 @@ def provide_jobs() -> "list[JobSpec]":
       (``restart.policy``) is dead code without it, and 33 agents once
       stayed dead for hours because of that.
 
+    * ``sac.restart-login-expired-agents`` (``kind="timer"``) — the SIBLING of
+      fleet-reconcile and the exact division of labor: fleet-reconcile owns
+      DEAD/no-session corpses; this owns LIVE-session-but-AUTH-DEAD agents (a
+      frozen "Login expired" banner) that fleet-reconcile explicitly leaves
+      alone, because touching a live session destroys context. Detection is
+      READ-ONLY + 2-run-corroborated; the restart runs through the pool-loading
+      start path (so a timer-driven restart cannot strip an agent's CCT/Telegram
+      token) and is rate-limited exactly like fleet-reconcile.
+
+      DEPLOY GATE — declared here so the mechanism is version-controlled and
+      TESTED, but it MUST NOT be enabled on a host until that host's
+      ``auth-heal.py`` ``scan_tui`` cron is RETIRED. That cron already restarts
+      these agents (2-run-corroborated TUI heal, since 2026-06-01); enabling
+      this timer alongside it puts TWO restarters on one fleet with INDEPENDENT
+      debounce state — the same double-supervisor class as the ``sac.listen``
+      duplication described below, one costume over. The crontab is host state a
+      PR cannot edit, so the cron retirement is an operator/dotfiles step that
+      must land WITH the enable.
+
+    * ``sac.heal-agent-auth`` (``kind="timer"``) — the INCUMBENT auth healer
+      (``~/.scitex/agent-container/bin/auth-heal.py``, every 10min), declared
+      here so it stops living as a hand-written crontab line that a sweep
+      deletes. ``~/.dotfiles/src/.cron/copy_crontab`` installs the tracked
+      manifest WHOLESALE (``git show HEAD:.crontab_list | crontab -``), so
+      anything absent from ``.crontab_list`` is erased on its next run — and
+      auth-heal has NO line in that manifest, which is why the wrapper that
+      exports ``SAC_SECRETS_ENVRC`` kept reverting. A hand-added crontab line
+      is temporary BY CONSTRUCTION; a JobSpec is not. scitex-cards and
+      dotfiles moved their own schedules to systemd ``--user`` timers for the
+      same reason, and scitex-dev's ruling makes the JobSpec plugin the SSoT.
+
+      MUTUALLY EXCLUSIVE WITH ``sac.restart-login-expired-agents`` — enable
+      exactly ONE. This job's ``scan_tui`` is precisely what that timer
+      reimplements natively, so the deploy gate documented below is not
+      lifted by declaring this one; it is made explicit. Declaring both is
+      safe (a JobSpec is inert until ``ecosystem up`` installs it); ENABLING
+      both puts two restarters with INDEPENDENT debounce state on one fleet.
+
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
       active one (``--include-active``), mirroring the rotated token back
@@ -37,14 +82,26 @@ def provide_jobs() -> "list[JobSpec]":
 
     * ``sac.host-sync-check`` (``kind="timer"``) — the READ-ONLY peer
       drift detector ``sac host sync --check --all``, run hourly with
-      ``--alarm`` so each peer's verdict is routed to an idempotent
-      scitex-todo card (upsert on drift/unknown, resolve on clean). This
-      is what makes the Stage-0 detector (PR #690) actually RUN and be
-      SEEN: shipped but scheduled nowhere, it was an inert alarm. The job
+      ``--alarm`` so each peer's verdict is recorded in sac's own event
+      log (degraded / unknown / recovered). This is what makes the Stage-0
+      detector (PR #690) actually RUN and be SEEN: shipped but scheduled
+      nowhere, it was an inert alarm. The job
       mutates NOTHING on any peer — it never calls the fast-forward
       remedy (that is Stage 1). ``--alarm`` is gated to require
       ``--check`` in the CLI, so this scheduled command is read-only by
       construction.
+
+    * ``sac.spartan-sif-bake`` (``kind="timer"``) — the EVERY-10-MINUTES
+      remote SIF bake + pull. Operator directive (2026-07-17, verbatim): 「sif は最新版を
+      定期焼きにしましょう。spartan 側で。それでこちらには定期的に rsync する形で。
+      cpu は使わずに新しいものが得られると思います。」 The bake runs as an
+      ``srun --overlap`` step inside the standing Spartan CPU lease
+      (resolved BY NAME — the job id changes at every resubmit), the
+      master then PULLS the gated artifact via rsync-over-ssh,
+      re-verifies it locally (sha256 + apptainer-exec symbol probe) and
+      only then atomically swaps the live ``sac-<layer>.sif`` symlinks.
+      Keep-3 rotation on both sides. A source-unchanged run is a cheap
+      SKIPPED verdict — the */10 cadence buys freshness, not transfers.
 
     * ``sac.worktree-gc`` (``kind="timer"``) — the DAILY worktree GC,
       ``sac worktree gc --apply --all``. Agent-tool worktrees auto-clean
@@ -56,7 +113,7 @@ def provide_jobs() -> "list[JobSpec]":
       schedules is a script, not a countermeasure, which is exactly how
       the sprawl accumulated in the first place. It removes ONLY what it
       can prove is safe (clean AND merged AND aged AND idle, never
-      ``--force``) and cards any repo still over its cap. ``--all`` is
+      ``--force``) and RECORDS any repo still over its cap. ``--all`` is
       well-defined here: it sweeps the local git repos declared as agents'
       ``spec.workdir``, so the command is correct as written.
 
@@ -138,10 +195,9 @@ def provide_jobs() -> "list[JobSpec]":
             command="sac host sync --check --all --alarm",
             description=(
                 "Read-only drift check of every peer's sac checkout vs the "
-                "centre; routes each verdict to an idempotent scitex-todo "
-                "card (upsert on drift/unknown, resolve on clean) so the "
-                "shout is SEEN on the board. Mutates nothing on any peer — "
-                "never runs the fast-forward remedy (Stage 1)."
+                "centre; records each verdict in sac's own event log so the "
+                "shout is DURABLE. Mutates nothing on any peer — never runs "
+                "the fast-forward remedy (Stage 1)."
             ),
             kind="timer",
             # First check 10min after boot/login (peers reachable, listen
@@ -163,8 +219,8 @@ def provide_jobs() -> "list[JobSpec]":
                 "Daily git-worktree GC: removes only worktrees PROVEN safe "
                 "(clean AND merged AND older than 24h AND not in use — never "
                 "--force), prunes admin refs whose directory is already gone, "
-                "and upserts an idempotent scitex-todo card for any repo still "
-                "over its worktree cap (resolved when it drops back under). "
+                "and records any repo still over its worktree cap in sac's "
+                "own event log (recorded as recovered when it drops back under). "
                 "The permanent countermeasure to worktree sprawl."
             ),
             kind="timer",
@@ -183,6 +239,78 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=900,
         ),
         JobSpec(
+            name="sac.spartan-sif-bake",
+            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
+            command="sac image bake-remote --yes",
+            description=(
+                "10-minute SIF refresh with zero master CPU: bake sac-base + "
+                "sac-scitex on the standing Spartan CPU lease (srun "
+                "--overlap into the job resolved BY NAME, never sbatch), "
+                "gate at build time (.def %post symbol gate) AND on the "
+                "artifact (apptainer-exec symbol probe), keep-3 rotate the "
+                "Spartan store, then PULL via rsync-over-ssh, re-verify "
+                "here (sha256 + the same symbol probe on the received "
+                "file) and only then atomically swap both live "
+                "sac-<layer>.sif symlinks + keep-3 rotate locally. A "
+                "failed leg leaves the live image untouched and exits "
+                "non-zero; a source-unchanged run is a loud SKIPPED, not "
+                "a transfer."
+            ),
+            kind="timer",
+            # 10min: the image is a point-in-time snapshot of @develop, and at
+            # our release rate a DAY-old SIF is mostly wrong. 30min was read
+            # off the operator's 「最低でも30分に1回」 — but that was his FLOOR,
+            # not his target (「なんで三十分に一回だけなの？」; 「例えば1分に1回焼いても
+            # 全く問題ないです」), so the cadence is set to what he wants, not to
+            # the minimum he would tolerate.
+            #
+            # Cheap by construction, which is what makes a 10min tick sane: a
+            # source-unchanged run is a SKIPPED verdict (check a git ref, one
+            # ssh round-trip, no transfer), so only a real @develop change ever
+            # costs a bake. A bake takes 8-30min, so at */10 most ticks land
+            # while one is still running — the script's `flock -n` makes those
+            # exit "already-running" immediately instead of piling up, which is
+            # exactly what that lock is for. The operator has separately
+            # accepted overlap outright (the swap is an atomic symlink flip at
+            # the end). Steady state: skip, skip, skip, … one real bake when
+            # something changed, the rest of that window bouncing off the lock.
+            on_boot_sec="30min",
+            on_unit_active_sec="10min",
+            # Two full bakes (base ~15-25min + scitex ~10-20min) plus a
+            # multi-GB pull on a slow link fit comfortably; the per-leg
+            # ssh timeout inside the command is 7200s, so 4h bounds the
+            # whole chain without ever hanging forever.
+            timeout_sec=14_400,
+        ),
+        JobSpec(
+            name="sac.freshness-refresh",
+            schedule="7 * * * *",  # hourly (cron form; timer cadence below)
+            command="sac freshness refresh",
+            description=(
+                "Publishes the version-currency verdict to the cache that "
+                "every `sac` invocation reads. Runs the real checks (PyPI, "
+                "git tags, gh release runs, systemd running-vs-installed, "
+                "symbol probes) via scitex-dev's `versioning` primitive and "
+                "writes the result atomically. This is the half that pays "
+                "the network cost, so the CLI hot path never does — without "
+                "it the startup banner has nothing to read and stays "
+                "permanently silent."
+            ),
+            kind="timer",
+            # Hourly against the primitive's 24h cache TTL: 24 consecutive
+            # misses before the banner falls silent, so a laptop that is shut
+            # most of the day still has a trustworthy answer. Faster buys
+            # nothing — releases are not more frequent than hourly — and each
+            # pass makes real network calls.
+            on_boot_sec="25min",
+            on_unit_active_sec="1h",
+            # Generous on purpose, matching the primitive's own 30s per-source
+            # timeouts: a busy host must not be mistaken for a broken one, and
+            # a manufactured UNKNOWN is exactly the failure mode. Nothing is
+            # waiting on this run.
+            timeout_sec=300,
+        ),
+        JobSpec(
             name="sac.fleet-reconcile",
             schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
             command="sac agents reconcile --apply",
@@ -193,8 +321,8 @@ def provide_jobs() -> "list[JobSpec]":
                 "touches a CORPSE (no session => no context to lose); never a "
                 "live-but-wedged agent (auth-heal owns those) and never a "
                 "deliberately-stopped one. Rate-limited (30min/agent debounce, "
-                "<=2/agent/hour, <=10/pass); an agent it cannot recover gets a "
-                "scitex-todo card instead of an endless bounce."
+                "<=2/agent/hour, <=10/pass); an agent it cannot recover is "
+                "RECORDED as degraded instead of bounced endlessly."
             ),
             kind="timer",
             # THIS JOB IS THE MECHANISM, not an optimisation. `restart.policy`
@@ -216,6 +344,92 @@ def provide_jobs() -> "list[JobSpec]":
             # this timeout is SAFE: the restart history is persisted per
             # restart, not at the end, so the next tick still honours the
             # debounce for anything already bounced.
+            timeout_sec=300,
+        ),
+        JobSpec(
+            name="sac.restart-login-expired-agents",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
+            command="sac agents restart-login-expired --apply",
+            description=(
+                "Restarts LIVE agents wedged behind a frozen 'Login expired' "
+                "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
+                "leaves alone. Detection is READ-ONLY + 2-run-corroborated (a "
+                "banner that moved between the two captures = working, never "
+                "restarted); the restart runs through the pool-loading start "
+                "path (cannot strip CCT tokens) and is rate-limited (30min/agent "
+                "debounce, <=2/agent/hour, <=10/pass); an agent still wedged "
+                "after the cap is RECORDED as degraded, not bounced endlessly. "
+                "DEPLOY GATE: do NOT enable until the host's auth-heal.py "
+                "scan_tui cron is retired (double-supervisor risk)."
+            ),
+            # Same taxonomy note as the jobs above: kind must be one of
+            # {"service","timer","cron"} (scitex-dev #153); a periodic
+            # systemd --user timer is ``kind="timer"`` with the cadence in
+            # ``on_unit_active_sec``. A wrong kind raises at construction and
+            # ``ecosystem up`` then silently drops sac's WHOLE provider.
+            kind="timer",
+            # 5min matched to fleet-reconcile so the two enforcers sweep on the
+            # same beat rather than harmonising into one; it is the window a
+            # wedged agent stays wedged. A no-op pass is one `tmux list-sessions`
+            # plus two pane captures ~4s apart.
+            on_boot_sec="5min",
+            on_unit_active_sec="5min",
+            # Mirrors fleet-reconcile: bounds the pathological pass (`--limit`
+            # restarts, each a stop+settle+start) plus the ~4s capture interval.
+            # A pass killed here is SAFE — history is persisted per restart, so
+            # the next tick still honours the debounce for anything bounced.
+            timeout_sec=300,
+        ),
+        JobSpec(
+            name="sac.heal-agent-auth",
+            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
+            # ABSOLUTE by design, both tokens. `resolve_execstart` passes a
+            # command whose head starts with "/" through VERBATIM, so this is
+            # the only form that depends on neither the ambient PATH nor which
+            # interpreter ran `ecosystem up`. A systemd --user unit gets a
+            # MINIMAL PATH, so the venv python must be named outright: the
+            # script's own `#!/usr/bin/env python3` would resolve to the SYSTEM
+            # python under systemd, not the 3.11 venv the fleet runs on.
+            command=(
+                "/home/ywatanabe/.env-3.11/bin/python "
+                "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
+            ),
+            description=(
+                "Auth auto-heal for the fleet: scans each agent's session.jsonl "
+                "TAIL for a CURRENT 401/authentication_error and restarts the "
+                "agent so a fresh credential is re-mounted, plus the sibling "
+                "TUI-pane scan (2-run-corroborated) for tmux agents whose "
+                "transcript lives in the container overlay and is invisible to "
+                "the session.jsonl glob. Rate-limited (per-agent debounce, boot "
+                "grace, global cap/hour) and phones the operator instead of "
+                "looping when a restart provably did not fix it. Declared as a "
+                "JobSpec because its crontab line was swept by copy_crontab's "
+                "full-manifest install. MUTUALLY EXCLUSIVE with "
+                "sac.restart-login-expired-agents — enable exactly one."
+            ),
+            kind="timer",
+            # Same taxonomy note as the jobs above: kind must be one of
+            # {"service","timer","cron"} (scitex-dev #153); a wrong kind raises
+            # at construction and `ecosystem up` then silently drops sac's WHOLE
+            # provider.
+            #
+            # 10min preserves the incumbent cadence EXACTLY — not a guess: the
+            # live `runtime/auth-heal.log` ticks 15:20 → 15:30 → 15:40 → 15:50
+            # → 16:00 (2026-07-18), matching the `*/10` cron line. Migrating a
+            # schedule is the wrong moment to also retune it; a cadence change
+            # belongs in its own PR with its own argument.
+            on_boot_sec="5min",
+            on_unit_active_sec="10min",
+            # `Persistent=true` is emitted by scitex-dev's timer renderer for
+            # every kind="timer", so a window missed while the host was asleep
+            # fires on resume — the property a crontab line does NOT have and a
+            # laptop fleet needs most.
+            #
+            # 300s matches the siblings and comfortably outlives a real pass:
+            # a no-op tick takes ~2-8s, and the worst observed pass (a TUI
+            # restart at 15:30:04 settling by 15:32:08) ~2min. A pass killed
+            # here is SAFE — state is persisted per restart, so the next tick
+            # still honours the debounce for anything already bounced.
             timeout_sec=300,
         ),
     ]

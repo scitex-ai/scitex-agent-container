@@ -72,6 +72,10 @@ def tmp_registry(tmp_path, env_save_restore):
     Reloads ``_state.registry`` so its module-level ``REGISTRY_DIR``
     picks up the env var. ``info_cmds`` imports ``Registry`` lazily,
     so the reload is honoured automatically.
+
+    ``reload_after_restore`` undoes that reload once the env is back: without
+    it ``REGISTRY_DIR`` stays pinned at this test's (soon-deleted) tmp dir for
+    the rest of the xdist worker's session.
     """
     reg = tmp_path / "registry"
     reg.mkdir()
@@ -79,6 +83,7 @@ def tmp_registry(tmp_path, env_save_restore):
     import scitex_agent_container._state.registry as _reg
 
     importlib.reload(_reg)
+    env_save_restore.reload_after_restore(_reg)
     yield reg
 
 

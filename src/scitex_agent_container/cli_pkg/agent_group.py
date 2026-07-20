@@ -59,6 +59,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "stop",
                 "restart",
                 "reconcile",
+                "restart-login-expired",
                 "rename",
                 "delete",
                 "forget",
@@ -113,6 +114,62 @@ agent_group.add_command(_rebind(_restart_impl, "restart"))
 from ._agents_reconcile import register as _register_reconcile  # noqa: E402
 
 _register_reconcile(agent_group)
+# `restart-login-expired` — the SIBLING enforcer. `reconcile` restarts DEAD
+# (no tmux session) agents; this restarts LIVE ones wedged behind a frozen
+# "Login expired" banner, which reconcile explicitly leaves alone (touching a
+# live session destroys context). Detection is READ-ONLY + 2-run-corroborated;
+# the restart is rate-limited like reconcile and goes through the pool-loading
+# start path so it cannot strip CCT/Telegram tokens. DEPLOY GATE: the scheduled
+# `sac.restart-login-expired-agents` timer must NOT be enabled on a host until
+# that host's auth-heal.py `scan_tui` cron is retired (double-supervisor risk).
+from ._agents_restart_login_expired import (  # noqa: E402
+    register as _register_restart_login_expired,
+)
+
+_register_restart_login_expired(agent_group)
+# `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
+# pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
+# is the last thing an agent RENDERED, not proof it is broken now, so an agent
+# that 401'd, recovered and went idle stays flagged forever (verified live
+# 2026-07-18 on `grant`, whose capture is checked in as a regression fixture).
+# The frozen-across-two-runs hardening makes it worse, because an idle pane is
+# maximally frozen. This verb counts those false positives; it NEVER restarts
+# anything.
+#
+# It does NOT gate the restarter. An earlier draft of this comment said no
+# automated restarter ships until the false-positive count is zero fleet-wide;
+# the operator overruled that on 2026-07-19 — restarting a healthy agent is
+# cheap, and withholding the mechanism costs more than the occasional wasted
+# restart. The defect worth fixing is the PERMANENT case, where one healthy
+# agent is restarted every cycle forever because a historical banner never
+# leaves the pane. A tail window fixes that; a gate on this count would not.
+from ._agents_auth_audit import register as _register_auth_audit  # noqa: E402
+
+_register_auth_audit(agent_group)
+# `state` — the ONE state shape, returned for every agent, always. Each signal
+# is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
+# instead of by whatever subset each call site happened to hold. It exists
+# because `auth-status` and `list`, asked minutes apart on one host, returned
+# DIFFERENT POPULATIONS and neither could notice. An agent it cannot read gets
+# an all-None ROW rather than vanishing, and every reading is archived with its
+# RAW pane captures so a verdict can be re-examined rather than merely believed.
+from ._agents_state import register as _register_agents_state  # noqa: E402
+
+_register_agents_state(agent_group)
+# `deliver` — a send that reports whether it actually landed. `send` (above)
+# resumes a recorded Claude session and is the right tool when the target has
+# one; measured on the live host, only a handful of agents do, so for the TUI
+# population it cannot deliver at all. A bare `tmux send-keys` into a session
+# that does not exist prints "can't find pane" to a stderr nobody reads and
+# exits 0 — which is how hours of coordination went to a session that had never
+# existed, every message reported as delivered. This verb resolves and PROVES
+# the target, confirms arrival by an injected token matched against a FLATTENED
+# pane (a prose grep already returned 0 for a message that had arrived), and
+# confirms SUBMISSION — the step that was missing, since text can sit unsent in
+# the composer forever while the agent looks idle.
+from ._agents_deliver import register as _register_agents_deliver  # noqa: E402
+
+_register_agents_deliver(agent_group)
 # `rename` — the ONE verb that moves an agent's name in every place it is
 # written: the spec dir, the spec's own self-references (labels, workdir,
 # overlay path, state-db path, and the SCITEX_TODO_AGENT_ID board

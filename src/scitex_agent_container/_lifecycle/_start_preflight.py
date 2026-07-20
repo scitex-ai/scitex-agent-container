@@ -147,7 +147,12 @@ def _rotate_among_credentials_files(
     Back-compat: a 1-element pool whose one snapshot is healthy resolves
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
-    from .._creds import pick_healthy_account
+    from .._account.quota_cache import quota_cache_present
+    from .._creds import (
+        POLICY_BURN,
+        pick_healthy_account,
+        resolve_7d_policy,
+    )
 
     entries: list[tuple[str, Path]] = []
     grandparents: set[str] = set()
@@ -165,17 +170,26 @@ def _rotate_among_credentials_files(
         entries[0][1].parent.parent if len(grandparents) == 1 else None
     )
 
+    # The 7d spend policy (env: SAC_CREDS_7D_POLICY). Fail-loud on an
+    # invalid value — an operator who asked for a policy must never
+    # silently get another. Default stays "spread": burn-to-zero is
+    # GATED on the fleet reconciler (see _creds._spend_policy).
+    policy = resolve_7d_policy()
+
     claude = config.claude
     # Preferred = a GENUINE pin only: the spec's named account when it is
     # one of the listed slugs, else the currently-effective
     # credentials_file's slug when it is listed. NOT the first listed
-    # entry — see the docstring (fleet-stacking incident).
+    # entry — see the docstring (fleet-stacking incident). Under
+    # POLICY_BURN the prior-slug churn-minimisation is dropped too:
+    # keeping the previously-bound file would freeze the pool and defeat
+    # draining the near-cap bucket (a named spec pin still holds).
     account = str(getattr(claude, "account", "") or "").strip()
     prior = str(getattr(claude, "credentials_file", "") or "").strip()
     prior_slug = _slug_of_credentials_file(Path(prior)) if prior else ""
     if account in slugs:
         preferred: str | None = account
-    elif prior_slug in slugs:
+    elif prior_slug in slugs and policy != POLICY_BURN:
         preferred = prior_slug
     else:
         preferred = None
@@ -189,6 +203,14 @@ def _rotate_among_credentials_files(
         usage_7d=usage_7d,
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
+        policy=policy,
+        # Boot gate (constitution §2): on a host that HAS a quota cache, a
+        # fully-BLIND pick means the populator failed (empty/stale cache) —
+        # fail loud rather than land the agent on an unverifiable, possibly
+        # quota-exhausted account (2026-07-20 incident). A host with NO cache
+        # (fresh install / CI / quota-cron-less Spartan node) still degrades
+        # to freshness-only and boots — the documented never-block invariant.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
 
     picked_path = next(p for slug, p in entries if slug == picked)
@@ -197,21 +219,47 @@ def _rotate_among_credentials_files(
     if str(picked_path) == prior:
         return  # 1-element / already-selected pool — no change, no log.
 
-    from .._creds import account_5h_usage, account_7d_usage
+    from .._creds import (
+        account_5h_usage,
+        account_7d_reset_at,
+        account_7d_usage,
+        audit_candidates,
+        format_pick_audit,
+    )
 
-    h5 = account_5h_usage(picked, usage_5h=usage_5h, quota_cache_path=quota_cache_path)
-    d7 = account_7d_usage(picked, usage_7d=usage_7d, quota_cache_path=quota_cache_path)
+    # EVERY ranking input, per candidate — the pick must be auditable
+    # (operator 2026-07-17: the notice named criteria but not inputs, so
+    # a reasoned pick was indistinguishable from a lucky one). Reads the
+    # same caches the pick read; never a token.
+    u5 = {
+        s: account_5h_usage(s, usage_5h=usage_5h, quota_cache_path=quota_cache_path)
+        for s in slugs
+    }
+    u7 = {
+        s: account_7d_usage(s, usage_7d=usage_7d, quota_cache_path=quota_cache_path)
+        for s in slugs
+    }
+    r7 = {s: account_7d_reset_at(s, quota_cache_path=quota_cache_path) for s in slugs}
+    audit = format_pick_audit(audit_candidates(slugs, u5, u7, reset_7d=r7, now=now))
 
     def fmt(v: float | None) -> str:
         return "?" if v is None else f"{v:.0f}%"
 
+    rationale = (
+        "token-fresh gate, 5h-blocked excluded, then HIGHEST 7d usage — "
+        "burn the perishable weekly bucket to zero — tie-break soonest "
+        "7d reset"
+        if policy == POLICY_BURN
+        else "token-fresh gate, avoids 5h-blocked and 7d-near-capped "
+        "accounts, load-balanced per agent by 7d headroom; time-to-reset "
+        "counts only within the 2h expiring horizon"
+    )
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' selected credentials_files pool "
         f"entry: account {picked!r} ({picked_path}) among {len(slugs)} listed "
-        f"credentials_files (quota-conditional pick — token-fresh, avoids "
-        f"5h-blocked and 7d-near-capped accounts, load-balanced per agent; "
-        f"picked usage 5h={fmt(h5)} 7d={fmt(d7)})",
+        f"credentials_files (policy={policy} — {rationale}; picked usage "
+        f"5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}; {audit})",
         file=stream,
     )
 
@@ -280,8 +328,10 @@ def _rotate_to_healthy_account(
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
 
-    from .._creds import pick_healthy_account
+    from .._account.quota_cache import quota_cache_present
+    from .._creds import pick_healthy_account, resolve_7d_policy
 
+    policy = resolve_7d_policy()
     picked = pick_healthy_account(
         pinned,
         now=now,
@@ -289,6 +339,11 @@ def _rotate_to_healthy_account(
         usage_7d=usage_7d,
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
+        policy=policy,
+        # Boot gate (constitution §2): a blind-quota pin fails loud on a host
+        # that HAS a cache (populator failure); a cache-less host degrades and
+        # boots (never-block invariant). See quota_cache_present.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.
@@ -297,9 +352,9 @@ def _rotate_to_healthy_account(
     stream = log_stream if log_stream is not None else sys.stderr
     print(
         f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (pinned account stale, 5h-blocked, or "
-        f"near its weekly cap; rotated to a fresh account with headroom, "
-        f"load-balanced per agent)",
+        f"{pinned!r} -> {picked!r} (policy={policy}; pinned account stale, "
+        f"5h-blocked, or otherwise outranked; rotated to the "
+        f"policy-preferred fresh account)",
         file=stream,
     )
 

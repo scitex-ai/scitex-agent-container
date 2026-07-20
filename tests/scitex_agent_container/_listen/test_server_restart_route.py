@@ -57,12 +57,11 @@ def isolated_env(tmp_path: Path, env_save_restore):
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
+    # Reload on the FAR side of the env restore — see
+    # test_server_startup_failed.py for why popping-then-reloading here
+    # silently re-pinned this constant at the operator's real $HOME.
+    env_save_restore.reload_after_restore(ss)
     yield tmp_path
-    os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
-    os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
-    os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
-    os.environ.pop("HOME", None)
-    importlib.reload(ss)
 
 
 @pytest.fixture

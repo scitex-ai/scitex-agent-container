@@ -57,7 +57,7 @@ def _snapshot_with_expiry(home: Path, name: str, expires_at_ms: int) -> None:
 
 def test_sync_live_exits_zero_for_valid_live(sandbox_home):
     # Arrange
-    _write_live(sandbox_home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["sync-live"])
@@ -67,12 +67,12 @@ def test_sync_live_exits_zero_for_valid_live(sandbox_home):
 
 def test_sync_live_reports_saved_store_name(sandbox_home):
     # Arrange
-    _write_live(sandbox_home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["sync-live"])
     # Assert
-    assert "wyusuuke-gmail-com" in result.output
+    assert "alpha-example-com" in result.output
 
 
 def test_sync_live_json_action_saved(sandbox_home):
@@ -88,7 +88,7 @@ def test_sync_live_json_action_saved(sandbox_home):
 
 def test_sync_live_idempotent_reports_up_to_date(sandbox_home):
     # Arrange — sync once, then sync again over the unchanged live cred.
-    _write_live(sandbox_home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     runner = CliRunner()
     runner.invoke(account, ["sync-live"])
     # Act
@@ -105,7 +105,7 @@ def test_sync_live_idempotent_reports_up_to_date(sandbox_home):
 
 def test_sync_live_exits_nonzero_when_live_expired(sandbox_home):
     # Arrange — expired live cred must NOT be saved.
-    _write_live(sandbox_home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["sync-live"])
@@ -127,7 +127,7 @@ def test_sync_live_exits_nonzero_when_live_absent(sandbox_home):
 
 def test_sync_live_error_message_points_at_login(sandbox_home):
     # Arrange
-    _write_live(sandbox_home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["sync-live"])

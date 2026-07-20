@@ -9,11 +9,11 @@ Two deliberate choices keep this hermetic without faking anything:
   so the merged leg is satisfied locally and ``gh`` is never invoked — no
   network, no flake, and the CLI is exercised with its REAL default seams
   rather than injected ones.
-* ``SCITEX_TODO_TASKS_YAML_SHARED`` is redirected to a temp store for the
-  WHOLE module (verified to be honoured at call time). The alarm defaults
-  ON under ``--apply``, so without this a test would card the operator's
-  real board. Belt and braces: tests whose subject is not the alarm pass
-  ``--no-alarm`` anyway.
+* ``SAC_EVENT_LOG`` is redirected to a temp file for the WHOLE module
+  (resolved per call, so it is honoured at call time). The alarm defaults
+  ON under ``--apply``, so without this a test would write into the
+  operator's real event log. Belt and braces: tests whose subject is not
+  the alarm pass ``--no-alarm`` anyway.
 
 The assertions that matter are the EXIT CODES and the DISK: ``--dry-run``
 is the default and must leave every directory exactly where it was, and a
@@ -32,6 +32,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from scitex_agent_container._events import (
+    EVENT_LOG_ENV,
+    SUBJECT_DEGRADED,
+    read_events,
+)
 from scitex_agent_container.cli_pkg._worktree_gc import worktree_gc
 
 
@@ -40,16 +45,16 @@ def _git(repo: Path, *args: str) -> None:
 
 
 @pytest.fixture
-def todo_store(tmp_path: Path, env_save_restore) -> Path:
-    """Redirect scitex-todo to a temp store for this whole module.
+def event_log(tmp_path: Path, env_save_restore) -> Path:
+    """Redirect sac's event log to a temp file for this whole module.
 
     The alarm rides --apply by default; a test must never write to the
-    operator's real board. Env redirect (not a mock) — the same mechanism
-    the fleet uses, and it resolves at call time.
+    operator's real log. Env redirect (not a mock) — the documented
+    ``SAC_EVENT_LOG`` override, resolved per call by ``event_log_path()``.
     """
-    store = tmp_path / "tasks.yaml"
-    env_save_restore.set("SCITEX_TODO_TASKS_YAML_SHARED", str(store))
-    return store
+    log = tmp_path / "sac-events.jsonl"
+    env_save_restore.set(EVENT_LOG_ENV, str(log))
+    return log
 
 
 @pytest.fixture
@@ -83,7 +88,7 @@ def worktree(repo: Path, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_reports_the_reapable_worktree(repo, worktree, todo_store):
+def test_dry_run_reports_the_reapable_worktree(repo, worktree, event_log):
     # Arrange — a clean, merged worktree; --min-age-hours 0 clears the age gate.
     path = worktree("reapable")
     # Act
@@ -94,7 +99,7 @@ def test_dry_run_reports_the_reapable_worktree(repo, worktree, todo_store):
     assert "would remove" in result.output
 
 
-def test_dry_run_leaves_the_worktree_on_disk(repo, worktree, todo_store):
+def test_dry_run_leaves_the_worktree_on_disk(repo, worktree, event_log):
     # Arrange — the report is a claim; the directory is the fact.
     path = worktree("reapable")
     # Act
@@ -105,7 +110,7 @@ def test_dry_run_leaves_the_worktree_on_disk(repo, worktree, todo_store):
     assert path.is_dir()
 
 
-def test_dry_run_says_it_removed_nothing(repo, worktree, todo_store):
+def test_dry_run_says_it_removed_nothing(repo, worktree, event_log):
     # Arrange — never silent: a dry run must SAY it was a dry run.
     worktree("reapable")
     # Act
@@ -116,7 +121,7 @@ def test_dry_run_says_it_removed_nothing(repo, worktree, todo_store):
     assert "nothing was removed" in result.output
 
 
-def test_dry_run_exits_zero_when_under_cap(repo, worktree, todo_store):
+def test_dry_run_exits_zero_when_under_cap(repo, worktree, event_log):
     # Arrange
     worktree("reapable")
     # Act
@@ -132,7 +137,7 @@ def test_dry_run_exits_zero_when_under_cap(repo, worktree, todo_store):
 # ---------------------------------------------------------------------------
 
 
-def test_apply_removes_the_reapable_worktree(repo, worktree, todo_store):
+def test_apply_removes_the_reapable_worktree(repo, worktree, event_log):
     # Arrange — the one case where deleting is right.
     path = worktree("reapable")
     # Act
@@ -144,7 +149,7 @@ def test_apply_removes_the_reapable_worktree(repo, worktree, todo_store):
     assert not path.exists()
 
 
-def test_apply_keeps_the_dirty_worktree(repo, worktree, todo_store):
+def test_apply_keeps_the_dirty_worktree(repo, worktree, event_log):
     # Arrange — merged + old, but dirty. --apply must not touch it.
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
@@ -157,7 +162,7 @@ def test_apply_keeps_the_dirty_worktree(repo, worktree, todo_store):
     assert (path / "README.md").read_text() == "uncommitted\n"
 
 
-def test_apply_names_the_keep_reason(repo, worktree, todo_store):
+def test_apply_names_the_keep_reason(repo, worktree, event_log):
     # Arrange — "kept" alone is useless; WHY is the product.
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
@@ -175,7 +180,7 @@ def test_apply_names_the_keep_reason(repo, worktree, todo_store):
 # ---------------------------------------------------------------------------
 
 
-def test_over_cap_exits_non_zero(repo, worktree, todo_store):
+def test_over_cap_exits_non_zero(repo, worktree, event_log):
     # Arrange — one dirty survivor against a cap of 0. An alarm that exits
     # 0 on sprawl is a report nobody reads.
     path = worktree("dirty")
@@ -189,7 +194,7 @@ def test_over_cap_exits_non_zero(repo, worktree, todo_store):
     assert result.exit_code == 1
 
 
-def test_unreadable_repo_exits_two(tmp_path, todo_store):
+def test_unreadable_repo_exits_two(tmp_path, event_log):
     # Arrange — unknown OUTRANKS over-cap: it is a known-bad you cannot see.
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
@@ -199,7 +204,7 @@ def test_unreadable_repo_exits_two(tmp_path, todo_store):
     assert result.exit_code == 2
 
 
-def test_unreadable_repo_is_labelled_unknown(tmp_path, todo_store):
+def test_unreadable_repo_is_labelled_unknown(tmp_path, event_log):
     # Arrange — "could not read" must never render as "clean".
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
@@ -214,7 +219,7 @@ def test_unreadable_repo_is_labelled_unknown(tmp_path, todo_store):
 # ---------------------------------------------------------------------------
 
 
-def test_repo_and_all_together_is_a_usage_error(repo, todo_store):
+def test_repo_and_all_together_is_a_usage_error(repo, event_log):
     # Arrange
     # Act
     result = CliRunner().invoke(worktree_gc, ["--repo", str(repo), "--all"])
@@ -222,7 +227,7 @@ def test_repo_and_all_together_is_a_usage_error(repo, todo_store):
     assert result.exit_code == 2
 
 
-def test_neither_repo_nor_all_is_a_usage_error(todo_store):
+def test_neither_repo_nor_all_is_a_usage_error(event_log):
     # Arrange
     # Act
     result = CliRunner().invoke(worktree_gc, [])
@@ -230,7 +235,7 @@ def test_neither_repo_nor_all_is_a_usage_error(todo_store):
     assert result.exit_code == 2
 
 
-def test_apply_with_dry_run_is_a_usage_error(repo, todo_store):
+def test_apply_with_dry_run_is_a_usage_error(repo, event_log):
     # Arrange — opposites. Silently preferring one would be a coin flip on
     # whether the run destroys anything.
     # Act
@@ -246,7 +251,7 @@ def test_apply_with_dry_run_is_a_usage_error(repo, todo_store):
 # ---------------------------------------------------------------------------
 
 
-def test_json_output_carries_the_exit_code(repo, worktree, todo_store):
+def test_json_output_carries_the_exit_code(repo, worktree, event_log):
     # Arrange — cron reads the JSON; it must agree with the exit code.
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
@@ -268,7 +273,7 @@ def test_json_output_carries_the_exit_code(repo, worktree, todo_store):
     assert json.loads(result.output)["exit_code"] == 1
 
 
-def test_json_output_reports_the_keep_reasons(repo, worktree, todo_store):
+def test_json_output_reports_the_keep_reasons(repo, worktree, event_log):
     # Arrange
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
@@ -281,7 +286,7 @@ def test_json_output_reports_the_keep_reasons(repo, worktree, todo_store):
     assert json.loads(result.output)["repos"][0]["keep_reasons"] == {"dirty": 1}
 
 
-def test_json_dry_run_reports_zero_removed(repo, worktree, todo_store):
+def test_json_dry_run_reports_zero_removed(repo, worktree, event_log):
     # Arrange
     worktree("reapable")
     # Act
@@ -298,9 +303,9 @@ def test_json_dry_run_reports_zero_removed(repo, worktree, todo_store):
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_writes_no_card_by_default(repo, worktree, todo_store):
-    # Arrange — a dry run is a REPORT; it must not mutate the board. Note
-    # no --no-alarm here: this pins the DEFAULT.
+def test_dry_run_records_nothing_by_default(repo, worktree, event_log):
+    # Arrange — a dry run is a REPORT; it must record no claim about a repo.
+    # Note no --no-alarm here: this pins the DEFAULT.
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
     # Act
@@ -308,12 +313,12 @@ def test_dry_run_writes_no_card_by_default(repo, worktree, todo_store):
         worktree_gc, ["--repo", str(repo), "--cap", "0", "--min-age-hours", "0"]
     )
     # Assert
-    assert not todo_store.exists()
+    assert not event_log.exists()
 
 
-def test_apply_over_cap_writes_a_card(repo, worktree, todo_store):
-    # Arrange — the scheduled path: --apply alarms by default, so the
-    # sprawl the GC could NOT fix reaches a surface the operator watches.
+def test_apply_over_cap_records_an_event(repo, worktree, event_log):
+    # Arrange — the scheduled path: --apply alarms by default, so the sprawl
+    # the GC could NOT fix leaves a durable record in sac's own log.
     path = worktree("dirty")
     (path / "README.md").write_text("uncommitted\n")
     # Act
@@ -322,5 +327,6 @@ def test_apply_over_cap_writes_a_card(repo, worktree, todo_store):
         ["--repo", str(repo), "--apply", "--cap", "0", "--min-age-hours", "0"],
     )
     # Assert
-    scitex_todo = pytest.importorskip("scitex_todo")
-    assert len(scitex_todo.list_tasks(str(todo_store), blocking_me=True)) == 1
+    degraded = read_events(event_log, subsystem="worktree-gc",
+                           event=SUBJECT_DEGRADED)
+    assert len(degraded) == 1

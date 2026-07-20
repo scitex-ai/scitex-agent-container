@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 def _clear_readonly_dst(dst: Path) -> None:
-    """Make an existing ``dst`` overwritable before a copy/write.
+    """Make ``dst`` a clean, writable slot before a copy/write.
 
     Hooks deployed under ``to_home/`` are commonly mode 0755/read-only
     (e.g. ``hook_switch_helper.sh``). ``shutil.copy2`` / ``Path.write_text``
@@ -50,13 +50,30 @@ def _clear_readonly_dst(dst: Path) -> None:
     ``PermissionError: [Errno 13]`` — the deploy from #142 hit exactly
     this. We add the owner-write bit so the in-place overwrite succeeds.
 
-    No-op when ``dst`` doesn't exist or is already writable. Symlinks are
-    left untouched (the symlink path unlinks them instead). Genuinely
+    A SYMLINK at ``dst`` is UNLINKED (not followed). A to_home deploy must
+    land a real, hermetic file at ``dst`` and must NEVER write THROUGH a
+    leftover link into whatever it points at. This generalises the
+    same-file guard :func:`_dst_resolves_to_source` (INCIDENT 2026-07-02 —
+    a symlink back to the SOURCE) to a symlink pointing at a DIFFERENT
+    target: e.g. a prior host-merge link ``$HOME/.claude/hooks/x ->
+    ~/.claude/hooks/x`` still in place when ``x`` later moves into the agent
+    baseline. Without unlinking, ``shutil.copy2`` / ``Path.write_text``
+    follow the link and CORRUPT the operator's real host file while leaving
+    a non-hermetic symlink in the container ``$HOME`` (and a DANGLING link
+    makes ``copy2`` raise ``FileNotFoundError`` outright). ``_deploy_plain_file``
+    still short-circuits a symlink-back-to-SOURCE via
+    :func:`_dst_resolves_to_source` BEFORE reaching here, so that legitimate
+    "linked host file, skip cleanly" case never hits the unlink.
+
+    No-op when ``dst`` doesn't exist or is already writable. Genuinely
     unexpected ``OSError`` (e.g. EROFS, EPERM on a foreign-owned file) is
     re-raised so the deploy still crashes loud rather than masking a real
     permissions problem.
     """
-    if dst.is_symlink() or not dst.exists():
+    if dst.is_symlink():
+        dst.unlink()
+        return
+    if not dst.exists():
         return
     mode = dst.stat().st_mode
     if not mode & stat.S_IWUSR:
@@ -138,7 +155,7 @@ def _deploy_mcp_merge(
 
     The two-pass overlay deploys the shared baseline ``.mcp.json`` first, then
     each agent's own lands here. Full-overwrite would silently drop the
-    baseline's default servers (sac / scitex-todo / claude-code-telegrammer);
+    baseline's default servers (sac / scitex-cards / claude-code-telegrammer);
     instead we UNION the ``mcpServers`` (baseline ∪ per-agent) via
     :func:`_mcp_merge.merge_mcp_json`. Fail-loud (no silent fallback): an
     unparseable source/destination ``.mcp.json`` raises

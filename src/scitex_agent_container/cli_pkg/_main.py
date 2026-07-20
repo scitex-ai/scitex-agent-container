@@ -72,7 +72,10 @@ COMMAND_CATEGORIES = [
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Host hygiene", ["worktree"]),
-    ("Diagnostics", ["doctor", "ports", "provenance", "ci"]),
+    (
+        "Diagnostics",
+        ["doctor", "ports", "provenance", "freshness", "auth-events", "ci"],
+    ),
     ("Remote testing", ["pytest"]),
     ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
     ("Developer", ["dev"]),
@@ -120,9 +123,18 @@ class _MainGroup(LazyGroup):
         # Read-only port-hygiene inventory: listen 7878 + a2a claims +
         # the scitex/sac port-assignment reference map.
         "ports": f"{_PKG}.ports_cmds:ports",
+        # READ-ONLY auth timeline: this host's auth-event log joined with the
+        # credential rotations the accounts store already audits. Observes
+        # only — auth-heal owns remediation.
+        "auth-events": f"{_PKG}.auth_events_cmds:auth_events",
         # Which code is ACTUALLY loaded — the heavy half of `--version`
         # (tree hash, duplicate/fossil .dist-info, shadowed imports).
         "provenance": f"{_PKG}.provenance_cmds:provenance",
+        # Is the loaded code CURRENT? (`provenance` answers "which code",
+        # this answers "is it what shipped".) Thin rendering over
+        # scitex-dev's `versioning` primitive — sac owns the constants and
+        # the symbol registry, dev owns every verdict.
+        "freshness": f"{_PKG}.freshness_cmds:freshness",
         # Spartan pytest runner (operator directive 2026-06-13). Phase 1
         # surface: ``sac pytest spartan run <repo>@<branch>``. The lazy
         # mapping resolves to the ``pytest_group`` click group exported
@@ -135,6 +147,11 @@ class _MainGroup(LazyGroup):
         # spec.yaml. Honest UNKNOWN for underivable facts; never prints
         # secret values.
         "whoami": f"{_PKG}._whoami:whoami",
+        # The never-stop-when-task-remains actuator: a Claude Code Stop hook that converts a
+        # stop-with-work-remaining into TAKING the next board item. Not a
+        # poller — it fires at turn end, which is the moment the agent would
+        # otherwise go idle holding claimed work.
+        "never-stop-when-task-remains": f"{_PKG}.never_stop_when_task_remains_cmds:never_stop_when_task_remains",
         "list-python-apis": f"{_PKG}.info_cmds:list_python_apis",
         "installation": f"{_PKG}.installation_group:install_group",
         # scitex-* version introspection across sac's base + overlay layers
@@ -292,7 +309,7 @@ class _MainGroup(LazyGroup):
     # subcommand's docstring/short_help.
     LAZY_SHORT_HELPS = {
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
-        "accounts": "Manage stored Claude Code accounts for credential rotation.",
+        "accounts": "Inspect provider accounts and manage Claude credentials.",
         "db": "Inspect and maintain the sac state database (state.db).",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",
@@ -313,6 +330,7 @@ class _MainGroup(LazyGroup):
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
+        "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",
         "worktree": "Git-worktree hygiene: report and reap safe, stale worktrees.",
         "install-shell-completion": "Wire up `<TAB>` completion in the user's shell rc.",
@@ -454,6 +472,21 @@ def cli_entry_point() -> None:
     otherwise.
     """
     import sys
+
+    # The staleness banner, in front of the command the operator types
+    # every day. Operator, 2026-07-14: "Comments and READMEs are meaningless
+    # if nobody reads them. If you're not on the latest version, that itself
+    # should emit a warning." So the control lives where the attention
+    # already is, not in a document.
+    #
+    # It is safe on the hot path because it reads ONE small cached JSON file
+    # written by `sac freshness refresh` — no network, no subprocess — and
+    # because every failure path inside it ends in silence. It warns only on
+    # a positively-STALE cached finding: a missing, expired or corrupt cache
+    # is UNKNOWN, and UNKNOWN says nothing at all.
+    from .._freshness import warn_once
+
+    warn_once()
 
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing

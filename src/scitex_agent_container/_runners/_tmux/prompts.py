@@ -12,10 +12,32 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+
+# Unicode whitespace Claude's Ink TUI renders where an ASCII space is expected.
+# The NBSP part is CAPTURED behaviour, not a guess: every REAL captured pane in
+# ``fixtures/pane_states`` shows the ``❯`` prompt gap as U+00A0, and the head-mba
+# capture renders the gap after the ``⎿`` result marker as U+00A0 too. The wider
+# set is defensive — those variants have NOT been observed from this TUI, they
+# are carried over from the proven emacs-claude-code matcher
+# (``--ecc-state-detection--normalize-text``) so a future Ink release that
+# substitutes one cannot silently blind the watchdog.
+_TUI_UNICODE_SPACE_RE = re.compile("[\u00a0\u2000-\u200b\u202f\u205f\u3000]")
+
+
+def normalize_tui_whitespace(text: str) -> str:
+    """Map the Unicode spaces the Ink TUI emits onto ASCII spaces.
+
+    The substitution is 1:1 and LENGTH-PRESERVING — it never collapses runs of
+    whitespace — so a caller's ``lstrip`` / ``startswith`` offsets keep meaning
+    the same thing they did on the raw line.
+    """
+    return _TUI_UNICODE_SPACE_RE.sub(" ", text)
 
 
 @dataclass
@@ -215,8 +237,6 @@ def _detect_compose_pending_unsent(content: str) -> bool:
     Excluded: lines that are just the decorative separator below an empty
     prompt — those contain only whitespace after ``❯``.
     """
-    import re
-
     # NBSP (U+00A0) included: Claude's Ink TUI renders the prompt gap as
     # ``❯\xa0[Pasted text …]`` (NBSP, not ASCII space); ``❯[ \t]+`` missed it
     # so a pasted-but-unsent buffer went undetected (proj-scitex-dev 2026-06-23).

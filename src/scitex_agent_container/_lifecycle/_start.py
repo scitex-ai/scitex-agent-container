@@ -26,6 +26,7 @@ from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 # Re-exported from _start_failure_diag for back-compat: this helper lived here
 # before the 512-line-cap split.
 from ._start_failure_diag import _format_boot_stderr_section  # noqa: F401
+from ._start_outcome import NOOP_ALREADY_RUNNING
 
 # Re-exported from _start_preflight for back-compat: callers/tests import these
 # pre-flight helpers from _start. ``_verify_real_liveness`` is no longer the
@@ -126,7 +127,8 @@ def agent_start(
             module-level API of :mod:`._lifecycle.handover`. Default
             ``None`` resolves to the real module.
 
-    Returns True on success, False on failure.
+    Truthy on success, False on failure; the already-running no-op
+    returns the tagged ``_start_outcome.NOOP_ALREADY_RUNNING``.
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
@@ -147,6 +149,10 @@ def agent_start(
     # one-shot capsule runs synchronously → real rc + real stderr land
     # in STARTUP_FAILED on crash (the diagnostic clew needs to find
     # WHY the bm172 capsule dies after one heartbeat).
+    # ``force`` is LOAD-BEARING here (incident 2026-07-12): this broker
+    # fires BEFORE the local force branch below, so dropping it silently
+    # downgraded an in-SIF RESTART into an unforced host start that
+    # no-op'd over the live agent and still reported SUCC + rc=0.
     if maybe_broker_in_sif_spawn(
         config.name,
         dry_run=dry_run,
@@ -154,6 +160,7 @@ def agent_start(
         foreground=foreground,
         one_shot=one_shot,
         assume_yes=assume_yes,
+        force=force,
     ):
         return True
 
@@ -327,7 +334,7 @@ def agent_start(
                 f"[{verdict.render()}]. No-op. Use --force to restart.",
                 file=__import__("sys").stderr,
             )
-            return True
+            return NOOP_ALREADY_RUNNING
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
         agent_stop(

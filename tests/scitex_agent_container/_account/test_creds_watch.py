@@ -21,10 +21,21 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._account.creds_watch import (
+    _signature,
     default_log_path,
     run_sync_once,
     watch_poll,
 )
+
+# A whole-second ns timestamp. Whole-second so the float(st_mtime)
+# conversion is EXACT, which makes the sub-ulp test below deterministic
+# rather than dependent on where the rounding boundary happens to fall.
+_PINNED_NS = 1_784_352_999_000_000_000
+
+# The live credential bundle's real size on this fleet. Successive
+# rotations were measured at exactly this length, which is why st_size
+# alone cannot detect a token rotation.
+_CRED_BYTES = 1_102
 
 
 @pytest.fixture
@@ -82,29 +93,29 @@ def test_default_log_path_under_runtime_logs(_isolate_home: Path) -> None:
 def test_run_sync_once_saves_store_for_valid_live(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 def test_run_sync_once_logs_saved_action(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert "saved wyusuuke-gmail-com" in log.getvalue()
+    assert "saved alpha-example-com" in log.getvalue()
 
 
 def test_run_sync_once_logs_invalid_without_raising(_isolate_home: Path) -> None:
     # Arrange — expired live cred: the watcher must log, not crash.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
@@ -115,12 +126,12 @@ def test_run_sync_once_logs_invalid_without_raising(_isolate_home: Path) -> None
 def test_run_sync_once_does_not_save_for_expired_live(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() - 10_000) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
     log = io.StringIO()
     # Act
     run_sync_once(log, home=home)
     # Assert
-    assert not _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert not _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +143,12 @@ def test_watch_poll_initial_sync_writes_store(_isolate_home: Path) -> None:
     # Arrange — valid live cred; zero poll iterations means only the
     # initial sync runs.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     watch_poll(log, home=home, iterations=0, sleep_fn=lambda _s: None)
     # Assert
-    assert _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 def test_watch_poll_resyncs_after_live_cred_change(_isolate_home: Path) -> None:
@@ -147,27 +158,27 @@ def test_watch_poll_resyncs_after_live_cred_change(_isolate_home: Path) -> None:
     home = _isolate_home
     first_ms = int((time.time() + 3_600) * 1_000)
     second_ms = int((time.time() + 9_999) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", first_ms)
+    _write_live(home, "alpha@example.com", first_ms)
     log = io.StringIO()
 
     def _mutate_on_first_poll(_seconds: float) -> None:
-        _write_live(home, "wyusuuke@gmail.com", second_ms)
+        _write_live(home, "alpha@example.com", second_ms)
 
     # Act
     watch_poll(home=home, log=log, iterations=1, sleep_fn=_mutate_on_first_poll)
     # Assert — the store now holds the SECOND (fresher) expiry.
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     assert json.loads(snap.read_text())["claudeAiOauth"]["expiresAt"] == second_ms
 
 
 def test_watch_poll_logs_change_detected_on_mutation(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
 
     def _mutate(_seconds: float) -> None:
-        _write_live(home, "wyusuuke@gmail.com", int((time.time() + 9_999) * 1_000))
+        _write_live(home, "alpha@example.com", int((time.time() + 9_999) * 1_000))
 
     # Act
     watch_poll(home=home, log=log, iterations=1, sleep_fn=_mutate)
@@ -180,9 +191,91 @@ def test_watch_poll_no_change_does_not_log_change_detected(
 ) -> None:
     # Arrange — sleep_fn leaves the file untouched, so no change fires.
     home = _isolate_home
-    _write_live(home, "wyusuuke@gmail.com", int((time.time() + 3_600) * 1_000))
+    _write_live(home, "alpha@example.com", int((time.time() + 3_600) * 1_000))
     log = io.StringIO()
     # Act
     watch_poll(home=home, log=log, iterations=2, sleep_fn=lambda _s: None)
     # Assert
     assert "change detected" not in log.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# _signature — the change-detection EQUALITY key
+#
+# A term missing from this key is a token rotation the watcher never
+# reports. Each test below pins the OTHER two terms so it fails if and
+# only if its own term is dropped — i.e. each is a mutation test for one
+# element of the tuple.
+#
+# Note on method: timestamps are pinned with os.utime(ns=...) rather than
+# produced by sleeping. A test that merely writes twice in quick
+# succession does NOT discriminate the old key from the new one on a
+# nanosecond-granularity filesystem — both pass — which is exactly how
+# the float-mtime defect survived review. Pinning states the intended
+# collision directly instead of hoping the scheduler produces it.
+# ---------------------------------------------------------------------------
+
+
+def test_signature_is_none_for_absent_file(tmp_path: Path) -> None:
+    # Arrange — no live credential on disk yet.
+    missing = tmp_path / ".credentials.json"
+    # Act
+    sig = _signature(missing)
+    # Assert
+    assert sig is None
+
+
+def test_signature_changes_when_mtime_moves_below_float_precision(
+    tmp_path: Path,
+) -> None:
+    # Arrange — two same-length writes 1 ns apart. At a 2026 epoch a
+    # double's ulp is ~477 ns, so both timestamps convert to the SAME
+    # st_mtime float: the old (st_mtime, st_size) key cannot see this.
+    # Size and inode are held constant (in-place rewrite), so mtime_ns is
+    # the only term that can distinguish them.
+    path = tmp_path / ".credentials.json"
+    path.write_text("a" * _CRED_BYTES)
+    os.utime(path, ns=(_PINNED_NS, _PINNED_NS))
+    before = _signature(path)
+    path.write_text("b" * _CRED_BYTES)
+    os.utime(path, ns=(_PINNED_NS + 1, _PINNED_NS + 1))
+    # Act
+    after = _signature(path)
+    # Assert
+    assert after != before
+
+
+def test_signature_changes_when_only_inode_moves(tmp_path: Path) -> None:
+    # Arrange — an atomic tmp+os.replace rotation, which is how BOTH
+    # credential writers we control update the file. mtime and size are
+    # forced identical across the swap, so the inode is the only term
+    # left that can reveal the rotation.
+    path = tmp_path / ".credentials.json"
+    path.write_text("a" * _CRED_BYTES)
+    os.utime(path, ns=(_PINNED_NS, _PINNED_NS))
+    before = _signature(path)
+    rotated = tmp_path / ".credentials.json.tmp"
+    rotated.write_text("b" * _CRED_BYTES)
+    os.replace(rotated, path)
+    os.utime(path, ns=(_PINNED_NS, _PINNED_NS))
+    # Act
+    after = _signature(path)
+    # Assert
+    assert after != before
+
+
+def test_signature_changes_when_only_size_moves(tmp_path: Path) -> None:
+    # Arrange — models a coarse (whole-second) filesystem by pinning the
+    # timestamp identical across an in-place rewrite that keeps the same
+    # inode. Size is then the only term that can see the change, which is
+    # why it stays in the key even though mtime_ns is finer-grained.
+    path = tmp_path / ".credentials.json"
+    path.write_text("a" * _CRED_BYTES)
+    os.utime(path, ns=(_PINNED_NS, _PINNED_NS))
+    before = _signature(path)
+    path.write_text("a" * (_CRED_BYTES * 2))
+    os.utime(path, ns=(_PINNED_NS, _PINNED_NS))
+    # Act
+    after = _signature(path)
+    # Assert
+    assert after != before

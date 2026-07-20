@@ -41,14 +41,14 @@ from scitex_agent_container._account.quota_cache import (
 SAMPLE = {
     "written_at": 1780352404.82,
     "accounts": {
-        "wyusuuke@gmail.com": {
-            "short": "wyusuuke",
+        "alpha@example.com": {
+            "short": "alpha",
             "h5": 17.0,
             "d7": 3.0,
             "ttl_h": 7.74,
         },
-        "ywata1989@gmail.com": {
-            "short": "ywata1989",
+        "beta@example.com": {
+            "short": "beta",
             "h5": 11.0,
             "d7": 2.0,
             "ttl_h": 6.52,
@@ -86,7 +86,7 @@ def clean_env(env_save_restore) -> None:
 @pytest.mark.parametrize(
     "field,expected",
     [
-        ("short", "ywata1989"),
+        ("short", "beta"),
         ("h5", 11.0),
         ("d7", 2.0),
         ("ttl_h", 6.52),
@@ -96,7 +96,7 @@ def test_read_quota_entry_short_match_returns_field(
     cache_file, clean_env, field: str, expected
 ) -> None:
     # Arrange
-    dirname = "ywata1989-gmail-com"
+    dirname = "beta-example-com"
     # Act
     entry = read_quota_entry(account=dirname, cache_path=cache_file)
     # Assert
@@ -121,23 +121,23 @@ def test_read_quota_entry_reads_account_from_env(
     cache_file, clean_env, env_save_restore
 ) -> None:
     # Arrange
-    env_save_restore.set(ENV_ACCOUNT, "wyusuuke-gmail-com")
+    env_save_restore.set(ENV_ACCOUNT, "alpha-example-com")
     # Act
     entry = read_quota_entry(cache_path=cache_file)
     # Assert
-    assert entry is not None and entry["short"] == "wyusuuke"
+    assert entry is not None and entry["short"] == "alpha"
 
 
 def test_read_quota_entry_reads_cache_path_from_env(
     cache_file, clean_env, env_save_restore
 ) -> None:
     # Arrange
-    env_save_restore.set(ENV_ACCOUNT, "wyusuuke-gmail-com")
+    env_save_restore.set(ENV_ACCOUNT, "alpha-example-com")
     env_save_restore.set(ENV_QUOTA_CACHE_PATH, str(cache_file))
     # Act
     entry = read_quota_entry()
     # Assert
-    assert entry is not None and entry["short"] == "wyusuuke"
+    assert entry is not None and entry["short"] == "alpha"
 
 
 def test_read_quota_entry_default_path_constant_is_stable() -> None:
@@ -170,7 +170,7 @@ def test_read_quota_entry_none_on_missing_file(tmp_path: Path, clean_env) -> Non
     # Arrange
     nope = tmp_path / "does-not-exist.json"
     # Act
-    entry = read_quota_entry(account="wyusuuke-gmail-com", cache_path=nope)
+    entry = read_quota_entry(account="alpha-example-com", cache_path=nope)
     # Assert
     assert entry is None
 
@@ -180,7 +180,7 @@ def test_read_quota_entry_none_on_malformed_json(tmp_path: Path, clean_env) -> N
     bad = tmp_path / "bad.json"
     bad.write_text("this is not valid json {", encoding="utf-8")
     # Act
-    entry = read_quota_entry(account="wyusuuke-gmail-com", cache_path=bad)
+    entry = read_quota_entry(account="alpha-example-com", cache_path=bad)
     # Assert
     assert entry is None
 
@@ -202,7 +202,7 @@ def test_read_quota_entry_none_on_wrong_typed_fields(tmp_path: Path, clean_env) 
             {
                 "accounts": {
                     "x@y.z": {
-                        "short": "wyusuuke",
+                        "short": "alpha",
                         "h5": "lots",
                         "d7": 3,
                         "ttl_h": 1,
@@ -213,7 +213,7 @@ def test_read_quota_entry_none_on_wrong_typed_fields(tmp_path: Path, clean_env) 
         encoding="utf-8",
     )
     # Act
-    entry = read_quota_entry(account="wyusuuke-gmail-com", cache_path=bad)
+    entry = read_quota_entry(account="alpha-example-com", cache_path=bad)
     # Assert
     assert entry is None
 
@@ -227,7 +227,7 @@ def test_read_quota_entry_rejects_bool_as_percentage(tmp_path: Path, clean_env) 
             {
                 "accounts": {
                     "x@y.z": {
-                        "short": "wyusuuke",
+                        "short": "alpha",
                         "h5": True,
                         "d7": 3.0,
                         "ttl_h": 1.0,
@@ -238,7 +238,7 @@ def test_read_quota_entry_rejects_bool_as_percentage(tmp_path: Path, clean_env) 
         encoding="utf-8",
     )
     # Act
-    entry = read_quota_entry(account="wyusuuke-gmail-com", cache_path=bad)
+    entry = read_quota_entry(account="alpha-example-com", cache_path=bad)
     # Assert
     assert entry is None
 
@@ -246,9 +246,9 @@ def test_read_quota_entry_rejects_bool_as_percentage(tmp_path: Path, clean_env) 
 def test_read_quota_entry_none_on_non_dict_accounts(tmp_path: Path, clean_env) -> None:
     # Arrange — top-level `accounts` is a list (legacy / future shape).
     bad = tmp_path / "list.json"
-    bad.write_text(json.dumps({"accounts": [{"short": "wyusuuke"}]}), encoding="utf-8")
+    bad.write_text(json.dumps({"accounts": [{"short": "alpha"}]}), encoding="utf-8")
     # Act
-    entry = read_quota_entry(account="wyusuuke-gmail-com", cache_path=bad)
+    entry = read_quota_entry(account="alpha-example-com", cache_path=bad)
     # Assert
     assert entry is None
 
@@ -257,11 +257,11 @@ def test_read_quota_entry_explicit_account_beats_env(
     cache_file, clean_env, env_save_restore
 ) -> None:
     # Arrange
-    env_save_restore.set(ENV_ACCOUNT, "wyusuuke-gmail-com")
+    env_save_restore.set(ENV_ACCOUNT, "alpha-example-com")
     # Act — explicit kwarg overrides env.
-    entry = read_quota_entry(account="ywata1989-gmail-com", cache_path=cache_file)
+    entry = read_quota_entry(account="beta-example-com", cache_path=cache_file)
     # Assert
-    assert entry is not None and entry["short"] == "ywata1989"
+    assert entry is not None and entry["short"] == "beta"
 
 
 def test_read_quota_entry_returns_copy_not_reference(cache_file, clean_env) -> None:
@@ -273,12 +273,12 @@ def test_read_quota_entry_returns_copy_not_reference(cache_file, clean_env) -> N
     # surrounding happy-path tests; reach in via ``or {}`` so a future
     # regression there fails through the actual under-test assertion
     # below instead of an unrelated precondition assert.
-    first = read_quota_entry(account="wyusuuke-gmail-com", cache_path=cache_file) or {}
+    first = read_quota_entry(account="alpha-example-com", cache_path=cache_file) or {}
     first["short"] = "mutated"
     # Act
-    second = read_quota_entry(account="wyusuuke-gmail-com", cache_path=cache_file) or {}
+    second = read_quota_entry(account="alpha-example-com", cache_path=cache_file) or {}
     # Assert
-    assert second.get("short") == "wyusuuke"
+    assert second.get("short") == "alpha"
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@ def test_read_quota_entry_returns_copy_not_reference(cache_file, clean_env) -> N
 @pytest.mark.parametrize(
     "key,expected",
     [
-        (META_KEY_ACCOUNT, "wyusuuke"),
+        (META_KEY_ACCOUNT, "alpha"),
         (META_KEY_PCT_5H, 17.0),
         (META_KEY_PCT_7D, 3.0),
         (META_KEY_TTL_H, 7.74),
@@ -303,7 +303,7 @@ def test_build_a2a_metadata_field(
     expected,
 ) -> None:
     # Arrange
-    env_save_restore.set(ENV_ACCOUNT, "wyusuuke-gmail-com")
+    env_save_restore.set(ENV_ACCOUNT, "alpha-example-com")
     env_save_restore.set(ENV_QUOTA_CACHE_PATH, str(cache_file))
     # Act
     meta = build_a2a_metadata()
@@ -319,7 +319,7 @@ def test_build_a2a_metadata_emits_exactly_four_keys(
     cache_file, clean_env, env_save_restore
 ) -> None:
     # Arrange
-    env_save_restore.set(ENV_ACCOUNT, "wyusuuke-gmail-com")
+    env_save_restore.set(ENV_ACCOUNT, "alpha-example-com")
     env_save_restore.set(ENV_QUOTA_CACHE_PATH, str(cache_file))
     expected_keys = {
         META_KEY_ACCOUNT,
@@ -368,7 +368,10 @@ def test_host_cache_candidates_puts_runtime_convention_path_first(
     # Act
     candidates = host_cache_candidates(home)
     # Assert
-    assert candidates[0] == home / ".scitex" / "agent-container" / "runtime" / "quota-cache.json"
+    assert (
+        candidates[0]
+        == home / ".scitex" / "agent-container" / "runtime" / "quota-cache.json"
+    )
 
 
 def test_host_cache_candidates_keeps_legacy_path_as_backcompat_last(

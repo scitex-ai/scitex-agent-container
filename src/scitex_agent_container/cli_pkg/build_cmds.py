@@ -54,8 +54,10 @@ def check(name_or_path: str) -> None:
 
     all_ok = True
 
-    # Container backend binary — apptainer-only since the 2026-05-13 ripout.
-    backend = config.runtime or "apptainer"
+    # ``runtime`` selects the SAC execution path (for example ``tui``); it is
+    # not an executable name. Apptainer is the sole container backend since
+    # the 2026-05-13 backend ripout, including for TUI sessions.
+    backend = "apptainer"
     backend_bin = shutil.which(backend)
     if backend_bin:
         console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")

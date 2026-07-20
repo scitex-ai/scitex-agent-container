@@ -6,6 +6,655 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-20
+
+### Changed
+
+- **sac records its own operational events, and no longer writes into a
+  third-party application's store.** sac's unattended passes — the fleet
+  reconciler, the auth-heal login-expired restarter, the host-sync drift check,
+  the worktree GC, the accounts refresh — decide things about the fleet every
+  few minutes, forever, with nobody watching. Their verdicts went to stderr and
+  into another application's data store. Neither is sac's own record: the stderr
+  line lands in a journal nobody opens (which is how a dead cron job stayed dead
+  for 49 days), and a store sac does not own can be absent, unwritable or
+  renamed — and when it is, sac retains no account of what its own timers
+  decided. An unlogged decision is an undebuggable one.
+
+  New `_events/` package: an append-only JSONL log of what sac observed and
+  decided, in sac's own vocabulary (`pass-completed`, `subject-degraded`,
+  `subject-unknown`, `subject-recovered`, `self-impaired`, `self-recovered`),
+  following the shape `_authevents/_log.py` already set. Default
+  `<runtime>/sac-events.jsonl`, relocatable with `SAC_EVENT_LOG`, resolved per
+  call. Fail-open but never silent — a failed write always prints loudly.
+
+  The four alarm modules each carried a near-identical private copy of the same
+  routing helpers; all four are replaced by one shared implementation
+  (`_events/_verdicts.py`), removing roughly 240 lines of duplication.
+
+  Interface changes: `reconcile_pass()` / `auth_heal_pass()` take `events_path`
+  where they took `store`; the `alarm` block of `sac host sync --json` and
+  `sac worktree gc --json` now uses the uniform keys
+  `degraded` / `unknown` / `recovered` / `failed`.
+
+  `tests/scitex_agent_container/test__card_package_boundary.py` enforces the
+  boundary with an AST scan asserting the importer set EXACTLY equals the two
+  files still permitted, so both a new import and a stale allowance go red.
+
+### Fixed
+
+- **The account picker booted an agent onto a quota-exhausted account when the
+  quota cache was empty.** It collapsed UNKNOWN quota into "OK" (constitution
+  §2 — unknown is a third state, never a pole), kept a blind pin, and read
+  `5h=? 7d=?` — on 2026-07-20 scitex-cards could not run after a plain restart
+  because the picker kept selecting the exhausted pinned account.
+  `pick_healthy_account` gains `require_quota_evidence`: a blind pin rotates off
+  toward a known-headroom account, and a fully-blind pick fails loud with an
+  actionable `sac accounts refresh-quota-cache` hint. The boot preflight gates
+  it on `quota_cache_present()`, so a host WITH a cache whose populator produced
+  nothing fails loud, while a cache-LESS host (fresh install / CI /
+  quota-cron-less Spartan node) still degrades to freshness-only and boots — the
+  documented never-block invariant is preserved. The health-probing layer moved
+  to `_creds/_account_health.py` (behaviour-neutral extraction).
+
+## [0.23.0] - 2026-07-20
+
+### Fixed
+
+- **`sac agents restart` inside a container reported success while restarting
+  nothing.** The plain restart path decided whether to broker to the host's
+  `sac listen` by INSPECTING AN EXCEPTION MESSAGE: it fell back only when the
+  local restart raised an error containing the literal substring
+  `"not found in registry"`. Local resolution has two legs — a registry row OR a
+  resolvable spec — and specs are bind-mounted into every container, so the spec
+  leg succeeded, nothing raised, the handler was never consulted, and the restart
+  ran locally inside the SIF where it cannot touch the host's tmux session. It
+  then printed `Agent 'x' restarted` and exited 0. The broker fired only for
+  agents that did not exist at all. Measured: restarting a real agent from a
+  container returned rc=0 with no `POST /agents/<name>/restart` in the host
+  listen log and the target's pid unchanged 70 minutes later.
+
+  Two faults, one refactor. Gating control flow on a substring of an error
+  message is fragile (a reword silently disables the broker) and it INVERTS the
+  logic (the fallback requires a failure that the silent success prevents).
+  Both the plain and the `--fresh` path — which used a second, different
+  predicate — now ask one readable question, `must_broker_to_host()`: *am I
+  inside an apptainer SIF?* That is the same rule the start path already uses,
+  and the same one the host's restart handler assumes when it strips the SIF env
+  markers from the child it shells. In a SIF with no reachable listen the restart
+  FAILS LOUD; there is deliberately no fall-through to the local no-op.
+
+- **A restart that changed nothing no longer reports success.** `rc=0` meant
+  "the call returned", never "the state changed" — the exit code was
+  byte-identical between the no-op and a real restart. A locally-performed
+  restart now captures the agent's identity-of-run
+  (`<runtime-dir>/<agent>/instance_id`, a uuid7 minted at launch) before and
+  after, and refuses to report success unless it CHANGED. The verdict is a
+  ternary, never a binary: `true` (a new run exists), `false` (the run is
+  unchanged, or gone entirely — both definitive, we held the before-evidence),
+  and `null` (no marker either side — no evidence, so the verdict abstains
+  rather than inventing a failure). It rides the `--json` envelope as
+  `verified` / `verified_reason` / `run_before` / `run_after`; a brokered
+  restart relays the HOST's verdict rather than re-deriving one it cannot see.
+
+- **Restart routing is now logged.** Whether a restart was handled locally or
+  brokered — and why — is appended as JSONL to
+  `<runtime-dir>/logs/restart_decision.log` before any work starts, plus an
+  outcome line after. Previously the fact that no request had been sent anywhere
+  was recorded nowhere: the listen log can only show what ARRIVED.
+
+- **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
+  is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
+  pending work under `[Unreleased]` while the declared version is one the
+  CHANGELOG has already shipped.
+
+  This is the third occurrence. `v0.21.22` was released to "stop the version lie
+  (21 PRs shipped under a spent number)". `v0.22.1` was released because #771's
+  `srun` fix never reached the machine — the installed wheel still held pre-#771
+  bytes, `grep -c -- --input=none` returned 0, and its version read `0.22.0`
+  *because the version was never bumped when #771 merged*. Both were repaired by
+  hand, and neither left anything behind that would notice a third time.
+
+  The third time arrived hours after the second: PR #782 merged 1691 lines and a
+  new `[codex]` extra onto `develop` while `pyproject.toml` still read `0.22.1`,
+  a version already published to PyPI. Installs key their build-wheel cache on
+  `(name, version)` rather than on content, so `--force-reinstall` is free to
+  serve the published wheel back, report success, and ship none of the new work.
+  The version string cannot distinguish the two; only the bytes can.
+
+  The guard is file-only — no network, no git, no tags — so it cannot flake on
+  the GPFS-backed runners that have been dropping `_work/_temp` files out from
+  under `actions/checkout`. It ships with controls that exercise the predicate
+  against the incident state and its bumped counterpart, because a check that has
+  never been observed to go red is a hope with a docstring on it.
+
+### Removed
+
+- **The fleet-default pre-stop rescue is ABOLISHED** (operator, 2026-07-19:
+  「rescue 一切やめましょう」). `_lifecycle/_pre_stop_rescue.py` and
+  `_lifecycle/_pre_stop_rescue_git.py` are archived to `.old/`, the call site
+  in `_lifecycle/_stop.agent_stop` is gone, and stopping an agent now leaves a
+  dirty worktree exactly as dirty as it found it.
+
+  **Its central contract was enforced against the wrong verb.** The module
+  docstring promised "no code path can publish on the agent's behalf" and
+  there was deliberately no push primitive — yet rescue commits are reachable
+  from `origin/develop` today. The leak was never a push. On a NON-protected
+  topic branch the rescue committed IN PLACE; that branch later became a PR
+  and was merged normally, carrying the rescue commit into `develop`. A
+  no-push guard cannot stop a commit riding a legitimate merge. Verified with
+  `git branch -a --contains`: `5340014c` sits on
+  `fix/restart-preflight-auth-before-stop` and `1042139e` on
+  `feat/a2a-default-communicate-and-role-visibility` — feature branches, not
+  the `rescue/` side-branches the design assumed.
+
+  **The damage was real.** Rescue commit `37d83977` (2026-07-01), an ancestor
+  of both `develop` and `main`, committed nine `mode 160000` gitlinks under
+  `.tmp-audit/` with no `.gitmodules`, breaking `actions/checkout` on every
+  run of every workflow until PR #769 removed them. That is the generic
+  failure, not bad luck: a broad `git add -A` over an agent's dirty tree
+  sweeps up whatever happens to be sitting in it.
+
+  **Nothing else depended on it.** `_state/worktree_safety.is_safe_to_reap`
+  independently refuses to reap any worktree whose `git status --porcelain` is
+  non-empty, so the lead-learnings/19 prune-destruction window stays closed
+  without the rescue; the rescue only ever changed whether the work was
+  already committed, never whether the janitor could destroy it. Uncommitted
+  work also still survives a restart on its own — `workdir` is a host bind
+  mount.
+
+  Regression guard: `tests/scitex_agent_container/_lifecycle/test__stop_no_rescue.py`
+  asserts HEAD is unmoved across a stop with a dirty topic-branch worktree
+  (RED against the pre-removal code), with controls that the stop still
+  succeeds and the runtime still tears down.
+
+  The `<git-dir>/sac-owner` stamp written by the `WorktreeCreate` baseline
+  hook is **retained but now has no consumer** — its only reader was the
+  rescue's ownership gate. Kept because the write is one cheap out-of-tree
+  file and the hook is a baked baseline asset; its docstring now says plainly
+  that no ownership gate is enforced anywhere.
+
+### Added
+
+- Add `spec.claude.provider: codex` for keeping Claude Code as the harness
+  while routing model calls through scitex-genai's ChatGPT Codex subscription
+  gateway. The new `[codex]` extra installs the gateway, and `sac accounts
+  list` discovers provider-qualified accounts from SAC's OpenAI store.
+
+- Add `sac accounts sync-openai` and show collected OpenAI Codex/ChatGPT
+  accounts without exposing tokens or API keys. The combined table and JSON
+  account list distinguish identities such as `openai:person-example-com` and
+  `claude-code:person-example-com` while preserving existing JSON fields.
+
+## [0.22.1] - 2026-07-19
+
+### Fixed
+
+- **The SIF bake ran a script the fix had never reached** (follow-up to PR #771).
+  #771 correctly identified that an unguarded `srun` was eating the bake script
+  off its own stdin, and added `--input=none` to all three `srun` calls. The next
+  real bake failed *identically* — build complete, `.partial` left, no
+  `SAC_BAKE_RESULT`, and `bake-remote FAILED:` with nothing after the colon.
+
+  The script that ran was never the fixed one. `sac image bake-remote` pipes the
+  script off the **installed wheel**, and the installed wheel still held pre-#771
+  bytes: `grep -c -- --input=none` on it returned **0**, with all three `srun`
+  calls unguarded at lines 223, 266 and 279. Its version read `0.22.0` — and so
+  did the checkout, because the version was never bumped when #771 merged. A
+  wheel cache keyed on `(name, version)` had served the stale build straight back
+  through a `--force-reinstall`. **The version string could not tell the two
+  apart; only the bytes could.**
+
+  Three changes, because each half failed on its own:
+
+  - `version` is bumped to `0.22.1`, so the cache key moves with the fix. A
+    merged fix that cannot reach a machine is not deployed.
+  - `run_remote_bake` now **preflights the script it is about to pipe**
+    (`unguarded_srun_invocations`) and refuses to bake when a guard is missing,
+    naming the offending file, the installed version, the exact line numbers and
+    the cache-busting reinstall that fixes it — instead of spending an hour of
+    standing lease producing another orphan `.partial`.
+  - Bake failures now **carry their evidence**. `bake-remote FAILED:` composes a
+    self-contained headline (a bare colon is invisible to the grep an operator
+    actually runs), and the reason carries the remote's exit status, the last
+    line of its stdout and the tail of its stderr. Previously `run_remote_bake`
+    discarded `returncode` and `stderr` entirely, so a failure that knew it had
+    failed could not say why. That is how this bug survived six silent runs.
+
+  Verified against the real artifact: the new preflight, run on the actual stale
+  script still installed on the master, reports all three unguarded calls.
+## [0.22.0] - 2026-07-19
+
+### Added
+
+- **A single collected fleet AUTH-EVENT log (`sac auth-events`)** (PR #763). Operator,
+  2026-07-18: 「サーバーが落とすんだから、ログを取ればいいんじゃないですか？」 — the
+  server is what drops us, so log it. New `_authevents` package: an append-only
+  JSONL rail at `<runtime>/auth-events.jsonl` (beside `auth-heal.log`), one line
+  per auth event, with UTC ISO timestamp, agent, event type, HTTP status,
+  account and free-text detail. It **OBSERVES ONLY** — no detector, no
+  restarter, no remediation; `auth-heal.py` keeps owning that.
+
+  **Attempt and outcome are SEPARATE records, joined by `attempt_id`.** This is
+  the point, not a detail: `auth-heal.log` carried 169 `-> auto-restart` lines
+  over seven days whose `age=` field never reset (one reached 262200s = three
+  days). Each stated an INTENT in the grammar of an EFFECT, and nothing existed
+  that could contradict one. `unresolved_attempts()` now answers "which restarts
+  were attempted and never shown to work" — covering both an outcome that says
+  `succeeded: false` and an outcome that never arrived. The suite
+  mutation-proves the separation: collapsing the two emissions into one combined
+  "restarted" event turns four tests red.
+
+  **The rotation event was never missing — it was unjoined.**
+  `_account._rotation_audit` has recorded every credential rotation to
+  `<accounts-store>/rotation-audit.jsonl` for weeks. Checked against the
+  2026-07-18 incident, the last record before six agents died at ~19:30 JST
+  reads `10:31:28 UTC` — the deaths, to the minute. So this PR adds **no second
+  rotation writer**; `_authevents._timeline` PROJECTS that existing audit at
+  read time, leaving `rotation-audit.jsonl` the single source of truth (and its
+  fingerprint-only security contract intact) while putting rotations and their
+  consequences in one ordered reading.
+
+  Fail-open throughout: every write is best-effort and returns a bool, so an
+  unwritable log can never abort the restart or refresh it observes. Fields are
+  tri-state — an undeterminable account is written as `null`, never guessed and
+  never omitted, since an absent key and an unknown value are different facts.
+  No `http_status` is synthesised from a "Login expired" banner: Claude Code
+  renders ANY 401 that way, sometimes when nothing expired, so a banner is
+  recorded as a banner.
+
+- **One state shape for a peer agent — every signal `True`/`False`/`None`
+  (`sac agents state`, `_agentstate`)** (PR #766). Every failure of the
+  2026-07-17/18 fleet incident was an UNKNOWN collapsed into a pole. The signals
+  were never the bug — that night's own restart log already printed
+  `delivery[unknown], process[dead], heartbeat[alive], registry[unknown]`,
+  tri-state and correct — and the verdict collapsed anyway. What was wrong was
+  the COMBINING, hidden at every call site, each folding whatever subset it
+  happened to hold.
+
+  `_spec.py` declares the signal set and which signals are LOAD-BEARING and
+  DECISIVE, so adding a criterion is a spec change rather than an edit at N call
+  sites. `_state.py` is the frozen `AgentState` dataclass: nine flat named
+  predicates, each `Optional[bool]`, plus a per-signal reason map and the RAW
+  captures they were read from — the shape never varies, and a non-bool raises
+  rather than evaluating as a pole. `_assess.py` is THE single pure fold: True =
+  every load-bearing signal healthy; False = one refutes with NO signal unread;
+  None = something load-bearing is unread, and the output NAMES which one.
+  `_journal.py` archives each reading to `<runtime>/agent-state.jsonl` with the
+  full pane captures and the ps line — truncation is MARKED, rotation RENAMES
+  and never condenses, because a verdict cannot be re-examined after the fact
+  but a capture can.
+
+  Two properties are the point. **Silence becomes a value**: a missing agent is
+  an all-`None` row that assesses UNKNOWN, not an absent row that reads as fine
+  — the shape that let scitex-hub sit login-expired unnoticed. And
+  **disagreement becomes visible**: `auth-status` and `list`, asked minutes
+  apart on one host, returned 12 agents and 11, with a live tmux session and a
+  live pid on an agent the registry called `defined`; that is now one row
+  showing `is_tmux_live=True` beside `is_registry_active=False`.
+
+  Mutation-proved, not asserted: collapsing the `if unresolved:` branch in the
+  fold turns 24 tests RED (77 still passing, so the gates are not trivially
+  red). Builds ON #758 rather than duplicating it — `_adapt.states_from_detection`
+  projects its `DetectionOutcome` + `Roster` into this shape, and the suite pins
+  that the projection reproduces the detector's own partition so the two cannot
+  drift.
+
+### Fixed
+
+- **`never-stop-when-task-remains`: exit 2 is not a verdict — gate it on a
+  parseable payload** (PR #768). The hook shelled out to `scitex-cards may-stop`
+  and read exit 2 as "work remains". Exit 2 is ALSO the universal CLI
+  usage-error code, so on any host whose scitex-cards predated the verb, click's
+  `No such command 'may-stop'` exited 2 and was consumed as an affirmative
+  BLOCK — with the usage text forwarded as `reason`, which Claude Code hands
+  back to the agent as its next instruction. Agents were told, repeatedly, that
+  they may not stop because of an error we could not interpret. The fail-open
+  path was never reached: the subprocess did not fail, it answered with a number
+  that meant two different things.
+
+  rc=2 now blocks ONLY when stdout also parses as the expected verdict (a
+  `runnable` key); rc=2 with empty or unparseable stdout is UNKNOWN and fails
+  open, loudly. `reason` is composed strictly from the parsed payload — raw
+  stderr never reaches it, since an unstructured channel carrying deprecation
+  notices and usage errors must not become an instruction. Volatile fields
+  (`idle_seconds`) are excluded so the loop-guard signature is stable and the
+  guard can actually trip; it could not before, because the reason moved every
+  turn.
+
+  A SECOND defect in the opposite direction was found while fixing: `may-stop`
+  answers in its OWN schema (`{agent, runnable, items, idle_seconds}`) with no
+  `decision` key, so `payload.get("decision") == "block"` was false and the gate
+  ALLOWED every stop on hosts where the detector works correctly — the feature
+  was inert wherever it was not harmful. The suite hid this by only ever feeding
+  it hook-protocol JSON the detector never emits; fixtures are now captured from
+  real runs. Diagnostics now report the argv executed, the resolved absolute
+  binary, and the version it claims, and `MIN_CARDS_VERSION` states the floor
+  rather than leaving skew to be discovered by an agent that cannot stop.
+
+- **CI: drop 9 committed `.tmp-audit` gitlinks that made checkout re-clone every
+  run** (PR #769). `develop` and `main` carried nine mode-160000 gitlinks under
+  `.tmp-audit/` with no `.gitmodules`, swept in by the 2026-07-01 rescue autosave
+  commit whose broad `git add` ran over a checkout with an unignored
+  ecosystem-audit scratch dir. A gitlink with no mapping makes `git submodule
+  status` fatal; `actions/checkout` runs that on every job, reads the fatal as
+  "Bad Submodules found", and DELETES AND RE-CLONES the whole workspace — every
+  run, every runner. On self-hosted Spartan runners sharing one filesystem that
+  is not merely slow: it widens the window for the shared-FS races (ESTALE on
+  the toolcache, locked `_temp` file-command files) that actually turn runs red.
+  Verified: a clean checkout of develop reproduced the error byte-for-byte
+  (rc=128); afterwards `git submodule status` exits 0 with no output.
+
+- **Recipes: a floor alone does not upgrade — `-U`/`--upgrade` so the routine
+  bake installs LATEST** (PR #765). Unpinning was only half of "a routine bake
+  must pick up new code". Every requirement in both recipes is already a FLOOR,
+  but a floor that is ALREADY SATISFIED is a no-op: uv/pip leave the installed
+  build in place and exit 0. That is exactly the steady state for the `:scitex`
+  layer, which bootstraps `From: ./sac-base.sif` and therefore INHERITS base's
+  venv with every scitex package already present — so without `-U` a rebake
+  re-resolves nothing, reships yesterday's packages, and reports success. A
+  FRESH-base bake happens to work either way, which is why this went unnoticed.
+  Operator ruling (2026-07-17): 「pin 止めしてたら routine 焼きする意味ないですからね」.
+  The bake now runs on a timer, so the silent no-op was live, not theoretical.
+  Both sac local-source installs are deliberately unchanged (`--reinstall-package`
+  / `--force-reinstall --no-deps` are the stronger, content-correct levers), and
+  the embedded freshness-gate heredoc still hashes identically in both `.def`
+  files.
+
+- **Security: make the creds-watch change key see a same-size token rotation**
+  (PR #761). `creds_watch._signature` returned `(st_mtime, st_size)` — an
+  equality key built from a float-second mtime, so two writes inside one
+  timestamp granule with the same length compare equal and the watcher concludes
+  nothing changed. That is not hypothetical for this file: a rotated token bundle
+  is the SAME LENGTH as its predecessor (measured on this fleet, the live
+  credential and its immediately-preceding `.bak` are both exactly 1102 bytes, as
+  is a backup from four days earlier), so `st_size` cannot see a rotation at all
+  and the timestamp was the only real term. Because a shared-account
+  `refreshToken` is single-use — one rotation invalidates every co-tenant's
+  in-memory token — a watcher that can miss a rotation is a watcher that cannot
+  warn anyone. The key is now `(st_mtime_ns, st_size, st_ino)`.
+
+## [0.21.26] - 2026-07-18
+
+### Added
+
+- **Periodic Spartan-side SIF bake + master pull/verify/atomic-swap (`sac image
+  bake-remote`, `sac.spartan-sif-bake` timer)** (PR #739). Per the operator's
+  2026-07-17 directive: bake fresh SIFs on Spartan and rsync them to the master,
+  so the master gets fresh images without spending its own CPU.
+  `containers/spartan-sif-bake.sh` is wheel-shipped and ssh-piped — nothing is
+  deployed to Spartan — and resolves the standing CPU lease BY NAME, runs
+  `srun --overlap` steps (never `sbatch`, never a login node), and gates on
+  quota (an UNKNOWN quota is a failure, not a pass), the `.def` `%post` gate and
+  an artifact symbol probe. The master leg pulls to a dot-prefixed `.incoming`
+  name, RE-VERIFIES independently (sha256 against the remote sidecar plus the
+  same symbol probe through local `apptainer exec`), then does an atomic
+  double-symlink swap and keep-3 prune. A failed leg leaves the live image
+  untouched and exits non-zero. The bake emits a single machine-readable
+  `SAC_BAKE_RESULT` verdict (BAKED/SKIPPED/FAILED — absence is a distinct
+  NO_RESULT state, not an implied pass). This PR also completes the
+  `scitex-todo` → `scitex-cards` rename inside the `%post` gates: #734 flipped
+  the install pins but left `md.version("scitex-todo")` and the dist-count loop
+  on the old name, so the FIRST CLEAN bake died on `PackageNotFoundError` —
+  earlier master bakes had only passed via a lingering pre-rename `.dist-info`.
+
+- **sac REGISTERS scitex-cards' Stop hook, so an agent cannot sit idle while its
+  board holds runnable work** (PR #755). The invariant: idle-with-work-pending
+  must be unreachable BY DESIGN, not a state detected afterwards and repaired.
+  On 2026-07-18 scitex-hub sat idle at its prompt for 80+ minutes holding 5
+  `in_progress` cards and the OPERATOR noticed it twice; a notification changed
+  nothing, because a stopped agent reads nothing. That is the structural flaw in
+  every notify/sweep design — the repair arrives at the one moment its subject
+  cannot act on it — so the trigger fires at the only instant the agent is still
+  running: turn end. **The ownership boundary is the point of this change.** The
+  first cut parsed scitex-cards' stdout JSON *and* their numbered stderr hints,
+  making their output an API they could not change without breaking us — the
+  exact coupling that was deleted in the other direction when cards' bridge was
+  killed for depending on sac. We removed their dependency on us and then
+  quietly built ours on them. The agreed split: **scitex-cards ships the hook
+  EXECUTABLE** and emits the Stop-hook JSON itself (both ends of that contract
+  are theirs); **sac REGISTERS it** — settings materialisation, deployment to
+  every agent, the de-dupe algebra, the loop guard, fail-open. The parsing layer
+  is gone (−2,115 lines net on the feature's own files); sac now reads only the
+  Claude Code hook protocol, which both sides already target, and forwards their
+  payload verbatim including unknown fields, so cards can evolve their output
+  with no sac release. Three states, never two: allow / runnable / unknown — an
+  exit 2 we merely failed to PARSE is still runnable and still blocks (the exit
+  code already proved work exists); only a genuinely unreadable detector yields
+  unknown, which ALLOWS the stop and logs loudly. Loop guard N=3 on consecutive
+  blocks with an identical opaque block text; on trip it alarms and allows,
+  because an agent that can never end its turn is a worse failure than an idle
+  one.
+
+### Fixed
+
+- **A login-expired pass can no longer report a fleet it never read
+  (`Verdict.UNOBSERVED`)** (PR #758). The detector computed a correct
+  three-state verdict and then threw two of the states away:
+  `detect_login_expired` returned `list[str]`, so `unknown` (pane unreadable)
+  had nowhere to go and was dropped, and `exit_code()` fell through to a bare
+  `return 0`. An empty report therefore meant BOTH "we checked everything and
+  all is well" AND "we observed nothing at all" — and systemd recorded
+  `Result=success ExecMainStatus=0` on every one of those passes. The population
+  was collapsed the same way: `capture_live_panes` built its keys from live tmux
+  sessions, so an agent whose session was gone never became a key and could not
+  be reported as anything — **the enumeration WAS the population, which made
+  absence invisible by construction.** Now a frozen `DetectionOutcome` carries
+  auth_failed / ok / unknown out of the detector in buckets that partition the
+  input (nothing handed in can vanish); `Roster` + `registered_agents()` supply
+  an independent population reusing fleet-reconcile's own registry enumeration
+  rather than a second source of truth, and a registry we cannot enumerate is
+  `readable=False`, never an empty roster — an empty roster would silently
+  certify that nobody is missing. `exit_code()` reserves 0 for "every roster
+  agent was observed and none is wedged"; UNOBSERVED joins BUDGET_UNKNOWN at 2.
+  The alarm no longer resolves an escalation card for an UNOBSERVED agent:
+  clearing a card on a reading we never took is a false all-clear in its most
+  durable form. Only `auth_failed` still authorises a restart.
+
+- **`--force` is propagated end to end, and a no-op restart reports
+  `restarted: false` instead of lying** (PR #756). An in-SIF RESTART could
+  report success over an agent that never cycled. `agent_restart` calls
+  `agent_start(force=True)` precisely because a restart must REPLACE the
+  process, but the in-SIF broker fires BEFORE that force is consulted locally
+  and had no `force` parameter at all, so the flag was silently dropped at the
+  container boundary. The host then ran a plain, unforced
+  `sac agents start <name>`, hit the idempotent "already running → no-op"
+  branch, printed `SUCC: <name> started` and exited 0 — while the API answered
+  `{"restarted": true, "dispatched": false}` over a process whose pid never
+  changed, so a caller counting rc=0 marked an unrestarted agent as rolled.
+  (Observed in the scitex-storage runtime dir, STARTUP_FAILED 2026-07-12,
+  `phase=post_ack_liveness kind=post_ack_no_apptainer_pid exit_code=0`: because
+  no container launched, no `apptainer_pid` was ever written, which is what
+  tripped the post-ack probe.) `force` now crosses every hop through to the host
+  handler's `--force`, emitted only when truthy so a pre-fix host ignores the
+  absent field. The no-op branch returns a tagged `NOOP_ALREADY_RUNNING` that
+  stays truthy — an idempotent `sac agents start` IS a success, and downgrading
+  it would invent the mirror-image lie — but now carries WHY, so a caller whose
+  contract is "the process must have CYCLED" can tell the two apart.
+  `sac agents restart` reports `restarted: false` with
+  `reason: "already-running"`, a hint naming the `--force` recovery, and a
+  non-zero exit.
+
+## [0.21.25] - 2026-07-18
+
+### Added
+
+- **A fleet-default env layer — ONE variable can now reach every agent without
+  editing N specs in another repo** (`runtimes/_fleet_env.py`, PR #754). Before
+  this the only path from config to container env was `spec.env`, so a
+  fleet-wide flag meant editing every spec — and the specs live in the dotfiles
+  repo, not here, which is why fleet-wide flags never happened. Precedence,
+  lowest → highest: `FLEET_DEFAULT_ENV` (sac's declared data) → `config.yaml`
+  `spec.fleet_default_env` (operator, host scope) → `spec.env` (per-agent,
+  **always wins**). Unlike `_layer_merge.deep_merge_layers`, which RAISES on a
+  scalar collision (correct for `to_home` peer layers, where each key is owned
+  by exactly one layer), a collision here is the feature: a default exists in
+  order to be overridden, so this follows the `_envrc` cascade idiom and logs
+  overrides at INFO instead. The defaults are DATA — no sac logic names a
+  consumer, and per-agent opt-out needs no new mechanism (set the key in
+  `spec.env`, or `""` to neutralise). Seeded with `SCITEX_CARDS_DUAL_WRITE=1`
+  and `SCITEX_CARDS_READ_BACKEND=sqlite`.
+
+- **`auth-heal` is declared as a `kind="timer"` JobSpec (`sac.heal-agent-auth`)
+  instead of a hand-written crontab line** (PR #753). The cron line was
+  temporary BY CONSTRUCTION: `~/.dotfiles/src/.cron/copy_crontab` installs the
+  tracked manifest WHOLESALE, so any line absent from `.crontab_list` is erased
+  on its next run — and auth-heal has no line in that manifest at all, which is
+  why the wrapper exporting `SAC_SECRETS_ENVRC` kept reverting. `kind="timer"`
+  materialises a systemd `--user` timer with `Persistent=true`, so a window
+  missed while the host slept fires on resume — the property a crontab line
+  never had, and the one a laptop fleet needs most. Both `ExecStart` tokens are
+  absolute, because a systemd `--user` unit's minimal PATH would otherwise
+  resolve the script's `#!/usr/bin/env python3` to the SYSTEM python rather
+  than the 3.11 venv the fleet runs on. **DEPLOY GATE:** this overlaps
+  `sac.restart-login-expired-agents`, which reimplements this job's `scan_tui`
+  natively. Declaring both is safe — a JobSpec is inert until `ecosystem up`
+  installs it — but only ONE may ever be ENABLED, or two restarters with
+  independent debounce state run on one fleet. Documented on both specs and
+  pinned by a test.
+
+### Fixed
+
+- **The bake shipped pre-#742 sac through four consecutive green builds — three
+  defects, all closed** (`apptainer-base.def` / `apptainer-scitex.def`, PR
+  #752). (1) `%files` NESTING, the root cause: apptainer copies INTO an
+  existing destination dir, so a base that already baked
+  `/opt/scitex-agent-container-src` made the scitex layer's copy land nested,
+  leaving the OUTER stale tree as the one uv built (measured in-image:
+  outer=1edf17d0 pre-#742, nested=1e4870fd #742, installed=1edf17d0). Now
+  flattened deterministically, then fail-loud if still nested. (2) PIP FLAGS
+  PASSED TO UV — `--no-cache-dir` / `--force-reinstall` are pip spellings that
+  uv does not honour as cache-bypass, so it reinstalled a cached stale wheel
+  (the cache is keyed on name+version, and sac's version does not advance
+  per-commit); uv's lever is `--reinstall-package`, which the recipe's own
+  comment already named and never applied. (3) CONTENT-ASSERT FALSE-GREEN — it
+  resolved the installed tree via `scitex_agent_container.__file__`, which
+  during `%post` can point at the STAGED tree, comparing it to itself and
+  passing regardless; now resolved from sysconfig purelib and fail-loud when
+  sac is absent from site-packages or both operands resolve to one directory.
+
+- **The build-time freshness gate compares shared `.py` CONTENT, not whole-tree
+  set equality** (PR #751). PR #749's gate hashed the whole installed `.py`
+  tree and required it to equal the staged-source tree-hash. That is a set
+  equality and it false-positived: the installed package tree legitimately
+  differs AS A SET from the source tree (the wheel excludes/relocates some
+  `.py`), so a CORRECT build still FAILED — the bake was right, the assert
+  lied, and it blocked EVERY bake. Now a per-file intersection compare: key
+  each tree's `.py` by its package-relative path, compare content only for
+  files present in BOTH, and ignore files in only one tree (packaging
+  set-difference, not staleness). A real stale wheel still trips it, and a
+  misalignment guard fails loudly below 50 shared files.
+
+- **The pre-stop rescue only commits worktrees it OWNS** (PR #747). On a SHARED
+  checkout (the scitex-cards lane runs 4 agents over one physical checkout)
+  `.git` / `.worktrees` / `git worktree list` are shared, so the rescue walked
+  peers' worktrees and committed them under the stopping agent's identity
+  (observed 2026-07-17: chat committed gui's tree). The push half was already
+  removed in #743; this closes the residual local mis-attribution. The
+  ownership marker lives OUT of the working tree at `<git-dir>/sac-owner` so
+  `git add -A` can never stage it; the `WorktreeCreate` hook stamps it, and a
+  three-state `_ownership_allows()` gate DEFAULT-DENIES every `.worktrees/*`
+  child whose owner mismatches OR is absent.
+
+- **The `scitex-todo` → `scitex-cards` rename is finished at the surfaces the
+  operator actually sees** (PR #754). Contracts with the deployed `.mcp.json`
+  keep dual-name tolerance on purpose — a live fleet is rolled one agent at a
+  time and that file is not sac's to flip, so a hard rename would classify
+  every not-yet-migrated agent's HEALTHY board MCP as absent and manufacture a
+  false alarm: `_mcp/_healthcheck.py` gains `SERVER_ALIASES` (a legacy key
+  still resolves, reported under the canonical name) and
+  `runtimes/_mcp_reliability.py` carries both spellings. Free-form display
+  strings (`_listen/_card_event_delivery.py`, `_listen/_notify.py`) are
+  straight flips. `BASE_REQUIRED_SKILLS` is deliberately NOT changed — it names
+  a skill directory that only exists under the old name, and flipping it would
+  put a nonexistent skill into every agent's CLAUDE.md.
+
+- **A bot-less agent no longer ships a `claude-code-telegrammer` MCP entry that
+  fails every boot** (`prune_tokenless_telegrammer_mcp`, PR #754). The shared
+  baseline `.mcp.json` declares the telegrammer for every agent, so an agent
+  with no bot launched it with an empty token, cct correctly refused, and the
+  panel carried a permanent failed row — fail-loud that is right for a
+  MISCONFIGURED agent and wrong for a deliberately bot-less one, and once the
+  entry exists the two are indistinguishable. Wired into
+  `_to_home.deploy_to_home` AFTER `ensure_cct_bot_token`; the ordering is
+  load-bearing and is asserted end-to-end rather than in a unit test that would
+  pass even with the call at the wrong point.
+
+## [0.21.24] - 2026-07-18
+
+### Added
+
+- **`sac agents restart-login-expired` + a `sac.restart-login-expired-agents`
+  timer — federated auto-restart for LIVE agents wedged behind a frozen "Login
+  expired" banner** (PR #748). This is the half `sac.fleet-reconcile` leaves
+  alone (reconcile only touches DEAD / no-session corpses). Detection is
+  READ-ONLY and 2-run-corroborated (reuses the `sac agents auth-status`
+  matcher, so a banner that MOVED between the two captures counts as working
+  and is never restarted); restart goes through the pool-loading
+  `agent_restart` path under reconcile's exact rate limits (30-min/agent
+  debounce, <=2/agent/hour, <=10/pass); an agent still wedged after the cap
+  gets an idempotent scitex-todo escalation card, never an infinite bounce. New
+  `_authheal/` package (`_detect`/`_pass`/`_alarm`) with its own history file
+  so the two restarters' debounces stay independent. **DEPLOY GATE:** the timer
+  is PR-only and must NOT be enabled on a host until that host's legacy
+  `auth-heal.py` `scan_tui` is retired — enabling both is a double-supervisor.
+  Documented in `_jobs_plugin`, `_pass`, and the CLI help.
+
+- **A guarded, fail-soft `direnv allow` is appended to every agent's default
+  `startup_commands`** (PR #745). `load_v3` (the single `load_config`
+  chokepoint) appends
+  `command -v direnv >/dev/null 2>&1 && [ -f "$PWD/.envrc" ] && direnv allow "$PWD" || true`,
+  so a project's non-secret `.envrc` surfaces in-container fleet-wide and is
+  VISIBLE in the spec (`AgentConfig.startup_commands`) rather than buried in
+  launch code. `$PWD` is the agent workdir at run time (the `bash -lc` wrapper
+  inherits apptainer's `--pwd`, and no `cd` is emitted first). The guard skips
+  silently when direnv is absent or the workdir has no `.envrc`; the trailing
+  `|| true` never breaks boot; it is idempotent (a spec that already runs
+  `direnv allow` is not doubled) and appended, not prepended, so an authored
+  `startup_commands[0]` keeps its position. Secrets/identity stay
+  sac-direct-injected and are never routed through direnv.
+
+### Fixed
+
+- **The bake pipeline now ships the staged source, not a stale uv wheel**
+  (`apptainer-base.def` / `apptainer-scitex.def`, PR #749). uv's built-wheel
+  cache is keyed on (name, version), and sac's metadata version does not
+  advance per-commit, so the sac-source install could serve a byte-identical
+  STALE wheel from a prior bake instead of rebuilding the newly staged tree
+  (two independent bakers confirmed a green build shipping pre-#742 code).
+  `--no-cache-dir` on the sac install forces a fresh build from source; a
+  generic installed-vs-staged content assert (sha256 of the installed vs staged
+  `.py` trees) folds into both freshness gates and fails the build if they
+  differ, naming no feature so a rename never breaks it; and base.def's gate is
+  migrated off the old `scitex-todo` dist name onto `scitex-cards` (now a
+  metadata-only shim), fixing a `PackageNotFoundError` and the latent twin bug
+  in scitex.def's dist-count loop.
+
+- **The CCT bot-token pool no longer folds EMPTY on a caller with
+  `SAC_SECRETS_ENVRC` unset** (PR #748, class fix). `sac start`/`restart`
+  TRUSTED the caller's env for the token pool, so a cron / raw-ssh /
+  federated-timer restart with the var unset stripped Telegram tokens (the root
+  cause of the 2026-07-17 CCT token-stripping incident).
+  `runtimes/_envrc.resolve_secret_files` now falls back to the canonical
+  `$HOME/.bash.d/secrets/010_scitex/*.src` default (the same the listen-unit
+  installer computes) when the var is unset, and `_cct_token_pool._pool_env`
+  uses it — so ANY caller re-resolves the token, fixing the whole class rather
+  than just the timer.
+
+- **A `to_home` deploy now replaces a leftover symlink destination instead of
+  writing THROUGH it** (`_clear_readonly_dst`, PR #746). For a symlink dst the
+  clear step used to leave the link untouched, so `shutil.copy2` /
+  `Path.write_text` followed it: a leftover host-merge link corrupted the
+  operator's real host file with agent-interpolated content, and a dangling
+  link made `copy2` raise `FileNotFoundError` and abort the deploy. This is the
+  unguarded sibling of the same-file guard added for INCIDENT 2026-07-02
+  (`_dst_resolves_to_source`, which only covered a link pointing back at the
+  SOURCE). `_clear_readonly_dst` now UNLINKS a symlink dst so the write lands a
+  real, hermetic file; the legitimate symlink-back-to-source case is still
+  short-circuited earlier. Regression covered with real files (no mocks).
+
+## [0.21.23] - 2026-07-18
+
 ### Added
 
 - **Inert-feature detector (`_jobs_audit`) — a declaration with no live
@@ -40,6 +689,28 @@ versioning follows [SemVer](https://semver.org/).
   diagnosis off a 4-day-stale schedule. Out of scope beats answered wrongly.
 
 ### Fixed
+
+- **The pre-stop rescue no longer pushes — it saves work LOCALLY and stops
+  there** (`_pre_stop_rescue`, PR #743). The fleet-default autosave that runs
+  on `sac agents stop` force-pushed worktrees it did not own, under the
+  stopping agent's identity, with no test gate. Observed 2026-07-17: a stopping
+  agent force-pushed a peer's `feat/` branch to the shared remote (bytes a peer
+  never reviewed, published under a name that never saw them); separately, two
+  `rescue:` commits reached `origin/develop`. Operator ruling 2026-07-17
+  (「プッシュはなしじゃない？」): the rescue commits locally — in place on a
+  topic branch, onto a `rescue/<agent>-<ts>` side-branch on a protected branch
+  — and never pushes either. `push_branch()` is **deleted** (function + both
+  call sites), so the ban is structural, not conventional: no code path is one
+  edit away from publishing again. `workdir` is a host bind mount, so the local
+  commit already survives the restart this module exists to make cheap — the
+  push was never what made the work durable. Two regression guards
+  (`test_rescue_never_pushes_*`) exercise the rescue against a REAL reachable
+  origin and assert nothing lands on it, so a reintroduced push goes red — the
+  observe-don't-assert acceptance test the earlier #578 lacked. NOT covered:
+  why two rescue commits reached `origin/develop` on 2026-07-13 stays open
+  (narrowed to a drift/propagation question, not a broken guard — the guard
+  fires correctly in current code); removing the push kills the irreversible
+  harm regardless of that answer.
 
 - **Every `sac dev` job verb was inert, and had been for weeks.**
   `_dev_jobs.py` passed the CLI GROUP NAME straight through as the JobSpec
@@ -525,12 +1196,12 @@ artifact**, so a ghost is now a RED release rather than a silent success.
   `sac accounts list` at the time of the report:
 
   ```
-  wyusuuke-gmail-com   5h 28%   7d 67%  (resets in 5d 14h)
-  ywata1989-gmail-com  5h  0%   7d 90%  (resets in 9h06m)
+  alpha-example-com   5h 28%   7d 67%  (resets in 5d 14h)
+  beta-example-com  5h  0%   7d 90%  (resets in 9h06m)
   ywatanabe-scitex-ai  5h  0%   7d 90%  (resets in 6 MINUTES)   <- 10% about to evaporate
   ```
 
-  The picker sent every agent to `wyusuuke` (67%), so `ywatanabe-scitex-ai`'s
+  The picker sent every agent to `alpha` (67%), so `ywatanabe-scitex-ai`'s
   remaining **10% of a 7-day window was deleted unused six minutes later**
   (operator: 「毎回 90%で10%捨ててる」 — we bin it every cycle).
 
@@ -560,7 +1231,7 @@ artifact**, so a ghost is now a RED release rather than a silent success.
 
   On the table above the expiring account goes from **0 of 60 agents to 37 of 60**,
   while the 9h-away reserve stays correctly avoided (**0 of 60**) and the fleet
-  still spreads (23 of 60 to `wyusuuke`).
+  still spreads (23 of 60 to `alpha`).
 
   Bounded against a 429 (the risk of routing onto a 90% account): the 5h window
   remains the supreme, untouched gate; an account with <2% of its weekly window

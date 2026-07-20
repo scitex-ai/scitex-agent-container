@@ -17,6 +17,7 @@ collide with the fixtures.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -26,8 +27,10 @@ import scitex_logging
 
 from scitex_agent_container.config._types import AgentConfig
 from scitex_agent_container.runtimes._cct_token_pool import (
+    _default_agent_id,
     _slot_candidates,
     ensure_cct_bot_token,
+    prune_tokenless_telegrammer_mcp,
 )
 
 _SECRETS_VAR = "SAC_SECRETS_ENVRC"
@@ -76,9 +79,7 @@ def _pool_file(tmp_path: Path, lines: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_noop_when_channel_not_requested(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_noop_when_channel_not_requested(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange — pool has a matching slot, but the spec does not request the channel.
     _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_NOCHAN=tok-zz\n")
     dest = tmp_path / "home"
@@ -89,9 +90,7 @@ def test_noop_when_channel_not_requested(
     assert not (dest / ".env").exists()
 
 
-def test_existing_token_left_untouched(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_existing_token_left_untouched(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange — the .envrc cascade already provided a token; pool has another.
     _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_KEEP=tok-pool\n")
     dest = tmp_path / "home"
@@ -105,10 +104,11 @@ def test_existing_token_left_untouched(
     assert "CCT_BOT_TOKEN=tok-hand" in (dest / ".env").read_text()
 
 
-def test_existing_token_backfills_agent_id(
+def test_existing_token_backfills_the_agents_own_name_as_identity(
     tmp_path: Path, secrets_envrc: None
 ) -> None:
-    # Arrange — token provided but no identity; workdir names the project.
+    # Arrange — token provided but no identity; the agent works in a project
+    # whose name differs from its own (the scitex-cards-in-scitex-todo shape).
     os.environ.pop(_SECRETS_VAR, None)
     dest = tmp_path / "home"
     dest.mkdir()
@@ -116,8 +116,11 @@ def test_existing_token_backfills_agent_id(
     workdir = tmp_path / "proj" / "zz-proj"
     # Act
     ensure_cct_bot_token(_cfg("zz-agent", workdir=str(workdir)), dest)
-    # Assert — identity defaults to the project (workdir basename).
-    assert "CCT_AGENT_ID=zz-proj" in (dest / ".env").read_text()
+    # Assert — identity is the AGENT, never the directory it stands in.
+    # This test asserted `CCT_AGENT_ID=zz-proj` until 2026-07-17: it encoded the
+    # bug as the contract, and would have blocked the fix for the incident it
+    # described.
+    assert "CCT_AGENT_ID=zz-agent" in (dest / ".env").read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +128,7 @@ def test_existing_token_backfills_agent_id(
 # ---------------------------------------------------------------------------
 
 
-def test_resolves_from_pool_via_agent_name(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_resolves_from_pool_via_agent_name(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange — a real temp pool holds the agent-name slot.
     _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_POOL_AGENT=tok-zz\n")
     dest = tmp_path / "home"
@@ -138,10 +139,11 @@ def test_resolves_from_pool_via_agent_name(
     assert "CCT_BOT_TOKEN=tok-zz" in (dest / ".env").read_text()
 
 
-def test_workdir_basename_slot_wins_over_agent_name(
+def test_agent_name_slot_wins_over_the_project_it_works_in(
     tmp_path: Path, secrets_envrc: None
 ) -> None:
-    # Arrange — pool has BOTH slots; the bot is per-PROJECT so workdir wins.
+    # Arrange — pool holds BOTH slots. This is the live scitex-cards shape:
+    # the project it works in HAS a registered bot; the agent is not its owner.
     _pool_file(
         tmp_path,
         "export CCT_BOT_TOKEN_ZZ_PROJ=tok-proj\n"
@@ -152,13 +154,15 @@ def test_workdir_basename_slot_wins_over_agent_name(
     workdir = tmp_path / "proj" / "zz-proj"
     # Act
     ensure_cct_bot_token(_cfg("zz-agent", workdir=str(workdir)), dest)
-    # Assert
-    assert "CCT_BOT_TOKEN=tok-proj" in (dest / ".env").read_text()
+    # Assert — the agent gets ITS OWN bot, not the one belonging to the
+    # directory. This asserted `tok-proj` until 2026-07-17, under the comment
+    # "the bot is per-PROJECT so workdir wins" — i.e. the test demanded the
+    # theft. It was written when a project had one agent and that made it true;
+    # it did not stop being green when that stopped being true.
+    assert "CCT_BOT_TOKEN=tok-agent" in (dest / ".env").read_text()
 
 
-def test_strips_scitex_prefix_candidate(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_strips_scitex_prefix_candidate(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange — pool names the core package by its short slot (scitex- stripped).
     _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZEXAMPLE=tok-short\n")
     dest = tmp_path / "home"
@@ -169,9 +173,7 @@ def test_strips_scitex_prefix_candidate(
     assert "CCT_BOT_TOKEN=tok-short" in (dest / ".env").read_text()
 
 
-def test_explicit_slot_override_wins(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_explicit_slot_override_wins(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange — spec.apptainer.env names a slot; the mechanical slot also exists.
     _pool_file(
         tmp_path,
@@ -181,9 +183,7 @@ def test_explicit_slot_override_wins(
     dest = tmp_path / "home"
     dest.mkdir()
     # Act
-    ensure_cct_bot_token(
-        _cfg("zz-mech", env={"CCT_BOT_TOKEN_SLOT": "ZZ_CUSTOM"}), dest
-    )
+    ensure_cct_bot_token(_cfg("zz-mech", env={"CCT_BOT_TOKEN_SLOT": "ZZ_CUSTOM"}), dest)
     # Assert
     assert "CCT_BOT_TOKEN=tok-custom" in (dest / ".env").read_text()
 
@@ -197,9 +197,7 @@ def test_override_miss_does_not_fall_back_mechanically(
     dest = tmp_path / "home"
     dest.mkdir()
     # Act
-    ensure_cct_bot_token(
-        _cfg("zz-mech", env={"CCT_BOT_TOKEN_SLOT": "ZZ_GHOST"}), dest
-    )
+    ensure_cct_bot_token(_cfg("zz-mech", env={"CCT_BOT_TOKEN_SLOT": "ZZ_GHOST"}), dest)
     # Assert — no token written at all.
     assert not (dest / ".env").exists()
 
@@ -218,22 +216,70 @@ def test_empty_pool_value_is_treated_as_missing(
 
 
 # ---------------------------------------------------------------------------
+# caller-independent pool: the canonical $HOME default (class fix 2026-07-18)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_home(tmp_path: Path) -> Iterator[Path]:
+    """Point ``$HOME`` at a real temp dir (save/restore) — no monkeypatch.
+
+    So the canonical-default resolver globs THIS dir, never the operator's real
+    ``~/.bash.d/secrets`` — the test stays deterministic on every host.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        yield home
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+def test_pool_resolves_from_canonical_default_when_var_unset(
+    tmp_path: Path, secrets_envrc: None, isolated_home: Path
+) -> None:
+    # Arrange — SAC_SECRETS_ENVRC UNSET (the cron / raw-ssh / federated-timer
+    # case that stripped tokens tonight), but the operator's standardized default
+    # pool file exists under $HOME. The class fix must resolve the token from
+    # there instead of folding it EMPTY — the whole point of the fix.
+    os.environ.pop(_SECRETS_VAR, None)
+    pooldir = isolated_home / ".bash.d" / "secrets" / "010_scitex"
+    pooldir.mkdir(parents=True)
+    (pooldir / "01_cct.src").write_text(
+        "export CCT_BOT_TOKEN_ZZ_DEFAULT=tok-default\n", encoding="utf-8"
+    )
+    dest = tmp_path / "workspace-home"
+    dest.mkdir()
+    # Act — no SAC_SECRETS_ENVRC set anywhere; only the default location has it.
+    ensure_cct_bot_token(_cfg("zz-default"), dest)
+    # Assert — the token is loaded from the canonical default pool, NOT stripped.
+    assert "CCT_BOT_TOKEN=tok-default" in (dest / ".env").read_text()
+
+
+# ---------------------------------------------------------------------------
 # injected .env contents
 # ---------------------------------------------------------------------------
 
 
-def test_injection_sets_default_agent_id_from_workdir(
+def test_injection_sets_default_agent_id_from_the_agents_own_name(
     tmp_path: Path, secrets_envrc: None
 ) -> None:
-    # Arrange
-    _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_IDPROJ=tok-id\n")
+    # Arrange — an agent working in a project it does not own.
+    _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_IDAGENT=tok-id\n")
     dest = tmp_path / "home"
     dest.mkdir()
     workdir = tmp_path / "proj" / "zz-idproj"
     # Act
     ensure_cct_bot_token(_cfg("zz-idagent", workdir=str(workdir)), dest)
-    # Assert
-    assert "CCT_AGENT_ID=zz-idproj" in (dest / ".env").read_text()
+    # Assert — asserted `zz-idproj` (the DIRECTORY) until 2026-07-17. The
+    # identity half is the silent one: a stolen slot 409s until someone
+    # notices, a stolen identity just writes under the wrong name.
+    assert "CCT_AGENT_ID=zz-idagent" in (dest / ".env").read_text()
 
 
 def test_injection_preserves_other_env_lines(
@@ -250,9 +296,7 @@ def test_injection_preserves_other_env_lines(
     assert "OTHER_VAR=1" in (dest / ".env").read_text()
 
 
-def test_injected_env_file_is_owner_only(
-    tmp_path: Path, secrets_envrc: None
-) -> None:
+def test_injected_env_file_is_owner_only(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange
     _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_PERMS=tok-perm\n")
     dest = tmp_path / "home"
@@ -354,9 +398,7 @@ def test_token_value_never_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Arrange — a distinctive token value that must never reach any log line.
-    _pool_file(
-        tmp_path, "export CCT_BOT_TOKEN_ZZ_REDACT=tok-NEVER-LOG-9x7\n"
-    )
+    _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_REDACT=tok-NEVER-LOG-9x7\n")
     dest = tmp_path / "home"
     dest.mkdir()
     # Act — capture EVERYTHING down to DEBUG.
@@ -387,12 +429,14 @@ def test_resolution_logs_slot_name_not_value(
 # ---------------------------------------------------------------------------
 
 
-def test_slot_candidates_workdir_first_then_name() -> None:
+def test_slot_candidates_come_from_the_agent_name_and_ignore_the_workdir() -> None:
     # Arrange
     # Act
     candidates = _slot_candidates("zz-agent", "/tmp/proj/zz-proj")
-    # Assert
-    assert candidates == ["ZZ_PROJ", "ZZ_AGENT"]
+    # Assert — the workdir contributes NOTHING. This asserted
+    # `["ZZ_PROJ", "ZZ_AGENT"]` until 2026-07-17: the project's slot first, the
+    # agent's own second. A directory names a PROJECT, never an agent.
+    assert candidates == ["ZZ_AGENT"]
 
 
 def test_slot_candidates_add_scitex_stripped_form() -> None:
@@ -437,3 +481,200 @@ def test_deploy_to_home_injects_pool_token_end_to_end(
     deploy_to_home(cfg, str(dest))
     # Assert — the materialised home carries the pool-resolved token.
     assert "CCT_BOT_TOKEN=tok-e2e" in (dest / ".env").read_text()
+
+
+# ---------------------------------------------------------------------------
+# Identity is agent-scoped, never directory-scoped (INCIDENT 2026-07-17)
+#
+# A directory names a PROJECT, never an agent; the second agent in a repo must
+# be a second AGENT, not the first one twice. Identity used to be derived from
+# the workdir basename, so one repo = one identity = one agent, structurally.
+# Three scitex-cards UI agents working in ~/proj/scitex-todo took the
+# scitex-todo steward's identity and its bot.
+# ---------------------------------------------------------------------------
+_SHARED_REPO = "/home/ywatanabe/proj/scitex-todo"
+
+
+def test_two_agents_in_one_repo_get_different_slots():
+    # Arrange: the exact shape of the incident -- siblings sharing a workdir.
+    # Act
+    chat = _slot_candidates("scitex-cards-chat", _SHARED_REPO)
+    gui = _slot_candidates("scitex-cards-gui", _SHARED_REPO)
+    # Assert: the whole point. Under the old workdir-first rule both returned
+    # TODO first and the second agent became the first.
+    assert chat[0] != gui[0]
+
+
+def test_two_agents_in_one_repo_get_different_identities():
+    # Arrange
+    # Act
+    chat = _default_agent_id("scitex-cards-chat", _SHARED_REPO)
+    gui = _default_agent_id("scitex-cards-gui", _SHARED_REPO)
+    # Assert: the silent half. A stolen slot 409s loudly; a stolen identity just
+    # writes under someone else's name.
+    assert chat != gui
+
+
+def test_an_agents_identity_is_its_own_name_even_inside_another_agents_repo():
+    # Arrange: the steward of this repo is 'scitex-todo'; the worker is not.
+    # Act
+    identity = _default_agent_id("scitex-cards-chat", _SHARED_REPO)
+    # Assert
+    assert identity == "scitex-cards-chat"
+
+
+def test_slot_never_includes_the_short_slot_of_the_project_worked_in():
+    # Arrange: CCT_BOT_TOKEN_TODO exists in the live pool and CARDS does not, so
+    # a workdir-first rule hands this agent the steward's REGISTERED bot.
+    # Act
+    candidates = _slot_candidates("scitex-cards-chat", _SHARED_REPO)
+    # Assert
+    assert "TODO" not in candidates
+
+
+def test_slot_never_includes_the_long_slot_of_the_project_worked_in():
+    # Arrange
+    # Act
+    candidates = _slot_candidates("scitex-cards-chat", _SHARED_REPO)
+    # Assert
+    assert "SCITEX_TODO" not in candidates
+
+
+def test_agent_whose_name_matches_its_project_is_unaffected():
+    # Arrange: 9 of 12 live agents look like this -- the rules agree, and the
+    # fix must be a no-op for them.
+    # Act
+    candidates = _slot_candidates("scitex-dev", "/home/ywatanabe/proj/scitex-dev")
+    # Assert
+    assert candidates == ["SCITEX_DEV", "DEV"]
+
+
+def test_scitex_prefix_still_yields_the_short_pool_slot():
+    # Arrange: the pool names core packages by short slot (TODO, DEV, ...).
+    # Act
+    candidates = _slot_candidates("scitex-storage", "/anywhere/at/all")
+    # Assert: no regression in the stripping behaviour the pool depends on.
+    assert candidates == ["SCITEX_STORAGE", "STORAGE"]
+
+
+def test_workdir_cannot_influence_the_slot_at_all():
+    # Arrange: same agent, wildly different locations.
+    # Act
+    a = _slot_candidates("grant", "/home/ywatanabe/proj/grant")
+    b = _slot_candidates("grant", "/home/ywatanabe/proj/scitex-todo")
+    c = _slot_candidates("grant", "")
+    # Assert: location is not an input to identity. Full stop.
+    assert a == b == c
+
+
+# ---------------------------------------------------------------------------
+# prune_tokenless_telegrammer_mcp — card
+# sac-omit-telegram-mcp-when-no-cct-bot-token-20260702.
+#
+# The shared baseline .mcp.json declares claude-code-telegrammer for EVERY
+# agent. An agent with no bot therefore launches it with an empty token, cct
+# refuses to start, and the operator's MCP panel carries a permanent "failed"
+# row. No token -> no entry -> nothing to fail. Real files on tmp_path.
+# ---------------------------------------------------------------------------
+
+_TELEGRAMMER = "claude-code-telegrammer"
+
+
+def _write_mcp_json(dest: Path, servers: dict) -> Path:
+    mcp = dest / ".mcp.json"
+    mcp.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    return mcp
+
+
+def _telegrammer_entry() -> dict:
+    return {
+        _TELEGRAMMER: {"command": "cct", "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"}}
+    }
+
+
+def _servers_in(mcp: Path) -> dict:
+    return json.loads(mcp.read_text())["mcpServers"]
+
+
+def test_tokenless_agent_loses_the_telegrammer_entry(tmp_path: Path) -> None:
+    # Arrange — a materialised home with the entry and an env with NO token.
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("SOME_OTHER=1\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_tokened_agent_keeps_the_telegrammer_entry(tmp_path: Path) -> None:
+    # Arrange — a real (non-empty) token in the materialised env.
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=123:abc\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER in _servers_in(mcp)
+
+
+def test_empty_token_value_counts_as_no_token(tmp_path: Path) -> None:
+    """An empty assignment is exactly the case cct fails loudly on."""
+    # Arrange
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_pruning_leaves_other_servers_untouched(tmp_path: Path) -> None:
+    """Only the telegrammer entry may be removed."""
+    # Arrange
+    servers = {**_telegrammer_entry(), "scitex-cards": {"command": "scitex-cards"}}
+    mcp = _write_mcp_json(tmp_path, servers)
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert "scitex-cards" in _servers_in(mcp)
+
+
+def test_prune_reports_whether_it_removed_the_entry(tmp_path: Path) -> None:
+    # Arrange
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is True
+
+
+def test_missing_mcp_json_is_a_noop(tmp_path: Path) -> None:
+    # Arrange — nothing materialised yet.
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is False
+
+
+def test_malformed_mcp_json_is_left_untouched(tmp_path: Path) -> None:
+    """The .mcp.json deploy owns JSON fail-loud; pruning must not mask it."""
+    # Arrange
+    mcp = tmp_path / ".mcp.json"
+    mcp.write_text("{not json")
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert mcp.read_text() == "{not json"
+
+
+def test_absent_telegrammer_entry_is_a_noop(tmp_path: Path) -> None:
+    # Arrange — an agent whose config never declared it.
+    _write_mcp_json(tmp_path, {"scitex-cards": {"command": "scitex-cards"}})
+    (tmp_path / ".env").write_text("")
+    # Act
+    removed = prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert removed is False

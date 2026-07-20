@@ -361,28 +361,43 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-todo PINNED ==0.13.5 (was a >=0.9.4 floor). Two incidents
-    # settle this on an EXACT pin, not a floor. THIS layer is the one that
-    # matters: most agent specs boot sac-base.sif directly, and the :scitex
-    # layer INHERITS this venv, so whatever scitex-todo lands here is what
-    # the whole fleet runs.
-    #  - A floor (>=) never FORCES a version: it takes whatever is newest-
-    #    satisfying on bake day and freezes it downstream. That silently
-    #    shipped 0.7.50 for days (incident-fleet-drift-stale-scitex-todo,
-    #    2026-07-12) — and a bake once 0.13.4 was latest would have auto-
-    #    pulled a version whose per-write store rewrite costs ~171s vs
-    #    ~4.5s on 0.13.5, making the board unusable the moment it landed.
-    #  - The exact pin makes the baked version DETERMINISTIC and bumps
-    #    DELIBERATE (measure, then raise the pin), not automatic-and-hopeful
-    #    — the reproducible-pinned-PyPI rule, applied to the one package the
-    #    whole fleet's task board runs on.
-    #  - 0.13.5 is the MEASURED-good version (scitex-todo owner, 2026-07-15:
-    #    0.9.4=46s / 0.13.4=171s / 0.13.5=4.5s per card write, store
-    #    preserved). It still carries the #356 WIP-gate fix (>=0.8.0); the
-    #    section-6c gate below asserts that capability BY SYMBOL, so a pin
-    #    to a version that dropped it dies LOUD at bake, not silent. To bump:
-    #    raise this pin AND apptainer-scitex.def's, rebake, time one card
-    #    write, confirm it is fast, THEN ship.
+    # scitex-cards: FLOOR (>=0.16.0), not an exact pin (was ==0.16.0). 2026-07-17.
+    #
+    # A floor is not a pin, and the difference is the whole point: `==` freezes
+    # the fleet at one version forever; `>=` states a CAPABILITY REQUIREMENT and
+    # lets the resolver take the newest that satisfies it. The integration guard
+    # `test_uv_pip_install_block_pins_scitex_todo_minimum_version` demands a
+    # specifier for exactly this reason, and it caught my first attempt, which
+    # dropped the specifier entirely — that is the ONE thing neither the pin nor
+    # the floor allows, because an unversioned requirement (its own words) "takes
+    # whatever happens to be newest on the bake day and then freezes it into every
+    # downstream layer." Unpinning is not the same as unversioning. The guard was
+    # right; I was wrong.
+    # THIS layer is the one that matters: most agent specs boot sac-base.sif
+    # directly and the :scitex layer INHERITS this venv, so whatever lands
+    # here is what the whole fleet runs.
+    #
+    # The pin's history, kept because it is a real trade and the next reader
+    # deserves both halves: a bake once 0.13.4 was latest would have pulled a
+    # version costing ~171s per card write (vs ~4.5s on 0.13.5) and the board
+    # would have died the moment the image landed. The pin prevented that.
+    #
+    # It also froze the fleet by construction. Operator ruling 2026-07-17:
+    # 「pin 止めしてたら routine 焁きする意味ないですからね」— a scheduled bake
+    # of a pinned recipe rebuilds the same image forever. And on the
+    # regression itself: 「scitex-cards が悪いならそれを直さなくてはいけない
+    # のでは？なぜ定期焼きを止めるって発想になる？」 That relocates the fix
+    # correctly: a package that ships a write-time regression is caught by
+    # THAT package's CI. This recipe is not the fleet's quarantine ward, and
+    # freezing every agent's image to dodge one hypothetical bad release
+    # trades a certainty (permanent staleness) for a possibility.
+    #
+    # What did NOT change: PUBLISHED PyPI only, never a git branch ref
+    # (operator's hard requirement — unpinned is not unpublished). And the
+    # section-6c gate below still asserts the capability BY SYMBOL, so a
+    # release that drops it dies LOUD at bake rather than shipping silently.
+    # That gate is the honest protection: verify the artifact you built,
+    # do not freeze the input and call it safety.
     # sac's [openai] extra (openai-agents — the `spec.provider: openai`
     # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
     # image serves EVERY agent, so a per-spec conditional install is
@@ -392,9 +407,37 @@ From: ubuntu:24.04
     # runtimes/_apptainer_provider.py). The extra's version floor lives
     # in pyproject.toml (SSoT); the bracket syntax on the local source
     # path resolves it through the bundled tree's own metadata.
-    uv pip install --python /opt/venv-sac/bin/python \
+    #
+    # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
+    # ``--force-reinstall`` are PIP flags; uv does not honour them as a
+    # cache-bypass/rebuild, so it can reinstall a byte-identical STALE wheel it
+    # already built — its built-wheel cache is keyed on (name, version), NOT
+    # content, and sac's version does not advance per-commit (importlib
+    # .metadata reports the last RELEASED version even for brand-new bundled
+    # source). uv's own lever is ``--reinstall-package <pkg>``, which IMPLIES
+    # ``--refresh-package``: it REBUILDS that package from the staged source,
+    # bypassing the cached wheel. Bakes carrying the pip-flag form shipped
+    # pre-#742 sac while reporting rc=0 — a green build carrying OLD code.
+    # ``--no-cache`` is uv's OWN cache-disable (the pip spelling is
+    # --no-cache-dir); belt-and-braces, not the mechanism. Keep the command
+    # starting with ``uv pip install`` — the base-def contract tests locate
+    # this block with startswith("uv pip install"), so an env-var prefix
+    # (UV_NO_CACHE=1 ...) makes the block invisible to them.
+    #
+    # ``-U`` — a FLOOR ALONE DOES NOT UPGRADE. This layer bootstraps from
+    # ubuntu:24.04, so its venv is normally fresh and ``-U`` is a no-op
+    # here; it is load-bearing for the ``--sandbox`` mutate-and-re-bake
+    # flow documented at the top of this file, where the venv already
+    # exists and an already-satisfied floor would leave the OLD build in
+    # place while exiting 0. It also keeps this line honest against its
+    # counterpart in apptainer-scitex.def, where the inherited-venv case
+    # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
+    # weaken ``--reinstall-package``: that stays the stronger lever for
+    # sac's own rebuild-from-staged-source.
+    uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
+        --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]==0.16.0" \
+        "scitex-cards[mcp]>=0.16.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -458,7 +501,19 @@ import sys
 # `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
 # CANCELLED cards as open and refuses legitimate card creation — the
 # 2026-07-12 fleet-drift incident this gate exists to end.
-from scitex_todo._throughput import WIP_STATUSES
+#
+# Package renamed scitex-cards (2026-07-16): the canonical module is
+# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
+# to the SAME module objects — un-cutover fleet code imports the old
+# name, so the shim working is itself a ship-gate for this image.
+from scitex_cards._throughput import WIP_STATUSES
+
+import scitex_cards
+import scitex_todo  # the transition shim — its absence breaks the fleet
+
+if scitex_todo is not scitex_cards:
+    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
+    sys.exit(1)
 
 # sac #633: auto-provisions a new agent's container overlay root; without
 # it every newly-created agent is stillborn on a raw apptainer FATAL.
@@ -469,8 +524,8 @@ from scitex_todo._throughput import WIP_STATUSES
 from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
 
 # Printed for the BUILD LOG only — these numbers are NOT the gate.
-print("scitex-todo reported version :", md.version("scitex-todo"))
-print("scitex-todo WIP_STATUSES     :", sorted(WIP_STATUSES))
+print("scitex-cards reported version:", md.version("scitex-cards"))
+print("scitex-cards WIP_STATUSES    :", sorted(WIP_STATUSES))
 print("sac reported version         :", md.version("scitex-agent-container"))
 print(
     "sac overlay auto-provision   :",
@@ -478,6 +533,60 @@ print(
 )
 
 failures = []
+
+# The version string lies (uv's wheel cache is version-keyed and sac's
+# version does not advance per-commit). File content cannot lie — but the
+# comparison must be SET-AWARE: compare CONTENT of .py files present in
+# BOTH the installed package and the staged source (shared relative
+# paths); a stale wheel makes a shared file's content differ.
+# Set-differences (wheel excludes data files) are NOT staleness and are
+# ignored — comparing whole-tree hashes false-positives on them. Generic
+# on purpose: it names no feature, so a rename or decoupling never breaks it.
+import hashlib as _hashlib, pathlib as _pathlib, sysconfig as _sysconfig
+# Resolve the INSTALLED tree from this interpreter's OWN site-packages, never
+# via ``scitex_agent_container.__file__`` (INCIDENT 2026-07-18): during %post
+# the staged source can be importable, in which case __file__ points at the
+# STAGED tree, the gate compares that tree to ITSELF, and it passes no matter
+# how stale the real install is. It false-greened a pre-#742 image exactly so.
+_installed_root = _pathlib.Path(_sysconfig.get_paths()["purelib"]) / "scitex_agent_container"
+_staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
+# A gate that cannot distinguish its two operands is blind — say so, loudly.
+if not _installed_root.is_dir():
+    failures.append(
+        "content assert cannot find the INSTALLED sac at %s — sac is not "
+        "installed into site-packages; the gate has nothing to verify." % _installed_root
+    )
+elif _installed_root.resolve() == _staged_root.resolve():
+    failures.append(
+        "content assert operands are the SAME directory (%s) — installed and "
+        "staged resolve identically, so the comparison proves nothing." % _installed_root
+    )
+def _rel_shas(root):
+    out = {}
+    for p in root.rglob("*.py"):
+        rel = p.relative_to(root).as_posix()
+        out[rel] = _hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+if _staged_root.is_dir():
+    _inst = _rel_shas(_installed_root)
+    _stg = _rel_shas(_staged_root)
+    _shared = sorted(set(_inst) & set(_stg))
+    print("content-assert shared .py files:", len(_shared))
+    if len(_shared) < 50:
+        failures.append(
+            "content assert compared only %d shared .py files (expected hundreds) — "
+            "installed/staged package roots may be misaligned; comparison is not meaningful." % len(_shared)
+        )
+    else:
+        _mismatch = [rel for rel in _shared if _inst[rel] != _stg[rel]]
+        if _mismatch:
+            failures.append(
+                "installed sac differs from staged source in %d of %d shared .py files "
+                "(e.g. %s) — a STALE wheel shipped; the fix did NOT ship. Verify --no-cache-dir "
+                "on the sac install." % (len(_mismatch), len(_shared), _mismatch[:5])
+            )
+else:
+    print("NOTE: staged source not at /opt/scitex-agent-container-src; content assert skipped")
 
 # The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
 # states must never occupy a WIP slot.
@@ -493,7 +602,7 @@ if terminal:
 # Exactly one installed distribution may claim each name. Two (an
 # orphaned .dist-info left by a partial reinstall) is the failure mode
 # that lets the reported version diverge from the code.
-for name in ("scitex-todo", "scitex-agent-container"):
+for name in ("scitex-cards", "scitex-agent-container"):
     dists = [
         dist
         for dist in md.distributions()
@@ -511,7 +620,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-todo WIP-gate + sac overlay symbols present and correct.")
+print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }

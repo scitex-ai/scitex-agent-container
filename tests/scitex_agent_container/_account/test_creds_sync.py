@@ -73,7 +73,7 @@ def _store_snapshot_path(home: Path, slug: str) -> Path:
 @pytest.mark.parametrize(
     ("email", "slug"),
     [
-        ("wyusuuke@gmail.com", "wyusuuke-gmail-com"),
+        ("alpha@example.com", "alpha-example-com"),
         ("ywatanabe@scitex.ai", "ywatanabe-scitex-ai"),
         ("Mixed.Case@Example.COM", "mixed-case-example-com"),
     ],
@@ -96,7 +96,7 @@ def test_sync_live_saves_when_store_absent(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
     result = sync_live(home=home)
     # Assert
@@ -109,11 +109,11 @@ def test_sync_live_writes_store_snapshot_bytes_matching_live(
     # Arrange
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
     sync_live(home=home)
     # Assert
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     assert json.loads(snap.read_text())["claudeAiOauth"]["expiresAt"] == future_ms
 
 
@@ -134,7 +134,7 @@ def test_sync_live_writes_account_metadata_email(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
     sync_live(home=home)
     # Assert
@@ -143,10 +143,10 @@ def test_sync_live_writes_account_metadata_email(_isolate_home: Path) -> None:
         / ".scitex"
         / "agent-container"
         / "accounts"
-        / "wyusuuke-gmail-com"
+        / "alpha-example-com"
         / "account.json"
     )
-    assert json.loads(meta.read_text())["email_address"] == "wyusuuke@gmail.com"
+    assert json.loads(meta.read_text())["email_address"] == "alpha@example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ def test_sync_live_is_up_to_date_when_store_matches_live(
     # Arrange — first sync writes the store, second should be a no-op.
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     sync_live(home=home)
     # Act
     result = sync_live(home=home)
@@ -173,10 +173,10 @@ def test_sync_live_overwrites_store_older_than_live(_isolate_home: Path) -> None
     home = _isolate_home
     older_ms = int((time.time() + 100) * 1_000)
     newer_ms = int((time.time() + 10_000) * 1_000)
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": older_ms}}))
-    _write_live(home, "wyusuuke@gmail.com", newer_ms)
+    _write_live(home, "alpha@example.com", newer_ms)
     # Act
     result = sync_live(home=home)
     # Assert
@@ -188,10 +188,10 @@ def test_sync_live_overwrites_store_that_is_expired(_isolate_home: Path) -> None
     home = _isolate_home
     expired_ms = int((time.time() - 10_000) * 1_000)
     future_ms = int((time.time() + 3_600) * 1_000)
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": expired_ms}}))
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
     result = sync_live(home=home)
     # Assert
@@ -220,7 +220,7 @@ def test_sync_live_raises_when_live_cred_expired(_isolate_home: Path) -> None:
     # Arrange — live cred expired in the past; must NOT save a stale token.
     home = _isolate_home
     expired_ms = int((time.time() - 10_000) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", expired_ms)
+    _write_live(home, "alpha@example.com", expired_ms)
     # Act
     ctx = pytest.raises(LiveCredInvalidError)
     # Assert
@@ -234,14 +234,14 @@ def test_sync_live_does_not_write_store_when_live_expired(
     # Arrange
     home = _isolate_home
     expired_ms = int((time.time() - 10_000) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", expired_ms)
+    _write_live(home, "alpha@example.com", expired_ms)
     # Act
     try:
         sync_live(home=home)
     except LiveCredInvalidError:
         pass
     # Assert — no snapshot was written for a stale live cred.
-    assert not _store_snapshot_path(home, "wyusuuke-gmail-com").exists()
+    assert not _store_snapshot_path(home, "alpha-example-com").exists()
 
 
 def test_sync_live_raises_when_email_missing(_isolate_home: Path) -> None:
@@ -278,20 +278,20 @@ def test_sync_live_matched_identity_writes_correct_store(_isolate_home: Path) ->
     # Arrange — token identity agrees with the metadata email.
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
-    result = sync_live(home=home, identity_fn=lambda _p: "wyusuuke@gmail.com")
+    result = sync_live(home=home, identity_fn=lambda _p: "alpha@example.com")
     # Assert
-    assert result.store_name == "wyusuuke-gmail-com"
+    assert result.store_name == "alpha-example-com"
 
 
 def test_sync_live_mismatched_identity_writes_token_store_not_metadata(
     _isolate_home: Path,
 ) -> None:
-    # Arrange — stale metadata says wyusuuke, but the live token is ywatanabe.
+    # Arrange — stale metadata says alpha, but the live token is ywatanabe.
     home = _isolate_home
     future_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", future_ms)
+    _write_live(home, "alpha@example.com", future_ms)
     # Act
     result = sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
     # Assert — the token's identity wins, not the stale metadata email.
@@ -301,21 +301,21 @@ def test_sync_live_mismatched_identity_writes_token_store_not_metadata(
 def test_sync_live_mismatched_identity_does_not_corrupt_wrong_store(
     _isolate_home: Path,
 ) -> None:
-    # Arrange — a healthy wyusuuke store already exists; metadata is stale
-    # (says wyusuuke) but the live token authenticates as ywatanabe.
+    # Arrange — a healthy alpha store already exists; metadata is stale
+    # (says alpha) but the live token authenticates as ywatanabe.
     home = _isolate_home
-    wyusuuke_ms = int((time.time() + 5_000) * 1_000)
+    user_one_ms = int((time.time() + 5_000) * 1_000)
     live_ms = int((time.time() + 3_600) * 1_000)
-    wyusuuke_snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
-    wyusuuke_snap.parent.mkdir(parents=True, exist_ok=True)
-    wyusuuke_snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": wyusuuke_ms}}))
-    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    user_one_snap = _store_snapshot_path(home, "alpha-example-com")
+    user_one_snap.parent.mkdir(parents=True, exist_ok=True)
+    user_one_snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": user_one_ms}}))
+    _write_live(home, "alpha@example.com", live_ms)
     # Act
     sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
-    # Assert — the wyusuuke store's credential is untouched (not clobbered).
+    # Assert — the alpha store's credential is untouched (not clobbered).
     assert (
-        json.loads(wyusuuke_snap.read_text())["claudeAiOauth"]["expiresAt"]
-        == wyusuuke_ms
+        json.loads(user_one_snap.read_text())["claudeAiOauth"]["expiresAt"]
+        == user_one_ms
     )
 
 
@@ -325,7 +325,7 @@ def test_sync_live_mismatched_identity_writes_token_store_snapshot(
     # Arrange
     home = _isolate_home
     live_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    _write_live(home, "alpha@example.com", live_ms)
     # Act
     sync_live(home=home, identity_fn=lambda _p: "ywatanabe@scitex.ai")
     # Assert — the token-identity store received the live credential.
@@ -336,12 +336,12 @@ def test_sync_live_mismatched_identity_writes_token_store_snapshot(
 def test_sync_live_offline_aborts_when_store_identity_differs(
     _isolate_home: Path,
 ) -> None:
-    # Arrange — whoami offline (None); metadata points at the wyusuuke store,
+    # Arrange — whoami offline (None); metadata points at the alpha store,
     # but that store already records a DIFFERENT account (ywatanabe).
     home = _isolate_home
     live_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", live_ms)
-    _write_store_account_json(home, "wyusuuke-gmail-com", "ywatanabe@scitex.ai")
+    _write_live(home, "alpha@example.com", live_ms)
+    _write_store_account_json(home, "alpha-example-com", "ywatanabe@scitex.ai")
     # Act
     ctx = pytest.raises(AccountIdentityError)
     # Assert
@@ -356,11 +356,11 @@ def test_sync_live_offline_abort_does_not_overwrite_snapshot(
     home = _isolate_home
     guarded_ms = int((time.time() + 5_000) * 1_000)
     live_ms = int((time.time() + 3_600) * 1_000)
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text(json.dumps({"claudeAiOauth": {"expiresAt": guarded_ms}}))
-    _write_store_account_json(home, "wyusuuke-gmail-com", "ywatanabe@scitex.ai")
-    _write_live(home, "wyusuuke@gmail.com", live_ms)
+    _write_store_account_json(home, "alpha-example-com", "ywatanabe@scitex.ai")
+    _write_live(home, "alpha@example.com", live_ms)
     # Act
     try:
         sync_live(home=home, identity_fn=lambda _p: None)
@@ -377,8 +377,8 @@ def test_sync_live_offline_saves_when_store_identity_matches(
     # so the metadata fallback may safely save.
     home = _isolate_home
     live_ms = int((time.time() + 3_600) * 1_000)
-    _write_live(home, "wyusuuke@gmail.com", live_ms)
-    _write_store_account_json(home, "wyusuuke-gmail-com", "wyusuuke@gmail.com")
+    _write_live(home, "alpha@example.com", live_ms)
+    _write_store_account_json(home, "alpha-example-com", "alpha@example.com")
     # Act
     result = sync_live(home=home, identity_fn=lambda _p: None)
     # Assert
@@ -403,13 +403,13 @@ def test_account_freshness_valid_for_future_expiry(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
     now = 1_700_000_000.0
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text(
         json.dumps({"claudeAiOauth": {"expiresAt": int((now + 3_600) * 1_000)}})
     )
     # Act
-    fresh = account_freshness("wyusuuke-gmail-com", home=home, now=now)
+    fresh = account_freshness("alpha-example-com", home=home, now=now)
     # Assert
     assert fresh.state == "VALID"
 
@@ -418,13 +418,13 @@ def test_account_freshness_expired_for_past_expiry(_isolate_home: Path) -> None:
     # Arrange
     home = _isolate_home
     now = 1_700_000_000.0
-    snap = _store_snapshot_path(home, "wyusuuke-gmail-com")
+    snap = _store_snapshot_path(home, "alpha-example-com")
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text(
         json.dumps({"claudeAiOauth": {"expiresAt": int((now - 3_600) * 1_000)}})
     )
     # Act
-    fresh = account_freshness("wyusuuke-gmail-com", home=home, now=now)
+    fresh = account_freshness("alpha-example-com", home=home, now=now)
     # Assert
     assert fresh.state == "EXPIRED"
 

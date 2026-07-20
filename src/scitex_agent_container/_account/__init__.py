@@ -1,1 +1,1 @@
-"""Account: credentials, quota watcher, Claude usage tracking."""
+"""Account credentials and usage tracking across supported providers."""

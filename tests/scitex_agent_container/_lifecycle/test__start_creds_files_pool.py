@@ -44,6 +44,28 @@ def _isolate_home(tmp_path: Path) -> Iterator[Path]:
             os.environ["HOME"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _isolate_quota_cache(tmp_path: Path) -> Iterator[None]:
+    """Point the quota-cache reader at a nonexistent tmp file.
+
+    Agent containers bind the LIVE fleet ``/var/sac/quota-cache.json`` (the
+    reader's default). Without this these boot tests would read real fleet
+    utilisation AND, since the fail-loud gate keys off cache PRESENCE, the live
+    bind would make an un-injected pick trip the gate. An absent override keeps
+    them hermetic (no cache present → freshness-only degrade) — quota reaches
+    the picker only through the ``usage_*`` injection seams.
+    """
+    saved = os.environ.get("SAC_QUOTA_CACHE_PATH")
+    os.environ["SAC_QUOTA_CACHE_PATH"] = str(tmp_path / "absent-quota-cache.json")
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_QUOTA_CACHE_PATH", None)
+        else:
+            os.environ["SAC_QUOTA_CACHE_PATH"] = saved
+
+
 def _snapshot_path(home: Path, slug: str) -> Path:
     return (
         home / ".scitex" / "agent-container" / "accounts" / slug / ".credentials.json"
@@ -111,6 +133,77 @@ def test_pool_selection_emits_a_one_line_notice(_isolate_home: Path) -> None:
     # Assert — operator sees WHICH agent and WHICH account was selected.
     msg = log.getvalue()
     assert "alpha" in msg and "acct-b" in msg
+
+
+def test_pool_notice_names_the_active_policy(_isolate_home: Path) -> None:
+    # Arrange — the notice must say WHICH 7d spend policy ranked the pick.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    log = io.StringIO()
+    # Act
+    _rotate_to_healthy_account(
+        cfg, log_stream=log, usage_7d={"acct-a": 95.0, "acct-b": 5.0}
+    )
+    # Assert
+    assert "policy=spread" in log.getvalue()
+
+
+def test_pool_notice_carries_per_candidate_ranking_inputs(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — operator 2026-07-17: the notice named its CRITERIA but
+    # not its INPUTS, so a reasoned pick was indistinguishable from a
+    # lucky one. Every candidate's 5h/7d/reset must appear.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    log = io.StringIO()
+    # Act
+    _rotate_to_healthy_account(
+        cfg, log_stream=log, usage_7d={"acct-a": 95.0, "acct-b": 5.0}
+    )
+    # Assert — the losing candidate's inputs are logged too.
+    assert "ranking inputs:" in log.getvalue() and "acct-a(5h=" in log.getvalue()
+
+
+@pytest.fixture
+def _burn_policy_env() -> Iterator[None]:
+    """Set the REAL SAC_CREDS_7D_POLICY=burn env var; restore on teardown."""
+    saved = os.environ.get("SAC_CREDS_7D_POLICY")
+    saved_long = os.environ.pop("SCITEX_AGENT_CONTAINER_CREDS_7D_POLICY", None)
+    os.environ["SAC_CREDS_7D_POLICY"] = "burn"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("SAC_CREDS_7D_POLICY", None)
+        else:
+            os.environ["SAC_CREDS_7D_POLICY"] = saved
+        if saved_long is not None:
+            os.environ["SCITEX_AGENT_CONTAINER_CREDS_7D_POLICY"] = saved_long
+
+
+def test_pool_under_burn_env_prefers_the_near_capped_entry(
+    _isolate_home: Path, _burn_policy_env: None
+) -> None:
+    # Arrange — SAC_CREDS_7D_POLICY=burn (fixture). Under the corrected
+    # 7d rule the near-capped entry is a reason to PICK: its unspent
+    # quota is destroyed at the weekly boundary.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    # Act
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=io.StringIO(),
+        usage_7d={"acct-a": 95.0, "acct-b": 5.0},
+    )
+    # Assert — spread avoids acct-a; burn drains it to zero.
+    assert cfg.claude.credentials_file == str(p_a)
 
 
 # ---------------------------------------------------------------------------

@@ -143,6 +143,52 @@ os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(_SAC_STATE_FLOOR / "regi
 # touch the LIVE `sac listen` PIDFILE. It now honours this same variable.
 os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(_SAC_STATE_FLOOR / "runtime")
 
+# --- NEVER let a test touch the REAL card board ---------------------------
+# INCIDENT 2026-07-20: the fleet's live board went from ~2777 cards to SIX.
+# Five of the six survivors were OUR fixtures — `other-agent-card-0/1` and
+# `scitex-todo-card-0/1/2`, i.e. exactly the `seed_cards()` calls in
+# tests/scitex_agent_container/_lifecycle/test__rename_cards.py.
+#
+# This was NOT a floor that broke. It is a floor that was never laid, and the
+# reason it was missed is that the tests LOOKED isolated. `_helpers/fleet_root.
+# isolated_board()` carefully redirects `$SCITEX_TODO_TASKS_YAML_SHARED` at a
+# tmp YAML and passes an explicit `store=` to every scitex-todo call. All of
+# that is correct — and all of it protects only the YAML.
+#
+# The board is no longer just YAML. scitex-cards mirrors every write into a
+# SQLite shadow, and the mirror resolves its OWN path independently of the
+# store you wrote to:
+#
+#   _dual_write.mirror_after_save(doc, store_path)   # store_path = our tmp yaml
+#     -> mirror_doc_incremental(doc, resolve_db_path(), store_path=store_path)
+#                                    ^^^^^^^^^^^^^^^^^ no explicit arg
+#
+# `resolve_db_path()` (scitex_cards/_db.py:95) with no argument falls through
+# `$SCITEX_CARDS_DB` -> `$SCITEX_TODO_DB` -> `~/.scitex/cards/cards.db`. None of
+# those were set, so the doc went to tmp and the MIRROR went to the live board.
+#
+# And the mirror is a RECONCILE, not an append (scitex_cards/_db_mirror.py:208):
+#
+#   removed = [i for i in prior if i not in now_hashes]
+#   for tid in removed: _delete_task(conn, tid)
+#
+# So mirroring a 5-card tmp doc onto the real DB DELETED the other 2,772 cards.
+# The test never touched the real board's YAML and still destroyed the board.
+#
+# Force-set, same rationale as the sac paths above: a hard floor that does not
+# depend on any fixture remembering to opt in. Redirecting the PATH (rather
+# than switching the mirror off) is deliberate — the production dual-write path
+# keeps running and stays under test; it just runs into the sandbox.
+#
+# BOTH names are set. `$SCITEX_CARDS_DB` is the current one and wins;
+# `$SCITEX_TODO_DB` is the pre-rename name (package renamed 2026-07-16) that
+# `resolve_db_path` still honours for direct callers in a process that never
+# imported the scitex_cards root, and this is the variable whose absence cost
+# 2,777 cards — it is not the place to bet on a transition window.
+_SAC_CARDS_DB = _SAC_STATE_FLOOR / "cards" / "cards.db"
+os.environ["SCITEX_CARDS_DB"] = str(_SAC_CARDS_DB)
+os.environ["SCITEX_TODO_DB"] = str(_SAC_CARDS_DB)
+
 
 def _ensure_subprocess_coverage_shim() -> None:
     """Drop an idempotent ``.pth`` shim in site-packages so every child
@@ -173,8 +219,11 @@ def _ensure_subprocess_coverage_shim() -> None:
 _ensure_subprocess_coverage_shim()
 
 # Expose shared no-mocks helpers (subprocess_shim, env_save_restore,
-# ssh_http_shim) as session-wide fixtures so any test under tests/
-# can use them by name.
+# ssh_exec_shim, ssh_http_shim) as session-wide fixtures so any test under
+# tests/ can use them by name.
+from tests.scitex_agent_container._helpers.ssh_exec_shim import (  # noqa: E402,F401
+    ssh_exec_shim,
+)
 from tests.scitex_agent_container._helpers.ssh_http_shim import (  # noqa: E402,F401
     ssh_http_shim,
 )
@@ -260,14 +309,137 @@ _STATE_DB_KEY = "SCITEX_AGENT_CONTAINER_STATE_DB"
 _state_db_seq = itertools.count()
 
 
+# ---------------------------------------------------------------------------
+# THE FLOOR MUST BE ABLE TO DETECT ITS OWN BREACH.
+#
+# Everything above sets the env EARLY so the three import-time constants are
+# born inside the sandbox. Nothing above notices when a test MOVES one back
+# out — and a test can, trivially: `importlib.reload()` re-derives the constant
+# from whatever the env says AT THAT MOMENT, so any teardown that drops the env
+# var and only THEN reloads re-pins the constant at the operator's real
+# ``$HOME/.scitex/agent-container/runtime`` for the REST of that xdist worker's
+# session. Every later test in that worker keeps passing while writing outside
+# the floor, because passing was never conditional on where the bytes landed.
+#
+# That is not hypothetical. Measured on PR #784, all three matrix legs died on
+# a Spartan runner with
+#
+#   OSError: [Errno 122] Disk quota exceeded:
+#     '/home/ywatanabe/.scitex/agent-container/runtime/alpha/instance_id.tmp'
+#
+# and the same escape had produced a FileNotFoundError on that path earlier.
+# Worse than CI: a live fleet agent really is named `alpha`, so the suite was
+# contending with a running agent for its own state files.
+#
+# So the floor gets an alarm. After EVERY test, re-read all three constants and
+# fail loudly — naming the test — if any of them no longer resolves inside
+# ``_SAC_STATE_FLOOR``. The modules are imported LAZILY here, inside the
+# finalizer, on purpose: binding them at collection time would capture a stale
+# reference and we would be asserting about a copy of the value rather than the
+# value the next test is about to use.
+#
+# ``sys.modules.get`` (not ``import_module``) so this fixture never IMPORTS a
+# module the run had not already loaded — a check that changes what it measures
+# is not a check.
+#
+# ORDERING IS LOAD-BEARING: ``_isolate_state_db`` below legitimately points
+# ``DEFAULT_DB_PATH`` at a per-test tmp db and restores it on teardown, so this
+# assertion has to run AFTER that restore. Fixture finalization is LIFO, so
+# this fixture must be SET UP FIRST — which is why ``_isolate_state_db``
+# requests it by name rather than relying on declaration order.
+# ---------------------------------------------------------------------------
+
+_STATE_FLOOR_CONSTANTS = (
+    ("scitex_agent_container._state.state_db", "DEFAULT_DB_PATH"),
+    ("scitex_agent_container._state.registry", "REGISTRY_DIR"),
+    ("scitex_agent_container._runners._session_state", "DEFAULT_STATE_ROOT"),
+)
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _assert_state_floor_intact(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail the test that moves an import-time state constant off the floor."""
+    yield
+
+    import sys
+
+    floor = _SAC_STATE_FLOOR.resolve()
+    breaches: list[str] = []
+    for module_path, attr in _STATE_FLOOR_CONSTANTS:
+        module = sys.modules.get(module_path)
+        if module is None:
+            continue
+        value = getattr(module, attr, None)
+        if value is None:
+            continue
+        resolved = Path(value).resolve()
+        if resolved != floor and floor not in resolved.parents:
+            breaches.append(f"  {module_path}.{attr}\n      -> {resolved}")
+
+    # The card board is checked by ASKING THE RESOLVER, not by reading a
+    # constant: `scitex_cards._db.resolve_db_path()` is a function evaluated at
+    # every write, so the only honest question is the one the dual-write mirror
+    # itself asks -- "where would a card write land RIGHT NOW". Reading an env
+    # var here would re-implement its precedence chain and could agree with
+    # itself while disagreeing with production.
+    #
+    # scitex-cards is an OPTIONAL peer (see test__rename_cards.py's
+    # importorskip), so its absence is not a breach -- but it must be a real
+    # ImportError, never a silently swallowed one.
+    try:
+        from scitex_cards._db import resolve_db_path
+    except ImportError:
+        resolve_db_path = None
+    if resolve_db_path is not None:
+        card_db = Path(resolve_db_path()).resolve()
+        if card_db != floor and floor not in card_db.parents:
+            breaches.append(f"  scitex_cards._db.resolve_db_path()\n      -> {card_db}")
+
+    if breaches:
+        raise AssertionError(
+            "\n=============== SAC STATE FLOOR BREACHED ===============\n"
+            f"After `{request.node.nodeid}` these state locations no longer\n"
+            "resolve under the per-worker sandbox floor:\n\n"
+            + "\n".join(breaches)
+            + f"\n\n  floor: {floor}\n\n"
+            "Everything from here on in this xdist worker will keep PASSING\n"
+            "while writing to the operator's REAL state -- that is precisely\n"
+            "how this went unseen: nothing was asserting on where the bytes\n"
+            "landed. It has cost three CI legs (Errno 122 on a live agent's\n"
+            "runtime dir) and ~2,772 cards off the live board.\n\n"
+            "If a MODULE CONSTANT moved: the teardown re-derived it from an\n"
+            "env var it had ALREADY dropped. RESTORE the env var BEFORE the\n"
+            "final `importlib.reload(...)`, not after. Working examples:\n"
+            "  tests/scitex_agent_container/_listen/test__agent_delete.py\n"
+            "  tests/scitex_agent_container/_runners/test_claude_session.py\n"
+            "Or register the module with the `env_save_restore` fixture:\n"
+            "  env_save_restore.reload_after_restore(module)\n\n"
+            "If the CARD BOARD moved: something cleared or overrode\n"
+            "$SCITEX_CARDS_DB. Note the dual-write mirror resolves that path\n"
+            "ITSELF at every write and RECONCILES (deletes cards absent from\n"
+            "the doc), so a tmp store plus a real DB path does not merely\n"
+            "pollute the board -- it DESTROYS it.\n"
+            "=======================================================\n"
+        )
+
+
 # scope="function" is SPELLED OUT (it is also pytest's default) because the
 # whole fix depends on it, and a future "let's not rebuild the DB 4900 times"
 # optimisation to scope="session"/"module" would silently REINTRODUCE the bug:
 # `claim_port` never releases, so any db shared across tests re-accumulates
 # rows until [19000, 19999] is exhausted mid-run. Per-TEST or it does not work.
 @pytest.fixture(autouse=True, scope="function")
-def _isolate_state_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
-    """Point this test's state.db at a private tmp file. Restores on teardown."""
+def _isolate_state_db(
+    tmp_path_factory: pytest.TempPathFactory,
+    _assert_state_floor_intact: None,
+) -> Iterator[Path]:
+    """Point this test's state.db at a private tmp file. Restores on teardown.
+
+    Requests ``_assert_state_floor_intact`` purely for ORDERING: that makes the
+    floor assertion set up FIRST and therefore (LIFO) finalize LAST, so it
+    observes ``DEFAULT_DB_PATH`` after the restore below rather than while this
+    fixture still has it pointed at a tmp db.
+    """
     from scitex_agent_container._state import state_db
 
     # Computed but deliberately NOT created: `state_db._connect` mkdirs the
@@ -291,3 +463,45 @@ def _isolate_state_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path
             os.environ.pop(_STATE_DB_KEY, None)
         else:
             os.environ[_STATE_DB_KEY] = saved_env
+
+
+# ---------------------------------------------------------------------------
+# sac event log isolation
+# ---------------------------------------------------------------------------
+
+_EVENT_LOG_KEY = "SAC_EVENT_LOG"
+_event_log_seq = itertools.count()
+
+
+# Same shape and the same reason as `_isolate_state_db` above. sac's alarm
+# rails record to an append-only event log whose path is resolved PER CALL
+# from this env var, and several of them default ON (the worktree GC alarms
+# under `--apply`; the reconcile and auth-heal passes record every pass). Any
+# test that exercises one of those paths without this fixture appends to the
+# OPERATOR'S REAL LOG — quietly, because the rail is deliberately fail-open.
+#
+# Per-TEST, not per-session: the rails also keep small "currently degraded"
+# state files BESIDE the log, so a shared log would let one test's remembered
+# degraded subject suppress the next test's degraded record — a cross-test
+# dependency that would only ever show up as a mystifying order-dependent
+# failure under `-p randomly`.
+@pytest.fixture(autouse=True, scope="function")
+def _isolate_event_log(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Point this test's sac event log at a private tmp file."""
+    # Computed but deliberately NOT created: the rail mkdirs its parent on
+    # first real write, so a test that records nothing leaves no dir behind.
+    log = (
+        tmp_path_factory.getbasetemp()
+        / "sac-events"
+        / f"t{next(_event_log_seq)}"
+        / "sac-events.jsonl"
+    )
+    saved = os.environ.get(_EVENT_LOG_KEY)
+    os.environ[_EVENT_LOG_KEY] = str(log)
+    try:
+        yield log
+    finally:
+        if saved is None:
+            os.environ.pop(_EVENT_LOG_KEY, None)
+        else:
+            os.environ[_EVENT_LOG_KEY] = saved

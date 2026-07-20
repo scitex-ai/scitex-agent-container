@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from scitex_agent_container._mcp._healthcheck import (
     CONNECTED,
+    CRITICAL_CAPABILITIES,
     FAILED,
     UNKNOWN,
     parse_mcp_status,
@@ -111,6 +112,13 @@ def test_run_healthcheck_all_ok_does_not_restart(tmp_path):
 
 
 def test_run_healthcheck_failed_reports_failed_server(tmp_path):
+    """A legacy-key failure is reported under the CANONICAL name.
+
+    The input line still says ``scitex-todo`` (an un-migrated ``.mcp.json``),
+    but the healthcheck reports every status under the preferred key so callers
+    read ONE name regardless of which spelling the agent's config used. The
+    failure is still detected — only its label is canonicalised.
+    """
     # Arrange
     recorder = _RestartRecorder()
     # Act
@@ -122,7 +130,7 @@ def test_run_healthcheck_failed_reports_failed_server(tmp_path):
         state_dir=tmp_path,
     )
     # Assert
-    assert result["failed"] == ["scitex-todo"]
+    assert result["failed"] == ["scitex-cards"]
 
 
 def test_run_healthcheck_failed_requests_restart(tmp_path):
@@ -298,3 +306,87 @@ def test_run_healthcheck_partial_unknown_is_not_ok(tmp_path):
     )
     # Assert — an unverified critical server means the whole reading is UNKNOWN.
     assert result["action"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# scitex-todo -> scitex-cards rename: dual-name tolerance.
+#
+# The ``.mcp.json`` is NOT emitted by sac (it comes from the operator's to_home
+# layers), so sac cannot flip the server key itself and a live fleet is rolled
+# one agent at a time. Both spellings must therefore resolve to the SAME
+# canonical status, or a not-yet-migrated agent's healthy board MCP reads as
+# absent -> UNKNOWN -> a false alarm manufactured by the rename.
+# ---------------------------------------------------------------------------
+
+_CARDS = ("scitex-agent-container", "scitex-cards")
+
+_LIST_NEW_KEY_OK = (
+    "scitex-agent-container: sac mcp start - Connected\n"
+    "scitex-cards: scitex-cards mcp start - Connected\n"
+)
+_LIST_OLD_KEY_OK = (
+    "scitex-agent-container: sac mcp start - Connected\n"
+    "scitex-todo: scitex-todo mcp start - Connected\n"
+)
+_LIST_OLD_KEY_FAILED = (
+    "scitex-agent-container: sac mcp start - Connected\n"
+    "scitex-todo: scitex-todo mcp start - Failed to connect\n"
+)
+
+
+def test_critical_capabilities_names_the_new_package():
+    # Arrange
+    keys = set(CRITICAL_CAPABILITIES)
+    # Act
+    present = "scitex-cards" in keys
+    # Assert
+    assert present
+
+
+def test_new_server_key_resolves_connected():
+    # Arrange
+    text = _LIST_NEW_KEY_OK
+    # Act
+    statuses = parse_mcp_status(text, _CARDS)
+    # Assert
+    assert statuses["scitex-cards"] == CONNECTED
+
+
+def test_legacy_server_key_still_resolves_under_the_new_name():
+    """TOLERANCE: an un-migrated .mcp.json must not read as absent."""
+    # Arrange
+    text = _LIST_OLD_KEY_OK
+    # Act
+    statuses = parse_mcp_status(text, _CARDS)
+    # Assert
+    assert statuses["scitex-cards"] == CONNECTED
+
+
+def test_legacy_server_key_failure_is_reported_under_the_new_name():
+    """Tolerance must not swallow a real failure on the old key."""
+    # Arrange
+    text = _LIST_OLD_KEY_FAILED
+    # Act
+    statuses = parse_mcp_status(text, _CARDS)
+    # Assert
+    assert statuses["scitex-cards"] == FAILED
+
+
+def test_genuinely_absent_board_server_is_still_unknown():
+    """Tolerance must not manufacture a status out of nothing."""
+    # Arrange — neither spelling appears.
+    text = "scitex-agent-container: sac mcp start - Connected\n"
+    # Act
+    statuses = parse_mcp_status(text, _CARDS)
+    # Assert
+    assert statuses["scitex-cards"] == UNKNOWN
+
+
+def test_caller_asking_for_the_legacy_name_verbatim_gets_that_key():
+    """Back-compat: an explicit legacy request keeps its own key in the result."""
+    # Arrange
+    text = _LIST_OLD_KEY_OK
+    # Act
+    statuses = parse_mcp_status(text, ("scitex-todo",))
+    # Assert
+    assert statuses["scitex-todo"] == CONNECTED

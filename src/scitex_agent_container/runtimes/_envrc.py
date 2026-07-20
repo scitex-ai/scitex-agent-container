@@ -25,9 +25,28 @@ BOTH the baseline AND the loaded shells, BEFORE everything else. Because the
 secret files' own vars then appear in BOTH shells they are NOT in the diff →
 NOT folded into the agent ``.env`` (no leak); but the per-agent ``.envrc``'s
 references now resolve to the real values and, being NEW/CHANGED keys, ARE
-folded. Unset/empty ``SAC_SECRETS_ENVRC`` ⇒ behaviour is exactly as before. A
-secret file that exists but fails to source still raises (fail-loud); only a
-NON-EXISTENT path is skipped (matching the per-layer skip-if-missing posture).
+folded. A secret file that exists but fails to source still raises (fail-loud);
+only a NON-EXISTENT path is skipped (matching the per-layer skip-if-missing
+posture).
+
+CANONICAL DEFAULT (class fix, 2026-07-18): ``start``/``restart`` used to TRUST
+the caller's environment for the pool — so ``SAC_SECRETS_ENVRC`` had to be set
+by whoever launched the process. It is baked into ``sac-listen.service`` but
+NOT into a cron line, a raw ``ssh`` restart, or a federated ``scitex_dev.jobs``
+timer (JobSpec cannot inject an environment). Any such caller folded EMPTY
+CCT/Telegram tokens and thereby STRIPPED them on redeploy (confirmed live: an
+``auth-heal.py`` cron restart and a raw-ssh restart both stripped cards+hub).
+:func:`resolve_secret_files` is the caller-independent resolver: an explicit
+``SAC_SECRETS_ENVRC`` wins verbatim, and when it is unset/empty it falls back to
+the operator's standardized secret files (``$HOME/.bash.d/secrets/010_scitex/
+*.src``) — the SAME default ``scripts/systemd/install-sac-listen.sh`` computes.
+The CCT pool resolver (``_cct_token_pool._pool_env``) uses it, so any caller
+re-resolves the bot token from the default pool AFTER the fold — no more
+stripping. The general ``.envrc`` fold preamble (:func:`_secrets_preamble_lines`)
+deliberately stays env-ONLY: it runs in a strict bash and must not couple every
+deploy to host ``$HOME`` state; the CCT re-resolution (fail-open) is what heals
+the reported incident. A host without that directory resolves to nothing (a safe
+no-op, exactly as before).
 """
 
 from __future__ import annotations
@@ -50,21 +69,65 @@ _SHELL_NOISE = frozenset({"_", "SHLVL", "PWD", "OLDPWD"})
 # Env var naming the secrets-preamble files (colon-separated absolute paths).
 _SECRETS_ENVRC_VAR = "SAC_SECRETS_ENVRC"
 
+# Canonical default pool location, resolved relative to ``$HOME`` — the SAME
+# glob ``scripts/systemd/install-sac-listen.sh::secrets_envrc_value`` bakes into
+# the listen unit. Used ONLY when ``SAC_SECRETS_ENVRC`` is unset/empty, so the
+# CCT/Telegram pool is found no matter which caller (cron, raw ssh, a federated
+# timer) launched the restart — not just the one process the operator's shell or
+# the listen unit happened to export the var into. See the module docstring.
+_DEFAULT_SECRETS_GLOB = ".bash.d/secrets/010_scitex/*.src"
+
 
 class EnvrcEvalError(RuntimeError):
     """An agent's ``.envrc`` failed to evaluate (fail-loud; aborts deploy)."""
 
 
-def _secrets_preamble_lines() -> list[str]:
-    """Return ``. <path>`` source lines for the ``SAC_SECRETS_ENVRC`` files.
+def resolve_secret_files(
+    *, environ: "dict[str, str] | None" = None, home: "Path | None" = None
+) -> list[Path]:
+    """The secret files the preamble sources, honouring the canonical default.
 
-    Reads the colon-separated absolute paths from ``SAC_SECRETS_ENVRC``,
-    keeps only the entries that currently exist (a non-existent path is
-    skipped — matching the per-layer skip-if-missing posture), and returns
-    one quoted ``. <path>`` line per surviving file. Empty list when the var
-    is unset/empty — so the baseline and loaded scripts are unchanged from
-    pre-preamble behaviour. The same list is spliced into BOTH the baseline
-    and the loaded shell so the secret files' own vars cancel in the diff.
+    Precedence — and the whole point of the 2026-07-18 class fix:
+
+    1. An explicit non-empty ``SAC_SECRETS_ENVRC`` wins VERBATIM: its
+       colon-separated paths, keeping only the entries that currently exist (a
+       non-existent path is skipped — the per-layer skip-if-missing posture).
+       An operator/inherited value is never overridden.
+    2. Otherwise (unset OR empty) fall back to the operator's standardized
+       secret files ``$HOME/.bash.d/secrets/010_scitex/*.src`` (sorted, existing
+       only) — the SAME default the listen-unit installer computes. This is what
+       makes the pool CALLER-INDEPENDENT: a cron/raw-ssh/federated-timer restart
+       that never had the var exported still loads the pool instead of folding
+       (and thereby STRIPPING) every CCT/Telegram token.
+
+    A host without that directory resolves to an empty list — a safe no-op,
+    exactly the pre-fix behaviour for a caller with no pool. ``environ`` / ``home``
+    are injectable so the resolution is unit-testable without touching the real
+    process environment or ``$HOME``.
+    """
+    env = environ if environ is not None else os.environ
+    raw = (env.get(_SECRETS_ENVRC_VAR) or "").strip()
+    if raw:
+        return [Path(e) for e in raw.split(":") if e and Path(e).is_file()]
+    base = Path(home) if home is not None else Path(env.get("HOME") or Path.home())
+    return sorted(p for p in base.glob(_DEFAULT_SECRETS_GLOB) if p.is_file())
+
+
+def _secrets_preamble_lines() -> list[str]:
+    """Return ``. <path>`` source lines from an EXPLICIT ``SAC_SECRETS_ENVRC``.
+
+    Env-ONLY by design (unset var ⇒ empty preamble, unchanged pre-fix
+    behaviour): the general ``.envrc`` fold sources these in a strict
+    ``--noprofile --norc`` bash, so it must stay a pure function of the
+    explicitly-configured var and never couple a deploy to host ``$HOME``
+    state. The canonical ``$HOME`` default fallback lives in
+    :func:`resolve_secret_files` and is applied only by the CCT pool resolver
+    (``_cct_token_pool._pool_env``) — which is fail-open and re-resolves the
+    bot token AFTER the fold, so an unset var no longer strips it.
+
+    The same list is spliced into BOTH the baseline AND the loaded shell so the
+    secret files' own vars cancel in the diff (no leak) while the per-agent
+    ``.envrc``'s references still resolve.
     """
     raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
     lines: list[str] = []
@@ -126,9 +189,7 @@ def eval_envrc(envrc: Path, *, base_env: Path | None = None) -> dict[str, str]:
     return _folded_env(loaded, baseline)
 
 
-def _folded_env(
-    loaded: dict[str, str], baseline: dict[str, str]
-) -> dict[str, str]:
+def _folded_env(loaded: dict[str, str], baseline: dict[str, str]) -> dict[str, str]:
     """Filter a captured ``loaded`` env down to the net ``.env`` contribution.
 
     Applied identically by :func:`eval_envrc` and :func:`eval_envrc_cascade`.
@@ -266,4 +327,5 @@ __all__ = [
     "eval_envrc_cascade",
     "fold_envrc_into_env",
     "fold_envrc_cascade_into_env",
+    "resolve_secret_files",
 ]
