@@ -189,9 +189,7 @@ COMMS_NODE_SQL = (
     "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
     "VALUES (?, ?, ?, ?, ?)"
 )
-TURN_SQL = (
-    "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
-)
+TURN_SQL = "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
@@ -236,13 +234,20 @@ def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:
 def isolated_board(tmp_path: Path) -> Iterator[Path]:
     """Yield a tmp scitex-todo store, fully cut off from the live fleet.
 
-    THREE things must be isolated, not one. Each is a real production
+    FOUR things must be isolated, not one. Each is a real production
     opt-out, not a mock — the code paths stay exactly as they ship; the
     test simply does not ride them.
 
     * **the store** — ``$SCITEX_TODO_TASKS_YAML_SHARED`` points at a tmp
       YAML file, so even a call that forgot ``store=`` lands in tmp rather
       than on the live 1,400-card board.
+
+    * **the SQLite shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
+      ``$SCITEX_TODO_DB``) points at a tmp DB. This one is not belt-and-
+      braces, it is load-bearing, and its absence destroyed the live board
+      on 2026-07-20: the dual-write mirror resolves its own path and
+      RECONCILES, so isolating only the YAML meant a five-card tmp doc
+      deleted 2,772 real cards. See the inline note below.
 
     * **the notification rail** — sac registers a ``scitex_todo.hooks``
       consumer (``_listen._card_event_delivery``), so every real
@@ -264,12 +269,42 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     store = tmp_path / "board" / "tasks.yaml"
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text("tasks: []\n")
+    cards_db = tmp_path / "board" / "cards.db"
 
     yield from _yield_value(
         store,
         _env_overrides(
             {
                 "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
+                # *** THE SQLITE SHADOW — isolating the YAML IS NOT ENOUGH. ***
+                #
+                # Redirecting the store above protects the YAML and nothing
+                # else. scitex-cards mirrors every write into a SQLite shadow
+                # whose path it resolves ITSELF, ignoring the store you wrote
+                # to: `_dual_write.mirror_after_save` calls
+                # `mirror_doc_incremental(doc, resolve_db_path(), ...)` with NO
+                # explicit path, so it lands on `$SCITEX_CARDS_DB` or, failing
+                # that, the live `~/.scitex/cards/cards.db`.
+                #
+                # And the mirror RECONCILES rather than appends
+                # (`_db_mirror.py:208`): every card in the DB that is absent
+                # from the doc is DELETED. So a tmp store of five seeded cards
+                # does not pollute the real board, it REPLACES it. On
+                # 2026-07-20 that took the fleet board from ~2,777 cards to
+                # six, five of which were this module's own fixtures.
+                #
+                # tests/conftest.py force-sets the same variable as a floor
+                # under the whole suite. This is the belt to that braces: a
+                # test using this helper is isolated even if the floor is not
+                # there (a bare `pytest` from another rootdir, a subprocess
+                # with a scrubbed env, a future refactor of conftest).
+                "SCITEX_CARDS_DB": str(cards_db),
+                # Pre-rename name of the same knob, still honoured by
+                # `resolve_db_path` for direct callers that never imported the
+                # scitex_cards root. Set both — this is the variable whose
+                # absence destroyed the board; do not bet on a transition
+                # window closing cleanly.
+                "SCITEX_TODO_DB": str(cards_db),
                 "SAC_CARD_EVENT_DELIVERY_DISABLED": "1",
                 "SCITEX_TODO_STORE_GIT_AUTOCOMMIT": "0",
                 # `list_tasks(scope=None)` falls back to this. A stray value
@@ -347,6 +382,4 @@ def add_card(
 
 def seed_cards(store: Path, owner: str, count: int) -> list[str]:
     """Add ``count`` real cards owned by ``owner`` to the tmp store."""
-    return [
-        add_card(store, f"{owner}-card-{i}", owner=owner) for i in range(count)
-    ]
+    return [add_card(store, f"{owner}-card-{i}", owner=owner) for i in range(count)]

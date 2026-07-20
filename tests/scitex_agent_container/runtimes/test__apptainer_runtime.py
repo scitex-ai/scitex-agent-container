@@ -70,13 +70,18 @@ def home_redirect(tmp_path: Path, env_save_restore) -> Path:
 def state_root(tmp_path: Path, env_save_restore, home_redirect: Path) -> Path:
     """Sandbox the per-agent state-dir root. Sets the env var that
     ``_session_state.DEFAULT_STATE_ROOT`` caches at import time, then
-    reloads the module so the next ``state_dir_for`` call sees it."""
+    reloads the module so the next ``state_dir_for`` call sees it.
+
+    ``reload_after_restore`` undoes the reload once ``env_save_restore`` has put
+    the env back — without it ``DEFAULT_STATE_ROOT`` stays pinned at this test's
+    (soon-deleted) tmp dir for the rest of the xdist worker's session."""
     root = tmp_path / "runtime"
     root.mkdir()
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(root))
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
+    env_save_restore.reload_after_restore(ss)
     return root
 
 
@@ -1638,8 +1643,7 @@ def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
     # Assert — the SDK in the container still authenticates: the secret is
     # delivered via the 0600 --env-file, not world-readable --env argv.
     assert (
-        _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY")
-        == "sk-ant-oat01-supersecrettoken"
+        _env_pairs(argv).get("SAC_ANTHROPIC_API_KEY") == "sk-ant-oat01-supersecrettoken"
     )
 
 
@@ -2534,8 +2538,7 @@ def test_listen_env_flags_unions_spec_dirs_value_with_default(
     flags = listen_env_flags(cfg)
     # Assert — the host value rides first, host default appended.
     assert (
-        "SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents:"
-        f"{_host_default_agents_dir()}"
+        f"SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents:{_host_default_agents_dir()}"
     ) in flags
 
 
@@ -2551,8 +2554,7 @@ def test_listen_env_flags_spec_dirs_pair_is_contiguous(env_save_restore) -> None
     # Act
     flags = listen_env_flags(cfg)
     value = (
-        "SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents:"
-        f"{_host_default_agents_dir()}"
+        f"SCITEX_AGENT_CONTAINER_YAML_DIRS=/host/agents:{_host_default_agents_dir()}"
     )
     # Assert
     assert flags[flags.index(value) - 1] == "--env"
@@ -2571,9 +2573,7 @@ def test_listen_env_flags_injects_default_spec_dir_when_unset(
     # Act
     flags = listen_env_flags(cfg)
     # Assert — the host default is injected even with nothing set.
-    assert (
-        f"SCITEX_AGENT_CONTAINER_YAML_DIRS={_host_default_agents_dir()}" in flags
-    )
+    assert f"SCITEX_AGENT_CONTAINER_YAML_DIRS={_host_default_agents_dir()}" in flags
 
 
 # ---------------------------------------------------------------------------

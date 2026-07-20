@@ -65,17 +65,19 @@ def test_prune_removes_runtime_dir(env_save_restore, tmp_path):
     ss = importlib.reload(
         importlib.import_module("scitex_agent_container._runners._session_state")
     )
-    try:
-        state_dir = ss.state_dir_for("cap")
-        state_dir.mkdir(parents=True)
-        (state_dir / "heartbeat.json").write_text("{}")
-        # Act
-        pr.prune_agent_runtime(_cfg(name="cap", policy="never", prune_on_stop=True))
-        # Assert
-        assert not state_dir.exists()
-    finally:
-        env_save_restore.delete(_RT_ENV)
-        importlib.reload(ss)
+    # Reload on the FAR side of the env restore. Deleting the env var and THEN
+    # reloading (the old shape here) re-derived DEFAULT_STATE_ROOT with no
+    # override at all, pinning it at the real $HOME for the rest of this xdist
+    # worker — this test was the FIRST breach the conftest floor assertion
+    # caught across the whole suite.
+    env_save_restore.reload_after_restore(ss)
+    state_dir = ss.state_dir_for("cap")
+    state_dir.mkdir(parents=True)
+    (state_dir / "heartbeat.json").write_text("{}")
+    # Act
+    pr.prune_agent_runtime(_cfg(name="cap", policy="never", prune_on_stop=True))
+    # Assert
+    assert not state_dir.exists()
 
 
 def test_prune_removes_overlay_dir(tmp_path):

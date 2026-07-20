@@ -276,6 +276,11 @@ def isolated_runtime_root(tmp_path: Path, env_save_restore):
     import scitex_agent_container._runners._session_state as _ss
 
     importlib.reload(_ss)
+    # This fixture had NO teardown at all: it reloaded the module against the
+    # redirected env and returned, leaving DEFAULT_STATE_ROOT pinned at a
+    # tmp_path that pytest later deletes. Register the reload so it happens
+    # after env_save_restore puts the env back.
+    env_save_restore.reload_after_restore(_ss)
     return runtime_root
 
 
