@@ -26,6 +26,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Per-writer-unique atomic text write (unique tmp name) so two processes
+# sharing one state dir never collide on a fixed ``<name>.tmp`` sibling.
+from ._atomic import atomic_write_text
+
 
 def _session_id_history_path(state_dir: Path) -> Path:
     return state_dir / "session_id_history"
@@ -83,9 +87,7 @@ def write_session_id(state_dir: Path, session_id: str) -> None:
     additive.
     """
     state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "session_id.tmp"
-    tmp.write_text(session_id, encoding="utf-8")
-    tmp.replace(state_dir / "session_id")
+    atomic_write_text(state_dir / "session_id", session_id)
     append_session_id_history(state_dir, session_id)
 
 
@@ -184,9 +186,7 @@ def discard_dead_session(state_dir: Path, dead_id: str) -> bool:
 
     survivors = [sid for sid in history if sid != dead_id]
     if survivors:
-        tmp = state_dir / "session_id_history.tmp"
-        tmp.write_text("\n".join(survivors) + "\n", encoding="utf-8")
-        tmp.replace(history_path)
+        atomic_write_text(history_path, "\n".join(survivors) + "\n")
     else:
         try:
             history_path.unlink()
