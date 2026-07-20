@@ -501,10 +501,10 @@ real `claude /login` is finally needed.
 A SECOND federated `scitex_dev.jobs` job (same mechanism as above;
 `_jobs_plugin.py`). Runs `sac host sync --check --all --alarm` hourly:
 the **read-only** one-way-sync drift detector (mutates no peer), with
-`--alarm` routing each verdict to an idempotent scitex-todo card
-(`host-sync-drift-<peer>`, `status=blocked`/`blocker=operator-decision`)
-— upsert on drift/unknown, resolve on clean. This makes the Stage-0
-detector (PR #690), previously scheduled nowhere, actually RUN and be
-SEEN on the board instead of in a log nobody reads. Install with
+`--alarm` recording each verdict in sac's own append-only event log
+(`sac-events.jsonl`, subsystem `host-sync`) as `subject-degraded` /
+`subject-unknown` / `subject-recovered`. This makes the Stage-0 detector
+(PR #690), previously scheduled nowhere, actually RUN and leave a durable
+record instead of a journal line nobody reads. Install with
 `sac dev systemd install --yes`, then
 `systemctl --user enable --now sac.host-sync-check.timer`.

@@ -13,7 +13,7 @@ The shape every rail in this package follows, learned from
   it was fine".
 * **Report by default, mutate only on request.** ``--dry-run`` is the
   default surface; ``--apply`` is the deliberate act.
-* **The board is a side rail.** A card-delivery failure prints loudly and
+* **Recording is a side rail.** A failed write prints loudly and
   never crashes the maintenance pass that feeds it.
 """
 

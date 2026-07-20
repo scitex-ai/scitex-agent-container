@@ -91,7 +91,7 @@ sac worktree gc --apply --all
 | `--all` | — | sweep every declared repo (see below) |
 | `--min-age-hours N` | 24 | keep any worktree whose HEAD commit is younger |
 | `--cap N` | 20 | alarm when a repo *still* has more than N after the pass |
-| `--alarm/--no-alarm` | on with `--apply` | route cap verdicts to a board card |
+| `--alarm/--no-alarm` | on with `--apply` | record cap verdicts in sac's event log |
 | `--json` | off | structured output |
 
 **Exit codes**: `0` every repo under cap · `1` a repo is still over cap
@@ -121,23 +121,24 @@ The reaping is the easy half. The half that prevents the incident is
 **shouting about what the predicate refused to touch**, because those are
 the worktrees that accumulate forever.
 
-After a pass, a repo still over `--cap` upserts an idempotent scitex-todo
-card on the board's BLOCKING-YOU view:
+After a pass, a repo still over `--cap` is recorded in sac's own
+append-only event log (`sac-events.jsonl`):
 
-- **id** `worktree-sprawl-<repo-basename>` (stable → a nightly re-run
-  updates in place instead of tiling the board)
-- **status** `blocked` / **blocker** `operator-decision`
-- **body** names the repo, the count, and the **kept-reasons breakdown**
-  (`9 dirty, 6 unmerged, 2 in-use`). That breakdown is the card's whole
-  value: "17 kept" is a number, "9 dirty" is an instruction.
+- **event** `subject-degraded`, **subsystem** `worktree-gc`,
+  **subject** the repo basename
+- **fields** carry the count, the cap, how many were removed, and the
+  **kept-reasons breakdown** (`9 dirty, 6 unmerged, 2 in-use`) as
+  structured data. That breakdown is the record's whole value: "17 kept"
+  is a number, "9 dirty" is an instruction.
 
-Three-state, like the predicate: **over cap** → card; **unreadable repo**
-→ card labelled UNKNOWN (never rendered clean); **back under cap** →
-card resolved, so a fixed repo stops shouting. A repo that sprawls, gets
-cleaned, then sprawls again alarms again.
+Three-state, like the predicate: **over cap** → `subject-degraded`;
+**unreadable repo** → `subject-unknown` (never rendered clean); **back
+under cap** → `subject-recovered`, recorded on the transition, so a
+fixed repo stops shouting. A repo that sprawls, gets cleaned, then
+sprawls again is recorded as degraded again.
 
-Delivery is a **side rail**: a board-write failure prints loudly to
-stderr and never crashes the GC that feeds it.
+Recording is a **side rail**: a failed write prints loudly to stderr and
+never crashes the GC that feeds it.
 
 ## The daily timer
 
@@ -180,7 +181,7 @@ sac worktree gc --all
 | `_maintenance/_worktree_gc_probe.py` | observation: git, `/proc`, `gh` (the injectable seams) |
 | `_maintenance/_worktree_gc_predicate.py` | **the four legs** |
 | `_maintenance/_worktree_gc.py` | the engine (dry-run/apply, remove, prune) |
-| `_maintenance/_worktree_gc_alarm.py` | the idempotent cap card |
+| `_maintenance/_worktree_gc_alarm.py` | the cap verdict record |
 | `_maintenance/_worktree_gc_repos.py` | `--all`'s repo discovery |
 | `cli_pkg/_worktree_gc.py` | the `sac worktree gc` verb |
 

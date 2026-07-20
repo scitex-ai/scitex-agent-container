@@ -6,6 +6,39 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **sac records its own operational events, and no longer writes into a
+  third-party application's store.** sac's unattended passes — the fleet
+  reconciler, the auth-heal login-expired restarter, the host-sync drift check,
+  the worktree GC, the accounts refresh — decide things about the fleet every
+  few minutes, forever, with nobody watching. Their verdicts went to stderr and
+  into another application's data store. Neither is sac's own record: the stderr
+  line lands in a journal nobody opens (which is how a dead cron job stayed dead
+  for 49 days), and a store sac does not own can be absent, unwritable or
+  renamed — and when it is, sac retains no account of what its own timers
+  decided. An unlogged decision is an undebuggable one.
+
+  New `_events/` package: an append-only JSONL log of what sac observed and
+  decided, in sac's own vocabulary (`pass-completed`, `subject-degraded`,
+  `subject-unknown`, `subject-recovered`, `self-impaired`, `self-recovered`),
+  following the shape `_authevents/_log.py` already set. Default
+  `<runtime>/sac-events.jsonl`, relocatable with `SAC_EVENT_LOG`, resolved per
+  call. Fail-open but never silent — a failed write always prints loudly.
+
+  The four alarm modules each carried a near-identical private copy of the same
+  routing helpers; all four are replaced by one shared implementation
+  (`_events/_verdicts.py`), removing roughly 240 lines of duplication.
+
+  Interface changes: `reconcile_pass()` / `auth_heal_pass()` take `events_path`
+  where they took `store`; the `alarm` block of `sac host sync --json` and
+  `sac worktree gc --json` now uses the uniform keys
+  `degraded` / `unknown` / `recovered` / `failed`.
+
+  `tests/scitex_agent_container/test__card_package_boundary.py` enforces the
+  boundary with an AST scan asserting the importer set EXACTLY equals the two
+  files still permitted, so both a new import and a stale allowance go red.
+
 ### Fixed
 
 - **The version lie, caught by a test instead of by an incident.** `pyproject.toml`

@@ -135,8 +135,8 @@ def _print_result(result: SyncResult) -> None:
     default=False,
     help=(
         "READ-ONLY (requires --check): route each peer's verdict to an "
-        "idempotent scitex-todo card — upsert on drift/unknown, resolve on "
-        "clean — so the shout is SEEN on the board, not just in a log. "
+        "record in sac's own event log — degraded / unknown / recovered — so "
+        "the shout is DURABLE rather than a line in a journal. "
         "Mutates no peer."
     ),
 )

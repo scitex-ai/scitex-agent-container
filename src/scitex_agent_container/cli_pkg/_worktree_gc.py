@@ -159,9 +159,9 @@ def _print_report(outcome: GcOutcome, *, apply: bool) -> None:
     "alarm",
     default=None,
     help=(
-        "Route each repo's cap verdict to an idempotent scitex-todo card "
+        "Record each repo's cap verdict in sac's own event log "
         "(upsert over cap / unknown, resolve back under). Default: on with "
-        "--apply, off on a dry run (a report must not write to the board)."
+        "--apply, off on a dry run (a report stays a pure report)."
     ),
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
