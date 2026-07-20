@@ -243,8 +243,9 @@ def alert_failed_refreshes(
         dirty = True
         alerted.append(name)
         print(
-            f"  {name:20s}  RECORDED in sac's event log + pushed at the lead "
-            "blocker rail; deduped until this account refreshes OK again",
+            f"  {name:20s}  ALERTED operator (recorded in sac's event log, "
+            "pushed at the lead blocker rail; deduped until this account "
+            "refreshes OK again)",
             file=stream,
         )
 
