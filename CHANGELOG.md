@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-07-20
+
 ### Fixed
 
 - **The v0.24.0 quota fail-loud hard-blocked `sac agents restart` and its own
