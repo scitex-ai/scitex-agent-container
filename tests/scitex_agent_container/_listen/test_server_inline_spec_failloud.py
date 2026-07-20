@@ -49,19 +49,15 @@ def isolated_env(tmp_path: Path, env_save_restore):
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
     import importlib
-    import os as _os
 
     import scitex_agent_container._runners._session_state as ss
 
     importlib.reload(ss)
+    # See test_server_startup_failed.py's same-named fixture: picking up "the
+    # OPERATOR's HOME" was the BUG, not the goal. Reload on the far side of the
+    # env restore so the constant lands back on the conftest sandbox floor.
+    env_save_restore.reload_after_restore(ss)
     yield tmp_path
-    # See test_server_startup_failed.py's same-named fixture for the
-    # LIFO-finalizer rationale: pop the env keys ourselves so the
-    # reload picks up the OPERATOR's HOME, not our tmp_path.
-    _os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
-    _os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
-    _os.environ.pop("HOME", None)
-    importlib.reload(ss)
 
 
 @pytest.fixture
