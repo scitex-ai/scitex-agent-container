@@ -142,7 +142,7 @@ def restart_login_expired(
                     "mode": "apply" if apply else "check",
                     "exit_code": code,
                     "counts": outcome.counts(),
-                    "heartbeat_carded": outcome.heartbeat_ok,
+                    "pass_recorded": outcome.heartbeat_ok,
                     "agents": [r.to_dict() for r in outcome.reports],
                 },
                 indent=2,
