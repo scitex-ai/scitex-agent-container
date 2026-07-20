@@ -25,7 +25,7 @@ from .._hostsync import (
     SyncResult,
     check_peer,
     exit_code_for,
-    route_reports_to_cards,
+    record_reports,
     sync_peer,
     syncable_peers,
 )
@@ -229,10 +229,10 @@ def host_sync(
 
     code = exit_code_for([r.outcome for r in results])
 
-    # Make the shout SEEN: route each verdict to an idempotent board card
-    # (upsert on drift/unknown, resolve on clean). This runs in BOTH output
-    # modes — the card is the delivery, independent of the console report.
-    alarm_outcome = route_reports_to_cards(results) if alarm else None
+    # Make the shout DURABLE: record each verdict in sac's own event log.
+    # This runs in BOTH output modes — the record is independent of whatever
+    # the console happens to print.
+    alarm_outcome = record_reports(results) if alarm else None
 
     if _json_flag(ctx, as_json):
         payload: dict = {
@@ -242,9 +242,9 @@ def host_sync(
         }
         if alarm_outcome is not None:
             payload["alarm"] = {
-                "drifted": list(alarm_outcome.drifted),
-                "undetermined": list(alarm_outcome.undetermined),
-                "cleared": list(alarm_outcome.cleared),
+                "degraded": list(alarm_outcome.degraded),
+                "unknown": list(alarm_outcome.unknown),
+                "recovered": list(alarm_outcome.recovered),
                 "failed": list(alarm_outcome.failed),
             }
         click.echo(json.dumps(payload, indent=2))

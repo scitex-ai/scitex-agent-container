@@ -9,12 +9,17 @@ failures went to the journal each run, nothing pushed at the operator,
 and the first visible symptom was ``sac agents start --group infra``
 failing for every agent with ``NoHealthyAccountError``.
 
-This module turns a failed refresh into an IMMEDIATE push on the
+This module turns a failed refresh into a DURABLE RECORD in sac's own
+event log (:mod:`.._events`), and then into an IMMEDIATE push on the
 fleet's existing agent→lead ``blocker`` rail (ADR-0013,
 :func:`scitex_agent_container._state.lead_inbox.push_to_lead` — the
 same typed event agents already use for "creds expired", persisted
 durably in the lead listen's ``channel_events`` store and relayed to
 the operator by the lead session). No new delivery rail is invented.
+
+The record is what makes the rail trustworthy; the push is what makes
+it timely. They fail independently, and only the record failing leaves
+sac with no account of the outage.
 
 Dedupe contract (operator spec):
 
@@ -27,8 +32,8 @@ Dedupe contract (operator spec):
 * A successful refresh (or a skipped-still-fresh result) CLEARS the
   account's entry — an account that recovers and later dies again
   alerts again.
-* A FAILED alert delivery is NOT recorded, so the next run retries it;
-  the delivery failure itself is printed loudly to stderr.
+* A FAILED record is NOT acknowledged, so the next run retries it; the
+  failure itself is printed loudly to stderr.
 
 :func:`alert_failed_refreshes` never raises — alerting is a side rail
 and must never break the refresh run that feeds it.
@@ -43,7 +48,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .._events import SUBJECT_DEGRADED, log_event
+
 STATE_FILENAME = "refresh-alarm-state.json"
+
+#: The pass this module speaks for — the axis a reader filters the log on.
+SUBSYSTEM = "accounts-refresh"
 
 # One-line recovery recipe included in every alert (operator spec: the
 # canonical fix line must ride with the alert). Only meaningful for the
@@ -101,48 +111,48 @@ def _notify_lead_blocker(summary: str, detail: str) -> None:
     )
 
 
-def _notify_todo_help_card(account: str, summary: str, detail: str) -> None:
-    """Leg 2 — the scitex-todo BLOCKING-YOU card (first-tier nudge rail).
-
-    Upserts the canonical ``help-<agent>-waiting`` card via
-    :func:`scitex_todo._help_wait.help_wait` (idempotent; status
-    ``blocked`` / blocker ``operator-decision``) under the pseudo-agent
-    ``accounts-refresh-<account>``, so a dead account surfaces on the
-    board's BLOCKING-YOU view and rides scitex-todo's own card-event
-    delivery (digest/telegram). Lazy import — raises when scitex-todo
-    is not installed, letting the caller report the rail as down.
-    """
-    from scitex_todo._help_wait import help_wait
-
-    help_wait(
-        agent=f"accounts-refresh-{account}",
-        question=f"{summary}\n\n{detail}",
-    )
-
-
 def _default_notify(account: str, summary: str, detail: str) -> None:
-    """Deliver through the EXISTING rails, most direct first.
+    """RECORD the failure in sac's own log, then push it at the operator.
 
-    Leg 1 is the typed lead ``blocker`` push; a fleet without a
-    ``lead:`` block (this host, 2026-07-11) falls through to leg 2, the
-    scitex-todo help card — the board's standing "waiting on operator"
-    rail. Raises only when EVERY leg failed, so the caller leaves the
-    dedupe unmarked and retries next run.
+    The record comes first and is what makes this rail trustworthy: it is
+    sac's own durable account of a refresh sac could not perform, written
+    to a file sac owns. It does not depend on a lead being configured, on
+    the network, or on any other software being installed.
+
+    The lead ``blocker`` push (ADR-0013) is the notification ON TOP of that
+    record — the thing that gets a human's attention today rather than
+    whenever somebody next reads the log. It is best-effort by design: on a
+    fleet with no ``lead:`` block (this host, 2026-07-11) there is nowhere to
+    push, and that must not turn into a re-page on every one of the timer's
+    ~12 daily runs.
+
+    Raises only when the RECORD failed, because that is the only failure that
+    leaves sac with no account of the outage at all — and only then does the
+    caller leave the dedupe unmarked so the next run tries again.
     """
-    # stx-allow: fallback (reason: multi-rail delivery — leg 1 being unconfigured/down must fall through to leg 2, not lose the alert; both failing raises loudly below)
+    recorded = log_event(
+        event=SUBJECT_DEGRADED,
+        subsystem=SUBSYSTEM,
+        subject=account,
+        subject_kind="account",
+        verdict="refresh_failed",
+        detail=f"{summary}\n\n{detail}",
+    )
+    if not recorded:
+        raise RuntimeError(
+            f"could not record the refresh failure for {account} in sac's "
+            f"event log; leaving it unacknowledged so the next run retries"
+        )
+    # stx-allow: fallback (reason: the durable record above already succeeded, so a lead-push failure loses attention-now, not the fact. It is printed loudly rather than swallowed, and must not re-page the operator every run on a fleet with no lead configured.)
     try:
         _notify_lead_blocker(summary, detail)
-        return
-    except Exception as lead_exc:  # stx-allow: fallback (reason: see inline comment)
-        lead_err = lead_exc
-    try:
-        _notify_todo_help_card(account, summary, detail)
-        return
-    except Exception as todo_exc:  # stx-allow: fallback (reason: re-raised with full context — both rails' failures are surfaced together)
-        raise RuntimeError(
-            f"every alert rail failed — lead blocker rail: {lead_err}; "
-            f"scitex-todo help-card rail: {todo_exc}"
-        ) from todo_exc
+    except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
+        print(
+            f"[refresh-alarm] {account}: recorded in sac's event log, but the "
+            f"lead blocker push FAILED — {exc}. Nobody has been paged; the "
+            f"failure is durable in the event log only.",
+            file=sys.stderr,
+        )
 
 
 def _build_summary(name: str, error: str) -> str:
@@ -245,8 +255,7 @@ def alert_failed_refreshes(
             _save_state(path, state)
         except OSError as exc:
             print(
-                f"[refresh-alarm] failed to persist dedupe state at {path}: "
-                f"{exc}",
+                f"[refresh-alarm] failed to persist dedupe state at {path}: {exc}",
                 file=stream,
             )
     return alerted

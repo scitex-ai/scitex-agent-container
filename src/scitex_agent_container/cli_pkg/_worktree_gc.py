@@ -25,7 +25,7 @@ from .._maintenance import (
     discover_repos,
     exit_code_for,
     gc_repos,
-    route_gc_to_cards,
+    record_gc_results,
 )
 from ._helpers import _json_flag, console
 
@@ -248,11 +248,10 @@ def worktree_gc(
     )
     code = exit_code_for(outcome)
 
-    # Make the shout SEEN: route each cap verdict to an idempotent board
-    # card. Defaults to riding --apply only — a dry run is a report and
-    # must not mutate the board.
+    # Make the shout DURABLE: record each cap verdict in sac's own event
+    # log. Defaults to riding --apply only, so a dry run stays a pure report.
     do_alarm = apply if alarm is None else alarm
-    alarm_outcome = route_gc_to_cards(list(outcome.results)) if do_alarm else None
+    alarm_outcome = record_gc_results(list(outcome.results)) if do_alarm else None
 
     if _json_flag(ctx, as_json):
         payload: dict = {
@@ -266,9 +265,9 @@ def worktree_gc(
         }
         if alarm_outcome is not None:
             payload["alarm"] = {
-                "exceeded": list(alarm_outcome.exceeded),
-                "unreadable": list(alarm_outcome.unreadable),
-                "cleared": list(alarm_outcome.cleared),
+                "degraded": list(alarm_outcome.degraded),
+                "unknown": list(alarm_outcome.unknown),
+                "recovered": list(alarm_outcome.recovered),
                 "failed": list(alarm_outcome.failed),
             }
         click.echo(json.dumps(payload, indent=2))

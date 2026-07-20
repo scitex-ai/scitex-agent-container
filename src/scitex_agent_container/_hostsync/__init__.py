@@ -30,7 +30,7 @@ The invariants, each one paid for:
   what it verified.
 """
 
-from ._alarm import AlarmOutcome, card_id_for, route_reports_to_cards
+from ._alarm import SUBSYSTEM, record_reports
 from ._apply import FastForwardResult, apply_fast_forward
 from ._ci_guard import DEFAULT_REPO, CiState, CiVerdict, check_ci_idle
 from ._model import GraphState, PeerSyncReport, SyncDecision, sync_decision
@@ -72,7 +72,6 @@ __all__ = [
     "DEFAULT_LISTEN_PORT",
     "DEFAULT_REPO",
     "GENERATED_HEADER_MARK",
-    "AlarmOutcome",
     "CiState",
     "CiVerdict",
     "ConfigVerdict",
@@ -87,7 +86,6 @@ __all__ = [
     "TokenStateResult",
     "TokenVerdict",
     "apply_fast_forward",
-    "card_id_for",
     "check_ci_idle",
     "check_config_peer",
     "check_peer",
@@ -103,7 +101,8 @@ __all__ = [
     "push_master_bearer",
     "render_peer_config",
     "rotate_peer_tokens",
-    "route_reports_to_cards",
+    "SUBSYSTEM",
+    "record_reports",
     "sha12",
     "stable_listen_token_name",
     "sync_decision",

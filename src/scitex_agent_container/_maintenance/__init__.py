@@ -32,30 +32,26 @@ from ._worktree_gc import (
     running_cwds,
 )
 from ._worktree_gc_alarm import (
-    CARD_ID_PREFIX,
-    AlarmOutcome,
-    card_id_for,
-    route_gc_to_cards,
+    SUBSYSTEM,
+    record_gc_results,
 )
 from ._worktree_gc_repos import discover_repos, spec_workdirs
 
 __all__ = [
-    "CARD_ID_PREFIX",
     "DEFAULT_CAP",
     "DEFAULT_MIN_AGE_HOURS",
-    "AlarmOutcome",
     "GcOutcome",
     "RepoGcResult",
     "WorktreeInfo",
     "WorktreeVerdict",
-    "card_id_for",
     "discover_repos",
     "exit_code_for",
     "gc_repo",
     "gc_repos",
     "gh_pr_merged",
     "list_worktrees",
-    "route_gc_to_cards",
+    "SUBSYSTEM",
+    "record_gc_results",
     "running_cwds",
     "spec_workdirs",
 ]
