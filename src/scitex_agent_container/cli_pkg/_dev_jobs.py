@@ -240,10 +240,69 @@ def _make_installable_group(group: str):
     return _grp
 
 
+def _add_audit_execstart_command(dev_group: click.Group) -> None:
+    """Attach ``sac dev audit-execstart`` — the deployed-vs-declared check.
+
+    This verb is the whole reason ``_execstart_audit`` is not a CI test:
+    the comparison can only be made where the units live, and CI runs in a
+    SIF with no access to the fleet host's ``systemctl --user``. A checker
+    nobody can run is the inert-feature shape it exists to detect.
+    """
+
+    @dev_group.command(name="audit-execstart")
+    @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+    def _audit_execstart(as_json):
+        """Check each sac unit RUNS what its JobSpec declares.
+
+        Reports; never repairs. A divergence means an unmanaged local
+        override or a generator bug — both worth knowing, neither safe to
+        rewrite automatically.
+        """
+        import json as _json
+
+        from scitex_agent_container._execstart_audit import audit_execstart
+
+        try:
+            report = audit_execstart()
+        except ImportError:  # stx-allow: fallback (reason: old scitex-dev lacks scitex_dev.jobs — print upgrade hint, not a stack trace)
+            click.echo(_degrade_msg(), err=True)
+            raise SystemExit(3)
+
+        if as_json:
+            click.echo(
+                _json.dumps(
+                    {
+                        "ok": report.ok,
+                        "findings": [
+                            {
+                                "job": f.job,
+                                "unit": f.unit,
+                                "verdict": f.verdict.value,
+                                "detail": f.detail,
+                                "intended": f.intended,
+                                "resolved": f.resolved,
+                            }
+                            for f in report.findings
+                        ],
+                    }
+                )
+            )
+        else:
+            click.echo(report.render())
+
+        # 0 = nothing diverged, 1 = at least one unit does not run what the
+        # source declares. UNKNOWN deliberately does NOT set a failing code:
+        # "could not ask" is not "found a problem", and making it red would
+        # mute the check everywhere systemd is absent. The verdicts are all
+        # in the output — nothing here should be inferred from the exit code.
+        raise SystemExit(0 if report.ok else 1)
+
+
 def register_dev_jobs_commands(dev_group: click.Group) -> None:
     """Attach a job group onto ``sac dev`` for every entry in GROUP_KINDS."""
     for group in sorted(GROUP_KINDS):
         dev_group.add_command(_make_installable_group(group))
+    _add_audit_execstart_command(dev_group)
 
 
 __all__ = ["GROUP_KINDS", "register_dev_jobs_commands"]

@@ -105,8 +105,38 @@ def test_provider_job_command_includes_active_account() -> None:
     job = _job("sac.accounts-refresh")
     # Assert
     assert job.command == (
-        "sac accounts refresh --all --include-active --sync-active-login"
+        "/home/ywatanabe/.env-3.11/bin/sac accounts refresh "
+        "--all --include-active --sync-active-login"
     )
+
+
+def test_accounts_refresh_head_is_absolute_not_a_bare_sac() -> None:
+    # Arrange — the same rule the heal-agent-auth pins below enforce, and for
+    # the same reason: `resolve_execstart` passes a head starting with "/"
+    # through VERBATIM, so an absolute head is the ONLY form independent of
+    # both the ambient PATH and which interpreter ran `ecosystem up`.
+    #
+    # A bare `sac` is not merely untidy here. The unit generated 2026-07-10
+    # read `ExecStart=/usr/bin/env sac accounts refresh ...` — resolve_execstart's
+    # rule-3 LAST RESORT — and only a hand-added override.conf drop-in has kept
+    # it working since. Safety that lives in an unmanaged drop-in evaporates the
+    # moment the unit is regenerated.
+    # Act
+    job = _job("sac.accounts-refresh")
+    # Assert
+    assert job.command.split()[0].startswith("/")
+
+
+def test_accounts_refresh_runs_the_measured_production_sac() -> None:
+    # Arrange — WHICH absolute sac matters: this host carries seven sac installs
+    # at five versions. `.env-3.11/bin/sac` is the measured production one — what
+    # the live override already pins, what every other installed sac.* unit
+    # resolved to, and the only NON-editable (wheel) install, so it cannot
+    # silently execute a dirty working checkout the way the editable venvs would.
+    # Act
+    job = _job("sac.accounts-refresh")
+    # Assert
+    assert job.command.startswith("/home/ywatanabe/.env-3.11/bin/sac ")
 
 
 def test_provider_job_command_never_skips_active() -> None:

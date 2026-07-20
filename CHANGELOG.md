@@ -8,6 +8,47 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A JobSpec declared a bare `sac`, and only an unmanaged drop-in made it
+  safe.** `sac.accounts-refresh` declared `command="sac accounts refresh …"`.
+  The generated unit read `ExecStart=/usr/bin/env sac accounts refresh …` —
+  `resolve_execstart`'s rule-3 LAST RESORT, reached only when the interpreter's
+  sibling bin and the ambient PATH both miss — which a systemd `--user` unit's
+  minimal PATH fails at `status=127`. It has worked since 2026-07-10 only
+  because a hand-added `override.conf` pinned the absolute path.
+
+  That is the defect: the safety lived in host state no PR can see, so deleting
+  the drop-in or regenerating the unit silently restored the hazard. The command
+  now declares `/home/ywatanabe/.env-3.11/bin/sac` outright, the same rule
+  `sac.heal-agent-auth` already followed — `resolve_execstart` passes an
+  absolute head through verbatim, so the declaration depends on neither the
+  ambient PATH nor on which interpreter ran `ecosystem up`. That second
+  dependency is not hypothetical: this host carries SEVEN `sac` installs at FIVE
+  versions, and rule 1 resolves against `sys.executable`'s sibling bin.
+
+### Added
+
+- **`sac dev audit-execstart` — the detector for deployed-vs-declared drift.**
+  Both instances of the `ExecStart` hazard were found by hand, comparing
+  `systemctl --user show -p ExecStart --value <unit>` against the JobSpec
+  source. Nothing ran that comparison, so both were found by luck; a hand repair
+  restores the state and leaves the system able to re-enter it.
+
+  The new `_execstart_audit` package asks systemd what each sac unit actually
+  runs and compares it to what the generator intends (obtained by calling
+  `resolve_execstart`, never by re-implementing it). A divergence means an
+  unmanaged local override or a generator bug — both worth knowing. It REPORTS
+  and never repairs: the `override.conf` above is a live example of a hand-patch
+  that was correct, and an auto-repair would have reverted it.
+
+  Five verdicts, because the failure modes are not binary: `MATCH`, `DIVERGED`,
+  `NOT_INSTALLED` (declared behind a deliberate deploy gate — not a divergence),
+  `UNVERIFIABLE` (the declared head is not absolute, so the intent is not
+  reproducible in the checking interpreter — the check refuses to compare rather
+  than emit a meaningless verdict), and `UNKNOWN` (systemd could not be asked at
+  all, e.g. inside a container). `UNKNOWN` is never folded into `MATCH`: a check
+  that cannot distinguish "matches" from "could not ask" is not a check. stderr
+  is captured and reported, never discarded.
+
 - **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
   is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
   pending work under `[Unreleased]` while the declared version is one the

@@ -168,7 +168,39 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="sac.accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
-            command=("sac accounts refresh --all --include-active --sync-active-login"),
+            # ABSOLUTE by design, same rule as ``sac.heal-agent-auth`` below:
+            # ``resolve_execstart`` passes a head starting with "/" through
+            # VERBATIM, so this is the only form that depends on neither the
+            # ambient PATH nor which interpreter ran ``ecosystem up``.
+            #
+            # Not theoretical. The unit generated for this job on 2026-07-10
+            # read ``ExecStart=/usr/bin/env sac accounts refresh ...`` — that is
+            # ``resolve_execstart``'s rule-3 LAST RESORT, reached only when the
+            # interpreter's sibling bin AND the ambient PATH both missed, and a
+            # systemd --user unit's minimal PATH would then have failed it at
+            # status=127. It has been safe since only because a hand-added
+            # ``override.conf`` drop-in pins the absolute path. THAT is the
+            # defect: the safety lives in host state no PR can see, so deleting
+            # the drop-in or regenerating the unit silently restores the hazard.
+            #
+            # Which binary a bare ``sac`` selects is a live question here, not a
+            # hypothetical: this host carries SEVEN sac installs at FIVE
+            # versions (0.22.1 wheel in .env-3.11; three 0.22.0 editable venvs;
+            # 0.21.2; and two 0.21.11 — one of them ``~/.local/bin/sac`` on
+            # python3.10). ``resolve_execstart`` rule 1 resolves against
+            # ``sys.executable``'s sibling bin, so with a bare head the version
+            # baked into the unit is decided by whichever interpreter happened
+            # to run ``ecosystem up``.
+            #
+            # ``/home/ywatanabe/.env-3.11/bin/sac`` is the MEASURED production
+            # install: it is what the live override already pins, what every
+            # other installed ``sac.*`` unit resolved to, the only NON-editable
+            # (wheel) install — so it cannot silently run a dirty working
+            # checkout — and the 3.11 venv the rest of the fleet runs on.
+            command=(
+                "/home/ywatanabe/.env-3.11/bin/sac accounts refresh "
+                "--all --include-active --sync-active-login"
+            ),
             description=(
                 "Headless OAuth access-token refresh for all stored Claude "
                 "accounts including the active one (sole-refresher model), "
