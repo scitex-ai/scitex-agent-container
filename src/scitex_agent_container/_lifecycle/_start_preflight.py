@@ -147,6 +147,7 @@ def _rotate_among_credentials_files(
     Back-compat: a 1-element pool whose one snapshot is healthy resolves
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
+    from .._account.quota_cache import quota_cache_present
     from .._creds import (
         POLICY_BURN,
         pick_healthy_account,
@@ -203,6 +204,13 @@ def _rotate_among_credentials_files(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
+        # Boot gate (constitution §2): on a host that HAS a quota cache, a
+        # fully-BLIND pick means the populator failed (empty/stale cache) —
+        # fail loud rather than land the agent on an unverifiable, possibly
+        # quota-exhausted account (2026-07-20 incident). A host with NO cache
+        # (fresh install / CI / quota-cron-less Spartan node) still degrades
+        # to freshness-only and boots — the documented never-block invariant.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
 
     picked_path = next(p for slug, p in entries if slug == picked)
@@ -320,6 +328,7 @@ def _rotate_to_healthy_account(
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
 
+    from .._account.quota_cache import quota_cache_present
     from .._creds import pick_healthy_account, resolve_7d_policy
 
     policy = resolve_7d_policy()
@@ -331,6 +340,10 @@ def _rotate_to_healthy_account(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
+        # Boot gate (constitution §2): a blind-quota pin fails loud on a host
+        # that HAS a cache (populator failure); a cache-less host degrades and
+        # boots (never-block invariant). See quota_cache_present.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.

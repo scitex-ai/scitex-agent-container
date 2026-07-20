@@ -114,6 +114,30 @@ def _resolve_cache_path(override: Path | str | None) -> Path:
     return host if host is not None else container
 
 
+def quota_cache_present(cache_path: Path | str | None = None) -> bool:
+    """Whether a quota-cache FILE actually exists for the reader to consult.
+
+    This is the discriminator the boot picker's fail-loud gate keys off (see
+    :func:`_creds.pick_healthy_account` ``require_quota_evidence``):
+
+    * ``True`` — a cache source exists (the container bind, or a host
+      ``quota-cache.json`` a populator/cron writes). On such a host an
+      all-UNKNOWN pick is a POPULATOR failure (an empty/stale cache), so the
+      boot should fail loud (constitution §2 — unknown is not "OK") rather than
+      silently launch on an unverifiable, possibly quota-exhausted account
+      (2026-07-20 incident).
+    * ``False`` — no cache source exists at all (a fresh install, CI, or a
+      quota-cron-less host such as a Spartan compute node). The documented
+      graceful-degradation contract holds: the boot degrades to freshness-only
+      and is NEVER blocked on a quota system that this host simply does not run.
+
+    Mirrors :func:`_resolve_cache_path`'s resolution order (container bind →
+    host runtime → legacy). A missing source resolves to the non-existent
+    container default, hence ``False``.
+    """
+    return _resolve_cache_path(cache_path).exists()
+
+
 def _resolve_account(override: str | None) -> str:
     if override is not None:
         return override.strip()
@@ -315,5 +339,6 @@ __all__ = [
     "build_a2a_metadata",
     "default_host_cache_path",
     "host_cache_candidates",
+    "quota_cache_present",
     "write_quota_cache",
 ]
