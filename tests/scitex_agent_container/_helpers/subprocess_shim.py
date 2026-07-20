@@ -19,9 +19,11 @@ Usage::
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import os
 from pathlib import Path
+from types import ModuleType
 from typing import Callable
 
 import pytest
@@ -167,8 +169,34 @@ def subprocess_shim(tmp_path: Path):
 
 @pytest.fixture
 def env_save_restore():
-    """Generic env save/restore — track keys you mutate, auto-revert."""
+    """Generic env save/restore — track keys you mutate, auto-revert.
+
+    ``reload_after_restore(module)`` additionally re-imports ``module`` AFTER
+    the env has been reverted. Use it for any module whose constants are
+    computed at IMPORT time from an env var this fixture is mutating —
+    ``_state.state_db``, ``_state.registry``, ``_runners._session_state``.
+
+    That ordering is the entire point, and getting it wrong is a REAL bug this
+    package shipped. ``importlib.reload`` re-derives such a constant from
+    whatever the env says at that instant, so a teardown that drops the env var
+    and only THEN reloads pins the constant at the operator's real
+    ``$HOME/.scitex/agent-container/runtime`` for the rest of the xdist
+    worker's session — every later test then passes while writing outside the
+    tests/results sandbox floor set in tests/conftest.py. It cost three green
+    matrix legs on PR #784 (``[Errno 122] Disk quota exceeded`` on a live fleet
+    agent's state path) and went unseen for months because nothing was
+    asserting on where the bytes landed.
+
+    Fixtures previously hand-rolled this and hand-rolled it WRONG, because
+    pytest finalizes inner-first: a fixture's own teardown runs BEFORE this
+    fixture reverts the env, so reloading there sees the still-mutated env.
+    The workaround was to ``os.environ.pop()`` the keys first — which reloads
+    against NO env var at all, i.e. straight back to the real ``$HOME``. Hence
+    this hook: register the module and let the reload happen on the correct
+    side of the restore.
+    """
     saved: dict[str, str | None] = {}
+    reload_targets: list[ModuleType] = []
 
     def _set(key: str, value: str) -> None:
         if key not in saved:
@@ -180,9 +208,16 @@ def env_save_restore():
             saved[key] = os.environ.get(key)
         os.environ.pop(key, None)
 
+    def _reload_after_restore(module: ModuleType) -> None:
+        if module not in reload_targets:
+            reload_targets.append(module)
+
     class _Env:
         set: Callable[[str, str], None] = staticmethod(_set)
         delete: Callable[[str], None] = staticmethod(_delete)
+        reload_after_restore: Callable[[ModuleType], None] = staticmethod(
+            _reload_after_restore
+        )
 
     try:
         yield _Env
@@ -192,3 +227,7 @@ def env_save_restore():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        # Only NOW, with the env back to its pre-test values, is a reload
+        # guaranteed to re-derive the constants the rest of the session needs.
+        for module in reload_targets:
+            importlib.reload(module)

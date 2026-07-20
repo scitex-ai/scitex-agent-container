@@ -47,6 +47,43 @@ def _isolate_home(tmp_path):
             os.environ["HOME"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_root(tmp_path):
+    """Pin the runtime root at a real, EMPTY, per-test directory.
+
+    ``restart`` now reads the target's identity-of-run from
+    ``<runtime-root>/<agent>/instance_id`` to verify its own postcondition,
+    so the runtime root is live input to every test in this file — and
+    ``runtime_base_dir()`` resolves it from
+    ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` first, falling back to ``$HOME``.
+    Isolating ``$HOME`` alone is therefore NOT enough: a sibling test that
+    sets the env var and does not restore it (or a production value left in
+    the ambient env) silently redirects these tests at the REAL fleet's
+    runtime dir. That is not hypothetical — running this file as part of the
+    whole ``cli_pkg/lifecycle`` directory made ``test_happy_path_exits_zero``
+    read agent ``alpha``'s genuine instance_id and correctly report that a
+    no-op restart cycled nothing, while the same test passed in isolation.
+
+    Pinning it here makes the ambient environment irrelevant in BOTH
+    directions: the legacy happy-path tests get a guaranteed-empty root (no
+    marker either side → the verdict abstains → their historical success is
+    preserved), and no test can ever touch the operator's real runtime dir.
+    """
+    from scitex_agent_container._runtime_paths import RUNTIME_DIR_ENV
+
+    root = tmp_path / "runtime-root"
+    root.mkdir(parents=True, exist_ok=True)
+    saved = os.environ.get(RUNTIME_DIR_ENV)
+    os.environ[RUNTIME_DIR_ENV] = str(root)
+    try:
+        yield root
+    finally:
+        if saved is None:
+            os.environ.pop(RUNTIME_DIR_ENV, None)
+        else:
+            os.environ[RUNTIME_DIR_ENV] = saved
+
+
 @contextmanager
 def _swap(name: str, fn: Callable) -> Iterator[None]:
     saved = getattr(restart_mod, name)
@@ -553,46 +590,51 @@ def test_cross_host_restart_nonjson_stdout_reports_non_json(
 
 
 # ---------------------------------------------------------------------------
-# --fresh branch: a fresh (no-resume) restart is bypass-only. With the host
-# listen reachable it brokers ``start --force --fresh`` (fresh=True) and never
-# touches the local restart; on a bare host (no listen) it fails LOUD with the
-# direct command rather than silently doing a resuming restart.
+# --fresh branch: a fresh (no-resume) restart is broker-only. Inside a SIF it
+# brokers ``start --force --fresh`` (fresh=True) and never touches the local
+# restart; on a bare host there is nothing to broker to, so it fails LOUD with
+# the direct command rather than silently doing a resuming restart.
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_without_bypass_exits_one():
-    # Arrange — no listen base URL resolvable (bare host).
+def _broker_ok(name, *, fresh=False):
+    """Stand-in for ``brokered_restart`` — always succeeds."""
+    return {"name": name, "restarted": True, "via": "host-listen"}, True
+
+
+def test_fresh_on_bare_host_exits_one():
+    # Arrange — not inside a SIF, so there is no host listen to broker to.
     runner = CliRunner()
     # Act
-    with _swap("_bypass_base_url_available", lambda: False):
+    with _swap("must_broker_to_host", lambda: False):
         result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
     assert result.exit_code == 1
 
 
-def test_fresh_without_bypass_reports_direct_start_command():
+def test_fresh_on_bare_host_reports_direct_start_command():
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("_bypass_base_url_available", lambda: False):
+    with _swap("must_broker_to_host", lambda: False):
         result = runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert — fail loud with the deterministic bare-host command.
     assert "start alpha --force --fresh" in result.output
 
 
-def test_fresh_with_bypass_brokers_fresh_true():
-    # Arrange — bypass available; record the brokered (name, fresh).
+def test_fresh_in_sif_brokers_fresh_true():
+    # Arrange — in a SIF; record the brokered (name, fresh).
     calls: list[tuple[str, bool]] = []
 
-    def _rec(name, fresh=False):
+    def _rec(name, *, fresh=False):
         calls.append((name, fresh))
-        return {"returncode": 0}
+        return {"name": name, "restarted": True}, True
 
     runner = CliRunner()
     # Act
     with (
-        _swap("_bypass_base_url_available", lambda: True),
-        _swap("_restart_via_host_bypass", _rec),
+        _swap("must_broker_to_host", lambda: True),
+        _swap("brokered_restart", _rec),
     ):
         runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
@@ -600,21 +642,41 @@ def test_fresh_with_bypass_brokers_fresh_true():
 
 
 def test_fresh_does_not_call_local_agent_restart():
-    # Arrange — fresh is bypass-only; the local restart must NOT run.
+    # Arrange — fresh is broker-only; the local restart must NOT run.
     called: list[str] = []
     runner = CliRunner()
     # Act
     with (
-        _swap("_bypass_base_url_available", lambda: True),
-        _swap(
-            "_restart_via_host_bypass",
-            lambda name, fresh=False: {"returncode": 0},
-        ),
+        _swap("must_broker_to_host", lambda: True),
+        _swap("brokered_restart", _broker_ok),
         _swap("agent_restart", lambda name: called.append(name)),
     ):
         runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
     assert called == []
+
+
+def test_brokered_restart_threads_fresh_to_the_host_client():
+    # Arrange — ``brokered_restart`` is the only caller of the host client, so
+    # the fresh flag must survive that hop too (the CLI test above stops at
+    # ``brokered_restart``'s own signature).
+    import scitex_agent_container.cli_pkg.lifecycle._restart_remote as remote_mod
+
+    seen: list[tuple[str, bool]] = []
+
+    def _client(name, fresh=False):
+        seen.append((name, fresh))
+        return {"returncode": 0, "stdout": ""}
+
+    saved = remote_mod._restart_via_host_bypass
+    remote_mod._restart_via_host_bypass = _client
+    # Act
+    try:
+        remote_mod.brokered_restart("alpha", fresh=True)
+    finally:
+        remote_mod._restart_via_host_bypass = saved
+    # Assert
+    assert seen == [("alpha", True)]
 
 
 # ---------------------------------------------------------------------------
@@ -931,3 +993,426 @@ def test_enumerate_running_keeps_only_running_status_rows():
             _helpers_mod.get_agent_list_data = saved
     # Assert — only the two running agents survive, in order.
     assert got == ["run-a", "run-e"]
+
+
+# ---------------------------------------------------------------------------
+# WHERE the restart runs (P0, 2026-07-20). An in-SIF ``sac`` cannot touch a
+# host agent's tmux session, so the restart MUST be brokered to the host
+# listen. The old plain path decided this by EXCEPTION — it brokered only when
+# the local restart raised an error whose text contained "not found in
+# registry" — which never happened for an agent whose spec is bind-mounted
+# into the container (i.e. all of them). The restart then ran locally, touched
+# nothing, and printed green. These tests arm exactly that condition: local
+# resolution SUCCEEDS, so a predicate that waits for a failure cannot fire.
+#
+# The package conftest clears APPTAINER_CONTAINER / SINGULARITY_CONTAINER for
+# every test (the suite itself runs inside a SIF), so "not in a SIF" is the
+# default and ``in_sif_env`` opts a test back in with a real env var.
+# ---------------------------------------------------------------------------
+
+
+_LISTEN_URL_KEYS = (
+    "SAC_LISTEN_BASE_URL",
+    "SCITEX_AGENT_CONTAINER_LISTEN_BASE_URL",
+)
+
+
+@pytest.fixture
+def in_sif_env():
+    """Run the CLI as if inside an apptainer SIF (real env var, restored).
+
+    ARMS THE CONDITION AND PROVES IT: the fixture asserts the production
+    detector actually reports in-SIF before yielding, so a test using it
+    can never quietly exercise the bare-host branch instead. (The arming
+    check lives here rather than in each test because the suite's TQ007
+    rule allows exactly one assertion per test function.)
+    """
+    from scitex_agent_container._lifecycle._in_sif_broker import is_in_sif
+
+    saved = os.environ.get("APPTAINER_CONTAINER")
+    os.environ["APPTAINER_CONTAINER"] = "/path/to/agent.sif"
+    try:
+        assert is_in_sif() is True, "fixture failed to arm the in-SIF branch"
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("APPTAINER_CONTAINER", None)
+        else:
+            os.environ["APPTAINER_CONTAINER"] = saved
+
+
+@pytest.fixture
+def bare_host_env():
+    """Assert the conftest really left us OUTSIDE a SIF (arming check)."""
+    from scitex_agent_container._lifecycle._in_sif_broker import is_in_sif
+
+    assert is_in_sif() is False, "fixture failed to arm the bare-host branch"
+    yield
+
+
+@pytest.fixture
+def no_listen_url():
+    """Clear both spellings of the listen base URL; restore on teardown."""
+    saved = {k: os.environ.get(k) for k in _LISTEN_URL_KEYS}
+    for key in _LISTEN_URL_KEYS:
+        os.environ.pop(key, None)
+    try:
+        yield
+    finally:
+        for key, prev in saved.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+
+
+def _record_broker(sink: list[str]):
+    """Build a ``brokered_restart`` stand-in that records the brokered name."""
+
+    def _broker(name, *, fresh=False):
+        sink.append(name)
+        return {"name": name, "restarted": True, "via": "host-listen"}, True
+
+    return _broker
+
+
+def test_in_sif_restart_of_a_resolvable_agent_is_brokered(in_sif_env):
+    # Arrange — local resolution SUCCEEDS here (``agent_restart`` returns
+    # instead of raising), which is precisely what made the old
+    # exception-gated predicate unreachable. ``in_sif_env`` proves the
+    # branch is armed before the test body runs.
+    brokered: list[str] = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("brokered_restart", _record_broker(brokered)),
+        _swap("agent_restart", lambda _name: True),
+    ):
+        runner.invoke(restart, ["broker-me", "-y"])
+    # Assert
+    assert brokered == ["broker-me"]
+
+
+def test_in_sif_restart_never_runs_the_local_restart(in_sif_env):
+    # Arrange — the local leg cannot reach the host's tmux session, so it must
+    # not run at all; running it is the silent no-op this fix removes.
+    local: list[str] = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("brokered_restart", _record_broker([])),
+        _swap("agent_restart", lambda name: local.append(name)),
+    ):
+        runner.invoke(restart, ["broker-me", "-y"])
+    # Assert
+    assert local == []
+
+
+def test_outside_a_sif_restart_runs_locally(bare_host_env):
+    # Arrange — ``bare_host_env`` proves the SIF markers really are clear.
+    local: list[str] = []
+    brokered: list[str] = []
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("brokered_restart", _record_broker(brokered)),
+        _swap("agent_restart", lambda name: local.append(name)),
+    ):
+        runner.invoke(restart, ["local-me", "-y"])
+    # Assert
+    assert local == ["local-me"] and brokered == []
+
+
+def test_in_sif_without_a_listen_url_exits_one(in_sif_env, no_listen_url):
+    # Arrange — in a SIF with nothing to broker to. The restart must FAIL
+    # LOUD; there is deliberately no fall-through to the local path.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["broker-me", "-y"])
+    # Assert
+    assert result.exit_code == 1, result.output
+
+
+def test_in_sif_without_a_listen_url_does_not_fall_back_to_local(
+    in_sif_env, no_listen_url
+):
+    # Arrange — the silent local fallback IS the bug; assert it is gone.
+    local: list[str] = []
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", lambda name: local.append(name)):
+        runner.invoke(restart, ["broker-me", "-y"])
+    # Assert
+    assert local == []
+
+
+def test_in_sif_without_a_listen_url_names_the_missing_env_var(
+    in_sif_env, no_listen_url
+):
+    # Arrange
+    import json
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(restart, ["broker-me", "-y", "--json"])
+    payload = json.loads(result.output.strip().splitlines()[-1])
+    # Assert — the operator is told WHICH knob is missing.
+    assert "SAC_LISTEN_BASE_URL" in payload.get("error", "")
+
+
+# ---------------------------------------------------------------------------
+# Postcondition: a restart that changed NOTHING must not report success.
+# ``<runtime-dir>/<agent>/instance_id`` is the agent's identity-of-run (a uuid7
+# minted at launch, deleted at stop), so a cycled agent has a NEW one. The
+# runtime root is relocated to a real tmp dir via the production env var, and
+# the restart collaborator is a REAL function that either rewrites the marker
+# (a genuine restart), leaves it alone (the P0's no-op) or deletes it (a stop
+# whose start leg never came back).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def runtime_root(_isolate_runtime_root):
+    """The per-test runtime root, named for tests that write markers into it."""
+    return _isolate_runtime_root
+
+
+def _write_run_marker(root, name: str, value: str) -> None:
+    """Write a real ``instance_id`` marker for ``name`` under ``root``."""
+    state_dir = root / name
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "instance_id").write_text(value, encoding="utf-8")
+
+
+def _current_run(name: str):
+    """Read the marker back through the production resolver."""
+    from scitex_agent_container.cli_pkg.lifecycle._restart_verify import (
+        read_run_identity,
+    )
+
+    return read_run_identity(name)
+
+
+def _envelope(result):
+    """Parse the CLI's ``--json`` envelope off the last stdout line."""
+    import json
+
+    return json.loads(result.output.strip().splitlines()[-1])
+
+
+@pytest.fixture
+def armed_run_marker(runtime_root):
+    """Give ``verify-me`` a real run marker and PROVE the CLI can read it.
+
+    Arming is checked HERE, not in each test: a fixture that silently
+    fails to arm turns every postcondition test into a test of nothing
+    (before and after would both be ``None``, which the ternary correctly
+    refuses to call a failure — so the suite would go green over a broken
+    check). Asserting in the fixture also keeps each test at the single
+    assertion the suite's TQ007 rule requires.
+    """
+    _write_run_marker(runtime_root, "verify-me", "run-1")
+    assert _current_run("verify-me") == "run-1", (
+        "fixture failed to arm the run marker — the postcondition tests "
+        "below would be vacuous"
+    )
+    return runtime_root
+
+
+@pytest.fixture
+def no_run_marker(runtime_root):
+    """Prove ``ghost-agent`` has NO run marker (the abstention case)."""
+    assert _current_run("ghost-agent") is None, (
+        "fixture failed to arm the no-evidence case — a stray marker would "
+        "make this test assert the wrong branch"
+    )
+    return runtime_root
+
+
+def _noop_restart(_name):
+    """A restart that returns happily and changes nothing — the P0's shape."""
+    return True
+
+
+def test_restart_that_leaves_the_run_unchanged_exits_one(armed_run_marker):
+    # Arrange
+    runner = CliRunner()
+    # Act — the restart returns happily and touches nothing.
+    with _swap("agent_restart", _noop_restart):
+        result = runner.invoke(restart, ["verify-me", "-y"])
+    # Assert
+    assert result.exit_code == 1, result.output
+
+
+def test_restart_that_leaves_the_run_unchanged_reports_verified_false(
+    armed_run_marker,
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _noop_restart):
+        result = runner.invoke(restart, ["verify-me", "-y", "--json"])
+    # Assert
+    assert _envelope(result).get("verified") is False
+
+
+def test_restart_that_leaves_the_run_unchanged_reports_the_same_run_both_sides(
+    armed_run_marker,
+):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _noop_restart):
+        result = runner.invoke(restart, ["verify-me", "-y", "--json"])
+    envelope = _envelope(result)
+    # Assert — the evidence travels with the verdict.
+    assert (envelope.get("run_before"), envelope.get("run_after")) == (
+        "run-1",
+        "run-1",
+    )
+
+
+def _cycling_restart_for(root):
+    """Build a REAL restart that replaces the marker, as a launch would."""
+
+    def _restart(_name):
+        _write_run_marker(root, "verify-me", "run-2")
+        return True
+
+    return _restart
+
+
+def test_restart_that_cycles_the_run_exits_zero(armed_run_marker):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
+        result = runner.invoke(restart, ["verify-me", "-y"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_restart_that_cycles_the_run_reports_verified_true(armed_run_marker):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
+        result = runner.invoke(restart, ["verify-me", "-y", "--json"])
+    # Assert
+    assert _envelope(result).get("verified") is True
+
+
+def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
+    # Arrange — the stop leg ran, the start leg never came back.
+    def _stop_only(_name):
+        (armed_run_marker / "verify-me" / "instance_id").unlink()
+        return True
+
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _stop_only):
+        result = runner.invoke(restart, ["verify-me", "-y"])
+    # Assert
+    assert result.exit_code == 1, result.output
+
+
+def test_no_marker_on_either_side_does_not_invent_a_failure(no_run_marker):
+    # Arrange — no evidence at all. Reporting FAILURE here would be the exact
+    # mirror of the false SUCCESS being fixed, so the verdict must abstain.
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _noop_restart):
+        result = runner.invoke(restart, ["ghost-agent", "-y", "--json"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_no_marker_on_either_side_reports_verified_null(no_run_marker):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _noop_restart):
+        result = runner.invoke(restart, ["ghost-agent", "-y", "--json"])
+    # Assert — abstention is reported as such, never as a pass or a fail.
+    assert _envelope(result).get("verified") is None
+
+
+@pytest.mark.parametrize(
+    "before,after,expected",
+    [
+        ("run-1", "run-2", True),
+        (None, "run-2", True),
+        ("run-1", "run-1", False),
+        ("run-1", None, False),
+        (None, None, None),
+    ],
+)
+def test_verify_cycled_is_a_ternary(before, after, expected):
+    # Arrange
+    from scitex_agent_container.cli_pkg.lifecycle._restart_verify import verify_cycled
+
+    # Act
+    verdict = verify_cycled("some-agent", before, after)
+    # Assert — True / False / None, never a two-valued collapse.
+    assert verdict.verified is expected
+
+
+# ---------------------------------------------------------------------------
+# Decision log: whether a restart was handled locally or brokered — and why —
+# is recorded before any work happens. The listen log can only ever show what
+# ARRIVED, so a request that was never sent used to leave no trace anywhere.
+# ---------------------------------------------------------------------------
+
+
+def _decision_entries(runtime_root):
+    """Read the JSONL decision log written under the relocated runtime root."""
+    import json
+
+    path = runtime_root / "logs" / "restart_decision.log"
+    if not path.exists():
+        return []
+    return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+
+def test_decision_log_records_a_local_restart(runtime_root):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", lambda _name: True):
+        runner.invoke(restart, ["local-me", "-y"])
+    entries = _decision_entries(runtime_root)
+    # Assert
+    assert entries[0]["site"] == "local", entries
+
+
+def test_decision_log_records_a_brokered_restart(runtime_root, in_sif_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("brokered_restart", _record_broker([])):
+        runner.invoke(restart, ["broker-me", "-y"])
+    entries = _decision_entries(runtime_root)
+    # Assert
+    assert entries[0]["site"] == "host-listen", entries
+
+
+def test_decision_log_records_the_reason_for_the_route(runtime_root, in_sif_env):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("brokered_restart", _record_broker([])):
+        runner.invoke(restart, ["broker-me", "-y"])
+    entries = _decision_entries(runtime_root)
+    # Assert — the WHY is written down, not just the WHAT.
+    assert "apptainer SIF" in entries[0]["why"]
+
+
+def test_decision_log_records_the_outcome_after_the_work(runtime_root):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", lambda _name: True):
+        runner.invoke(restart, ["local-me", "-y"])
+    entries = _decision_entries(runtime_root)
+    # Assert — one line for the decision, one for what came of it.
+    assert [e["event"] for e in entries] == ["decided", "completed"]
