@@ -45,6 +45,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ._log import (
+    SELF_IMPAIRED,
+    SELF_RECOVERED,
     SUBJECT_DEGRADED,
     SUBJECT_RECOVERED,
     SUBJECT_UNKNOWN,
@@ -57,8 +59,10 @@ __all__ = [
     "SubjectState",
     "SubjectVerdict",
     "degraded_state_path",
+    "emit_self_state",
     "emit_subject_verdicts",
     "recover_absent_subjects",
+    "self_state_path",
 ]
 
 
@@ -123,6 +127,17 @@ def degraded_state_path(subsystem: str, *, path: Path | None = None) -> Path:
     """Where ``subsystem``'s currently-degraded subject set is remembered."""
     base = Path(path) if path is not None else event_log_path()
     return base.parent / f"sac-events-{subsystem}-degraded.json"
+
+
+def self_state_path(subsystem: str, *, path: Path | None = None) -> Path:
+    """Where ``subsystem``'s own impaired/healthy state is remembered.
+
+    Deliberately a SEPARATE file from the subject set: a pass's own health is
+    not one of its subjects, and sharing one file would need a reserved key
+    that a real subject could one day collide with.
+    """
+    base = Path(path) if path is not None else event_log_path()
+    return base.parent / f"sac-events-{subsystem}-self.json"
 
 
 def _load_degraded(target: Path, *, err_stream: Any) -> set[str]:
@@ -316,3 +331,53 @@ def recover_absent_subjects(
 
     _save_degraded(state_file, remembered, err_stream=stream)
     return EmitOutcome(recovered=tuple(recovered), failed=tuple(failed))
+
+
+def emit_self_state(
+    subsystem: str,
+    *,
+    impaired: bool,
+    detail: str,
+    verdict: str | None = None,
+    extra: dict[str, Any] | None = None,
+    path: Path | None = None,
+    now: float | None = None,
+    err_stream: Any = None,
+) -> bool:
+    """Record a change in whether SAC ITSELF can do this pass's job.
+
+    Returns whether a record was written — ``False`` means nothing changed, not
+    that anything failed.
+
+    Transition-tracked for the same reason subjects are, and the stakes are
+    higher here: a pass runs every few minutes, so recording "I am fine" on
+    every tick would write hundreds of thousands of records a year and, worse,
+    would make :data:`SELF_RECOVERED` mean nothing. A recovery record has to
+    mark an actual recovery, or it is not evidence of one.
+
+    An impairment is re-recorded on every pass while it stands, exactly like a
+    degraded subject: an ongoing refusal to act is an ongoing fact, and a log
+    that mentions it once and goes quiet is indistinguishable from a log
+    written by a pass that has itself died.
+    """
+    stream = err_stream if err_stream is not None else sys.stderr
+    state_file = self_state_path(subsystem, path=path)
+    was_impaired = subsystem in _load_degraded(state_file, err_stream=stream)
+
+    if not impaired and not was_impaired:
+        return False
+
+    written = log_event(
+        event=SELF_IMPAIRED if impaired else SELF_RECOVERED,
+        subsystem=subsystem,
+        verdict=verdict,
+        detail=detail,
+        extra=extra,
+        path=path,
+        now=now,
+        err_stream=stream,
+    )
+    if not written:
+        return False
+    _save_degraded(state_file, {subsystem} if impaired else set(), err_stream=stream)
+    return True

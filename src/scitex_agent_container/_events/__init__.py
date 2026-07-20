@@ -32,8 +32,10 @@ from ._verdicts import (
     SubjectState,
     SubjectVerdict,
     degraded_state_path,
+    emit_self_state,
     emit_subject_verdicts,
     recover_absent_subjects,
+    self_state_path,
 )
 
 __all__ = [
@@ -51,10 +53,12 @@ __all__ = [
     "SubjectState",
     "SubjectVerdict",
     "degraded_state_path",
+    "emit_self_state",
     "emit_subject_verdicts",
     "event_log_path",
     "log_event",
     "log_pass_completed",
     "read_events",
     "recover_absent_subjects",
+    "self_state_path",
 ]

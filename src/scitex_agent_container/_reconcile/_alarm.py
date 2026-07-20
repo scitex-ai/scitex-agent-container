@@ -49,13 +49,11 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from .._events import (
-    SELF_IMPAIRED,
-    SELF_RECOVERED,
     EmitOutcome,
     SubjectState,
     SubjectVerdict,
+    emit_self_state,
     emit_subject_verdicts,
-    log_event,
     log_pass_completed,
 )
 from ._rule import Verdict
@@ -146,9 +144,9 @@ def record_self_impaired(
     it became permission-denied for fresh processes — while everything still
     LOOKED installed and configured.
     """
-    return log_event(
-        event=SELF_IMPAIRED,
-        subsystem=SUBSYSTEM,
+    return emit_self_state(
+        SUBSYSTEM,
+        impaired=True,
         verdict="state_unreadable",
         detail=(
             f"reconciler cannot read its own restart history at "
@@ -170,10 +168,17 @@ def record_self_recovered(
     now: float | None = None,
     err_stream: Any = None,
 ) -> bool:
-    """Record that the reconciler can read its own memory again. Never raises."""
-    return log_event(
-        event=SELF_RECOVERED,
-        subsystem=SUBSYSTEM,
+    """Record that the reconciler can read its own memory again.
+
+    Returns whether a record was written. ``False`` is the ORDINARY answer: it
+    means the reconciler was not impaired to begin with, so there was no
+    recovery to record. Only a genuine transition writes — a pass runs every
+    few minutes, and a "still fine" record on every tick would drown the log
+    and rob :data:`SELF_RECOVERED` of any meaning.
+    """
+    return emit_self_state(
+        SUBSYSTEM,
+        impaired=False,
         verdict="state_readable",
         detail=(
             f"reconciler can read its restart history at "
