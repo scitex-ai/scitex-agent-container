@@ -117,13 +117,18 @@ def _fmt_reset(seconds: float | None) -> str:
     return "?" if seconds is None else f"{seconds / 3600.0:+.1f}h"
 
 
-def format_pick_audit(records: list[CandidateAudit]) -> str:
-    """One log-safe line naming EVERY ranking input for every candidate.
+def pick_audit_parts(records: list[CandidateAudit]) -> list[str]:
+    """Per-candidate ranking-input strings, one string per candidate, in order.
 
-    ``ranking inputs: a(5h=9% 7d=10% 7d_reset=+56.4h), b(...)`` — the
-    flags (``5h-blocked`` / ``7d-near-cap`` / ``7d-expiring``) appear
-    only when set. Contains percentages, relative hours, and account
-    slugs ONLY — never a token value or credential path.
+    The building block behind :func:`format_pick_audit` (which joins these into
+    one comma-run line). Exposed so a caller that wants a readable, one-entry-
+    per-line ranking LIST — the start-time ``[sac:creds]`` notice — can indent
+    each entry on its own line instead of a run-on comma-run (operator
+    2026-07-19: the notice was "めっちゃ汚い"). Each entry is
+    ``a(5h=9% 7d=10% 7d_reset=+56.4h)`` with the flags (``5h-blocked`` /
+    ``7d-near-cap`` / ``7d-expiring``) appended only when set. Contains
+    percentages, relative hours, and account slugs ONLY — never a token value
+    or credential path.
     """
     parts: list[str] = []
     for r in records:
@@ -138,11 +143,24 @@ def format_pick_audit(records: list[CandidateAudit]) -> str:
             f"{r.name}(5h={_fmt_pct(r.pct_5h)} 7d={_fmt_pct(r.pct_7d)} "
             f"7d_reset={_fmt_reset(r.reset_7d_in_s)}{flags})"
         )
-    return "ranking inputs: " + ", ".join(parts)
+    return parts
+
+
+def format_pick_audit(records: list[CandidateAudit]) -> str:
+    """One log-safe line naming EVERY ranking input for every candidate.
+
+    ``ranking inputs: a(5h=9% 7d=10% 7d_reset=+56.4h), b(...)`` — the
+    flags (``5h-blocked`` / ``7d-near-cap`` / ``7d-expiring``) appear
+    only when set. Contains percentages, relative hours, and account
+    slugs ONLY — never a token value or credential path. The per-candidate
+    rendering is :func:`pick_audit_parts` (shared SSOT).
+    """
+    return "ranking inputs: " + ", ".join(pick_audit_parts(records))
 
 
 __all__ = [
     "CandidateAudit",
     "audit_candidates",
     "format_pick_audit",
+    "pick_audit_parts",
 ]

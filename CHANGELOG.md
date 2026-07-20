@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Start / start-failure log output is now readable, not a run-on wall**
+  (operator 2026-07-19: "めっちゃ汚い"). Format-only — no control-flow, trigger,
+  or suppression behaviour changed:
+  - The **start-failure diagnostic** (`raise_start_failure` /
+    `_start_failure_diag`) now renders as a headline plus clearly separated,
+    indented sections (`tmux session`, `inner stderr`, `pane tail`) with each
+    section body indented under its label, instead of one flush-left blob.
+  - The per-start **`[sac:creds]` credentials-pool selection notice** is now a
+    headline naming the agent + picked account, followed by indented fields
+    (`file`, `policy=…`, `picked usage`) and a one-entry-per-line ranking-inputs
+    list, instead of a single run-on sentence. It still writes through the
+    caller's `log_stream` (the `preflight_from_config_path` dry-probe
+    suppression seam is preserved — it is NOT routed to a logger).
+  - Hook failures in `_hook_runner` now log at WARNING level (`logger.warning`)
+    instead of `print`-ing `[WARN] …` with the severity baked into the message
+    text.
+
 ## [0.24.1] - 2026-07-20
 
 ### Fixed
