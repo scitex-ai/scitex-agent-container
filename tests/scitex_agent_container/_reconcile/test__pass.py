@@ -1,12 +1,12 @@
 """Tests for ``_reconcile._pass`` — WHICH agents does a real pass restart?
 
-The rate limits, restart failures, exit codes and board rails live in the
+The rate limits, restart failures, exit codes and recording rails live in the
 sibling ``test__pass_limits.py`` (512-line cap); this file owns the core
 question: given a real fleet on disk, who gets restarted and who does not.
 
 No mocks. Real on-disk v3 ``spec.yaml`` files in a tmp fleet registry, a
 REAL temp ``state.db`` with REAL ``instances`` rows written by the
-production writer, a real temp scitex-todo store, and a real injected clock.
+production writer, a real temp scitex-todo events, and a real injected clock.
 Fixtures live in ``conftest.py``, helpers in ``_fleet.py``.
 
 Two seams, both real callables rather than mocks:
@@ -27,8 +27,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 
 from __future__ import annotations
 
-import pytest
-
+from scitex_agent_container._events import SUBJECT_DEGRADED, read_events
+from scitex_agent_container._reconcile._alarm import SUBSYSTEM
 from scitex_agent_container._reconcile._budget import load_history
 from scitex_agent_container._reconcile._rule import Verdict
 from tests.scitex_agent_container._reconcile._fleet import (
@@ -42,13 +42,19 @@ from tests.scitex_agent_container._reconcile._fleet import (
     write_spec,
 )
 
-scitex_todo = pytest.importorskip("scitex_todo")
+
+def _degraded_subjects(events) -> list[str]:
+    """Agents this pass recorded as DOWN-and-unrecoverable, in order."""
+    return [
+        e.subject
+        for e in read_events(events, subsystem=SUBSYSTEM, event=SUBJECT_DEGRADED)
+    ]
 
 
 # --- a live session is left alone ------------------------------------------
 
 
-def test_agent_with_live_session_is_not_restarted(registry, db_path, history, store):
+def test_agent_with_live_session_is_not_restarted(registry, db_path, history, events):
     # Arrange — the session EXISTS, so the agent is alive.
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -58,7 +64,7 @@ def test_agent_with_live_session_is_not_restarted(registry, db_path, history, st
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         snapshot_fn=lambda **_: sessions("alpha"),
         restart_fn=recorder,
@@ -67,19 +73,19 @@ def test_agent_with_live_session_is_not_restarted(registry, db_path, history, st
     assert recorder.names == []
 
 
-def test_agent_with_live_session_reports_ok(registry, db_path, history, store):
+def test_agent_with_live_session_reports_ok(registry, db_path, history, events):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
     outcome = run_pass(
-        registry, db_path, history, store, snapshot_fn=lambda **_: sessions("alpha")
+        registry, db_path, history, events, snapshot_fn=lambda **_: sessions("alpha")
     )
     # Assert
     assert verdict_of(outcome, "alpha") is Verdict.OK
 
 
-def test_live_session_outranks_a_crashed_row(registry, db_path, history, store):
+def test_live_session_outranks_a_crashed_row(registry, db_path, history, events):
     # Arrange — the row says crashed but tmux says the session is THERE.
     # tmux is the fact; the registry's view is a hypothesis.
     write_spec(registry, "alpha")
@@ -90,7 +96,7 @@ def test_live_session_outranks_a_crashed_row(registry, db_path, history, store):
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         snapshot_fn=lambda **_: sessions("alpha"),
         restart_fn=recorder,
@@ -102,7 +108,7 @@ def test_live_session_outranks_a_crashed_row(registry, db_path, history, store):
 # --- THE HEADLINE: tonight's 33 dead agents --------------------------------
 
 
-def test_ghost_active_row_agent_is_restarted(registry, db_path, history, store):
+def test_ghost_active_row_agent_is_restarted(registry, db_path, history, events):
     # Arrange — EXACTLY tonight's state: spec says keep-running, tmux has no
     # session, and the instances row still claims ended_at IS NULL. Nothing
     # recorded an end, so nobody ended it — it died with the OAuth rotation.
@@ -110,62 +116,62 @@ def test_ghost_active_row_agent_is_restarted(registry, db_path, history, store):
     ghost("alpha")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert — this is the fleet coming back.
     assert recorder.names == ["alpha"]
 
 
-def test_ghost_active_row_is_reported_restarted(registry, db_path, history, store):
+def test_ghost_active_row_is_reported_restarted(registry, db_path, history, events):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    outcome = run_pass(registry, db_path, history, store, apply=True)
+    outcome = run_pass(registry, db_path, history, events, apply=True)
     # Assert
     assert verdict_of(outcome, "alpha") is Verdict.RESTARTED
 
 
-def test_whole_dead_fleet_is_recovered(registry, db_path, history, store):
+def test_whole_dead_fleet_is_recovered(registry, db_path, history, events):
     # Arrange — the real shape of the incident: many agents, all ghosts.
     for name in ("a1", "a2", "a3", "a4", "a5"):
         write_spec(registry, name)
         ghost(name)
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert — every one of them comes back in a single pass.
     assert sorted(recorder.names) == ["a1", "a2", "a3", "a4", "a5"]
 
 
-def test_crashed_agent_is_restarted(registry, db_path, history, store):
+def test_crashed_agent_is_restarted(registry, db_path, history, events):
     # Arrange — the reaper recorded 'crashed': it died without being asked.
     write_spec(registry, "alpha")
     ended("alpha", "crashed")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == ["alpha"]
 
 
-def test_reboot_swept_agent_is_restarted(registry, db_path, history, store):
+def test_reboot_swept_agent_is_restarted(registry, db_path, history, events):
     # Arrange — the host rebooted under it. Nobody chose to stop this agent.
     write_spec(registry, "alpha")
     ended("alpha", "reboot-swept")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == ["alpha"]
 
 
-def test_always_policy_is_enforced(registry, db_path, history, store):
+def test_always_policy_is_enforced(registry, db_path, history, events):
     # Arrange — policy: always is the other managed policy.
     write_spec(registry, "alpha", policy="always")
     ghost("alpha")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == ["alpha"]
 
@@ -173,83 +179,83 @@ def test_always_policy_is_enforced(registry, db_path, history, store):
 # --- THE OPERATOR'S INTENT IS SACRED ---------------------------------------
 
 
-def test_deliberately_stopped_agent_is_not_restarted(registry, db_path, history, store):
+def test_deliberately_stopped_agent_is_not_restarted(registry, db_path, history, events):
     # Arrange — `sac agents stop` recorded 'stopped'. The operator MEANT it.
     write_spec(registry, "alpha")
     ended("alpha", "stopped")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert — an enforcer that undoes a stop is one nobody can turn off.
     assert recorder.names == []
 
 
-def test_deliberately_stopped_agent_reports_skipped(registry, db_path, history, store):
+def test_deliberately_stopped_agent_reports_skipped(registry, db_path, history, events):
     # Arrange
     write_spec(registry, "alpha")
     ended("alpha", "stopped")
     # Act
-    outcome = run_pass(registry, db_path, history, store, apply=True)
+    outcome = run_pass(registry, db_path, history, events, apply=True)
     # Assert
     assert verdict_of(outcome, "alpha") is Verdict.SKIPPED
 
 
-def test_stopped_agent_skip_states_its_reason(registry, db_path, history, store):
+def test_stopped_agent_skip_states_its_reason(registry, db_path, history, events):
     # Arrange — never silent: the report must SAY why it stood down.
     write_spec(registry, "alpha")
     ended("alpha", "stopped")
     # Act
-    outcome = run_pass(registry, db_path, history, store, apply=True)
+    outcome = run_pass(registry, db_path, history, events, apply=True)
     # Assert
     assert "DELIBERATELY" in detail_of(outcome, "alpha")
 
 
-def test_deleted_agent_is_not_restarted(registry, db_path, history, store):
+def test_deleted_agent_is_not_restarted(registry, db_path, history, events):
     # Arrange
     write_spec(registry, "alpha")
     ended("alpha", "deleted")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == []
 
 
-def test_stopped_agent_raises_no_card(registry, db_path, history, store):
+def test_stopped_agent_records_no_verdict(registry, db_path, history, events):
     # Arrange — a stopped agent is a CORRECT state, not a problem. Carding
-    # it would train the operator to ignore the board.
+    # it would train a reader to ignore the log.
     write_spec(registry, "alpha")
     ended("alpha", "stopped")
     # Act
-    run_pass(registry, db_path, history, store, apply=True)
+    run_pass(registry, db_path, history, events, apply=True)
     # Assert
-    assert scitex_todo.list_tasks(store, blocking_me=True) == []
+    assert _degraded_subjects(events) == []
 
 
-def test_unmanaged_spec_is_not_restarted(registry, db_path, history, store):
+def test_unmanaged_spec_is_not_restarted(registry, db_path, history, events):
     # Arrange — policy=never (also the DEFAULT for a spec with no restart
     # block). sac never promised to keep this one running.
     write_spec(registry, "alpha", policy="never")
     ghost("alpha")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == []
 
 
-def test_never_started_spec_is_not_started(registry, db_path, history, store):
+def test_never_started_spec_is_not_started(registry, db_path, history, events):
     # Arrange — a spec with NO instances row. Starting it would be a start
     # nobody asked for; doing that for every unstarted spec is a storm.
     write_spec(registry, "alpha")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == []
 
 
-def test_remote_agent_is_not_restarted_locally(registry, db_path, history, store):
+def test_remote_agent_is_not_restarted_locally(registry, db_path, history, events):
     # Arrange — the row belongs to another host, so its tmux is not ours to
     # read and a local restart would DUPLICATE a live remote agent.
     from scitex_agent_container._state import state_db
@@ -258,7 +264,7 @@ def test_remote_agent_is_not_restarted_locally(registry, db_path, history, store
     state_db.record_instance_start(name="alpha", host="host-b", pid=1, remote=True)
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert
     assert recorder.names == []
 
@@ -266,28 +272,28 @@ def test_remote_agent_is_not_restarted_locally(registry, db_path, history, store
 # --- --dry-run mutates NOTHING ---------------------------------------------
 
 
-def test_dry_run_restarts_nothing(registry, db_path, history, store):
+def test_dry_run_restarts_nothing(registry, db_path, history, events):
     # Arrange — a corpse that WOULD be restarted under --apply.
     write_spec(registry, "alpha")
     ghost("alpha")
     recorder = Recorder()
     # Act — apply defaults to False.
-    run_pass(registry, db_path, history, store, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, restart_fn=recorder)
     # Assert — the irreversible act was never invoked.
     assert recorder.names == []
 
 
-def test_dry_run_reports_would_restart(registry, db_path, history, store):
+def test_dry_run_reports_would_restart(registry, db_path, history, events):
     # Arrange — reporting the corpse is the whole point of the dry run.
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    outcome = run_pass(registry, db_path, history, store)
+    outcome = run_pass(registry, db_path, history, events)
     # Assert
     assert verdict_of(outcome, "alpha") is Verdict.WOULD_RESTART
 
 
-def test_dry_run_records_no_restart(registry, db_path, history, store):
+def test_dry_run_records_no_restart(registry, db_path, history, events):
     # Arrange — a dry run must not spend budget it never used, or the next
     # --apply would think alpha was already bounced and debounce it.
     #
@@ -301,26 +307,26 @@ def test_dry_run_records_no_restart(registry, db_path, history, store):
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    run_pass(registry, db_path, history, store)
+    run_pass(registry, db_path, history, events)
     # Assert
     assert load_history(history) == {}
 
 
-def test_dry_run_raises_no_down_card(registry, db_path, history, store):
-    # Arrange — a dry run reports; it must not mutate the shared board about
+def test_dry_run_records_no_down_verdict(registry, db_path, history, events):
+    # Arrange — a dry run reports; it must not record a claim about
     # an AGENT (its own heartbeat is a different, deliberate rail).
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    run_pass(registry, db_path, history, store)
+    run_pass(registry, db_path, history, events)
     # Assert
-    assert scitex_todo.list_tasks(store, blocking_me=True) == []
+    assert _degraded_subjects(events) == []
 
 
 # --- "I could not look" is not "nothing is there" --------------------------
 
 
-def test_blind_probe_restarts_nothing(registry, db_path, history, store):
+def test_blind_probe_restarts_nothing(registry, db_path, history, events):
     # Arrange — snapshot_fn returns None: the probe could not look (tmux
     # wedged, or we are in a container). Inferring death here would restart
     # the ENTIRE fleet at once.
@@ -332,7 +338,7 @@ def test_blind_probe_restarts_nothing(registry, db_path, history, store):
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         snapshot_fn=lambda **_: None,
         restart_fn=recorder,
@@ -341,20 +347,20 @@ def test_blind_probe_restarts_nothing(registry, db_path, history, store):
     assert recorder.names == []
 
 
-def test_blind_probe_reports_unknown(registry, db_path, history, store):
+def test_blind_probe_reports_unknown(registry, db_path, history, events):
     # Arrange — UNKNOWN must never be rendered as clean.
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
     outcome = run_pass(
-        registry, db_path, history, store, apply=True, snapshot_fn=lambda **_: None
+        registry, db_path, history, events, apply=True, snapshot_fn=lambda **_: None
     )
     # Assert
     assert verdict_of(outcome, "alpha") is Verdict.UNKNOWN
 
 
 def test_empty_fleet_seen_from_a_container_is_blindness(
-    registry, db_path, history, store
+    registry, db_path, history, events
 ):
     # Arrange — THE TRAP: inside a SIF the probe does not fail, it SUCCEEDS
     # and reports an EMPTY fleet (that container's own /tmp has no tmux
@@ -367,7 +373,7 @@ def test_empty_fleet_seen_from_a_container_is_blindness(
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         snapshot_fn=lambda **_: {},
         in_sif_fn=lambda: True,
@@ -377,7 +383,7 @@ def test_empty_fleet_seen_from_a_container_is_blindness(
     assert recorder.names == []
 
 
-def test_raising_probe_is_unknown_not_dead(registry, db_path, history, store):
+def test_raising_probe_is_unknown_not_dead(registry, db_path, history, events):
     # Arrange — a probe that EXPLODES is a probe that did not look.
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -391,7 +397,7 @@ def test_raising_probe_is_unknown_not_dead(registry, db_path, history, store):
         registry,
         db_path,
         history,
-        store,
+        events,
         apply=True,
         snapshot_fn=_boom,
         restart_fn=recorder,
@@ -400,7 +406,7 @@ def test_raising_probe_is_unknown_not_dead(registry, db_path, history, store):
     assert recorder.names == []
 
 
-def test_tmux_is_probed_once_per_pass(registry, db_path, history, store):
+def test_tmux_is_probed_once_per_pass(registry, db_path, history, events):
     # Arrange — probing per agent costs ~93 tmux spawns a tick, the exact
     # O(N)-subprocess cost that blew the heartbeat tick's budget and got it
     # abandoned. The real probe is batched; this pass must use it that way.
@@ -414,7 +420,7 @@ def test_tmux_is_probed_once_per_pass(registry, db_path, history, store):
         write_spec(registry, name)
         ghost(name)
     # Act
-    run_pass(registry, db_path, history, store, snapshot_fn=_counting)
+    run_pass(registry, db_path, history, events, snapshot_fn=_counting)
     # Assert
     assert len(calls) == 1
 
@@ -422,7 +428,7 @@ def test_tmux_is_probed_once_per_pass(registry, db_path, history, store):
 # --- one bad spec must not strand the fleet --------------------------------
 
 
-def test_unreadable_spec_does_not_abort_the_sweep(registry, db_path, history, store):
+def test_unreadable_spec_does_not_abort_the_sweep(registry, db_path, history, events):
     # Arrange — one malformed spec must not strand the rest of the fleet.
     (registry / "broken").mkdir()
     (registry / "broken" / "spec.yaml").write_text("{[not: valid: yaml")
@@ -430,35 +436,35 @@ def test_unreadable_spec_does_not_abort_the_sweep(registry, db_path, history, st
     ghost("alpha")
     recorder = Recorder()
     # Act
-    run_pass(registry, db_path, history, store, apply=True, restart_fn=recorder)
+    run_pass(registry, db_path, history, events, apply=True, restart_fn=recorder)
     # Assert — alpha is still recovered.
     assert recorder.names == ["alpha"]
 
 
-def test_unreadable_spec_is_reported_unknown(registry, db_path, history, store):
+def test_unreadable_spec_is_reported_unknown(registry, db_path, history, events):
     # Arrange — we cannot know whether it should be running, so we must not
     # guess: it is UNKNOWN, never a corpse.
     (registry / "broken").mkdir()
     (registry / "broken" / "spec.yaml").write_text("{[not: valid: yaml")
     # Act
-    outcome = run_pass(registry, db_path, history, store, apply=True)
+    outcome = run_pass(registry, db_path, history, events, apply=True)
     # Assert
     assert verdict_of(outcome, "broken") is Verdict.UNKNOWN
 
 
-def test_scaffold_dirs_are_not_agents(registry, db_path, history, store):
+def test_scaffold_dirs_are_not_agents(registry, db_path, history, events):
     # Arrange — `_shared` / `_template_*` / `_archive` are scaffolding.
     write_spec(registry, "_template_python")
     # Act
-    outcome = run_pass(registry, db_path, history, store)
+    outcome = run_pass(registry, db_path, history, events)
     # Assert
     assert outcome.reports == ()
 
 
-def test_missing_registry_is_not_a_crash(registry, db_path, history, store, tmp_path):
+def test_missing_registry_is_not_a_crash(registry, db_path, history, events, tmp_path):
     # Arrange — a host with no fleet registry at all reports nothing rather
     # than taking the scheduled pass down.
     # Act
-    outcome = run_pass(tmp_path / "nope", db_path, history, store)
+    outcome = run_pass(tmp_path / "nope", db_path, history, events)
     # Assert
     assert outcome.reports == ()

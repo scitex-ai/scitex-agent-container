@@ -1,7 +1,7 @@
 """Real temp state for the login-expired auto-restart suites — no mocks.
 
 Every fixture hands the pass REAL state it can write to and a test can read
-back: an on-disk restart-history file, an on-disk scitex-todo store and an
+back: an on-disk restart-history file, an on-disk sac event log and an
 on-disk fleet registry. Detection is capture-driven (injected panes), so no
 state.db is needed here — but the ROSTER is real, because the pass now checks
 its pane reading against the registry to find the agents that reading failed
@@ -50,9 +50,29 @@ def roster(tmp_path: Path):
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> str:
-    """A real (initially absent) scitex-todo store path — no mocks."""
-    return str(tmp_path / "tasks.yaml")
+def events(tmp_path: Path) -> Path:
+    """A real (initially absent) sac event-log path — no mocks.
+
+    Nothing creates it until a pass records something, so ``events.exists()``
+    is itself the assertion "this pass recorded nothing at all".
+    """
+    return tmp_path / "sac-events.jsonl"
+
+
+@pytest.fixture
+def unwritable(tmp_path: Path):
+    """An event-log path the REAL writer genuinely cannot write. No mocks.
+
+    The parent dir is read-only, so the append fails the way it would on a
+    broken host — the world says no; nothing is injected.
+    """
+    readonly = tmp_path / "readonly-events"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    try:
+        yield readonly / "sac-events.jsonl"
+    finally:
+        readonly.chmod(0o755)
 
 
 @pytest.fixture

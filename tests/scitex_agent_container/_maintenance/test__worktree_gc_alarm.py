@@ -1,19 +1,20 @@
-"""Tests for ``_maintenance._worktree_gc_alarm`` — over-cap → SEEN card.
+"""Tests for ``_maintenance._worktree_gc_alarm`` — over-cap → a recorded event.
 
-PA-306: no ``unittest.mock``. Real :class:`RepoGcResult` values and a REAL
-temporary scitex-todo store (``tmp_path/tasks.yaml``); the routing calls
-the real ``scitex_todo`` writer and each test reads the card back through
-the real reader.
+PA-306: no ``unittest.mock``, no monkeypatching. Real :class:`RepoGcResult`
+values and a REAL temporary JSONL event log (``tmp_path/sac-events.jsonl``)
+passed through the module's own ``path=`` seam; every assertion reads the
+bytes back through the production :func:`read_events`.
 
 The behaviours that matter:
 
-* over cap → an upserted BLOCKING-YOU card naming the repo and count,
-* the card carries the kept-reasons BREAKDOWN (the actionable part),
-* a second over-cap run UPDATES in place (never duplicates),
-* back under cap → the card is RESOLVED (a fixed repo stops shouting),
-* UNREADABLE is carded too but labelled UNKNOWN — never rendered clean,
-* re-sprawl after a clear REOPENS the card,
-* a board-write failure NEVER crashes the GC (delivery is a side rail).
+* over cap → a DEGRADED record naming the repo and the count,
+* the record carries the kept-reasons BREAKDOWN (the actionable part: "17
+  worktrees" is a number, "9 dirty" is an instruction),
+* a second over-cap run records AGAIN (an ongoing problem is an ongoing fact),
+* back under cap → the RECOVERY is recorded, once,
+* UNREADABLE is its own event — never rendered as clean,
+* re-sprawl after a recovery records again,
+* a write failure NEVER crashes the GC (recording is a side rail).
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name (TQ003).
 """
@@ -25,9 +26,15 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._events import (
+    SUBJECT_DEGRADED,
+    SUBJECT_RECOVERED,
+    SUBJECT_UNKNOWN,
+    read_events,
+)
 from scitex_agent_container._maintenance._worktree_gc_alarm import (
-    card_id_for,
-    route_gc_to_cards,
+    SUBSYSTEM,
+    record_gc_results,
 )
 from scitex_agent_container._maintenance._worktree_gc_model import (
     KEEP_DIRTY,
@@ -36,7 +43,8 @@ from scitex_agent_container._maintenance._worktree_gc_model import (
     WorktreeVerdict,
 )
 
-scitex_todo = pytest.importorskip("scitex_todo")
+#: A fixed clock, so no test can be flaky on time.
+NOW = 1_800_000_000.0
 
 
 def _kept(path: str, *reasons: str) -> WorktreeVerdict:
@@ -67,161 +75,186 @@ def _unreadable(repo: str = "/proj/broken") -> RepoGcResult:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> str:
-    """A real (initially absent) scitex-todo store path — no mocks."""
-    return str(tmp_path / "tasks.yaml")
+def events(tmp_path: Path) -> Path:
+    """A real (initially absent) sac event-log path — no mocks."""
+    return tmp_path / "sac-events.jsonl"
 
 
-def test_over_cap_upserts_a_blocking_you_card(store):
+@pytest.fixture
+def unwritable(tmp_path: Path):
+    """An event-log path the REAL writer genuinely cannot write. No mocks."""
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    try:
+        yield readonly / "sac-events.jsonl"
+    finally:
+        readonly.chmod(0o755)
+
+
+def _kinds(events: Path) -> list[str]:
+    return [e.event for e in read_events(events, subsystem=SUBSYSTEM)]
+
+
+def test_over_cap_records_a_degraded_event(events):
     # Arrange — a repo with more survivors than its cap allows.
     # Act
-    route_gc_to_cards([_over_cap()], store=store)
-    # Assert — it lands on the board's BLOCKING-YOU seen surface.
-    blocking = scitex_todo.list_tasks(store, blocking_me=True)
-    assert [t["id"] for t in blocking] == [card_id_for("/proj/sprawly")]
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    # Assert
+    assert _kinds(events) == [SUBJECT_DEGRADED]
 
 
-def test_over_cap_card_names_the_repo(store):
-    # Arrange
+def test_the_over_cap_record_names_the_repo(events):
+    # Arrange — never silent: a reader must see WHICH repo.
     # Act
-    route_gc_to_cards([_over_cap()], store=store)
-    # Assert — never silent: the operator must see WHICH repo.
-    card = scitex_todo.get_task(store, card_id_for("/proj/sprawly"))
-    assert "sprawly" in card["title"]
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    # Assert
+    assert read_events(events)[0].subject == "sprawly"
 
 
-def test_over_cap_card_names_the_count(store):
+def test_the_over_cap_record_carries_the_full_path(events):
+    # Arrange — the subject is the readable BASENAME, so the full path has to
+    # ride along as a field or two checkouts become indistinguishable.
+    # Act
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    # Assert
+    assert read_events(events)[0].raw["repo"] == "/proj/sprawly"
+
+
+def test_the_over_cap_record_carries_the_count(events):
     # Arrange — two survivors against a cap of one.
     # Act
-    route_gc_to_cards([_over_cap()], store=store)
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Assert
-    card = scitex_todo.get_task(store, card_id_for("/proj/sprawly"))
-    assert "2 worktrees" in card["title"]
+    assert read_events(events)[0].raw["count_after"] == 2
 
 
-def test_over_cap_card_carries_the_reason_breakdown(store):
-    # Arrange — "2 kept" is a number; "1 dirty, 1 unmerged" is an
-    # instruction. The breakdown is the card's entire value.
+def test_the_over_cap_record_carries_the_reason_breakdown(events):
+    # Arrange — "2 kept" is a number; "1 dirty, 1 unmerged" is an instruction.
+    # The breakdown is this record's entire value.
     # Act
-    route_gc_to_cards([_over_cap()], store=store)
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Assert
-    card = scitex_todo.get_task(store, card_id_for("/proj/sprawly"))
-    assert "1 dirty" in card["note"] and "1 unmerged" in card["note"]
+    assert read_events(events)[0].raw["keep_reasons"] == {
+        KEEP_DIRTY: 1,
+        KEEP_UNMERGED: 1,
+    }
 
 
-def test_second_over_cap_run_updates_not_duplicates(store):
-    # Arrange — first run creates the card.
-    route_gc_to_cards([_over_cap()], store=store)
-    # Act — a nightly timer must UPDATE in place, not tile the board.
-    route_gc_to_cards([_over_cap()], store=store)
+def test_the_over_cap_record_labels_the_subject_a_repo(events):
+    # Arrange — a repo is not an agent; the subject_kind keeps the populations
+    # apart in one shared log.
+    # Act
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Assert
-    assert len(scitex_todo.list_tasks(store)) == 1
+    assert read_events(events)[0].subject_kind == "repo"
 
 
-def test_back_under_cap_resolves_the_card(store):
-    # Arrange — the repo sprawled, so a card exists.
-    route_gc_to_cards([_over_cap()], store=store)
+def test_a_second_over_cap_run_records_again(events):
+    # Arrange — first run records the sprawl.
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    # Act — the nightly timer runs again and the repo is STILL over.
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    # Assert
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_DEGRADED]
+
+
+def test_back_under_cap_records_the_recovery(events):
+    # Arrange — the repo sprawled, so a degraded record exists.
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Act — the operator cleaned it up.
-    route_gc_to_cards([_under_cap()], store=store)
-    # Assert — a fixed repo stops shouting (off the BLOCKING-YOU view).
-    assert scitex_todo.list_tasks(store, blocking_me=True) == []
+    record_gc_results([_under_cap()], path=events, now=NOW)
+    # Assert — a fixed repo stops shouting, and says so once.
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_RECOVERED]
 
 
-def test_back_under_cap_marks_the_card_done(store):
-    # Arrange
-    route_gc_to_cards([_over_cap()], store=store)
-    # Act
-    route_gc_to_cards([_under_cap()], store=store)
-    # Assert
-    card = scitex_todo.get_task(store, card_id_for("/proj/sprawly"))
-    assert card["status"] == "done"
-
-
-def test_healthy_repo_without_prior_card_is_a_noop(store):
+def test_a_healthy_repo_without_prior_sprawl_records_nothing(events):
     # Arrange — a repo that was never over cap.
     # Act
-    route_gc_to_cards([_under_cap()], store=store)
-    # Assert — no phantom card is created just to resolve it.
-    assert not Path(store).exists() or scitex_todo.list_tasks(store) == []
+    record_gc_results([_under_cap()], path=events, now=NOW)
+    # Assert — no phantom record is created just to say nothing is wrong.
+    assert not events.exists()
 
 
-def test_unreadable_repo_gets_a_card(store):
+def test_an_unreadable_repo_is_recorded(events):
     # Arrange — UNKNOWN must be surfaced, not swallowed.
     # Act
-    route_gc_to_cards([_unreadable()], store=store)
+    record_gc_results([_unreadable()], path=events, now=NOW)
     # Assert
-    card_id = card_id_for("/proj/broken")
-    assert scitex_todo.get_task(store, card_id)["id"] == card_id
+    assert _kinds(events) == [SUBJECT_UNKNOWN]
 
 
-def test_unreadable_card_is_labelled_unknown(store):
+def test_an_unreadable_repo_is_never_recorded_clean(events):
     # Arrange — "I could not look" must never read as "I looked, it's fine".
     # Act
-    route_gc_to_cards([_unreadable()], store=store)
+    record_gc_results([_unreadable()], path=events, now=NOW)
     # Assert
-    card = scitex_todo.get_task(store, card_id_for("/proj/broken"))
-    assert "UNKNOWN" in card["title"]
+    assert SUBJECT_RECOVERED not in _kinds(events)
 
 
-def test_route_buckets_over_cap_and_unknown_separately(store):
+def test_the_unreadable_record_carries_the_error(events):
+    # Arrange — the reason it could not be read is what sends the operator
+    # somewhere useful.
+    # Act
+    record_gc_results([_unreadable()], path=events, now=NOW)
+    # Assert
+    assert read_events(events)[0].raw["error"] == "not a git repository"
+
+
+def test_the_record_buckets_over_cap_and_unknown_separately(events):
     # Arrange — a sprawling repo AND an unreadable one in one run.
     # Act
-    outcome = route_gc_to_cards([_over_cap(), _unreadable()], store=store)
+    outcome = record_gc_results([_over_cap(), _unreadable()], path=events, now=NOW)
     # Assert — three-state honest: distinct buckets, never merged.
-    assert (outcome.exceeded, outcome.unreadable) == (
-        ("/proj/sprawly",),
-        ("/proj/broken",),
-    )
+    assert (outcome.degraded, outcome.unknown) == (("sprawly",), ("broken",))
 
 
-def test_route_reports_the_cleared_repo(store):
-    # Arrange — sprawl first so there is a card to clear.
-    route_gc_to_cards([_over_cap()], store=store)
+def test_the_recovered_repo_is_reported_to_the_caller(events):
+    # Arrange — sprawl first so there is something to recover from.
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Act
-    outcome = route_gc_to_cards([_under_cap()], store=store)
+    outcome = record_gc_results([_under_cap()], path=events, now=NOW)
     # Assert
-    assert outcome.cleared == ("/proj/sprawly",)
+    assert outcome.recovered == ("sprawly",)
 
 
-def test_resprawl_after_clear_reopens_the_card(store):
-    # Arrange — over cap, then cleaned (card resolved).
-    route_gc_to_cards([_over_cap()], store=store)
-    route_gc_to_cards([_under_cap()], store=store)
-    # Act — it sprawls AGAIN; the alarm must re-fire, not stay silent.
-    route_gc_to_cards([_over_cap()], store=store)
+def test_resprawl_after_a_recovery_records_again(events):
+    # Arrange — over cap, then cleaned (recovery recorded).
+    record_gc_results([_over_cap()], path=events, now=NOW)
+    record_gc_results([_under_cap()], path=events, now=NOW)
+    # Act — it sprawls AGAIN; the rail must re-fire, not stay silent.
+    record_gc_results([_over_cap()], path=events, now=NOW)
     # Assert
-    assert len(scitex_todo.list_tasks(store, blocking_me=True)) == 1
+    assert _kinds(events) == [SUBJECT_DEGRADED, SUBJECT_RECOVERED, SUBJECT_DEGRADED]
 
 
-def test_board_write_failure_does_not_raise(tmp_path):
-    # Arrange — an unwritable store path (a directory where the YAML file
-    # should be). Card delivery is a SIDE rail: it must never crash the GC
-    # pass that feeds it.
-    unwritable = tmp_path / "tasks.yaml"
-    unwritable.mkdir()
+def test_a_write_failure_does_not_raise(unwritable):
+    # Arrange — recording is a SIDE rail: it must never crash the GC pass
+    # that feeds it.
     # Act
-    outcome = route_gc_to_cards(
-        [_over_cap()], store=str(unwritable), err_stream=io.StringIO()
+    outcome = record_gc_results(
+        [_over_cap()], path=unwritable, now=NOW, err_stream=io.StringIO()
     )
     # Assert — recorded as failed, not raised.
-    assert outcome.failed == ("/proj/sprawly",)
+    assert outcome.failed == ("sprawly",)
 
 
-def test_board_write_failure_is_printed_loudly(tmp_path):
+def test_a_write_failure_is_printed_loudly(unwritable):
     # Arrange — a failure nobody hears is the anti-pattern this whole rail
     # exists to fix, so the side rail still SHOUTS on stderr.
-    unwritable = tmp_path / "tasks.yaml"
-    unwritable.mkdir()
     stream = io.StringIO()
     # Act
-    route_gc_to_cards([_over_cap()], store=str(unwritable), err_stream=stream)
+    record_gc_results([_over_cap()], path=unwritable, now=NOW, err_stream=stream)
     # Assert
-    assert "FAILED" in stream.getvalue()
+    assert "FAILED to record" in stream.getvalue()
 
 
-def test_card_id_is_stable_for_a_repo_path():
-    # Arrange — idempotency is BY ID: an unstable id tiles the board.
+def test_the_subject_is_the_readable_repo_name(events):
+    # Arrange — the transition rule is keyed BY SUBJECT, so the label must be
+    # stable AND readable: a full path would work but says nothing at a glance.
     # Act
-    card_id = card_id_for("/home/user/proj/scitex-todo")
+    record_gc_results(
+        [_over_cap("/home/user/proj/scitex-agent-container")], path=events, now=NOW
+    )
     # Assert
-    assert card_id == "worktree-sprawl-scitex-todo"
+    assert read_events(events)[0].subject == "scitex-agent-container"

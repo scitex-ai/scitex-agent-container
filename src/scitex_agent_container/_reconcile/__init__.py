@@ -29,11 +29,7 @@ the ``sac.fleet-reconcile`` JobSpec.
 from __future__ import annotations
 
 from ._alarm import (
-    CARD_ID_PREFIX,
-    HEARTBEAT_CARD_ID,
-    STATE_CARD_ID,
-    AlarmOutcome,
-    card_id_for,
+    SUBSYSTEM,
 )
 from ._budget import (
     DEBOUNCE_S,
@@ -49,21 +45,17 @@ from ._rule import MANAGED_POLICIES, Decision, Verdict, decide
 
 __all__ = [
     "AgentReport",
-    "AlarmOutcome",
     "Budget",
-    "CARD_ID_PREFIX",
     "DEBOUNCE_S",
     "DEFAULT_PASS_CAP",
     "Decision",
-    "HEARTBEAT_CARD_ID",
     "HistoryRead",
     "HistoryState",
     "MANAGED_POLICIES",
     "MAX_RESTARTS_PER_AGENT_PER_HOUR",
     "PassOutcome",
-    "STATE_CARD_ID",
     "Verdict",
-    "card_id_for",
+    "SUBSYSTEM",
     "decide",
     "fleet_spec_paths",
     "read_history",

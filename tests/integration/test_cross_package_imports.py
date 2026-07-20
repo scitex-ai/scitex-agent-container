@@ -36,7 +36,6 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_logging",
     "scitex_notification",
     "scitex_todo",
-    "scitex_todo._help_wait",
 ]
 # ===== END AUTO-GENERATED =====
 

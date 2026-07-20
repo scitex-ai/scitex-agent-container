@@ -44,8 +44,8 @@ WHAT A CLEAN PASS IS ALLOWED TO MEAN
     pass that read nothing at all produces.
 
 Every collaborator is an injectable seam with a REAL default, so tests drive the
-whole pass against real panes, a real temp history file and a real scitex-todo
-store — with the one irreversible act (the restart) swapped for a recorder. No
+whole pass against real panes, a real temp history file and a real temp event
+log — with the one irreversible act (the restart) swapped for a recorder. No
 mocks.
 """
 
@@ -55,7 +55,6 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -67,7 +66,7 @@ from .._reconcile._budget import (
     save_history,
 )
 from .._reconcile._rule import Verdict
-from ._alarm import route_reports_to_cards, upsert_heartbeat
+from ._alarm import record_pass_completed, record_reports
 from ._detect import (
     DEFAULT_INTERVAL,
     capture_live_panes,
@@ -90,9 +89,9 @@ __all__ = [
 _HISTORY_ENV = "SAC_LOGIN_EXPIRED_HISTORY"
 
 #: Which rate-limit stood in the way, mapped to the verdict it becomes. Same
-#: split as reconcile: only OVER-BUDGET is carded (a human is genuinely needed);
-#: COOLING-DOWN is the NORMAL state of a healthy recovery and CAPPED is our own
-#: throttle, so neither mints a card.
+#: split as reconcile: only OVER-BUDGET gets a per-agent record (sac has stopped
+#: trying); COOLING-DOWN is the NORMAL state of a healthy recovery and CAPPED is
+#: our own throttle, so neither does — both are still counted in the pass record.
 _BUDGET_VERDICTS = {
     "debounce": Verdict.COOLING_DOWN,
     "over-budget": Verdict.OVER_BUDGET,
@@ -363,7 +362,7 @@ def auth_heal_pass(
     limit: int = DEFAULT_PASS_CAP,
     specs_dir: Path | None = None,
     history_file: Path | None = None,
-    store: str | None = None,
+    events_path: Path | None = None,
     alarm: bool = True,
     now: float | None = None,
     restart_fn: Callable[[str], bool] | None = None,
@@ -394,7 +393,6 @@ def auth_heal_pass(
         would make the restarter's own history its evidence about itself.
     """
     now = now if now is not None else time.time()
-    now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
     restart_fn = restart_fn if restart_fn is not None else _real_restart
     capture_fn = (
         capture_fn if capture_fn is not None else (lambda: capture_live_panes(interval))
@@ -480,20 +478,18 @@ def auth_heal_pass(
     alarm_outcome = None
     heartbeat_ok = False
     if alarm:
-        # Board rails run LAST, after every restart decision is made and carried
-        # out, so nothing they do (or fail to do) can change what happened.
+        # Recording runs LAST, after every restart decision is made and carried
+        # out, so nothing it does (or fails to do) can change what happened.
         alarm_outcome = (
-            route_reports_to_cards(
-                reports, store=store, now=now_dt, err_stream=err_stream
-            )
+            record_reports(reports, path=events_path, now=now, err_stream=err_stream)
             if apply
             else None
         )
-        heartbeat_ok = upsert_heartbeat(
+        heartbeat_ok = record_pass_completed(
             outcome.counts(),
             mode="apply" if apply else "check",
-            store=store,
-            now=now_dt,
+            path=events_path,
+            now=now,
             err_stream=err_stream,
         )
     return PassOutcome(
