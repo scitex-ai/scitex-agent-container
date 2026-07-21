@@ -26,6 +26,11 @@ from pathlib import Path
 # per-agent state root all relocate together.
 from .._runtime_paths import runtime_base_dir
 
+# Per-writer-unique atomic text write: a UNIQUE tmp name so two processes
+# sharing one state dir never collide on a fixed ``<name>.tmp`` sibling
+# (the ``instance_id.tmp`` FileNotFoundError race). See ``_atomic``.
+from ._atomic import atomic_write_text
+
 # Session-id resume marker + append-only history live in a focused
 # module to keep this file under the 512-line cap. Re-exported here
 # (explicit ``as`` aliases mark the intentional re-export) so the
@@ -38,6 +43,12 @@ from ._session_id import discard_dead_session as discard_dead_session
 from ._session_id import read_session_id as read_session_id
 from ._session_id import read_session_id_history as read_session_id_history
 from ._session_id import write_session_id as write_session_id
+
+# Quota totals live in a focused module (keeps this file under the
+# 512-line cap). Re-exported so ``_session_state.{read,accumulate}_quota``
+# importers keep working unchanged.
+from ._session_quota import accumulate_quota as accumulate_quota
+from ._session_quota import read_quota as read_quota
 
 DEFAULT_STATE_ROOT = runtime_base_dir()
 DEFAULT_TICK_SECONDS = 10.0
@@ -69,9 +80,7 @@ def state_dir_for(name: str, root: Path | None = None) -> Path:
 def write_pid(state_dir: Path, pid: int) -> None:
     """Write the runner's PID atomically (tmp + rename)."""
     state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "pid.tmp"
-    tmp.write_text(f"{pid}\n", encoding="utf-8")
-    tmp.replace(state_dir / "pid")
+    atomic_write_text(state_dir / "pid", f"{pid}\n")
 
 
 def read_pid(state_dir: Path) -> int | None:
@@ -102,9 +111,7 @@ def write_started_at(state_dir: Path, started_at: float | None = None) -> float:
     if started_at is None:
         started_at = time.time()
     state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "started_at.tmp"
-    tmp.write_text(repr(float(started_at)), encoding="utf-8")
-    tmp.replace(state_dir / "started_at")
+    atomic_write_text(state_dir / "started_at", repr(float(started_at)))
     return float(started_at)
 
 
@@ -294,9 +301,7 @@ def write_heartbeat(
 
     payload.update(heartbeat_jsonl_fields(state_dir, now))
     payload.update(heartbeat_progress_fields(state_dir))
-    tmp = state_dir / "heartbeat.json.tmp"
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(state_dir / "heartbeat.json")
+    atomic_write_text(state_dir / "heartbeat.json", json.dumps(payload))
     if name and host:
         writer = _resolve_db_writer(db_writer)
         writer.record_heartbeat(
@@ -425,56 +430,6 @@ async def heartbeat_loop(
 
 
 # ---------------------------------------------------------------------------
-# Quota
-# ---------------------------------------------------------------------------
-
-
-def _quota_path(state_dir: Path) -> Path:
-    return state_dir / "quota.json"
-
-
-def read_quota(state_dir: Path) -> dict:
-    """Return the persisted quota totals, or a zeroed dict if absent."""
-    p = _quota_path(state_dir)
-    if not p.is_file():
-        return {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
-            "turns": 0,
-        }
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
-    """Add one ``ResultMessage.usage`` block to the running totals.
-
-    Atomic via tmp+rename so a concurrent ``sac agent status`` reader
-    never sees a partial write. Returns the new totals.
-    """
-    if not usage:
-        return read_quota(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    totals = read_quota(state_dir)
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ):
-        totals[key] = int(totals.get(key, 0)) + int(usage.get(key, 0) or 0)
-    totals["turns"] = int(totals.get("turns", 0)) + 1
-    tmp = state_dir / "quota.json.tmp"
-    tmp.write_text(json.dumps(totals), encoding="utf-8")
-    tmp.replace(_quota_path(state_dir))
-    return totals
-
-
-# ---------------------------------------------------------------------------
 # Session id (resume marker) + append-only history
 #
 # Implementation extracted to ``_session_id.py`` (focused module, keeps
@@ -499,9 +454,7 @@ def accumulate_quota(state_dir: Path, usage: dict | None) -> dict:
 def write_instance_id(state_dir: Path, instance_id: str) -> None:
     """Persist the state.db instance uuid alongside the runner pid."""
     state_dir.mkdir(parents=True, exist_ok=True)
-    tmp = state_dir / "instance_id.tmp"
-    tmp.write_text(instance_id, encoding="utf-8")
-    tmp.replace(state_dir / "instance_id")
+    atomic_write_text(state_dir / "instance_id", instance_id)
 
 
 def read_instance_id(state_dir: Path) -> str | None:

@@ -6,6 +6,58 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-07-21
+
+### Added
+
+- **Merge->release automation: `autobump-release-sweep.yaml`.** A state-driven
+  scheduled sweep (mirroring `auto-merge-to-develop.yaml`'s proven shape) that
+  auto-bumps the patch version and cuts a release on every merge-to-develop —
+  the automation of the manual `bump pyproject + promote CHANGELOG -> PR ->
+  merge -> tag -> push tag` ritual. It advances the version every release so
+  uv's `(name, version)` wheel-cache key changes (no stale-wheel reuse — the
+  root-cause fix, not the by-symbol workaround). Loop-safety is STRUCTURAL
+  (repository state, not event guards): an untagged version is re-tagged, never
+  re-incremented. It gates on develop's post-merge all-green check state, fires
+  the EXISTING release pipeline via `workflow_dispatch` (no bot token / PAT —
+  github.token is used throughout; a github.token tag push does not fire
+  `on: push`, so the release is dispatched explicitly), and runs every tick as a
+  continuous ghost-tag monitor (tag present but PyPI not serving => off-rail
+  Telegram alarm + re-dispatch). Bump/CHANGELOG logic is the tested, dependency-
+  free `.github/ci/autobump.py` (unit-tested in `tests/develop/test_autobump.py`).
+  SHIPS DISARMED: every mutation is gated behind the repo Actions Variable
+  `AUTOBUMP_ENABLED == 'true'`, and the file only executes once on `main` — so
+  merging it changes nothing until the operator deliberately arms it.
+
+### Changed
+
+- **Start / start-failure log output is now readable, not a run-on wall**
+  (operator 2026-07-19: "めっちゃ汚い"). Format-only — no control-flow, trigger,
+  or suppression behaviour changed:
+  - The **start-failure diagnostic** (`raise_start_failure` /
+    `_start_failure_diag`) now renders as a headline plus clearly separated,
+    indented sections (`tmux session`, `inner stderr`, `pane tail`) with each
+    section body indented under its label, instead of one flush-left blob.
+  - The per-start **`[sac:creds]` credentials-pool selection notice** is now a
+    headline naming the agent + picked account, followed by indented fields
+    (`file`, `policy=…`, `picked usage`) and a one-entry-per-line ranking-inputs
+    list, instead of a single run-on sentence. It still writes through the
+    caller's `log_stream` (the `preflight_from_config_path` dry-probe
+    suppression seam is preserved — it is NOT routed to a logger).
+  - Hook failures in `_hook_runner` now log at WARNING level (`logger.warning`)
+    instead of `print`-ing `[WARN] …` with the severity baked into the message
+    text.
+
+### Fixed
+
+- **Concurrent runner-state writes no longer race on a shared `<name>.tmp`**
+  (#797). Each of the seven runner-state writers wrote to a fixed sibling
+  `<name>.tmp` before the atomic rename, so two writers racing on the same
+  target could clobber each other's temp file. Each now writes to a unique
+  temp path via the `atomic_write_text` helper; the per-session quota group
+  was extracted to `_session_quota.py` to keep the module under the line cap,
+  and a regression test covers the concurrent-writer case.
+
 ## [0.24.1] - 2026-07-20
 
 ### Fixed

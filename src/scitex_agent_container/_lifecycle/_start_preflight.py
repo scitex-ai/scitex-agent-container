@@ -224,7 +224,7 @@ def _rotate_among_credentials_files(
         account_7d_reset_at,
         account_7d_usage,
         audit_candidates,
-        format_pick_audit,
+        pick_audit_parts,
     )
 
     # EVERY ranking input, per candidate — the pick must be auditable
@@ -240,7 +240,7 @@ def _rotate_among_credentials_files(
         for s in slugs
     }
     r7 = {s: account_7d_reset_at(s, quota_cache_path=quota_cache_path) for s in slugs}
-    audit = format_pick_audit(audit_candidates(slugs, u5, u7, reset_7d=r7, now=now))
+    records = audit_candidates(slugs, u5, u7, reset_7d=r7, now=now)
 
     def fmt(v: float | None) -> str:
         return "?" if v is None else f"{v:.0f}%"
@@ -254,12 +254,21 @@ def _rotate_among_credentials_files(
         "accounts, load-balanced per agent by 7d headroom; time-to-reset "
         "counts only within the 2h expiring horizon"
     )
+    # Readable, structured notice (operator 2026-07-19: the run-on one-liner
+    # was "めっちゃ汚い"): a headline naming the agent + picked account, then
+    # indented fields, then the per-candidate ranking inputs as a ONE-ENTRY-
+    # PER-LINE list. Still emitted through ``stream`` (log_stream or stderr)
+    # so ``preflight_from_config_path``'s throwaway-StringIO suppression of the
+    # dry-probe rotation notice keeps working — do NOT route this to a logger.
+    ranking = "\n".join(f"      {part}" for part in pick_audit_parts(records))
     stream = log_stream if log_stream is not None else sys.stderr
     print(
-        f"[sac:creds] agent '{config.name}' selected credentials_files pool "
-        f"entry: account {picked!r} ({picked_path}) among {len(slugs)} listed "
-        f"credentials_files (policy={policy} — {rationale}; picked usage "
-        f"5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}; {audit})",
+        f"[sac:creds] agent '{config.name}' selected credentials pool account "
+        f"{picked!r} ({len(slugs)} candidates listed)\n"
+        f"  file:          {picked_path}\n"
+        f"  policy={policy} — {rationale}\n"
+        f"  picked usage:  5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}\n"
+        f"  ranking inputs:\n{ranking}",
         file=stream,
     )
 

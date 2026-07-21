@@ -20,6 +20,18 @@ __all__ = [
 ]
 
 
+def _indent_block(text: str, prefix: str = "      ") -> str:
+    """Indent every line of a multi-line body so it reads as ONE sub-section.
+
+    The start-failure report is a headline + labelled sections; each section's
+    BODY (an inner-stderr tail, a pane capture) is indented under its label so
+    the operator can see at a glance where one section ends and the next begins
+    instead of reading a run-on wall (operator 2026-07-19). Empty-safe.
+    """
+    lines = text.splitlines() or [""]
+    return "\n".join(f"{prefix}{line}" for line in lines)
+
+
 def _format_boot_stderr_section(log: Path) -> str:
     """Formatted 'inner stderr' diagnostic section for a failed TUI start.
 
@@ -29,15 +41,19 @@ def _format_boot_stderr_section(log: Path) -> str:
     (``log``), which SURVIVES the tmux pane's death. Return its tail so a boot
     failure is the LOUD cause in the raised error, never a cause-less
     ``<empty>`` pane fallback. Empty/absent-log safe; never raises.
+
+    Rendered as a labelled section (the ``inner stderr`` label at 2 spaces, the
+    captured body indented under it at 6) so the report reads as distinct,
+    separated sections rather than a flush-left blob.
     """
     tail = ""
     if log.is_file():
         tail = log.read_text(errors="replace")[-4_000:].rstrip()
     body = tail or "<no stderr captured — runtime never launched the process>"
-    return f"  inner stderr ({log}):\n{body}\n"
+    return f"\n  inner stderr ({log}):\n{_indent_block(body)}"
 
 
-_NO_PANE = " (no pane diagnostics available)"
+_NO_PANE = "\n  (no pane diagnostics available)"
 
 
 def raise_start_failure(
@@ -114,9 +130,9 @@ def capture_pane_diag(config: Any) -> str:
     pane = TmuxManager.capture_logs(sess, lines=60).rstrip()
     boot_log = _state_dir(config) / "boot.stderr.log"
     return (
-        f" (tmux session_exists={TmuxManager.exists(sess)})\n"
+        f"\n  tmux session: exists={TmuxManager.exists(sess)} (session {sess!r})"
         f"{_format_boot_stderr_section(boot_log)}"
-        f"  pane tail:\n{pane or '<empty>'}"
+        f"\n  pane tail:\n{_indent_block(pane or '<empty>')}"
     )
 
 

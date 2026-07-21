@@ -30,6 +30,7 @@ from ._pick_audit import (
     CandidateAudit,
     audit_candidates,
     format_pick_audit,
+    pick_audit_parts,
 )
 from ._pick_healthy import (
     AccountHealth,
@@ -60,6 +61,7 @@ __all__ = [
     "account_health",
     "audit_candidates",
     "format_pick_audit",
+    "pick_audit_parts",
     "pick_healthy_account",
     "resolve_7d_policy",
 ]
