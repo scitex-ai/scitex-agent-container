@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-07-21
+
 ### Added
 
 - **Merge->release automation: `autobump-release-sweep.yaml`.** A state-driven
@@ -45,6 +47,16 @@ versioning follows [SemVer](https://semver.org/).
   - Hook failures in `_hook_runner` now log at WARNING level (`logger.warning`)
     instead of `print`-ing `[WARN] …` with the severity baked into the message
     text.
+
+### Fixed
+
+- **Concurrent runner-state writes no longer race on a shared `<name>.tmp`**
+  (#797). Each of the seven runner-state writers wrote to a fixed sibling
+  `<name>.tmp` before the atomic rename, so two writers racing on the same
+  target could clobber each other's temp file. Each now writes to a unique
+  temp path via the `atomic_write_text` helper; the per-session quota group
+  was extracted to `_session_quota.py` to keep the module under the line cap,
+  and a regression test covers the concurrent-writer case.
 
 ## [0.24.1] - 2026-07-20
 
