@@ -29,6 +29,8 @@ production collaborators:
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import importlib
 import json
 from pathlib import Path
@@ -82,7 +84,7 @@ def _write_spec(parent: Path, name: str, *, body: str | None = None) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        body
+        explicitize_yaml(body
         if body is not None
         else (
             "apiVersion: scitex-agent-container/v3\n"
@@ -103,7 +105,7 @@ def _write_spec(parent: Path, name: str, *, body: str | None = None) -> Path:
             "  restart:\n"
             "    policy: on-failure\n"
             "    max_retries: 3\n"
-        )
+        ))
     )
     return spec
 

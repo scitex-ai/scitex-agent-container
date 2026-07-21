@@ -49,6 +49,7 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.config import load_config
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 from scitex_agent_container.runtimes import tui_session as _tui
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
@@ -114,7 +115,7 @@ def _write_spec(tmp_path: Path) -> Path:
     spec_dir = tmp_path / "agents" / "agt"
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
-    spec.write_text(_SPEC_BODY, encoding="utf-8")
+    spec.write_text(explicitize_yaml(_SPEC_BODY), encoding="utf-8")
     return spec
 
 

@@ -46,18 +46,25 @@ def _register_agent_with_workdir(name: str, workdir: Path) -> Path:
     home = Path.home()
     agents_dir = home / ".scitex" / "agent-container" / "agents" / name
     agents_dir.mkdir(parents=True, exist_ok=True)
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (curated wins).
     spec = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {
-            "runtime": "apptainer",
-            "host": "${HOSTNAME}",
-            "workdir": str(workdir),
-            "apptainer": {"image": "/x.sif", "binds": []},
-            "claude": {"model": "sonnet"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "apptainer",
+                "host": "${HOSTNAME}",
+                "workdir": str(workdir),
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
     }
     spec_path = agents_dir / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec))

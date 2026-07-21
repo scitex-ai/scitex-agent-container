@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container.config import load_config
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 from scitex_agent_container.config._types import AgentConfig
 from scitex_agent_container.runtimes.claude_md import (
     ORIENTATION_MAX_LINES,
@@ -62,7 +63,7 @@ def loaded_config(tmp_path):
     """Real AgentConfig loaded from a real minimal spec.yaml fixture."""
     agent_dir = tmp_path / "orient-fixture"
     agent_dir.mkdir()
-    (agent_dir / "spec.yaml").write_text(_MINIMAL_SPEC)
+    (agent_dir / "spec.yaml").write_text(explicitize_yaml(_MINIMAL_SPEC))
     return load_config(agent_dir / "spec.yaml")
 
 

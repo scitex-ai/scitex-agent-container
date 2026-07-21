@@ -49,21 +49,29 @@ def db_path(tmp_path: Path):
             os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
 
 
-_REQUIRED_SCAFFOLD: dict = {
-    "host": "${HOSTNAME}",
-    "runtime": "apptainer",
-    "claude": {"model": "claude-opus-4-8[1m]"},
-    "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
-    "health": {"enabled": True, "interval": 60},
-    "restart": {"policy": "on-failure", "max_retries": 3},
-}
+def _required_scaffold() -> dict:
+    """Fully-explicit scaffold (red-start ruling 2026-07-21)."""
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    return explicit_spec(
+        {
+            "host": "${HOSTNAME}",
+            "runtime": "apptainer",
+            "claude": {"model": "claude-opus-4-8[1m]"},
+            "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        }
+    )
 
 
 def _write_spec(registry: Path, name: str, labels: dict | None) -> Path:
     """Write a dir-as-SSoT v3 ``<name>/spec.yaml`` under ``registry``."""
     agent_dir = registry / name
     agent_dir.mkdir(parents=True)
-    spec_body = dict(_REQUIRED_SCAFFOLD)
+    spec_body = _required_scaffold()
     spec_body["workdir"] = f"~/.scitex/agent-container/runtime/agents/{name}"
     metadata = {"labels": labels} if labels is not None else {}
     spec_path = agent_dir / "spec.yaml"
