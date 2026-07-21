@@ -1,0 +1,527 @@
+name: autobump-release-sweep
+
+# Auto-bump patch + cut a release on every MERGE-to-develop — the automation of
+# the manual ritual (worktree -> bump pyproject + promote CHANGELOG -> PR ->
+# merge -> tag vX.Y.Z -> push tag) done by hand for 0.24.0 / 0.24.1.
+#
+# ─── READ THIS BEFORE TOUCHING TRIGGERS OR CREDENTIALS ───────────────────────
+#
+# WHY A STATE-DRIVEN CRON, not an event bump. Loop-safety here comes from
+# repository STATE, not event bookkeeping. Each tick reads develop's head,
+# V = pyproject version at head, and the tags, then takes EXACTLY ONE branch:
+#
+#   STEADY    tag vV exists AND develop head == the tagged commit  -> do nothing
+#             (belt: also confirm PyPI actually serves V; see GHOST below).
+#   BUMP      tag vV exists AND head has moved past it (new work landed, but
+#             pyproject is still the last-released V) -> gate develop green,
+#             bump V->V+1, land it as a PR merged with --admin, tag the merge
+#             commit, fire the release.
+#   TAG_ONLY  tag vV does NOT exist though pyproject is already V (a prior
+#             tick's bump merged but its tag/dispatch failed) -> RE-TAG the
+#             landed bump, NEVER re-bump. This is the fix for the runaway-bump
+#             loop: an untagged version is re-tagged, it is never re-incremented.
+#   GHOST     tag vV exists, head == tag, but PyPI has NOT served V past a grace
+#             window -> off-rail ALARM + re-dispatch the release. The sweep is a
+#             CONTINUOUS ghost-tag monitor, every tick, on a rail (this workflow)
+#             independent of the release pipeline that failed.
+#
+# The bump PR merge and the tag are done with the DEFAULT github.token, and the
+# release is fired by DISPATCHING the existing release pipeline
+# (pypi-publish-and-github-release-on-tag.yml accepts a `version` input;
+# workflow_dispatch via github.token IS exempt from the recursive-run
+# suppression, unlike a tag PUSH, which is NOT — a github.token tag push fires
+# NOTHING, which is why we dispatch explicitly). NO bot token / PAT is required
+# for the mechanism. (Verified in this repo: a recent release ran as
+# event=workflow_dispatch and succeeded.)
+#
+# THE RUN HISTORY IS THE HEARTBEAT — same doctrine as auto-merge-to-develop.yaml.
+# A scheduled tick that stops appearing is a VISIBLE GAP. Do NOT add an `if:`
+# that skips the whole job, and do NOT exit in a way that leaves no run record.
+#
+# GitHub reads schedule- and workflow_run-triggered workflows from the DEFAULT
+# branch (main). *** THIS FILE TAKES EFFECT ONLY ONCE IT REACHES main. *** Merging
+# it to develop changes NOTHING at runtime until develop is promoted to main —
+# which is the operator's deliberate go-ahead, not an escape hatch.
+#
+# ARMING (second, independent safety): every MUTATING action is gated behind the
+# repo Actions Variable AUTOBUMP_ENABLED == 'true'. Unset/false => the sweep runs
+# as a REPORT-ONLY heartbeat: it computes the decision and prints what it WOULD
+# do, and mutates nothing. So even on main it is inert until the operator arms
+# it, and clearing the variable is the kill switch.
+#
+# RUNNER (operator rule 2026-07-14, absolute): NO GitHub-hosted runners. `gh` is
+# NOT on the bare Spartan node — it is bootstrapped into RUNNER_TEMP exactly as
+# auto-merge does. `jq` is NOT assumed either; every filter goes through
+# `gh --jq`. python is NOT on the bare node — the bump/verify helper runs INSIDE
+# the ci-cpu SIF via exec-in-sif.sh.
+#
+# DOES NOT touch: the release/publish pipeline (it is dispatched, not modified),
+# auto-merge-to-develop.yaml (byte-for-byte untouched), or the release->host
+# deploy cron (req 5, out of scope — already works).
+
+on:
+  schedule:
+    # Every ~15 min, OFF the top of the hour, and offset from auto-merge's
+    # "7,22,37,52" so the two sweeps interleave: auto-merge lands a green PR,
+    # then a couple minutes later this sweep acts on the resulting green head.
+    - cron: "3,18,33,48 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report the decision + what WOULD happen, mutate nothing (overrides AUTOBUMP_ENABLED)."
+        type: boolean
+        default: true
+
+# One sweep at a time per repo. Two concurrent sweeps would race on the tag /
+# bump state machine. Queue, never cancel: a cancelled run mid-merge is how you
+# get a half-applied release.
+concurrency:
+  group: autobump-release-sweep-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # push the bump branch + tag ref; --admin merge
+  pull-requests: write   # open + merge the bump PR
+  actions: write         # gh workflow run (dispatch the release / tests)
+
+env:
+  # Pinned, not `latest`: a moving ref is an unreviewed binary on a persistent
+  # node whose $HOME is the operator's real home. Bump deliberately.
+  GH_CLI_VERSION: "2.96.0"
+  SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
+  SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+
+jobs:
+  sweep:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 20
+    steps:
+      - name: Ensure the gh CLI exists (the bare Spartan node has none)
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already present: $(gh --version | head -1)"
+            exit 0
+          fi
+          echo "gh not found — installing v${GH_CLI_VERSION} into RUNNER_TEMP"
+          tgz="$RUNNER_TEMP/gh.tar.gz"
+          curl -fsSL --retry 3 --max-time 120 -o "$tgz" \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP"
+          bindir="$RUNNER_TEMP/gh_${GH_CLI_VERSION}_linux_amd64/bin"
+          "$bindir/gh" --version
+          echo "$bindir" >> "$GITHUB_PATH"
+
+      # fetch-depth:0 + ref:develop — we operate on develop regardless of the
+      # default-branch checkout, and need full history + tags for the state read
+      # and the `git log --grep` bump-commit lookup. persist-credentials (default
+      # true) wires github.token as the origin credential so `git push` works.
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: autobump + release sweep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # ARM SWITCH. Must be exactly 'true' for ANY mutation. Unset => report-only.
+          AUTOBUMP_ENABLED: ${{ vars.AUTOBUMP_ENABLED }}
+          # workflow_dispatch default is true (safe). On schedule this is '' and
+          # arming is governed solely by AUTOBUMP_ENABLED.
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          PKG: scitex-agent-container
+          RELEASE_WORKFLOW: pypi-publish-and-github-release-on-tag.yml
+          # A tag younger than this whose version is not yet on PyPI is "release
+          # in flight", not a ghost. 45 min covers the SIF matrix + publish.
+          GRACE_SECONDS: "2700"
+          # Off-rail alarm (req 6). Telegram is a rail wholly independent of
+          # GitHub Actions. Optional: absent => degrade to the on-rail red run +
+          # the continuous PyPI monitor (which are the MECHANISMS; the emit is a
+          # notification). Names follow the repo's PS-168 secret-prefix rule.
+          TG_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ vars.SCITEX_AGENT_CONTAINER_TELEGRAM_CHAT_ID }}
+        run: |
+          set -uo pipefail
+
+          # =====================================================================
+          # helpers
+          # =====================================================================
+          log() { echo "[autobump] $*"; }
+
+          acting() {
+            # mutate only when armed AND not an explicit dry-run
+            [ "${AUTOBUMP_ENABLED:-}" = "true" ] && [ "${DRY_RUN:-}" != "true" ]
+          }
+
+          alarm() {
+            # OFF-RAIL notification. Never fails the step (an alarm that reds the
+            # sweep would put the alarm on the same rail it is reporting about).
+            local msg="$1"
+            echo "::error::[autobump] $msg"
+            if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT:-}" ]; then
+              curl -sS --max-time 15 \
+                "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${TG_CHAT}" \
+                --data-urlencode "text=[autobump-release-sweep] ${REPO}: ${msg}" \
+                >/dev/null 2>&1 || echo "::warning::[autobump] Telegram alarm send failed"
+            else
+              echo "::warning::[autobump] no Telegram secret/chat set — off-rail alarm degraded to the on-rail red annotation only"
+            fi
+            # Best-effort durable board card, only where the runner has reach.
+            if command -v sac >/dev/null 2>&1; then
+              sac help-wait autobump-release-sweep --question "$msg" >/dev/null 2>&1 || true
+            fi
+          }
+
+          pypi_serves() {
+            # version-specific JSON with real file count — same contract the
+            # release pipeline's own verify uses. Never trust /simple/ or latest.
+            local v="$1" code out="$RUNNER_TEMP/pypi.json"
+            code=$(curl -sS -o "$out" -w '%{http_code}' --max-time 20 \
+                    "https://pypi.org/pypi/${PKG}/${v}/json" 2>/dev/null || echo 000)
+            if [ "$code" = "200" ] && grep -q '"packagetype"' "$out" 2>/dev/null; then
+              rm -f "$out"; return 0
+            fi
+            rm -f "$out"; return 1
+          }
+
+          tag_sha() {
+            # echo the COMMIT sha a tag ultimately points at, or empty if the
+            # tag is absent. An ANNOTATED tag ref's object.sha is the tag
+            # OBJECT, not the commit — peel via /git/tags/<sha>. Without the
+            # peel, head == tagged-commit still reads as "moved past" and
+            # STEADY is unreachable for annotated tags (operator-cut releases
+            # like v0.24.2 are annotated; first dry-run 2026-07-21 caught it).
+            # ABSENT tag: `gh api` on a 404 prints the ERROR JSON BODY to
+            # STDOUT (only the "gh: Not Found" line goes to stderr), so
+            # capturing stdout yields a non-empty JSON blob, not "". The
+            # first scheduled tick (run 29804531483) read that blob as a
+            # sha: BUMP fired instead of TAG_ONLY and a "TAG COLLISION"
+            # alarm fired for v0.24.4, WHICH DOES NOT EXIST. Only a
+            # 40-hex string is a sha; anything else is treated as absent.
+            local sha type peeled
+            sha=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.sha' 2>/dev/null || echo "")
+            case "$sha" in
+              *[!0-9a-f]*|"") echo ""; return;;
+            esac
+            [ "${#sha}" -eq 40 ] || { echo ""; return; }
+            type=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.type' 2>/dev/null || echo "")
+            if [ "$type" = "tag" ]; then
+              peeled=$(gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha' 2>/dev/null || echo "")
+              case "$peeled" in
+                *[!0-9a-f]*|"") echo ""; return;;
+              esac
+              [ "${#peeled}" -eq 40 ] || { echo ""; return; }
+              echo "$peeled"
+            else
+              echo "$sha"
+            fi
+          }
+
+          commit_age_seconds() {
+            local iso now t
+            iso=$(gh api "repos/$REPO/commits/$1" --jq '.commit.committer.date' 2>/dev/null || echo "")
+            [ -z "$iso" ] && { echo 0; return; }
+            t=$(date -u -d "$iso" +%s 2>/dev/null || echo 0)
+            now=$(date -u +%s)
+            echo $(( now - t ))
+          }
+
+          run_autobump() {
+            # exit code propagates out of the SIF (exec-in-sif.sh uses exec).
+            bash .github/ci/exec-in-sif.sh autobump-in-sif.sh "$@"
+          }
+
+          dispatch_release() {
+            # Fire the existing release pipeline for an EXISTING tag. workflow_dispatch
+            # via github.token DOES create a run (a tag PUSH via github.token does not).
+            local ver="$1"
+            gh workflow run "$RELEASE_WORKFLOW" --repo "$REPO" --ref main -f version="$ver"
+          }
+
+          confirm_release_started() {
+            # Immediate watchdog: a fresh release run should appear within ~2 min.
+            # The continuous PyPI monitor is the durable backstop if this is flaky.
+            local i cutoff fresh
+            cutoff=$(date -u -d '-6 minutes' +%Y-%m-%dT%H:%M:%SZ)
+            for i in $(seq 1 12); do
+              fresh=$(gh run list --repo "$REPO" --workflow "$RELEASE_WORKFLOW" --limit 8 \
+                        --json createdAt --jq "[.[] | select(.createdAt > \"$cutoff\")] | length" \
+                        2>/dev/null || echo 0)
+              [ "${fresh:-0}" -gt 0 ] && return 0
+              sleep 10
+            done
+            return 1
+          }
+
+          # Reads develop head's aggregate check state (ALL non-advisory workflows,
+          # not one, not the PR) — same 3-valued shape as auto-merge's gate,
+          # plus a latest-run-per-name projection auto-merge does not have yet
+          # (candidate for upstreaming there — its miss is only over-conservative).
+          # Sets GATE to green|busy|red|unknown|nochecks.
+          gate_develop() {
+            # LATEST RUN PER CHECK NAME. A re-run does not replace its failed
+            # predecessor — the commit keeps BOTH check-run rows, so counting
+            # raw failures reads a flaky-then-green check as permanently red
+            # (first dry-run 2026-07-21: pytest-matrix-py3.11 failed once,
+            # re-ran green, gate said RED). Branch protection judges by the
+            # newest run per name; project by group_by(.name)|max_by(started_at)
+            # before classifying, exactly like it.
+            local sha="$1" bad busy total
+            bad=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
+              [ .check_runs[]
+                | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+              ] | group_by(.name) | map(max_by(.started_at // ""))
+                | map(select(.status == "completed"))
+                | map(select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required"))
+                | length' 2>/dev/null || echo "")
+            busy=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
+              [ .check_runs[]
+                | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+              ] | group_by(.name) | map(max_by(.started_at // ""))
+                | map(select(.status != "completed"))
+                | length' 2>/dev/null || echo "")
+            total=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
+              [ .check_runs[]
+                | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+              ] | group_by(.name) | length' 2>/dev/null || echo "")
+            # THREE STATES, NOT TWO. Unreadable != green.
+            if [ -z "$bad" ] || [ -z "$busy" ] || [ -z "$total" ]; then GATE=unknown; return; fi
+            if [ "$busy" -gt 0 ]; then GATE=busy; return; fi
+            if [ "$bad" -gt 0 ]; then GATE=red; return; fi
+            if [ "$total" -eq 0 ]; then GATE=nochecks; return; fi
+            GATE=green
+          }
+
+          # =====================================================================
+          # read state
+          # =====================================================================
+          if ! acting; then
+            log "REPORT-ONLY (AUTOBUMP_ENABLED='${AUTOBUMP_ENABLED:-}', DRY_RUN='${DRY_RUN:-}') — no mutation this tick."
+          fi
+
+          H=$(git rev-parse HEAD)
+          # V = the [project] version at develop head. Plain col-0 read; it is
+          # cross-checked by `autobump verify` before any tag is cut, so a drift
+          # between this read and the helper's parser goes red rather than ships.
+          V=$(grep -m1 -E '^version[[:space:]]*=[[:space:]]*"' pyproject.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+          if ! printf '%s' "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            alarm "pyproject [project] version '$V' is not clean X.Y.Z — refusing to act."
+            exit 0
+          fi
+          MAJ=${V%%.*}; REST=${V#*.}; MIN=${REST%%.*}; PAT=${REST#*.}
+          NEXT="${MAJ}.${MIN}.$((PAT + 1))"
+          log "develop head=$H  pyproject=$V  next-patch=$NEXT"
+
+          TAGV_SHA=$(tag_sha "v$V")
+
+          DECISION=""
+          if [ -n "$TAGV_SHA" ]; then
+            if [ "$TAGV_SHA" = "$H" ]; then
+              # ---- STEADY / GHOST monitor -----------------------------------
+              if pypi_serves "$V"; then
+                log "STEADY: v$V is tagged at develop head AND served on PyPI. Nothing to do."
+                exit 0
+              fi
+              AGE=$(commit_age_seconds "$H")
+              if [ "$AGE" -lt "$GRACE_SECONDS" ]; then
+                log "release v$V in flight (head age ${AGE}s < grace ${GRACE_SECONDS}s) — waiting for PyPI."
+                exit 0
+              fi
+              alarm "GHOST TAG v$V: tag+release commit present, but PyPI has served nothing for ${AGE}s (> grace)."
+              if acting; then
+                log "recovery: re-dispatching the release for v$V (idempotent; publish self-verifies + PyPI-verifies)."
+                if dispatch_release "v$V"; then
+                  log "re-dispatch submitted for v$V."
+                else
+                  alarm "re-dispatch of the release for v$V FAILED to submit."
+                fi
+              fi
+              exit 0
+            fi
+            DECISION=BUMP
+          else
+            # tag vV absent though pyproject is V => a landed bump awaiting its tag.
+            if run_autobump verify --version "$V"; then
+              DECISION=TAG_ONLY
+            else
+              alarm "INCONSISTENT: pyproject is $V, no tag v$V, and CHANGELOG has no released [$V] section. Refusing to guess."
+              exit 0
+            fi
+          fi
+
+          # =====================================================================
+          # TAG_ONLY — a prior bump landed but its tag/dispatch failed. Re-tag the
+          # bump-merge commit (never re-bump). Locate it so a feature merged on top
+          # afterwards is not tagged under this version.
+          # =====================================================================
+          if [ "$DECISION" = "TAG_ONLY" ]; then
+            M=$(git log origin/develop --grep="autobump/release-v$V" --format=%H -1 2>/dev/null || echo "")
+            [ -z "$M" ] && M=$(git log origin/develop --grep="chore(release): v$V" --format=%H -1 2>/dev/null || echo "")
+            if [ -z "$M" ]; then
+              alarm "TAG_ONLY: pyproject is $V with no tag v$V, but the bump-merge commit could not be located. Manual tag needed."
+              exit 0
+            fi
+            MV=$(git show "$M:pyproject.toml" 2>/dev/null | grep -m1 -E '^version[[:space:]]*=' | sed -E 's/.*"([^"]+)".*/\1/')
+            if [ "$MV" != "$V" ]; then
+              alarm "TAG_ONLY: located commit $M has pyproject '$MV', expected '$V'. Refusing to tag the wrong tree."
+              exit 0
+            fi
+            log "TAG_ONLY: v$V landed but is untagged; will re-tag the bump-merge commit $M."
+            if ! acting; then
+              log "REPORT-ONLY: would tag v$V at $M and dispatch the release."
+              exit 0
+            fi
+            EXIST=$(tag_sha "v$V")
+            if [ -z "$EXIST" ]; then
+              gh api --method POST "repos/$REPO/git/refs" -f ref="refs/tags/v$V" -f sha="$M" >/dev/null \
+                || { alarm "TAG_ONLY: failed to create tag v$V at $M."; exit 1; }
+            elif [ "$EXIST" != "$M" ]; then
+              alarm "TAG_ONLY: tag v$V already exists at $EXIST, not the expected $M. Not moving it."
+              exit 1
+            fi
+            if dispatch_release "v$V"; then
+              confirm_release_started "v$V" || alarm "tag v$V present + dispatch returned, but no release run appeared in the watch window (the PyPI monitor will re-check next tick)."
+              log "TAG_ONLY complete: v$V tagged at $M + release dispatched."
+            else
+              alarm "TAG_ONLY: 'gh workflow run $RELEASE_WORKFLOW -f version=v$V' failed to dispatch."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          # =====================================================================
+          # BUMP — develop advanced past the last release. Gate green, bump, land
+          # via --admin PR merge, tag the merge commit, dispatch the release.
+          # =====================================================================
+          log "BUMP: develop moved past v$V (tagged at $TAGV_SHA) — evaluating a v$NEXT release."
+
+          gate_develop "$H"
+          case "$GATE" in
+            unknown) log "could not read develop's check state — merging/tagging nothing this tick (fail-safe)."; exit 0 ;;
+            busy)    log "develop CI still in flight — the next tick is the wait. Nothing this tick."; exit 0 ;;
+            red)
+              # develop is broken: do NOT release. develop's own red Actions run is
+              # the on-rail signal; we alarm off-rail and stay green (the sweep is
+              # healthy; develop is not).
+              alarm "develop head $H is RED (failing non-advisory checks). Refusing to release onto a broken base — fix develop first."
+              exit 0 ;;
+            nochecks)
+              # Releasing an un-CI'd tree is worse than merging one. Do NOT proceed
+              # (unlike auto-merge). Force develop's matrix so a later tick can gate
+              # on real checks, then wait. (Only `tests` is the required, dispatchable
+              # gate; quality-audit/import-smoke lack workflow_dispatch.)
+              log "develop head has NO non-advisory checks (likely a github.token merge). Not releasing un-CI'd code."
+              if acting; then
+                gh workflow run "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml" --repo "$REPO" --ref develop >/dev/null 2>&1 \
+                  && log "dispatched the pytest matrix on develop head; will gate on it next tick." \
+                  || log "note: could not dispatch the pytest matrix; next tick re-reads."
+              fi
+              exit 0 ;;
+            green) log "develop head is green (all non-advisory checks passed) — proceeding to v$NEXT." ;;
+          esac
+
+          # Never re-tag a shipped version (ghost-mismatch guard).
+          if [ -n "$(tag_sha "v$NEXT")" ]; then
+            alarm "TAG COLLISION: tag v$NEXT already exists but pyproject is still $V. A shipped version must never be re-tagged. Manual reconciliation needed."
+            exit 1
+          fi
+
+          if ! acting; then
+            log "REPORT-ONLY: would bump $V -> $NEXT, land it as a PR merged --admin to develop, tag v$NEXT at the merge commit, and dispatch the release."
+            exit 0
+          fi
+
+          BRANCH="autobump/release-v$NEXT"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Clean any stale branch/PR from a prior failed tick (prevents a DIRTY
+          # open-PR wedge: we never leave a lingering release PR behind).
+          STALE_PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number' 2>/dev/null || echo "")
+          for p in $STALE_PR; do gh pr close "$p" --repo "$REPO" --delete-branch >/dev/null 2>&1 || true; done
+          git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+
+          # Mutate pyproject + CHANGELOG inside the SIF, then cross-check.
+          if ! run_autobump bump --date "$(date -u +%F)"; then
+            alarm "autobump bump failed inside the SIF (V=$V -> NEXT=$NEXT). No changes pushed."
+            exit 1
+          fi
+          if ! run_autobump verify --version "$NEXT"; then
+            alarm "autobump produced an INCONSISTENT tree for $NEXT (pyproject/CHANGELOG disagree). Aborting before any tag."
+            git checkout -- . 2>/dev/null || true
+            exit 1
+          fi
+
+          git checkout -b "$BRANCH"
+          git add pyproject.toml CHANGELOG.md
+          git commit -m "chore(release): v$NEXT" -m "Automated patch bump + CHANGELOG promotion by autobump-release-sweep." >/dev/null
+          if ! git push origin "$BRANCH"; then
+            alarm "failed to push the bump branch $BRANCH."
+            exit 1
+          fi
+
+          # Tighten the tagged tree: if develop moved since the gate read, abort
+          # (next tick re-gates on the new head). Guarantees the merge commit ==
+          # gated-head + inert bump, so what we tag is exactly what we gated.
+          git fetch origin develop >/dev/null 2>&1 || true
+          if [ "$(git rev-parse origin/develop)" != "$H" ]; then
+            log "develop moved during the bump — aborting this tick and cleaning up; next tick re-gates."
+            gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number' 2>/dev/null \
+              | while read -r p; do [ -n "$p" ] && gh pr close "$p" --repo "$REPO" >/dev/null 2>&1 || true; done
+            git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+            exit 0
+          fi
+
+          PR=$(gh pr create --repo "$REPO" --base develop --head "$BRANCH" \
+                 --title "chore(release): v$NEXT" \
+                 --body "Automated patch bump to v$NEXT + CHANGELOG promotion (autobump-release-sweep). Merged with --admin (inert diff); the tagged tree is re-tested by the release pipeline before publish." \
+                 2>/dev/null | grep -oE '[0-9]+$' | tail -1)
+          if [ -z "${PR:-}" ]; then
+            # PR may already exist for this head — recover its number.
+            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+          fi
+          if [ -z "${PR:-}" ]; then
+            alarm "opened no bump PR for $BRANCH and could not find an existing one."
+            exit 1
+          fi
+
+          # --admin lands the inert bump under branch protection (proven primitive;
+          # enforce_admins=false). The bump PR has no CI of its own by design; the
+          # green gate above (develop head) + the release pipeline's re-test of the
+          # tagged tree are what satisfy "post-merge all-green".
+          if ! gh pr merge "$PR" --repo "$REPO" --merge --admin --delete-branch; then
+            state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
+            if [ "$state" != "MERGED" ]; then
+              alarm "failed to --admin merge the bump PR #$PR (state=$state)."
+              exit 1
+            fi
+            log "bump PR #$PR was already merged (race with auto-merge) — continuing."
+          fi
+
+          M=$(gh pr view "$PR" --repo "$REPO" --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null || echo "")
+          if [ -z "$M" ]; then
+            alarm "bump PR #$PR merged but its merge-commit sha could not be resolved — cannot tag."
+            exit 1
+          fi
+          log "bump v$NEXT merged to develop as $M."
+
+          # Tag the merge commit (github.token; does NOT fire on:push — we dispatch).
+          if ! gh api --method POST "repos/$REPO/git/refs" -f ref="refs/tags/v$NEXT" -f sha="$M" >/dev/null; then
+            existing=$(tag_sha "v$NEXT")
+            if [ "$existing" != "$M" ]; then
+              alarm "bump merged as $M but tag v$NEXT could not be created (existing=$existing). Next tick will TAG_ONLY-recover."
+              exit 1
+            fi
+          fi
+          log "tagged v$NEXT at $M."
+
+          if dispatch_release "v$NEXT"; then
+            confirm_release_started "v$NEXT" \
+              || alarm "tag v$NEXT pushed + dispatch returned, but no release run appeared in the watch window — the PyPI monitor will re-check next tick."
+            log "RELEASE v$NEXT: bump merged ($M), tagged, release dispatched."
+          else
+            alarm "tag v$NEXT created but 'gh workflow run $RELEASE_WORKFLOW -f version=v$NEXT' failed to dispatch. Next tick will TAG_ONLY-recover / re-dispatch."
+            exit 1
+          fi

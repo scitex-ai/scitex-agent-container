@@ -1,14 +1,14 @@
 """One reconcile pass: enumerate specs, observe tmux, resurrect corpses.
 
 The IO half of the enforcer. The decision itself is pure and lives in
-:mod:`._rule`; the rate limits in :mod:`._budget`; the board rails in
+:mod:`._rule`; the rate limits in :mod:`._budget`; the recording rails in
 :mod:`._alarm`. This module only wires facts into the rule and carries out
 whatever the rule authorises.
 
 Every collaborator is an injectable seam with a REAL default, so tests
-drive the whole pass against a real temp ``state.db``, a real temp
-scitex-todo store and a real fake ``tmux`` — with the one and only
-irreversible act (the restart) swapped for a recorder. No mocks.
+drive the whole pass against a real temp ``state.db``, a real temp event
+log and a real fake ``tmux`` — with the one and only irreversible act
+(the restart) swapped for a recorder. No mocks.
 """
 
 from __future__ import annotations
@@ -17,16 +17,15 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .._events import EmitOutcome
 from ._alarm import (
-    AlarmOutcome,
-    clear_state_alarm,
-    route_reports_to_cards,
-    upsert_heartbeat,
-    upsert_state_alarm,
+    record_pass_completed,
+    record_reports,
+    record_self_impaired,
+    record_self_recovered,
 )
 from ._budget import DEFAULT_PASS_CAP, Budget, history_path, read_history, save_history
 from ._rule import MANAGED_POLICIES, Verdict, decide
@@ -69,7 +68,7 @@ class PassOutcome:
     """Everything one pass concluded and did."""
 
     reports: tuple[AgentReport, ...] = ()
-    alarm: AlarmOutcome | None = None
+    alarm: EmitOutcome | None = None
     heartbeat_ok: bool = False
     applied: bool = False
 
@@ -77,7 +76,7 @@ class PassOutcome:
         return tuple(r for r in self.reports if r.verdict in verdicts)
 
     def counts(self) -> dict[str, int]:
-        """Per-verdict tally — the heartbeat card's payload."""
+        """Per-verdict tally — the pass record's payload."""
         out = {v.value: 0 for v in Verdict}
         for report in self.reports:
             out[report.verdict.value] += 1
@@ -338,7 +337,7 @@ def reconcile_pass(
     specs_dir: Path | None = None,
     db_path: Path | None = None,
     history_file: Path | None = None,
-    store: str | None = None,
+    events_path: Path | None = None,
     alarm: bool = True,
     now: float | None = None,
     restart_fn: Callable[[str], bool] | None = None,
@@ -350,9 +349,9 @@ def reconcile_pass(
     """Run ONE reconcile pass over the fleet.
 
     ``apply=False`` (the default) is a REPORT: it reads tmux and the
-    registry, decides, and mutates no agent. The only board write a dry-run
-    makes is the reconciler's own heartbeat — a liveness beacon about US,
-    never about an agent.
+    registry, decides, and mutates no agent. The only thing a dry run
+    records is the pass itself — proof this ran, never a claim about an
+    agent.
 
     Parameters
     ----------
@@ -360,7 +359,7 @@ def reconcile_pass(
         Actually restart. Default ``False``.
     limit
         Global cap on restarts THIS pass (blast radius of one bad tick).
-    specs_dir, db_path, history_file, store
+    specs_dir, db_path, history_file, events_path
         Real state, redirectable for tests.
     restart_fn
         ``(name) -> bool``. The one irreversible act, injectable so tests
@@ -371,7 +370,6 @@ def reconcile_pass(
     from ..config import load_config
 
     now = now if now is not None else time.time()
-    now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
     restart_fn = restart_fn if restart_fn is not None else _real_restart
     snapshot = _batched_snapshot_fn(snapshot_fn)
     local_host = (local_host_fn or _local_host)()
@@ -462,16 +460,16 @@ def reconcile_pass(
     # decision is already made and carried out, so nothing they do (or fail
     # to do) can change what happened to the fleet.
     if alarm:
-        # A reconciler that cannot read its own state must ALARM, never
+        # A reconciler that cannot read its own state must SAY SO, never
         # quietly do nothing — "did nothing" is indistinguishable from
         # "nothing needed doing", which is the silence this whole command
-        # exists to abolish. Cleared the moment the state is readable again.
+        # exists to abolish. Recorded as recovered the moment it is readable.
         if not read.enforceable:
-            upsert_state_alarm(
+            record_self_impaired(
                 read.detail,
-                path=history_file,
-                store=store,
-                now=now_dt,
+                state_file=history_file,
+                path=events_path,
+                now=now,
                 err_stream=err_stream,
             )
             print(
@@ -479,19 +477,24 @@ def reconcile_pass(
                 file=stream,
             )
         else:
-            clear_state_alarm(store=store, err_stream=err_stream)
+            record_self_recovered(
+                state_file=history_file,
+                path=events_path,
+                now=now,
+                err_stream=err_stream,
+            )
     alarm_outcome = (
-        route_reports_to_cards(reports, store=store, now=now_dt, err_stream=err_stream)
+        record_reports(reports, path=events_path, now=now, err_stream=err_stream)
         if (alarm and apply)
         else None
     )
     heartbeat_ok = (
-        upsert_heartbeat(
+        record_pass_completed(
             outcome.counts(),
             mode="apply" if apply else "dry-run",
             host=local_host,
-            store=store,
-            now=now_dt,
+            path=events_path,
+            now=now,
             err_stream=err_stream,
         )
         if alarm

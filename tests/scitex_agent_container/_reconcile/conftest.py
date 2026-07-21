@@ -2,7 +2,7 @@
 
 Every fixture here hands the pass REAL state it can write to and a test can
 read back: an on-disk ``state.db``, an on-disk fleet registry of v3 specs,
-an on-disk scitex-todo store, an on-disk history file.
+an on-disk sac event log, an on-disk history file.
 
 The ``db_path`` fixture redirects BOTH handles (the env var AND the
 already-baked ``DEFAULT_DB_PATH`` module constant), because the constant is
@@ -50,9 +50,13 @@ def registry(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> str:
-    """A real (initially absent) scitex-todo store path — no mocks."""
-    return str(tmp_path / "tasks.yaml")
+def events(tmp_path: Path) -> Path:
+    """A real (initially absent) sac event-log path — no mocks.
+
+    Nothing creates it until a pass records something, so ``events.exists()``
+    is itself the assertion "this pass recorded nothing at all".
+    """
+    return tmp_path / "sac-events.jsonl"
 
 
 @pytest.fixture
@@ -63,15 +67,15 @@ def history(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def unwritable(tmp_path: Path):
-    """A store path the REAL writer genuinely cannot write. No mocks.
+    """An event-log path the REAL writer genuinely cannot write. No mocks.
 
-    The parent dir is read-only, so ``scitex_todo``'s own write fails the
-    way it would on a broken host — the world says no; nothing is injected.
+    The parent dir is read-only, so the append fails the way it would on a
+    broken host — the world says no; nothing is injected.
     """
     readonly = tmp_path / "readonly"
     readonly.mkdir()
     readonly.chmod(0o555)
     try:
-        yield str(readonly / "tasks.yaml")
+        yield readonly / "sac-events.jsonl"
     finally:
         readonly.chmod(0o755)

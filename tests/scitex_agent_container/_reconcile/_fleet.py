@@ -1,9 +1,10 @@
 """Shared no-mocks helpers for the reconcile suites.
 
 Real on-disk v3 specs, real ``instances`` rows written by the production
-writer, and a real recorder standing in for the ONE irreversible act. Split
-out of ``test__pass.py`` so it and ``test__pass_limits.py`` drive the same
-fleet without either file breaching the 512-line cap.
+writer, a real temp sac event log, and a real recorder standing in for the ONE
+irreversible act. Split out of ``test__pass.py`` so it and
+``test__pass_limits.py`` drive the same fleet without either file breaching
+the 512-line cap.
 """
 
 from __future__ import annotations
@@ -86,18 +87,22 @@ def ended(name: str, reason: str) -> None:
     state_db.record_instance_stop(instance_id, exit_reason=reason)
 
 
-def run_pass(registry, db_path, history, store, **overrides):
+def run_pass(registry, db_path, history, events, **overrides):
     """One pass with every real seam wired to this test's temp state.
 
     Defaults describe a HOST that can see tmux (``in_sif_fn`` False) and an
     EMPTY tmux (``snapshot_fn`` -> ``{}``), i.e. every agent is a corpse —
     the interesting case. Tests override what they are about.
+
+    ``events`` is the sac event log this pass records to — a real temp JSONL
+    path. A test that wants an UNWRITABLE one passes ``events_path=`` as an
+    override, which lands on the same production keyword.
     """
     kwargs = {
         "specs_dir": registry,
         "db_path": db_path,
         "history_file": history,
-        "store": store,
+        "events_path": events,
         "now": NOW,
         "snapshot_fn": lambda **_: {},
         "in_sif_fn": lambda: False,

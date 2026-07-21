@@ -14,6 +14,11 @@ hand the start a different account whose snapshot IS healthy; raise
 loudly when NOTHING is healthy (the genuine "all three accounts
 capped/expired" case the operator must fix).
 
+The account-health probing and the operator-facing error rendering it
+uses live in :mod:`._account_health` (``AccountHealth``,
+``account_health``, ``NoHealthyAccountError``); this module is the pure
+pick DECISION on top of them.
+
 Scope (Phase 1, deliberately small)
 -----------------------------------
 * Health is *snapshot freshness*: a non-expired ``claudeAiOauth.
@@ -44,7 +49,8 @@ Scope (Phase 1, deliberately small)
 * GRACEFUL DEGRADATION: the quota cache is best-effort. When it is
   absent / stale / unreadable for an account (or entirely — e.g. a
   host whose cron has not populated it yet), that account degrades to
-  the freshness-only behavior — never a crash, never a blocked boot.
+  the freshness-only behavior — never a crash, never a blocked boot —
+  UNLESS the caller sets ``require_quota_evidence`` (see below).
 * Read-only: this module NEVER writes a snapshot. The existing
   per-agent writable boot-copy in
   :func:`runtimes._apptainer_creds.resolve_cred_file` and its
@@ -59,21 +65,34 @@ operator immediately sees which accounts to refresh. No silent
 fallback to a stale snapshot — running a pinned agent on a known-
 expired token is exactly what the previous fail-loud guard was added
 to prevent.
+
+``require_quota_evidence`` (opt-in, set by the boot preflight) extends
+that contract to the QUOTA axis, per constitution §2 — *unknown is a
+third state, never silently collapsed into "OK"*. When it is set and
+the selected account's cached utilisation is entirely unknown (no 5h
+AND no 7d), the pick is BLIND: the cache told us nothing, so we cannot
+confirm the account has headroom. Rather than boot an agent onto a
+possibly-exhausted account (2026-07-20 incident: an empty cache read
+"5h=? 7d=?" and launched scitex-cards on a 7d=100% account), the picker
+raises. Freshness stays the token gate; this adds "verifiable quota" as
+a boot gate ONLY when the caller asks for it, so library / test callers
+keep the graceful-degradation behaviour by default.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-from .._account.creds_sync import (
-    _oauth_expiry_to_seconds,
-    _read_oauth_expiry_raw,
+from ._account_health import (
+    AccountHealth,
+    NoHealthyAccountError,
+    _discover_candidates,
+    _format_states,
+    _iso_utc,
+    account_health,
 )
-from .._state.account_store import _store_path
 from ._quota_rank import (
     BLOCKED_5H_PCT,
     EXPIRING_7D_HORIZON_S,
@@ -90,175 +109,10 @@ from ._spend_policy import (
     validate_7d_policy,
 )
 
-# Health states for one account's snapshot. Mirrors
-# :class:`_account.creds_sync.Freshness` but anchored on a *name* so the
-# picker can return a structured "why I rotated" record to its caller.
-_VALID = "VALID"
-_EXPIRED = "EXPIRED"
-_ABSENT = "ABSENT"
-
 # Thresholds live in ._quota_rank (shared with the ranking); the local
 # aliases keep this module's public parameter defaults stable.
 _NEAR_CAP_PCT = NEAR_CAP_7D_PCT
 _BLOCKED_5H_PCT = BLOCKED_5H_PCT
-
-
-class NoHealthyAccountError(RuntimeError):
-    """Raised when no stored account currently has a usable snapshot.
-
-    The message names every probed account and its state so the
-    operator sees the full picture in one error line — they should
-    ``claude /login`` to one of them and ``sac accounts sync-live``,
-    then restart the agent. Surfaced through ``sac agents start``.
-    """
-
-
-@dataclass(frozen=True)
-class AccountHealth:
-    """Health of one stored account's credential snapshot.
-
-    Attributes
-    ----------
-    name
-        The stored-account name (a slug — see
-        :func:`_account.creds_sync.slugify_email`).
-    state
-        ``"VALID"`` (non-expired snapshot present), ``"EXPIRED"`` (a
-        snapshot exists but its ``expiresAt`` is in the past), or
-        ``"ABSENT"`` (no snapshot file on disk, or unparseable).
-    hours_remaining
-        Signed hours to expiry (positive = remaining, negative =
-        past) for VALID/EXPIRED; ``None`` for ABSENT.
-    snapshot_path
-        The EXACT file this probe read (or looked for). INCIDENT
-        2026-07-10: the "EXPIRED (-5.8h)" boot error hid which file it
-        had evaluated, so a snapshot repaired minutes later looked like
-        a false read and cost the investigation hours. Every health
-        record now carries its evidence.
-    expires_at_raw
-        The literal ``claudeAiOauth.expiresAt`` value found in the file
-        (claude-code writes unix milliseconds); ``None`` for ABSENT.
-    """
-
-    name: str
-    state: str
-    hours_remaining: float | None
-    snapshot_path: str | None = None
-    expires_at_raw: float | None = None
-
-    @property
-    def is_healthy(self) -> bool:
-        return self.state == _VALID
-
-
-def account_health(
-    name: str,
-    *,
-    store_dir: Path | None = None,
-    home: Path | None = None,
-    now: float | None = None,
-) -> AccountHealth:
-    """Return the health of one stored account's snapshot.
-
-    Never raises. A missing / unparseable snapshot reads as
-    :class:`AccountHealth` ``state="ABSENT"``.
-
-    This is functionally equivalent to
-    :func:`_account.creds_sync.account_freshness`, re-exposed under a
-    name-anchored shape so :func:`pick_healthy_account` can build the
-    diagnostic error message without losing the account name.
-    """
-    _home = home if home is not None else Path.home()
-    now_ts = now if now is not None else time.time()
-
-    store = _store_path(store_dir, _home)
-    snapshot = store / name / ".credentials.json"
-    # ONE read supplies BOTH the raw evidence value and the normalised
-    # expiry, so the record can never quote a different file state than
-    # the one it judged (a mid-probe rewrite yields a coherent record).
-    raw = _read_oauth_expiry_raw(snapshot) if snapshot.is_file() else None
-    if raw is None:
-        return AccountHealth(
-            name=name,
-            state=_ABSENT,
-            hours_remaining=None,
-            snapshot_path=str(snapshot),
-            expires_at_raw=None,
-        )
-    expiry = _oauth_expiry_to_seconds(raw)
-    hours = (expiry - now_ts) / 3600.0
-    state = _VALID if expiry > now_ts else _EXPIRED
-    return AccountHealth(
-        name=name,
-        state=state,
-        hours_remaining=hours,
-        snapshot_path=str(snapshot),
-        expires_at_raw=raw,
-    )
-
-
-def _discover_candidates(
-    store_dir: Path | None,
-    home: Path,
-) -> list[str]:
-    """Return every stored-account name on disk (sorted, deterministic).
-
-    Best-effort: a missing / unreadable store reads as no candidates
-    (the caller turns that into :class:`NoHealthyAccountError`). We
-    skip the store-internal ``_rotations/`` housekeeping dir so it
-    can never get picked.
-    """
-    store = _store_path(store_dir, home)
-    if not store.is_dir():
-        return []
-    out: list[str] = []
-    # stx-allow: fallback (reason: store iteration is best-effort
-    # discovery; an unreadable dir / partially-created entry must
-    # degrade to "no candidates" so the caller's fail-loud takes over,
-    # never crash with an OSError mid-resolution.)
-    try:
-        for child in sorted(store.iterdir()):
-            if not child.is_dir():
-                continue
-            if child.name.startswith("_"):
-                continue
-            out.append(child.name)
-    except OSError:
-        return []
-    return out
-
-
-def _iso_utc(seconds: float) -> str:
-    """Render a unix-seconds timestamp as a compact ISO-8601 UTC string."""
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat(
-        timespec="seconds"
-    )
-
-
-def _format_states(healths: list[AccountHealth]) -> str:
-    """Render the operator-facing per-account evidence list for the error.
-
-    Self-diagnosing (INCIDENT 2026-07-10): each entry names the file
-    that was read, the RAW ``expiresAt`` value found in it, and its UTC
-    rendering — so a "this account was fine minutes later!" report can
-    be adjudicated from the error line alone (the snapshot may simply
-    have been rewritten between the probe and the re-check).
-    """
-    parts: list[str] = []
-    for h in healths:
-        if h.hours_remaining is None or h.expires_at_raw is None:
-            parts.append(
-                f"{h.name}={h.state} (no numeric claudeAiOauth.expiresAt; "
-                f"file={h.snapshot_path})"
-            )
-        else:
-            expiry_s = _oauth_expiry_to_seconds(h.expires_at_raw)
-            parts.append(
-                f"{h.name}={h.state} ({h.hours_remaining:+.1f}h; "
-                f"expiresAt={h.expires_at_raw:.0f} = {_iso_utc(expiry_s)}; "
-                f"file={h.snapshot_path})"
-            )
-    return ", ".join(parts) if parts else "(no candidates)"
 
 
 def pick_healthy_account(
@@ -277,6 +131,7 @@ def pick_healthy_account(
     expiring_horizon_s: float = EXPIRING_7D_HORIZON_S,
     spread_key: str | None = None,
     policy: str = POLICY_SPREAD,
+    require_quota_evidence: bool = False,
 ) -> str:
     """Return the stored-account name an agent should run on right now.
 
@@ -288,7 +143,10 @@ def pick_healthy_account(
        unknown) AND it is NOT near-capped (cached 7d utilisation below
        ``near_cap_pct``, or unknown). Unknown quota degrades to
        freshness-only and keeps the preferred — this minimises churn;
-       we only rotate off ``preferred`` on *known* bad quota.
+       we only rotate off ``preferred`` on *known* bad quota. (With
+       ``require_quota_evidence`` a BLIND preferred — no cached 5h AND
+       no cached 7d — is instead rotated off, so a pin we cannot see
+       does not win over a known-headroom alternative.)
     2. Otherwise, the best tier of token-fresh candidates competes —
        see :func:`._quota_rank.pick_ranked`: unblocked-now beats
        5h-blocked, 7d-headroom beats near-capped, known 7d beats
@@ -300,7 +158,9 @@ def pick_healthy_account(
     Quota is a *preference*, not a hard gate: when every fresh
     candidate is blocked or near-capped, the least-bad fresh one is
     still returned (a boot is never blocked on quota — only on there
-    being NOTHING token-fresh, which stays fail-loud).
+    being NOTHING token-fresh, which stays fail-loud). The one
+    exception is ``require_quota_evidence`` (below), which turns a
+    fully-BLIND pick (no cached quota at all) into a loud failure.
 
     Parameters
     ----------
@@ -364,6 +224,16 @@ def pick_healthy_account(
         HIGHEST 7d usage among 5h-unblocked fresh accounts, tie-break
         soonest 7d reset — and a near-capped 7d ``preferred`` is a
         reason to STAY (drain it), never to rotate off.
+    require_quota_evidence
+        Boot-time quota gate (constitution §2 — unknown is not "OK").
+        Default ``False`` preserves graceful degradation for library /
+        test callers. When ``True`` (the ``sac agents start`` boot
+        preflight) a fully-BLIND selection — the picked account has
+        NEITHER a cached 5h NOR a cached 7d utilisation — raises
+        :class:`NoHealthyAccountError` instead of booting an unverifiable
+        account. This fires only when the cache is empty for EVERY fresh
+        candidate (a known-headroom account would have won the ranking);
+        a fleet with known-but-busy quota still returns least-bad.
 
     Returns
     -------
@@ -373,11 +243,12 @@ def pick_healthy_account(
     Raises
     ------
     NoHealthyAccountError
-        When no candidate is :attr:`AccountHealth.is_healthy`. The
-        message names every candidate's state. NEVER falls back to
-        a stale snapshot, and NEVER raised merely because accounts are
-        blocked/near-capped (quota is a preference, freshness is the
-        gate).
+        When no candidate is :attr:`AccountHealth.is_healthy` (the
+        message names every candidate's state; NEVER falls back to a
+        stale snapshot, and NEVER raised merely because accounts are
+        blocked/near-capped — quota is a preference, freshness is the
+        gate). Also raised, when ``require_quota_evidence`` is set, if
+        the selected account's quota is entirely unknown (a blind pick).
     """
     validate_7d_policy(policy)
     _home = home if home is not None else Path.home()
@@ -450,6 +321,8 @@ def pick_healthy_account(
     }
     probe_now = now if now is not None else time.time()
 
+    picked: str | None = None
+
     # 1. Preferred wins when it is fresh AND not blocked-now (5h) AND
     #    not near-capped (7d); unknown quota keeps it (degrade to
     #    freshness-only). Minimises churn: only rotate off `preferred`
@@ -479,8 +352,17 @@ def pick_healthy_account(
             # reason to STAY and drain it, never to rotate off.
             if policy == POLICY_BURN:
                 near_capped = False
-            if not blocked_now and not near_capped:
-                return pref
+            # CONSTITUTION §2 — a BLIND pin (no cached 5h AND no cached
+            # 7d) is NOT "confirmed OK"; under require_quota_evidence do
+            # not keep it. Falling through lets the ranking prefer a
+            # known-headroom account; if none exists (all blind) the
+            # blind-pick gate below turns the pick into a loud failure.
+            pref_blind = pref_5h is None and pref_7d is None
+            keep_pref = not blocked_now and not near_capped
+            if require_quota_evidence and pref_blind:
+                keep_pref = False
+            if keep_pref:
+                picked = pref
 
     # 2. Otherwise the conditional ranking picks among the fresh set —
     #    unblocked beats 5h-blocked, headroom beats near-capped, expiring
@@ -488,18 +370,40 @@ def pick_healthy_account(
     #    load-balances the winning tier across the fleet. Quota is a
     #    preference, not a hard gate: an all-blocked fleet still returns
     #    the least-bad fresh account.
-    return pick_ranked(
-        [h.name for h in fresh],
-        u5,
-        u7,
-        reset_7d=r7,
-        now=probe_now,
-        spread_key=spread_key,
-        near_cap_pct=near_cap_pct,
-        blocked_5h_pct=blocked_5h_pct,
-        expiring_horizon_s=expiring_horizon_s,
-        policy=policy,
-    )
+    if picked is None:
+        picked = pick_ranked(
+            [h.name for h in fresh],
+            u5,
+            u7,
+            reset_7d=r7,
+            now=probe_now,
+            spread_key=spread_key,
+            near_cap_pct=near_cap_pct,
+            blocked_5h_pct=blocked_5h_pct,
+            expiring_horizon_s=expiring_horizon_s,
+            policy=policy,
+        )
+
+    # 4. BLIND-PICK GATE (constitution §2 — unknown is a third state,
+    #    never collapsed into "OK"). Under require_quota_evidence, if the
+    #    selected account has NEITHER a cached 5h NOR a cached 7d reading,
+    #    the quota cache told us nothing about it and we cannot confirm it
+    #    has headroom. Because the ranking prefers a known account over an
+    #    unknown one, a blind winner means EVERY fresh candidate is blind
+    #    (an empty/absent cache) — the 2026-07-20 incident, where the pick
+    #    read "5h=? 7d=?" and booted a 7d=100% account. Refuse rather than
+    #    boot blind; a fleet with known-but-busy quota is unaffected.
+    if require_quota_evidence and u5.get(picked) is None and u7.get(picked) is None:
+        raise NoHealthyAccountError(
+            f"quota cache is blind for the selected account {picked!r} "
+            "(5h=? 7d=? — no cached utilisation for any fresh candidate), "
+            "so the pick cannot be confirmed to have headroom. Refusing to "
+            "boot without verifiable quota (constitution: unknown is not "
+            "'OK'). Fix: populate the cache on THIS host — run `sac accounts "
+            "refresh-quota-cache` (or wait for its cron) — then restart."
+        )
+
+    return picked
 
 
 __all__ = [

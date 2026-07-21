@@ -114,6 +114,30 @@ def _resolve_cache_path(override: Path | str | None) -> Path:
     return host if host is not None else container
 
 
+def quota_cache_present(cache_path: Path | str | None = None) -> bool:
+    """Whether a quota-cache FILE actually exists for the reader to consult.
+
+    This is the discriminator the boot picker's fail-loud gate keys off (see
+    :func:`_creds.pick_healthy_account` ``require_quota_evidence``):
+
+    * ``True`` — a cache source exists (the container bind, or a host
+      ``quota-cache.json`` a populator/cron writes). On such a host an
+      all-UNKNOWN pick is a POPULATOR failure (an empty/stale cache), so the
+      boot should fail loud (constitution §2 — unknown is not "OK") rather than
+      silently launch on an unverifiable, possibly quota-exhausted account
+      (2026-07-20 incident).
+    * ``False`` — no cache source exists at all (a fresh install, CI, or a
+      quota-cron-less host such as a Spartan compute node). The documented
+      graceful-degradation contract holds: the boot degrades to freshness-only
+      and is NEVER blocked on a quota system that this host simply does not run.
+
+    Mirrors :func:`_resolve_cache_path`'s resolution order (container bind →
+    host runtime → legacy). A missing source resolves to the non-existent
+    container default, hence ``False``.
+    """
+    return _resolve_cache_path(cache_path).exists()
+
+
 def _resolve_account(override: str | None) -> str:
     if override is not None:
         return override.strip()
@@ -228,18 +252,27 @@ def build_a2a_metadata() -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # Writer side — the POPULATOR that produces the aggregate quota-cache.json
-# the reader above consumes. The reader's DEFAULT_QUOTA_CACHE_PATH
-# (/var/sac/quota-cache.json) is the *in-container* bind target; the writer
-# runs on the HOST (via `sac accounts refresh-quota-cache`, typically a cron)
-# and writes the canonical host file ``~/.scitex/quota-cache.json`` that the
-# apptainer runtime binds into each agent at the in-container path. Both ends
-# honour the ``SAC_QUOTA_CACHE_PATH`` override so host-side readers/writers and
-# tests can co-locate on one path.
-DEFAULT_HOST_QUOTA_CACHE_SUBPATH = Path(".scitex") / "quota-cache.json"
+# the reader above consumes. Its default MUST be the SAME path the reader's
+# first candidate resolves to (``HOST_RUNTIME_CACHE_SUBPATH``), or the two
+# silently diverge: a prior split (writer → legacy ~/.scitex/quota-cache.json,
+# reader → runtime) meant `sac accounts refresh-quota-cache` wrote a file the
+# picker never read, so the picker stayed BLIND and the fail-loud boot gate's
+# own actionable hint ("run refresh-quota-cache") could not clear the block
+# (2026-07-20 incident: `sac-restart scitex-dev` hard-failed and the documented
+# fix did nothing). Writer default == reader first candidate == apptainer bind
+# is the SSOT that makes that hint actually work. ``SAC_QUOTA_CACHE_PATH``
+# overrides both ends so host readers/writers and tests co-locate on one path.
+DEFAULT_HOST_QUOTA_CACHE_SUBPATH = HOST_RUNTIME_CACHE_SUBPATH
 
 
 def default_host_cache_path(home: Path | None = None) -> Path:
-    """Canonical HOST path the populator writes (``~/.scitex/quota-cache.json``)."""
+    """Canonical HOST path the populator writes.
+
+    ``~/.scitex/agent-container/runtime/quota-cache.json`` — the SAME path
+    :func:`host_cache_candidates` returns first (the reader) and the apptainer
+    bind resolves to, so a plain ``sac accounts refresh-quota-cache`` populates
+    exactly the file the boot picker reads.
+    """
     _home = home if home is not None else Path.home()
     return _home / DEFAULT_HOST_QUOTA_CACHE_SUBPATH
 
@@ -315,5 +348,6 @@ __all__ = [
     "build_a2a_metadata",
     "default_host_cache_path",
     "host_cache_candidates",
+    "quota_cache_present",
     "write_quota_cache",
 ]

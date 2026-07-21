@@ -44,7 +44,7 @@ def _events(path: Path, kind: str) -> list:
 
 
 def test_a_restart_that_does_not_take_effect_is_visible_as_unresolved(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """THE test: a restart that ran and did not work must be refutable.
 
@@ -62,7 +62,7 @@ def test_a_restart_that_does_not_take_effect_is_visible_as_unresolved(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -75,7 +75,7 @@ def test_a_restart_that_does_not_take_effect_is_visible_as_unresolved(
 
 
 def test_the_attempt_and_the_outcome_are_two_separate_records(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """Conflating them is the exact defect this rail exists to prevent.
 
@@ -91,7 +91,7 @@ def test_the_attempt_and_the_outcome_are_two_separate_records(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -105,7 +105,7 @@ def test_the_attempt_and_the_outcome_are_two_separate_records(
 
 
 def test_the_failed_outcome_records_that_it_did_not_succeed(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """The outcome must carry the refutation explicitly, not by omission."""
     # Arrange
@@ -117,7 +117,7 @@ def test_the_failed_outcome_records_that_it_did_not_succeed(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -129,7 +129,7 @@ def test_the_failed_outcome_records_that_it_did_not_succeed(
 
 
 def test_a_successful_restart_leaves_nothing_unresolved(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """The refutation query must be able to come back clean.
 
@@ -145,7 +145,7 @@ def test_a_successful_restart_leaves_nothing_unresolved(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -157,7 +157,7 @@ def test_a_successful_restart_leaves_nothing_unresolved(
 
 
 def test_the_attempt_is_recorded_before_the_outcome(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """Order is load-bearing: intent is written BEFORE the act it describes.
 
@@ -174,7 +174,7 @@ def test_the_attempt_is_recorded_before_the_outcome(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -191,7 +191,7 @@ def test_the_attempt_is_recorded_before_the_outcome(
 
 
 def test_a_raising_restart_still_leaves_an_attempt_and_a_failed_outcome(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """An exception is an outcome too, and a failed one.
 
@@ -207,7 +207,7 @@ def test_a_raising_restart_still_leaves_an_attempt_and_a_failed_outcome(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -219,7 +219,7 @@ def test_a_raising_restart_still_leaves_an_attempt_and_a_failed_outcome(
 
 
 def test_the_wedge_is_observed_before_any_restart_decision(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """What we SAW is recorded first, and separately from what we DID.
 
@@ -235,7 +235,7 @@ def test_the_wedge_is_observed_before_any_restart_decision(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -247,7 +247,7 @@ def test_the_wedge_is_observed_before_any_restart_decision(
 
 
 def test_a_check_run_observes_the_wedge_but_attempts_no_restart(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """Observing is not acting. A dry run that saw a wedge really did see it.
 
@@ -265,7 +265,7 @@ def test_a_check_run_observes_the_wedge_but_attempts_no_restart(
         apply=False,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -278,7 +278,7 @@ def test_a_check_run_observes_the_wedge_but_attempts_no_restart(
 
 
 def test_each_wedged_agent_gets_its_own_attempt_id(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """Six agents dying together must be six traceable stories, not one blur.
 
@@ -294,7 +294,7 @@ def test_each_wedged_agent_gets_its_own_attempt_id(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe", "crossref-local"),
@@ -307,7 +307,7 @@ def test_each_wedged_agent_gets_its_own_attempt_id(
 
 
 def test_an_unresolvable_account_is_recorded_as_null_not_guessed(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """The registry here is empty, so the account is genuinely undeterminable.
 
@@ -324,7 +324,7 @@ def test_an_unresolvable_account_is_recorded_as_null_not_guessed(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=lambda: stuck("figrecipe"),
@@ -337,7 +337,7 @@ def test_an_unresolvable_account_is_recorded_as_null_not_guessed(
 
 
 def test_an_unwritable_event_log_does_not_stop_the_restart(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """FAIL-OPEN, proved end to end against a really read-only directory.
 
@@ -356,7 +356,7 @@ def test_an_unwritable_event_log_does_not_stop_the_restart(
             apply=True,
             now=NOW,
             history_file=history,
-            store=store,
+            events_path=events,
             alarm=False,
             restart_fn=recorder,
             capture_fn=lambda: stuck("figrecipe"),
@@ -370,7 +370,7 @@ def test_an_unwritable_event_log_does_not_stop_the_restart(
 
 
 def test_a_healthy_fleet_writes_no_auth_events(
-    tmp_path: Path, history: Path, store: str
+    tmp_path: Path, history: Path, events: Path
 ) -> None:
     """Silence means nothing was seen — the log must not invent activity.
 
@@ -386,7 +386,7 @@ def test_a_healthy_fleet_writes_no_auth_events(
         apply=True,
         now=NOW,
         history_file=history,
-        store=store,
+        events_path=events,
         alarm=False,
         restart_fn=recorder,
         capture_fn=dict,

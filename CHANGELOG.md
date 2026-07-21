@@ -38,6 +38,203 @@ versioning follows [SemVer](https://semver.org/).
   new tests fail; the 4 that still pass are the healthy-store and absent-store
   controls, which must not depend on it.
 
+- **autobump-release-sweep: an ABSENT tag read as a garbage sha — first
+  scheduled tick raised a false TAG COLLISION for v0.24.4, which does not
+  exist.** `gh api` on a 404 prints the error JSON to STDOUT, so `tag_sha`
+  captured a JSON blob instead of "": BUMP fired where TAG_ONLY belonged and
+  the collision guard tripped on a phantom tag (run 29804531483, fail-loud
+  alarm — report-only held, no mutation). `tag_sha` now accepts only a
+  40-hex sha at both the ref and peel reads; anything else is treated as
+  absent. Verified live: v0.24.4 (absent) → empty; v0.24.2 (annotated) →
+  peeled develop commit.
+
+- **`notify` extra is now closed under `all` (PS-221), unblocking the whole PR
+  queue.** `scitex-notification>=0.2.9` sat in the public `notify` extra but not
+  in `all`, so `pip install scitex-agent-container[all]` silently under-installed
+  the login-relay's email surface. The omission was deliberate and documented —
+  `all` could not reference a version that did not exist on PyPI yet — but 0.2.9
+  has since been published, so the constraint has expired and the comment
+  asserting it was outdated. This single error failed
+  `tests/develop/test_audit.py::test_audit_all_clean` on EVERY open pull
+  request, not just the one that introduced it, because the audit grades the
+  whole checkout rather than the diff.
+
+- **autobump-release-sweep: two state-read defects caught by the first live
+  dry-run (2026-07-21), fixed before arming.** (1) `tag_sha` returned an
+  ANNOTATED tag's tag-object sha, not the peeled commit — head==tagged-commit
+  read as "moved past" and STEADY was unreachable for operator-cut annotated
+  tags. Now peels via `/git/tags/<sha>`. (2) `gate_develop` counted every
+  completed check-run, so a flaky-then-rerun-green check (two rows for one
+  name) kept develop RED forever. Now projects latest-run-per-name
+  (`group_by(.name) | max_by(.started_at)`) before classifying, matching
+  branch-protection semantics. Both verified against the live commit that
+  produced the false readings (bad=0, gate=green; peel=develop head).
+
+## [0.24.2] - 2026-07-21
+
+### Added
+
+- **Merge->release automation: `autobump-release-sweep.yaml`.** A state-driven
+  scheduled sweep (mirroring `auto-merge-to-develop.yaml`'s proven shape) that
+  auto-bumps the patch version and cuts a release on every merge-to-develop —
+  the automation of the manual `bump pyproject + promote CHANGELOG -> PR ->
+  merge -> tag -> push tag` ritual. It advances the version every release so
+  uv's `(name, version)` wheel-cache key changes (no stale-wheel reuse — the
+  root-cause fix, not the by-symbol workaround). Loop-safety is STRUCTURAL
+  (repository state, not event guards): an untagged version is re-tagged, never
+  re-incremented. It gates on develop's post-merge all-green check state, fires
+  the EXISTING release pipeline via `workflow_dispatch` (no bot token / PAT —
+  github.token is used throughout; a github.token tag push does not fire
+  `on: push`, so the release is dispatched explicitly), and runs every tick as a
+  continuous ghost-tag monitor (tag present but PyPI not serving => off-rail
+  Telegram alarm + re-dispatch). Bump/CHANGELOG logic is the tested, dependency-
+  free `.github/ci/autobump.py` (unit-tested in `tests/develop/test_autobump.py`).
+  SHIPS DISARMED: every mutation is gated behind the repo Actions Variable
+  `AUTOBUMP_ENABLED == 'true'`, and the file only executes once on `main` — so
+  merging it changes nothing until the operator deliberately arms it.
+
+### Changed
+
+- **Start / start-failure log output is now readable, not a run-on wall**
+  (operator 2026-07-19: "めっちゃ汚い"). Format-only — no control-flow, trigger,
+  or suppression behaviour changed:
+  - The **start-failure diagnostic** (`raise_start_failure` /
+    `_start_failure_diag`) now renders as a headline plus clearly separated,
+    indented sections (`tmux session`, `inner stderr`, `pane tail`) with each
+    section body indented under its label, instead of one flush-left blob.
+  - The per-start **`[sac:creds]` credentials-pool selection notice** is now a
+    headline naming the agent + picked account, followed by indented fields
+    (`file`, `policy=…`, `picked usage`) and a one-entry-per-line ranking-inputs
+    list, instead of a single run-on sentence. It still writes through the
+    caller's `log_stream` (the `preflight_from_config_path` dry-probe
+    suppression seam is preserved — it is NOT routed to a logger).
+  - Hook failures in `_hook_runner` now log at WARNING level (`logger.warning`)
+    instead of `print`-ing `[WARN] …` with the severity baked into the message
+    text.
+
+### Fixed
+
+- **Concurrent runner-state writes no longer race on a shared `<name>.tmp`**
+  (#797). Each of the seven runner-state writers wrote to a fixed sibling
+  `<name>.tmp` before the atomic rename, so two writers racing on the same
+  target could clobber each other's temp file. Each now writes to a unique
+  temp path via the `atomic_write_text` helper; the per-session quota group
+  was extracted to `_session_quota.py` to keep the module under the line cap,
+  and a regression test covers the concurrent-writer case.
+
+## [0.24.1] - 2026-07-20
+
+### Fixed
+
+- **The v0.24.0 quota fail-loud hard-blocked `sac agents restart` and its own
+  documented fix did nothing.** The boot picker reads the RUNTIME
+  `~/.scitex/agent-container/runtime/quota-cache.json`, but `sac accounts
+  refresh-quota-cache` defaulted to the LEGACY `~/.scitex/quota-cache.json` — so
+  when the picker went blind (a transient stale-cache window), its error told
+  the operator to run `refresh-quota-cache`, which populated a file the picker
+  never read, leaving the restart hard-blocked (2026-07-20: `sac-restart
+  scitex-dev`). The populator's default and the apptainer bind now resolve to
+  the SAME runtime path the reader reads first, so the fail-loud's actionable
+  hint actually clears the block. A path-SSOT test (`test_quota_cache_path_ssot`)
+  pins writer-default == reader-first-candidate == bind so a re-split goes red.
+
+## [0.24.0] - 2026-07-20
+
+### Changed
+
+- **sac records its own operational events, and no longer writes into a
+  third-party application's store.** sac's unattended passes — the fleet
+  reconciler, the auth-heal login-expired restarter, the host-sync drift check,
+  the worktree GC, the accounts refresh — decide things about the fleet every
+  few minutes, forever, with nobody watching. Their verdicts went to stderr and
+  into another application's data store. Neither is sac's own record: the stderr
+  line lands in a journal nobody opens (which is how a dead cron job stayed dead
+  for 49 days), and a store sac does not own can be absent, unwritable or
+  renamed — and when it is, sac retains no account of what its own timers
+  decided. An unlogged decision is an undebuggable one.
+
+  New `_events/` package: an append-only JSONL log of what sac observed and
+  decided, in sac's own vocabulary (`pass-completed`, `subject-degraded`,
+  `subject-unknown`, `subject-recovered`, `self-impaired`, `self-recovered`),
+  following the shape `_authevents/_log.py` already set. Default
+  `<runtime>/sac-events.jsonl`, relocatable with `SAC_EVENT_LOG`, resolved per
+  call. Fail-open but never silent — a failed write always prints loudly.
+
+  The four alarm modules each carried a near-identical private copy of the same
+  routing helpers; all four are replaced by one shared implementation
+  (`_events/_verdicts.py`), removing roughly 240 lines of duplication.
+
+  Interface changes: `reconcile_pass()` / `auth_heal_pass()` take `events_path`
+  where they took `store`; the `alarm` block of `sac host sync --json` and
+  `sac worktree gc --json` now uses the uniform keys
+  `degraded` / `unknown` / `recovered` / `failed`.
+
+  `tests/scitex_agent_container/test__card_package_boundary.py` enforces the
+  boundary with an AST scan asserting the importer set EXACTLY equals the two
+  files still permitted, so both a new import and a stale allowance go red.
+
+### Fixed
+
+- **The account picker booted an agent onto a quota-exhausted account when the
+  quota cache was empty.** It collapsed UNKNOWN quota into "OK" (constitution
+  §2 — unknown is a third state, never a pole), kept a blind pin, and read
+  `5h=? 7d=?` — on 2026-07-20 scitex-cards could not run after a plain restart
+  because the picker kept selecting the exhausted pinned account.
+  `pick_healthy_account` gains `require_quota_evidence`: a blind pin rotates off
+  toward a known-headroom account, and a fully-blind pick fails loud with an
+  actionable `sac accounts refresh-quota-cache` hint. The boot preflight gates
+  it on `quota_cache_present()`, so a host WITH a cache whose populator produced
+  nothing fails loud, while a cache-LESS host (fresh install / CI /
+  quota-cron-less Spartan node) still degrades to freshness-only and boots — the
+  documented never-block invariant is preserved. The health-probing layer moved
+  to `_creds/_account_health.py` (behaviour-neutral extraction).
+
+## [0.23.0] - 2026-07-20
+
+### Fixed
+
+- **`sac agents restart` inside a container reported success while restarting
+  nothing.** The plain restart path decided whether to broker to the host's
+  `sac listen` by INSPECTING AN EXCEPTION MESSAGE: it fell back only when the
+  local restart raised an error containing the literal substring
+  `"not found in registry"`. Local resolution has two legs — a registry row OR a
+  resolvable spec — and specs are bind-mounted into every container, so the spec
+  leg succeeded, nothing raised, the handler was never consulted, and the restart
+  ran locally inside the SIF where it cannot touch the host's tmux session. It
+  then printed `Agent 'x' restarted` and exited 0. The broker fired only for
+  agents that did not exist at all. Measured: restarting a real agent from a
+  container returned rc=0 with no `POST /agents/<name>/restart` in the host
+  listen log and the target's pid unchanged 70 minutes later.
+
+  Two faults, one refactor. Gating control flow on a substring of an error
+  message is fragile (a reword silently disables the broker) and it INVERTS the
+  logic (the fallback requires a failure that the silent success prevents).
+  Both the plain and the `--fresh` path — which used a second, different
+  predicate — now ask one readable question, `must_broker_to_host()`: *am I
+  inside an apptainer SIF?* That is the same rule the start path already uses,
+  and the same one the host's restart handler assumes when it strips the SIF env
+  markers from the child it shells. In a SIF with no reachable listen the restart
+  FAILS LOUD; there is deliberately no fall-through to the local no-op.
+
+- **A restart that changed nothing no longer reports success.** `rc=0` meant
+  "the call returned", never "the state changed" — the exit code was
+  byte-identical between the no-op and a real restart. A locally-performed
+  restart now captures the agent's identity-of-run
+  (`<runtime-dir>/<agent>/instance_id`, a uuid7 minted at launch) before and
+  after, and refuses to report success unless it CHANGED. The verdict is a
+  ternary, never a binary: `true` (a new run exists), `false` (the run is
+  unchanged, or gone entirely — both definitive, we held the before-evidence),
+  and `null` (no marker either side — no evidence, so the verdict abstains
+  rather than inventing a failure). It rides the `--json` envelope as
+  `verified` / `verified_reason` / `run_before` / `run_after`; a brokered
+  restart relays the HOST's verdict rather than re-deriving one it cannot see.
+
+- **Restart routing is now logged.** Whether a restart was handled locally or
+  brokered — and why — is appended as JSONL to
+  `<runtime-dir>/logs/restart_decision.log` before any work starts, plus an
+  outcome line after. Previously the fact that no request had been sent anywhere
+  was recorded nowhere: the listen log can only show what ARRIVED.
+
 - **The version lie, caught by a test instead of by an incident.** `pyproject.toml`
   is bumped to `0.23.0`, and a guard now fails CI whenever the CHANGELOG lists
   pending work under `[Unreleased]` while the declared version is one the

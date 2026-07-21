@@ -147,6 +147,7 @@ def _rotate_among_credentials_files(
     Back-compat: a 1-element pool whose one snapshot is healthy resolves
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
+    from .._account.quota_cache import quota_cache_present
     from .._creds import (
         POLICY_BURN,
         pick_healthy_account,
@@ -203,6 +204,13 @@ def _rotate_among_credentials_files(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
+        # Boot gate (constitution §2): on a host that HAS a quota cache, a
+        # fully-BLIND pick means the populator failed (empty/stale cache) —
+        # fail loud rather than land the agent on an unverifiable, possibly
+        # quota-exhausted account (2026-07-20 incident). A host with NO cache
+        # (fresh install / CI / quota-cron-less Spartan node) still degrades
+        # to freshness-only and boots — the documented never-block invariant.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
 
     picked_path = next(p for slug, p in entries if slug == picked)
@@ -216,7 +224,7 @@ def _rotate_among_credentials_files(
         account_7d_reset_at,
         account_7d_usage,
         audit_candidates,
-        format_pick_audit,
+        pick_audit_parts,
     )
 
     # EVERY ranking input, per candidate — the pick must be auditable
@@ -232,7 +240,7 @@ def _rotate_among_credentials_files(
         for s in slugs
     }
     r7 = {s: account_7d_reset_at(s, quota_cache_path=quota_cache_path) for s in slugs}
-    audit = format_pick_audit(audit_candidates(slugs, u5, u7, reset_7d=r7, now=now))
+    records = audit_candidates(slugs, u5, u7, reset_7d=r7, now=now)
 
     def fmt(v: float | None) -> str:
         return "?" if v is None else f"{v:.0f}%"
@@ -246,12 +254,21 @@ def _rotate_among_credentials_files(
         "accounts, load-balanced per agent by 7d headroom; time-to-reset "
         "counts only within the 2h expiring horizon"
     )
+    # Readable, structured notice (operator 2026-07-19: the run-on one-liner
+    # was "めっちゃ汚い"): a headline naming the agent + picked account, then
+    # indented fields, then the per-candidate ranking inputs as a ONE-ENTRY-
+    # PER-LINE list. Still emitted through ``stream`` (log_stream or stderr)
+    # so ``preflight_from_config_path``'s throwaway-StringIO suppression of the
+    # dry-probe rotation notice keeps working — do NOT route this to a logger.
+    ranking = "\n".join(f"      {part}" for part in pick_audit_parts(records))
     stream = log_stream if log_stream is not None else sys.stderr
     print(
-        f"[sac:creds] agent '{config.name}' selected credentials_files pool "
-        f"entry: account {picked!r} ({picked_path}) among {len(slugs)} listed "
-        f"credentials_files (policy={policy} — {rationale}; picked usage "
-        f"5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}; {audit})",
+        f"[sac:creds] agent '{config.name}' selected credentials pool account "
+        f"{picked!r} ({len(slugs)} candidates listed)\n"
+        f"  file:          {picked_path}\n"
+        f"  policy={policy} — {rationale}\n"
+        f"  picked usage:  5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}\n"
+        f"  ranking inputs:\n{ranking}",
         file=stream,
     )
 
@@ -320,6 +337,7 @@ def _rotate_to_healthy_account(
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
 
+    from .._account.quota_cache import quota_cache_present
     from .._creds import pick_healthy_account, resolve_7d_policy
 
     policy = resolve_7d_policy()
@@ -331,6 +349,10 @@ def _rotate_to_healthy_account(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
+        # Boot gate (constitution §2): a blind-quota pin fails loud on a host
+        # that HAS a cache (populator failure); a cache-less host degrades and
+        # boots (never-block invariant). See quota_cache_present.
+        require_quota_evidence=quota_cache_present(quota_cache_path),
     )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.

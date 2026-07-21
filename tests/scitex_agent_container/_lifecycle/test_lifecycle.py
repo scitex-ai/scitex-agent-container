@@ -317,16 +317,18 @@ def test_run_hooks_skips_https_url_entries() -> None:
     assert calls == []
 
 
-def test_run_hooks_warns_on_nonzero_returncode(capsys: pytest.CaptureFixture) -> None:
+def test_run_hooks_warns_on_nonzero_returncode(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     # Arrange
     def runner(cmd: str, **_kwargs: Any) -> _FakeResult:
         return _FakeResult(returncode=2, stderr="boom")
 
     # Act
-    lc._run_hooks(["false"], runner=runner)
-    # Assert
-    err = capsys.readouterr().err
-    assert "Hook failed" in err and "boom" in err
+    with caplog.at_level("WARNING"):
+        lc._run_hooks(["false"], runner=runner)
+    # Assert — the failure is logged at WARNING level with cmd + stderr.
+    assert "Hook failed" in caplog.text and "boom" in caplog.text
 
 
 def test_run_hooks_real_subprocess_executes(tmp_path: Path) -> None:

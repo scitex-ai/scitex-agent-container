@@ -8,10 +8,20 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import Any, Callable
 
 from ..hooks import run_hook
+
+# Module logger (stdlib, mirroring ._stop_escalate) so hook failures are
+# emitted at a proper WARNING LEVEL — rendered as scitex-logging's coloured
+# ``WARN:`` prefix by the root handler in production — instead of a bare
+# ``print`` with the severity baked into the message text as ``[WARN]``
+# (operator 2026-07-19: severity is DATA, not text). Stdlib ``getLogger`` is
+# free, so this does not tax the CLI import budget the way a top-level
+# ``scitex_logging`` import would (see config._config_logger).
+logger = logging.getLogger(__name__)
 
 
 def _fire_forget_hook(
@@ -32,12 +42,7 @@ def _fire_forget_hook(
     try:
         run_hook(agent_name, hook_name, list(commands or []), context=context)
     except Exception:  # pragma: no cover  # stx-allow: fallback (reason: hook dispatch safety net — hook crashes must not propagate to caller)
-        import sys
-
-        print(
-            f"[WARN] run_hook {hook_name} dispatch failed for {agent_name}",
-            file=sys.stderr,
-        )
+        logger.warning("run_hook %s dispatch failed for %s", hook_name, agent_name)
 
 
 def _run_hooks(
@@ -70,9 +75,9 @@ def _run_hooks(
             continue
         result = runner(hook, shell=True, capture_output=True, text=True, env=env)
         if result.returncode != 0:
-            # Log but don't fail
-            import sys
-
-            print(f"[WARN] Hook failed: {hook}", file=sys.stderr)
+            # Log but don't fail — at WARNING level (severity as data), and
+            # the captured stderr as its own indented follow-on line rather
+            # than a run-on.
+            logger.warning("Hook failed (rc=%s): %s", result.returncode, hook)
             if result.stderr:
-                print(f"       {result.stderr.strip()}", file=sys.stderr)
+                logger.warning("    %s", result.stderr.strip())

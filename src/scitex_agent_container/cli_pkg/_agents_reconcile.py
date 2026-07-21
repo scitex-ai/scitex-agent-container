@@ -158,7 +158,7 @@ def reconcile(
                     "mode": "apply" if apply else "dry-run",
                     "exit_code": code,
                     "counts": outcome.counts(),
-                    "heartbeat_carded": outcome.heartbeat_ok,
+                    "pass_recorded": outcome.heartbeat_ok,
                     "agents": [r.to_dict() for r in outcome.reports],
                 },
                 indent=2,
@@ -224,9 +224,9 @@ def reconcile(
         )
     if not outcome.heartbeat_ok:
         console.print(
-            "[yellow]note:[/yellow] the reconciler's heartbeat card was NOT "
-            "written — the board cannot tell anyone whether this enforcer is "
-            "alive. See the stderr line above."
+            "[yellow]note:[/yellow] this pass was NOT recorded in sac's "
+            "event log — nothing durable now says whether this enforcer ran. "
+            "See the stderr line above."
         )
     raise SystemExit(code)
 

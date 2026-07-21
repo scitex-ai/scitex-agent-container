@@ -82,10 +82,10 @@ def provide_jobs() -> "list[JobSpec]":
 
     * ``sac.host-sync-check`` (``kind="timer"``) — the READ-ONLY peer
       drift detector ``sac host sync --check --all``, run hourly with
-      ``--alarm`` so each peer's verdict is routed to an idempotent
-      scitex-todo card (upsert on drift/unknown, resolve on clean). This
-      is what makes the Stage-0 detector (PR #690) actually RUN and be
-      SEEN: shipped but scheduled nowhere, it was an inert alarm. The job
+      ``--alarm`` so each peer's verdict is recorded in sac's own event
+      log (degraded / unknown / recovered). This is what makes the Stage-0
+      detector (PR #690) actually RUN and be SEEN: shipped but scheduled
+      nowhere, it was an inert alarm. The job
       mutates NOTHING on any peer — it never calls the fast-forward
       remedy (that is Stage 1). ``--alarm`` is gated to require
       ``--check`` in the CLI, so this scheduled command is read-only by
@@ -113,7 +113,7 @@ def provide_jobs() -> "list[JobSpec]":
       schedules is a script, not a countermeasure, which is exactly how
       the sprawl accumulated in the first place. It removes ONLY what it
       can prove is safe (clean AND merged AND aged AND idle, never
-      ``--force``) and cards any repo still over its cap. ``--all`` is
+      ``--force``) and RECORDS any repo still over its cap. ``--all`` is
       well-defined here: it sweeps the local git repos declared as agents'
       ``spec.workdir``, so the command is correct as written.
 
@@ -195,10 +195,9 @@ def provide_jobs() -> "list[JobSpec]":
             command="sac host sync --check --all --alarm",
             description=(
                 "Read-only drift check of every peer's sac checkout vs the "
-                "centre; routes each verdict to an idempotent scitex-todo "
-                "card (upsert on drift/unknown, resolve on clean) so the "
-                "shout is SEEN on the board. Mutates nothing on any peer — "
-                "never runs the fast-forward remedy (Stage 1)."
+                "centre; records each verdict in sac's own event log so the "
+                "shout is DURABLE. Mutates nothing on any peer — never runs "
+                "the fast-forward remedy (Stage 1)."
             ),
             kind="timer",
             # First check 10min after boot/login (peers reachable, listen
@@ -220,8 +219,8 @@ def provide_jobs() -> "list[JobSpec]":
                 "Daily git-worktree GC: removes only worktrees PROVEN safe "
                 "(clean AND merged AND older than 24h AND not in use — never "
                 "--force), prunes admin refs whose directory is already gone, "
-                "and upserts an idempotent scitex-todo card for any repo still "
-                "over its worktree cap (resolved when it drops back under). "
+                "and records any repo still over its worktree cap in sac's "
+                "own event log (recorded as recovered when it drops back under). "
                 "The permanent countermeasure to worktree sprawl."
             ),
             kind="timer",
@@ -322,8 +321,8 @@ def provide_jobs() -> "list[JobSpec]":
                 "touches a CORPSE (no session => no context to lose); never a "
                 "live-but-wedged agent (auth-heal owns those) and never a "
                 "deliberately-stopped one. Rate-limited (30min/agent debounce, "
-                "<=2/agent/hour, <=10/pass); an agent it cannot recover gets a "
-                "scitex-todo card instead of an endless bounce."
+                "<=2/agent/hour, <=10/pass); an agent it cannot recover is "
+                "RECORDED as degraded instead of bounced endlessly."
             ),
             kind="timer",
             # THIS JOB IS THE MECHANISM, not an optimisation. `restart.policy`
@@ -359,7 +358,7 @@ def provide_jobs() -> "list[JobSpec]":
                 "restarted); the restart runs through the pool-loading start "
                 "path (cannot strip CCT tokens) and is rate-limited (30min/agent "
                 "debounce, <=2/agent/hour, <=10/pass); an agent still wedged "
-                "after the cap gets a scitex-todo card, not an endless bounce. "
+                "after the cap is RECORDED as degraded, not bounced endlessly. "
                 "DEPLOY GATE: do NOT enable until the host's auth-heal.py "
                 "scan_tui cron is retired (double-supervisor risk)."
             ),
