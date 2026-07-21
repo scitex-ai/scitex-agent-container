@@ -18,7 +18,16 @@ versioning follows [SemVer](https://semver.org/).
   absent. Verified live: v0.24.4 (absent) → empty; v0.24.2 (annotated) →
   peeled develop commit.
 
-### Fixed
+- **`notify` extra is now closed under `all` (PS-221), unblocking the whole PR
+  queue.** `scitex-notification>=0.2.9` sat in the public `notify` extra but not
+  in `all`, so `pip install scitex-agent-container[all]` silently under-installed
+  the login-relay's email surface. The omission was deliberate and documented —
+  `all` could not reference a version that did not exist on PyPI yet — but 0.2.9
+  has since been published, so the constraint has expired and the comment
+  asserting it was outdated. This single error failed
+  `tests/develop/test_audit.py::test_audit_all_clean` on EVERY open pull
+  request, not just the one that introduced it, because the audit grades the
+  whole checkout rather than the diff.
 
 - **autobump-release-sweep: two state-read defects caught by the first live
   dry-run (2026-07-21), fixed before arming.** (1) `tag_sha` returned an
