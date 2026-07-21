@@ -193,12 +193,27 @@ jobs:
             # peel, head == tagged-commit still reads as "moved past" and
             # STEADY is unreachable for annotated tags (operator-cut releases
             # like v0.24.2 are annotated; first dry-run 2026-07-21 caught it).
-            local sha type
+            # ABSENT tag: `gh api` on a 404 prints the ERROR JSON BODY to
+            # STDOUT (only the "gh: Not Found" line goes to stderr), so
+            # capturing stdout yields a non-empty JSON blob, not "". The
+            # first scheduled tick (run 29804531483) read that blob as a
+            # sha: BUMP fired instead of TAG_ONLY and a "TAG COLLISION"
+            # alarm fired for v0.24.4, WHICH DOES NOT EXIST. Only a
+            # 40-hex string is a sha; anything else is treated as absent.
+            local sha type peeled
             sha=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.sha' 2>/dev/null || echo "")
-            [ -z "$sha" ] && { echo ""; return; }
+            case "$sha" in
+              *[!0-9a-f]*|"") echo ""; return;;
+            esac
+            [ "${#sha}" -eq 40 ] || { echo ""; return; }
             type=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.type' 2>/dev/null || echo "")
             if [ "$type" = "tag" ]; then
-              gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha' 2>/dev/null || echo ""
+              peeled=$(gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha' 2>/dev/null || echo "")
+              case "$peeled" in
+                *[!0-9a-f]*|"") echo ""; return;;
+              esac
+              [ "${#peeled}" -eq 40 ] || { echo ""; return; }
+              echo "$peeled"
             else
               echo "$sha"
             fi
