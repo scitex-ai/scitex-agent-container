@@ -25,6 +25,8 @@ smoke tests.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import os
 import time
@@ -281,7 +283,7 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
     sub.mkdir(parents=True, exist_ok=True)
     y = sub / f"{name}.yaml"
     y.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -293,7 +295,7 @@ def _write_singleton_yaml(parent: Path, name: str, host: str) -> Path:
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         "  claude:\n"
-        "    model: haiku\n"
+        "    model: haiku\n")
     )
     return y
 
@@ -753,7 +755,7 @@ def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
     yaml_path = agents_dir / f"{name}.yaml"
     port_line = "null" if a2a_port is None else json.dumps(a2a_port)
     yaml_path.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata: {}\n"
         "spec:\n"
@@ -764,7 +766,7 @@ def _write_local_spec_with_a2a(home: Path, name: str, *, a2a_port: Any) -> Path:
         "  claude:\n    model: sonnet\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        f"  a2a:\n    port: {port_line}\n"
+        f"  a2a:\n    port: {port_line}\n")
     )
     return yaml_path
 
@@ -959,7 +961,7 @@ def _write_group_agent_spec(home: Path, name: str, *, host: str, groups_yaml: st
     d.mkdir(parents=True)
     y = d / "spec.yaml"
     y.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         "  labels:\n"
@@ -973,7 +975,7 @@ def _write_group_agent_spec(home: Path, name: str, *, host: str, groups_yaml: st
         "    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n    model: haiku\n"
+        "  claude:\n    model: haiku\n")
     )
     return y
 
