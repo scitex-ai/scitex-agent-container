@@ -29,6 +29,8 @@ does not leak two long-lived agents into the operator's environment.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import os
 import shutil
@@ -63,7 +65,7 @@ def _write_fleet(home: Path, names: list[str]) -> Path:
         agent_dir = fleet_root / name
         agent_dir.mkdir(parents=True, exist_ok=True)
         (agent_dir / "spec.yaml").write_text(
-            textwrap.dedent(
+            explicitize_yaml(textwrap.dedent(
                 f"""\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -89,7 +91,7 @@ def _write_fleet(home: Path, names: list[str]) -> Path:
                     policy: on-failure
                     max_retries: 3
                 """
-            )
+            ))
         )
     return fleet_root
 

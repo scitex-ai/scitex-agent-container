@@ -139,12 +139,18 @@ def _run_piped_on_stdin(body: str, work: Path) -> subprocess.CompletedProcess[st
     srun.write_text(_FAKE_SRUN, encoding="utf-8")
     srun.chmod(0o755)
     script = _HARNESS_PREAMBLE.format(srun=srun, work=work) + body + _HARNESS_TAIL
+    # cwd=work: the lifted blocks are executed for their REDIRECTION shape,
+    # and a mutated block can create relative-path files. Anchoring bash in
+    # the per-test tmp dir keeps any such droppings out of the repo root
+    # (a stray 0-byte SAC_TEST_SCRIPT_TAIL_REACHED once rode a git add -A
+    # into a PR from exactly this seam).
     return subprocess.run(
         ["bash", "-s"],
         input=script,
         capture_output=True,
         text=True,
         timeout=60,
+        cwd=str(work),
     )
 
 

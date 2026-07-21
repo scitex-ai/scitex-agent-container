@@ -59,32 +59,39 @@ def _write_spec(tmp_path: Path, *, name: str = "alpha", runtime: str = "tui") ->
     ``load_config`` derives the agent name from the parent directory
     (dir-as-SSoT), so the file must live at ``<name>/spec.yaml``.
     """
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     agent_dir = tmp_path / name
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        f"  runtime: {runtime}\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {tmp_path / 'work'}\n"
-        "  apptainer:\n"
-        "    image: /x.sif\n"
-        "    binds: []\n"
-        "  claude:\n"
-        "    model: sonnet\n"
-        "  health:\n"
-        "    enabled: true\n"
-        "    interval: 60\n"
-        "  restart:\n"
-        "    policy: on-failure\n"
-        "    max_retries: 3\n"
-        "  hooks:\n"
-        "    pre_start: []\n"
-        "    post_start: []\n"
-        "    pre_stop: []\n"
-        "    post_stop: []\n"
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            f"  runtime: {runtime}\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {tmp_path / 'work'}\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: true\n"
+            "    interval: 60\n"
+            "  restart:\n"
+            "    policy: on-failure\n"
+            "    max_retries: 3\n"
+            "  hooks:\n"
+            "    pre_start: []\n"
+            "    post_start: []\n"
+            "    pre_stop: []\n"
+            "    post_stop: []\n"
+        )
     )
     return spec
 

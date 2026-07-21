@@ -50,6 +50,13 @@ from pathlib import Path
 
 import click
 
+# Inline spec templates live in ``_create_templates`` (per-file line
+# cap). Fully-explicit bodies per the red-start ruling 2026-07-21.
+from ._create_templates import (  # noqa: F401
+    _FULL_TEMPLATE,
+    _MINIMAL_TEMPLATE,
+    _TEMPLATES,
+)
 from ._new_dir_template import (
     DirTemplateError,
     discover_dir_templates,
@@ -73,190 +80,6 @@ def _is_valid_agent_name(name: str) -> bool:
     if not name:
         return False
     return all(ch in _VALID_NAME_CHARS for ch in name)
-
-
-_MINIMAL_TEMPLATE = """\
-# {name} — fresh v3 spec scaffolded by ``sac agents create``.
-#
-# This is the minimal shape — every field the validator REQUIRES (no hidden
-# defaults): placement, workdir, image + binds, model, health, restart. Add
-# startup_prompts, channels, etc. as you need them — see
-# ``examples/agents/full-agent/spec.yaml`` for the full annotated tour.
-
-apiVersion: scitex-agent-container/v3
-kind: Agent
-
-spec:
-  runtime: apptainer
-  # Placement: the RESOLVED hostname of the machine this agent runs on
-  # (filled with the creating host at render time; `host: local` is
-  # banned). Edit to a `sac host list` peer name to pin it elsewhere,
-  # or use `hosts:` for one instance per host.
-  host: {host}
-  workdir: ~/proj/{name}
-
-  apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
-    binds: []
-
-  claude:
-    model: haiku
-    flags:
-      - --dangerously-skip-permissions
-
-  health:
-    enabled: true
-    interval: 60
-
-  restart:
-    policy: on-failure
-    max_retries: 3
-
-# EOF
-"""
-
-
-_FULL_TEMPLATE = """\
-# {name} — fresh v3 DEVELOPER spec scaffolded by ``sac agents create --template full``.
-#
-# This is the PROVEN developer shape the fleet's live dev agents use
-# (card sac-agents-new-template-stale; operator 2026-06-25: "very
-# general, just developer like existing ones") — a ready-to-run
-# project-maintainer agent, NOT a bare skeleton. It ships:
-#   * runtime: tui                interactive in-apptainer Claude TUI
-#   * relaxed + directory overlay persistent per-agent $HOME / installs
-#   * full host reach at the canonical path (so ~/proj/... paths match)
-#   * fleet push channels         server:sac + server:scitex-todo + telegrammer
-#   * SCITEX_TODO_AGENT_ID        todo-store writes attribute to THIS agent
-#   * editable install of the agent's own repo (live dev loop)
-#   * a generic "Start or continue." kick + metadata.labels + opus model
-# Every field validates against the live v3 schema. Edit the labels + the
-# startup prompt for the agent's real mission; delete blocks you don't need.
-
-apiVersion: scitex-agent-container/v3
-kind: Agent
-
-metadata:
-  labels:
-    role: project-maintainer
-    team: scitex
-    project: {name}
-    purpose: {name}-maintainer
-    description: |
-      {name} developer agent — maintains the {name} repo. Replace this
-      description and the startup prompt below with the agent's real mission.
-    capabilities: develop, test, review, release
-    cardinality: singleton
-
-spec:
-  runtime: tui
-  # RESOLVED placement (creating host at render time; `local` is banned).
-  host: {host}
-
-  # The in-container --pwd. The repo is bound at this SAME absolute path
-  # below, so host and container agree (editable install, git, tooling).
-  workdir: {home}/proj/{name}
-
-  # to_home/ sibling — mirrored into the container $HOME (overlay upper
-  # home under relaxed mode). Put CLAUDE.md / .mcp.json / .claude/ there.
-  to_home: ./to_home
-
-  python-venv: auto
-
-  apptainer:
-    # sac-base.sif = the minimal layer; the agent editable-installs its
-    # own stack into the overlay below. Swap to sac-scitex.sif to start
-    # from the full pre-baked scitex stack instead.
-    image: ~/.scitex/agent-container/containers/sac-base.sif
-
-    # Relaxed isolation — the dev agent shares the operator's identity and
-    # host tree (the fleet dev default). Pairs with the raw_args below,
-    # which re-declare the namespace + canonical HOME the overlay needs.
-    relaxed: true
-
-    # Persistent per-agent directory overlay: package installs, caches and
-    # $HOME state survive restarts while the base SIF stays immutable. sac
-    # auto-creates the overlay dir and materialises to_home/ into its upper
-    # home on first start.
-    overlay: ~/.scitex/agent-container/containers/overlays/{name}/
-
-    # Full host reach at the CANONICAL path (source ~ is expanded by sac;
-    # the destination must be absolute). Narrow this to specific project
-    # trees for a capsule-style agent.
-    binds:
-      - {home}:{home}:rw
-
-    # Per-agent env. SCITEX_TODO_AGENT_ID makes scitex-todo writes
-    # attribute to THIS agent. (sac AUTO-injects
-    # SCITEX_AGENT_CONTAINER_STATE_DB + binds the per-agent state dir, so
-    # the state DB needs no manual entry here.)
-    env:
-      SCITEX_TODO_AGENT_ID: {name}
-
-    # Relaxed mode skips sac's curated isolation prepend, so re-declare the
-    # user namespace, filesystem isolation, and the canonical container HOME
-    # that the overlay upper home is materialised under.
-    raw_args:
-      - --userns
-      - --containall
-      - --home=/home/agent
-
-  claude:
-    model: opus[1m]
-    flags:
-      - --dangerously-skip-permissions
-    session: continue
-    auto_accept: true
-
-    # Fleet push channels: sac control bus + shared scitex-todo store + the
-    # Telegram bridge (operator DMs wake the agent). server:sac is also
-    # auto-injected by the loader; listed here for visibility.
-    channels:
-      - server:sac
-      - server:scitex-todo
-      - server:claude-code-telegrammer
-
-    # Pin this agent to a dedicated account by uncommenting and pointing at
-    # that account's LIVE .credentials.json (else the shared host OAuth is
-    # forwarded automatically).
-    # credentials_file: ~/.scitex/agent-container/accounts/<ACCOUNT>/.credentials.json
-
-  # Editable-install the agent's own repo so imports resolve to the live
-  # working tree (edit -> test without reinstall). The `|| true` keeps
-  # startup resilient when the repo has no installable package yet.
-  startup_commands:
-    - command: 'uv pip install -e {home}/proj/{name} --quiet || true'
-
-  # Generic self-resume kick — the agent picks up its board / last state.
-  # Replace with the agent's real first mission.
-  startup_prompts:
-    - Start or continue.
-
-  health:
-    enabled: true
-    interval: 60
-    timeout: 10
-    method: sdk-alive
-
-  restart:
-    policy: on-failure
-    max_retries: 3
-    backoff:
-      initial: 10
-      max: 120
-      multiplier: 2
-
-  a2a:
-    port: auto
-
-# EOF
-"""
-
-
-_TEMPLATES = {
-    "minimal": _MINIMAL_TEMPLATE,
-    "full": _FULL_TEMPLATE,
-}
 
 
 def _default_base_dir() -> Path:

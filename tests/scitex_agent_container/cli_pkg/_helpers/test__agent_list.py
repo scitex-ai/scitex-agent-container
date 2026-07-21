@@ -35,6 +35,7 @@ from scitex_agent_container.cli_pkg._helpers._agent_list import (
     print_agent_list,
     print_agent_list_json,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real-fake registry — exposes the one method production uses.
@@ -155,7 +156,7 @@ def _write_valid_spec(
             "    max_retries: 3",
         ]
     )
-    spec.write_text("\n".join(lines) + "\n")
+    spec.write_text(explicitize_yaml("\n".join(lines) + "\n"))
     return spec
 
 
@@ -173,8 +174,10 @@ def _write_invalid_spec(dir_: Path) -> Path:
     dir_.mkdir(parents=True, exist_ok=True)
     spec = dir_ / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\nkind: Agent\nmetadata: {}\n"
-        "spec:\n  runtime: docker\n"
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\nkind: Agent\nmetadata: {}\n"
+            "spec:\n  runtime: docker\n"
+        )
     )
     return spec
 

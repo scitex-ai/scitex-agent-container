@@ -154,8 +154,17 @@ def test_wants_continue_only_true_for_continue_mode(mode, expected):
 
 
 def _write_spec(tmp_path, body: str):
+    # Red-start ruling 2026-07-21: merge the validator's paste defaults
+    # beneath the fixture body (body wins) so every field is explicit.
+    # The merge NEVER adds claude.session unless already authored —
+    # paste value is null == unauthored — so the role-default scenarios
+    # under test keep their meaning.
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     p = tmp_path / "spec.yaml"
-    p.write_text(body, encoding="utf-8")
+    p.write_text(explicitize_yaml(body), encoding="utf-8")
     return p
 
 

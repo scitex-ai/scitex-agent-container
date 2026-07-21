@@ -36,6 +36,8 @@ back via ``caplog`` (a real pytest log-capture fixture, not a mock).
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import logging
 import os
 import pty
@@ -76,7 +78,7 @@ def _write_local_spec(home: Path, name: str) -> Path:
     agents_dir.mkdir(parents=True)
     yaml_path = agents_dir / f"{name}.yaml"
     yaml_path.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         # sac-builtin: off — opts out of the default server:sac push channel,
         # which otherwise requires a live `sac listen` bearer token file this
@@ -91,7 +93,7 @@ def _write_local_spec(home: Path, name: str) -> Path:
         "  claude:\n    model: sonnet\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  a2a:\n    port: null\n"
+        "  a2a:\n    port: null\n")
     )
     return yaml_path
 

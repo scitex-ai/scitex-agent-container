@@ -16,6 +16,8 @@ Conventions: one assertion per test (STX-TQ007); AAA markers; no mocks
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 from pathlib import Path
 
 from scitex_agent_container._lifecycle._ci_owner import resolve_owner, tracked_repos
@@ -25,13 +27,13 @@ def _write_spec(agents_dir: Path, agent_name: str, project: str) -> None:
     d = agents_dir / agent_name
     d.mkdir(parents=True, exist_ok=True)
     (d / "spec.yaml").write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         "  labels:\n"
         f"    project: {project}\n"
         "spec:\n"
-        "  runtime: tui\n"
+        "  runtime: tui\n")
     )
 
 

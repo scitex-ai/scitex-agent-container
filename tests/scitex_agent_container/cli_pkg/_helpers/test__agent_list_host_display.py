@@ -17,6 +17,8 @@ attributes — mirroring the sibling ``test__agent_list`` conventions.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import os
 from contextlib import contextmanager
@@ -121,7 +123,7 @@ def _write_valid_spec(dir_: Path) -> Path:
     dir_.mkdir(parents=True, exist_ok=True)
     spec = dir_ / "spec.yaml"
     spec.write_text(
-        "\n".join(
+        explicitize_yaml("\n".join(
             [
                 "apiVersion: scitex-agent-container/v3",
                 "kind: Agent",
@@ -143,7 +145,7 @@ def _write_valid_spec(dir_: Path) -> Path:
                 "    max_retries: 3",
             ]
         )
-        + "\n"
+        + "\n")
     )
     return spec
 

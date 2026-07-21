@@ -20,6 +20,11 @@ from textwrap import dedent
 import pytest
 import yaml
 
+# Red-start ruling 2026-07-21: the TestEffectiveId bodies wrap their inline
+# specs with this at module level (the _write_agent_yaml helper imports its
+# own sibling function-locally and does NOT cover these call sites).
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -93,14 +98,21 @@ def _write_agent_yaml(
     # defaults). host/hosts is set per-test below; default to local singleton
     # when a test pins neither, so the placement-composition under test stays
     # the only variable.
-    spec: dict = {
-        "runtime": "apptainer",
-        "workdir": "/home/agent/work",
-        "claude": {"model": "sonnet"},
-        "apptainer": {"image": "/x.sif", "binds": []},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    }
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (curated wins).
+    spec: dict = explicit_spec(
+        {
+            "runtime": "apptainer",
+            "workdir": "/home/agent/work",
+            "claude": {"model": "sonnet"},
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        }
+    )
     if host is not None:
         spec["host"] = host
     if hosts is not None:
@@ -450,8 +462,9 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -474,6 +487,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
+                )
             )
         )
         # Act
@@ -490,8 +504,9 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -513,6 +528,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
+                )
             )
         )
         # Act
@@ -529,8 +545,9 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -552,6 +569,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
+                )
             )
         )
         # Act
@@ -570,8 +588,9 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -592,6 +611,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
+                )
             )
         )
         # Act
@@ -609,8 +629,9 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -636,6 +657,7 @@ class TestEffectiveId:
                     - nas
                     - spartan
                 """
+                )
             )
         )
         # Act
@@ -651,8 +673,9 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -678,6 +701,7 @@ class TestEffectiveId:
                     - nas
                     - spartan
                 """
+                )
             )
         )
         # Act
@@ -698,8 +722,9 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
-                """\
+            explicitize_yaml(
+                dedent(
+                    """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
                 metadata:
@@ -723,6 +748,7 @@ class TestEffectiveId:
                     - ywata-note-win
                     - mba
                 """
+                )
             )
         )
         # Act

@@ -16,6 +16,8 @@ AAA, one assertion per test, no mocks/monkeypatch (STX-NM002).
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 from pathlib import Path
 
@@ -38,7 +40,7 @@ def _write_agent_spec(agents_root: Path, name: str, *, groups_yaml: str) -> Path
     d = agents_root / name
     d.mkdir(parents=True)
     (d / "spec.yaml").write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         "  labels:\n"
@@ -50,7 +52,7 @@ def _write_agent_spec(agents_root: Path, name: str, *, groups_yaml: str) -> Path
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n    model: sonnet\n"
+        "  claude:\n    model: sonnet\n")
     )
     return d / "spec.yaml"
 
@@ -175,7 +177,7 @@ class TestResolveGroupTargets:
         d = isolated_agents_root / "ungrouped"
         d.mkdir()
         (d / "spec.yaml").write_text(
-            "apiVersion: scitex-agent-container/v3\n"
+            explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
             "kind: Agent\n"
             "spec:\n"
             "  runtime: tui\n"
@@ -184,7 +186,7 @@ class TestResolveGroupTargets:
             "  apptainer:\n    image: /x.sif\n    binds: []\n"
             "  health:\n    enabled: true\n    interval: 60\n"
             "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-            "  claude:\n    model: sonnet\n"
+            "  claude:\n    model: sonnet\n")
         )
         # Act
         result = resolve_group_targets(("developer",))

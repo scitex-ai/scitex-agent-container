@@ -21,6 +21,8 @@ preflight) reads ``$HOME`` on linux, so the redirect is honoured.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 from pathlib import Path
 
@@ -205,7 +207,7 @@ def _install_provider_spec(
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -220,7 +222,7 @@ def _install_provider_spec(
         "    image: /nonexistent/dummy.sif\n"
         "    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"),
         encoding="utf-8",
     )
     return spec
@@ -232,7 +234,7 @@ def _install_anthropic_spec(yaml_dir: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -243,7 +245,7 @@ def _install_anthropic_spec(yaml_dir: Path, name: str) -> Path:
         "    image: /nonexistent/dummy.sif\n"
         "    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n"),
         encoding="utf-8",
     )
     return spec

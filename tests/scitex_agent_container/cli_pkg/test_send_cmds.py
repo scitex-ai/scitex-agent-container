@@ -15,6 +15,8 @@ into ``pytest.parametrize`` so the matrix stays declarative.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -62,7 +64,7 @@ def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
     agent_dir = yaml_root / name
     agent_dir.mkdir(parents=True)
     (agent_dir / "spec.yaml").write_text(
-        f"""apiVersion: scitex-agent-container/v3
+        explicitize_yaml(f"""apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
@@ -79,7 +81,7 @@ spec:
   restart:
     policy: on-failure
     max_retries: 3
-"""
+""")
     )
     (tmp_path / "workdir").mkdir()
     state_dir = tmp_path / "state" / name

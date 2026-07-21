@@ -38,34 +38,35 @@ from scitex_agent_container.config import AgentConfig, load_config, validate_con
 # ---------------------------------------------------------------------------
 
 
-# No-hidden-defaults (operator directive 2026-06-23): every applicable
-# author field is REQUIRED at the YAML/load layer. ``_write_spec`` fills the
-# required scaffolding so each test body only has to declare the field it
-# exercises; the body still wins on any key (deep-merged for the nested
-# engine blocks), so round-trip and removed-field assertions are preserved.
+# Explicit-fields red-start ruling (2026-07-21, superseding the 2026-06-23
+# subset): EVERY spec field is REQUIRED at the YAML/load layer. ``_write_spec``
+# fills the full scaffolding from the validator's own paste defaults so each
+# test body only has to declare the field it exercises; the body still wins on
+# any key (deep-merged), so round-trip and removed-field assertions are
+# preserved.
 # NOTE: ``runtime`` is intentionally NOT scaffolded — the body must supply it
 # (every test does), keeping the validator's runtime-required rule honest.
-_REQUIRED_SCAFFOLD: dict = {
-    "host": "${HOSTNAME}",
-    "workdir": "~/.scitex/agent-container/runtime/agents/v3spec",
-    "claude": {"model": "claude-opus-4-8[1m]"},
-    "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
-    "health": {"enabled": True, "interval": 60},
-    "restart": {"policy": "on-failure", "max_retries": 3},
-}
+
+
+def _required_scaffold() -> dict:
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec_defaults,
+    )
+
+    scaffold = explicit_spec_defaults("Agent")
+    del scaffold["runtime"]
+    scaffold["host"] = "${HOSTNAME}"
+    scaffold["workdir"] = "~/.scitex/agent-container/runtime/agents/v3spec"
+    scaffold["claude"]["model"] = "claude-opus-4-8[1m]"
+    scaffold["apptainer"]["image"] = "/opt/sac/scitex.sif"
+    return scaffold
 
 
 def _merge_required(spec_body: dict) -> dict:
     """Deep-merge the required scaffold UNDER ``spec_body`` (body wins)."""
-    import copy
+    from tests.scitex_agent_container._helpers.explicit_spec import deep_merge
 
-    merged = copy.deepcopy(_REQUIRED_SCAFFOLD)
-    for key, value in spec_body.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = {**merged[key], **value}
-        else:
-            merged[key] = value
-    return merged
+    return deep_merge(_required_scaffold(), spec_body)
 
 
 def _write_spec(tmp_path: Path, spec_body: dict, name: str = "v3spec") -> Path:

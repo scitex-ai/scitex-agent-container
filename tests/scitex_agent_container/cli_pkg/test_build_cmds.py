@@ -60,6 +60,14 @@ spec:
     max_retries: 3
 """
 
+# Red-start ruling 2026-07-21: the VALID fixture must carry every field.
+# Merged once at import; deliberately-invalid bodies below stay raw.
+from tests.scitex_agent_container._helpers.explicit_spec import (  # noqa: E402
+    explicitize_yaml as _explicitize_yaml,
+)
+
+_MINIMAL_VALID_SPEC = _explicitize_yaml(_MINIMAL_VALID_SPEC)
+
 
 def _write_spec(tmp_path: Path, body: str = _MINIMAL_VALID_SPEC) -> Path:
     spec = tmp_path / "spec.yaml"
@@ -90,7 +98,7 @@ def _write_spec_with_binds(tmp_path: Path, binds: list[str]) -> Path:
         "    binds:\n"
         f"{bind_lines}\n"
     )
-    return _write_spec(tmp_path, body)
+    return _write_spec(tmp_path, _explicitize_yaml(body))
 
 
 @contextmanager

@@ -16,6 +16,8 @@ exercised through the production ``load_config`` / ``validate_config``).
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 from pathlib import Path
 
 import pytest
@@ -170,7 +172,7 @@ def test_existing_spec_yaml_path_passes_through(tmp_path):
     # Arrange — an explicit spec.yaml path must NOT be cold-started.
     spec = tmp_path / "foo" / "spec.yaml"
     spec.parent.mkdir(parents=True)
-    spec.write_text("apiVersion: scitex-agent-container/v3\nkind: Agent\nspec: {}\n")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\nkind: Agent\nspec: {}\n"))
     # Act
     rewritten, plans = resolve_cold_start_targets(
         [str(spec)], caller_host="h", base_dir=tmp_path / "agents"

@@ -30,19 +30,31 @@ from scitex_agent_container.config._validation import validate_raw
 # Spec builders
 # ---------------------------------------------------------------------------
 
-_COMPLETE_SPEC = {
-    "apiVersion": "scitex-agent-container/v3",
-    "kind": "Agent",
-    "spec": {
-        "runtime": "tui",
-        "host": "${HOSTNAME}",
-        "workdir": "/home/agent/work",
-        "apptainer": {"image": "/x.sif", "binds": []},
-        "claude": {"model": "opus"},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    },
-}
+
+def _complete_spec() -> dict:
+    """Fully-explicit spec (red-start ruling 2026-07-21: EVERY field)."""
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    return {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": explicit_spec(
+            {
+                "runtime": "tui",
+                "host": "${HOSTNAME}",
+                "workdir": "/home/agent/work",
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "claude": {"model": "opus"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
+    }
+
+
+_COMPLETE_SPEC = _complete_spec()
 
 
 def _raw_with_startup(cmds: list) -> dict:

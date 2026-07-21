@@ -13,6 +13,8 @@ verified (TQ003-compatible), and each test asserts exactly one fact
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 import shutil
 from contextlib import contextmanager
@@ -94,7 +96,7 @@ def _seed_agent(tmp_path: Path, name: str, *, spec=True, runtime=True) -> None:
     if spec:
         d = root / "agents" / name
         d.mkdir(parents=True)
-        (d / "spec.yaml").write_text("apiVersion: scitex-agent-container/v3\n")
+        (d / "spec.yaml").write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"))
     if runtime:
         rt = root / "runtime" / name
         rt.mkdir(parents=True)

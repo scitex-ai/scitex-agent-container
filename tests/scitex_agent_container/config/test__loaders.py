@@ -30,6 +30,10 @@ from scitex_agent_container.config._loaders import (
     compose_effective_name,
 )
 from scitex_agent_container.config._types import HostsSpec, StartupCommand
+from tests.scitex_agent_container._helpers.explicit_spec import (
+    deep_merge,
+    explicit_spec,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -373,15 +377,17 @@ def _v3_minimal_cfg(tmp_path: Path):
     body = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {
-            "runtime": "apptainer",
-            "host": "${HOSTNAME}",
-            "workdir": "/home/agent/work",
-            "apptainer": {"image": "x.sif", "binds": []},
-            "claude": {"model": "sonnet"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "apptainer",
+                "host": "${HOSTNAME}",
+                "workdir": "/home/agent/work",
+                "apptainer": {"image": "x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
     }
     p.write_text(yaml.safe_dump(body))
     return load_config(p)
@@ -425,14 +431,16 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
     body = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {
-            "runtime": "apptainer",
-            "apptainer": {"image": "x.sif", "binds": []},
-            "claude": {"model": "sonnet"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-            "hosts": ["mba", "spartan"],
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "apptainer",
+                "apptainer": {"image": "x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+                "hosts": ["mba", "spartan"],
+            }
+        ),
     }
     p.write_text(yaml.safe_dump(body))
     # Act
@@ -456,15 +464,19 @@ def test_load_config_v3_multi_host_appends_hostname(tmp_path: Path) -> None:
 
 
 def _v3_yaml(tmp_path: Path, name: str, spec_extra: dict) -> Path:
-    spec = {
-        "runtime": "apptainer",
-        "host": "${HOSTNAME}",
-        "workdir": str(tmp_path / "wd"),
-        "apptainer": {"image": "x.sif", "binds": []},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    }
-    spec.update(spec_extra)
+    spec = explicit_spec(
+        {
+            "runtime": "apptainer",
+            "host": "${HOSTNAME}",
+            "workdir": str(tmp_path / "wd"),
+            "apptainer": {"image": "x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        }
+    )
+    # Deep-merge so a claude/apptainer extra doesn't strip the other
+    # required keys of its block (red-start ruling: all keys must stay).
+    spec = deep_merge(spec, spec_extra)
     # Ensure required claude.model survives an extra that overrides claude.
     spec.setdefault("claude", {}).setdefault("model", "sonnet")
     body = {
@@ -670,15 +682,17 @@ def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> N
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "metadata": {"labels": {"sac-builtin": "off"}},
-        "spec": {
-            "runtime": "apptainer",
-            "host": "${HOSTNAME}",
-            "workdir": str(tmp_path / "wd"),
-            "apptainer": {"image": "x.sif", "binds": []},
-            "claude": {"model": "sonnet"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "apptainer",
+                "host": "${HOSTNAME}",
+                "workdir": str(tmp_path / "wd"),
+                "apptainer": {"image": "x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
     }
     p = tmp_path / "sac-off" / "spec.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)

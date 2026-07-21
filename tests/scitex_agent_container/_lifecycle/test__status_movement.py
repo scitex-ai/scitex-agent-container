@@ -12,6 +12,8 @@ separate lines; one assertion per test (STX-TQ007).
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import importlib
 import json
 import os
@@ -74,11 +76,11 @@ def _write_valid_spec(parent: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata: {}\n"
         "spec:\n"
-        "  runtime: apptainer\n"
+        "  runtime: apptainer\n")
     )
     return spec
 

@@ -24,6 +24,8 @@ version exercises real production collaborators:
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import importlib
 import json
 import os
@@ -50,7 +52,7 @@ def _write_spec_dir(tmp_path: Path, name: str, caps: str = "HPC,GPU") -> Path:
     d.mkdir()
     spec = d / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         f"  labels:\n    capabilities: '{caps}'\n    machine: m1\n"
@@ -60,7 +62,7 @@ def _write_spec_dir(tmp_path: Path, name: str, caps: str = "HPC,GPU") -> Path:
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"
         "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n")
     )
     return spec
 

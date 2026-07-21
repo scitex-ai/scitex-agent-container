@@ -226,21 +226,29 @@ def test_parse_proxy_invalid_timeout_raises_value_error(timeout_value) -> None:
 
 
 def _base_proxy_raw(**overrides) -> dict:
+    # Red-start ruling 2026-07-21: every field explicit — merged onto the
+    # validator's own AgentProxy paste defaults (curated fields win). A
+    # proxy has NO claude block (forbidden for kind: AgentProxy);
+    # proxy.upstream is its kind-specific required field.
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "AgentProxy",
-        "spec": {
-            # Required author fields (no hidden defaults). A proxy has NO
-            # claude block (forbidden for kind: AgentProxy); proxy.upstream is
-            # its kind-specific required field.
-            "runtime": "tui",
-            "host": "${HOSTNAME}",
-            "workdir": "/home/agent/work",
-            "apptainer": {"image": "/x.sif", "binds": []},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "always", "max_retries": 3},
-            "proxy": {"upstream": "https://peer.example.com"},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "tui",
+                "host": "${HOSTNAME}",
+                "workdir": "/home/agent/work",
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "always", "max_retries": 3},
+                "proxy": {"upstream": "https://peer.example.com"},
+            },
+            kind="AgentProxy",
+        ),
     }
     raw["spec"].update(overrides)
     return raw

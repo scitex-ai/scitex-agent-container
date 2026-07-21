@@ -166,8 +166,13 @@ def _write_spec(tmp_path: Path, workdir: Path, name: str = "alpha") -> Path:
         "    pre_stop: []\n"
         "    post_stop: []\n"
     )
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     spec = agent_dir / "spec.yaml"
-    spec.write_text(body)
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
+    spec.write_text(explicitize_yaml(body))
     return spec
 
 

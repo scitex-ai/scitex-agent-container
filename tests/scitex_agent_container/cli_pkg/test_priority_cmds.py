@@ -75,15 +75,21 @@ def _write_spec(
         "    max_retries: 3",
     ]
     if hosts is not None:
-        # multi-instance → workdir auto-derives per host (not required).
+        # multi-instance → workdir: null keeps the per-instance derivation
+        # (the KEY is still required; red-start ruling 2026-07-21).
         lines.append(f"  hosts: {json.dumps(hosts)}")
+        lines.append("  workdir:")
     else:
         # singleton (explicit host, or the local default) → workdir required.
         # 'local' is banned; an EMPTY host: is the caller's-host spelling
         # for the no-host-declared case.
         lines.append(f"  host: {json.dumps(host)}" if host is not None else "  host:")
         lines.append("  workdir: /home/agent/work")
-    spec.write_text("\n".join(lines) + "\n")
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
+    spec.write_text(explicitize_yaml("\n".join(lines) + "\n"))
     return spec
 
 
