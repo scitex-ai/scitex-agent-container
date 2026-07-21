@@ -71,6 +71,17 @@ versioning follows [SemVer](https://semver.org/).
   branch-protection semantics. Both verified against the live commit that
   produced the false readings (bad=0, gate=green; peel=develop head).
 
+### Documentation
+
+- **Account-selection + 7d spend policy are now discoverable** (operator
+  2026-07-21: 「burn というポリシーがあるのを初めて聞いた」). New §4 in
+  `26_credentials-rotation.md`: `claude.account` pin vs unpinned picker,
+  the explicit-`account: ""` spec convention, and
+  `SAC_CREDS_7D_POLICY: spread | burn` — spread's headroom-ranking vs
+  burn's use-it-or-lose-it ordering, and WHY burn stays gated on the
+  fleet reconciler. Host spec templates got the same values as inline
+  comments plus an explicit `account: ""` field.
+
 ## [0.24.2] - 2026-07-21
 
 ### Added
