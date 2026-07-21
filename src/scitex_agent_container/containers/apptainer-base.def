@@ -361,7 +361,19 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-cards: FLOOR (>=0.16.0), not an exact pin (was ==0.16.0). 2026-07-17.
+    # scitex-cards: FLOOR (>=0.17.2), not an exact pin (was ==0.16.0). 2026-07-17,
+    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20.
+    #
+    # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
+    # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
+    # DATABASES: its store resolution accepts an explicit YAML path that does not
+    # exist plus a bundled-example fallback, and a YAML->sqlite sync then wrote the
+    # example's single card over 2142 real ones (2026-07-19, recovered from
+    # backup). "Does not delete the board" is a capability, so it belongs in the
+    # specifier. >=0.16.0 happens to resolve to 0.17.2 today only because 0.17.2 is
+    # newest; that is luck, and luck expires the moment any other constraint in the
+    # resolve pins the range lower. 0.17.1 is skipped because it was never
+    # published as an artifact — its tag points at a commit predating the fix.
     #
     # A floor is not a pin, and the difference is the whole point: `==` freezes
     # the fleet at one version forever; `>=` states a CAPABILITY REQUIREMENT and
@@ -437,7 +449,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]>=0.16.0" \
+        "scitex-cards[mcp]>=0.17.2" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------

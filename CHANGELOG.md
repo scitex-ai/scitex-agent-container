@@ -35,6 +35,67 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **An unreadable OpenAI store deleted the Claude account view.** `sac accounts
+  list` called `read_codex_accounts_metadata()` unguarded, on the line *above*
+  both the `--json` branch and the Claude credential block. That function raises
+  `CodexAccountSyncError` — a bare `RuntimeError`, so click prints a traceback and
+  exits 1 — for every degraded state of the OpenAI store once its root directory
+  exists, and `sac accounts sync-openai` creates that root permanently on first
+  use. An OpenAI-side problem therefore took down the operator's primary
+  credential instrument: no table, no TTLs, no usage bars, and a non-zero exit for
+  anything parsing `--json`.
+
+  The states that trigger it are ordinary, not exotic: a ChatGPT logout (rewrites
+  `auth.json` to `{}`), a store root left holding no `*/auth.json`, a truncated
+  write, a file owned by another uid, or an api-key-mode `auth.json` — a
+  legitimate auth mode that carries no decodable JWT claims. One broken member of
+  an otherwise healthy pool raises for the whole pool. And the command is reached
+  most often *during* a credential incident, which is exactly when the store is
+  most likely to be in one of those states.
+
+  The Claude reads on that same path were always exception-tolerant; the provider
+  axis had quietly lowered the contract. It now degrades to a **third state**
+  rather than to absence: an absent store stays `[]` with `openai_error: null`,
+  while an unreadable one is `[]` plus the message, surfaced as an `openai_error`
+  key in `--json` and an `OpenAI accounts UNREADABLE:` line in human output.
+  Collapsing the two would have traded a loud failure for a quiet wrong answer —
+  telling the operator their store is empty when it is broken.
+
+  Mutation-proven rather than merely green: with the guard removed, 6 of the 10
+  new tests fail; the 4 that still pass are the healthy-store and absent-store
+  controls, which must not depend on it.
+
+- **MCP reconnect respawn preserves spec env — store vars survived only the
+  first spawn** (P1, card `sac-env-injection-lost-on-mcp-reconnect-20260721`).
+  sac delivered `spec.env` (+ the fleet-default layer) to MCP servers ONLY via
+  process inheritance (`apptainer --env` → container env → the `claude`
+  client → first stdio spawn). A mid-session MCP reconnect RESPAWN goes
+  through the bundled stdio transport's sanitized env
+  (`{...getDefaultEnvironment(), ...entry.env}`, allowlist
+  `HOME/LOGNAME/PATH/SHELL/TERM/USER` — read out of the deployed claude
+  2.1.216 binary), so every injected var not declared in the entry's `env`
+  block vanished mid-session: scitex-cards' resolve-store flipped stores and
+  `store_identity` mismatches appeared while plain-shell children still saw
+  the vars. On old scitex-cards vintages this env loss is one of the two
+  preconditions for the packaged-example board-wipe class (the shared-store
+  var `SCITEX_TODO_TASKS_YAML_SHARED` is deliberately never baked host-side,
+  so it lived ONLY in the volatile channel). Fix makes the spec env DURABLE
+  where the respawner reads it: the launch argv now carries a
+  `SAC_SPEC_ENV_KEYS` manifest naming the injected keys
+  (`runtimes/_apptainer_listen_env.listen_env_flags`), and the in-container
+  SDK options builder (`runtimes/_sdk_common.build_sdk_options`) bakes those
+  keys' literal values into every stdio server entry's `env` block
+  (entry-declared keys win) — per-agent-correct because it expands from the
+  agent's OWN container env, never the launching host shell (the 2026-07-02
+  wrong-identity incident stays fixed). The workdir `.mcp.json` writer
+  (`runtimes/mcp_config.setup_mcp_config`) bakes `spec.env` the same way.
+  Fail-loud: a manifested key absent at bake time raises
+  `SpecEnvUnresolvedError`; a value still shaped like `${VAR}` raises
+  `UnexpandedEnvValueError` (never stored as data). New module
+  `runtimes/_mcp_spec_env`; PR #319's provider tool whitelist extracted
+  verbatim to `runtimes/_sdk_provider_tools` (line-cap split, no behavior
+  change).
+
 - **autobump-release-sweep: an ABSENT tag read as a garbage sha — first
   scheduled tick raised a false TAG COLLISION for v0.24.4, which does not
   exist.** `gh api` on a 404 prints the error JSON to STDOUT, so `tag_sha`
@@ -66,6 +127,17 @@ versioning follows [SemVer](https://semver.org/).
   (`group_by(.name) | max_by(.started_at)`) before classifying, matching
   branch-protection semantics. Both verified against the live commit that
   produced the false readings (bad=0, gate=green; peel=develop head).
+
+### Documentation
+
+- **Account-selection + 7d spend policy are now discoverable** (operator
+  2026-07-21: 「burn というポリシーがあるのを初めて聞いた」). New §4 in
+  `26_credentials-rotation.md`: `claude.account` pin vs unpinned picker,
+  the explicit-`account: ""` spec convention, and
+  `SAC_CREDS_7D_POLICY: spread | burn` — spread's headroom-ranking vs
+  burn's use-it-or-lose-it ordering, and WHY burn stays gated on the
+  fleet reconciler. Host spec templates got the same values as inline
+  comments plus an explicit `account: ""` field.
 
 ## [0.24.2] - 2026-07-21
 
