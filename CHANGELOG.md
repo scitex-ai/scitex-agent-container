@@ -8,6 +8,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **autobump-release-sweep: an ABSENT tag read as a garbage sha — first
+  scheduled tick raised a false TAG COLLISION for v0.24.4, which does not
+  exist.** `gh api` on a 404 prints the error JSON to STDOUT, so `tag_sha`
+  captured a JSON blob instead of "": BUMP fired where TAG_ONLY belonged and
+  the collision guard tripped on a phantom tag (run 29804531483, fail-loud
+  alarm — report-only held, no mutation). `tag_sha` now accepts only a
+  40-hex sha at both the ref and peel reads; anything else is treated as
+  absent. Verified live: v0.24.4 (absent) → empty; v0.24.2 (annotated) →
+  peeled develop commit.
+
 - **`notify` extra is now closed under `all` (PS-221), unblocking the whole PR
   queue.** `scitex-notification>=0.2.9` sat in the public `notify` extra but not
   in `all`, so `pip install scitex-agent-container[all]` silently under-installed
