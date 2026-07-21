@@ -6,6 +6,8 @@ fallbacks to orochi or any other external orchestrator's paths.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 from pathlib import Path
 
 import pytest
@@ -255,9 +257,9 @@ def _mkagent(root: Path, name: str) -> None:
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "spec.yaml").write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "spec: { runtime: apptainer }\n"
+        "spec: { runtime: apptainer }\n")
     )
 
 
@@ -380,9 +382,9 @@ def test_resolve_with_prefix_returns_path_argument_unchanged(
     # Arrange
     yaml_path = tmp_path / "explicit.yaml"
     yaml_path.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
-        "spec: { runtime: apptainer }\n"
+        "spec: { runtime: apptainer }\n")
     )
     # Act
     result = resolve_with_prefix(str(yaml_path))

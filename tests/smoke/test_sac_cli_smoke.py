@@ -169,7 +169,12 @@ def test_sac_agents_start_dry_run_against_real_spec_yaml(tmp_path, env_save_rest
     _install_fresh_creds(home)
     spec = tmp_path / "smoke-agent" / "spec.yaml"
     spec.parent.mkdir()
-    spec.write_text(_MINIMAL_V3_SPEC)
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
+    spec.write_text(explicitize_yaml(_MINIMAL_V3_SPEC))
     # Act
     result = _run("agents", "start", str(spec), "--dry-run", cwd=tmp_path)
     # Assert (one combined assert: exit 0 AND output mentions "dry-run")

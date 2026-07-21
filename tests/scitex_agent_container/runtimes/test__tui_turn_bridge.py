@@ -17,6 +17,8 @@ assert + STX-TQ003 descriptive names.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import shutil
 import socket
@@ -271,7 +273,7 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
 ) -> None:
     # Arrange — a resolved port + config_path; record the spawn argv.
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
     recorded: dict = {}
 
     def fake_spawn(argv, **kwargs):
@@ -292,7 +294,7 @@ def test_start_turn_bridge_returns_spawned_pid(
 ) -> None:
     # Arrange
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
@@ -354,7 +356,7 @@ def test_start_turn_bridge_returns_none_on_spawn_failure(
 ) -> None:
     # Arrange — spawn raises; the launcher must swallow it and return None.
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
 
     def raising_spawn(argv, **kwargs):
         raise OSError("exec failed")
@@ -394,7 +396,7 @@ def test_start_turn_bridge_kills_preexisting_bridge_before_spawn(
     # (the orphan a port-changing restart would otherwise leave alive), plus
     # a recording spawn for the NEW bridge so no second subprocess is created.
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="restart-me", config_path=str(spec)
     )
@@ -418,7 +420,7 @@ def test_start_turn_bridge_records_new_pid_over_prior(
     # start must overwrite it with the freshly-spawned bridge's PID (never
     # leave the orphaned/stale value behind).
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="repid-me", config_path=str(spec)
     )
@@ -503,7 +505,7 @@ def test_start_turn_bridge_fails_loud_when_port_stays_busy(
 ) -> None:
     # Arrange — a REAL listener holds the agent's a2a port; spawn must NOT run.
     spec = tmp_path / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n", encoding="utf-8")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
     held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     held.bind(("127.0.0.1", 0))
     held.listen()

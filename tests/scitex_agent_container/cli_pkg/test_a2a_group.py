@@ -17,6 +17,8 @@ collaborators are real:
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import os
 import shutil
@@ -435,7 +437,7 @@ def live_serve_yaml(tmp_path: Path) -> Path:
     agent_dir.mkdir()
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         f"  name: {name}\n"
@@ -443,7 +445,7 @@ def live_serve_yaml(tmp_path: Path) -> Path:
         "  a2a:\n"
         "    host: 127.0.0.1\n"
         "    port: 0\n"
-        "    handler: echo\n"
+        "    handler: echo\n")
     )
     return spec
 
@@ -523,7 +525,7 @@ def live_doctor_against_serve(tmp_path: Path) -> Iterator[dict]:
     spec = agent_dir / "spec.yaml"
     port = _free_port()
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         f"  name: {name}\n"
@@ -531,7 +533,7 @@ def live_doctor_against_serve(tmp_path: Path) -> Iterator[dict]:
         "  a2a:\n"
         "    host: 127.0.0.1\n"
         f"    port: {port}\n"
-        "    handler: echo\n"
+        "    handler: echo\n")
     )
     cmd = _sac_cmd() + [
         "a2a",

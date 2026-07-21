@@ -18,6 +18,8 @@ through ``resolve_config``. Conforms to STX-TQ002 (AAA markers), STX-TQ003
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import importlib
 import os
 from pathlib import Path
@@ -69,11 +71,11 @@ def _write_auto_port_yaml(tmp_path: Path) -> Path:
     y = tmp_path / "clew" / "clew.yaml"
     y.parent.mkdir(parents=True)
     y.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  a2a: {port: auto}\n"
+        "  a2a: {port: auto}\n")
     )
     return y
 
@@ -83,11 +85,11 @@ def _write_static_local_yaml(tmp_path: Path) -> Path:
     y = tmp_path / "clew" / "clew.yaml"
     y.parent.mkdir(parents=True)
     y.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
-        "  a2a: {port: 18888, host: 127.0.0.1}\n"
+        "  a2a: {port: 18888, host: 127.0.0.1}\n")
     )
     return y
 
