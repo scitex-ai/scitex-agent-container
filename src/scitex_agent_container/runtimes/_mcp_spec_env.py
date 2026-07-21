@@ -128,16 +128,24 @@ def resolve_spec_env(environ: Mapping[str, str]) -> dict[str, str]:
         assert_expanded(key, value)
         resolved[key] = value
     if missing:
+        agent = environ.get("SAC_NAME") or environ.get(
+            "SCITEX_AGENT_CONTAINER_NAME", "<unknown>"
+        )
         raise SpecEnvUnresolvedError(
-            f"{SPEC_ENV_KEYS_VAR} names spec-env key(s) absent from the "
-            f"environment: {', '.join(sorted(missing))}. The launch promised "
-            "these vars (they were listed at `--env` injection time), so "
-            "their absence means the env-injection contract broke. Refusing "
-            "to build an MCP config without them: a respawned (reconnected) "
-            "MCP server only receives env baked into its config entry, so "
-            "continuing would silently rebuild the mid-session store/identity "
-            "loss this bake exists to close (card "
-            "sac-env-injection-lost-on-mcp-reconnect-20260721)."
+            f"agent '{agent}': {SPEC_ENV_KEYS_VAR} names spec-env key(s) "
+            f"absent from the environment: {', '.join(sorted(missing))}. The "
+            "launch promised these vars (they were listed at `--env` "
+            "injection time), so their absence means the env-injection "
+            "contract broke — something between launch and here unset them. "
+            "Refusing to build an MCP config without them: a respawned "
+            "(reconnected) MCP server only receives env baked into its config "
+            "entry, so continuing would silently rebuild the mid-session "
+            "store/identity loss this bake exists to close (card "
+            "sac-env-injection-lost-on-mcp-reconnect-20260721). Fix: check "
+            f"`spec.env` in this agent's YAML for the key(s) named above and "
+            "restart the agent; if the spec is correct, find what unset the "
+            "var inside the container (.envrc / a wrapper) — or, to launch "
+            "degraded anyway, remove the key from spec.env."
         )
     return resolved
 
