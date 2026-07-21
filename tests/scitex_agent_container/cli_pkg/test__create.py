@@ -23,6 +23,7 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._create import create as create_cmd
 from scitex_agent_container.config._validation import validate_config
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def test_create_writes_spec_yaml_at_target(tmp_path: Path) -> None:
@@ -194,8 +195,10 @@ def test_create_default_template_is_minimal(tmp_path: Path) -> None:
     # the prose docstring (the comment legitimately MENTIONS the field
     # name as an "add this if you need it" pointer).
     parsed = yaml.safe_load((base / "defaulty" / "spec.yaml").read_text())
-    # Assert — minimal template omits startup_prompts; the full template ships it.
-    assert "startup_prompts" not in parsed.get("spec", {})
+    # Assert — minimal template ships an EMPTY startup_prompts (explicit-fields
+    # ruling 2026-07-21: the key must be present); the full template ships a
+    # non-empty kick. Empty distinguishes the default=minimal rendering.
+    assert parsed["spec"]["startup_prompts"] == []
 
 
 def test_create_creates_to_home_skeleton(tmp_path: Path) -> None:
@@ -319,6 +322,11 @@ spec:
 # EOF
 """
 
+# Red-start ruling 2026-07-21: fixture templates must carry EVERY field.
+# The readable minimal body above stays the authored surface; the merge
+# fills the remainder with the validator's own paste defaults.
+_DEMO_SPEC = explicitize_yaml(_DEMO_SPEC)
+
 
 def _make_demo_template(base: Path, *, extra_token: str | None = None) -> Path:
     """Create a fake ``_template_demo/`` dir under ``base`` and return it.
@@ -346,9 +354,7 @@ def _no_placeholder_remains(agent_dir: Path) -> bool:
     return True
 
 
-def _invoke_demo(
-    runner: CliRunner, base: Path, name: str, *extra_args: str
-) -> object:
+def _invoke_demo(runner: CliRunner, base: Path, name: str, *extra_args: str) -> object:
     """Instantiate the demo dir-template under ``base`` and return result."""
     return runner.invoke(
         create_cmd,
@@ -426,7 +432,15 @@ def test_create_dir_template_agent_id_defaults_to_name(tmp_path: Path) -> None:
     # Act — omit --agent-id; it must default to <name>.
     runner.invoke(
         create_cmd,
-        ["nameddefault", "--base-dir", str(base), "--template", "demo", "--project", "p"],
+        [
+            "nameddefault",
+            "--base-dir",
+            str(base),
+            "--template",
+            "demo",
+            "--project",
+            "p",
+        ],
     )
     text = (base / "nameddefault" / "to_home" / "CLAUDE.md").read_text()
     # Assert
@@ -455,7 +469,9 @@ def test_create_dir_template_missing_placeholder_names_token(tmp_path: Path) -> 
     assert "SAC_PLACEHOLDER_PROJECT" in result.output
 
 
-def test_create_dir_template_missing_placeholder_leaves_no_output(tmp_path: Path) -> None:
+def test_create_dir_template_missing_placeholder_leaves_no_output(
+    tmp_path: Path,
+) -> None:
     # Arrange
     runner = CliRunner()
     base = tmp_path / "agents"
@@ -515,9 +531,7 @@ def test_create_inline_minimal_still_works_with_dir_templates_present(
     base = tmp_path / "agents"
     _make_demo_template(base)
     # Act
-    runner.invoke(
-        create_cmd, ["inl", "--base-dir", str(base), "--template", "minimal"]
-    )
+    runner.invoke(create_cmd, ["inl", "--base-dir", str(base), "--template", "minimal"])
     errors = validate_config(base / "inl" / "spec.yaml")
     # Assert
     assert errors == []
@@ -597,6 +611,13 @@ _SCIENTIST_DEMO_SPEC = _DEVELOPER_DEMO_SPEC.replace(
     "SAC_PLACEHOLDER_PROJECT-maintainer", "SAC_PLACEHOLDER_PROJECT-research"
 ).replace("groups: [developer]", "groups: [scientist]")
 
+# Red-start ruling 2026-07-21: fixture templates must carry EVERY field
+# (merged from the validator's own paste defaults; minimal body stays
+# the authored surface). Derive scientist from developer BEFORE the
+# merge so the string replaces still hit the readable bodies.
+_DEVELOPER_DEMO_SPEC = explicitize_yaml(_DEVELOPER_DEMO_SPEC)
+_SCIENTIST_DEMO_SPEC = explicitize_yaml(_SCIENTIST_DEMO_SPEC)
+
 
 def _write_dir_template(base: Path, kind: str, body: str) -> Path:
     """Create a fake ``_template_<kind>/`` dir under ``base`` and return it."""
@@ -614,7 +635,15 @@ def test_create_developer_template_leaves_no_placeholder(tmp_path: Path) -> None
     # Act
     runner.invoke(
         create_cmd,
-        ["dev1", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+        [
+            "dev1",
+            "--base-dir",
+            str(base),
+            "--template",
+            "developer",
+            "--project",
+            "myproj",
+        ],
     )
     # Assert
     assert _no_placeholder_remains(base / "dev1")
@@ -628,7 +657,15 @@ def test_create_developer_template_validates(tmp_path: Path) -> None:
     # Act
     runner.invoke(
         create_cmd,
-        ["dev2", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+        [
+            "dev2",
+            "--base-dir",
+            str(base),
+            "--template",
+            "developer",
+            "--project",
+            "myproj",
+        ],
     )
     errors = validate_config(base / "dev2" / "spec.yaml")
     # Assert
@@ -643,7 +680,15 @@ def test_create_developer_template_group_label(tmp_path: Path) -> None:
     # Act
     runner.invoke(
         create_cmd,
-        ["dev3", "--base-dir", str(base), "--template", "developer", "--project", "myproj"],
+        [
+            "dev3",
+            "--base-dir",
+            str(base),
+            "--template",
+            "developer",
+            "--project",
+            "myproj",
+        ],
     )
     parsed = yaml.safe_load((base / "dev3" / "spec.yaml").read_text())
     # Assert
@@ -658,7 +703,15 @@ def test_create_scientist_template_leaves_no_placeholder(tmp_path: Path) -> None
     # Act
     runner.invoke(
         create_cmd,
-        ["sci1", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+        [
+            "sci1",
+            "--base-dir",
+            str(base),
+            "--template",
+            "scientist",
+            "--project",
+            "paperx",
+        ],
     )
     # Assert
     assert _no_placeholder_remains(base / "sci1")
@@ -672,7 +725,15 @@ def test_create_scientist_template_validates(tmp_path: Path) -> None:
     # Act
     runner.invoke(
         create_cmd,
-        ["sci2", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+        [
+            "sci2",
+            "--base-dir",
+            str(base),
+            "--template",
+            "scientist",
+            "--project",
+            "paperx",
+        ],
     )
     errors = validate_config(base / "sci2" / "spec.yaml")
     # Assert
@@ -687,7 +748,15 @@ def test_create_scientist_template_group_label(tmp_path: Path) -> None:
     # Act
     runner.invoke(
         create_cmd,
-        ["sci3", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+        [
+            "sci3",
+            "--base-dir",
+            str(base),
+            "--template",
+            "scientist",
+            "--project",
+            "paperx",
+        ],
     )
     parsed = yaml.safe_load((base / "sci3" / "spec.yaml").read_text())
     # Assert
@@ -702,7 +771,15 @@ def test_create_scientist_template_purpose_suffix(tmp_path: Path) -> None:
     # Act
     runner.invoke(
         create_cmd,
-        ["sci4", "--base-dir", str(base), "--template", "scientist", "--project", "paperx"],
+        [
+            "sci4",
+            "--base-dir",
+            str(base),
+            "--template",
+            "scientist",
+            "--project",
+            "paperx",
+        ],
     )
     parsed = yaml.safe_load((base / "sci4" / "spec.yaml").read_text())
     # Assert — scientist purpose is the research suffix (mirrors retired `create`).

@@ -31,7 +31,17 @@ def _write_yaml(data: dict, name: str = "test-agent") -> Path:
     """Write YAML into dir-as-SSoT layout; strip metadata.name if present."""
     import copy
 
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        deep_merge,
+        explicit_spec_defaults,
+    )
+
     data = copy.deepcopy(data)
+    # Red-start ruling 2026-07-21: every spec field explicit (fixture wins).
+    if isinstance(data.get("spec"), dict):
+        data["spec"] = deep_merge(
+            explicit_spec_defaults(data.get("kind", "Agent")), data["spec"]
+        )
     metadata = data.get("metadata") or {}
     metadata.pop("name", None)
     if metadata:

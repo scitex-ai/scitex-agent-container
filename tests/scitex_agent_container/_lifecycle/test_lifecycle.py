@@ -104,8 +104,14 @@ def _write_spec(
         "    post_stop: []\n"
         f"{extra_spec}"
     )
+    # Red-start ruling 2026-07-21: merge the validator's paste defaults
+    # beneath the composed body (body wins) so every field is explicit.
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     spec = agent_dir / "spec.yaml"
-    spec.write_text(body)
+    spec.write_text(explicitize_yaml(body))
     return spec
 
 

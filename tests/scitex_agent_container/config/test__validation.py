@@ -701,19 +701,31 @@ def test_image_round_trips_into_top_level_image_alias(_loaded_config_with_image)
 # (``host: local`` is BANNED; operator directive 2026-07-10).
 # ---------------------------------------------------------------------------
 
-_COMPLETE_SPEC = {
-    "apiVersion": "scitex-agent-container/v3",
-    "kind": "Agent",
-    "spec": {
-        "runtime": "tui",
-        "host": "${HOSTNAME}",
-        "workdir": "/home/agent/work",
-        "apptainer": {"image": "/x.sif", "binds": []},
-        "claude": {"model": "opus"},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    },
-}
+
+def _complete_spec() -> dict:
+    """Fully-explicit spec (red-start ruling 2026-07-21: EVERY field)."""
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    return {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": explicit_spec(
+            {
+                "runtime": "tui",
+                "host": "${HOSTNAME}",
+                "workdir": "/home/agent/work",
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "claude": {"model": "opus"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
+    }
+
+
+_COMPLETE_SPEC = _complete_spec()
 
 
 def _spec_without(dotted_path: str) -> dict:
@@ -775,7 +787,7 @@ def test_missing_workdir_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.workdir is REQUIRED" in e]
+    assert [e for e in errors if "spec.workdir" in e]
 
 
 def test_missing_apptainer_image_is_rejected():
@@ -784,7 +796,7 @@ def test_missing_apptainer_image_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.apptainer.image is REQUIRED" in e]
+    assert [e for e in errors if "spec.apptainer.image" in e]
 
 
 def test_missing_apptainer_binds_is_rejected():
@@ -793,7 +805,7 @@ def test_missing_apptainer_binds_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.apptainer.binds is REQUIRED" in e]
+    assert [e for e in errors if "spec.apptainer.binds" in e]
 
 
 def test_missing_health_interval_is_rejected():
@@ -802,7 +814,7 @@ def test_missing_health_interval_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.health.interval is REQUIRED" in e]
+    assert [e for e in errors if "spec.health.interval" in e]
 
 
 def test_missing_restart_policy_is_rejected():
@@ -811,7 +823,7 @@ def test_missing_restart_policy_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.restart.policy is REQUIRED" in e]
+    assert [e for e in errors if "spec.restart.policy" in e]
 
 
 def test_agentproxy_missing_upstream_is_rejected():
@@ -832,15 +844,32 @@ def test_agentproxy_missing_upstream_is_rejected():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.proxy.upstream is REQUIRED" in e]
+    assert [e for e in errors if "spec.proxy.upstream" in e]
 
 
-def test_multi_host_does_not_require_workdir():
-    # Arrange — a multi-instance agent derives a per-instance workdir.
+def test_multi_host_requires_workdir_key_too():
+    # Arrange — red-start ruling 2026-07-21: EVERY field is written, multi-
+    # host included. (The old multi-host exemption is gone; a multi-instance
+    # spec writes ``workdir: null`` to keep the per-instance derivation.)
     import copy
 
     raw = copy.deepcopy(_COMPLETE_SPEC)
     raw["spec"].pop("workdir")
+    raw["spec"].pop("host")
+    raw["spec"]["hosts"] = "all"
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.workdir" in e]
+
+
+def test_multi_host_null_workdir_keeps_derivation_green():
+    # Arrange — ``workdir: null`` is the explicit spelling of "derive the
+    # per-instance runtime workdir" (present-but-null counts as declared).
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"]["workdir"] = None
     raw["spec"].pop("host")
     raw["spec"]["hosts"] = "all"
     # Act

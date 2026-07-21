@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — every spec field explicit, red-start (operator ruling
+  2026-07-21).** `config.load_config` / `load_v3` / `validate_raw` now REQUIRE
+  every author-facing field of an agent `spec.yaml` to be WRITTEN — an omitted
+  field is a load-time ERROR. 86 required keys for `kind: Agent` (78 for
+  `kind: AgentProxy`), derived from the section dataclasses
+  (`config/_explicit_fields.py`) with alias tables where YAML keys differ
+  (`watchdog.responses.*`, `restart.backoff.*`, `python-venv`). There is NO
+  migration phase, NO warn mode, and NO bypass flag — the only entry point is
+  `_explicit_validation.validate(doc, path)`; every under-specified spec in
+  the fleet goes boot-red at its next start, as ruled. The hint contract:
+  ONE error listing ALL missing fields at once (YAML path + expected type +
+  current default), followed by a marker-delimited paste-ready YAML block
+  whose values reproduce exactly what omission used to mean (loader
+  derivations paste `null`: `workdir`, `claude.session`), ending with the
+  loaded file's path. The hint provably clears the condition (round-trip
+  tested). The 2026-06-23 nine-field "no hidden defaults" subset was
+  superseded and removed. Excluded from the required set (each documented in
+  the module): `host`/`hosts` (exactly-one enforced by placement validation),
+  top-level `session` (alias of `claude.session`), banned/relocated keys
+  (`access`, `scheduling`, `container_workdir`, ...), the dead `screen` /
+  `startup` keys, and the four keys `load_v3` reads but `validate_raw`
+  rejects (`multiplexer`, `env-file`, `exclude_hooks`, `exclude_skills` —
+  flagged for operator review). `sac agents create` templates and
+  `examples/agents/*` now render the full explicit field set.
+
 ## [0.24.2] - 2026-07-21
 
 ### Added
