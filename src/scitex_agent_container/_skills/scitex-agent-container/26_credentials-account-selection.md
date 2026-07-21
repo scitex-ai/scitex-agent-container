@@ -2,7 +2,7 @@
 description: |
   [TOPIC] scitex-agent-container — which OAuth account an agent boots on, and how the 7d quota window is spent.
   [DETAILS] The boot-time decision in `_lifecycle/_start_preflight.py`: `claude.account: <store-name>` as a genuine PIN vs `account: ""` + `credentials_files: [...]` handed to the boot picker (`_creds/_pick_healthy.py`). The `SAC_CREDS_7D_POLICY: spread | burn` spend policy (`_creds/_spend_policy.py`), why 5h and 7d are different kinds of resource, and why `burn` is gated on automatic restart. Reallocation today = restart. On-disk credential model + auth mechanics live in [26_credentials-rotation.md](26_credentials-rotation.md).
-tags: [scitex-agent-container-credentials-rotation]
+tags: [scitex-agent-container-credentials-account-selection]
 ---
 
 # SAC account selection at boot + the 7d spend policy
