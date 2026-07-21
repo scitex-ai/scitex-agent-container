@@ -253,8 +253,10 @@ def test_validate_raw_accepts_runtime_apptainer_for_backcompat():
 # ---------------------------------------------------------------------------
 
 
-def test_validate_raw_absent_provider_is_not_an_error():
-    # Arrange — no-op guarantee: omitting spec.provider adds zero errors.
+def test_validate_raw_absent_provider_adds_no_value_error():
+    # Arrange — the VALUE check stays a no-op when spec.provider is absent
+    # (the red-start ruling flags the MISSING field separately; the
+    # "must be one of" value diagnostic must not fire on absence).
     raw = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
@@ -263,7 +265,20 @@ def test_validate_raw_absent_provider_is_not_an_error():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.provider" in e]
+    assert not [e for e in errors if "spec.provider must be one of" in e]
+
+
+def test_validate_raw_absent_provider_is_flagged_missing():
+    # Arrange — red-start ruling 2026-07-21: every field explicit.
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "spec.provider" in e]
 
 
 def test_validate_raw_accepts_provider_anthropic():
@@ -350,8 +365,8 @@ def test_autonomous_default_block_passes_validation():
     assert not [e for e in errors if "spec.autonomous" in e]
 
 
-def test_autonomous_block_is_optional():
-    """No autonomous block at all is fine — defaults apply at parse time."""
+def test_autonomous_block_absent_is_flagged_missing():
+    """Red-start ruling 2026-07-21: the autonomous block must be written."""
     # Arrange
     raw = {
         "apiVersion": "scitex-agent-container/v3",
@@ -361,7 +376,7 @@ def test_autonomous_block_is_optional():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.autonomous" in e]
+    assert [e for e in errors if "spec.autonomous.enabled" in e]
 
 
 def test_autonomous_block_must_be_a_mapping():
@@ -652,23 +667,31 @@ def _loaded_config_with_image(tmp_path):
     yaml_dir = tmp_path / "image-set"
     yaml_dir.mkdir()
     yaml_path = yaml_dir / "image-set.yaml"
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
     yaml_path.write_text(
         _yaml.safe_dump(
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {
-                    "runtime": "apptainer",
-                    "host": "${HOSTNAME}",
-                    "workdir": "/home/agent/work",
-                    "apptainer": {
-                        "image": "~/.scitex/agent-container/containers/sac-scitex.sif",
-                        "binds": [],
-                    },
-                    "claude": {"model": "claude-opus-4-8[1m]"},
-                    "health": {"enabled": True, "interval": 60},
-                    "restart": {"policy": "on-failure", "max_retries": 3},
-                },
+                "spec": explicit_spec(
+                    {
+                        "runtime": "apptainer",
+                        "host": "${HOSTNAME}",
+                        "workdir": "/home/agent/work",
+                        "apptainer": {
+                            "image": (
+                                "~/.scitex/agent-container/containers/sac-scitex.sif"
+                            ),
+                            "binds": [],
+                        },
+                        "claude": {"model": "claude-opus-4-8[1m]"},
+                        "health": {"enabled": True, "interval": 60},
+                        "restart": {"policy": "on-failure", "max_retries": 3},
+                    }
+                ),
             }
         )
     )

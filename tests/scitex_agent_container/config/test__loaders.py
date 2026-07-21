@@ -30,7 +30,10 @@ from scitex_agent_container.config._loaders import (
     compose_effective_name,
 )
 from scitex_agent_container.config._types import HostsSpec, StartupCommand
-from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
+from tests.scitex_agent_container._helpers.explicit_spec import (
+    deep_merge,
+    explicit_spec,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -679,15 +682,17 @@ def test_load_config_sac_builtin_optout_label_skips_channel(tmp_path: Path) -> N
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
         "metadata": {"labels": {"sac-builtin": "off"}},
-        "spec": {
-            "runtime": "apptainer",
-            "host": "${HOSTNAME}",
-            "workdir": str(tmp_path / "wd"),
-            "apptainer": {"image": "x.sif", "binds": []},
-            "claude": {"model": "sonnet"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "apptainer",
+                "host": "${HOSTNAME}",
+                "workdir": str(tmp_path / "wd"),
+                "apptainer": {"image": "x.sif", "binds": []},
+                "claude": {"model": "sonnet"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
     }
     p = tmp_path / "sac-off" / "spec.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)

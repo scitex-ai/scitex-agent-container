@@ -93,14 +93,21 @@ def _write_agent_yaml(
     # defaults). host/hosts is set per-test below; default to local singleton
     # when a test pins neither, so the placement-composition under test stays
     # the only variable.
-    spec: dict = {
-        "runtime": "apptainer",
-        "workdir": "/home/agent/work",
-        "claude": {"model": "sonnet"},
-        "apptainer": {"image": "/x.sif", "binds": []},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    }
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (curated wins).
+    spec: dict = explicit_spec(
+        {
+            "runtime": "apptainer",
+            "workdir": "/home/agent/work",
+            "claude": {"model": "sonnet"},
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        }
+    )
     if host is not None:
         spec["host"] = host
     if hosts is not None:
