@@ -151,6 +151,21 @@ def listen_env_flags(config) -> list[str]:
     # scitex-* package.
     flags += mcp_timeout_env_flags()
 
+    # SPEC-ENV KEY MANIFEST (P1, card sac-env-injection-lost-on-mcp-
+    # reconnect-20260721): name the spec/fleet env keys the launch injects
+    # as ``--env`` value flags (build_run_argv's ``effective_env`` loop) so
+    # the IN-CONTAINER SDK options builder can bake their VALUES into every
+    # stdio MCP server entry's env block. Process inheritance delivers those
+    # vars only to the FIRST spawn of an MCP server; a mid-session reconnect
+    # RESPAWN through the sanitized stdio transport env (allowlist
+    # HOME/LOGNAME/PATH/SHELL/TERM/USER + the entry's own env block) loses
+    # them — the entry env block is the only channel that survives every
+    # spawn path. See runtimes/_mcp_spec_env for the full mechanism.
+    from ._fleet_env import effective_env
+    from ._mcp_spec_env import spec_env_keys_flag
+
+    flags += spec_env_keys_flag(effective_env(config))
+
     # ALWAYS inject the agent-spec search path so the in-container sac
     # resolves peer specs even when the launching env has nothing set.
     # The in-container ``$HOME`` is a different, empty home than the
