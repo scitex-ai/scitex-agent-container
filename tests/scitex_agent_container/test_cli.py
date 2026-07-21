@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import tempfile
 from pathlib import Path
@@ -13,6 +11,7 @@ import yaml
 from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
@@ -33,7 +32,17 @@ def _write_config(data: dict, name: str = "cli-test") -> str:
     """Write config under <tmp>/<name>/<name>.yaml (dir-as-SSoT)."""
     import copy
 
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        deep_merge,
+        explicit_spec_defaults,
+    )
+
     data = copy.deepcopy(data)
+    # Red-start ruling 2026-07-21: every spec field explicit (fixture wins).
+    if isinstance(data.get("spec"), dict):
+        data["spec"] = deep_merge(
+            explicit_spec_defaults(data.get("kind", "Agent")), data["spec"]
+        )
     metadata = data.get("metadata") or {}
     metadata.pop("name", None)
     if metadata:
@@ -276,6 +285,11 @@ class TestCLI:
 
     def _find_setup_gpu_agent(self, tmpdir):
         """Shared setup for agents-find tests below."""
+        from tests.scitex_agent_container._helpers.explicit_spec import (
+            explicit_spec,
+        )
+
+        # Red-start ruling 2026-07-21: every spec field explicit.
         config_with_caps = {
             "apiVersion": "scitex-agent-container/v3",
             "kind": "Agent",
@@ -286,15 +300,17 @@ class TestCLI:
                     "capabilities": "gpu,slurm,ml-training",
                 },
             },
-            "spec": {
-                "runtime": "apptainer",
-                "host": "${HOSTNAME}",
-                "workdir": "/home/agent/work",
-                "apptainer": {"image": "/x.sif", "binds": []},
-                "claude": {"model": "sonnet"},
-                "health": {"enabled": True, "interval": 60},
-                "restart": {"policy": "on-failure", "max_retries": 3},
-            },
+            "spec": explicit_spec(
+                {
+                    "runtime": "apptainer",
+                    "host": "${HOSTNAME}",
+                    "workdir": "/home/agent/work",
+                    "apptainer": {"image": "/x.sif", "binds": []},
+                    "claude": {"model": "sonnet"},
+                    "health": {"enabled": True, "interval": 60},
+                    "restart": {"policy": "on-failure", "max_retries": 3},
+                }
+            ),
         }
         agent_dir = Path(tmpdir) / "test-gpu-agent"
         agent_dir.mkdir()
