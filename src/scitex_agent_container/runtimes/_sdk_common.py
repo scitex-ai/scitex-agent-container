@@ -50,44 +50,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
     from ..config._types import AgentConfig
 
-# PR #319 (lead msg a456b610 2026-06-06): provider-aware tool whitelist.
-#
-# Root cause v8: LiteLLM 1.52.16's Anthropic-shim doesn't recognize newer
-# Claude Code builtins (ExitPlanMode, BashOutput, KillShell — added after
-# the LiteLLM version pinned in the cohort's vLLM stack). The shim's
-# pydantic Union of recognized AnthropicTool subclasses falls through to
-# the last subclass (``AnthropicComputerTool``), which requires
-# ``display_width_px`` that the unknown tool's payload doesn't have →
-# 422 on every API call → capsule errors all 60 turns.
-#
-# Fix: when a provider backend is active, REGISTER only the
-# shim-recognized tool set so unrecognized builtins never enter the
-# outbound ``tools[]`` array. ``ClaudeAgentOptions.tools`` is the
-# registration knob — maps to ``--tools <csv>`` per the SDK transport
-# layer at ``claude_agent_sdk/_internal/transport/subprocess_cli.py
-# :241-250``, where the CLI honours it as "the list of available tools
-# from the built-in set" (CLI ``--help``).
-#
-# Spec-side override: ``spec.claude.provider.allowed_tools: list[str]``
-# lets an operator declare their shim's recognized set explicitly. When
-# absent, the default below applies. The default is calibrated for
-# LiteLLM-1.52.16-known tools (clew bm172 cohort 2026-06-06 baseline) +
-# the ``Agent`` subagent registrar; bump this list as the shim ecosystem
-# catches up.
-_PROVIDER_DEFAULT_ALLOWED_TOOLS: tuple[str, ...] = (
-    "Bash",
-    "Read",
-    "Edit",
-    "Write",
-    "Glob",
-    "Grep",
-    "WebFetch",
-    "WebSearch",
-    "TodoWrite",
-    "Task",
-    "NotebookEdit",
-    "Agent",
-)
+# PR #319 provider-aware tool whitelist: extracted to
+# ``._sdk_provider_tools`` (line-cap split, 2026-07-21). The constant
+# ``_PROVIDER_DEFAULT_ALLOWED_TOOLS`` and the root-cause record live there.
 
 __all__ = [
     "SDKCommonError",
@@ -473,36 +438,28 @@ def build_sdk_options(
         _allowed.append("Agent")
     kwargs["allowed_tools"] = _allowed
 
-    # PR #319: provider-aware tool REGISTRATION whitelist. When the
-    # agent routes through a non-Anthropic provider (LiteLLM / vLLM /
-    # gateway via ``spec.claude.provider``), restrict the registered
-    # built-in tool set so unrecognized newer Claude Code builtins
-    # (ExitPlanMode, BashOutput, KillShell) never enter the outbound
-    # API request body. See the module-level constant docstring for
-    # the root-cause + spec contract. Resolution order:
-    #
-    #   1. ``spec.claude.provider.allowed_tools`` (operator override) —
-    #      used verbatim; the operator KNOWS their shim's recognized set.
-    #   2. ``_PROVIDER_DEFAULT_ALLOWED_TOOLS`` (runner default) — the
-    #      LiteLLM-1.52.16-known set + Agent.
-    #
-    # Non-provider agents (real Anthropic backend) leave ``tools``
-    # unset → CLI registers its full default toolset (back-compat).
-    # The caller can also explicitly pass ``tools=...`` via ``extra``;
-    # an explicit caller value WINS over this auto-populate.
-    from ._apptainer_provider import provider_active
+    # PR #319: provider-aware tool REGISTRATION whitelist — restrict the
+    # registered built-in tool set when a non-Anthropic provider backend
+    # is active. Extracted to ``._sdk_provider_tools`` (root cause + spec
+    # contract documented there). An explicit caller ``tools=...`` WINS.
+    from ._sdk_provider_tools import apply_provider_tools
 
-    _provider_cfg = _load_agent_config_silent(agent_name)
-    if (
-        _provider_cfg is not None
-        and provider_active(_provider_cfg)
-        and "tools" not in kwargs
-    ):
-        provider = getattr(getattr(_provider_cfg, "claude", None), "provider", None)
-        spec_tools = list(getattr(provider, "allowed_tools", []) or [])
-        if spec_tools:
-            kwargs["tools"] = spec_tools
-        else:
-            kwargs["tools"] = list(_PROVIDER_DEFAULT_ALLOWED_TOOLS)
+    apply_provider_tools(kwargs, _load_agent_config_silent(agent_name))
+
+    # DURABLE SPEC ENV for every stdio MCP server (P1, card
+    # sac-env-injection-lost-on-mcp-reconnect-20260721). Runs AFTER all
+    # entries are assembled (registry spec.mcp_servers + $HOME/.mcp.json +
+    # channel sidecars) so every one of them gets the bake. The spec env
+    # reaches this process only as inherited environment (apptainer --env);
+    # the FIRST MCP spawn inherits it too, but a mid-session RECONNECT
+    # respawn through the sanitized stdio transport env does not — the
+    # entry's env block is the only channel that survives every spawn path.
+    # So the launch-manifested keys (SAC_SPEC_ENV_KEYS) are resolved from
+    # this process's environ and baked in as literals. Entry-declared env
+    # keys win; fail-loud when the manifest names an absent key; no-op on
+    # pre-manifest launches. See runtimes/_mcp_spec_env.
+    from ._mcp_spec_env import bake_spec_env_into_servers
+
+    bake_spec_env_into_servers(kwargs.get("mcp_servers"), os.environ)
 
     return ClaudeAgentOptions(**kwargs)
