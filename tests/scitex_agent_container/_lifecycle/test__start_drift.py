@@ -17,6 +17,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 import subprocess
 from pathlib import Path
@@ -105,7 +107,7 @@ def _make_spec_repo(tmp_path: Path, *, drifted: bool) -> Path:
     agent_dir.mkdir(parents=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -117,7 +119,7 @@ def _make_spec_repo(tmp_path: Path, *, drifted: bool) -> Path:
         "    model: sonnet\n"
         "  health:\n"
         "    enabled: false\n"
-        "    interval: 60\n"
+        "    interval: 60\n")
     )
     _git(work, "add", "-A")
     _git(work, "commit", "-m", "init")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 import tempfile
 from pathlib import Path
@@ -488,21 +490,21 @@ class TestListJsonTimeoutBudget:
         # unknown) — that's what this test exercises, so a minimal v3
         # spec without spec.remote is sufficient.
         remote_cfg_path.write_text(
-            """apiVersion: scitex-agent-container/v3
+            explicitize_yaml("""apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
-"""
+""")
         )
         ld = tmp_path / "test-local"
         ld.mkdir()
         local_cfg_path = ld / "test-local.yaml"
         local_cfg_path.write_text(
-            """apiVersion: scitex-agent-container/v3
+            explicitize_yaml("""apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
-"""
+""")
         )
 
         # PA-306: hand-rolled fake injection with explicit restore.
@@ -564,7 +566,7 @@ spec:
         d.mkdir()
         cfg_path = d / "test-fast.yaml"
         cfg_path.write_text(
-            """apiVersion: scitex-agent-container/v3
+            explicitize_yaml("""apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
   runtime: apptainer
@@ -581,7 +583,7 @@ spec:
   restart:
     policy: on-failure
     max_retries: 3
-"""
+""")
         )
 
         # PA-306: hand-rolled fake injection with explicit restore.

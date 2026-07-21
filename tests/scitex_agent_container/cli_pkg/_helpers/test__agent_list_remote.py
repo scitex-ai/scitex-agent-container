@@ -179,7 +179,12 @@ def _write_valid_spec(
         "    policy: on-failure",
         "    max_retries: 3",
     ]
-    spec.write_text("\n".join(lines) + "\n")
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
+    spec.write_text(explicitize_yaml("\n".join(lines) + "\n"))
     return spec
 
 

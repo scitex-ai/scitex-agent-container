@@ -22,6 +22,8 @@ AAA blocks, markers on their own line, one assert per test.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 import socket
 from pathlib import Path
@@ -71,7 +73,7 @@ def _write_spec(tmp_path: Path, raw_args_yaml: str) -> Path:
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "metadata:\n"
         "  labels:\n"
@@ -93,7 +95,7 @@ def _write_spec(tmp_path: Path, raw_args_yaml: str) -> Path:
         "    policy: on-failure\n"
         "    max_retries: 3\n"
         "  claude:\n"
-        "    model: claude-opus-4-8[1m]\n",
+        "    model: claude-opus-4-8[1m]\n"),
         encoding="utf-8",
     )
     return spec

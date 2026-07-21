@@ -457,7 +457,7 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -481,7 +481,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(head_dir / "head.yaml"))
@@ -497,7 +497,7 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -520,7 +520,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(head_dir / "head.yaml"))
@@ -536,7 +536,7 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -559,7 +559,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(head_dir / "head.yaml"))
@@ -577,7 +577,7 @@ class TestEffectiveId:
         head_dir = tmp_path / "head"
         head_dir.mkdir()
         (head_dir / "head.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -599,7 +599,7 @@ class TestEffectiveId:
                     max_retries: 3
                   hosts: all
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(head_dir / "head.yaml"))
@@ -616,7 +616,7 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -643,7 +643,7 @@ class TestEffectiveId:
                     - nas
                     - spartan
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(d / "lead.yaml"))
@@ -658,7 +658,7 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -685,7 +685,7 @@ class TestEffectiveId:
                     - nas
                     - spartan
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(d / "lead.yaml"))
@@ -705,7 +705,7 @@ class TestEffectiveId:
         d = tmp_path / "lead"
         d.mkdir()
         (d / "lead.yaml").write_text(
-            dedent(
+            explicitize_yaml(dedent(
                 """\
                 apiVersion: scitex-agent-container/v3
                 kind: Agent
@@ -730,7 +730,7 @@ class TestEffectiveId:
                     - ywata-note-win
                     - mba
                 """
-            )
+            ))
         )
         # Act
         cfg = load_config(str(d / "lead.yaml"))

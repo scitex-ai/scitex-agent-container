@@ -81,8 +81,13 @@ def _write_spec(home: Path, name: str, host_line: str) -> Path:
         "    policy: on-failure\n"
         "    max_retries: 3\n"
     )
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     spec = d / "spec.yaml"
-    spec.write_text(body)
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
+    spec.write_text(explicitize_yaml(body))
     return spec
 
 

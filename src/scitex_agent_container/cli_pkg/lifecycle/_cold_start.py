@@ -28,12 +28,13 @@ from pathlib import Path
 # digits, hyphen, underscore; must start with a letter.
 _VALID_LABEL = re.compile(r"^[a-z][a-z0-9_-]*$")
 
-# Standardized TUI spec for a cold-started agent. Every APPLICABLE field is
-# written explicitly — NO HIDDEN DEFAULTS (operator directive 2026-06-23): a
-# reader sees placement, image, mounts, model, and lifecycle without consulting
-# code, and the validator REQUIRES them. The sac MCP server + ``server:sac``
-# channel are still auto-injected by the loader. ``host`` is always set
-# (``local`` = the caller's host; dispatch runs remote when it names a peer).
+# Standardized TUI spec for a cold-started agent. EVERY field is written
+# explicitly — red-start ruling 2026-07-21 (superseding the 2026-06-23
+# subset): an omitted field is a load ERROR, so anything sac itself renders
+# must carry the complete required set. Non-curated values sit at their
+# defaults. The sac MCP server + ``server:sac`` channel are still
+# auto-injected by the loader. ``host`` is always set (dispatch runs remote
+# when it names a peer).
 _COLD_START_SPEC = """\
 # {label} — cold-started by `sac start` ({stamp_note}).
 # Standardized TUI spec; edit freely or `sac agents create` for the full tour.
@@ -44,25 +45,113 @@ metadata:
     project: {label}
 spec:
   runtime: tui
+  provider: anthropic
   host: {host}
   workdir: {workdir}
+  python-venv: ""
+  user: ""
+  to_home: ./to_home
+  startup_commands: []
+  startup_prompts: []
+  listen: []
+  extensions: {{}}
+  mcp_servers: {{}}
+  container:
+    runtime: none
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
   apptainer:
     # Default SIF, named explicitly. ``binds: []`` = no extra mounts; apptainer's
     # default $HOME mount makes the workdir reachable. Add binds for more reach.
     image: ~/.scitex/agent-container/containers/scitex-agent-container.sif
     binds: []
+    env: {{}}
+    raw_args: []
+    post: ""
+    environment: {{}}
+    def_file: ""
+    nv: false
+    rocm: false
+    overlay: ""
+    overlay_size: ""
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    relaxed: false
+    fakeroot: false
+    jail: false
+    nested_build: false
   claude:
     model: sonnet
     flags:
       - --dangerously-skip-permissions
+    channels: []
+    raw_options: {{}}
+    # null = role-derived (continue for coordinator roles, fresh otherwise)
+    session: null
+    continue_max_age_minutes: null
+    resume_id: ""
+    auto_accept: true
+    account: ""
+    credentials_file: ""
+    credentials_files: []
+    provider: null
   health:
     enabled: true
     interval: 60
+    timeout: 5
+    method: sdk-alive
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: "1"
+      y_y_n: "2"
+      waiting: /speak-and-call
   restart:
     policy: on-failure
     max_retries: 3
+    prune_on_stop: false
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
   a2a:
+    host: 127.0.0.1
     port: auto
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+  lineage:
+    group: ""
+    may_spawn: true
 """
 
 

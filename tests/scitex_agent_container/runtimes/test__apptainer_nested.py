@@ -57,7 +57,12 @@ def _cfg(tmp_path: Path, extra: str):
     spec_dir = tmp_path / "agents" / "agt"
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
-    spec.write_text(_SPEC.format(extra=extra), encoding="utf-8")
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (body wins).
+    spec.write_text(explicitize_yaml(_SPEC.format(extra=extra)), encoding="utf-8")
     return load_config(str(spec))
 
 
