@@ -68,6 +68,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay, settings hook
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
 - [26_credentials-rotation-host.md](26_credentials-rotation-host.md) — refresh + one-refresher invariant + host cron
+- [26-acct](26_credentials-account-selection.md) — boot account pin/picker + 7d policy
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push via a2a_send

@@ -178,6 +178,10 @@ ops (cron, watch-live daemon, CI rotation) are in
 
 ## See also
 
+- [26_credentials-account-selection.md](26_credentials-account-selection.md) —
+  which account an agent boots on (`claude.account` pin vs the boot
+  picker) and the `SAC_CREDS_7D_POLICY: spread | burn` spend policy.
+
 - [26_credentials-rotation-host.md](26_credentials-rotation-host.md) —
   refresh mechanics + one-refresher invariant + host cron / watch-live /
   CI rotation.
