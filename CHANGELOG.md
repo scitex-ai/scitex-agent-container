@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **autobump-release-sweep: two state-read defects caught by the first live
+  dry-run (2026-07-21), fixed before arming.** (1) `tag_sha` returned an
+  ANNOTATED tag's tag-object sha, not the peeled commit — head==tagged-commit
+  read as "moved past" and STEADY was unreachable for operator-cut annotated
+  tags. Now peels via `/git/tags/<sha>`. (2) `gate_develop` counted every
+  completed check-run, so a flaky-then-rerun-green check (two rows for one
+  name) kept develop RED forever. Now projects latest-run-per-name
+  (`group_by(.name) | max_by(.started_at)`) before classifying, matching
+  branch-protection semantics. Both verified against the live commit that
+  produced the false readings (bad=0, gate=green; peel=develop head).
+
 ## [0.24.2] - 2026-07-21
 
 ### Added
