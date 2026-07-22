@@ -106,7 +106,7 @@ The `isolation` block (see ADR-0001) carries:
 | `binds_count` | int | Total apptainer `--bind` entries. |
 | `binds_writable_count` | int | Number of binds NOT carrying `:ro`. |
 
-External attestation surfaces (Clew, orochi) read these booleans to
+External attestation surfaces (Clew, fleet hubs) read these booleans to
 prove isolation properties without re-parsing the YAML.
 
 ### Per-agent `capabilities.extensions[]` entries

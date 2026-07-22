@@ -119,7 +119,7 @@ all tmux-managed agents on that host:
 
 | Host              | Domain role            | Credential home |
 |-------------------|------------------------|-----------------|
-| MBA               | scitex-orochi.com hub  | `~/.claude/`    |
+| MBA               | fleet hub              | `~/.claude/`    |
 | NAS               | scitex.ai              | `~/.claude/`    |
 | spartan           | GPU worker             | `~/.claude/`    |
 | ywata-note-win    | Windows/WSL            | `~/.claude/`    |

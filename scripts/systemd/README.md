@@ -419,8 +419,8 @@ curl -s http://127.0.0.1:7878/v1/sac/health
   URL) and uvicorn's request log to `journalctl --user -u
   sac-listen`.
 * No `--bind` override: the default `127.0.0.1:7878` is correct
-  for the supported deployment shape (orochi owns the tunnel
-  mesh; SAC_OROCHI_SCOPES.md §4.4). Override via a `systemctl
+  for the supported deployment shape (the fleet hub owns the tunnel
+  mesh). Override via a `systemctl
   --user edit sac-listen` drop-in if a non-loopback bind is ever
   needed.
 

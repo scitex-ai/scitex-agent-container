@@ -210,7 +210,7 @@ spec:
 
     # MCP push channels (passed as `claude --channels`).
     # channels:
-    #   - server:orochi-push
+    #   - server:sac
     #   - server:a2a
 
     # auto_accept: auto-confirm permission prompts in the TUI.
