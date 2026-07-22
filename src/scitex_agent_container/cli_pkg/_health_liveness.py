@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["liveness_payload", "print_liveness"]
+__all__ = ["liveness_payload", "print_inbox", "print_liveness"]
 
 # wedged = present but NOT working — magenta, distinct from unknown's yellow so
 # a "known-stuck, needs a restart" reads apart from a "we could not tell". It is
@@ -84,3 +84,25 @@ def print_liveness(console: Any, liveness: dict) -> None:
         console.print(
             f"[dim]  destructive action NOT authorised on this evidence: {veto}[/dim]"
         )
+
+
+def print_inbox(console: Any, name: str, subscribers: int, reachable: str) -> None:
+    """Render the inbox-reachability observation (moved verbatim from
+    ``status_cmds.health`` — the 512-line per-file cap)."""
+    from .._listen._reachability import UNKNOWN, UNREACHABLE
+
+    if reachable == UNREACHABLE:
+        console.print(
+            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers. "
+            f"a2a_send to '{name}' will reach nobody (messages are queued and "
+            f"replayed when its channel adapter reconnects). The process is "
+            f"up; its inbox adapter is not attached. Do NOT force-restart on "
+            f"this alone.[/yellow]"
+        )
+    elif reachable == UNKNOWN:
+        console.print(
+            "[dim]inbox: unknown (could not reach sac listen to observe "
+            "subscribers)[/dim]"
+        )
+    else:
+        console.print(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]")
