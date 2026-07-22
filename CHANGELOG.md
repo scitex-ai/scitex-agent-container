@@ -56,7 +56,7 @@ versioning follows [SemVer](https://semver.org/).
   only implemented engine. A spec naming a ripped-out engine now fails
   yaml-validate with a message listing only the engines that exist, instead
   of validating cleanly and dying at dispatch. New
-  `tests/scitex_agent_container/config/test__container_runtime_enum.py`
+  `tests/scitex_agent_container/config/test__validation_container_runtime.py`
   probes the LIVE resolver (`_container_runtime_for`) for every advertised
   value, so re-adding an unimplemented engine to the enum fails the suite.
 
