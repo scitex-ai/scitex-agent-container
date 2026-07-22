@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Detector: agent overlays that silently mask a base-baked package**
+  (incident 2026-07-22). Historical per-agent `pip install`s left stale
+  `scitex_cards` copies (0.16.0–0.17.4) in overlay UPPER layers
+  (`~/.scitex/agent-container/containers/overlays/<agent>/upper/opt/venv-sac/
+  …/site-packages/`); the upper wins over the base SIF, so restarts onto a
+  rebuilt base were silent no-ops and the all-clear had to be retracted. New
+  `_maintenance._overlay_masking` (+ `_overlay_masking_model`) implements the
+  sweep-validated rule: a `*.dist-info` in the upper for a package the base
+  provides = MASKED; a bare package dir with only `__pycache__` (zero
+  top-level `*.py`, no dist-info) is a benign overlayfs copy-up, NOT masking
+  (counting those once caused a false fleet scare). Three-valued throughout —
+  missing/unreadable overlay or unreadable base package set reports UNKNOWN,
+  never clean. Surfaced per-agent in `sac agents check-health` (human +
+  `--json` `overlay_masking` key, flowing through the MCP `agent_health`
+  tool) as an observation NEXT TO `healthy`, never folded into the exit code;
+  fleet-wide via `sweep_agent_overlays()`. The base package set is read
+  lazily (only when the upper actually carries a dist-info) via an
+  UNFILTERED live `pip list` of the SIF venv, falling back to the baked
+  scitex-\* manifest honestly labelled PARTIAL. The operational rule ships as
+  one string (`OPERATIONAL_RULE`, quoted verbatim by the RED rendering and
+  `docs/isolation.md` §7): NEVER pip-install a base-baked package into a
+  running agent's overlay — hotfix by force-reinstalling the EXACT base
+  version or recreating the overlay. `status_cmds.health`'s inbox rendering
+  moved to `_health_liveness.print_inbox` (512-line per-file cap).
+
 ### Changed
 
 - auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.

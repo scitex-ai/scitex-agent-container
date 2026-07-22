@@ -210,6 +210,29 @@ Semantics:
 - K/KB units are explicitly rejected — apptainer's
   `overlay create --size` takes integer MB.
 
+**Overlay masking of base-baked packages (incident 2026-07-22).**
+The overlay upper WINS over the base SIF. A `pip install` of a package the
+base already bakes into `/opt/venv-sac` lands in
+`<overlay>/upper/opt/venv-sac/.../site-packages/` and silently shadows the
+base copy for that one agent — across every later base rebuild and restart.
+The fleet carried stale `scitex_cards` fossils (0.16.0–0.17.4) this way:
+restarts onto a new base were no-ops, and the all-clear had to be retracted.
+
+The operational rule (also printed by `sac agents check-health` when the
+detector fires): **NEVER pip-install a base-baked package into a running
+agent's overlay.** A hotfix either force-reinstalls the EXACT base version,
+or recreates the overlay (stop the agent, remove
+`<overlay>/upper/opt/venv-sac`, restart onto the base).
+
+Detection (per-agent in `sac agents check-health`, fleet-wide via
+`scitex_agent_container._maintenance.sweep_agent_overlays`): a
+`*.dist-info` in the upper's site-packages for a package the base provides
+= MASKED. A bare package directory holding only `__pycache__` (zero
+top-level `*.py`, no dist-info) is a benign overlayfs copy-up, NOT masking
+— counting those once produced a false fleet scare. The verdict is
+three-valued: an overlay we cannot read (missing root, unreadable upper,
+unreadable base package set) reports UNKNOWN, never clean.
+
 ### 8. `--writable` vs `--writable-tmpfs` confusion
 
 - `--writable` — modifies the SIF itself. Destroys SIF immutability.

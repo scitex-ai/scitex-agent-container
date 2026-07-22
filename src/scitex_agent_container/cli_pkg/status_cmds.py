@@ -455,7 +455,6 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     # a detached inbox adapter, not a dead agent, and anything that
     # auto-restarts on it would destroy a healthy session. Observation only.
     from .._lifecycle.inbox_probe import probe_inbox_reachability
-    from .._listen._reachability import UNKNOWN, UNREACHABLE
 
     subscribers, reachable = probe_inbox_reachability(name)
 
@@ -463,9 +462,14 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     # alongside the ``healthy`` bool rather than replacing it — a bool cannot
     # say "I could not tell", and ``healthy`` gates this command's exit code.
     # See :mod:`._health_liveness`.
-    from ._health_liveness import liveness_payload, print_liveness
+    from ._health_liveness import liveness_payload, print_inbox, print_liveness
 
     liveness = liveness_payload(name, config)
+
+    # Observation-only like ``liveness``: never flips ``healthy``.
+    from ._health_overlay_masking import overlay_masking_payload, print_overlay_masking
+
+    overlay_masking = overlay_masking_payload(name, config)
 
     if use_json:
         click.echo(
@@ -477,6 +481,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "inbox_subscribers": subscribers,
                     "inbox_reachable": reachable,
                     "liveness": liveness,
+                    "overlay_masking": overlay_masking,
                 },
                 indent=2,
             )
@@ -491,22 +496,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         console.print(f"[red]{message}[/red]")
 
     print_liveness(console, liveness)
-
-    if reachable == UNREACHABLE:
-        console.print(
-            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers. "
-            f"a2a_send to '{name}' will reach nobody (messages are queued and "
-            f"replayed when its channel adapter reconnects). The process is "
-            f"up; its inbox adapter is not attached. Do NOT force-restart on "
-            f"this alone.[/yellow]"
-        )
-    elif reachable == UNKNOWN:
-        console.print(
-            "[dim]inbox: unknown (could not reach sac listen to observe "
-            "subscribers)[/dim]"
-        )
-    else:
-        console.print(f"[green]inbox: reachable ({subscribers} subscriber(s))[/green]")
+    print_overlay_masking(console, overlay_masking)
+    print_inbox(console, name, subscribers, reachable)
 
     if not is_healthy:
         sys.exit(1)
