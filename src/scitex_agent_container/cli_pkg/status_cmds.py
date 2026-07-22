@@ -466,11 +466,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     liveness = liveness_payload(name, config)
 
-    # Overlay-masking (2026-07-22 incident): does this agent's overlay UPPER
-    # carry a dist-info that shadows a base-baked package? Three-valued and
-    # observation-only — same restraint as ``liveness``; a MASKED overlay is
-    # a standing hazard, not a dead process, so it never flips ``healthy``.
-    # See :mod:`._health_overlay_masking`.
+    # Observation-only like ``liveness``: never flips ``healthy``.
     from ._health_overlay_masking import overlay_masking_payload, print_overlay_masking
 
     overlay_masking = overlay_masking_payload(name, config)

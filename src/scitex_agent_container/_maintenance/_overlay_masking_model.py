@@ -1,33 +1,4 @@
-"""Data + vocabulary for overlay-masking detection. No subprocess, no I/O.
-
-Companion to :mod:`._overlay_masking` (the scanner + verdict engine),
-split model-from-engine exactly like ``_worktree_gc_model`` /
-``_worktree_gc_predicate``.
-
-THE INCIDENT THIS VOCABULARY EXISTS FOR (2026-07-22)
-----------------------------------------------------
-Agent containers run a base SIF whose venv is ``/opt/venv-sac``. Each agent
-also mounts a writable directory overlay whose upper layer lives at::
-
-    ~/.scitex/agent-container/containers/overlays/<agent>/upper/
-
-Historical per-agent ``pip install``s left stale copies of ``scitex_cards``
-(0.16.0 … 0.17.4) in those upper layers. Overlayfs resolves the UPPER layer
-first, so a plain restart onto a rebuilt base did NOT migrate the package —
-the fossil kept winning, silently, forever. Every downstream symptom
-followed (resolve-store hitting a bundled example, coin-toss dist-info,
-cards never reaching the canonical board), plus a no-op restart wave and a
-premature all-clear that had to be retracted.
-
-Nothing in sac installs packages into overlay uppers today — the ``.def``
-bakes installs into ``/opt/venv-sac`` in the BASE, correctly. The fossils
-were hand-upgrades. A hand-cleanup restores the state but leaves the system
-able to re-enter it silently; the DETECTOR is the deliverable.
-
-The verdict / reason strings below are API, not debug text: they land in
-``sac agents check-health --json`` (and through it in the MCP
-``agent_health`` tool).
-"""
+"""Vocabulary + data types for overlay-masking detection (:mod:`._overlay_masking`)."""
 
 from __future__ import annotations
 
@@ -60,9 +31,7 @@ __all__ = [
     "canonical_dist_name",
 ]
 
-#: THE OPERATIONAL RULE, as ONE string, so the health output and any
-#: card/report quote the same words instead of paraphrasing drift into
-#: being. Documented here because the detector is the enforcement.
+# User-facing output (quoted verbatim by the health rendering), not a comment.
 OPERATIONAL_RULE = (
     "NEVER pip-install a base-baked package into a running agent's overlay: "
     "the overlay upper masks the base venv from then on, and every later "
@@ -72,17 +41,17 @@ OPERATIONAL_RULE = (
     "restart onto the base)."
 )
 
-# Agent-level verdicts.
+# Agent-level verdicts (API strings: `sac agents check-health --json`).
 VERDICT_MASKED = "masked"
 VERDICT_CLEAN = "clean"
 VERDICT_UNKNOWN = "unknown"
 
 # Per-shadow-install classifications.
-SHADOW_MASKED = "masked"  # base provides the package -> the upper shadows it
-SHADOW_OVERLAY_ONLY = "overlay-only"  # complete base set lacks it -> legit add
-SHADOW_BASE_UNKNOWN = "base-unknown"  # could not tell what the base provides
+SHADOW_MASKED = "masked"
+SHADOW_OVERLAY_ONLY = "overlay-only"
+SHADOW_BASE_UNKNOWN = "base-unknown"
 
-# Reason tokens (machine token; the verdict carries a human ``detail`` too).
+# Reason tokens (API; the verdict carries a human ``detail`` too).
 REASON_NO_OVERLAY = "no-overlay-declared"
 REASON_IMAGE_OVERLAY = "image-overlay-unscannable"
 REASON_OVERLAY_MISSING = "overlay-root-missing"
@@ -102,13 +71,10 @@ def canonical_dist_name(name: str) -> str:
 
 @dataclass(frozen=True)
 class BasePackageSet:
-    """What the BASE image's venv provides — with honest coverage.
+    """Packages the BASE image's venv provides.
 
-    ``complete=True`` means a full ``pip list`` of the base venv: a package
-    absent from it is genuinely not base-provided. ``complete=False`` means
-    a partial read (the baked ``/opt/scitex-versions.json`` manifest covers
-    scitex-* only): membership proves MASKED, but absence proves nothing —
-    a miss classifies as :data:`SHADOW_BASE_UNKNOWN`, never as clean.
+    ``complete=False`` (e.g. the baked scitex-* manifest) means absence
+    proves nothing: a miss classifies SHADOW_BASE_UNKNOWN, never clean.
     """
 
     packages: Mapping[str, str]  # canonical dist name -> version
@@ -118,13 +84,13 @@ class BasePackageSet:
 
 @dataclass(frozen=True)
 class ShadowInstall:
-    """ONE dist-info found in an overlay upper's site-packages."""
+    """One dist-info found in an overlay upper's site-packages."""
 
-    package: str  # canonical dist name
-    version: str  # version the upper carries (i.e. what the agent RUNS)
-    dist_info: str  # host path of the dist-info directory (the evidence)
+    package: str
+    version: str  # what the agent actually runs
+    dist_info: str  # evidence path
     status: str  # SHADOW_MASKED | SHADOW_OVERLAY_ONLY | SHADOW_BASE_UNKNOWN
-    base_version: str = ""  # base's version when status == SHADOW_MASKED
+    base_version: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -138,23 +104,16 @@ class ShadowInstall:
 
 @dataclass(frozen=True)
 class OverlayMaskVerdict:
-    """What we concluded about ONE agent's overlay — and the evidence why.
-
-    Three-valued, like every rail in ``_maintenance``: a state we could not
-    read (overlay root missing, unreadable upper, unreadable base package
-    set) is :data:`VERDICT_UNKNOWN` — never collapsed into clean. The
-    asymmetry is deliberate: a false UNKNOWN is a yellow line in health
-    output; a false CLEAN is the 2026-07-22 incident again.
-    """
+    """Tri-state verdict for one agent's overlay; UNKNOWN never reads clean."""
 
     agent: str
     overlay_root: str  # "" when the spec declares no overlay
     verdict: str  # VERDICT_MASKED | VERDICT_CLEAN | VERDICT_UNKNOWN
     reason: str  # one REASON_* token
-    detail: str = ""  # human sentence expanding the token
+    detail: str = ""
     shadows: tuple[ShadowInstall, ...] = ()
     copyups: tuple[str, ...] = ()  # benign copy-up dirs (evidence, not alarm)
-    stray_dirs: tuple[str, ...] = ()  # non-taxonomy dirs, listed not judged
+    stray_dirs: tuple[str, ...] = ()
     base_source: str = ""  # "" when the base set was never consulted
 
     @property

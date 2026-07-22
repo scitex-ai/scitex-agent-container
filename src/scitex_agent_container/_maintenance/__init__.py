@@ -5,11 +5,8 @@ Two concerns live here:
 * **git worktree sprawl** (:mod:`._worktree_gc`), the standing liability
   behind the incident card ``incident-worktree-sprawl-permanent-gc-20260710``
   — one repo reached 105 worktrees and helped trigger a host load-spike.
-* **overlay masking of base-baked packages**
-  (:mod:`._overlay_masking` / :mod:`._overlay_masking_model`), from the
-  2026-07-22 incident where historical ``pip install``s in agent overlay
-  UPPER layers silently shadowed the base venv's ``scitex_cards`` across
-  base rebuilds. Surfaced per-agent in ``sac agents check-health``.
+* **overlay masking of base-baked packages** (:mod:`._overlay_masking`),
+  surfaced per-agent in ``sac agents check-health``.
 
 The shape every rail in this package follows, learned from
 ``_hostsync``:

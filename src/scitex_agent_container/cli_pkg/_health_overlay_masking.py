@@ -1,17 +1,7 @@
-"""Overlay-masking verdict, rendered for ``sac agents check-health``.
+"""Overlay-masking observation for ``sac agents check-health``.
 
-Sibling of :mod:`._health_liveness`, same doctrine: the observation is
-published NEXT TO the ``healthy`` bool, never folded into it. ``healthy``
-gates the command's exit code and automation keys on that; a MASKED overlay
-is a standing configuration hazard, not a dead process, and must not make a
-live agent read as down. The verdict is three-valued (masked / clean /
-unknown) because the detector can genuinely fail to see (overlay root
-missing on this host, unreadable upper, unreadable base package set) — and
-"could not tell" must render as UNKNOWN, never as clean.
-
-Detector: :mod:`.._maintenance._overlay_masking` (2026-07-22 incident —
-historical pip installs in overlay uppers silently shadowed the base venv's
-``scitex_cards`` across base rebuilds).
+Published NEXT TO ``healthy`` (never folded into the exit code), same as
+:mod:`._health_liveness`. Detector: :mod:`.._maintenance._overlay_masking`.
 """
 
 from __future__ import annotations
@@ -28,12 +18,7 @@ _VERDICT_COLOUR = {
 
 
 def overlay_masking_payload(name: str, config: Any) -> dict:
-    """Resolve ``name``'s overlay-masking verdict as a JSON-ready dict.
-
-    Tolerant by construction: any failure to gather degrades to an UNKNOWN
-    verdict carrying the reason — never to a fabricated CLEAN, and never to
-    an exception that takes the health command down.
-    """
+    """JSON-ready verdict dict; any gather failure degrades to UNKNOWN."""
     from .._maintenance._overlay_masking import inspect_agent_overlay
     from .._maintenance._overlay_masking_model import (
         REASON_INSPECT_ERROR,
@@ -54,7 +39,7 @@ def overlay_masking_payload(name: str, config: Any) -> dict:
 
 
 def print_overlay_masking(console: Any, payload: dict) -> None:
-    """Print the verdict AND why; on MASKED, print the operational rule."""
+    """One verdict line; on MASKED, each shadow plus the operational rule."""
     from .._maintenance._overlay_masking_model import OPERATIONAL_RULE
 
     verdict = str(payload.get("verdict", "unknown"))
