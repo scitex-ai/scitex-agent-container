@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.
+
 ## [0.24.11] - 2026-07-22
 
 ### Changed
