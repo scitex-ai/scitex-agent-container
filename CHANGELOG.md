@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.11] - 2026-07-22
+
 ### Changed
 
 - **BREAKING — every spec field explicit, red-start (operator ruling
