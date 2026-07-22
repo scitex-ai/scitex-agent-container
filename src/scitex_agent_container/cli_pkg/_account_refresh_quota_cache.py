@@ -89,19 +89,32 @@ def account_refresh_quota_cache(cache_path: str | None, as_json: bool) -> None:
             err=True,
         )
     else:
+        from .._helpers import system_msg
+
         results = result["results"]
+        if not results:
+            system_msg(
+                "no accounts stored — run `sac accounts save <name>`",
+                style="warn",
+            )
+        # The per-account figures are what the operator reads to decide which
+        # account has headroom; one multi-line record keeps the table aligned
+        # under a single level prefix.
+        rows = [
+            f"  {row['name']:20s}  5h={row['h5']:.0f}% "
+            f"7d={row['d7']:.0f}% ttl={row['ttl_h']:.2f}h"
+            for row in results
+            if row["error"] is None
+        ]
+        if rows:
+            system_msg("\n".join(rows), style="info")
         for row in results:
-            if row["error"] is None:
-                click.echo(
-                    f"  {row['name']:20s}  5h={row['h5']:.0f}% "
-                    f"7d={row['d7']:.0f}% ttl={row['ttl_h']:.2f}h"
-                )
-            else:
-                click.echo(f"  {row['name']:20s}  FAILED — {row['error']}", err=True)
-        click.echo(
-            f"wrote {result['ok']} account(s) to {result['cache_path']} "
-            f"({result['failed']} failed)"
-        )
+            if row["error"] is not None:
+                system_msg(f"{row['name']}: {row['error']}", style="red")
+        if result["ok"]:
+            tail = f" ({result['failed']} failed)" if result["failed"] else ""
+            system_msg(f"refreshed {result['ok']} account(s){tail}", style="success")
+>>>>>>> d9d526c8 (feat(cli): honest output levels — one line per condition, no traceback on an expected refusal)
 
     # An empty store is its OWN outcome, checked before the all-failed guard
     # below. That guard's `attempted > 0` used to leave this case uncovered,
