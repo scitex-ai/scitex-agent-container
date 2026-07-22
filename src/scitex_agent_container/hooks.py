@@ -8,7 +8,7 @@ command (``shlex.split`` + ``subprocess.run``). Stdlib only.
 All invocations are fire-and-forget via a module-level thread pool;
 ``run_hook`` never blocks the caller and never raises — errors are
 logged and swallowed. This lets scitex-agent-container stay agnostic
-of orochi / telegram / any specific fleet comms: external tools plug
+of telegram / any specific fleet comms: external tools plug
 in via YAML and the container runs them opaquely.
 
 Trust boundary: entries in a spec.hooks.* list execute arbitrary shell

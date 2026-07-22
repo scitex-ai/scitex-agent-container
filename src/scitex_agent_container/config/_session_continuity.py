@@ -55,7 +55,7 @@ SESSION_RESUME = "resume"
 #
 # Match is case-insensitive on the exact role OR any ``_CONTINUITY_PREFIXES``
 # prefix (roles are frequently project-suffixed, e.g.
-# ``worker-telegrammer-orochi``, ``contributor-figrecipe``).
+# ``worker-telegrammer-nas``, ``contributor-figrecipe``).
 _CONTINUITY_ROLES: frozenset[str] = frozenset(
     {
         # Fleet coordinator roles (env-injected).
@@ -76,7 +76,7 @@ _CONTINUITY_ROLES: frozenset[str] = frozenset(
 )
 
 # Role PREFIXES that mark a continuity role even when project-suffixed.
-# e.g. ``worker-telegrammer-orochi`` / ``contributor-figrecipe`` /
+# e.g. ``worker-telegrammer-nas`` / ``contributor-figrecipe`` /
 # ``lead-ywata-note-win`` / ``head-ywata-note-win``.
 _CONTINUITY_PREFIXES: tuple[str, ...] = (
     "lead-",

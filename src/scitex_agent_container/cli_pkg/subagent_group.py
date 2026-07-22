@@ -5,7 +5,7 @@ single Claude Code session — as distinct from sac's own apptainer
 ``agents`` group (Type 1).
 
 Scope: pure state inspection. Classification (running / stale / dead /
-completed) is deliberately left to the consumer (orochi or any
+completed) is deliberately left to the consumer (any
 orchestrator); this surface returns the same facts that the
 ``subagent_get_state`` MCP tool returns.
 """

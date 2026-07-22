@@ -3,7 +3,7 @@
 v1: host-level token, one per host, stored under
 ``~/.scitex/agent-container/tokens/listen-<hostname>.token``.
 
-Per SAC_OROCHI_SCOPES.md §4.1, per-agent scoped tokens are a future
+Per-agent scoped tokens are a future
 extension; this module reserves the path layout to accept them later.
 """
 

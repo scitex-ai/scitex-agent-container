@@ -331,7 +331,7 @@ def db_export(
     dry_run: bool,
     yes: bool,
 ) -> None:
-    """Dump state.db rows as a JSON delta. Consumed by orochi.
+    """Dump state.db rows as a JSON delta. Consumed by an external aggregator.
 
     Default emits to stdout so it can be piped over ssh:
 
@@ -357,8 +357,7 @@ def db_export(
         unknown = [t for t in tables if t not in KNOWN_TABLES]
         if unknown:
             raise click.BadParameter(
-                f"unknown table(s) {unknown!r}; "
-                f"valid names are {list(KNOWN_TABLES)}",
+                f"unknown table(s) {unknown!r}; valid names are {list(KNOWN_TABLES)}",
                 param_hint="--tables",
             )
     payload = export_state(since=since, host=host, tables=tables)
@@ -415,7 +414,7 @@ def db_import(
 ) -> None:
     """Ingest a JSON dump produced by ``sac db export``.
 
-    Pass ``-`` to read from stdin (the canonical orochi-pull pattern).
+    Pass ``-`` to read from stdin (the canonical aggregator-pull pattern).
     Idempotent: rows already present (matched by primary key) are
     silently skipped.
 
