@@ -1,9 +1,12 @@
 """Host-hygiene maintenance rails that run on a schedule, not on a whim.
 
-Today one concern lives here: **git worktree sprawl**
-(:mod:`._worktree_gc`), the standing liability behind the incident card
-``incident-worktree-sprawl-permanent-gc-20260710`` — one repo reached 105
-worktrees and helped trigger a host load-spike.
+Two concerns live here:
+
+* **git worktree sprawl** (:mod:`._worktree_gc`), the standing liability
+  behind the incident card ``incident-worktree-sprawl-permanent-gc-20260710``
+  — one repo reached 105 worktrees and helped trigger a host load-spike.
+* **overlay masking of base-baked packages** (:mod:`._overlay_masking`),
+  surfaced per-agent in ``sac agents check-health``.
 
 The shape every rail in this package follows, learned from
 ``_hostsync``:
@@ -17,6 +20,18 @@ The shape every rail in this package follows, learned from
   never crashes the maintenance pass that feeds it.
 """
 
+from ._overlay_masking import (
+    base_package_set_for,
+    inspect_agent_overlay,
+    inspect_overlay,
+    sweep_agent_overlays,
+)
+from ._overlay_masking_model import (
+    OPERATIONAL_RULE,
+    BasePackageSet,
+    OverlayMaskVerdict,
+    ShadowInstall,
+)
 from ._worktree_gc import (
     DEFAULT_CAP,
     DEFAULT_MIN_AGE_HOURS,
@@ -40,11 +55,19 @@ from ._worktree_gc_repos import discover_repos, spec_workdirs
 __all__ = [
     "DEFAULT_CAP",
     "DEFAULT_MIN_AGE_HOURS",
+    "OPERATIONAL_RULE",
+    "BasePackageSet",
     "GcOutcome",
+    "OverlayMaskVerdict",
     "RepoGcResult",
+    "ShadowInstall",
     "WorktreeInfo",
     "WorktreeVerdict",
+    "base_package_set_for",
     "discover_repos",
+    "inspect_agent_overlay",
+    "inspect_overlay",
+    "sweep_agent_overlays",
     "exit_code_for",
     "gc_repo",
     "gc_repos",
