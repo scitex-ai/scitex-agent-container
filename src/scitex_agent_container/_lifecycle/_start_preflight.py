@@ -7,7 +7,6 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-import sys
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
