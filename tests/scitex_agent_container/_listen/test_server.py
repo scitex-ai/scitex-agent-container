@@ -1514,3 +1514,56 @@ def test_message_send_threads_dispatch_id_into_published_event(
     event = _roundtrip_local_send(cross_host_env, metadata=metadata)
     # Assert
     assert event.get("dispatch_id") == "d-route-99"
+
+
+# ---------------------------------------------------------------------------
+# Re-export surface — a missing one degraded SILENTLY
+#
+# `_resolve_runtime_self_identity` moved into `_agents_list` alongside
+# `list_agents`, but only `list_agents` was re-exported here. Both self-peer
+# callers import it inside a try/except that falls back to a warning, so the
+# ImportError disabled self-peer persistence WITHOUT failing anything: listen
+# kept serving and logged "continues without persisted self-peers". It reached
+# develop and survived there, because nothing asserted the import.
+#
+# These assert the import SITE, not the behaviour, which is the thing that
+# actually broke. Delete either name from the re-export and they go red.
+# ---------------------------------------------------------------------------
+
+
+def test_server_reexports_resolve_runtime_self_identity() -> None:
+    # Arrange — the historical import path three callers still use.
+    from scitex_agent_container._listen import server
+
+    # Act
+    resolved = getattr(server, "_resolve_runtime_self_identity", None)
+
+    # Assert
+    assert callable(resolved)
+
+
+def test_server_reexports_list_agents() -> None:
+    # Arrange — the sibling that WAS re-exported; guards the pair.
+    from scitex_agent_container._listen import server
+
+    # Act
+    resolved = getattr(server, "list_agents", None)
+
+    # Assert
+    assert callable(resolved)
+
+
+def test_self_peer_persistence_can_resolve_identity_without_falling_back() -> None:
+    # Arrange — the real consumer whose except-branch masked the breakage.
+    from scitex_agent_container._listen import _self_peer_persistence  # noqa: F401
+
+    # Act
+    from scitex_agent_container._listen.server import (
+        _resolve_runtime_self_identity,
+    )
+
+    # Assert — resolving to None is a legitimate answer (no `lead:` block);
+    # raising ImportError is not, and that is what this pins.
+    assert _resolve_runtime_self_identity() is None or isinstance(
+        _resolve_runtime_self_identity(), str
+    )
