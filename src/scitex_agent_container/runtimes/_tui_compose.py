@@ -36,22 +36,14 @@ import re
 import time
 from typing import Callable
 
+from ._pane_context_log import log_pane_context
+from ._pane_context_log import pane_tail as _pane_tail
+
 __all__ = [
     "clear_compose_buffer",
     "is_fresh_boot_welcome_screen",
     "verify_submit_by_advancement",
 ]
-
-
-def _pane_tail(pane: str, lines: int = 14) -> str:
-    """Last ``lines`` non-empty rows of a captured pane, for loud diagnostics.
-
-    A boot-drain failure logs this so the operator sees the EXACT modal /
-    login-wall / render state that blocked readiness — never a bare
-    "timed out" with no evidence.
-    """
-    rows = [r for r in (pane or "").splitlines() if r.strip()]
-    return "\n".join(rows[-lines:])
 
 
 #: Live compose box = the BOTTOM-MOST ``❯`` row (claude renders it just
@@ -252,11 +244,11 @@ def clear_compose_buffer(
             "screen; sending Escape would CANCEL the launch and kill the "
             "session. The modal drainer must dismiss it (Enter to confirm) "
             "before any Escape-based clear. Attach to inspect: "
-            "`tmux attach -t %s`. Pane tail:\n%s",
+            "`tmux attach -t %s`.",
             name,
             name,
-            _pane_tail(pane),
         )
+        log_pane_context(log, name, pane)
         return False
     if is_fresh_boot_welcome_screen(pane):
         # BUG 3 — the fresh-boot welcome/model-info/promo screen is up and
@@ -283,10 +275,10 @@ def clear_compose_buffer(
             log.error(
                 "TuiSessionRuntime: aborting compose-buffer clear for %s "
                 "mid-loop — a cancelable modal appeared; Escape would kill the "
-                "session. Let the modal drainer dismiss it first. Pane tail:\n%s",
+                "session. Let the modal drainer dismiss it first.",
                 name,
-                _pane_tail(current),
             )
+            log_pane_context(log, name, current)
             return False
         if is_fresh_boot_welcome_screen(current):
             # BUG 3 — (re)appeared mid-loop (a slow mount can outlast the
@@ -317,12 +309,12 @@ def clear_compose_buffer(
             "cleared within the wait budget, so no Escape was sent at all "
             "(sending it would not have landed). Boot will proceed "
             "(verify_submit_by_advancement is the next net). Attach to "
-            "inspect: `tmux attach -t %s`. Pane tail:\n%s",
+            "inspect: `tmux attach -t %s`.",
             name,
             max_attempts,
             name,
-            _pane_tail(last_pane),
         )
+        log_pane_context(log, name, last_pane)
         return False
 
     log.error(
@@ -330,13 +322,13 @@ def clear_compose_buffer(
         "%d attempts of %r — the Ink TUI kept dropping the clear keystroke (or "
         "new text keeps arriving). Boot will proceed (verify_submit_by_advancement "
         "is the next net), but the boot Enter may submit stale text. Attach to "
-        "inspect/recover: `tmux attach -t %s`. Pane tail:\n%s",
+        "inspect/recover: `tmux attach -t %s`.",
         name,
         max_attempts,
         list(_COMPOSE_CLEAR_KEYS),
         name,
-        _pane_tail(last_pane),
     )
+    log_pane_context(log, name, last_pane)
     return False
 
 
@@ -463,10 +455,10 @@ def verify_submit_by_advancement(
         "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
         "after %d wait-for-idle Enter attempts — the Ink TUI keeps dropping "
         "Enter (or the pane never left BUSY). Attach to inspect/recover: "
-        "`tmux attach -t %s` then press Enter. Pane tail:\n%s",
+        "`tmux attach -t %s` then press Enter.",
         name,
         max_resends,
         name,
-        _pane_tail(pane or last_pane),
     )
+    log_pane_context(log, name, pane or last_pane)
     return False

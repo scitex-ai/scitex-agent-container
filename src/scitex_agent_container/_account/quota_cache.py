@@ -138,6 +138,32 @@ def quota_cache_present(cache_path: Path | str | None = None) -> bool:
     return _resolve_cache_path(cache_path).exists()
 
 
+def quota_cache_entry_count(cache_path: Path | str | None = None) -> int:
+    """How many per-account entries the resolved cache actually holds.
+
+    :func:`quota_cache_present` answers "is there a FILE"; this answers "does
+    that file say anything". The two differ for exactly one input — a cache
+    written with zero accounts (``{"accounts": {}}``) — and that difference
+    is what lets the boot picker's blind-pick refusal name the right remedy:
+    zero entries means the POPULATOR produced nothing (re-running it is not
+    obviously the fix), a non-zero count means the cache is populated but
+    STALE or mismatched for this fleet (re-running it is exactly the fix).
+
+    Missing / unreadable / malformed → ``0``. Never raises.
+    """
+    path = _resolve_cache_path(cache_path)
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+    ):  # stx-allow: fallback (reason: mirrors read_quota_entry — an absent or corrupt cache is a normal cold-start state, and "0 entries" is the honest answer for it rather than an exception the caller must special-case)
+        return 0
+    accounts = parsed.get("accounts") if isinstance(parsed, dict) else None
+    return len(accounts) if isinstance(accounts, dict) else 0
+
+
 def _resolve_account(override: str | None) -> str:
     if override is not None:
         return override.strip()
@@ -348,6 +374,7 @@ __all__ = [
     "build_a2a_metadata",
     "default_host_cache_path",
     "host_cache_candidates",
+    "quota_cache_entry_count",
     "quota_cache_present",
     "write_quota_cache",
 ]

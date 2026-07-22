@@ -15,11 +15,28 @@ cron (every 15-30 min) should run this so the picker stays current.
 Fail-loud per account: one account's fetch failure is printed and the loop
 continues; the run exits non-zero only when EVERY attempted account failed.
 Token values are never printed — only percentages + TTL hours.
+
+Three outcomes, three exit codes
+--------------------------------
+"Found nothing to refresh" is NOT "refreshed" — a cron (or a human following
+the boot picker's "run this command" hint) must be able to tell them apart
+without parsing prose, so each gets its own code:
+
+* ``0`` — at least one account was refreshed and the cache was written.
+* ``1`` — accounts exist but EVERY one of them failed.
+* ``EXIT_NO_ACCOUNTS`` — the store holds no accounts. Nothing was fetched
+  and, crucially, nothing was WRITTEN: this command cannot help, and the
+  remedy is ``sac accounts save``, not another run of it.
 """
 
 from __future__ import annotations
 
 import click
+
+#: Exit code for "no accounts stored". Deliberately NOT 2: click spends 2 on
+#: UsageError, so a caller branching on 2 could not tell an empty store from
+#: a mistyped flag — the exact collision that makes a tri-state useless.
+EXIT_NO_ACCOUNTS = 3
 
 
 @click.command("refresh-quota-cache")
@@ -56,19 +73,23 @@ def account_refresh_quota_cache(cache_path: str | None, as_json: bool) -> None:
     """
     import json as _json
 
-    from .._account.quota_cache_refresh import refresh_quota_cache
+    from .._account.quota_cache_refresh import REASON_NO_ACCOUNTS, refresh_quota_cache
 
     result = refresh_quota_cache(cache_path=cache_path)
 
     if as_json:
         click.echo(_json.dumps(result, ensure_ascii=False, indent=2))
+    elif result["reason"] == REASON_NO_ACCOUNTS:
+        click.echo(
+            "No accounts stored — nothing to refresh, so nothing was written. "
+            f"{result['cache_path']} is UNCHANGED (an empty cache written here "
+            "would restamp data no one re-measured, and its mere existence "
+            "arms the boot picker's quota gate). Running this command again "
+            "cannot help. Fix: `sac accounts save <name>` on this host first.",
+            err=True,
+        )
     else:
         results = result["results"]
-        if not results:
-            click.echo(
-                "No accounts stored. Use: sac accounts save <name> "
-                f"(wrote empty cache to {result['cache_path']})"
-            )
         for row in results:
             if row["error"] is None:
                 click.echo(
@@ -76,13 +97,18 @@ def account_refresh_quota_cache(cache_path: str | None, as_json: bool) -> None:
                     f"7d={row['d7']:.0f}% ttl={row['ttl_h']:.2f}h"
                 )
             else:
-                click.echo(
-                    f"  {row['name']:20s}  FAILED — {row['error']}", err=True
-                )
+                click.echo(f"  {row['name']:20s}  FAILED — {row['error']}", err=True)
         click.echo(
             f"wrote {result['ok']} account(s) to {result['cache_path']} "
             f"({result['failed']} failed)"
         )
+
+    # An empty store is its OWN outcome, checked before the all-failed guard
+    # below. That guard's `attempted > 0` used to leave this case uncovered,
+    # so "found nothing, wrote nothing" reported the same exit 0 as a real
+    # refresh and the picker's "run refresh-quota-cache" hint looked satisfied.
+    if result["reason"] == REASON_NO_ACCOUNTS:
+        raise SystemExit(EXIT_NO_ACCOUNTS)
 
     # Exit non-zero only when EVERY attempted account failed — a partial
     # success (some accounts written) is still useful for the picker.
@@ -97,6 +123,7 @@ def register_refresh_quota_cache_command(group: click.Group) -> None:
 
 
 __all__ = [
+    "EXIT_NO_ACCOUNTS",
     "account_refresh_quota_cache",
     "register_refresh_quota_cache_command",
 ]

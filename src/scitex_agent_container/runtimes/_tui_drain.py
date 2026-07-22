@@ -31,7 +31,7 @@ import time
 from typing import Callable
 
 from . import prompts as _prompts
-from ._tui_compose import _pane_tail
+from ._pane_context_log import log_pane_context
 
 __all__ = [
     "drain_modals_until_ready",
@@ -154,12 +154,12 @@ def drain_modals_until_ready(
                 "TuiSessionRuntime: boot-drain ABORTED for %s — the inner "
                 "claude process EXITED during boot (tmux session gone), so it "
                 "can never reach ready. This is NOT a login wall or a timeout; "
-                "read the last pane for the real cause. Reproduce live: "
-                "`tmux attach -t %s`. Last pane before exit:\n%s",
+                "read the last pane (logged next, at info) for the real cause. "
+                "Reproduce live: `tmux attach -t %s`.",
                 name,
                 name,
-                _pane_tail(last_pane) if last_pane else "(nothing captured)",
             )
+            log_pane_context(log, name, last_pane)
             return False
         pane = capture_fn(name)
         if pane.strip():
@@ -180,13 +180,13 @@ def drain_modals_until_ready(
                 "keystrokes did NOT dismiss it after %d verified resends. The "
                 "detector/keys in runtimes/prompts.py are likely stale for this "
                 "claude build, or the Ink TUI is dropping input. Inspect with "
-                "`tmux attach -t %s`. Pane tail:\n%s",
+                "`tmux attach -t %s`.",
                 modal,
                 name,
                 n,
                 name,
-                _pane_tail(last_pane or pane),
             )
+            log_pane_context(log, name, last_pane or pane)
             return False
         # BUG 2 — wait for the pane to SETTLE before sending keys, so a large
         # --continue replay's re-render race does not eat them. Re-detect after
@@ -235,13 +235,13 @@ def drain_modals_until_ready(
         )
     log.error(
         "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s without a "
-        "ready signal. %s Reproduce live: `tmux attach -t %s`. Pane tail:\n%s",
+        "ready signal. %s Reproduce live: `tmux attach -t %s`.",
         timeout_s,
         name,
         diagnosis,
         name,
-        _pane_tail(last_pane),
     )
+    log_pane_context(log, name, last_pane)
     return False
 
 
