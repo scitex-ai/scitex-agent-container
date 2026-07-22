@@ -1514,3 +1514,134 @@ def test_message_send_threads_dispatch_id_into_published_event(
     event = _roundtrip_local_send(cross_host_env, metadata=metadata)
     # Assert
     assert event.get("dispatch_id") == "d-route-99"
+
+
+# ---------------------------------------------------------------------------
+# Re-export surface — a missing one degraded SILENTLY
+#
+# `_resolve_runtime_self_identity` moved into `_agents_list` alongside
+# `list_agents`, but only `list_agents` was re-exported here. Both self-peer
+# callers import it inside a try/except that falls back to a warning, so the
+# ImportError disabled self-peer persistence WITHOUT failing anything: listen
+# kept serving and logged "continues without persisted self-peers". It reached
+# develop and survived there, because nothing asserted the import.
+#
+# These assert the import SITE, not the behaviour, which is the thing that
+# actually broke. Delete either name from the re-export and they go red.
+# ---------------------------------------------------------------------------
+
+
+def test_server_reexports_resolve_runtime_self_identity() -> None:
+    # Arrange — the historical import path three callers still use.
+    from scitex_agent_container._listen import server
+
+    # Act
+    resolved = getattr(server, "_resolve_runtime_self_identity", None)
+
+    # Assert
+    assert callable(resolved)
+
+
+def test_server_reexports_list_agents() -> None:
+    # Arrange — the sibling that WAS re-exported; guards the pair.
+    from scitex_agent_container._listen import server
+
+    # Act
+    resolved = getattr(server, "list_agents", None)
+
+    # Assert
+    assert callable(resolved)
+
+
+def test_self_peer_persistence_can_resolve_identity_without_falling_back() -> None:
+    # Arrange — the real consumer whose except-branch masked the breakage.
+    from scitex_agent_container._listen import _self_peer_persistence  # noqa: F401
+
+    # Act
+    from scitex_agent_container._listen.server import (
+        _resolve_runtime_self_identity,
+    )
+
+    # Assert — resolving to None is a legitimate answer (no `lead:` block);
+    # raising ImportError is not, and that is what this pins.
+    assert _resolve_runtime_self_identity() is None or isinstance(
+        _resolve_runtime_self_identity(), str
+    )
+
+
+# ---------------------------------------------------------------------------
+# The FAMILY guard, not just this instance
+#
+# Fixing one missing re-export leaves the class unguarded: any symbol imported
+# from `_listen.server` that this module does not export fails the same way,
+# and both self-peer call sites absorb that ImportError into a warning, so it
+# degrades silently instead of failing. `_resolve_runtime_self_identity` sat
+# broken on develop for exactly that reason.
+#
+# This scans the shipped package for every `from ... _listen.server import X`
+# and asserts X actually resolves. It catches the whole family at import-graph
+# level, without needing anyone to have anticipated the specific symbol.
+# ---------------------------------------------------------------------------
+
+
+def _symbols_imported_from_listen_server() -> list[tuple[str, str]]:
+    """Return (filename, symbol) for every import taken from `_listen.server`.
+
+    Covers all three spellings in the tree: `from .server import X` inside
+    `_listen/`, `from .._listen.server import X`, and the absolute form.
+    """
+    import ast
+    from pathlib import Path
+
+    from scitex_agent_container._listen import server as _server
+
+    listen_dir = Path(_server.__file__).parent
+    pkg_root = listen_dir.parent
+    found: list[tuple[str, str]] = []
+    for py in pkg_root.rglob("*.py"):
+        if "__pycache__" in py.parts:
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            mod = node.module or ""
+            targets = (
+                (node.level == 1 and mod == "server" and py.parent == listen_dir)
+                or (node.level >= 1 and mod.endswith("_listen.server"))
+                or (node.level == 0 and mod.endswith("_listen.server"))
+            )
+            if targets:
+                found.extend((py.name, a.name) for a in node.names if a.name != "*")
+    return found
+
+
+def test_listen_server_import_scan_is_not_vacuous() -> None:
+    # Arrange — a scan that finds nothing would make the guard below pass
+    # for the wrong reason. This is that guard's positive control.
+    expected_at_least = 2
+
+    # Act
+    found = _symbols_imported_from_listen_server()
+
+    # Assert
+    assert len(found) >= expected_at_least, f"scan found only {found}"
+
+
+def test_every_symbol_imported_from_listen_server_resolves() -> None:
+    # Arrange
+    from scitex_agent_container._listen import server as _server
+
+    requested = _symbols_imported_from_listen_server()
+
+    # Act
+    missing = [(f, n) for f, n in requested if not hasattr(_server, n)]
+
+    # Assert
+    assert not missing, (
+        "imported from _listen.server but not exported by it — this fails "
+        f"SILENTLY at runtime where the caller catches ImportError: {missing}"
+    )

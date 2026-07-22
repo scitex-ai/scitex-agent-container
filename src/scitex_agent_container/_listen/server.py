@@ -61,7 +61,19 @@ async def health(_request: Request) -> JSONResponse:
 # REACHABLE — see ``_reachability``). Re-imported here so route
 # registration and the historical
 # ``from ..._listen.server import list_agents`` import path keep working.
-from ._agents_list import list_agents  # noqa: E402,F401
+#
+# ``_resolve_runtime_self_identity`` moved in that same extraction and must
+# be re-exported on the same terms: three callers still import it from here
+# (``_self_peer_persistence``, ``_agents_list`` itself, and
+# ``_mcp._channel_self_peer_discovery``). It was left out, and because both
+# self-peer call sites import it inside a try/except that degrades to a
+# warning, the resulting ImportError disabled self-peer persistence SILENTLY
+# rather than failing — listen kept serving while reporting "continues
+# without persisted self-peers".
+from ._agents_list import (  # noqa: E402,F401
+    _resolve_runtime_self_identity,
+    list_agents,
+)
 
 
 async def agent_status(request: Request) -> JSONResponse:
