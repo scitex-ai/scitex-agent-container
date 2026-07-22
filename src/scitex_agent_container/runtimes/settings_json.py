@@ -84,7 +84,7 @@ _MANAGED_KEYS = frozenset(
 # the per-agent event ring-buffer (~/.scitex/agent-container/runtime/events/
 # <agent>.jsonl). Consumed by event_log.summarize() which feeds the
 # fleet dashboard's Last tool / Last MCP / Last action rows. Without
-# this wiring those rows render as dashes (scitex-orochi todo#59).
+# this wiring those rows render as dashes (fleet todo#59).
 _HOOKS_CONFIG = {
     "PreToolUse": [
         {
@@ -219,7 +219,6 @@ _SEED_DEFAULTS: dict = {
             "Glob(*)",
             "Grep(*)",
             "Agent(*)",
-            "mcp__scitex-orochi__*",
             "mcp__scitex__*",
             "mcp__filesystem__*",
         ]
@@ -313,7 +312,7 @@ def setup_settings_json(
 
     # Always inject hook wiring — even if skip-permissions / dev-channels
     # aren't active we still want Last tool / Last MCP / Last action rows
-    # to populate on the dashboard (scitex-orochi todo#59).
+    # to populate on the dashboard (fleet todo#59).
     settings["hooks"] = _HOOKS_CONFIG
 
     # Register sac-statusline as the statusLine command so the JSON payload
