@@ -32,7 +32,6 @@ PACKAGES = [
     ("scitex-agent-container", "scitex_agent_container", "scitex-agent-container"),
     ("scitex-container", "scitex_container", "scitex-container"),
     ("scitex-dev", "scitex_dev", "scitex-dev"),
-    ("scitex-orochi", "scitex_orochi", "scitex-orochi"),
     ("scitex-ui", "scitex_ui", "scitex-ui"),
     ("scitex-io", "scitex_io", "scitex-io"),
     ("scitex-plt", "scitex_plt", "scitex-plt"),

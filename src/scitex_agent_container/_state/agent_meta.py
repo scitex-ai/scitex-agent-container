@@ -343,7 +343,7 @@ def collect_rich(
         "last_activity": last_activity,
         "skills_loaded": skills_loaded,
         "machine": machine,
-        # scitex-orochi todo#55: canonical FQDN for display next to the
+        # fleet todo#55: canonical FQDN for display next to the
         # short machine label ("spartan (spartan.hpc.unimelb.edu.au)").
         # Falls back to the short name on hosts with no reverse DNS.
         "hostname_canonical": (socket.getfqdn() or "").strip(),

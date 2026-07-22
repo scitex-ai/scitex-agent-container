@@ -1,6 +1,6 @@
 # Telegram fold into sac MCP — design
 
-Status: **Phase 2 + Phase 3 complete** — bridge ported from orochi, allowed-
+Status: **Phase 2 + Phase 3 complete** — bridge ported from the upstream fleet implementation, allowed-
 users filter enforced, flock singleton with stale-PID recovery in place, six
 transport tools backed by the in-process bridge, default-on registration
 (`SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=0` to opt out). Phase 1 scaffolding
@@ -203,10 +203,10 @@ config files.
   the lock is stale — we delete it and retry once. This is the failure mode
   that the standalone telegrammer suffers from (lock file from a crashed
   process blocks future starts until manual `rm`); calling it out so Phase 2
-  ports the orochi `deleteWebhook`+offset-flush dance *plus* the stale-lock
+  ports the upstream `deleteWebhook`+offset-flush dance *plus* the stale-lock
   recovery.
 - **Bot-token uniqueness**: only one process per bot token may long-poll
-  Telegram (409 Conflict otherwise). The lock file plus orochi-style
+  Telegram (409 Conflict otherwise). The lock file plus the upstream-style
   `deleteWebhook` + `getUpdates(offset=-1)` flush at startup guarantees a
   clean slot.
 - **Health check**: `getMe` at startup populates `self._bot_name`; failure
@@ -219,10 +219,10 @@ config files.
   tool stubs raising `NotImplementedError`, feature-flagged off via
   `SCITEX_AGENT_CONTAINER_TELEGRAM_FOLD=1`, tests locking the import
   surface). No behaviour change for sac users.
-- **Phase 2**: port `TelegramBridge` from
-  `/home/ywatanabe/proj/scitex-orochi/src/scitex_orochi/_telegram_bridge.py`
-  to sit on the sac broker instead of the orochi channel. Add the lock-file
-  singleton with stale-PID recovery. Wire startup hook into `sac listen`.
+- **Phase 2**: port `TelegramBridge` from the upstream telegram-bridge
+  implementation to sit on the sac broker instead of the upstream channel.
+  Add the lock-file singleton with stale-PID recovery. Wire startup hook
+  into `sac listen`.
 - **Phase 3**: implement the 6 transport tools (`telegram_send`,
   `telegram_reply`, `telegram_react`, `telegram_edit_message`,
   `telegram_send_document`, `telegram_download_attachment`). Flip the
@@ -231,14 +231,14 @@ config files.
   agent's MCP. Add metrics / heartbeat.
 - **Phase 5**: docs, examples, CHANGELOG entry; coordinate retirement of
   `~/proj/claude-code-telegrammer` for sac-fleet usage and removal of
-  `_telegram_bridge.py` from orochi (separate PR).
+  `_telegram_bridge.py` from the upstream repo (separate PR).
 
 ## Open questions for the user
 
-- Migration confirmation: orochi still owns the bot token in code today
-  (`_telegram_bridge.py` unchanged in the last 3 days). Confirm the
-  transition window — when does orochi stop polling so sac can start?
-- Inbound routing target: orochi posted to `#telegram`. Sac's broker is
+- Migration confirmation: the upstream bridge still owns the bot token in
+  code today (`_telegram_bridge.py` unchanged in the last 3 days). Confirm the
+  transition window — when does the upstream bridge stop polling so sac can start?
+- Inbound routing target: the upstream bridge posted to `#telegram`. Sac's broker is
   per-agent; default target should probably be `master`. Configurable?
   Multi-subscriber fanout?
 - Persistence: do you want a `tg-archiver` sidecar that re-creates
