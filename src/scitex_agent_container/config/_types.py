@@ -18,7 +18,7 @@ from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
 
 @dataclass
 class ContainerSpec:
-    runtime: str = "none"  # none | docker | apptainer
+    runtime: str = "none"  # none | apptainer (see VALID_CONTAINER_RUNTIMES)
     image: str = "scitex-agent-container:latest"
     volumes: list[str] = field(default_factory=list)
     network: str = "host"
