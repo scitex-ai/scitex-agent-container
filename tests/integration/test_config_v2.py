@@ -22,7 +22,18 @@ def _write_config(data: dict) -> str:
     """
     import copy
 
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        deep_merge,
+        explicit_spec_defaults,
+    )
+
     data = copy.deepcopy(data)
+    # Red-start ruling 2026-07-21: every spec field must be explicit —
+    # merge the validator's own paste defaults beneath (fixture wins).
+    data["spec"] = deep_merge(
+        explicit_spec_defaults(data.get("kind", "Agent")),
+        data.get("spec") or {},
+    )
     metadata = data.get("metadata") or {}
     name = metadata.pop("name", None) or "test-agent"
     if metadata:

@@ -11,6 +11,8 @@ ApptainerContainerRuntime's resolver API), same as the session-seed suite.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 from pathlib import Path
 
@@ -285,7 +287,7 @@ def _write_parent_spec(agents_dir: Path, name: str) -> None:
     spec_dir = agents_dir / name
     spec_dir.mkdir(parents=True, exist_ok=True)
     (spec_dir / "spec.yaml").write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -305,7 +307,7 @@ def _write_parent_spec(agents_dir: Path, name: str) -> None:
         "    method: sdk-alive\n"
         "  restart:\n"
         "    policy: never\n"
-        "    max_retries: 0\n",
+        "    max_retries: 0\n"),
         encoding="utf-8",
     )
 

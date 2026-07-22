@@ -43,26 +43,116 @@ spec:
     # binds — explicit mounts. This example mounts nothing beyond the
     # agent's own state bind.
     binds: []
+    env: {}
+    raw_args: []
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    relaxed: false
+    fakeroot: false
+    jail: false
+    nested_build: false
 
   claude:
     # The provider's own model id — accepted because provider is set
     # (the claude-* alias check is relaxed under a provider override).
     model: deepseek-chat
     flags:
-      - --dangerously-skip-permissions
+    - --dangerously-skip-permissions
     provider:
       base_url: https://api.deepseek.com/anthropic
       # NAME of the host env var holding the key — NOT the key value.
       auth_token_env: DEEPSEEK_API_KEY
 
   # health — periodic liveness probe (drives the restart policy below).
+    channels: []
+    raw_options: {}
+    session:
+    continue_max_age_minutes:
+    resume_id: ''
+    auto_accept: true
+    account: ''
+    credentials_file: ''
+    credentials_files: []
   health:
     enabled: true
     interval: 60
 
   # restart — bulk fleet agents are long-lived; restart on failure.
+    timeout: 5
+    method: sdk-alive
   restart:
     policy: on-failure          # never | on-failure | always
     max_retries: 3
 
 # EOF
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+    prune_on_stop: false
+
+  # Explicit-fields ruling (2026-07-21): every spec field is written; values below are the defaults.
+  provider: anthropic
+  python-venv: ''
+  startup_commands: []
+  startup_prompts: []
+  listen: []
+  extensions: {}
+  mcp_servers: {}
+  user: ''
+  to_home: ./to_home
+  container:
+    runtime: none
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: '1'
+      y_y_n: '2'
+      waiting: /speak-and-call
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
+  a2a:
+    host: 127.0.0.1
+    port: auto
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+  lineage:
+    group: ''
+    may_spawn: true

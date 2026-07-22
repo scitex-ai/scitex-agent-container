@@ -9,6 +9,8 @@ to trip the per-subdir bloat threshold (default 1,000 files).
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
+
 from pathlib import Path
 
 import pytest
@@ -157,7 +159,7 @@ def _registered(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {
+                "spec": explicit_spec({
                     "runtime": "apptainer",
                     "host": "${HOSTNAME}",
                     "workdir": str(workdir),
@@ -165,7 +167,7 @@ def _registered(tmp_path: Path, env_save_restore):
                     "claude": {"model": "sonnet"},
                     "health": {"enabled": True, "interval": 60},
                     "restart": {"policy": "on-failure", "max_retries": 3},
-                },
+                }),
             }
         )
     )
@@ -237,7 +239,7 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": {
+                "spec": explicit_spec({
                     "runtime": "apptainer",
                     "host": "${HOSTNAME}",
                     "workdir": str(workdir),
@@ -245,7 +247,7 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
                     "claude": {"model": "sonnet"},
                     "health": {"enabled": True, "interval": 60},
                     "restart": {"policy": "on-failure", "max_retries": 3},
-                },
+                }),
             }
         )
     )

@@ -26,6 +26,8 @@ no-op'd at the runtime rather than relaunched over.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 from pathlib import Path
 from typing import Iterator
@@ -125,7 +127,7 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -141,7 +143,7 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
         "    interval: 60\n"
         "  restart:\n"
         "    policy: never\n"
-        "    max_retries: 3\n"
+        "    max_retries: 3\n")
     )
     return spec
 

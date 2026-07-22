@@ -299,23 +299,32 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore):
         encoding="utf-8",
     )
 
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     template = tmp_path / "template.yaml"
     csv_file = tmp_path / "fleet.csv"
+    # Red-start ruling 2026-07-21: every field explicit (body wins). The
+    # merge introduces no dollar-brace tokens, so expand's leftover check
+    # stays quiet.
     _write(
         template,
-        "apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n  runtime: apptainer\n"
-        # Empty host: (caller's host) — 'local' is banned; a placeholder
-        # would trip expand's leftover check, and a concrete foreign name
-        # would make the post-expand `start --dry-run` fail loud as an
-        # unregistered host.
-        "  host:\n"
-        "  workdir: /tmp/${name}\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  claude:\n    model: sonnet\n"
-        "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n",
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n  runtime: apptainer\n"
+            # Empty host: (caller's host) — 'local' is banned; a placeholder
+            # would trip expand's leftover check, and a concrete foreign name
+            # would make the post-expand `start --dry-run` fail loud as an
+            # unregistered host.
+            "  host:\n"
+            "  workdir: /tmp/${name}\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  claude:\n    model: sonnet\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        ),
     )
     _write(csv_file, "name\nalpha\nbeta\n")
     out_dir = tmp_path / "expanded"

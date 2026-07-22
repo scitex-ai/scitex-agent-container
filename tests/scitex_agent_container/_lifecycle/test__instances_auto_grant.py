@@ -18,6 +18,8 @@ stub exposing ``_state_dir`` — no mocks, no monkeypatch.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import importlib
 import os
 from pathlib import Path
@@ -205,7 +207,7 @@ def _write_health_spec(tmp_path: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -214,7 +216,7 @@ def _write_health_spec(tmp_path: Path, name: str) -> Path:
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  health:\n    enabled: true\n    interval: 60\n"
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n    model: sonnet\n"
+        "  claude:\n    model: sonnet\n")
     )
     return spec
 

@@ -21,6 +21,8 @@ AAA marker comments; one assertion per test; ≥3-word names.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import json
 from pathlib import Path
 from typing import Any, Iterator
@@ -77,7 +79,7 @@ def _write_pinned_spec(parent: Path, *, name: str, account: str) -> Path:
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -88,7 +90,7 @@ def _write_pinned_spec(parent: Path, *, name: str, account: str) -> Path:
         "  restart:\n    policy: on-failure\n    max_retries: 3\n"
         f"  claude:\n"
         f"    account: {account}\n"
-        "    model: sonnet\n"
+        "    model: sonnet\n")
     )
     return spec
 
@@ -98,7 +100,7 @@ def _write_unpinned_spec(parent: Path, *, name: str) -> Path:
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
     spec.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -107,7 +109,7 @@ def _write_unpinned_spec(parent: Path, *, name: str) -> Path:
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"
         "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n")
     )
     return spec
 

@@ -21,13 +21,22 @@ from scitex_agent_container._state import state_db
 NOW = 1_800_000_000.0
 HOST = "host-a"
 
-_SCAFFOLD: dict = {
-    "host": "${HOSTNAME}",
-    "runtime": "apptainer",
-    "claude": {"model": "claude-opus-4-8[1m]"},
-    "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
-    "health": {"enabled": True, "interval": 60},
-}
+
+def _scaffold() -> dict:
+    """Fully-explicit spec body (red-start ruling 2026-07-21)."""
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    return explicit_spec(
+        {
+            "host": "${HOSTNAME}",
+            "runtime": "apptainer",
+            "claude": {"model": "claude-opus-4-8[1m]"},
+            "apptainer": {"image": "/opt/sac/scitex.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+        }
+    )
 
 
 class Recorder:
@@ -54,9 +63,11 @@ def write_spec(registry: Path, name: str, *, policy: str = "on-failure") -> Path
     """A real dir-as-SSoT v3 ``<name>/spec.yaml`` the loader accepts."""
     agent_dir = registry / name
     agent_dir.mkdir(parents=True, exist_ok=True)
-    body = dict(_SCAFFOLD)
+    body = _scaffold()
     body["workdir"] = f"~/.scitex/agent-container/runtime/agents/{name}"
-    body["restart"] = {"policy": policy, "max_retries": 3}
+    # Update in place — replacing the block would strip the other
+    # required restart keys (red-start ruling: all keys must stay).
+    body["restart"].update({"policy": policy, "max_retries": 3})
     spec = agent_dir / "spec.yaml"
     spec.write_text(
         _yaml.safe_dump(

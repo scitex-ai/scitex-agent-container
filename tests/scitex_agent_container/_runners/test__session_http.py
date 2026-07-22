@@ -15,6 +15,8 @@ env-var isolation uses an explicit save/restore fixture.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import asyncio
 import json
 import os
@@ -251,7 +253,7 @@ def minimal_yaml(tmp_path: Path) -> Path:
     """Write the smallest viable v3 spec.yaml at the test's tmp_path root."""
     yaml_path = tmp_path / "spec.yaml"
     yaml_path.write_text(
-        "apiVersion: scitex-agent-container/v3\n"
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
         "kind: Agent\n"
         "spec:\n"
         "  runtime: apptainer\n"
@@ -260,7 +262,7 @@ def minimal_yaml(tmp_path: Path) -> Path:
         "  apptainer:\n    image: /x.sif\n    binds: []\n"
         "  claude:\n    model: sonnet\n"
         "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        "  restart:\n    policy: on-failure\n    max_retries: 3\n")
     )
     return yaml_path
 

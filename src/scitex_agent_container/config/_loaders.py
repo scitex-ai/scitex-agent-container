@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ._explicit_validation import validate as _validate_explicit_fields
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -262,6 +263,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     No backward compatibility — old apiVersions raise loud validation
     errors at config-load time.
     """
+    # Red-start explicit-fields gate (operator ruling 2026-07-21): every
+    # spec field must be WRITTEN — an omitted field is a load error with
+    # a complete, paste-ready hint. Runs BEFORE any parsing so an
+    # under-specified spec fails with the full field list, not a parser
+    # TypeError. No bypass, no migration phase.
+    _validate_explicit_fields(raw, path)
+
     spec = raw.get("spec", {}) or {}
     hosts_spec = parse_hosts_spec(spec)
 

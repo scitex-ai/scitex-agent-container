@@ -132,85 +132,15 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Required author-facing fields (operator directive 2026-06-23 — NO HIDDEN
-# DEFAULTS). Extends the spec.access removal: just as host-access is now an
-# explicit binds list, every field with a BEHAVIOURAL default-when-absent must
-# be written in the spec, and the validator errors ROUNDLY (naming the field +
-# the fix) when an applicable one is missing. A reader of the spec then sees
-# every setting that actually applies — nothing is silently defaulted.
-#
-# Intentionally NOT required (so the rule stays coherent, not noise):
-#   * opt-in subsystems whose ABSENCE means "feature off" — and is therefore
-#     self-evident, not a hidden default: autonomous, watchdog,
-#     context_management, listen, hooks, comms, lineage, to_home, startup_*,
-#     a2a, env, user, container.*.
-#   * computed / loader-filled fields the author cannot meaningfully supply:
-#     python_venv, screen, expanded_workdir.
-#
-# Dataclass defaults are RETAINED on purpose — internal/test construction is
-# unaffected; enforcement lives HERE, at spec-validate time, where the round
-# errors live. Each entry is ``(dotted-path, multi-line fix hint)``.
-_REQUIRED_FIELDS_BOTH_KINDS: tuple[tuple[str, str], ...] = (
-    ("runtime", "runtime: tui            # tui | claude-agent-sdk"),
-    ("workdir", "workdir: /home/<you>/proj/<repo>   # the in-container --pwd"),
-    ("apptainer.image", "apptainer:\n    image: <path-to>.sif"),
-    (
-        "apptainer.binds",
-        "apptainer:\n    binds: []   # explicit mounts; [] = nothing beyond state",
-    ),
-    ("health.enabled", "health:\n    enabled: true"),
-    ("health.interval", "health:\n    interval: 60"),
-    (
-        "restart.policy",
-        "restart:\n    policy: on-failure   # never | on-failure | always",
-    ),
-    ("restart.max_retries", "restart:\n    max_retries: 3"),
-)
-# kind: Agent only (the SDK/TUI runner reads spec.claude; a proxy has no SDK).
-_REQUIRED_FIELDS_AGENT: tuple[tuple[str, str], ...] = (
-    ("claude.model", "claude:\n    model: claude-opus-4-8[1m]"),
-)
-
-_MISSING = object()
-
-
-def _dotted_get(spec: dict, path: str):
-    """Walk a dotted key path; return ``_MISSING`` if any level is absent.
-
-    A key present with a ``None`` value (e.g. ``binds:`` written with no value)
-    counts as PRESENT — the author declared it explicitly; value-type checks
-    elsewhere handle the shape. Only a genuinely absent key (or a non-mapping
-    parent) is ``_MISSING``.
-    """
-    cur: object = spec
-    for part in path.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            return _MISSING
-        cur = cur[part]
-    return cur
-
-
-def _missing_required_fields(spec: dict, kind: object) -> list[str]:
-    """Round errors for every REQUIRED author field absent from ``spec``."""
-    required = list(_REQUIRED_FIELDS_BOTH_KINDS)
-    if kind == "Agent":
-        required += list(_REQUIRED_FIELDS_AGENT)
-    # Multi-instance agents (``spec.hosts``) auto-derive a PER-INSTANCE workdir
-    # — the runtime path keyed by the host-suffixed effective id. That is the
-    # intended multi-host behaviour (each instance gets its own scratch), NOT a
-    # hidden default, so workdir is not required there. A singleton
-    # (``spec.host``) opens at a canonical path the operator must state, so it
-    # stays required. (Multi-host MAY still set workdir to share one path.)
-    if "hosts" in spec:
-        required = [(p, h) for (p, h) in required if p != "workdir"]
-    out: list[str] = []
-    for path, hint in required:
-        if _dotted_get(spec, path) is _MISSING:
-            out.append(
-                f"spec.{path} is REQUIRED — declare it explicitly (no hidden "
-                f"defaults; operator directive 2026-06-23). Add:\n  {hint}"
-            )
-    return out
+# Required author-facing fields. The 2026-06-23 "no hidden defaults" subset
+# (runtime/workdir/apptainer.{image,binds}/health/restart/claude.model) was
+# SUPERSEDED by the 2026-07-21 red-start ruling: EVERY spec field must be
+# written explicitly, an omitted field is a load error, and the hint lists
+# every missing field at once with a paste-ready block. The required-key map
+# and the consolidated message live in the sibling ``_explicit_fields`` /
+# ``_explicit_validation`` modules (single source of truth — ``load_v3``
+# raises through the same map for direct callers); ``validate_raw`` delegates
+# below so ``sac agents check`` reports identically to ``load_config``.
 
 
 # ``_validate_provider`` moved to ``_provider_validation.validate_provider``
@@ -315,11 +245,9 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # spec.provider — AGENT SDK FAMILY selector (openai-compat-1
         # foundation). Distinct from spec.claude.provider (ProviderSpec,
         # validated inside validate_claude) — see the naming-collision
-        # note in config._provider_types.AgentProvider. Optional and
-        # NOT in _REQUIRED_FIELDS_BOTH_KINDS on purpose: the whole point
-        # of this field is a safe, backward-compatible default so no
-        # existing spec needs to change while openai-compat-2/3 land the
-        # actual "openai" runner + entrypoint wiring.
+        # note in config._provider_types.AgentProvider. Presence is
+        # enforced by the explicit-fields map (red-start ruling
+        # 2026-07-21); this check only owns the VALUE diagnostic.
         provider = spec.get("provider")
         if provider and not is_known_agent_provider(str(provider)):
             errors.append(
@@ -482,10 +410,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "(multi-instance, 'all' or list)."
             )
 
-        # No hidden defaults: every APPLICABLE author field must be declared
-        # explicitly (operator directive 2026-06-23). host/hosts presence is
-        # already enforced above; this covers the rest of the required set.
-        errors.extend(_missing_required_fields(spec, kind))
+        # Red-start explicit-fields ruling (2026-07-21): EVERY spec field
+        # must be written explicitly. host/hosts presence is enforced above
+        # (mutually-exclusive pair — cannot live in a require-all map); the
+        # consolidated one-error-lists-everything message with the
+        # paste-ready block comes from the SSOT module.
+        from ._explicit_validation import explicit_field_errors
+
+        errors.extend(explicit_field_errors(raw, path))
 
     return errors
 

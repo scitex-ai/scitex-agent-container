@@ -100,10 +100,18 @@ def listen_bearer_token(_isolate_home: Path) -> Path:
 
 
 def _write_spec(tmp_path: Path, body: str) -> Path:
+    # Red-start ruling 2026-07-21: every spec field must be explicit —
+    # merge the validator's own paste defaults beneath the fixture body
+    # (the fixture's fields win) so minimal bodies stay the authored
+    # surface while the write satisfies the validator.
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
     spec_dir = tmp_path / "agents" / "agt"
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
-    spec.write_text(body, encoding="utf-8")
+    spec.write_text(explicitize_yaml(body), encoding="utf-8")
     return spec
 
 

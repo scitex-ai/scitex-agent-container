@@ -78,19 +78,117 @@ spec:
       - SCITEX_TODO_AGENT_ID={name}
       - --env
       - GIT_AUTHOR_NAME=Yusuke Watanabe
+    env: {{}}
+    post: ""
+    environment: {{}}
+    def_file: ""
+    nv: false
+    rocm: false
+    overlay: ""
+    overlay_size: ""
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    fakeroot: false
+    jail: false
+    nested_build: false
 
   claude:
     model: opus[1m]
     flags:
       - --dangerously-skip-permissions
+    channels: []
+    raw_options: {{}}
+    session:
+    continue_max_age_minutes:
+    resume_id: ""
+    auto_accept: true
+    account: ""
+    credentials_file: ""
+    credentials_files: []
+    provider:
 
   health:
     enabled: true
     interval: 60
+    timeout: 5
+    method: sdk-alive
 
   restart:
     policy: on-failure
     max_retries: 3
+    prune_on_stop: false
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+
+  # Explicit-fields ruling (2026-07-21): the remainder of the required
+  # field set at its defaults — every spec field is written.
+  provider: anthropic
+  python-venv: ""
+  user: ""
+  to_home: ./to_home
+  startup_commands: []
+  startup_prompts: []
+  listen: []
+  extensions: {{}}
+  mcp_servers: {{}}
+
+  container:
+    runtime: none
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
+
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: "1"
+      y_y_n: "2"
+      waiting: /speak-and-call
+
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
+
+  a2a:
+    host: 127.0.0.1
+    port: auto
+
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+
+  lineage:
+    group: ""
+    may_spawn: true
 
 # EOF
 """

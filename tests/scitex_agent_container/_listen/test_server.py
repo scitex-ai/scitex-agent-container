@@ -118,18 +118,25 @@ def _write_spec(home: Path, name: str, workdir: str = "/tmp") -> Path:
     """Write a minimal v3 spec.yaml that ``load_config`` will accept."""
     spec_dir = home / ".scitex" / "agent-container" / "agents" / name
     spec_dir.mkdir(parents=True, exist_ok=True)
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicit_spec,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (curated wins).
     spec = {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {
-            "runtime": "tui",
-            "host": "${HOSTNAME}",
-            "workdir": workdir,
-            "apptainer": {"image": "/x.sif", "binds": []},
-            "claude": {"model": "claude-sonnet-4-5"},
-            "health": {"enabled": True, "interval": 60},
-            "restart": {"policy": "on-failure", "max_retries": 3},
-        },
+        "spec": explicit_spec(
+            {
+                "runtime": "tui",
+                "host": "${HOSTNAME}",
+                "workdir": workdir,
+                "apptainer": {"image": "/x.sif", "binds": []},
+                "claude": {"model": "claude-sonnet-4-5"},
+                "health": {"enabled": True, "interval": 60},
+                "restart": {"policy": "on-failure", "max_retries": 3},
+            }
+        ),
     }
     p = spec_dir / "spec.yaml"
     p.write_text(yaml.safe_dump(spec), encoding="utf-8")

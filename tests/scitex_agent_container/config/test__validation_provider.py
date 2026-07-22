@@ -21,17 +21,23 @@ from __future__ import annotations
 
 from scitex_agent_container.config._validation import validate_raw
 
+# Red-start ruling 2026-07-21: every spec field explicit — base fixture
+# merges the validator's own paste defaults beneath the curated fields.
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
+
 _BASE = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
-    "spec": {
-        "runtime": "apptainer",
-        "host": "${HOSTNAME}",
-        "workdir": "/home/agent/work",
-        "apptainer": {"image": "/x.sif", "binds": []},
-        "health": {"enabled": True, "interval": 60},
-        "restart": {"policy": "on-failure", "max_retries": 3},
-    },
+    "spec": explicit_spec(
+        {
+            "runtime": "apptainer",
+            "host": "${HOSTNAME}",
+            "workdir": "/home/agent/work",
+            "apptainer": {"image": "/x.sif", "binds": []},
+            "health": {"enabled": True, "interval": 60},
+            "restart": {"policy": "on-failure", "max_retries": 3},
+        }
+    ),
 }
 
 _PROVIDER = {
@@ -41,7 +47,10 @@ _PROVIDER = {
 
 
 def _claude_spec(claude: dict) -> dict:
-    return {**_BASE, "spec": {**_BASE["spec"], "claude": claude}}
+    # Merge onto the explicit claude defaults so the block keeps every
+    # required key while the test's fields win.
+    merged = {**_BASE["spec"]["claude"], **claude}
+    return {**_BASE, "spec": {**_BASE["spec"], "claude": merged}}
 
 
 # ---------------------------------------------------------------------------

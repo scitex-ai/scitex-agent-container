@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.24.2"
+version = "0.24.12"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -97,8 +97,8 @@ notify = [
     # auth URL via `scitex_notification.send_email`). Optional + lazily
     # imported (a clear EmailRelayError is raised if absent), so core install
     # and CI need not resolve it. Agents that use the login-relay install
-    # `scitex-agent-container[notify]`. NOT in `[all]` until 0.2.9 is on PyPI
-    # (the public send_email landed in 0.2.9; PyPI currently tops out at 0.2.8).
+    # `scitex-agent-container[notify]`. 0.2.9 floor — that is where the public
+    # send_email landed.
     "scitex-notification>=0.2.9",
 ]
 slurm = [
@@ -178,6 +178,7 @@ docs = [
 all = [
     "scitex-agent-container[mcp]",
     "scitex-agent-container[telegram]",
+    "scitex-agent-container[notify]",
     "scitex-agent-container[slurm]",
     # `openai` is in [all] so CI (`pip install -e ".[all,dev]"`) exercises
     # the real openai-agents SDK paths; the bare install stays Claude-only.

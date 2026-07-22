@@ -28,6 +28,8 @@ stop --force`` so a failing assert does not leave a container behind.
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import os
 import shutil
 import subprocess
@@ -59,7 +61,7 @@ def _write_minimal_spec(home: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        textwrap.dedent(
+        explicitize_yaml(textwrap.dedent(
             f"""\
             apiVersion: scitex-agent-container/v3
             kind: Agent
@@ -86,7 +88,7 @@ def _write_minimal_spec(home: Path, name: str) -> Path:
                 policy: on-failure
                 max_retries: 3
             """
-        )
+        ))
     )
     return spec
 

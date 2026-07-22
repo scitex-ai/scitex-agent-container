@@ -32,9 +32,9 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 from scitex_agent_container._runners._provider_session import ProviderSession
 from scitex_agent_container._runners.openai_session import OpenAISession
+from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 from scitex_agent_container.config import load_config
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 
@@ -94,8 +94,14 @@ def _load_column(tmp_path: Path, name: str, provider_line: str):
     spec_dir = tmp_path / "agents" / name
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        explicitize_yaml,
+    )
+
+    # Red-start ruling 2026-07-21: every field explicit (template wins).
     spec.write_text(
-        _SPEC_TEMPLATE.format(provider_line=provider_line), encoding="utf-8"
+        explicitize_yaml(_SPEC_TEMPLATE.format(provider_line=provider_line)),
+        encoding="utf-8",
     )
     return load_config(str(spec))
 

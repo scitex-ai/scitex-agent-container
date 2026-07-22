@@ -187,8 +187,36 @@ jobs:
           }
 
           tag_sha() {
-            # echo the commit sha a tag points at, or empty if the tag is absent.
-            gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.sha' 2>/dev/null || echo ""
+            # echo the COMMIT sha a tag ultimately points at, or empty if the
+            # tag is absent. An ANNOTATED tag ref's object.sha is the tag
+            # OBJECT, not the commit — peel via /git/tags/<sha>. Without the
+            # peel, head == tagged-commit still reads as "moved past" and
+            # STEADY is unreachable for annotated tags (operator-cut releases
+            # like v0.24.2 are annotated; first dry-run 2026-07-21 caught it).
+            # ABSENT tag: `gh api` on a 404 prints the ERROR JSON BODY to
+            # STDOUT (only the "gh: Not Found" line goes to stderr), so
+            # capturing stdout yields a non-empty JSON blob, not "". The
+            # first scheduled tick (run 29804531483) read that blob as a
+            # sha: BUMP fired instead of TAG_ONLY and a "TAG COLLISION"
+            # alarm fired for v0.24.4, WHICH DOES NOT EXIST. Only a
+            # 40-hex string is a sha; anything else is treated as absent.
+            local sha type peeled
+            sha=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.sha' 2>/dev/null || echo "")
+            case "$sha" in
+              *[!0-9a-f]*|"") echo ""; return;;
+            esac
+            [ "${#sha}" -eq 40 ] || { echo ""; return; }
+            type=$(gh api "repos/$REPO/git/ref/tags/$1" --jq '.object.type' 2>/dev/null || echo "")
+            if [ "$type" = "tag" ]; then
+              peeled=$(gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha' 2>/dev/null || echo "")
+              case "$peeled" in
+                *[!0-9a-f]*|"") echo ""; return;;
+              esac
+              [ "${#peeled}" -eq 40 ] || { echo ""; return; }
+              echo "$peeled"
+            else
+              echo "$sha"
+            fi
           }
 
           commit_age_seconds() {
@@ -228,25 +256,36 @@ jobs:
           }
 
           # Reads develop head's aggregate check state (ALL non-advisory workflows,
-          # not one, not the PR) — byte-identical 3-valued gate to auto-merge. Sets
-          # GATE to green|busy|red|unknown|nochecks.
+          # not one, not the PR) — same 3-valued shape as auto-merge's gate,
+          # plus a latest-run-per-name projection auto-merge does not have yet
+          # (candidate for upstreaming there — its miss is only over-conservative).
+          # Sets GATE to green|busy|red|unknown|nochecks.
           gate_develop() {
+            # LATEST RUN PER CHECK NAME. A re-run does not replace its failed
+            # predecessor — the commit keeps BOTH check-run rows, so counting
+            # raw failures reads a flaky-then-green check as permanently red
+            # (first dry-run 2026-07-21: pytest-matrix-py3.11 failed once,
+            # re-ran green, gate said RED). Branch protection judges by the
+            # newest run per name; project by group_by(.name)|max_by(started_at)
+            # before classifying, exactly like it.
             local sha="$1" bad busy total
             bad=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
               [ .check_runs[]
                 | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-                | select(.status == "completed")
-                | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")
-              ] | length' 2>/dev/null || echo "")
+              ] | group_by(.name) | map(max_by(.started_at // ""))
+                | map(select(.status == "completed"))
+                | map(select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required"))
+                | length' 2>/dev/null || echo "")
             busy=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
               [ .check_runs[]
                 | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-                | select(.status != "completed")
-              ] | length' 2>/dev/null || echo "")
+              ] | group_by(.name) | map(max_by(.started_at // ""))
+                | map(select(.status != "completed"))
+                | length' 2>/dev/null || echo "")
             total=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '
               [ .check_runs[]
                 | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-              ] | length' 2>/dev/null || echo "")
+              ] | group_by(.name) | length' 2>/dev/null || echo "")
             # THREE STATES, NOT TWO. Unreadable != green.
             if [ -z "$bad" ] || [ -z "$busy" ] || [ -z "$total" ]; then GATE=unknown; return; fi
             if [ "$busy" -gt 0 ]; then GATE=busy; return; fi

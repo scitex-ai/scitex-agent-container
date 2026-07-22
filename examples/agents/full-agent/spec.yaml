@@ -165,13 +165,27 @@ spec:
   # ----------------------------------------------------------------------
   # claude block — SDK-scoped knobs (raw_options is the escape hatch).
   # ----------------------------------------------------------------------
+    env: {}
+    raw_args: []
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    fakeroot: false
+    jail: false
+    nested_build: false
   claude:
     # haiku | sonnet | opus | a full versioned id like claude-opus-4-5
     model: sonnet
 
     # CLI flags forwarded to `claude` (the SDK runs the bundled binary).
     flags:
-      - --dangerously-skip-permissions
+    - --dangerously-skip-permissions
 
     # Session continuity ("fresh by default, opt-in continue", 2026-06-22):
     #   fresh        — DEFAULT. Every launch is an independent session
@@ -230,10 +244,18 @@ spec:
   # With `sac agents start --one-shot` the runner exits after the first.
   # Without --one-shot it stays attached for follow-up turns.
   # ----------------------------------------------------------------------
+    channels: []
+    raw_options: {}
+    continue_max_age_minutes:
+    resume_id: ''
+    account: ''
+    credentials_file: ''
+    credentials_files: []
+    provider:
   startup_prompts:
-    - |
-      You are a generic worker template. Replace this prompt with your
-      agent's actual mission. Reply READY when initialized.
+  - |
+    You are a generic worker template. Replace this prompt with your
+    agent's actual mission. Reply READY when initialized.
 
   # ----------------------------------------------------------------------
   # startup — broader pre-launch policy block.
@@ -299,6 +321,7 @@ spec:
   # (default 19000-19999) and persists in state.db. `sac agents list`
   # shows the assigned port.
   # ----------------------------------------------------------------------
+    prune_on_stop: false
   a2a:
     port: auto                  # default — sac picks from the range
     # port: 7901                # pin only when a stable external URL is needed
@@ -353,6 +376,7 @@ spec:
   # transparently over the host registry's ssh rails. ${HOSTNAME} resolves
   # to the loading machine at load time (portable example/fixture specs).
   # ----------------------------------------------------------------------
+    host: 127.0.0.1
   host: ${HOSTNAME}               # this machine, resolved at load time
   # host: gpu-box                 # pin to a single peer (ssh-dispatched)
   # host: spartan-gpgpu106        # glob peer (spartan-*) — rides the
@@ -361,3 +385,56 @@ spec:
   #                               # — agent name becomes <name>@<host>
 
 # EOF
+
+  # Explicit-fields ruling (2026-07-21): every spec field is written; values below are the defaults.
+  provider: anthropic
+  startup_commands: []
+  listen: []
+  extensions: {}
+  mcp_servers: {}
+  user: ''
+  container:
+    runtime: none
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: '1'
+      y_y_n: '2'
+      waiting: /speak-and-call
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+  lineage:
+    group: ''
+    may_spawn: true

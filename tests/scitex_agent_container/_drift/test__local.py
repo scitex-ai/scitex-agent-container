@@ -12,6 +12,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name
 
 from __future__ import annotations
 
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
 import subprocess
 from pathlib import Path
 
@@ -70,7 +72,7 @@ def spec_repo(tmp_path: Path):
     agents = work / ".scitex" / "agent-container" / "agents" / "foo"
     agents.mkdir(parents=True)
     spec = agents / "spec.yaml"
-    spec.write_text("apiVersion: scitex-agent-container/v3\n")
+    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"))
     _git(work, "add", "-A")
     _git(work, "commit", "-m", "init")
     _git(work, "push", "-u", "origin", "develop")

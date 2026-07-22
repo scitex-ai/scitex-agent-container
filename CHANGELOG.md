@@ -6,6 +6,165 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.11] - 2026-07-22
+
+### Changed
+
+- **BREAKING — every spec field explicit, red-start (operator ruling
+  2026-07-21).** `config.load_config` / `load_v3` / `validate_raw` now REQUIRE
+  every author-facing field of an agent `spec.yaml` to be WRITTEN — an omitted
+  field is a load-time ERROR. 86 required keys for `kind: Agent` (78 for
+  `kind: AgentProxy`), derived from the section dataclasses
+  (`config/_explicit_fields.py`) with alias tables where YAML keys differ
+  (`watchdog.responses.*`, `restart.backoff.*`, `python-venv`). There is NO
+  migration phase, NO warn mode, and NO bypass flag — the only entry point is
+  `_explicit_validation.validate(doc, path)`; every under-specified spec in
+  the fleet goes boot-red at its next start, as ruled. The hint contract:
+  ONE error listing ALL missing fields at once (YAML path + expected type +
+  current default), followed by a marker-delimited paste-ready YAML block
+  whose values reproduce exactly what omission used to mean (loader
+  derivations paste `null`: `workdir`, `claude.session`), ending with the
+  loaded file's path. The hint provably clears the condition (round-trip
+  tested). The 2026-06-23 nine-field "no hidden defaults" subset was
+  superseded and removed. Excluded from the required set (each documented in
+  the module): `host`/`hosts` (exactly-one enforced by placement validation),
+  top-level `session` (alias of `claude.session`), banned/relocated keys
+  (`access`, `scheduling`, `container_workdir`, ...), the dead `screen` /
+  `startup` keys, and the four keys `load_v3` reads but `validate_raw`
+  rejects (`multiplexer`, `env-file`, `exclude_hooks`, `exclude_skills` —
+  flagged for operator review). `sac agents create` templates and
+  `examples/agents/*` now render the full explicit field set.
+
+### Fixed
+
+- **auto-merge-to-develop: bot-merged commits landed on develop with ZERO CI —
+  the sweep now dispatches the post-merge gates itself.** GitHub suppresses
+  workflow triggers for pushes made with the default `github.token`
+  (recursive-run protection), and the sweep merges with exactly that token, so
+  every commit it landed arrived on develop with no check runs at all
+  (measured: bot-merged develop head `ae09a078` → check-runs `total_count: 0`;
+  its user-pushed neighbours `33c61392`/`8c537754` → 9 check runs each, with
+  runners online and idle — not a capacity problem). The sweep's own
+  develop-health gate then read that absence as "no red signal to honour" and
+  kept merging: green-by-absence. The repo already documents the identical
+  hazard for tag pushes in `autobump-release-sweep.yaml` and works around it
+  by dispatching explicitly — `workflow_dispatch` is exempt from the
+  suppression — but the merge path never got the same treatment. Now, after a
+  successful merge, the sweep fires the five develop gates (`POST_MERGE_GATES`:
+  pytest matrix, quality audit, lint, import smoke, hosted-runner guard) via
+  `gh workflow run … --ref develop` — ONCE per tick, never per merged PR;
+  skipped on dry-run; `permissions.actions: write` added for the dispatch. A
+  failed dispatch is `::error::`-loud and turns the run red ON PURPOSE (the
+  run record stays, per the file's heartbeat doctrine). No PAT/bot token
+  introduced. Pinned by `tests/develop/test_auto_merge_dispatch.py`
+  (file-only, cannot flake) and mutation-proven: pre-fix workflow → 11/17
+  fail; dispatch line neutered → 3 fail; `--ref main` → ref test fails;
+  restored → 17 pass.
+
+- **An unreadable OpenAI store deleted the Claude account view.** `sac accounts
+  list` called `read_codex_accounts_metadata()` unguarded, on the line *above*
+  both the `--json` branch and the Claude credential block. That function raises
+  `CodexAccountSyncError` — a bare `RuntimeError`, so click prints a traceback and
+  exits 1 — for every degraded state of the OpenAI store once its root directory
+  exists, and `sac accounts sync-openai` creates that root permanently on first
+  use. An OpenAI-side problem therefore took down the operator's primary
+  credential instrument: no table, no TTLs, no usage bars, and a non-zero exit for
+  anything parsing `--json`.
+
+  The states that trigger it are ordinary, not exotic: a ChatGPT logout (rewrites
+  `auth.json` to `{}`), a store root left holding no `*/auth.json`, a truncated
+  write, a file owned by another uid, or an api-key-mode `auth.json` — a
+  legitimate auth mode that carries no decodable JWT claims. One broken member of
+  an otherwise healthy pool raises for the whole pool. And the command is reached
+  most often *during* a credential incident, which is exactly when the store is
+  most likely to be in one of those states.
+
+  The Claude reads on that same path were always exception-tolerant; the provider
+  axis had quietly lowered the contract. It now degrades to a **third state**
+  rather than to absence: an absent store stays `[]` with `openai_error: null`,
+  while an unreadable one is `[]` plus the message, surfaced as an `openai_error`
+  key in `--json` and an `OpenAI accounts UNREADABLE:` line in human output.
+  Collapsing the two would have traded a loud failure for a quiet wrong answer —
+  telling the operator their store is empty when it is broken.
+
+  Mutation-proven rather than merely green: with the guard removed, 6 of the 10
+  new tests fail; the 4 that still pass are the healthy-store and absent-store
+  controls, which must not depend on it.
+
+- **MCP reconnect respawn preserves spec env — store vars survived only the
+  first spawn** (P1, card `sac-env-injection-lost-on-mcp-reconnect-20260721`).
+  sac delivered `spec.env` (+ the fleet-default layer) to MCP servers ONLY via
+  process inheritance (`apptainer --env` → container env → the `claude`
+  client → first stdio spawn). A mid-session MCP reconnect RESPAWN goes
+  through the bundled stdio transport's sanitized env
+  (`{...getDefaultEnvironment(), ...entry.env}`, allowlist
+  `HOME/LOGNAME/PATH/SHELL/TERM/USER` — read out of the deployed claude
+  2.1.216 binary), so every injected var not declared in the entry's `env`
+  block vanished mid-session: scitex-cards' resolve-store flipped stores and
+  `store_identity` mismatches appeared while plain-shell children still saw
+  the vars. On old scitex-cards vintages this env loss is one of the two
+  preconditions for the packaged-example board-wipe class (the shared-store
+  var `SCITEX_TODO_TASKS_YAML_SHARED` is deliberately never baked host-side,
+  so it lived ONLY in the volatile channel). Fix makes the spec env DURABLE
+  where the respawner reads it: the launch argv now carries a
+  `SAC_SPEC_ENV_KEYS` manifest naming the injected keys
+  (`runtimes/_apptainer_listen_env.listen_env_flags`), and the in-container
+  SDK options builder (`runtimes/_sdk_common.build_sdk_options`) bakes those
+  keys' literal values into every stdio server entry's `env` block
+  (entry-declared keys win) — per-agent-correct because it expands from the
+  agent's OWN container env, never the launching host shell (the 2026-07-02
+  wrong-identity incident stays fixed). The workdir `.mcp.json` writer
+  (`runtimes/mcp_config.setup_mcp_config`) bakes `spec.env` the same way.
+  Fail-loud: a manifested key absent at bake time raises
+  `SpecEnvUnresolvedError`; a value still shaped like `${VAR}` raises
+  `UnexpandedEnvValueError` (never stored as data). New module
+  `runtimes/_mcp_spec_env`; PR #319's provider tool whitelist extracted
+  verbatim to `runtimes/_sdk_provider_tools` (line-cap split, no behavior
+  change).
+
+- **autobump-release-sweep: an ABSENT tag read as a garbage sha — first
+  scheduled tick raised a false TAG COLLISION for v0.24.4, which does not
+  exist.** `gh api` on a 404 prints the error JSON to STDOUT, so `tag_sha`
+  captured a JSON blob instead of "": BUMP fired where TAG_ONLY belonged and
+  the collision guard tripped on a phantom tag (run 29804531483, fail-loud
+  alarm — report-only held, no mutation). `tag_sha` now accepts only a
+  40-hex sha at both the ref and peel reads; anything else is treated as
+  absent. Verified live: v0.24.4 (absent) → empty; v0.24.2 (annotated) →
+  peeled develop commit.
+
+- **`notify` extra is now closed under `all` (PS-221), unblocking the whole PR
+  queue.** `scitex-notification>=0.2.9` sat in the public `notify` extra but not
+  in `all`, so `pip install scitex-agent-container[all]` silently under-installed
+  the login-relay's email surface. The omission was deliberate and documented —
+  `all` could not reference a version that did not exist on PyPI yet — but 0.2.9
+  has since been published, so the constraint has expired and the comment
+  asserting it was outdated. This single error failed
+  `tests/develop/test_audit.py::test_audit_all_clean` on EVERY open pull
+  request, not just the one that introduced it, because the audit grades the
+  whole checkout rather than the diff.
+
+- **autobump-release-sweep: two state-read defects caught by the first live
+  dry-run (2026-07-21), fixed before arming.** (1) `tag_sha` returned an
+  ANNOTATED tag's tag-object sha, not the peeled commit — head==tagged-commit
+  read as "moved past" and STEADY was unreachable for operator-cut annotated
+  tags. Now peels via `/git/tags/<sha>`. (2) `gate_develop` counted every
+  completed check-run, so a flaky-then-rerun-green check (two rows for one
+  name) kept develop RED forever. Now projects latest-run-per-name
+  (`group_by(.name) | max_by(.started_at)`) before classifying, matching
+  branch-protection semantics. Both verified against the live commit that
+  produced the false readings (bad=0, gate=green; peel=develop head).
+
+### Documentation
+
+- **Account-selection + 7d spend policy are now discoverable** (operator
+  2026-07-21: 「burn というポリシーがあるのを初めて聞いた」). New §4 in
+  `26_credentials-rotation.md`: `claude.account` pin vs unpinned picker,
+  the explicit-`account: ""` spec convention, and
+  `SAC_CREDS_7D_POLICY: spread | burn` — spread's headroom-ranking vs
+  burn's use-it-or-lose-it ordering, and WHY burn stays gated on the
+  fleet reconciler. Host spec templates got the same values as inline
+  comments plus an explicit `account: ""` field.
+
 ## [0.24.2] - 2026-07-21
 
 ### Added

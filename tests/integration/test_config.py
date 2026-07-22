@@ -92,10 +92,23 @@ def _write_config(data: dict) -> str:
     The helper picks the dir name from ``data["metadata"]["name"]`` (a
     test-only convenience) and then **strips** that field before writing
     so the validator (which now rejects metadata.name) doesn't complain.
+
+    Red-start ruling 2026-07-21: every spec field must be explicit, so
+    the helper merges the validator's own paste defaults BENEATH the
+    test's spec (the test's fields win) before writing.
     """
     import copy
 
+    from tests.scitex_agent_container._helpers.explicit_spec import (
+        deep_merge,
+        explicit_spec_defaults,
+    )
+
     data = copy.deepcopy(data)
+    data["spec"] = deep_merge(
+        explicit_spec_defaults(data.get("kind", "Agent")),
+        data.get("spec") or {},
+    )
     metadata = data.get("metadata") or {}
     name = metadata.pop("name", None) or "test-agent"
     if metadata:
