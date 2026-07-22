@@ -51,6 +51,10 @@ _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 # ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.
 _VALID_RUNTIMES = frozenset({"claude-agent-sdk", "tui", "apptainer", ""})
 
+# spec.container.runtime — every value here must have a working engine
+# behind it. docker/podman were ripped out 2026-05-13.
+VALID_CONTAINER_RUNTIMES = frozenset({"none", "apptainer"})
+
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
 
@@ -314,12 +318,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # module (keeps this orchestrator under the per-file cap).
         errors.extend(validate_claude(spec))
 
-        # container.runtime
+        # container.runtime — apptainer is the only implemented engine
+        # (docker/podman ripout 2026-05-13).
         container = spec.get("container", {}) or {}
         cr = container.get("runtime")
-        if cr and cr not in ("none", "docker", "podman", "apptainer"):
+        if cr and cr not in VALID_CONTAINER_RUNTIMES:
             errors.append(
-                f"spec.container.runtime must be none|docker|podman|apptainer, got '{cr}'"
+                "spec.container.runtime must be "
+                f"{'|'.join(sorted(VALID_CONTAINER_RUNTIMES))}, got '{cr}'"
             )
 
         # container.mount_host_claude (opt-in; default False)

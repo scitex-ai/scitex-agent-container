@@ -81,8 +81,7 @@ cfg.runtime          # "apptainer"
 cfg.model            # str
 cfg.expanded_workdir # str (~ resolved)
 cfg.a2a.port         # int | None
-cfg.remote.host      # str ("" if local)
-cfg.remote.is_remote # bool
+cfg.hosts_spec.host  # str | list[str] ("" if unpinned) — spec.remote was deleted in WI-6
 cfg.startup_commands # list[StartupCommand]
 ```
 

@@ -37,6 +37,29 @@ versioning follows [SemVer](https://semver.org/).
 
 - auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.
 
+### Removed
+
+- **Dead runtime dispatch that advertised docker / podman / ssh-remote.**
+  `_runners/_tmux/claude_code.py` carried four dispatch blocks (`start`,
+  `stop`, `is_running`, `logs`) importing `.docker` / `.podman` /
+  `.apptainer` — modules that do not exist in that package — plus
+  `_should_dispatch_remote`, which read `config.remote.is_remote` after
+  `RemoteSpec` was deleted in WI-6. Neither half could execute
+  (ImportError / AttributeError). The live start path is unaffected:
+  `_lifecycle/_start.py` → `_runtime_select._get_runtime` branches on the
+  top-level `spec.runtime` launch-mode selector into `TuiSessionRuntime` /
+  `ClaudeSessionRuntime` → `runtimes/_apptainer_*`, and never reads
+  `spec.container.runtime`.
+- `spec.container.runtime` no longer accepts `docker` / `podman`. The
+  accepted set is now `none | apptainer` (`VALID_CONTAINER_RUNTIMES`),
+  matching the 2026-05-13 docker/podman ripout that left `apptainer` as the
+  only implemented engine. A spec naming a ripped-out engine now fails
+  yaml-validate with a message listing only the engines that exist, instead
+  of validating cleanly and dying at dispatch. New
+  `tests/scitex_agent_container/config/test__validation_container_runtime.py`
+  probes the LIVE resolver (`_container_runtime_for`) for every advertised
+  value, so re-adding an unimplemented engine to the enum fails the suite.
+
 ## [0.24.11] - 2026-07-22
 
 ### Changed
