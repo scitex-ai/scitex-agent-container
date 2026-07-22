@@ -328,10 +328,9 @@ def build_run_argv(
     # appended verbatim after all curated args, before the SIF +
     # inner command. Lets operators bolt on flags sac doesn't model
     # (e.g. ``--userns``, ``--cleanenv``).
-    ap_for_raw = getattr(config, "apptainer", None)
-    if ap_for_raw is not None:
-        for arg in getattr(ap_for_raw, "raw_args", None) or []:
-            argv.append(str(arg))
+    _ap_raw = getattr(config, "apptainer", None)
+    spec_raw_args = [str(a) for a in (getattr(_ap_raw, "raw_args", None) or [])]
+    argv += spec_raw_args
 
     # Relaxed + directory-overlay + explicit ``--home`` shadows the
     # to_home tree. ``deploy_to_home_overlay`` materialises the tree
@@ -392,7 +391,10 @@ def build_run_argv(
 
     # Root-cause guard for the stray ``--fakeroot`` file in the project root
     # (see _apptainer_argv_guard): a value-taking flag missing its value.
-    validate_flag_argv(argv)
+    # raw_args + name let the message attribute the fault and name the spec.
+    validate_flag_argv(
+        argv, raw_args=spec_raw_args, agent=getattr(config, "name", None)
+    )
 
     argv.append(str(sif_path))
 
