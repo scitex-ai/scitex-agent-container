@@ -221,23 +221,39 @@ def test_status_does_not_supersede_when_there_is_no_heartbeat_file(
 def test_supersession_uses_mtime_when_ts_is_stale_but_mtime_is_fresh(
     client, auth_headers, isolated_env
 ) -> None:
-    # Arrange — real measured scitex-fixture divergence: `ts` is 70182s
-    # stale (would NOT supersede if read), but `mtime` is fresh.
+    # Arrange — a TIGHT window, chosen so the choice of clock source is the
+    # ONLY thing that can flip the verdict: the failure is HEARTBEAT_STALE_S
+    # + 100s old; `mtime` is fresh (postdates the failure by >= one window,
+    # via the REAL clock); `ts` claims a moment only 10s after the failure
+    # (postdates it by << one window). A implementation that reads `ts`
+    # instead of `mtime` for the postdates-failure check returns early
+    # (not superseded) here — a WIDE gap (e.g. 19 days failed / 70182s-old
+    # `ts`) does NOT discriminate: both clock sources clear the one-window
+    # bar by an enormous margin regardless of which is read, so a test built
+    # on wide gaps alone would pass against a broken implementation too.
+    failed_seconds_ago = HEARTBEAT_STALE_S + 100
+    ts_seconds_ago = failed_seconds_ago - 10
     _write_spec(isolated_env / "home", "mtime-not-ts-a")
     sd = _state_dir("mtime-not-ts-a")
-    _write_marker(sd, failed_seconds_ago=19 * 86400)
-    _write_heartbeat(sd, ts_seconds_ago=70182, mtime_seconds_ago=0)
+    _write_marker(sd, failed_seconds_ago=failed_seconds_ago)
+    _write_heartbeat(sd, ts_seconds_ago=ts_seconds_ago, mtime_seconds_ago=0)
     # Act
     response = client.get("/agents/mtime-not-ts-a/status", headers=auth_headers)
     # Assert
     assert response.json()["status"] == "startup_failed_superseded"
 
 
-def test_supersession_uses_mtime_when_ts_is_fresh_but_mtime_is_stale(
+def test_a_fresh_ts_does_not_supersede_a_stale_real_mtime(
     client, auth_headers, isolated_env
 ) -> None:
-    # Arrange — inverse: `ts` is fresh (would WRONGLY supersede if read),
-    # but `mtime` is a full day stale.
+    # Arrange — general correctness pin, NOT a clock-source discriminator:
+    # ``heartbeat_signal`` re-reads the real OS mtime independently, so it
+    # gates on the actual stale mtime regardless of which clock the
+    # postdates-check used — this holds even under the ts-reading mutation
+    # the test above catches, since that mutation only ever widens what
+    # reaches ``heartbeat_signal``, never narrows it. Kept as a behavioral
+    # pin against a DIFFERENT future bug (e.g. dropping the
+    # ``heartbeat_signal`` corroboration entirely).
     _write_spec(isolated_env / "home", "mtime-not-ts-b")
     sd = _state_dir("mtime-not-ts-b")
     _write_marker(sd, failed_seconds_ago=19 * 86400)
