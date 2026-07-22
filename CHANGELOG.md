@@ -35,6 +35,30 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **auto-merge-to-develop: bot-merged commits landed on develop with ZERO CI —
+  the sweep now dispatches the post-merge gates itself.** GitHub suppresses
+  workflow triggers for pushes made with the default `github.token`
+  (recursive-run protection), and the sweep merges with exactly that token, so
+  every commit it landed arrived on develop with no check runs at all
+  (measured: bot-merged develop head `ae09a078` → check-runs `total_count: 0`;
+  its user-pushed neighbours `33c61392`/`8c537754` → 9 check runs each, with
+  runners online and idle — not a capacity problem). The sweep's own
+  develop-health gate then read that absence as "no red signal to honour" and
+  kept merging: green-by-absence. The repo already documents the identical
+  hazard for tag pushes in `autobump-release-sweep.yaml` and works around it
+  by dispatching explicitly — `workflow_dispatch` is exempt from the
+  suppression — but the merge path never got the same treatment. Now, after a
+  successful merge, the sweep fires the five develop gates (`POST_MERGE_GATES`:
+  pytest matrix, quality audit, lint, import smoke, hosted-runner guard) via
+  `gh workflow run … --ref develop` — ONCE per tick, never per merged PR;
+  skipped on dry-run; `permissions.actions: write` added for the dispatch. A
+  failed dispatch is `::error::`-loud and turns the run red ON PURPOSE (the
+  run record stays, per the file's heartbeat doctrine). No PAT/bot token
+  introduced. Pinned by `tests/develop/test_auto_merge_dispatch.py`
+  (file-only, cannot flake) and mutation-proven: pre-fix workflow → 11/17
+  fail; dispatch line neutered → 3 fail; `--ref main` → ref test fails;
+  restored → 17 pass.
+
 - **An unreadable OpenAI store deleted the Claude account view.** `sac accounts
   list` called `read_codex_accounts_metadata()` unguarded, on the line *above*
   both the `--json` branch and the Claude credential block. That function raises
