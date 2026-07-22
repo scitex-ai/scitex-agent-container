@@ -248,6 +248,6 @@ sidecar and `sac listen`, so the same client code works against either.
 
 - [`spec-reference.md`](spec-reference.md) — the YAML knobs (`spec.a2a.port`, `spec.listen.port`)
 - [`how-sac-works.md`](how-sac-works.md) — the architecture diagram showing where each transport hooks in
-- [`sac-and-orochi.md`](sac-and-orochi.md) — how orochi consumes `sac listen` across hosts
+- [`adr/0008-sac-node-transport-boundary.md`](adr/0008-sac-node-transport-boundary.md) — how an external hub consumes `sac listen` across hosts
 
 <!-- EOF -->

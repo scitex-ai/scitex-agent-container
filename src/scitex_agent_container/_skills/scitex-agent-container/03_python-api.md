@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Python programmatic surface
-  [DETAILS] AgentConfig + load_config/validate_config + the `agent` namespace (start/stop/restart/status/logs/...) + Registry + peer.post_turn for outbound A2A. Use when embedding sac in another Python process (orochi master, scripts, notebooks).
+  [DETAILS] AgentConfig + load_config/validate_config + the `agent` namespace (start/stop/restart/status/logs/...) + Registry + peer.post_turn for outbound A2A. Use when embedding sac in another Python process (an orchestrator master, scripts, notebooks).
 tags: [scitex-agent-container-python-api]
 ---
 
@@ -39,7 +39,7 @@ returns a list of schema-violation strings (empty when valid).
 
 ## Peer — drive another agent's `/v1/turn`
 
-For agent-to-agent communication (orochi master → workers, peer collaboration):
+For agent-to-agent communication (a master → workers topology, peer collaboration):
 
 ```python
 from scitex_agent_container.peer import post_turn, post_turn_to_url, resolve_peer_url

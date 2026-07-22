@@ -9,8 +9,7 @@ endpoint with sac alone, no fleet dependency.
 This package provides:
 
 * :mod:`._card` — v3 YAML → A2A AgentCard projection. No fleet-specific
-  fields; sac-internal extensions live under ``x-scitex-agent-container``
-  (NOT ``x-orochi``).
+  fields; sac-internal extensions live under ``x-scitex-agent-container``.
 * :mod:`._handlers` — pluggable sync ``(name, text) -> str`` handlers
   (``echo`` / ``claude_cli`` / ``exec``) used by the executors.
 * :mod:`.executors` — corresponding :class:`a2a.server.agent_execution.AgentExecutor`

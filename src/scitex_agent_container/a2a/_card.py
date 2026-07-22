@@ -1,8 +1,8 @@
 """A2A AgentCard projection from a v3 sac YAML.
 
 **Canonical source for v3 → AgentCard projection.** The scitex-cloud
-mirror at ``apps/infra/a2a_app/_card.py`` (orochi public surface) is
-expected to layer ``x-orochi`` enrichment on top of the field set
+mirror at ``apps/infra/a2a_app/_card.py`` (a downstream mirror) is
+expected to layer its own extension enrichment on top of the field set
 this module produces. Until the projection logic is extracted into a
 shared dependency, the two implementations must be kept in sync:
 canonical = THIS file; mirror = scitex-cloud `_card.py`.
@@ -10,10 +10,10 @@ canonical = THIS file; mirror = scitex-cloud `_card.py`.
 No fleet imports. The projection is request-aware: pass
 ``base_url`` so each card advertises the URL the client actually used.
 
-sac-internal fields live under ``x-scitex-agent-container``; this is
-intentionally NOT ``x-orochi`` because the orochi extension namespace
-is owned by that project, not sac. A standalone ``sac a2a serve``
-agent therefore won't carry an ``x-orochi`` block — that's by design.
+sac-internal fields live under ``x-scitex-agent-container``. sac never
+emits fields in another project's extension namespace — a downstream
+consumer layers its own on top. A standalone ``sac a2a serve`` agent
+therefore carries only sac's own block — that's by design.
 """
 
 from __future__ import annotations
