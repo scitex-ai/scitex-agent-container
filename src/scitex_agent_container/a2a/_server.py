@@ -21,7 +21,7 @@ served from the equivalent proto card built by
 :func:`._card.project_card_proto`.
 
 Task store is in-memory per the migration doc's recommendation for
-sac standalone use. Orochi can later override this with a DB-backed
+sac standalone use. A consumer can later override this with a DB-backed
 store.
 """
 

@@ -36,7 +36,7 @@ Design rules
   are parameters so tests stay deterministic.
 - **Stdlib only.** ``secrets`` for the nonce, no requests, no psutil.
 - **Zero coupling.** scitex-agent-container does not know about
-  scitex-orochi — consumers wrap this observer.
+  any external orchestrator — consumers wrap this observer.
 """
 
 from __future__ import annotations

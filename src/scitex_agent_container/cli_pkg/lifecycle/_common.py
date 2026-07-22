@@ -333,7 +333,7 @@ def _discover_all_agents(project_local_dirs=None) -> list[str]:
          test agents and CI fixtures override globals.
       1. ``~/.scitex/agent-container/agents/<name>/spec.yaml`` — sac's own root.
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port (colon-separated)
-         for downstream orchestrators (e.g. orochi) to inject extra paths
+         for downstream orchestrators to inject extra paths
          without sac knowing about them.
 
     sac is standalone: it never reads from any other scitex package's

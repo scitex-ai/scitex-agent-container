@@ -50,7 +50,7 @@ _FAILBACK_POLL_INTERVAL_S = 60.0
 def _load_raw_spec(config_path: str) -> dict:
     """Load the YAML at ``config_path`` and return the inner spec dict.
 
-    The orochi spec format wraps everything under ``spec:``; older specs
+    The v2+ spec format wraps everything under ``spec:``; older specs
     are flat. Tolerate both.
     """
     if not config_path:
