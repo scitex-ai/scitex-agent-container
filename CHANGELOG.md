@@ -35,6 +35,35 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Changed
 
+- **CLI output: honest levels, one line per condition** (operator ruling
+  2026-07-22 — 「フィードバックがクソ長い、ユーザ目線に立って短く、読みやすく」).
+  User-facing start/account paths now route through `scitex-logging` so INFO
+  (dim, skippable) / WARN / ERRO / SUCC carry meaning instead of arriving as
+  undifferentiated prose:
+  - `NoHealthyAccountError` is an EXPECTED refusal, so `sac agents start` no
+    longer lets it escape as a traceback (a stack trace reads "sac crashed,
+    file a bug", which is false) nor prints the same paragraph twice. It
+    carries a new one-line `brief` — e.g. `ERRO: dotfiles: quota unknown for
+    wyusuuke-gmail-com — run \`sac accounts refresh-quota-cache\`` — and the
+    full per-account diagnosis drops to DEBUG. `--json` gains a
+    `no-healthy-account` status.
+  - `sac accounts refresh-quota-cache` reports through `logger.success`
+    instead of bare `click.echo`, and the summary drops the absolute cache
+    path (implementation detail). The per-account 5h/7d/ttl figures stay —
+    they are what the operator reads to pick an account.
+  - `sac agents start` on an already-running agent no longer prints "No-op"
+    and then a contradicting `SUCC: <name> started`. The no-op branch reports
+    INFO + the three commands that WOULD act; the SUCC line is suppressed and
+    `--json` reports `already_running`. **Exit code stays 0** (PR #756's
+    idempotent-start decision, matching `systemctl`/`docker start`). Every
+    hinted command was executed before shipping: `restart` requires `-y`,
+    `stop` does NOT (its `-y` gate covers only the fleet-wide selection
+    flags).
+  - The ~8 lines of credential-ranking detail (`policy=`, ranking inputs,
+    per-account usage) move from the default path to DEBUG; a one-line
+    headline naming the agent and picked account stays at INFO. The
+    `log_stream` capture seam is preserved unchanged, so the dry-probe
+    rotation-notice suppression still works.
 - auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.
 
 ## [0.24.11] - 2026-07-22

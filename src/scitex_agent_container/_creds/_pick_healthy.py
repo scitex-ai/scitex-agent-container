@@ -269,7 +269,8 @@ def pick_healthy_account(
         raise NoHealthyAccountError(
             "no stored accounts to choose from — run "
             "`sac accounts save <name>` or `sac accounts sync-live` "
-            "on the credential-holding host, then retry."
+            "on the credential-holding host, then retry.",
+            brief="no stored accounts — run `sac accounts sync-live`",
         )
 
     healths = [
@@ -291,7 +292,11 @@ def pick_healthy_account(
         raise NoHealthyAccountError(
             f"no healthy stored account (probed at {_iso_utc(probe_ts)}): "
             f"{_format_states(healths)}. Fix: `claude /login` to one of "
-            "them, then `sac accounts sync-live`, then restart the agent."
+            "them, then `sac accounts sync-live`, then restart the agent.",
+            brief=(
+                f"no fresh account among {', '.join(h.name for h in healths)}"
+                " — run `claude /login` then `sac accounts sync-live`"
+            ),
         )
 
     # Per-account 5h + 7d utilisation for the fresh shortlist. Best-
@@ -400,7 +405,10 @@ def pick_healthy_account(
             "so the pick cannot be confirmed to have headroom. Refusing to "
             "boot without verifiable quota (constitution: unknown is not "
             "'OK'). Fix: populate the cache on THIS host — run `sac accounts "
-            "refresh-quota-cache` (or wait for its cron) — then restart."
+            "refresh-quota-cache` (or wait for its cron) — then restart.",
+            brief=(
+                f"quota unknown for {picked} — run `sac accounts refresh-quota-cache`"
+            ),
         )
 
     return picked
