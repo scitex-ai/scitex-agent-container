@@ -245,7 +245,7 @@ def subagent_get_state(
 
     Walks ``~/.claude/projects/<project_hash>/<session>/subagents/agent-*.jsonl``
     and returns one dict per matching transcript. No classification —
-    the caller (orochi, or any orchestrator) decides how to map these
+    the caller (any orchestrator) decides how to map these
     facts to a ``running`` / ``stale`` / ``dead`` / ``completed``
     label.
 

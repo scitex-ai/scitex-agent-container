@@ -94,7 +94,7 @@ def export_state(
 ) -> dict:
     """Dump the registry tables (and ``attempts``) into a JSON-able dict.
 
-    Used by ``sac db export``; orochi consumes the result via
+    Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).
 
     ``tables`` (added 2026-05 alongside ADR-0014's anti-entropy sync)

@@ -216,7 +216,7 @@ def post_turn(
 
     Convenience wrapper that combines :func:`resolve_peer_url` and
     :func:`post_turn_to_url`. Use this from one running agent to drive
-    another (orochi master → workers, peer collaboration, etc.).
+    another (a master → workers topology, peer collaboration, etc.).
 
     Records a dispatch-ledger row with ``to_agent=agent_name`` so a later
     ``list_dispatches(to_agent=...)`` can recall every turn sent to a
