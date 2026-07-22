@@ -24,6 +24,20 @@ fails this round keeps whatever entry it had from a prior successful round
 (a transient blip must not wipe good data the picker relies on). The caller
 (the CLI) exits non-zero only when EVERY attempted account failed.
 
+Zero accounts is NOT a refresh
+------------------------------
+The merge above preserves entries for accounts that FAIL — a set that is
+EMPTY when the store holds no accounts at all, so it protects nothing in
+that case. An empty store used to still WRITE: it restamped ``written_at``
+on a cache nothing had re-measured, and on a host with no cache it CREATED
+``{"accounts": {}}`` — a file that makes :func:`_account.quota_cache.
+quota_cache_present` report ``True``. That flip is not cosmetic: the boot
+picker's ``require_quota_evidence`` gate is keyed off exactly that predicate,
+so an empty cache converts a boot that would have degraded to freshness-only
+into a hard refusal. ``accounts_found == 0`` therefore writes NOTHING and
+reports ``written=False`` / ``reason="no-accounts"``, which the CLI maps to
+its own exit code.
+
 Token material never leaves :mod:`_account.claude_usage`; this module handles
 only percentages + TTL hours.
 """
@@ -93,13 +107,19 @@ def refresh_quota_cache(
             that FAIL this round, so a transient error never drops good data.
 
     Returns:
-        ``{"cache_path": str, "written": bool, "ok": int, "failed": int,
+        ``{"cache_path": str, "written": bool, "reason": str | None,
+           "accounts_found": int, "ok": int, "failed": int,
            "results": [{"name", "short", "h5", "d7", "ttl_h",
                         "reset_at_5h", "reset_at_7d", "error"}]}``.
         ``error`` is ``None`` on success. The two ``reset_at_*`` stamps
         are ISO-8601 strings (or ``None`` when upstream omits them) and
         are what lets the picker tell expiring quota from a reserve —
-        see :func:`_creds._quota_rank.is_expiring_7d`. Never raises.
+        see :func:`_creds._quota_rank.is_expiring_7d`.
+
+        ``accounts_found == 0`` is a THIRD outcome, neither refreshed nor
+        failed: nothing is written, ``written`` is ``False`` and ``reason``
+        is ``"no-accounts"``. Every other run writes and reports
+        ``reason=None``. Never raises.
     """
     from .._state.account_store import list_accounts
 
@@ -117,10 +137,15 @@ def refresh_quota_cache(
     results: list[dict[str, Any]] = []
     ok = 0
     failed = 0
-    for meta in list_accounts(store_dir=store_dir, home=_home):
-        name = meta.get("name")
-        if not isinstance(name, str) or not name:
-            continue
+    names = [
+        meta.get("name") for meta in list_accounts(store_dir=store_dir, home=_home)
+    ]
+    names = [n for n in names if isinstance(n, str) and n]
+
+    if not names:
+        return _no_accounts_result(cache_path, _home)
+
+    for name in names:
         row = _refresh_one(name, store, _fetch, _now)
         results.append(row)
         if row["error"] is None:
@@ -151,9 +176,42 @@ def refresh_quota_cache(
     return {
         "cache_path": str(written_path),
         "written": True,
+        "reason": None,
+        "accounts_found": len(names),
         "ok": ok,
         "failed": failed,
         "results": results,
+    }
+
+
+#: ``reason`` value for the zero-accounts outcome — the token the CLI maps
+#: to its own exit code and any caller can branch on without parsing prose.
+REASON_NO_ACCOUNTS = "no-accounts"
+
+
+def _no_accounts_result(
+    cache_path: Path | str | None,
+    home: Path,
+) -> dict[str, Any]:
+    """The zero-accounts outcome: report the path, write nothing to it.
+
+    Deliberately does not call :func:`write_quota_cache`. There is nothing
+    to merge and nothing to record, so the only two things a write could do
+    are both damage: restamp ``written_at`` on data no one re-measured, or
+    materialise an empty cache whose mere EXISTENCE arms the boot picker's
+    ``require_quota_evidence`` gate (see :func:`_account.quota_cache.
+    quota_cache_present`).
+    """
+    from .quota_cache import _resolve_write_cache_path
+
+    return {
+        "cache_path": str(_resolve_write_cache_path(cache_path, home)),
+        "written": False,
+        "reason": REASON_NO_ACCOUNTS,
+        "accounts_found": 0,
+        "ok": 0,
+        "failed": 0,
+        "results": [],
     }
 
 
@@ -178,7 +236,9 @@ def _load_existing_accounts(
     # cold-start case; degrade to an empty seed rather than fail the refresh.)
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
         return {}
     accounts = parsed.get("accounts") if isinstance(parsed, dict) else None
     return dict(accounts) if isinstance(accounts, dict) else {}
@@ -211,7 +271,9 @@ def _refresh_one(
     # whole refresh loop or corrupts the cache.)
     try:
         usage = fetch(creds_path)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
+    except (
+        Exception
+    ) as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment)
         row["error"] = f"usage fetch raised: {exc}"
         return row
 
@@ -258,6 +320,7 @@ def _is_pct(value: Any) -> bool:
 
 
 __all__ = [
+    "REASON_NO_ACCOUNTS",
     "refresh_quota_cache",
     "read_quota_entry",  # re-export for callers verifying round-trips
     "UsageFetcher",

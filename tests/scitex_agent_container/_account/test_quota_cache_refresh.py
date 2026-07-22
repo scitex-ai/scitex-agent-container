@@ -10,7 +10,9 @@ Coverage:
   * a per-account failure is isolated — the other accounts are still written
     and the cache is not corrupted;
   * the write is atomic (no ``.tmp`` residue, file parses);
-  * an empty store does not crash and writes an empty ``accounts`` map;
+  * an empty store is a distinct outcome that writes NOTHING — no file is
+    created, a prior file keeps its ``written_at``, and the boot picker's
+    cache-present gate stays disarmed;
   * a missing per-account snapshot is a recorded failure, not a crash;
   * merge preserves a prior good entry for an account that fails this round.
 """
@@ -160,13 +162,14 @@ def test_refresh_reports_ok_count(tmp_path: Path) -> None:
     _make_account(store, "a-gmail-com")
     _make_account(store, "b-gmail-com")
     cache = tmp_path / "quota-cache.json"
-    fetch = _fetcher(
-        {"a-gmail-com": _ok(10.0, 1.0), "b-gmail-com": _ok(20.0, 2.0)}
-    )
+    fetch = _fetcher({"a-gmail-com": _ok(10.0, 1.0), "b-gmail-com": _ok(20.0, 2.0)})
     # Act
     result = refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     # Assert
     assert result["ok"] == 2 and result["failed"] == 0
@@ -186,13 +189,20 @@ def test_per_account_failure_does_not_block_others(tmp_path: Path) -> None:
     fetch = _fetcher(
         {
             "a-gmail-com": _ok(10.0, 1.0),
-            "b-gmail-com": {"used_pct_5h": None, "used_pct_7d": None, "error": "HTTP 429"},
+            "b-gmail-com": {
+                "used_pct_5h": None,
+                "used_pct_7d": None,
+                "error": "HTTP 429",
+            },
         }
     )
     # Act
     refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     entry = read_quota_entry(account="a-gmail-com", cache_path=cache)
     # Assert
@@ -208,13 +218,20 @@ def test_per_account_failure_is_counted(tmp_path: Path) -> None:
     fetch = _fetcher(
         {
             "a-gmail-com": _ok(10.0, 1.0),
-            "b-gmail-com": {"used_pct_5h": None, "used_pct_7d": None, "error": "HTTP 429"},
+            "b-gmail-com": {
+                "used_pct_5h": None,
+                "used_pct_7d": None,
+                "error": "HTTP 429",
+            },
         }
     )
     # Act
     result = refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     # Assert
     assert result["ok"] == 1 and result["failed"] == 1
@@ -230,8 +247,11 @@ def test_failed_account_absent_from_cache_when_no_prior(tmp_path: Path) -> None:
     )
     # Act
     refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     entry = read_quota_entry(account="b-gmail-com", cache_path=cache)
     # Assert
@@ -246,11 +266,17 @@ def test_missing_snapshot_is_recorded_failure(tmp_path: Path) -> None:
     fetch = _fetcher({})  # never called — snapshot missing short-circuits
     # Act
     result = refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     # Assert
-    assert result["failed"] == 1 and "no credentials snapshot" in result["results"][0]["error"]
+    assert (
+        result["failed"] == 1
+        and "no credentials snapshot" in result["results"][0]["error"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +292,11 @@ def test_write_is_atomic_no_tmp_residue(tmp_path: Path) -> None:
     fetch = _fetcher({"a-gmail-com": _ok(10.0, 1.0)})
     # Act
     refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     # Assert — the tmp sidecar was renamed away; only the final file remains.
     assert cache.is_file() and not Path(str(cache) + ".tmp").exists()
@@ -281,8 +310,11 @@ def test_written_file_has_accounts_and_written_at(tmp_path: Path) -> None:
     fetch = _fetcher({"a-gmail-com": _ok(10.0, 1.0)})
     # Act
     refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     parsed = json.loads(cache.read_text(encoding="utf-8"))
     # Assert
@@ -296,12 +328,168 @@ def test_empty_store_does_not_crash(tmp_path: Path) -> None:
     cache = tmp_path / "quota-cache.json"
     # Act
     result = refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=_fetcher({}), now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
+    )
+    # Assert
+    assert result["ok"] == 0 and result["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Zero accounts — a THIRD outcome, and it writes nothing
+#
+# The merge below preserves entries for accounts that FAIL. With no accounts
+# there are no failures, so that guard covers none of this: an empty store
+# used to write anyway.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_store_reports_no_accounts_reason(tmp_path: Path) -> None:
+    # Arrange
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = tmp_path / "quota-cache.json"
+    # Act
+    result = refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
+    )
+    # Assert — distinguishable from a real refresh without parsing prose.
+    assert result["reason"] == "no-accounts"
+
+
+def test_empty_store_reports_not_written(tmp_path: Path) -> None:
+    # Arrange
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = tmp_path / "quota-cache.json"
+    # Act
+    result = refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
+    )
+    # Assert
+    assert result["written"] is False
+
+
+def test_empty_store_creates_no_cache_file(tmp_path: Path) -> None:
+    # Arrange — no cache exists yet. Creating an empty one here is what makes
+    # `quota_cache_present` report True, which arms the boot picker's
+    # require_quota_evidence gate and converts graceful degradation into a
+    # hard refusal. The file must simply not appear.
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = tmp_path / "quota-cache.json"
+    # Act
+    refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
+    )
+    # Assert
+    assert not cache.exists()
+
+
+def test_empty_store_does_not_arm_the_boot_quota_gate(tmp_path: Path) -> None:
+    # Arrange — the consequence the file-absence test above exists to prevent,
+    # asserted against the predicate the boot gate actually reads.
+    from scitex_agent_container._account.quota_cache import quota_cache_present
+
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = tmp_path / "quota-cache.json"
+    # Act
+    refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
+    )
+    # Assert
+    assert quota_cache_present(cache) is False
+
+
+def test_empty_store_leaves_prior_written_at_untouched(tmp_path: Path) -> None:
+    # Arrange — a prior cache exists. Rewriting it restamps `written_at` on
+    # data nothing re-measured: a stale cache that now claims to be current.
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = tmp_path / "quota-cache.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "written_at": 1.0,
+                "accounts": {
+                    "a-gmail-com": {"short": "a", "h5": 5.0, "d7": 1.0, "ttl_h": 3.0}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Act
+    refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=_fetcher({}),
+        now=_NOW,
     )
     parsed = json.loads(cache.read_text(encoding="utf-8"))
     # Assert
-    assert result["ok"] == 0 and result["failed"] == 0 and parsed["accounts"] == {}
+    assert parsed["written_at"] == 1.0
+
+
+def test_populated_store_still_reports_written_and_no_reason(tmp_path: Path) -> None:
+    # Arrange — the discriminating counter-input: same call, one account.
+    # Without this the "no-accounts" assertions above could pass on a
+    # populator that had simply stopped writing altogether.
+    store = tmp_path / "store"
+    _make_account(store, "a-gmail-com")
+    cache = tmp_path / "quota-cache.json"
+    fetch = _fetcher({"a-gmail-com": _ok(10.0, 1.0)})
+    # Act
+    result = refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
+    )
+    # Assert
+    assert result["written"] is True and result["reason"] is None
+
+
+def test_all_accounts_failing_still_writes_the_merged_cache(tmp_path: Path) -> None:
+    # Arrange — "every account failed" must stay a WRITE (the merge is what
+    # preserves prior good data); only "no accounts at all" skips it.
+    store = tmp_path / "store"
+    _make_account(store, "a-gmail-com")
+    cache = tmp_path / "quota-cache.json"
+    fetch = _fetcher(
+        {"a-gmail-com": {"used_pct_5h": None, "used_pct_7d": None, "error": "boom"}}
+    )
+    # Act
+    result = refresh_quota_cache(
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
+    )
+    # Assert
+    assert result["written"] is True and cache.is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +519,11 @@ def test_merge_preserves_prior_entry_on_failure(tmp_path: Path) -> None:
     )
     # Act
     refresh_quota_cache(
-        home=tmp_path, store_dir=store, cache_path=cache,
-        usage_fetcher=fetch, now=_NOW,
+        home=tmp_path,
+        store_dir=store,
+        cache_path=cache,
+        usage_fetcher=fetch,
+        now=_NOW,
     )
     entry = read_quota_entry(account="a-gmail-com", cache_path=cache)
     # Assert — the stale-but-good prior entry is still there.

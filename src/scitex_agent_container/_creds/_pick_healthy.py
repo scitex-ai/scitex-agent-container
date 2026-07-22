@@ -399,11 +399,39 @@ def pick_healthy_account(
             "(5h=? 7d=? — no cached utilisation for any fresh candidate), "
             "so the pick cannot be confirmed to have headroom. Refusing to "
             "boot without verifiable quota (constitution: unknown is not "
-            "'OK'). Fix: populate the cache on THIS host — run `sac accounts "
-            "refresh-quota-cache` (or wait for its cron) — then restart."
+            f"'OK'). {_blind_cache_remedy(quota_cache_path)}"
         )
 
     return picked
+
+
+def _blind_cache_remedy(quota_cache_path: Path | str | None) -> str:
+    """The remedy line for a blind pick — chosen by WHY the cache is blind.
+
+    Two causes reach the blind gate and they need different instructions;
+    naming only the refresh command sent an operator whose cache holds ZERO
+    entries into a loop, because on a host with no stored accounts that
+    command finds nothing to refresh and changes nothing.
+    """
+    from .._account.quota_cache import quota_cache_entry_count
+
+    entries = quota_cache_entry_count(quota_cache_path)
+    if entries == 0:
+        return (
+            "Cause: the quota cache exists but holds ZERO account entries, so "
+            "the populator has never written a successful one. Fix: run `sac "
+            "accounts refresh-quota-cache` on THIS host and READ ITS OUTPUT — "
+            "if it reports no accounts stored (exit 3) it cannot help, and the "
+            "real fix is `sac accounts save <name>` (or `sac accounts "
+            "sync-live`) here first, then re-run the refresh."
+        )
+    return (
+        f"Cause: the quota cache holds {entries} account entr"
+        f"{'y' if entries == 1 else 'ies'}, but none of them covers a fresh "
+        "candidate — it is STALE or was written for a different account set. "
+        "Fix: populate the cache on THIS host — run `sac accounts "
+        "refresh-quota-cache` (or wait for its cron) — then restart."
+    )
 
 
 __all__ = [
