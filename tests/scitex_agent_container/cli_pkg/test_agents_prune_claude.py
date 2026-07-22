@@ -9,8 +9,6 @@ to trip the per-subdir bloat threshold (default 1,000 files).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
-
 from pathlib import Path
 
 import pytest
@@ -21,6 +19,7 @@ from scitex_agent_container.cli_pkg.agents_prune_claude import (
     archive_bloat_sources,
     archive_claude_bloat,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
 
 # ---------------------------------------------------------------------------
 # Fixture builders
@@ -45,7 +44,7 @@ def _populate_subdir(claude: Path, rel: str, file_count: int) -> Path:
 def _make_bloated_workdir(tmp_path: Path) -> Path:
     """Build a workdir whose ``.claude/`` carries a single bloat source.
 
-    Mirrors the orochi failure-mode shape: a ``hooks/pre-tool-use/
+    Mirrors the observed failure-mode shape: a ``hooks/pre-tool-use/
     .pending/`` directory with ~1,500 stub files (above the 1,000-file
     per-subdir threshold so the audit flags it). 1,500 stays small
     enough that the test stays sub-second on the CI runner.
@@ -159,15 +158,17 @@ def _registered(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": explicit_spec({
-                    "runtime": "apptainer",
-                    "host": "${HOSTNAME}",
-                    "workdir": str(workdir),
-                    "apptainer": {"image": "/x.sif", "binds": []},
-                    "claude": {"model": "sonnet"},
-                    "health": {"enabled": True, "interval": 60},
-                    "restart": {"policy": "on-failure", "max_retries": 3},
-                }),
+                "spec": explicit_spec(
+                    {
+                        "runtime": "apptainer",
+                        "host": "${HOSTNAME}",
+                        "workdir": str(workdir),
+                        "apptainer": {"image": "/x.sif", "binds": []},
+                        "claude": {"model": "sonnet"},
+                        "health": {"enabled": True, "interval": 60},
+                        "restart": {"policy": "on-failure", "max_retries": 3},
+                    }
+                ),
             }
         )
     )
@@ -239,15 +240,17 @@ def test_cli_no_bloat_emits_no_op_message(tmp_path: Path, env_save_restore):
             {
                 "apiVersion": "scitex-agent-container/v3",
                 "kind": "Agent",
-                "spec": explicit_spec({
-                    "runtime": "apptainer",
-                    "host": "${HOSTNAME}",
-                    "workdir": str(workdir),
-                    "apptainer": {"image": "/x.sif", "binds": []},
-                    "claude": {"model": "sonnet"},
-                    "health": {"enabled": True, "interval": 60},
-                    "restart": {"policy": "on-failure", "max_retries": 3},
-                }),
+                "spec": explicit_spec(
+                    {
+                        "runtime": "apptainer",
+                        "host": "${HOSTNAME}",
+                        "workdir": str(workdir),
+                        "apptainer": {"image": "/x.sif", "binds": []},
+                        "claude": {"model": "sonnet"},
+                        "health": {"enabled": True, "interval": 60},
+                        "restart": {"policy": "on-failure", "max_retries": 3},
+                    }
+                ),
             }
         )
     )

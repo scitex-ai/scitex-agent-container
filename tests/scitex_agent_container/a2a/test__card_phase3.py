@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from scitex_agent_container.a2a._card import project_card
 
-
 _BASE_URL = "http://127.0.0.1:7901"
 
 
@@ -34,21 +33,17 @@ def test_isolation_lineage_may_spawn_defaults_true_when_block_absent() -> None:
     # Act
     card = project_card("cap-a", v3, _BASE_URL)
     # Assert
-    assert (
-        card["x-scitex-agent-container"]["isolation"]["lineage"]["may_spawn"]
-        is True
-    )
+    assert card["x-scitex-agent-container"]["isolation"]["lineage"]["may_spawn"] is True
 
 
 def test_isolation_lineage_may_spawn_false_surfaces_in_card() -> None:
     """Gap-5: spec.lineage.may_spawn=false is visible to external
-    capsule attestation (Clew, orochi) without parsing the YAML."""
+    capsule attestation (Clew, fleet hubs) without parsing the YAML."""
     # Arrange
     v3 = _v3({"lineage": {"may_spawn": False}})
     # Act
     card = project_card("cap-a", v3, _BASE_URL)
     # Assert
     assert (
-        card["x-scitex-agent-container"]["isolation"]["lineage"]["may_spawn"]
-        is False
+        card["x-scitex-agent-container"]["isolation"]["lineage"]["may_spawn"] is False
     )
