@@ -33,23 +33,8 @@ name: auto-merge-to-develop
 # whole job on schedule, and do NOT make the job exit in a way that leaves no run
 # record. A boring green run every 15 minutes IS the product.
 #
-# *** A github.token MERGE FIRES NOTHING ON develop. *** GitHub suppresses
-# workflow triggers for pushes made with the default workflow token
-# (recursive-run protection), and `gh pr merge` below pushes the merge commit
-# with exactly that token — so every commit this sweep landed arrived on
-# develop with ZERO check runs. Measured, not inferred: bot-merged develop
-# head ae09a078 -> check-runs total_count 0, while its user-pushed neighbours
-# (33c61392 / 8c537754) carried 9 check runs each, with runners online and
-# idle. The develop-health gate below then reads "no checks" as "no red
-# signal to honour" and keeps merging — green-by-absence, the same
-# evidence-that-could-not-have-disagreed shape as the 8-day outage above.
-# workflow_dispatch IS exempt from the suppression (the identical escape
-# hatch autobump-release-sweep.yaml documents for tag pushes), so after a
-# successful merge this sweep explicitly DISPATCHES develop's post-merge
-# gates (POST_MERGE_GATES below) — ONCE per tick, not once per merged PR. A
-# failed dispatch turns this run red ON PURPOSE: an un-CI'd develop head is
-# exactly the silence this file exists to end. Deliberately NO PAT / bot
-# token: explicit dispatch is the sanctioned workaround.
+# A github.token merge push triggers NO workflows (recursive-run
+# suppression), so develop's gates are dispatched explicitly after a merge.
 #
 # GitHub reads schedule- AND check_suite-triggered workflows from the DEFAULT
 # branch (main), so this file lives on main but acts ONLY on PRs whose base is
@@ -166,12 +151,7 @@ jobs:
           # instead of by a human babysitting a loop. Raising this above 1 means
           # merging onto a base whose CI has not run yet. Don't.
           MAX_MERGES: "1"
-          # develop's post-merge gates, dispatched explicitly after a merge
-          # because a github.token merge push triggers NOTHING (see header).
-          # Every entry MUST accept a bare `workflow_dispatch` (all five do —
-          # pinned by tests/develop/test_auto_merge_dispatch.py). Space-
-          # separated (`>-` folds the newlines) so the shell can iterate
-          # without arrays.
+          # Space-separated; every entry must accept a bare workflow_dispatch.
           POST_MERGE_GATES: >-
             pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
             quality-audit-on-ubuntu-latest.yml
@@ -346,16 +326,7 @@ jobs:
 
           echo "sweep complete: $merges merge(s) this run"
 
-          # ---------------------------------------------------------------
-          # POST-MERGE CI DISPATCH — a github.token merge fires NOTHING.
-          # ---------------------------------------------------------------
-          # The merge commit we just pushed carries the default workflow
-          # token, so GitHub suppresses every push-triggered workflow on it
-          # (see header). Without this block develop's new head has ZERO
-          # check runs, and the next tick's develop-health gate reads that
-          # absence as "no red signal" — green-by-absence. workflow_dispatch
-          # is exempt from the suppression, so fire the gates explicitly.
-          # ONCE per tick (merges is the tick's total), never per PR.
+          # github.token pushes fire no workflows — dispatch the gates once per tick.
           if [ "$merges" -gt 0 ]; then
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN: would dispatch post-merge gates on develop: $POST_MERGE_GATES"
@@ -365,8 +336,6 @@ jobs:
                 if gh workflow run "$wf" --repo "$REPO" --ref develop; then
                   echo "dispatched $wf on develop"
                 else
-                  # LOUD, never silent: an undispatched gate leaves develop's
-                  # new head UN-CHECKED — the exact hole this block closes.
                   echo "::error::failed to dispatch $wf on develop — the merged head has NO CI of its own until something fires it"
                   dispatch_failures=$((dispatch_failures + 1))
                 fi

@@ -1,30 +1,8 @@
-"""The auto-merge sweep must DISPATCH develop's post-merge gates itself.
+"""auto-merge-to-develop.yaml must dispatch develop's post-merge gates.
 
-GitHub SUPPRESSES workflow triggers for pushes made with the default
-``github.token`` (recursive-run protection), and auto-merge-to-develop.yaml
-merges with exactly that token — so every commit the sweep lands arrives on
-develop with ZERO check runs. Measured on this repo: bot-merged develop head
-``ae09a078`` -> ``check-runs total_count: 0``, while its user-pushed
-neighbours carried 9 check runs each, with runners online and idle. The
-sweep's own develop-health gate then reads "no checks" as "no red signal to
-honour" and keeps merging — green-by-absence, the exact
-``reference-evidence-that-could-not-have-disagreed`` shape the file's header
-warns about.
-
-``workflow_dispatch`` IS exempt from that suppression (the escape hatch
-autobump-release-sweep.yaml already documents for tags), so the merge step
-must explicitly dispatch every develop gate after a successful merge. These
-tests pin that wiring AS TEXT — no network, no gh, cannot flake:
-
-* the merge step names every required gate (``POST_MERGE_GATES``);
-* it dispatches with ``gh workflow run ... --ref develop``;
-* the dispatch is reachable only AFTER a real merge (guarded on the merge
-  count, skipped on dry-run) — N merged PRs must produce ONE dispatch fan-out,
-  not N;
-* the workflow token is actually allowed to dispatch (``actions: write``);
-* every dispatched gate still accepts a bare ``workflow_dispatch`` — a gate
-  that drops the trigger would turn the dispatch into a silent 404, quietly
-  rebuilding the un-CI'd-develop hole this wiring exists to close.
+A github.token merge push triggers no workflows, so the merge step fires
+POST_MERGE_GATES explicitly (once per tick, --ref develop, loud on failure).
+File-only assertions on the workflow YAML — no network, cannot flake.
 """
 
 from __future__ import annotations

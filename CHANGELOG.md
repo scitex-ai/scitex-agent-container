@@ -33,6 +33,10 @@ versioning follows [SemVer](https://semver.org/).
   version or recreating the overlay. `status_cmds.health`'s inbox rendering
   moved to `_health_liveness.print_inbox` (512-line per-file cap).
 
+### Changed
+
+- auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.
+
 ## [0.24.11] - 2026-07-22
 
 ### Changed
