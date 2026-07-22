@@ -119,9 +119,9 @@ def handle_claude_session(
 
     MCP wiring: looks up the agent's workspace ``.mcp.json`` (written by
     sac at agent-start time from ``spec.mcp_servers``) and passes it
-    through to the SDK. So an agent whose YAML declares the
-    ``scitex-orochi`` MCP server can answer A2A requests AND speak
-    orochi from the same handler call. ``${VAR}`` references in the
+    through to the SDK. So an agent whose YAML declares an external
+    fleet MCP server can answer A2A requests AND speak that fleet's
+    protocol from the same handler call. ``${VAR}`` references in the
     on-disk JSON are resolved against this process's environment.
 
     Env knobs:

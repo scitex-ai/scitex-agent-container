@@ -15,7 +15,7 @@ Scope: this module is **pure state**. It walks the on-disk
 transcripts, stats them, tails the last few records, and returns one
 dict per matching subagent — no judgment about whether they're
 ``running`` / ``stale`` / ``dead`` / ``completed``. Classification is
-deliberately out of scope; the caller (orochi, or any orchestrator)
+deliberately out of scope; the caller (any orchestrator)
 owns the policy of mapping these facts to a status label.
 
 Hard constraint: ``subagent_get_state`` NEVER loads a transcript fully

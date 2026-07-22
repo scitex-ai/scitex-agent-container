@@ -132,7 +132,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         "required_skills": list(required_skills),
         # D3 — structured isolation block (see
         # docs/adr/0001-isolation-hardening.md). External verifiers (Clew,
-        # orochi attestation) read these booleans to attest specific
+        # external attestation) read these booleans to attest specific
         # properties; ``level`` is the human shorthand.
         "isolation": _isolation_block(spec),
     }
@@ -276,7 +276,7 @@ def _lineage_may_spawn(spec: dict[str, Any]) -> bool:
 
     Default ``True`` matches the dataclass default — absence of the
     block preserves pre-Phase-3 behaviour. Surfaced in the isolation
-    block so external verifiers (Clew, orochi attestation) can attest
+    block so external verifiers (Clew, external attestation) can attest
     whether the agent is allowed to spawn children at all without
     parsing the YAML themselves.
     """

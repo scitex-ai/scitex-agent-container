@@ -1,6 +1,6 @@
 """Outbound peer-to-peer client for the claude-session inbound endpoint.
 
-Layer 3 of the orochi-consumption rollout. Layer 2 made it possible to
+Layer 3 of the external-orchestrator rollout. Layer 2 made it possible to
 spawn + manage a remote agent that listens on ``POST /v1/turn``. This
 module is the *outbound* side: an ergonomic helper for one runner (or
 ops script) to drop a new turn onto another agent's persistent SDK

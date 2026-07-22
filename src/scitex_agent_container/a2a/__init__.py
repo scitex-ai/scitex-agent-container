@@ -3,7 +3,7 @@
 `A2A <https://a2a-protocol.org/>`_ is an open agent-to-agent protocol —
 treat it like HTTP: the *protocol* is open, the *implementation* is
 ours. sac knowing A2A does not couple it to any particular fleet
-runtime (orochi, etc.); a single agent can expose its own A2A
+runtime; a single agent can expose its own A2A
 endpoint with sac alone, no fleet dependency.
 
 This package provides:
