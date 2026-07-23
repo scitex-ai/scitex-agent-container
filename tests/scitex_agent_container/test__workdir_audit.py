@@ -49,7 +49,7 @@ def healthy_workdir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def bloated_workdir(tmp_path: Path) -> Path:
-    """`.claude/` tree mirroring the orochi failure mode:
+    """`.claude/` tree mirroring the observed failure mode:
     big `worktrees` AND big `hooks/pre-tool-use/.pending`.
     """
     claude = tmp_path / ".claude"

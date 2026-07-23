@@ -5,11 +5,11 @@ start (hooks, skills, settings.local.json, agents). When that tree is
 heavy — large bytes, but more importantly **many files** — the SDK either
 times out spawning MCP servers or swallows discovery errors and returns
 0 tokens per turn with no log line. The breakage observed in the field
-(orochi) was at ~42 k files where the bun MCP server silently never
+was at ~42 k files where the bun MCP server silently never
 spawned despite the `--mcp-config` listing it correctly. Smaller-fleet
 peers at ~13 k files were skating on thin ice.
 
-Two distinct leaks drove the orochi failure, observed in the fleet sweep
+Two distinct leaks drove that failure, observed in the fleet sweep
 2026-06-03:
 
 1. ``.claude/worktrees/agent-*`` — subagent worktrees accumulate; the
@@ -23,8 +23,8 @@ Two distinct leaks drove the orochi failure, observed in the fleet sweep
    5 k records each, single-directory.
 
 Pure file-count is the dominant signal: ``proj-grant`` runs healthy
-with 1.1 GB / 2.7 k files (a single large-blob worktree), while
-``proj-scitex-orochi`` failed at 884 MB / 41.8 k files. The walk cost
+with 1.1 GB / 2.7 k files (a single large-blob worktree), while the
+failing agent's workdir was 884 MB / 41.8 k files. The walk cost
 scales with file count, not bytes.
 
 This module exposes a pure-function audit + structured result so:
@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # The byte threshold is the historical F-CS8 trip (10 MiB). The file-count
 # threshold (5 000) is the lead-confirmed level from the 2026-06-03 fleet
 # sweep — below this every observed fleet member has live MCP tools; above
-# it we have two confirmed silent failures (orochi at 41.8 k pre-clean,
+# it we have two confirmed silent failures (one agent at 41.8 k pre-clean,
 # my own agent at 13.4 k post-bloat-discovery). 5 k is conservative.
 #
 # The per-subdir threshold (1 000) catches the specific bloat-source
@@ -329,7 +329,7 @@ def _walk_gdu_node_for_asize(node: Any) -> int:
 # Rich gdu-JSON extractor: bytes + files + per-subdir in ONE subprocess.
 # This is what eliminates the trailing os.walk on hot paths — gdu has
 # already walked every inode to compute its asize sum, so re-walking in
-# Python just to count files is pure overhead. The orochi 42 k-file
+# Python just to count files is pure overhead. The 42 k-file
 # pathology is the exact case this helps most.
 # ---------------------------------------------------------------------------
 

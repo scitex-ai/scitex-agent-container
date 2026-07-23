@@ -1,6 +1,6 @@
 """Tests for ``sac agent send``.
 
-Covers the resume-path wrapper from SAC_OROCHI_SCOPES.md §6 step 1:
+Covers the resume-path wrapper:
 read session_id → cd workdir → exec claude --resume <sid> -p.
 
 PA-306: no ``unittest.mock``. Production collaborators are swapped at
@@ -15,8 +15,6 @@ into ``pytest.parametrize`` so the matrix stays declarative.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,6 +25,7 @@ from click.testing import CliRunner
 
 import scitex_agent_container.cli_pkg.send_cmds as send_mod
 from scitex_agent_container.cli_pkg.send_cmds import send
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @contextmanager

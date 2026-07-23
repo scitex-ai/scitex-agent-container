@@ -399,7 +399,7 @@ class TestRotation:
 
 @pytest.fixture
 def last_tool_summary(tmp_root: Path):
-    """Three pretools: Read, mcp__orochi__send_message, Edit."""
+    """Three pretools: Read, mcp__fleet__send_message, Edit."""
     append_event(
         "agent-lt",
         "pretool",
@@ -409,7 +409,7 @@ def last_tool_summary(tmp_root: Path):
     append_event(
         "agent-lt",
         "pretool",
-        {"tool_name": "mcp__orochi__send_message", "tool_input": {"text": "hi"}},
+        {"tool_name": "mcp__fleet__send_message", "tool_input": {"text": "hi"}},
         root=tmp_root,
     )
     append_event(
@@ -506,7 +506,7 @@ class TestSummarize:
         # Act
         last_mcp = out["last_mcp_tool_name"]
         # Assert
-        assert last_mcp == "mcp__orochi__send_message"
+        assert last_mcp == "mcp__fleet__send_message"
 
     def test_last_mcp_tool_at_set_when_mcp_pretool_seen(self, last_tool_summary):
         # Arrange

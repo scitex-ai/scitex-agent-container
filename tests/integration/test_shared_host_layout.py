@@ -1,7 +1,7 @@
 """Tests for sac's agent discovery, hostname substitution, and scheduling.
 
 sac-only concerns: discovery searches ``~/.scitex/agent-container/agents/``
-plus ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin port). Any orochi- or
+plus ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (plugin port). Any
 fleet-specific layering is the consumer's responsibility.
 
 No-mocks: tests use the real ``env_save_restore`` fixture to redirect env
