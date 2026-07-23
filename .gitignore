@@ -63,18 +63,20 @@ logs/
 # no future broad `git add` can re-commit them.
 .tmp-audit/
 
-# Sphinx-generated AST cache — not part of the published HTML
-# (CI in docs.yml strips this before committing _sphinx_html/)
-_sphinx_html/.doctrees/
 .worktrees/
 
-# Sphinx build directory. Ephemeral output target of `sphinx-build`; the
-# docs workflow builds INTO it then copies to the canonical committed
-# mirror src/scitex_agent_container/_sphinx_html/ (which IS tracked and
-# CI-refreshed). This tree was tracked by accident and never refreshed by
-# CI, so it went stale. Untracked + ignored so it stops carrying stale
-# generated content.
+# Generated Sphinx output — commit only SOURCE (docs/sphinx/*.rst, conf.py),
+# never generated HTML. Fleet convention (scitex-dev ruling 2026-07-23):
+# consumers build fresh — ReadTheDocs via its own webhook, scitex-hub's doc
+# aggregator from each leaf's docs/sphinx SOURCE. Nothing reads a committed
+# mirror (RTD builds from source; no Pages deploy; sac's rsync excludes it;
+# the aggregator omits sac). sac previously committed src/.../_sphinx_html —
+# the fleet-divergent shape — so this converges by ignoring BOTH the build
+# dir and the mirror. The mirror's refresh-and-commit workflow step (whose
+# push to protected develop was rejected and masked green by
+# continue-on-error) is removed in the same change.
 docs/sphinx/_build/
+src/scitex_agent_container/_sphinx_html/
 
 # Build stamp written by src/hatch_build.py at build time (commit + code
 # hash of the artifact). Generated, never committed — a checked-in copy

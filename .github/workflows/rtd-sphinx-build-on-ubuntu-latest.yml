@@ -66,33 +66,10 @@ jobs:
             .venv/bin/sphinx-build -b html docs/sphinx docs/sphinx/_build/html
           fi
 
-      - name: Refresh src/scitex_agent_container/_sphinx_html/ (push to default branch only)
-        if: github.event_name == 'push'
-        run: |
-          rm -rf src/scitex_agent_container/_sphinx_html
-          cp -rf docs/sphinx/_build/html src/scitex_agent_container/_sphinx_html
-          # ``.doctrees/`` is Sphinx's internal pickled-AST cache —
-          # not part of the published HTML. The binary
-          # ``environment.pickle`` is what made every release's
-          # sync-main fast-forward fail with merge conflicts on
-          # develop ↔ main. Strip it before committing so the two
-          # branches never carry divergent binaries.
-          rm -rf src/scitex_agent_container/_sphinx_html/.doctrees
-          touch src/scitex_agent_container/_sphinx_html/.nojekyll
-
-      - name: Commit refreshed HTML if it changed
-        continue-on-error: true
-        if: github.event_name == 'push'
-        run: |
-          if [ -n "$(git status --porcelain src/scitex_agent_container/_sphinx_html)" ]; then
-            # `git config` WITHOUT --global, deliberately. On a PERSISTENT
-            # self-hosted runner $HOME is the OPERATOR'S REAL HOME — a
-            # `--global` write here would edit the operator's live ~/.gitconfig
-            # on every single docs build. Repo-local config stays inside the
-            # workspace and is discarded with it.
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/scitex_agent_container/_sphinx_html
-            git commit -m "docs: refresh _sphinx_html/ from CI build [skip ci]"
-            git push
-          fi
+      # The committed _sphinx_html mirror and its refresh-and-commit step were
+      # REMOVED (scitex-dev fleet ruling 2026-07-23): generated Sphinx HTML is
+      # gitignored, not committed — consumers build fresh (RTD webhook; the
+      # scitex-hub aggregator from docs/sphinx SOURCE). The old step's `git
+      # push` to protected develop was rejected (GH006) and hidden green by
+      # `continue-on-error`, so the mirror never updated anyway. This job now
+      # only BUILDS (the smoke check above), matching the org reusable.
