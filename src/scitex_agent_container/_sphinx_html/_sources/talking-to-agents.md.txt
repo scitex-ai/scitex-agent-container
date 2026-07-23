@@ -14,7 +14,7 @@ ordered from external-friendliest to most internal:
 |------------------------------------------------------------------------------|---------------------------------------------------------------------------|-----------------|
 | **A2A sidecar** — `POST /agents/<name>/turn` on the agent's own port  | External tools, browsers, curl, peer agents, A2A-spec consumers           | none (loopback) |
 | **CLI** — `sac agents send` / `tail`                                         | Scripted flows on the same host (the one running the agent)               | none            |
-| **`sac listen`** — `POST /agents/<name>/send` on the host port (7878) | Trusted orchestrators (e.g. orochi), cross-host via the existing SSH mesh | bearer token    |
+| **`sac listen`** — `POST /agents/<name>/send` on the host port (7878) | Trusted orchestrators, cross-host via the existing SSH mesh | bearer token    |
 
 All three end up dropping a `TurnEnvelope` on the runner's shared
 inbox, so the SDK conversation is identical regardless of which door
@@ -47,7 +47,7 @@ per-agent port churns.
 The per-agent sidecar then exposes the **same URL shape** as the
 host-level `sac listen`, so the same client URL works whether it
 routes through the host control plane or POSTs directly to the
-agent's port. Per the sac/orochi contract, two symmetric namespaces
+agent's port. Per the sac/hub contract, two symmetric namespaces
 serve identical handlers:
 
 | Method | Path                                          | Purpose                                              |
@@ -236,7 +236,7 @@ for the full reference.
 - **A2A-spec client / browser / curl** → POST to the URL the AgentCard advertises (`<base>/agents/<name>/turn`). Loopback only; no auth.
 - **Shell script on the same host** → `sac agents send` + `tail`. No port, no JSON, no token.
 - **Another agent, on the same host** → A2A sidecar; agents have `httpx` in the SIF. Use the canonical URL or the `/v1/turn` shortcut — both work.
-- **Orchestrator (orochi, custom)** → `sac listen` (port 7878) with the bearer token; same `/agents/<name>/...` path shape, cross-host via the existing SSH mesh.
+- **Orchestrator (fleet hub, custom)** → `sac listen` (port 7878) with the bearer token; same `/agents/<name>/...` path shape, cross-host via the existing SSH mesh.
 - **External A2A peer (hosted service, vendor)** → wrap as a [`kind: AgentProxy`](spec-reference.md#kind-agentproxy--http-forwarder-agents) agent so the rest of sac treats it the same.
 
 Pick the most external transport that meets your needs — every layer
@@ -248,6 +248,6 @@ sidecar and `sac listen`, so the same client code works against either.
 
 - [`spec-reference.md`](spec-reference.md) — the YAML knobs (`spec.a2a.port`, `spec.listen.port`)
 - [`how-sac-works.md`](how-sac-works.md) — the architecture diagram showing where each transport hooks in
-- [`sac-and-orochi.md`](sac-and-orochi.md) — how orochi consumes `sac listen` across hosts
+- [`adr/0008-sac-node-transport-boundary.md`](adr/0008-sac-node-transport-boundary.md) — how an external hub consumes `sac listen` across hosts
 
 <!-- EOF -->

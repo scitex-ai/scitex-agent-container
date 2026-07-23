@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.runtimes.prompts &mdash; scitex-agent-container v0.21.11</title>
+  <title>scitex_agent_container.runtimes.prompts &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -151,8 +151,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -171,30 +175,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -202,6 +182,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -223,8 +204,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -239,6 +221,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -252,6 +235,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -331,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -384,6 +369,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -394,9 +380,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -496,6 +487,38 @@
         <span class="s2">&quot;1. I am using this for local development&quot;</span> <span class="ow">in</span> <span class="n">content</span>
         <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
     <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="has_esc_cancel_modal">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">has_esc_cancel_modal</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;True iff an on-screen modal treats **Esc as CANCEL / EXIT**.</span>
+
+<span class="sd">    The fatal boot bug (card</span>
+<span class="sd">    ``sac-boot-automation-devchannels-modal-continue-compose-buffer``): the</span>
+<span class="sd">    stale-compose clear sends ``Escape``, but while the ``--dangerously-load-</span>
+<span class="sd">    development-channels`` confirmation is up (&quot;❯ 1. I am using this for local</span>
+<span class="sd">    development … Enter to confirm · **Esc to cancel**&quot;) an ``Escape`` CANCELS</span>
+<span class="sd">    the launch → claude exits → the tmux session DIES mid-boot. Any drain step</span>
+<span class="sd">    that would send ``Escape`` (the compose-buffer clear) MUST first verify no</span>
+<span class="sd">    such cancelable modal is on screen.</span>
+
+<span class="sd">    Detection is deliberately BROAD — a keystroke that kills the session is far</span>
+<span class="sd">    costlier than a spurious &quot;don&#39;t-Esc&quot; skip:</span>
+
+<span class="sd">      * the explicit ``Esc to cancel`` footer any confirm-modal renders, OR</span>
+<span class="sd">      * the dev-channels modal specifically (its footer wording has varied</span>
+<span class="sd">        across Claude Code builds; match the option text too so a reworded</span>
+<span class="sd">        footer still guards).</span>
+
+<span class="sd">    Pure + string-only so the drain-ordering guard is unit-testable without a</span>
+<span class="sd">    live TUI.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">lowered</span> <span class="o">=</span> <span class="n">content</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">if</span> <span class="s2">&quot;esc to cancel&quot;</span> <span class="ow">in</span> <span class="n">lowered</span> <span class="ow">or</span> <span class="s2">&quot;escape to cancel&quot;</span> <span class="ow">in</span> <span class="n">lowered</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">_detect_dev_channels</span><span class="p">(</span><span class="n">content</span><span class="p">)</span></div>
 
 
 
@@ -676,17 +699,53 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect unsent text sitting in the Claude Code compose buffer.</span>
 
 <span class="sd">    The classifier in ``agent_meta._classify_pane_state`` matches</span>
-<span class="sd">    ``❯[ \\t]+\\S`` (non-whitespace after the prompt marker on the same</span>
+<span class="sd">    ``❯[ \\t\\xa0]+\\S`` (non-whitespace after the prompt marker on the same</span>
 <span class="sd">    line), meaning the user has typed something but not yet pressed Enter.</span>
 <span class="sd">    We mirror that pattern here so the prompts system can submit it via</span>
 <span class="sd">    a plain Enter keystroke.</span>
+
+<span class="sd">    The gap MUST include U+00A0 NO-BREAK SPACE: Claude Code&#39;s Ink TUI renders</span>
+<span class="sd">    the prompt as ``❯\\xa0[Pasted text …]`` (an NBSP, not an ASCII space). The</span>
+<span class="sd">    earlier ``❯[ \\t]+`` pattern silently missed it, so a multi-line</span>
+<span class="sd">    startup_prompt paste was never detected as pending and the boot-drain /</span>
+<span class="sd">    ``_verify_submitted`` resend never fired — the agent sat idle with its</span>
+<span class="sd">    instructions pasted-but-unsent (proj-scitex-dev 2026-06-23).</span>
 
 <span class="sd">    Excluded: lines that are just the decorative separator below an empty</span>
 <span class="sd">    prompt — those contain only whitespace after ``❯``.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 
-    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;❯[ \t]+\S&quot;</span><span class="p">,</span> <span class="n">content</span><span class="p">))</span></div>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;❯[ \t\xa0]+\S&quot;</span><span class="p">,</span> <span class="n">content</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="_detect_resume_session">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_resume_session</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Long-session resume picker shown by ``claude --continue`` / ``--resume``.</span>
+
+<span class="sd">    When the session being resumed is large, Claude Code interposes a</span>
+<span class="sd">    three-way picker before the REPL opens::</span>
+
+<span class="sd">        This session is &lt;N&gt;h &lt;M&gt;m old and &lt;K&gt;k tokens.</span>
+<span class="sd">        Resuming the full session will consume a substantial portion ...</span>
+<span class="sd">        ❯ 1. Resume from summary (recommended)</span>
+<span class="sd">          2. Resume full session as-is</span>
+<span class="sd">          3. Don&#39;t ask me again</span>
+
+<span class="sd">    The sac TUI boot uses ``--continue`` precisely to resume the FULL prior</span>
+<span class="sd">    context, so we always pick option 2 (&quot;Resume full session as-is&quot;). Left</span>
+<span class="sd">    unhandled this modal BLOCKS boot: the startup_prompt paste lands inside</span>
+<span class="sd">    the picker and the boot-drain hangs (lead-retirement, 2026-06-25). Must</span>
+<span class="sd">    out-rank ``compose-pending-unsent`` — the modal&#39;s ``❯ 1.`` line also</span>
+<span class="sd">    matches that detector — hence priority 1.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="s2">&quot;Resume full session as-is&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">&quot;Resume from summary&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+        <span class="ow">and</span> <span class="s2">&quot;Enter to confirm&quot;</span> <span class="ow">in</span> <span class="n">content</span>
+    <span class="p">)</span></div>
 
 
 
@@ -710,6 +769,15 @@
         <span class="n">detect</span><span class="o">=</span><span class="n">_detect_bypass_permissions</span><span class="p">,</span>
         <span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;2&quot;</span><span class="p">,</span> <span class="s2">&quot;Enter&quot;</span><span class="p">],</span>  <span class="c1"># &quot;2. Yes, I accept&quot;</span>
         <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">PromptHandler</span><span class="p">(</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;resume-session&quot;</span><span class="p">,</span>
+        <span class="n">detect</span><span class="o">=</span><span class="n">_detect_resume_session</span><span class="p">,</span>
+        <span class="n">keys</span><span class="o">=</span><span class="p">[</span>
+            <span class="s2">&quot;2&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Enter&quot;</span><span class="p">,</span>
+        <span class="p">],</span>  <span class="c1"># &quot;2. Resume full session as-is&quot; (--continue wants full context)</span>
+        <span class="n">priority</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># before compose-pending-unsent: the modal&#39;s &quot;❯ 1.&quot; matches that too</span>
     <span class="p">),</span>
     <span class="n">PromptHandler</span><span class="p">(</span>
         <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dev-channels&quot;</span><span class="p">,</span>
@@ -789,6 +857,45 @@
 
 
 
+<span class="c1">#: How many non-empty rows of a captured pane count as the LIVE region for</span>
+<span class="c1">#: modal detection. See :func:`_recent_tail` for the false-positive this</span>
+<span class="c1">#: guards against; sized with headroom over the tallest verified real modal</span>
+<span class="c1">#: capture (``_LIVE_BYPASS_PANE`` in ``test_prompts.py``, 9 non-empty rows).</span>
+<span class="n">_LIVE_WINDOW_LINES</span> <span class="o">=</span> <span class="mi">15</span>
+
+
+<div class="viewcode-block" id="_recent_tail">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">lines</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">_LIVE_WINDOW_LINES</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the last ``lines`` non-empty rows of ``content``.</span>
+
+<span class="sd">    Scopes modal detection to the LIVE region of a captured pane instead of</span>
+<span class="sd">    the entire accumulated snapshot ``tmux capture-pane -p`` (no ``-S``)</span>
+<span class="sd">    returns the whole VISIBLE viewport, not just the freshest output. Once</span>
+<span class="sd">    Claude Code&#39;s Ink TUI has moved a first-run modal&#39;s rendered text</span>
+<span class="sd">    further up the screen — dismissed, but not yet scrolled past the</span>
+<span class="sd">    viewport — an unscoped substring match can still fire on it long after</span>
+<span class="sd">    the modal is gone, sending its registered digit+``Enter`` into what is</span>
+<span class="sd">    now the plain, empty compose box: card</span>
+<span class="sd">    ``sac-tui-stray-1-submitted-on-boot`` — a spurious ``&quot;1&quot;`` gets typed</span>
+<span class="sd">    and submitted as a user message during boot (observed with the</span>
+<span class="sd">    ``thinking-effort`` / ``file-trust-radio`` / ``theme-selection``</span>
+<span class="sd">    handlers, none of which scoped their match to the live screen).</span>
+
+<span class="sd">    ``_LIVE_WINDOW_LINES`` comfortably covers the tallest verified real</span>
+<span class="sd">    modal capture with headroom, while still excluding an EARLIER,</span>
+<span class="sd">    already-dismissed modal&#39;s text once enough new output has rendered</span>
+<span class="sd">    below it. Mirrors :func:`_detect_press_enter_continue`&#39;s existing</span>
+<span class="sd">    last-N-lines window (same fix shape, wider here because these handlers</span>
+<span class="sd">    need a whole title+options+footer block, not one banner line) and</span>
+<span class="sd">    :func:`_tui_compose._compose_pending_live`&#39;s bottom-anchored scoping for</span>
+<span class="sd">    the analogous Enter-drop bug (``sac-tui-enter-drop-on-boot``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">row</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rows</span><span class="p">[</span><span class="o">-</span><span class="n">lines</span><span class="p">:])</span></div>
+
+
+
 <div class="viewcode-block" id="detect_and_respond">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">detect_and_respond</span><span class="p">(</span>
@@ -806,15 +913,60 @@
 <span class="sd">    Returns:</span>
 <span class="sd">        Name of the matched prompt, or None if no match.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tail</span> <span class="o">=</span> <span class="n">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">PROMPT_HANDLERS</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">h</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">priority</span><span class="p">):</span>
         <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">accepted</span><span class="p">:</span>
             <span class="k">continue</span>
-        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">detect</span><span class="p">(</span><span class="n">content</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">detect</span><span class="p">(</span><span class="n">tail</span><span class="p">):</span>
             <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">:</span>
                 <span class="n">send_keys_fn</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Auto-accepted prompt: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span>
     <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="detect">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">detect</span><span class="p">(</span><span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the NAME of the first matching prompt handler (by priority), or</span>
+<span class="sd">    None when no known modal is on screen. Detect-only — sends nothing.</span>
+
+<span class="sd">    Pairs with :func:`respond_modal` so a drain loop can RESPOND, settle, then</span>
+<span class="sd">    re-detect to VERIFY the modal actually cleared — instead of firing</span>
+<span class="sd">    keystrokes once and assuming success. Claude&#39;s Ink TUI drops keys sent</span>
+<span class="sd">    mid-render, so a fire-and-forget send silently leaves the modal up; the</span>
+<span class="sd">    detect/respond/verify cycle is the no-silent-fallback fix.</span>
+
+<span class="sd">    Matches against :func:`_recent_tail` (the LIVE region), not the raw</span>
+<span class="sd">    ``content`` — see its docstring for the stray-boot-submit false</span>
+<span class="sd">    positive this prevents.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tail</span> <span class="o">=</span> <span class="n">_recent_tail</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">PROMPT_HANDLERS</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">h</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">priority</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">detect</span><span class="p">(</span><span class="n">tail</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="respond_modal">
+<a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">respond_modal</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">send_keys_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Send the registered keystrokes for the handler named ``name``.</span>
+
+<span class="sd">    Returns True iff a handler with that name exists (its keys were sent),</span>
+<span class="sd">    False otherwise. The caller MUST verify the modal cleared (re-capture +</span>
+<span class="sd">    :func:`detect`) and resend on the render race — a single send is not</span>
+<span class="sd">    guaranteed to land.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">PROMPT_HANDLERS</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">:</span>
+                <span class="n">send_keys_fn</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Responded to prompt </span><span class="si">%s</span><span class="s2"> (keys=</span><span class="si">%s</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="kc">False</span></div>
 
 
 

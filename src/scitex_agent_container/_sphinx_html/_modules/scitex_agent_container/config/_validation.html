@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._validation &mdash; scitex-agent-container v0.21.11</title>
+  <title>scitex_agent_container.config._validation &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -151,8 +151,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -171,30 +175,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -202,6 +182,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -223,8 +204,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -239,6 +221,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -252,6 +235,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -331,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -384,6 +369,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -394,9 +380,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -440,54 +431,32 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._acl_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_phase3_acl</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">provider_is_active</span><span class="p">,</span> <span class="n">validate_provider</span>
 
-<span class="c1"># Accepted shapes for ``spec.model`` (F-CS7).</span>
-<span class="c1">#</span>
-<span class="c1"># claude-agent-sdk silently rejects unknown aliases — the runner stays</span>
-<span class="c1"># alive, the heartbeat is fresh, but every turn returns 0 input tokens</span>
-<span class="c1"># and 0 output tokens because the SDK never makes the API call. Pin</span>
-<span class="c1"># the validation here so the failure surfaces at yaml-validate time</span>
-<span class="c1"># instead of as a hung-looking agent.</span>
-<span class="c1">#</span>
-<span class="c1"># Two acceptable shapes:</span>
-<span class="c1">#   1. Bare alias: ``opus`` / ``sonnet`` / ``haiku`` / ``inherit`` /</span>
-<span class="c1">#      ``default``, optionally with a context-suffix (``[1m]``).</span>
-<span class="c1">#   2. Full versioned form: ``claude-&lt;family&gt;-N-M`` with optional date</span>
-<span class="c1">#      tail (``-20251001``) and optional context-suffix.</span>
-<span class="c1">#</span>
-<span class="c1"># Reproduction (2026-05-05): ``claude-opus[1m]`` (abbreviated, missing</span>
-<span class="c1"># the version digits) was accepted by the YAML loader but silently</span>
-<span class="c1"># rejected by the SDK — every turn returned ``input_tokens=0``,</span>
-<span class="c1"># ``output_tokens=0``, ``iterations=[]``. Other peers using</span>
-<span class="c1"># ``claude-opus-4-7[1m]`` worked fine.</span>
-<span class="n">_VALID_MODEL_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
-<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    ^(?:</span>
-<span class="sd">        (?:opus|sonnet|haiku|fable|inherit|default)</span>
-<span class="sd">        |</span>
-<span class="sd">        # opus/sonnet/haiku ship as ``family-N-M`` (e.g. ``claude-opus-4-7``).</span>
-<span class="sd">        # Fable is published as a single-digit family version</span>
-<span class="sd">        # (``claude-fable-5``); see lead-confirmed 2026-06-12 (msg</span>
-<span class="sd">        # 6172e53d ruling 1). The ``[1m]`` context-suffix is CLI-native</span>
-<span class="sd">        # (proven empirically — msg 6f7e2f56) and bolted on below.</span>
-<span class="sd">        claude-(?:</span>
-<span class="sd">            (?:opus|sonnet|haiku)-\d+-\d+</span>
-<span class="sd">            |</span>
-<span class="sd">            fable-\d+</span>
-<span class="sd">        )(?:-[a-z0-9]+)*</span>
-<span class="sd">    )</span>
-<span class="sd">    (?:\[[a-zA-Z0-9_]+\])?</span>
-<span class="sd">    $</span>
-<span class="sd">    &quot;&quot;&quot;</span><span class="p">,</span>
-    <span class="n">re</span><span class="o">.</span><span class="n">VERBOSE</span><span class="p">,</span>
-<span class="p">)</span>
+<span class="c1"># Cohesive validation blocks extracted into sibling modules to keep this</span>
+<span class="c1"># orchestrator under the 512-line cap (same pattern as _acl_validation /</span>
+<span class="c1"># _provider_validation). ``_VALID_MODEL_RE`` is re-exported here for</span>
+<span class="c1"># back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._claude_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">_VALID_MODEL_RE</span> <span class="k">as</span> <span class="n">_VALID_MODEL_RE</span>  <span class="c1"># noqa: F401</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._claude_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_claude</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._labels_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_labels</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._placement_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_placement</span>
+
+<span class="c1"># spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1</span>
+<span class="c1"># foundation) — distinct from spec.claude.provider (validated inside</span>
+<span class="c1"># validate_claude via _provider_validation). See the naming-collision</span>
+<span class="c1"># note in config._provider_types.AgentProvider.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">is_known_agent_provider</span><span class="p">,</span> <span class="n">list_agent_providers</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._shape_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_autonomous</span><span class="p">,</span> <span class="n">validate_proxy_coupling</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._startup_command_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_startup_commands</span>
+
+<span class="c1"># ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to</span>
+<span class="c1"># ``_claude_validation`` alongside the rest of the claude-block checks;</span>
+<span class="c1"># re-exported at the top of this module for back-compat.</span>
 
 <span class="n">_VALID_API_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;scitex-agent-container/v3&quot;</span><span class="p">,)</span>
 
@@ -505,6 +474,10 @@
 <span class="c1"># ``&quot;claude-agent-sdk&quot;`` at dispatch — see ``_lifecycle/_runtime_select``.</span>
 <span class="n">_VALID_RUNTIMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;claude-agent-sdk&quot;</span><span class="p">,</span> <span class="s2">&quot;tui&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">})</span>
 
+<span class="c1"># spec.container.runtime — every value here must have a working engine</span>
+<span class="c1"># behind it. docker/podman were ripped out 2026-05-13.</span>
+<span class="n">VALID_CONTAINER_RUNTIMES</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">})</span>
+
 
 <span class="n">_SDK_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:scitex&quot;</span>
 
@@ -515,6 +488,10 @@
 <span class="n">_KNOWN_SPEC_KEYS</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(</span>
     <span class="p">{</span>
         <span class="s2">&quot;runtime&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;provider&quot;</span><span class="p">,</span>  <span class="c1"># agent SDK family: anthropic (default) | openai — see</span>
+        <span class="c1"># config._provider_types.AgentProvider for the naming-collision</span>
+        <span class="c1"># note against the unrelated, nested spec.claude.provider.</span>
+        <span class="s2">&quot;access&quot;</span><span class="p">,</span>  <span class="c1"># host-access posture: full (default) | capsule</span>
         <span class="s2">&quot;workdir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;python-venv&quot;</span><span class="p">,</span>
         <span class="s2">&quot;container&quot;</span><span class="p">,</span>
@@ -581,6 +558,18 @@
 <span class="p">}</span>
 
 
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Required author-facing fields. The 2026-06-23 &quot;no hidden defaults&quot; subset</span>
+<span class="c1"># (runtime/workdir/apptainer.{image,binds}/health/restart/claude.model) was</span>
+<span class="c1"># SUPERSEDED by the 2026-07-21 red-start ruling: EVERY spec field must be</span>
+<span class="c1"># written explicitly, an omitted field is a load error, and the hint lists</span>
+<span class="c1"># every missing field at once with a paste-ready block. The required-key map</span>
+<span class="c1"># and the consolidated message live in the sibling ``_explicit_fields`` /</span>
+<span class="c1"># ``_explicit_validation`` modules (single source of truth — ``load_v3``</span>
+<span class="c1"># raises through the same map for direct callers); ``validate_raw`` delegates</span>
+<span class="c1"># below so ``sac agents check`` reports identically to ``load_config``.</span>
+
+
 <span class="c1"># ``_validate_provider`` moved to ``_provider_validation.validate_provider``</span>
 <span class="c1"># (ADR-0011 extension — provider as registered string identifier; see</span>
 <span class="c1"># the sibling module for the dict + string forms).</span>
@@ -625,6 +614,10 @@
             <span class="s2">&quot;the metadata.name field and ensure the YAML lives at &quot;</span>
             <span class="s2">&quot;&lt;name&gt;/&lt;name&gt;.yaml.&quot;</span>
         <span class="p">)</span>
+
+    <span class="c1"># metadata.labels — abolished classification fields (``tags``, removed</span>
+    <span class="c1"># 2026-07-19 in favour of the ``groups`` SSoT). See _labels_validation.</span>
+    <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_labels</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">path</span><span class="p">))</span>
 
     <span class="c1"># spec</span>
     <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">)</span>
@@ -676,6 +669,55 @@
                 <span class="s2">&quot;&#39;claude-agent-sdk&#39; at dispatch.&quot;</span>
             <span class="p">)</span>
 
+        <span class="c1"># spec.provider — AGENT SDK FAMILY selector (openai-compat-1</span>
+        <span class="c1"># foundation). Distinct from spec.claude.provider (ProviderSpec,</span>
+        <span class="c1"># validated inside validate_claude) — see the naming-collision</span>
+        <span class="c1"># note in config._provider_types.AgentProvider. Presence is</span>
+        <span class="c1"># enforced by the explicit-fields map (red-start ruling</span>
+        <span class="c1"># 2026-07-21); this check only owns the VALUE diagnostic.</span>
+        <span class="n">provider</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;provider&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">provider</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">is_known_agent_provider</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">provider</span><span class="p">)):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;spec.provider must be one of </span><span class="si">{</span><span class="n">list_agent_providers</span><span class="p">()</span><span class="si">}</span><span class="s2"> &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;(got &#39;</span><span class="si">{</span><span class="n">provider</span><span class="si">}</span><span class="s2">&#39;). &#39;anthropic&#39; (default) = &quot;</span>
+                <span class="s2">&quot;claude-agent-sdk, the only implemented family today; &quot;</span>
+                <span class="s2">&quot;&#39;openai&#39; is accepted by the schema but has no runner yet &quot;</span>
+                <span class="s2">&quot;(openai-compat-2).&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).</span>
+        <span class="c1"># The knob silently injected a whole-home bind, a ``/work`` alias and</span>
+        <span class="c1"># a ``--pwd`` rewrite, so a reader of the spec could not tell what</span>
+        <span class="c1"># actually mounted. Fail LOUD with the exact replacement rather than</span>
+        <span class="c1"># silently honour or ignore it.</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;access&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">workdir</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;workdir&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&lt;your workdir&gt;&quot;</span>
+            <span class="n">home</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">())</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="s2">&quot;spec.access has been REMOVED — host access + cwd are now &quot;</span>
+                <span class="s2">&quot;declared explicitly (single source of truth). Delete the &quot;</span>
+                <span class="s2">&quot;`access:` line and instead:</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  * FULL host reach → add to apptainer.binds:  - </span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">home</span><span class="si">}</span><span class="s2">:rw</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;    and set `workdir: </span><span class="si">{</span><span class="n">workdir</span><span class="si">}</span><span class="s2">` (a path under it; it is the --pwd).</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;  * CAPSULE (restricted) → add ONLY the binds you want &quot;</span>
+                <span class="s2">&quot;(e.g. `- &lt;writable&gt;:/work:rw` plus data mounts) and set &quot;</span>
+                <span class="s2">&quot;`workdir: /work`.</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;Whatever apptainer.binds lists is exactly what mounts; &quot;</span>
+                <span class="s2">&quot;workdir is only the --pwd.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># apptainer.container_workdir — REMOVED with `access`. The workdir is</span>
+        <span class="c1"># now mounted by an EXPLICIT bind and `spec.workdir` is the --pwd, so</span>
+        <span class="c1"># an in-container alias field no longer does anything. Loud, not inert.</span>
+        <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apptainer&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ap_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="n">ap_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container_workdir&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="s2">&quot;apptainer.container_workdir has been REMOVED — declare the &quot;</span>
+                <span class="s2">&quot;mount explicitly in apptainer.binds (e.g. &quot;</span>
+                <span class="s2">&quot;`- &lt;host-src&gt;:/work:rw`) and set `workdir: /work` as the &quot;</span>
+                <span class="s2">&quot;--pwd. The spec&#39;s binds are the single source of truth.&quot;</span>
+            <span class="p">)</span>
+
         <span class="c1"># spec.image — moved to spec.apptainer.image in v3 (handled by the</span>
         <span class="c1"># relocation rejection above). Type-check the new home instead.</span>
         <span class="n">ap_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;apptainer&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
@@ -694,60 +736,19 @@
                 <span class="sa">f</span><span class="s2">&quot;spec.dockerfile must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">dockerfile</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
             <span class="p">)</span>
 
-        <span class="c1"># spec.claude.model — F-CS7 (v3: moved from top-level spec.model).</span>
-        <span class="c1"># Validate against accepted SDK aliases / versioned forms. The</span>
-        <span class="c1"># SDK silently rejects unknown values (heartbeat fresh, every</span>
-        <span class="c1"># turn returns 0 tokens), so we surface bad strings at yaml-</span>
-        <span class="c1"># validate time. Empty / missing is allowed — runtime falls back</span>
-        <span class="c1"># to its default.</span>
-        <span class="n">claude_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;claude&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">claude_block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-            <span class="n">claude_block</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="c1"># spec.claude.provider — vendor-agnostic backend override</span>
-        <span class="c1"># (ProviderSpec). When present, the SDK session runs against an</span>
-        <span class="c1"># Anthropic-SDK-compatible backend on an API key, so the model id</span>
-        <span class="c1"># is the provider&#39;s own (e.g. &#39;deepseek-chat&#39;) and the claude-*</span>
-        <span class="c1"># regex below is skipped. Absent → behaviour unchanged.</span>
-        <span class="n">provider_block</span> <span class="o">=</span> <span class="n">claude_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;provider&quot;</span><span class="p">)</span>
-        <span class="n">has_provider</span> <span class="o">=</span> <span class="n">provider_is_active</span><span class="p">(</span><span class="n">provider_block</span><span class="p">)</span>
-        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_provider</span><span class="p">(</span><span class="n">provider_block</span><span class="p">))</span>
-        <span class="n">model</span> <span class="o">=</span> <span class="n">claude_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.claude.model must be a string, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                <span class="p">)</span>
-            <span class="k">elif</span> <span class="n">model</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">has_provider</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">_VALID_MODEL_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.claude.model &#39;</span><span class="si">{</span><span class="n">model</span><span class="si">}</span><span class="s2">&#39; is not an accepted alias. &quot;</span>
-                    <span class="s2">&quot;Use a bare alias (&#39;opus&#39;, &#39;sonnet&#39;, &#39;haiku&#39;, &#39;inherit&#39;, &quot;</span>
-                    <span class="s2">&quot;&#39;default&#39;), optionally with a context suffix like &quot;</span>
-                    <span class="s2">&quot;&#39;opus[1m]&#39;; OR the full versioned form &quot;</span>
-                    <span class="s2">&quot;&#39;claude-&lt;family&gt;-N-M[-&lt;tail&gt;]&#39; (e.g. &#39;claude-opus-4-7&#39;, &quot;</span>
-                    <span class="s2">&quot;&#39;claude-opus-4-7[1m]&#39;, &#39;claude-haiku-4-5-20251001&#39;). &quot;</span>
-                    <span class="s2">&quot;Abbreviated forms like &#39;claude-opus[1m]&#39; are rejected &quot;</span>
-                    <span class="s2">&quot;by the SDK without raising — every turn returns 0 &quot;</span>
-                    <span class="s2">&quot;tokens. (When spec.claude.provider is set, the model &quot;</span>
-                    <span class="s2">&quot;field accepts the provider&#39;s own model id instead.)&quot;</span>
-                <span class="p">)</span>
+        <span class="c1"># spec.claude block (model alias / provider / account exclusivity /</span>
+        <span class="c1"># resume_id UUID) — validated in the sibling ``_claude_validation``</span>
+        <span class="c1"># module (keeps this orchestrator under the per-file cap).</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_claude</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
-        <span class="c1"># spec.claude.provider + spec.claude.account are mutually</span>
-        <span class="c1"># exclusive — an API-key backend needs no OAuth. Declaring both</span>
-        <span class="c1"># is a config error (the runtime would otherwise have to guess</span>
-        <span class="c1"># which auth path wins). Reject loudly at validate time.</span>
-        <span class="k">if</span> <span class="n">has_provider</span> <span class="ow">and</span> <span class="p">(</span><span class="n">claude_block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;account&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.claude.provider and spec.claude.account are mutually &quot;</span>
-                <span class="s2">&quot;exclusive — a provider backend uses an API key, not &quot;</span>
-                <span class="s2">&quot;Anthropic OAuth. Set exactly one.&quot;</span>
-            <span class="p">)</span>
-
-        <span class="c1"># container.runtime</span>
+        <span class="c1"># container.runtime — apptainer is the only implemented engine</span>
+        <span class="c1"># (docker/podman ripout 2026-05-13).</span>
         <span class="n">container</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;container&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
         <span class="n">cr</span> <span class="o">=</span> <span class="n">container</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">cr</span> <span class="ow">and</span> <span class="n">cr</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;podman&quot;</span><span class="p">,</span> <span class="s2">&quot;apptainer&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">cr</span> <span class="ow">and</span> <span class="n">cr</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">VALID_CONTAINER_RUNTIMES</span><span class="p">:</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;spec.container.runtime must be none|docker|podman|apptainer, got &#39;</span><span class="si">{</span><span class="n">cr</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="s2">&quot;spec.container.runtime must be &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;|&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">VALID_CONTAINER_RUNTIMES</span><span class="p">))</span><span class="si">}</span><span class="s2">, got &#39;</span><span class="si">{</span><span class="n">cr</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># container.mount_host_claude (opt-in; default False)</span>
@@ -771,6 +772,13 @@
         <span class="k">if</span> <span class="n">policy</span> <span class="ow">and</span> <span class="n">policy</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;never&quot;</span><span class="p">,</span> <span class="s2">&quot;on-failure&quot;</span><span class="p">,</span> <span class="s2">&quot;always&quot;</span><span class="p">):</span>
             <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;spec.restart.policy must be never|on-failure|always, got &#39;</span><span class="si">{</span><span class="n">policy</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+            <span class="p">)</span>
+        <span class="c1"># restart.prune_on_stop — inode-hygiene opt-in (bool only).</span>
+        <span class="n">prune_on_stop</span> <span class="o">=</span> <span class="n">restart</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;prune_on_stop&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">prune_on_stop</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">prune_on_stop</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="s2">&quot;spec.restart.prune_on_stop must be a boolean, got &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">prune_on_stop</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
             <span class="p">)</span>
 
         <span class="c1"># health.method — sole supported probe is the SDK runner&#39;s</span>
@@ -801,103 +809,21 @@
                     <span class="sa">f</span><span class="s2">&quot;got &#39;</span><span class="si">{</span><span class="n">user_val</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
                 <span class="p">)</span>
 
-        <span class="c1"># host / hosts (mutually exclusive)</span>
-        <span class="n">has_host</span> <span class="o">=</span> <span class="s2">&quot;host&quot;</span> <span class="ow">in</span> <span class="n">spec</span>
-        <span class="n">has_hosts</span> <span class="o">=</span> <span class="s2">&quot;hosts&quot;</span> <span class="ow">in</span> <span class="n">spec</span>
-        <span class="k">if</span> <span class="n">has_host</span> <span class="ow">and</span> <span class="n">has_hosts</span><span class="p">:</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;spec.host and spec.hosts are mutually exclusive — set &quot;</span>
-                <span class="s2">&quot;exactly one (host: singleton, hosts: multi-instance)&quot;</span>
-            <span class="p">)</span>
-        <span class="k">if</span> <span class="n">has_host</span><span class="p">:</span>
-            <span class="n">host_val</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;host&quot;</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">host_val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">host_val</span><span class="p">,</span> <span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">)):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.host must be a string, list of strings, or empty; &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">host_val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                <span class="p">)</span>
-            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">host_val</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span>
-                <span class="nb">isinstance</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">host_val</span>
-            <span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.host list must contain only strings&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">has_hosts</span><span class="p">:</span>
-            <span class="n">hosts_val</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hosts&quot;</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">hosts_val</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="s2">&quot;spec.hosts cannot be empty — use &#39;all&#39; (every fleet &quot;</span>
-                    <span class="s2">&quot;host) or a list of host names&quot;</span>
-                <span class="p">)</span>
-            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hosts_val</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="n">hosts_val</span> <span class="o">!=</span> <span class="s2">&quot;all&quot;</span><span class="p">:</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.hosts string must be &#39;all&#39;, got &#39;</span><span class="si">{</span><span class="n">hosts_val</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
-            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hosts_val</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span>
-                <span class="nb">isinstance</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">hosts_val</span>
-            <span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.hosts list must contain only strings&quot;</span><span class="p">)</span>
-            <span class="k">elif</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hosts_val</span><span class="p">,</span> <span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">)):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;spec.hosts must be &#39;all&#39; or a list of strings; &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">hosts_val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                <span class="p">)</span>
+        <span class="c1"># host / hosts — placement. Exactly one is REQUIRED and they are</span>
+        <span class="c1"># mutually exclusive (sibling ``_placement_validation`` module).</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_placement</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
-        <span class="c1"># spec.autonomous (F-CS3 phase 1) — drive-until-done.</span>
-        <span class="n">autonomous</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;autonomous&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">autonomous</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">autonomous</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="s2">&quot;spec.autonomous must be a mapping; got &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">autonomous</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
-                <span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">drive_until</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;drive_until&quot;</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">drive_until</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">drive_until</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.drive_until must be a string&quot;</span><span class="p">)</span>
-                <span class="k">elif</span> <span class="n">drive_until</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
-                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.drive_until must be non-empty&quot;</span><span class="p">)</span>
-                <span class="k">for</span> <span class="n">fld</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;max_turns&quot;</span><span class="p">,</span> <span class="s2">&quot;idle_kick_after_s&quot;</span><span class="p">):</span>
-                    <span class="n">val</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fld</span><span class="p">)</span>
-                    <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
-                            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.autonomous.</span><span class="si">{</span><span class="n">fld</span><span class="si">}</span><span class="s2"> must be an integer&quot;</span><span class="p">)</span>
-                        <span class="k">elif</span> <span class="n">val</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
-                            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;spec.autonomous.</span><span class="si">{</span><span class="n">fld</span><span class="si">}</span><span class="s2"> must be &gt; 0&quot;</span><span class="p">)</span>
-                <span class="n">kick</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;kick_text&quot;</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">kick</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">kick</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.kick_text must be a string&quot;</span><span class="p">)</span>
-                <span class="n">enabled</span> <span class="o">=</span> <span class="n">autonomous</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;enabled&quot;</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">enabled</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">enabled</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
-                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;spec.autonomous.enabled must be a boolean&quot;</span><span class="p">)</span>
+        <span class="c1"># spec.autonomous (F-CS3 drive-until-done) + kind:AgentProxy</span>
+        <span class="c1"># coupling rules — sibling ``_shape_validation`` module.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_autonomous</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_proxy_coupling</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="p">))</span>
 
-        <span class="c1"># kind: AgentProxy coupling rules.</span>
-        <span class="c1">#</span>
-        <span class="c1"># AgentProxy has NO SDK — it&#39;s a thin HTTP forwarder. So:</span>
-        <span class="c1">#   * spec.proxy is REQUIRED (no upstream → nothing to forward to)</span>
-        <span class="c1">#   * spec.claude is IGNORED (no SDK to configure); operator</span>
-        <span class="c1">#     authoring it is a category error we surface loudly.</span>
-        <span class="c1">#   * spec.startup_prompts / spec.startup_commands are IGNORED</span>
-        <span class="c1">#     for the same reason — no SDK to prompt.</span>
-        <span class="c1">#</span>
-        <span class="c1"># The mirror also holds for kind: Agent — spec.proxy is rejected</span>
-        <span class="c1"># there because the SDK runner doesn&#39;t read it.</span>
-        <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;AgentProxy&quot;</span><span class="p">:</span>
-            <span class="n">proxy_block</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;proxy&quot;</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">proxy_block</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="s2">&quot;spec.proxy is required when kind: AgentProxy &quot;</span>
-                    <span class="s2">&quot;(no upstream to forward to).&quot;</span>
-                <span class="p">)</span>
-            <span class="k">for</span> <span class="n">forbidden</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;claude&quot;</span><span class="p">,</span> <span class="s2">&quot;startup_prompts&quot;</span><span class="p">,</span> <span class="s2">&quot;startup_commands&quot;</span><span class="p">):</span>
-                <span class="n">val</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">forbidden</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">val</span><span class="p">:</span>
-                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                        <span class="sa">f</span><span class="s2">&quot;spec.</span><span class="si">{</span><span class="n">forbidden</span><span class="si">}</span><span class="s2"> is not allowed when kind: AgentProxy &quot;</span>
-                        <span class="s2">&quot;(proxy has no SDK to configure / prompt). Remove the field.&quot;</span>
-                    <span class="p">)</span>
-        <span class="k">elif</span> <span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;Agent&quot;</span><span class="p">:</span>
-            <span class="k">if</span> <span class="s2">&quot;proxy&quot;</span> <span class="ow">in</span> <span class="n">spec</span><span class="p">:</span>
-                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="s2">&quot;spec.proxy is only meaningful when kind: AgentProxy; &quot;</span>
-                    <span class="s2">&quot;remove it for kind: Agent.&quot;</span>
-                <span class="p">)</span>
+        <span class="c1"># spec.startup_commands destructive-command guard — REJECT an</span>
+        <span class="c1"># unguarded recursive-force ``rm`` on a variable target (the</span>
+        <span class="c1"># 2026-07-16 P0 landmine: ``rm -rf $HOME/proj`` one bad symlink</span>
+        <span class="c1"># from wiping ~195 repos). Sibling ``_startup_command_validation``</span>
+        <span class="c1"># module; allows the fixed ``rm -f $VAR`` form.</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">validate_startup_commands</span><span class="p">(</span><span class="n">spec</span><span class="p">))</span>
 
         <span class="c1"># Phase-3 capsule-isolation: type-check ``spec.comms`` +</span>
         <span class="c1"># ``spec.lineage`` shapes. Detailed rules live in the</span>
@@ -912,6 +838,15 @@
                 <span class="s2">&quot;(singleton, optionally with fallback list) or spec.hosts &quot;</span>
                 <span class="s2">&quot;(multi-instance, &#39;all&#39; or list).&quot;</span>
             <span class="p">)</span>
+
+        <span class="c1"># Red-start explicit-fields ruling (2026-07-21): EVERY spec field</span>
+        <span class="c1"># must be written explicitly. host/hosts presence is enforced above</span>
+        <span class="c1"># (mutually-exclusive pair — cannot live in a require-all map); the</span>
+        <span class="c1"># consolidated one-error-lists-everything message with the</span>
+        <span class="c1"># paste-ready block comes from the SSOT module.</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">._explicit_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">explicit_field_errors</span>
+
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">explicit_field_errors</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">path</span><span class="p">))</span>
 
     <span class="k">return</span> <span class="n">errors</span>
 

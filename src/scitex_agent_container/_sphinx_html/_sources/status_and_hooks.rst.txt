@@ -51,7 +51,7 @@ Selected fields:
 ``last_tool_at`` / ``last_tool_name``
     ISO timestamp and tool name of the newest ``pretool`` event in the
     ring buffer (any tool, e.g. ``Edit``, ``Bash``,
-    ``mcp__orochi__send_message``). Acts as a *functional heartbeat*:
+    ``mcp__hub__send_message``). Acts as a *functional heartbeat*:
     lets orchestrators distinguish "process alive" from "LLM actually
     producing tool calls" without any extra collection -- the values
     are derived from the existing hook buffer.
@@ -64,7 +64,7 @@ Selected fields:
 ``last_action_at`` / ``last_action_name``
     ISO timestamp and name of the most recent recorded action attempt.
     ``last_action_name`` is renamed from the original ``last_action`` so
-    it does not collide with the orochi hub's own ``last_action`` column.
+    it does not collide with the fleet hub's own ``last_action`` column.
 
 ``last_action_outcome`` / ``last_action_elapsed_s``
     Outcome string (``success``, ``precondition_fail``,
@@ -122,7 +122,7 @@ Wire it into the agent workspace's ``.claude/settings.local.json``:
 Agent name resolution order:
 
 1. ``--agent <name>`` CLI flag
-2. ``SCITEX_OROCHI_AGENT`` env var
+2. ``SCITEX_AGENT_CONTAINER_AGENT`` env var
 3. ``CLAUDE_AGENT_ID`` env var
 4. basename of the current working directory
 
@@ -140,9 +140,9 @@ Zero Coupling Design
 --------------------
 
 scitex-agent-container has no knowledge of any particular downstream
-orchestrator (scitex-orochi, a custom hub, etc.). ``status --json``
+orchestrator (a fleet hub, a custom hub, etc.). ``status --json``
 emits a self-describing dict; consumers wrap it themselves. For
-example, scitex-orochi's ``heartbeat-push`` command:
+example, a hub's ``heartbeat-push`` command:
 
 1. Shells out to ``sac agents list <name> --json``.
 2. Reshapes the payload into its own hub schema.
