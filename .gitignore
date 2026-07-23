@@ -68,6 +68,14 @@ logs/
 _sphinx_html/.doctrees/
 .worktrees/
 
+# Sphinx build directory. Ephemeral output target of `sphinx-build`; the
+# docs workflow builds INTO it then copies to the canonical committed
+# mirror src/scitex_agent_container/_sphinx_html/ (which IS tracked and
+# CI-refreshed). This tree was tracked by accident and never refreshed by
+# CI, so it went stale. Untracked + ignored so it stops carrying stale
+# generated content.
+docs/sphinx/_build/
+
 # Build stamp written by src/hatch_build.py at build time (commit + code
 # hash of the artifact). Generated, never committed — a checked-in copy
 # would go stale on the next commit and start LYING about which code is
