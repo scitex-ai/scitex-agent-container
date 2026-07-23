@@ -345,7 +345,7 @@ spec:
 
 `scitex-agent-container` is part of [**SciTeX**](https://scitex.ai). Install via the umbrella with `pip install scitex[agent-container]` to use as `scitex.agent_container` (Python) or `scitex agent-container ...` (CLI).
 
-[`scitex-orochi`](https://github.com/ywatanabe1989/scitex-orochi) adds cross-host message routing, a Slack-like chatops UI, and a peer registry on top of `sac`. The dependency is one-way — orochi reads sac's on-disk state; sac never imports orochi. For details, see **[docs/sac-and-orochi.md](docs/sac-and-orochi.md)** — architecture diagram, responsibility split, how to wire `server:orochi-push`.
+An external fleet hub can add cross-host message routing, a chatops UI, and a peer registry on top of `sac`. The dependency is one-way — the hub reads sac's on-disk state and published HTTP endpoints; sac never imports it. See **[docs/adr/0008-sac-node-transport-boundary.md](docs/adr/0008-sac-node-transport-boundary.md)** for the transport boundary sac guarantees.
 
 ## Four Freedoms for Research
 

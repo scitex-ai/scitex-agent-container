@@ -44,7 +44,7 @@ The `to_home/` directory (override path with `spec.to_home:`) is sac's generic f
 Don't put raw tokens in YAML/JSON committed to git. Pattern:
 
 1. Token file at `~/.bash.d/secrets/010_scitex/.../<id>.<purpose>-token` (rides with dotfiles git, syncs across hosts).
-2. Inject the **path** via port 1 or 2 (e.g. `SCITEX_OROCHI_GITEA_TOKEN_PATH=~/.bash.d/secrets/.../${SAC_NAME}.gitea-token`), or read the file in the parent shell and inject the value via `${VAR}`.
+2. Inject the **path** via port 1 or 2 (e.g. `FLEET_GITEA_TOKEN_PATH=~/.bash.d/secrets/.../${SAC_NAME}.gitea-token`), or read the file in the parent shell and inject the value via `${VAR}`.
 3. Consumer reads file on demand.
 
 Path-in-env is safer than value-in-env (`/proc/<pid>/environ` exposure), but value-in-env is fine when the consumer is short-lived (MCP server process).

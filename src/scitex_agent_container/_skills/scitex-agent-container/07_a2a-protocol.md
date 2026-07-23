@@ -1,25 +1,25 @@
 ---
 description: |
   [TOPIC] A2A protocol — native sac surface
-  [DETAILS] CLI (`sac a2a serve` / `doctor`), auto-launch via `spec.a2a`, SDK 1.x methods, handler env vars, orochi boundary. AgentCard extension fields live in the sibling leaf.
+  [DETAILS] CLI (`sac a2a serve` / `doctor`), auto-launch via `spec.a2a`, SDK 1.x methods, handler env vars, fleet-hub boundary. AgentCard extension fields live in the sibling leaf.
 tags: [scitex-agent-container-a2a-protocol]
 ---
 
 # A2A protocol — native sac surface
 
-[A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no orochi, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.
+[A2A](https://a2a-protocol.org/) is an open agent-to-agent JSON-RPC protocol. sac speaks it directly, with **zero fleet dependencies**: no fleet hub, no Cloudflare tunnel, no Gitea identity. A single agent YAML can expose its own A2A endpoint with one command.
 
 The per-card `x-scitex-agent-container.*` extension fields and a full JSON example live in [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md).
 
-## Why sac knows A2A but not orochi
+## Why sac knows A2A but not any fleet hub
 
-A2A is a **protocol**; orochi is one **implementation** of a fleet hub on top of A2A. sac knowing A2A doesn't violate the layering — same as a generic HTTP library knowing HTTP without knowing nginx. By making A2A native to sac, a lab can adopt the *protocol* without adopting an entire fleet stack.
+A2A is a **protocol**; a fleet hub is one **implementation** on top of A2A. sac knowing A2A doesn't violate the layering — same as a generic HTTP library knowing HTTP without knowing nginx. By making A2A native to sac, a lab can adopt the *protocol* without adopting an entire fleet stack.
 
 Concrete value:
 
 - **Standalone agent deploy** — `sac a2a serve agent.yaml` boots one A2A agent. Done.
 - **Protocol-aware health check** — sac agents health can hit an AgentCard endpoint (future).
-- **Swappable fleet implementations** — orochi is one consumer of sac-served A2A endpoints; another fleet hub can be too.
+- **Swappable fleet implementations** — any fleet hub is one consumer of sac-served A2A endpoints; another can be too.
 
 ## CLI
 
@@ -131,15 +131,14 @@ sac uses the official Python `a2a-sdk[http-server]>=1.0.2`. Handlers are `AgentE
 - **`uvicorn ws="none"`**: A2A is HTTP+SSE only — uvicorn 0.27's WS protocol auto-loader breaks on websockets 15.x (`websockets.legacy` removed). Sac passes `ws="none"` so the sidecar boots cleanly.
 - **AgentCard is protobuf**: SDK 1.x expects a protobuf `AgentCard`, not pydantic dict. `_card.project_card_proto()` is the adapter; the dict form (`project_card()`) is what gets served at `/.well-known/agent-card.json` (v1 name).
 
-## Boundary with orochi
+## Boundary with a fleet hub
 
-orochi (the fleet hub) is **one consumer** of sac-served A2A endpoints. Its dispatch bridge serves the same SDK 1.x surface at `https://scitex-orochi.com/agents/<name>/` and proxies into the live agent's sidecar (Tier-3 HTTP-direct, or WS fallback). orochi adds workspace-token auth (`WorkspaceTokenContextBuilder`), agent registry resolution, and chat-room semantics on top. None of that is required for sac's A2A — those are orochi-side features layered on top.
+A fleet hub is **one consumer** of sac-served A2A endpoints. Its dispatch bridge serves the same SDK 1.x surface at `https://<hub-host>/agents/<name>/` and proxies into the live agent's sidecar (Tier-3 HTTP-direct, or WS fallback). A hub can add workspace-token auth, agent registry resolution, and chat-room semantics on top. None of that is required for sac's A2A — those are hub-side features layered on top.
 
-If you want a fleet, use orochi. If you want one agent on a laptop, use `sac a2a serve`.
+If you want a fleet, use a fleet hub. If you want one agent on a laptop, use `sac a2a serve`.
 
 ## Cross-references
 
 - [`07_a2a-protocol-extension-fields.md`](07_a2a-protocol-extension-fields.md) — `x-scitex-agent-container.*` per-agent / fleet / proxy field enumeration + full JSON card example
 - [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md) — A2A v1.0 compliance
 - [`06_env-injection-ports.md`](06_env-injection-ports.md) — the four env-injection ports (yaml.env / to_home/.mcp.json env / to_home/.env / hooks)
-- [scitex-orochi `docs/a2a-protocol.md`](https://github.com/ywatanabe1989/scitex-orochi/blob/develop/docs/a2a-protocol.md) — fleet-side architecture (Tier 3 dispatch bridge)

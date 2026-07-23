@@ -379,7 +379,7 @@ def agent_start(
     # agent_start. ``ensure_instance_uuid`` writes
     # ``SAC_INSTANCE_UUID`` into ``config.env`` so the runtime's
     # ``_build_env_exports`` (claude_code.py) propagates it; the runtime
-    # is supposed to read it back when wiring up the orochi WS connect
+    # is supposed to read it back when wiring up the hub WS connect
     # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
     # skill can pick up the snapshot before claude actually launches.
     _h = handover_mod if handover_mod is not None else _load_handover_module()

@@ -9,7 +9,7 @@ tags: [scitex-agent-container-a2a-protocol-extension-fields]
 
 Companion to [`07_a2a-protocol.md`](07_a2a-protocol.md). That leaf documents the protocol surface (CLI, auto-launch, handlers); this leaf enumerates every vendor field projected under the sac namespace and shows one full card.
 
-A2A v1.0 reserves the AgentCard top level for spec-defined fields and funnels vendor data into a namespaced extension block. **sac uses exactly one namespace key: `x-scitex-agent-container`.** Every sac-specific datum lives under that key, never at the top level, never under another vendor namespace (e.g. `x-orochi` is owned by the orochi fleet hub, not by sac). See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
+A2A v1.0 reserves the AgentCard top level for spec-defined fields and funnels vendor data into a namespaced extension block. **sac uses exactly one namespace key: `x-scitex-agent-container`.** Every sac-specific datum lives under that key, never at the top level, never under another vendor namespace (another project's extension namespace is owned by that project, not by sac). See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
 
 ## v3 YAML — what gets projected
 
@@ -39,7 +39,7 @@ Emitted by `a2a/_card.py::project_card`. Every per-agent card served at `GET /ag
 | `x-scitex-agent-container.model` | `spec.claude.model` ∨ `spec.model` (legacy) | LLM model identifier. |
 | `x-scitex-agent-container.multiplexer` | `spec.multiplexer` | tmux / zellij / none. |
 | `x-scitex-agent-container.required_skills` | `metadata.labels.skills` (CSV) — `spec.skills` is rejected in v3; skills now live as files under `to_home/.claude/skills/` | Skill IDs the agent loads at boot. |
-| `x-scitex-agent-container.isolation` | derived from `spec.apptainer.*` | D3 attestation block — `{level, containall, cleanenv, writable_tmpfs, preflight_passed, preflight_allowed, binds_count, binds_writable_count}`. External attestation surfaces (Clew, orochi) read these booleans. |
+| `x-scitex-agent-container.isolation` | derived from `spec.apptainer.*` | D3 attestation block — `{level, containall, cleanenv, writable_tmpfs, preflight_passed, preflight_allowed, binds_count, binds_writable_count}`. External attestation surfaces (Clew, fleet hubs) read these booleans. |
 
 ## Per-agent `capabilities.extensions[]` entries
 

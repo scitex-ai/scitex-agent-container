@@ -902,7 +902,7 @@ def test_multi_host_null_workdir_keeps_derivation_green():
 
 
 # ---------------------------------------------------------------------------
-# spec.remote — rejection error message must point at spec.host (not orochi)
+# spec.remote — rejection error message must point at the native spec.host
 # ---------------------------------------------------------------------------
 
 
@@ -925,18 +925,6 @@ def test_spec_remote_rejection_mentions_spec_host():
     # Assert — the rejection redirects users to the v3 replacement field.
     assert "spec.host" in message, (
         f"spec.remote rejection must redirect to spec.host; got {message!r}"
-    )
-
-
-def test_spec_remote_rejection_does_not_blame_orochi():
-    # Arrange
-    bad = _remote_errors()
-    # Act
-    message = bad[0] if bad else ""
-    # Assert — sac v3 supports cross-host natively; the error must not
-    # send users to orochi.
-    assert "orochi" not in message.lower(), (
-        f"spec.remote rejection must not mention orochi; got {message!r}"
     )
 
 

@@ -14,7 +14,6 @@ Returns True if a key action was sent, False for no-op / escalate.
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import time
 from typing import Callable
@@ -46,55 +45,20 @@ def _tmux_send(name: str, *keys: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Orochi DM escalation
+# Escalation (log-only default)
 # ---------------------------------------------------------------------------
 
 
-def _orochi_dm(channel: str, message: str) -> None:
-    """Send a DM to an Orochi channel via the hub HTTP API.
+def _log_escalation(channel: str, message: str) -> None:
+    """Default escalation sink — record locally, no outbound push.
 
-    Uses environment variables:
-      SCITEX_OROCHI_HUB_URL   (default: https://scitex-orochi.com)
-      SCITEX_OROCHI_TOKEN     (required for auth)
-
-    Falls back to logging when the hub is unreachable or credentials
-    are absent so that the daemon never crashes on escalation failure.
+    sac's comms boundary is one-way: an external hub reads sac's state;
+    sac never pushes to it. The auto-accept daemon therefore has no
+    transport of its own — it logs the escalation and a consumer that
+    tails these records acts on it. Callers inject ``dm_fn`` to attach a
+    real transport.
     """
-    hub = os.environ.get("SCITEX_OROCHI_HUB_URL", "https://scitex-orochi.com").rstrip(
-        "/"
-    )
-    token = os.environ.get("SCITEX_OROCHI_TOKEN", "")
-    agent = os.environ.get("SCITEX_OROCHI_AGENT", "c-sac-auto-accept")
-
-    if not token:
-        logger.warning(
-            "SCITEX_OROCHI_TOKEN not set — DM to %s dropped: %s", channel, message
-        )
-        return
-
-    payload = f'{{"channel":"{channel}","text":"{message}","from":"{agent}"}}'
-    try:
-        subprocess.run(
-            [
-                "curl",
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                f"Authorization: Bearer {token}",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                payload,
-                f"{hub}/api/v1/messages",
-            ],
-            check=False,
-            timeout=10,
-            capture_output=True,
-        )
-        logger.info("DM sent to %s: %s", channel, message)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        logger.warning("DM to %s failed: %s — message: %s", channel, exc, message)
+    logger.warning("escalation [%s]: %s", channel, message)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +114,7 @@ def respond(
     True if keys were sent; False for no-op or escalate-only actions.
     """
     _send = send_fn if send_fn is not None else lambda *keys: _tmux_send(name, *keys)
-    _dm = dm_fn if dm_fn is not None else _orochi_dm
+    _dm = dm_fn if dm_fn is not None else _log_escalation
     _email = (
         email_fn
         if email_fn is not None

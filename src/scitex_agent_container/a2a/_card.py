@@ -1,8 +1,8 @@
 """A2A AgentCard projection from a v3 sac YAML.
 
 **Canonical source for v3 → AgentCard projection.** The scitex-cloud
-mirror at ``apps/infra/a2a_app/_card.py`` (orochi public surface) is
-expected to layer ``x-orochi`` enrichment on top of the field set
+mirror at ``apps/infra/a2a_app/_card.py`` (a downstream mirror) is
+expected to layer its own extension enrichment on top of the field set
 this module produces. Until the projection logic is extracted into a
 shared dependency, the two implementations must be kept in sync:
 canonical = THIS file; mirror = scitex-cloud `_card.py`.
@@ -10,10 +10,10 @@ canonical = THIS file; mirror = scitex-cloud `_card.py`.
 No fleet imports. The projection is request-aware: pass
 ``base_url`` so each card advertises the URL the client actually used.
 
-sac-internal fields live under ``x-scitex-agent-container``; this is
-intentionally NOT ``x-orochi`` because the orochi extension namespace
-is owned by that project, not sac. A standalone ``sac a2a serve``
-agent therefore won't carry an ``x-orochi`` block — that's by design.
+sac-internal fields live under ``x-scitex-agent-container``. sac never
+emits fields in another project's extension namespace — a downstream
+consumer layers its own on top. A standalone ``sac a2a serve`` agent
+therefore carries only sac's own block — that's by design.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def project_card(name: str, v3: dict[str, Any], base_url: str) -> dict[str, Any]
         "required_skills": list(required_skills),
         # D3 — structured isolation block (see
         # docs/adr/0001-isolation-hardening.md). External verifiers (Clew,
-        # orochi attestation) read these booleans to attest specific
+        # external attestation) read these booleans to attest specific
         # properties; ``level`` is the human shorthand.
         "isolation": _isolation_block(spec),
     }
@@ -276,7 +276,7 @@ def _lineage_may_spawn(spec: dict[str, Any]) -> bool:
 
     Default ``True`` matches the dataclass default — absence of the
     block preserves pre-Phase-3 behaviour. Surfaced in the isolation
-    block so external verifiers (Clew, orochi attestation) can attest
+    block so external verifiers (Clew, external attestation) can attest
     whether the agent is allowed to spawn children at all without
     parsing the YAML themselves.
     """

@@ -14,8 +14,6 @@ otherwise identical.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import http.server
 import json
 import socket
@@ -27,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container import hooks
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -340,17 +339,19 @@ def _write_v3_config(tmp_path: Path, extra: str = "") -> Path:
     d.mkdir(exist_ok=True)
     p = d / "statustest.yaml"
     p.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        "  workdir: /home/agent/work\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n"
-        "    model: sonnet\n" + extra)
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  claude:\n"
+            "    model: sonnet\n" + extra
+        )
     )
     return p
 
@@ -380,11 +381,13 @@ def _real_status(tmp_path: Path, extra: str) -> dict:
 
 def test_extensions_passthrough_in_status(tmp_path):
     # Arrange
-    extra = "  extensions:\n    orochi:\n      foo: bar\n      nested:\n        a: 1\n"
+    extra = (
+        "  extensions:\n    fleethub:\n      foo: bar\n      nested:\n        a: 1\n"
+    )
     # Act
     result = _real_status(tmp_path, extra)
     # Assert
-    assert result["extensions"] == {"orochi": {"foo": "bar", "nested": {"a": 1}}}
+    assert result["extensions"] == {"fleethub": {"foo": "bar", "nested": {"a": 1}}}
 
 
 def test_listen_first_entry_port_in_status(tmp_path):
@@ -394,7 +397,7 @@ def test_listen_first_entry_port_in_status(tmp_path):
         "    - port: 8559\n"
         "      proto: tcp\n"
         "      name: mcp_bun\n"
-        "      owner: orochi\n"
+        "      owner: fleethub\n"
     )
     # Act
     result = _real_status(tmp_path, extra)
@@ -407,14 +410,14 @@ def test_listen_unix_socket_entry_path_in_status(tmp_path):
     extra = (
         "  listen:\n"
         "    - proto: unix\n"
-        "      path: /tmp/orochi.sock\n"
+        "      path: /tmp/fleethub.sock\n"
         "      name: heartbeat\n"
-        "      owner: orochi\n"
+        "      owner: fleethub\n"
     )
     # Act
     result = _real_status(tmp_path, extra)
     # Assert
-    assert result["listen"][0]["path"] == "/tmp/orochi.sock"
+    assert result["listen"][0]["path"] == "/tmp/fleethub.sock"
 
 
 def test_hooks_configured_pre_start_count_in_status(tmp_path):

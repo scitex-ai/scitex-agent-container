@@ -121,10 +121,10 @@ fails on hub absence.
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SCITEX_AGENT_CONTAINER_HUB_URL` | Fleet hub endpoint (e.g. an orochi instance). | unset (standalone) | URL |
+| `SCITEX_AGENT_CONTAINER_HUB_URL` | Fleet hub endpoint. | unset (standalone) | URL |
 | `SCITEX_AGENT_CONTAINER_HUB_TOKEN` | Bearer token for the hub. | `—` | string |
 
-Downstream fleet implementations (e.g. scitex-orochi) own their own env
+Downstream fleet implementations own their own env
 namespace; sac does not read fleet-specific vars directly.
 
 ## Host listen — SAC-from-SAC broker

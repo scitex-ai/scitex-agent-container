@@ -353,7 +353,7 @@ def test_external_node_agent_card_advertises_node_kind_external(
 ) -> None:
     """The synthesised card carries
     ``x-scitex-agent-container.node_kind == "external"`` so consumers
-    (and orochi later) can distinguish a managed agent from an external
+    (and orchestrators later) can distinguish a managed agent from an external
     node without parsing YAML.
     """
     # Arrange — implicit registration via message:send.

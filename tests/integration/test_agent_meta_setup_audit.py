@@ -98,7 +98,7 @@ def stdio_mcp_entry(tmp_path: Path) -> dict:
         tmp_path,
         {
             "mcpServers": {
-                "scitex-orochi": {
+                "fleet-hub": {
                     "type": "stdio",
                     "command": "bun",
                     "args": ["/path/to/mcp/server.ts"],
@@ -116,7 +116,7 @@ def stdio_mcp_entry(tmp_path: Path) -> dict:
 @pytest.mark.parametrize(
     "key,expected",
     [
-        ("name", "scitex-orochi"),
+        ("name", "fleet-hub"),
         ("transport", "stdio"),
         ("command", "bun"),
         ("url_host", None),
@@ -141,7 +141,7 @@ def http_mcp_entry(tmp_path: Path) -> dict:
             "mcpServers": {
                 "remote-hub": {
                     "type": "http",
-                    "url": "https://scitex-orochi.com/mcp/sse?token=secret",
+                    "url": "https://fleet-hub.example.com/mcp/sse?token=secret",
                 }
             }
         },
@@ -157,7 +157,7 @@ def test_parse_mcp_http_server_extracts_only_host(http_mcp_entry: dict) -> None:
     # Arrange — fixture parsed the http entry.
     # Act — fixture already invoked the parser.
     # Assert
-    assert http_mcp_entry["url_host"] == "scitex-orochi.com"
+    assert http_mcp_entry["url_host"] == "fleet-hub.example.com"
 
 
 def test_parse_mcp_http_server_strips_query_string_token(
@@ -402,7 +402,7 @@ def rich_payload_with_plugins_and_mcp(tmp_path: Path, env_save_restore) -> dict:
     workdir = tmp_path / "workspace"
     _write_mcp(
         workdir,
-        {"mcpServers": {"scitex-orochi": {"type": "stdio", "command": "bun"}}},
+        {"mcpServers": {"fleet-hub": {"type": "stdio", "command": "bun"}}},
     )
     # Act
     return collect_rich(name="agent-z", workdir=str(workdir), session="agent-z")
@@ -446,7 +446,7 @@ def test_collect_rich_emits_structured_mcp_servers_entry(
     # Assert
     assert rich_payload_with_plugins_and_mcp["mcp_servers"] == [
         {
-            "name": "scitex-orochi",
+            "name": "fleet-hub",
             "transport": "stdio",
             "url_host": None,
             "command": "bun",

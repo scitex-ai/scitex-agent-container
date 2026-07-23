@@ -195,7 +195,7 @@ def test_host_add_exits_nonzero_when_validation_fails(cfg_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# symlink-safety: shared-config layouts (orochi-shared) symlink
+# symlink-safety: fleet-shared config layouts symlink
 # ~/.scitex/agent-container/config.yaml to a shared file. Writing the
 # symlink path directly would replace the link with a regular file and
 # silently break the shared relationship. See foundation-polish bug 3.
@@ -207,7 +207,7 @@ def symlinked_cfg(tmp_path: Path, env_save_restore) -> tuple[Path, Path]:
     """Return ``(link_path, target_path)`` where ``link_path`` is a symlink to ``target_path``.
 
     The CLI is pointed at ``link_path`` via the env override; the target
-    holds the actual YAML bytes (mimicking orochi-shared layout).
+    holds the actual YAML bytes (mimicking a fleet-shared layout).
     """
     target = tmp_path / "shared" / "config.yaml"
     target.parent.mkdir(parents=True)

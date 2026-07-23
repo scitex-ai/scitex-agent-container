@@ -449,7 +449,7 @@ class _FakeMCP:
 
 
 def test_register_subagent_tools_registers_get_state_only():
-    # Arrange — classification is orochi's job, not sac's; MCP surface
+    # Arrange — classification is the orchestrator's job, not sac's; MCP surface
     # exposes pure state only.
     mcp = _FakeMCP()
     # Act

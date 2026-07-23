@@ -169,7 +169,7 @@ def mcp_channel(name: str | None, listen_url: str | None, turn_url: str | None) 
 
     Intended to be spawned by Claude Code via
     ``--dangerously-load-development-channels server:sac`` — see
-    ``docs/sac-and-orochi.md``. Streams inbox events from sac listen
+    ``docs/adr/0008-sac-node-transport-boundary.md``. Streams inbox events from sac listen
     as ``notifications/claude/channel`` so the running session sees
     ``<channel source="..." msg_id="...">`` tags in real time, and (when
     ``--turn-url`` is set) WAKES the session by POSTing each event to the

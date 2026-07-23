@@ -40,7 +40,7 @@ doing right now?"*:
    fleet by reading individual `sac agents status` outputs per host
    and mentally union-ing them. This is the work `sac fleet sync`
    does for *specs*, applied to *running instances*.
-5. **orochi is UI, not source-of-truth.** The orochi viewer renders
+5. **The fleet UI is not source-of-truth.** A viewer renders
    whatever the fleet reports; it cannot itself be the registry without
    collapsing UI and storage into the same layer (rejected — see
    Alternatives).
@@ -106,12 +106,12 @@ like any other delta. Eviction is server-driven, never caller-driven
 — a dead agent does not stay alive because nobody happens to call
 `sac agents status`.
 
-### Non-goal: orochi stays UI-only
+### Non-goal: the fleet UI stays UI-only
 
-orochi is a **consumer** of the central fleet registry, not its
-owner. The registry is sac-internal; orochi reads it (via a `sac
+A fleet UI is a **consumer** of the central fleet registry, not its
+owner. The registry is sac-internal; the UI reads it (via a `sac
 fleet status --json` or equivalent surface) and renders. Mixing UI
-and source-of-truth into orochi was considered and rejected — see
+and source-of-truth into the UI layer was considered and rejected — see
 Alternatives.
 
 ## Consequences
@@ -130,7 +130,7 @@ Alternatives.
 - **`sac fleet sync` (PR #207) and `sac fleet status` form a clean
   pair**: sync audits the definition, status reports the running
   instance — same loudness contract, same JSON envelope shape.
-- **Orochi gets a stable upstream.** UI work decouples from registry
+- **The UI gets a stable upstream.** UI work decouples from registry
   work because the registry has a defined `--json` surface.
 
 ### Negative / things to watch
@@ -169,12 +169,12 @@ Alternatives.
   listen is down, and the lead laptop is exactly the machine most
   likely to be offline (closed lid, traveling).
 
-- **Make orochi the central registry.** orochi already aggregates a
+- **Make the fleet UI the central registry.** The UI already aggregates a
   fleet view for display; tempting to let it own storage too.
   Rejected: collapses UI and source-of-truth into one process, makes
   sac depend on a UI to know what is running, and forces any future
-  non-orochi consumer (a CLI, a CI check, a different UI) to talk to
-  a UI server. orochi stays a thin consumer of the sac surface.
+  non-UI consumer (a CLI, a CI check, a different UI) to talk to
+  a UI server. The UI stays a thin consumer of the sac surface.
 
 - **Per-feature reverse tunnels for agent→lead push.** Continue the
   current pattern: ship a targeted reverse-tunnel slice each time a

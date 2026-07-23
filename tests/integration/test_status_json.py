@@ -36,7 +36,7 @@ def fake_workspace(tmp_path: Path) -> Path:
         "# header\n\n"
         "```skills\n"
         "scitex\n"
-        "scitex-orochi\n"
+        "scitex-example\n"
         "# a comment\n"
         "scitex-agent-container\n"
         "```\n"
@@ -134,7 +134,7 @@ def test_collect_rich_parses_skills_block_from_claude_md(
     # Assert
     assert rich["skills_loaded"] == [
         "scitex",
-        "scitex-orochi",
+        "scitex-example",
         "scitex-agent-container",
     ]
 
@@ -176,12 +176,12 @@ def test_collect_rich_populates_machine_with_hostname(
 
 def test_encode_claude_project_collapses_hidden_dir_to_double_dash() -> None:
     # Arrange
-    workdir = "/Users/ywatanabe/.dotfiles/src/.scitex/orochi/workspaces/head-mba"
+    workdir = "/Users/ywatanabe/.dotfiles/src/.scitex/fleet/workspaces/head-mba"
     # Act
     encoded = agent_meta._encode_claude_project(workdir)
     # Assert
     assert encoded == (
-        "-Users-ywatanabe--dotfiles-src--scitex-orochi-workspaces-head-mba"
+        "-Users-ywatanabe--dotfiles-src--scitex-fleet-workspaces-head-mba"
     )
 
 
@@ -412,7 +412,7 @@ def test_agent_status_includes_parsed_skills_loaded(status_result: dict) -> None
     # Assert
     assert status_result["skills_loaded"] == [
         "scitex",
-        "scitex-orochi",
+        "scitex-example",
         "scitex-agent-container",
     ]
 
@@ -784,11 +784,11 @@ def representative_full_status() -> dict:
         "current_tool": "Bash",
         "account_email": "beta@example.com",
         "skills_loaded": [
-            "orochi-agent-startup-protocol",
-            "orochi-fleet-communication-discipline",
-            "orochi-fleet-members",
-            "orochi-user-communication",
-            "orochi-fleet-resurrection-protocol",
+            "fleet-agent-startup-protocol",
+            "fleet-communication-discipline",
+            "fleet-members",
+            "fleet-user-communication",
+            "fleet-resurrection-protocol",
         ],
         "hostname_canonical": "mba.hpc.unimelb.edu.au",
         "machine": "mba",

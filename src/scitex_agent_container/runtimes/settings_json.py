@@ -43,7 +43,8 @@ Cleanup removes only the keys this module managed.
 Global seed (ensure_global_settings_json):
 - Also ensures ~/.claude/settings.json exists and is not a broken symlink.
 - If missing or broken, drops a minimal seed from
-  ~/.scitex/orochi/templates/claude-code-seed.json (or a built-in default).
+  ~/.scitex/agent-container/templates/claude-code-seed.json (or a built-in
+  default).
 - Idempotent: no-op when the global file already resolves correctly.
 """
 
@@ -82,8 +83,8 @@ _MANAGED_KEYS = frozenset(
 # PreToolUse / PostToolUse / UserPromptSubmit / Stop events flow into
 # the per-agent event ring-buffer (~/.scitex/agent-container/runtime/events/
 # <agent>.jsonl). Consumed by event_log.summarize() which feeds the
-# Orochi dashboard's Last tool / Last MCP / Last action rows. Without
-# this wiring those rows render as dashes (scitex-orochi todo#59).
+# fleet dashboard's Last tool / Last MCP / Last action rows. Without
+# this wiring those rows render as dashes (fleet todo#59).
 _HOOKS_CONFIG = {
     "PreToolUse": [
         {
@@ -218,7 +219,6 @@ _SEED_DEFAULTS: dict = {
             "Glob(*)",
             "Grep(*)",
             "Agent(*)",
-            "mcp__scitex-orochi__*",
             "mcp__scitex__*",
             "mcp__filesystem__*",
         ]
@@ -312,7 +312,7 @@ def setup_settings_json(
 
     # Always inject hook wiring — even if skip-permissions / dev-channels
     # aren't active we still want Last tool / Last MCP / Last action rows
-    # to populate on the dashboard (scitex-orochi todo#59).
+    # to populate on the dashboard (fleet todo#59).
     settings["hooks"] = _HOOKS_CONFIG
 
     # Register sac-statusline as the statusLine command so the JSON payload

@@ -102,7 +102,7 @@ def test_parse_listen_port_returns_none_for_url_with_port_zero() -> None:
 
 
 def test_parse_listen_port_handles_https_scheme() -> None:
-    # Arrange — sac listen can run behind tls (orochi tunnel pattern).
+    # Arrange — sac listen can run behind tls (tunnel pattern).
     from scitex_agent_container._mcp._channel_self_register import parse_listen_port
 
     # Act

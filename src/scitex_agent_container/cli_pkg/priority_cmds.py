@@ -1,6 +1,6 @@
 """priority-check and singleton-reconcile commands.
 
-Building blocks for the healer-driven singleton reconciler (scitex-orochi#250).
+Building blocks for the healer-driven singleton reconciler (fleet issue #250).
 
 When an agent declares ``spec.host: [spartan, nas, mba]``, it should run on the
 *highest-priority reachable* host, not just wherever ``sac agent start`` was called.
@@ -239,7 +239,7 @@ def priority_check(
 
 # ---------------------------------------------------------------------------
 # singleton-reconcile: sweep all locally registered agents and yield any
-# that have a higher-priority reachable host.  (scitex-orochi#250)
+# that have a higher-priority reachable host.  (fleet issue #250)
 # ---------------------------------------------------------------------------
 
 _SSH_START_TIMEOUT = 30  # seconds to wait for remote sac agent start

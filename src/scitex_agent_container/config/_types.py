@@ -320,7 +320,7 @@ class ListenPort:
     The container NEVER binds these — it just validates the shape and
     echoes them in ``status --json`` so orchestrators can see what
     sidecars are expected to exist. ``owner`` is free-form (e.g.
-    ``"orochi"``) to identify the plugin that actually listens.
+    ``"fleet-hub"``) to identify the plugin that actually listens.
     """
 
     port: int = 0

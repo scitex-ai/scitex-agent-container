@@ -71,7 +71,7 @@ MINIMAL_V2_CONFIG = {
     "kind": "Agent",
     "metadata": {
         "name": "head-test",
-        "labels": {"role": "head", "team": "orochi", "machine": "test-box"},
+        "labels": {"role": "head", "team": "fleet", "machine": "test-box"},
     },
     "spec": {
         "runtime": "apptainer",
@@ -102,14 +102,14 @@ V2_WITH_MCP = {
         "health": {"enabled": True, "interval": 60},
         "restart": {"policy": "on-failure", "max_retries": 3},
         "mcp_servers": {
-            "scitex-orochi": {
+            "fleet-hub": {
                 "type": "stdio",
                 "command": "bun",
-                "args": ["run", "~/proj/scitex-orochi/ts/mcp_channel.ts"],
+                "args": ["run", "~/proj/fleet-hub/ts/mcp_channel.ts"],
                 "env": {
-                    "SCITEX_OROCHI_URL": "wss://scitex-orochi.com",
-                    "SCITEX_OROCHI_AGENT": "${metadata.name}",
-                    "SCITEX_OROCHI_TOKEN": "${SCITEX_OROCHI_TOKEN}",
+                    "SCITEX_HUB_URL": "wss://fleet-hub.example.com",
+                    "SCITEX_HUB_AGENT": "${metadata.name}",
+                    "SCITEX_HUB_TOKEN": "${SCITEX_HUB_TOKEN}",
                 },
             }
         },
@@ -231,20 +231,20 @@ class TestV2AutoDerivedEnv:
         # Assert
         assert value == "Claude Opus (1M)"
 
-    def test_v2_env_omits_external_orochi_agent(self, v2_loaded_config):
-        """sac MUST NOT auto-inject external-consumer (orochi etc.) env vars."""
+    def test_v2_env_omits_external_hub_agent(self, v2_loaded_config):
+        """sac MUST NOT auto-inject external-consumer (hub etc.) env vars."""
         # Arrange
         config = v2_loaded_config
         # Act
-        present = "SCITEX_OROCHI_AGENT" in config.env
+        present = "SCITEX_HUB_AGENT" in config.env
         # Assert
         assert present is False
 
-    def test_v2_env_omits_external_orochi_model(self, v2_loaded_config):
+    def test_v2_env_omits_external_hub_model(self, v2_loaded_config):
         # Arrange
         config = v2_loaded_config
         # Act
-        present = "SCITEX_OROCHI_MODEL" in config.env
+        present = "SCITEX_HUB_MODEL" in config.env
         # Assert
         assert present is False
 
@@ -301,18 +301,18 @@ class TestV2McpServersInterpolation:
         # Arrange
         config = v2_mcp_loaded_config
         # Act
-        value = config.mcp_servers["scitex-orochi"]["env"]["SCITEX_OROCHI_AGENT"]
+        value = config.mcp_servers["fleet-hub"]["env"]["SCITEX_HUB_AGENT"]
         # Assert
         assert value == "head-test"
 
     def test_v2_mcp_leaves_non_metadata_envref_unchanged(self, v2_mcp_loaded_config):
-        """${SCITEX_OROCHI_TOKEN} stays as-is (not a metadata ref)."""
+        """${SCITEX_HUB_TOKEN} stays as-is (not a metadata ref)."""
         # Arrange
         config = v2_mcp_loaded_config
         # Act
-        value = config.mcp_servers["scitex-orochi"]["env"]["SCITEX_OROCHI_TOKEN"]
+        value = config.mcp_servers["fleet-hub"]["env"]["SCITEX_HUB_TOKEN"]
         # Assert
-        assert value == "${SCITEX_OROCHI_TOKEN}"
+        assert value == "${SCITEX_HUB_TOKEN}"
 
 
 class TestV2Validates:

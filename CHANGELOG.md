@@ -2177,8 +2177,8 @@ set + the empty-ack fix + the smoke-test contract update.
   in-container Claude CLI's ~1h OAuth refresh wrote back to that
   per-agent copy — not the source snapshot. After ~8h drift, every
   SDK turn 401'd silently (the telegram bridge still marked inbound
-  👀 but the agent could not complete a turn). Hit hub, orochi, and
-  proj-scitex-agent-container (revived only by restart). Fix:
+  👀 but the agent could not complete a turn). Hit the hub and multiple
+  project agents (revived only by restart). Fix:
   `runtimes/_apptainer_creds.resolve_cred_file` pinned branch now
   returns the snapshot path directly. The caller's existing `:rw`
   bind in `_apptainer_auth.auth_argv` lands on the snapshot — the
@@ -2476,13 +2476,14 @@ set + the empty-ack fix + the smoke-test contract update.
 - **docs/agent-spec-schema.yaml** moved to
   `docs/legacy/agent-spec-schema-cld-v1.yaml`. It documented the
   pre-v3 `cld-agent/v1` schema (`metadata.name`, `runtime: claude-code
-  | slurm | slurm-tenant`, `container:` block, `orochi:` block) which
+  | slurm | slurm-tenant`, `container:` block, an external-hub block) which
   is now rejected at load time. Kept under `docs/legacy/` for
   historical reference only.
 
 ### Added
 - **telegram fold (Phase 2 + Phase 3)** — the Telegram fold is now a
-  first-class sac feature. `TelegramBridge` is fully ported from orochi
+  first-class sac feature. `TelegramBridge` is fully ported from the
+  upstream fleet bridge
   (`_telegram/_bridge.py`): aiohttp long-poll against the Telegram Bot
   API, `allowed_users` filter enforced on inbound updates (empty list
   fails closed), and graceful shutdown that closes the API session and

@@ -7,8 +7,8 @@ Claude CLI refreshed the OAuth ``accessToken`` (~1h cadence), the refresh
 landed on that per-agent copy — not on the source snapshot. After the
 ~8h refresh-token TTL elapsed (or the per-agent copy drifted across
 restarts), every SDK turn 401'd. The telegram bridge still marked
-inbound 👀, but the agent could not complete a turn → silent. Hit hub,
-orochi, and proj-scitex-agent-container (revived only by restart).
+inbound 👀, but the agent could not complete a turn → silent. Hit the
+hub and multiple project agents (revived only by restart).
 
 Fix (operator-approved): mount the per-account live credential file
 DIRECTLY as a ``:rw`` bind. The agent always reads the latest token AND

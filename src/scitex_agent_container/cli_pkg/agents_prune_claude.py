@@ -10,7 +10,7 @@ on every start and surfaces a LOUD banner listing ``bloat_sources``
 copy-paste-able ``mv ...`` recipe. The operator gap is the copy-paste:
 they have to read the banner, eyeball the rel_path, and run the move
 by hand. In production that loop has stalled the recovery of multiple
-fleet members (proj-scitex-orochi at 41,873 files / 884 MB on
+fleet members (one agent workdir at 41,873 files / 884 MB on
 2026-06-03, see ``runtimes/claude_session.py:163-169``).
 
 This command closes that loop. For each ``bloat_sources`` entry the
@@ -182,7 +182,7 @@ def archive_claude_bloat(name: str) -> None:
 
     \b
     Examples:
-      $ sac agents archive-claude-bloat proj-scitex-orochi
+      $ sac agents archive-claude-bloat proj-heavy-agent
       $ sac agents archive-claude-bloat proj-grant
     """
     workdir = _resolve_agent_workdir(name)

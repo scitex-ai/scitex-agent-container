@@ -236,25 +236,22 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Always export the canonical fleet hostname so downstream consumers
-        # (orochi MCP sidecar, telegram, etc.) register with "mba" rather
-        # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
-        # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
-        # hostname() — this just hands it the canonical value.
-        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
+        # Always export the canonical fleet hostname so downstream
+        # consumers register with "mba" rather than the OS-reported FQDN
+        # ("Yusukes-MacBook-Air.local").
+        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving the hostname unset is safe because consumers fall back to their own hostname() call)
         try:
             from ..config._host import resolve_hostname
 
             _canonical = resolve_hostname()
             if _canonical:
-                lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
                 lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             # resolve_hostname falls through to socket.gethostname() short
             # form on misconfig; if even that raises, leave the env unset
-            # and let the sidecar fall back to its own hostname() call.
+            # and let consumers fall back to their own hostname() call.
             pass
-        # Cross-package env vars (e.g., orochi-side channel/auth config)
+        # Cross-package env vars (e.g., a fleet hub's channel/auth config)
         # are caller's concern: declare them in the agent YAML's env
         # block and they are exported above with the rest of config.env.
         return "\n".join(lines)
@@ -562,7 +559,7 @@ class ClaudeCodeRuntime(RuntimeBase):
         workdir = config.expanded_workdir
 
         # Source workspace .env before explicit env so path-based token vars
-        # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
+        # (a fleet hub's token-path vars, etc.) reach the agent process.
         # config.env exports follow and take precedence over .env values.
         env_file = Path(workdir) / ".env"
         env_source = (

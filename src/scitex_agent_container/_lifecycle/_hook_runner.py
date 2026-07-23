@@ -34,7 +34,7 @@ def _fire_forget_hook(
 
     Called alongside the legacy synchronous ``_run_hooks`` path so
     existing YAML pipes/redirects keep working unchanged while
-    external tools (orochi etc.) can additionally plug in via
+    external tools can additionally plug in via
     ``http(s)://`` URLs. The legacy path filters out URL entries to
     avoid double-dispatch of the same side-effect.
     """

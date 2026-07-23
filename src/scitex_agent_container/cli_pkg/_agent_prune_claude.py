@@ -21,7 +21,7 @@ Default mode prints what *would* be pruned without touching disk. Pass
 leisure once they've verified nothing live depends on the contents.
 
 The "park, don't delete" rule mirrors the manual triage we used on
-orochi + proj-scitex-agent-container; nothing in the prune path
+multiple project agents; nothing in the prune path
 forecloses operator review.
 """
 
@@ -664,8 +664,8 @@ def prune_claude(
 
     \b
     Examples:
-      $ sac agents prune-claude proj-scitex-orochi             # dry-run
-      $ sac agents prune-claude proj-scitex-orochi --apply
+      $ sac agents prune-claude proj-example             # dry-run
+      $ sac agents prune-claude proj-example --apply
       $ sac agents prune-claude proj-grant --pending-age-days 14 --json
     """
     workdir = _resolve_agent_workdir(name)

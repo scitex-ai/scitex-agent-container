@@ -1,9 +1,9 @@
 """Sac-local host & peer configuration (F-CS12).
 
 Lives at ``~/.scitex/agent-container/config.yaml`` (or under
-``$SCITEX_AGENT_CONTAINER_HOME/config.yaml``). Separate from any orochi
-config — sac never reaches out to orochi; orochi is a separate
-concern that pulls from sac via ssh.
+``$SCITEX_AGENT_CONTAINER_HOME/config.yaml``). Separate from any external
+orchestrator's config — sac never reaches out to one; an orchestrator is a
+separate concern that pulls from sac via ssh.
 
 YAML shape::
 

@@ -343,13 +343,13 @@ class TestClaudeBlock:
             tmp_path,
             {
                 "runtime": "apptainer",
-                "claude": {"channels": ["server:orochi-push"]},
+                "claude": {"channels": ["server:hub-push"]},
             },
         )
         # Act
         cfg = load_config(str(spec))
         # Assert
-        assert "server:orochi-push" in cfg.claude.channels
+        assert "server:hub-push" in cfg.claude.channels
 
     def test_claude_flags_round_trip(self, tmp_path):
         # Arrange

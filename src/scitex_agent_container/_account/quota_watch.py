@@ -17,8 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-from .claude_usage import fetch_usage
 from .._state.account_store import list_accounts, switch_account
+from .claude_usage import fetch_usage
 from .credentials import read_credentials_metadata
 
 logger = logging.getLogger(__name__)
@@ -219,7 +219,7 @@ def survival_mode_check(
 
     Single-account survival mode: only 1 account available in the store, and
     the current 5h quota usage has exceeded *warn_threshold*.  In this state
-    agents should suppress non-critical Orochi chatter to preserve quota for
+    agents should suppress non-critical fleet chatter to preserve quota for
     critical work.
 
     Returns:

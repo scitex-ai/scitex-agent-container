@@ -7,9 +7,9 @@ Token auto-generates at first run; printed once for the operator to
 copy. Subsequent runs reuse the token file.
 
 Loopback-only by default; non-loopback binds require the operator to
-agree they have an external transport (tunnel / VPN). See
-SAC_OROCHI_SCOPES.md §4.4 (orochi owns the cloudflared/autossh mesh —
-sac listen should not be reachable from public internet).
+agree they have an external transport (tunnel / VPN). The
+cloudflared/autossh mesh is the fleet operator's concern — sac listen
+should not be reachable from the public internet.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def _warn_bare_boot_deprecated() -> None:
     default=False,
     help=(
         "Permit binding to non-loopback addresses. Required for "
-        "tailscale/tunnel binds; orochi-side mesh is the supported transport."
+        "tailscale/tunnel binds; an external mesh is the supported transport."
     ),
 )
 @click.option(
@@ -196,8 +196,7 @@ def _do_start_listen(
     if not _is_loopback(host) and not allow_non_loopback:
         raise click.UsageError(
             f"--bind {host}:{port} is not loopback. Pass --allow-non-loopback "
-            "if you have an orochi-style tunnel arranged. See "
-            "SAC_OROCHI_SCOPES.md §4.4."
+            "if you have an external tunnel arranged."
         )
 
     from .._listen.server import create_app

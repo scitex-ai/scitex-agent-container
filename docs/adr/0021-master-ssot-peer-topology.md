@@ -18,8 +18,8 @@ per host**, and each one has already drifted its own way:
 - Spartan's `comms_nodes` / `peers` block was typed by hand during the
   spartan-dev placement (ADR-0020 step 6) and nothing keeps it aligned
   with the master since.
-- mba's config is an orochi-era relic (a symlink into the retired
-  orochi-shared layout carrying stale topology).
+- mba's config is a pre-sac relic (a symlink into the retired
+  fleet-shared layout carrying stale topology).
 - Nothing DETECTS any of this. A wrong `host.canonical` silently
   mis-scopes every state.db write on that host; a wrong reverse route
   silently breaks peer→master a2a.
@@ -167,7 +167,7 @@ the generated config says so in a comment beside it.
   (`--check` exits non-zero; the volatile push-timestamp line is the
   one ignored difference). Hand edits on peers stop being silent: the
   checker shouts and the next push refuses until `--adopt`.
-- The mba orochi-relic symlink is retired by adoption: `--adopt` backs
+- The mba relic symlink is retired by adoption: `--adopt` backs
   up the linked content on the peer, and the atomic `mv` lands a
   regular generated file in its place.
 - The master itself is protected organically: its own config carries no

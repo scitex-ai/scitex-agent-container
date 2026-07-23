@@ -31,12 +31,6 @@ air-gapped server. Part of `SciTeX <https://scitex.ai>`_.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Ecosystem
-
-   sac-and-orochi
-
-.. toctree::
-   :maxdepth: 2
    :caption: API Reference
 
    api/scitex_agent_container

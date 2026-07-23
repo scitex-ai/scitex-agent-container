@@ -6,8 +6,8 @@ session id from ``~/.scitex/agent-container/runtime/<name>/session_id``
 (persisted by the SDK runner) and ``cd``s into the agent's workdir
 before shelling out so claude's per-project session lookup resolves.
 
-v1 scope: bare-CLI passthrough. The follow-up implementation order in
-``GITIGNORED/SAC_OROCHI_SCOPES.md`` then exposes this through
+v1 scope: bare-CLI passthrough. The follow-up implementation order
+then exposes this through
 ``sac listen`` + ``POST /agents/<name>/send``.
 
 For programmatic callers that need a structured ``{status,
@@ -261,7 +261,7 @@ def send(
       sac agent send coverage-runner -- --model opus --max-turns 3 "..."
 
     Anything after a literal ``--`` is forwarded verbatim to ``claude``
-    (the raw escape hatch documented in SAC_OROCHI_SCOPES.md §1).
+    (the raw escape hatch).
     """
     if key and prompt:
         raise click.UsageError("--key is mutually exclusive with PROMPT.")
