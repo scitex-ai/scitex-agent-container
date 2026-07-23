@@ -20,6 +20,7 @@ from typing import Callable
 
 import click
 
+from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
@@ -263,6 +264,12 @@ def run_single_targets(
                         "with --yes to launch.",
                         style="yellow",
                     )
+                    # STARTUP_FAILED must never be minted for a decline (the
+                    # host listen's only signal on this subprocess is its
+                    # exit code, and this branch's sys.exit(1) below is
+                    # indistinguishable from a real launch failure without
+                    # this sentinel — see write_marker's guard).
+                    click.echo(DECLINE_SENTINEL, err=True)
                     refused = True
                     continue
 

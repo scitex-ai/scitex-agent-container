@@ -101,8 +101,15 @@ async def agent_status(request: Request) -> JSONResponse:
 
     marker = read_marker(sd)
     if marker is not None:
-        body["status"] = "startup_failed"
+        from .._lifecycle._startup_failed_supersede import liveness_since_failure
+
+        refuted_by = liveness_since_failure(
+            sd, marker, name=name, runtime_kind=str(getattr(cfg, "runtime", "") or "")
+        )
+        body["status"] = "startup_failed_superseded" if refuted_by else "startup_failed"
         body["startup_failed"] = marker
+        if refuted_by:
+            body["startup_failed_superseded_by"] = refuted_by
     # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
     # ``a2a_port`` + derived ``turn_url`` so a status poll yields the
     # same endpoint shape ``GET /agents`` does.

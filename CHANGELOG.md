@@ -6,6 +6,31 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `--yes`-less start refusal was recorded as a permanent STARTUP_FAILED**
+  (21 markers on the live fleet, at least 3 confirmed declines). The
+  brokered listen's only discriminator on the `sac agents start` subprocess
+  is its exit code, and a refusal exits 1 exactly like a real launch
+  failure — `write_marker` could not tell them apart. Fix, four pieces:
+  (1) the refusal branch (`cli_pkg/lifecycle/_start_single.py`) now emits a
+  shared sentinel (`_lifecycle._start_decline.DECLINE_SENTINEL`) that
+  `write_marker` matches and refuses to act on — not an exit-code test,
+  since a stale host `sac` binary is known to return rc=2 for an unrelated
+  reason; (2) `retract_marker` renames `STARTUP_FAILED` to
+  `STARTUP_FAILED.retracted` — never deletes, since the marker is the only
+  copy of its `stderr_tail`; (3) the ONE retraction call site is the
+  already-running no-op in `agent_start`, reached only on a positively
+  ALIVE liveness verdict — never on a bare `runtime.start()` returning
+  `True` (a background `Popen` or an existing tmux session name is not
+  evidence the agent came up); (4) `GET /agents/<name>/status` additionally
+  relabels a marker `startup_failed_superseded` when `heartbeat.json`'s
+  MTIME (PROCESS ALIVE) — never the `ts` payload field, which routinely
+  lags MTIME by tens of thousands of seconds for an idle agent — postdates
+  `failed_at` by at least one staleness window. Existing markers are
+  untouched by this change; each is superseded/retracted only the next
+  time its own agent is observed alive.
+
 ### Added
 
 - **Detector: agent overlays that silently mask a base-baked package**

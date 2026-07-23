@@ -302,12 +302,15 @@ async def agents_start(request: Request) -> JSONResponse:
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             pass
 
+        from .._lifecycle._start_decline import start_was_declined
+
         return JSONResponse(
             {
                 "name": name,
                 "returncode": proc.returncode,
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
+                "declined": start_was_declined(proc.stdout, proc.stderr),
             },
             status_code=502,
         )
