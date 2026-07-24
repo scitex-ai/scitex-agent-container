@@ -173,6 +173,40 @@ def test_known_but_capped_fleet_returns_least_bad_not_raise(_isolate_home):
     assert picked in {"wyusuuke-gmail-com", "ywatanabe-scitex-ai"}
 
 
+def test_blind_pin_with_sighted_near_capped_siblings_boots_on_a_sighted_one(
+    _isolate_home,
+):
+    # Arrange: the 2026-07-25 incident shape. The pinned account is BLIND
+    # (cancelled — its usage fetch FAILED so the cache has no entry), and
+    # every sighted sibling is near-capped (7d ≥ 90). The blind account's
+    # tier (not blocked, not near-capped, d7-unknown) sorts AHEAD of the
+    # sighted-but-capped tier, so without the sighted-pool restriction the
+    # ranking hands the gate a blind winner and the boot is refused even
+    # though a verifiable least-bad account exists.
+    home = _isolate_home
+    now = 1_784_530_000.0
+    for name in ("wyusuuke-gmail-com", "ywata1989-gmail-com", "ywatanabe-scitex-ai"):
+        _write_fresh_snapshot(home, name, now)
+
+    # Act: under the gate, blind candidates must not displace sighted ones.
+    picked = pick_healthy_account(
+        "wyusuuke-gmail-com",  # blind pin (no cached quota at all)
+        candidates=[
+            "wyusuuke-gmail-com",
+            "ywata1989-gmail-com",
+            "ywatanabe-scitex-ai",
+        ],
+        home=home,
+        now=now,
+        usage_5h={"ywata1989-gmail-com": 0.0, "ywatanabe-scitex-ai": 1.0},
+        usage_7d={"ywata1989-gmail-com": 100.0, "ywatanabe-scitex-ai": 90.0},
+        require_quota_evidence=True,
+    )
+
+    # Assert: least-bad SIGHTED account (lowest 7d %), not a refusal.
+    assert picked == "ywatanabe-scitex-ai"
+
+
 def test_blind_pick_error_names_the_selected_account(_isolate_home):
     # Arrange: a single fresh account with no quota evidence.
     home = _isolate_home
