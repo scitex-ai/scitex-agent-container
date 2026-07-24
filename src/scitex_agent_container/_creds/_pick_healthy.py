@@ -231,9 +231,13 @@ def pick_healthy_account(
         preflight) a fully-BLIND selection — the picked account has
         NEITHER a cached 5h NOR a cached 7d utilisation — raises
         :class:`NoHealthyAccountError` instead of booting an unverifiable
-        account. This fires only when the cache is empty for EVERY fresh
-        candidate (a known-headroom account would have won the ranking);
-        a fleet with known-but-busy quota still returns least-bad.
+        account. Blind candidates are also excluded from the ranking while
+        any SIGHTED (cached-quota) candidate exists — a blind account can
+        never pass the gate, so it must not displace one that can (even a
+        near-capped one: least-bad sighted beats unverifiable). The gate
+        therefore fires only when the cache is empty for EVERY fresh
+        candidate; a fleet with known-but-busy quota still returns
+        least-bad.
 
     Returns
     -------
@@ -370,9 +374,26 @@ def pick_healthy_account(
     #    load-balances the winning tier across the fleet. Quota is a
     #    preference, not a hard gate: an all-blocked fleet still returns
     #    the least-bad fresh account.
+    #
+    #    Under require_quota_evidence a BLIND candidate (no cached 5h AND
+    #    no cached 7d) can never boot — the gate below refuses it — so it
+    #    must not displace a SIGHTED one in the ranking either. Without
+    #    this restriction the tier order (d7-unknown sorts ahead of
+    #    near-capped) hands the gate a blind winner whenever every sighted
+    #    account is near-capped, and the boot is refused even though a
+    #    verifiable least-bad account exists (2026-07-25 incident: a
+    #    cancelled account's usage fetch FAILED → no cache entry → it
+    #    outranked two 7d≥90% siblings and blocked the restart).
     if picked is None:
+        rank_pool = [h.name for h in fresh]
+        if require_quota_evidence:
+            sighted = [
+                n for n in rank_pool if u5.get(n) is not None or u7.get(n) is not None
+            ]
+            if sighted:
+                rank_pool = sighted
         picked = pick_ranked(
-            [h.name for h in fresh],
+            rank_pool,
             u5,
             u7,
             reset_7d=r7,
@@ -388,11 +409,12 @@ def pick_healthy_account(
     #    never collapsed into "OK"). Under require_quota_evidence, if the
     #    selected account has NEITHER a cached 5h NOR a cached 7d reading,
     #    the quota cache told us nothing about it and we cannot confirm it
-    #    has headroom. Because the ranking prefers a known account over an
-    #    unknown one, a blind winner means EVERY fresh candidate is blind
-    #    (an empty/absent cache) — the 2026-07-20 incident, where the pick
-    #    read "5h=? 7d=?" and booted a 7d=100% account. Refuse rather than
-    #    boot blind; a fleet with known-but-busy quota is unaffected.
+    #    has headroom. Because the ranking above is restricted to sighted
+    #    candidates whenever any exist, a blind winner means EVERY fresh
+    #    candidate is blind (an empty/absent cache) — the 2026-07-20
+    #    incident, where the pick read "5h=? 7d=?" and booted a 7d=100%
+    #    account. Refuse rather than boot blind; a fleet with
+    #    known-but-busy quota is unaffected.
     if require_quota_evidence and u5.get(picked) is None and u7.get(picked) is None:
         raise NoHealthyAccountError(
             f"quota cache is blind for the selected account {picked!r} "
