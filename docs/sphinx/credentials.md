@@ -33,16 +33,14 @@ SAC uses the nested `spec.claude.provider` backend axis for this mode. Do not
 set the top-level `spec.provider: openai`: that selects the OpenAI Agents SDK
 and replaces the Claude Code harness.
 
-Start the scitex-genai gateway with its account homes and a local gateway key:
+Install the gateway extra and collect the current Codex login once:
 
 ```bash
 pip install 'scitex-agent-container[codex]'
 sac accounts sync-openai
-export SCITEX_GENAI_GATEWAY_API_KEY="$(openssl rand -hex 32)"
-scitex-genai-gateway --host 127.0.0.1 --port 18765
 ```
 
-Then declare the backend in an agent spec:
+Then declare the backend in an agent spec and start it normally:
 
 ```yaml
 spec:
@@ -54,6 +52,17 @@ spec:
       - --dangerously-skip-permissions
       - --effort=medium
 ```
+
+```bash
+sac agents start my-codex-agent
+```
+
+On first use, SAC generates a mode-0600 local-hop key under
+`~/.scitex/agent-container/runtime/codex-gateway/` and starts the shared
+gateway on `127.0.0.1:18765`. Later Codex-backed agents reuse it. If a gateway
+was started manually, SAC verifies it with `SCITEX_GENAI_GATEWAY_API_KEY`
+resolved from the shell or `$HOME/.env`, then stores that key privately for
+later starts; it never guesses past a key mismatch.
 
 The gateway discovers the collected Codex homes, keeps sessions sticky, ranks
 accounts by available usage-window headroom, spreads concurrent sessions, and
