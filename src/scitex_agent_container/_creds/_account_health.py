@@ -45,6 +45,16 @@ class NoHealthyAccountError(RuntimeError):
     """
 
 
+class BlindQuotaCacheError(NoHealthyAccountError):
+    """Raised when boot requires quota evidence but the cache has none.
+
+    This typed subtype lets the lifecycle layer distinguish a recoverable
+    cache-population problem from expired or absent credentials.  The pure
+    picker remains read-only; ``sac agents start`` may catch this condition,
+    refresh the cache once, and retry the same decision.
+    """
+
+
 @dataclass(frozen=True)
 class AccountHealth:
     """Health of one stored account's credential snapshot.
@@ -195,6 +205,7 @@ def _format_states(healths: list[AccountHealth]) -> str:
 
 __all__ = [
     "AccountHealth",
+    "BlindQuotaCacheError",
     "NoHealthyAccountError",
     "account_health",
 ]
