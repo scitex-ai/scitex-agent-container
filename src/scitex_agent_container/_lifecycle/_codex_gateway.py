@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Callable, Iterator
 
 from scitex_config import PriorityConfig, load_dotenv
 
@@ -95,7 +95,12 @@ def _write_private(path: Path, value: str) -> None:
             pass
 
 
-def _configured_key() -> str:
+def _configured_key(config: AgentConfig) -> str:
+    declared = str(
+        getattr(getattr(config.claude, "provider", None), "auth_token", "") or ""
+    ).strip()
+    if declared and declared.lower() != "auto":
+        return declared
     load_dotenv(dotenv_path=str(Path.home() / ".env"))
     return str(
         PriorityConfig(auto_uppercase=False).resolve(key=_AUTH_ENV, default="") or ""
@@ -138,7 +143,17 @@ def _tail(path: Path, lines: int = 12) -> str:
         return ""
 
 
-def ensure_codex_gateway(config: AgentConfig, *, wait_seconds: float = 8.0) -> None:
+def ensure_codex_gateway(
+    config: AgentConfig,
+    *,
+    wait_seconds: float = 8.0,
+    runtime_dir: Path | None = None,
+    configured_key_fn: Callable[[AgentConfig], str] | None = None,
+    health_fn: Callable[[str], bool] | None = None,
+    accepts_key_fn: Callable[[str, str], bool] | None = None,
+    executable_resolver: Callable[[str], str | None] | None = None,
+    popen_fn: Callable[..., Any] | None = None,
+) -> None:
     """Ensure the registered Codex gateway is authenticated and ready.
 
     Non-Codex configs are untouched.  The generated key is a host-local
@@ -150,21 +165,26 @@ def ensure_codex_gateway(config: AgentConfig, *, wait_seconds: float = 8.0) -> N
 
     provider = config.claude.provider
     base_url = str(provider.base_url).rstrip("/")
-    runtime_dir = _runtime_dir()
+    runtime_dir = runtime_dir or _runtime_dir()
+    configured_key_fn = configured_key_fn or _configured_key
+    health_fn = health_fn or _health
+    accepts_key_fn = accepts_key_fn or _accepts_key
+    executable_resolver = executable_resolver or shutil.which
+    popen_fn = popen_fn or subprocess.Popen
     key_path = runtime_dir / "api-key"
     log_path = runtime_dir / "gateway.log"
     pid_path = runtime_dir / "gateway.pid"
 
     with _launch_lock(runtime_dir):
-        key = _configured_key() or _read_persisted_key(key_path)
-        if _health(base_url):
+        key = configured_key_fn(config) or _read_persisted_key(key_path)
+        if health_fn(base_url):
             if not key:
                 raise CodexGatewayError(
                     f"A Codex gateway is already running at {base_url}, but SAC "
                     f"cannot recover its local-hop key. Set {_AUTH_ENV} in the "
                     "launch shell or $HOME/.env, or stop that gateway and retry."
                 )
-            if not _accepts_key(base_url, key):
+            if not accepts_key_fn(base_url, key):
                 raise CodexGatewayError(
                     f"The Codex gateway at {base_url} rejects SAC's configured "
                     f"{_AUTH_ENV}. Use the key that started the gateway, or stop "
@@ -183,7 +203,7 @@ def ensure_codex_gateway(config: AgentConfig, *, wait_seconds: float = 8.0) -> N
         _write_private(key_path, key)
         os.environ[_AUTH_ENV] = key
 
-        executable = shutil.which("scitex-genai-gateway")
+        executable = executable_resolver("scitex-genai-gateway")
         if not executable:
             raise CodexGatewayError(
                 "Cannot auto-start the Codex gateway: scitex-genai-gateway is "
@@ -195,7 +215,7 @@ def ensure_codex_gateway(config: AgentConfig, *, wait_seconds: float = 8.0) -> N
         log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with log_path.open("wb") as log_file:
-                process = subprocess.Popen(
+                process = popen_fn(
                     [
                         executable,
                         "--host",
@@ -220,7 +240,7 @@ def ensure_codex_gateway(config: AgentConfig, *, wait_seconds: float = 8.0) -> N
 
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
-            if _health(base_url) and _accepts_key(base_url, key):
+            if health_fn(base_url) and accepts_key_fn(base_url, key):
                 return
             if process.poll() is not None:
                 break
