@@ -16,9 +16,11 @@ agent.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .._usage_period import parse_usage_timestamp, timestamp_in_period
 from .claude_pricing import PRICE_SOURCE, PRICE_VERSION, estimate_message_cost_usd
 
 
@@ -32,6 +34,10 @@ def _zero_usage() -> dict[str, Any]:
         "transcript_files": 0,
         "first_observed_at": None,
         "last_observed_at": None,
+        "retained_first_observed_at": None,
+        "retained_last_observed_at": None,
+        "timestamped_messages": 0,
+        "untimestamped_messages": 0,
         "estimated_api_cost_usd": None,
         "cost_estimate_complete": False,
         "priced_messages": 0,
@@ -85,7 +91,13 @@ def _server_tool_requests(usage: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
+def read_claude_code_usage(
+    home: Path | None,
+    agent: str,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> dict[str, Any]:
     """Aggregate unique assistant-message usage below one Claude Code home.
 
     UUID de-duplication prevents a branched session copied into multiple
@@ -130,15 +142,28 @@ def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
-                out["assistant_messages"] += 1
                 timestamp = record.get("timestamp")
-                if isinstance(timestamp, str) and timestamp:
+                timestamp_dt = parse_usage_timestamp(timestamp)
+                if timestamp_dt is None:
+                    out["untimestamped_messages"] += 1
+                else:
+                    out["timestamped_messages"] += 1
+                    retained_first = out["retained_first_observed_at"]
+                    retained_last = out["retained_last_observed_at"]
+                    if retained_first is None or timestamp_dt < retained_first[0]:
+                        out["retained_first_observed_at"] = (timestamp_dt, timestamp)
+                    if retained_last is None or timestamp_dt > retained_last[0]:
+                        out["retained_last_observed_at"] = (timestamp_dt, timestamp)
+                if not timestamp_in_period(timestamp_dt, since, until):
+                    continue
+                out["assistant_messages"] += 1
+                if timestamp_dt is not None:
                     first = out["first_observed_at"]
                     last = out["last_observed_at"]
-                    if first is None or timestamp < first:
-                        out["first_observed_at"] = timestamp
-                    if last is None or timestamp > last:
-                        out["last_observed_at"] = timestamp
+                    if first is None or timestamp_dt < first[0]:
+                        out["first_observed_at"] = (timestamp_dt, timestamp)
+                    if last is None or timestamp_dt > last[0]:
+                        out["last_observed_at"] = (timestamp_dt, timestamp)
                 for key in (
                     "input_tokens",
                     "output_tokens",
@@ -182,12 +207,21 @@ def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
     }
     out["unpriced_models"].sort()
     out["server_tool_requests"] = dict(sorted(out["server_tool_requests"].items()))
+    for key in (
+        "first_observed_at",
+        "last_observed_at",
+        "retained_first_observed_at",
+        "retained_last_observed_at",
+    ):
+        stamped = out[key]
+        out[key] = stamped[1] if stamped is not None else None
     out["cost_estimate_complete"] = (
         out["priced_messages"] > 0
         and out["unpriced_messages"] == 0
         and not out["server_tool_requests"]
     )
-    _read_statusline(Path(home), agent, out)
+    if since is None and until is None:
+        _read_statusline(Path(home), agent, out)
     if not paths and out["current_session_id"] is None:
         out["error"] = "no Claude Code usage state recorded yet"
     return out

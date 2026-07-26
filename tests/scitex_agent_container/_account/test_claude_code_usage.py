@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scitex_agent_container._account.claude_code_usage import (
@@ -142,6 +143,67 @@ def test_reader_reports_assistant_usage_timestamp_window(tmp_path: Path) -> None
         usage["first_observed_at"],
         usage["last_observed_at"],
     ) == ("2026-06-27T19:39:10.285Z", "2026-07-26T12:48:50.048Z")
+
+
+def test_reader_filters_usage_to_half_open_period(tmp_path: Path) -> None:
+    # Arrange
+    _write_transcript(
+        tmp_path,
+        [
+            _assistant(
+                "before",
+                timestamp="2026-07-26T09:59:59Z",
+                input_tokens=100,
+            ),
+            _assistant(
+                "inside",
+                timestamp="2026-07-26T10:00:00Z",
+                input_tokens=10,
+            ),
+            _assistant(
+                "at-end",
+                timestamp="2026-07-26T11:00:00Z",
+                input_tokens=1_000,
+            ),
+        ],
+    )
+    # Act
+    usage = read_claude_code_usage(
+        tmp_path,
+        "sales",
+        since=datetime(2026, 7, 26, 10, tzinfo=timezone.utc),
+        until=datetime(2026, 7, 26, 11, tzinfo=timezone.utc),
+    )
+    # Assert
+    assert (usage["input_tokens"], usage["assistant_messages"]) == (10, 1)
+
+
+def test_reader_excludes_untimestamped_messages_from_period(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    _write_transcript(tmp_path, [_assistant("legacy", input_tokens=10)])
+    # Act
+    usage = read_claude_code_usage(
+        tmp_path,
+        "sales",
+        since=datetime(2026, 7, 26, tzinfo=timezone.utc),
+    )
+    # Assert
+    assert (usage["input_tokens"], usage["untimestamped_messages"]) == (0, 1)
+
+
+def test_reader_omits_current_session_cost_from_period(tmp_path: Path) -> None:
+    # Arrange
+    _write_statusline(tmp_path, "sales", 0.012345)
+    # Act
+    usage = read_claude_code_usage(
+        tmp_path,
+        "sales",
+        since=datetime(2026, 7, 26, tzinfo=timezone.utc),
+    )
+    # Assert
+    assert usage["current_session_cost_usd"] is None
 
 
 def test_reader_ignores_malformed_and_non_assistant_records(

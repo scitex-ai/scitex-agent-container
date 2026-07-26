@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -65,7 +66,7 @@ def test_payload_totals_all_token_classes(tmp_path: Path) -> None:
     # Act
     payload = build_usage_payload("sales", state_dir=state_dir, home=tmp_path)
     # Assert
-    assert payload["tokens"]["total"] == 145
+    assert payload["tokens"]["total"] == 395
 
 
 def test_payload_combines_sdk_and_tui_tokens(tmp_path: Path) -> None:
@@ -82,7 +83,7 @@ def test_payload_combines_sdk_and_tui_tokens(tmp_path: Path) -> None:
         agent_home=agent_home,
     )
     # Assert
-    assert payload["tokens"]["total"] == 173
+    assert payload["tokens"]["total"] == 423
 
 
 def test_payload_reports_provider_cost(tmp_path: Path) -> None:
@@ -164,6 +165,81 @@ def test_payload_reports_transcript_coverage_window(tmp_path: Path) -> None:
     assert payload["coverage"]["first_observed_at"] == "2026-07-26T12:48:50.048Z"
 
 
+def test_payload_filters_claude_tokens_by_period(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    agent_home = tmp_path / "agent-home"
+    _seed_tui_usage(agent_home)
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        agent_home=agent_home,
+        since="2026-07-26T12:00:00Z",
+        until="2026-07-26T13:00:00Z",
+    )
+    # Assert
+    assert payload["tokens"]["total"] == 28
+
+
+def test_payload_period_is_half_open(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    agent_home = tmp_path / "agent-home"
+    _seed_tui_usage(agent_home)
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        agent_home=agent_home,
+        until="2026-07-26T12:48:50.048Z",
+    )
+    # Assert
+    assert payload["tokens"]["total"] == 0
+
+
+def test_payload_filters_openai_tokens_by_period(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    record_usage(
+        {"requests": 1, "input_tokens": 200, "output_tokens": 50},
+        model="gpt-4o-mini",
+        agent="sales",
+        home=tmp_path,
+        now=datetime(2026, 7, 26, 12, tzinfo=timezone.utc),
+    )
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        since="2026-07-26T00:00:00Z",
+        until="2026-07-27T00:00:00Z",
+    )
+    # Assert
+    assert payload["tokens"]["total"] == 250
+
+
+def test_payload_rejects_reversed_period(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    # Act / Assert
+    try:
+        build_usage_payload(
+            "sales",
+            state_dir=state_dir,
+            home=tmp_path,
+            since="2026-07-27T00:00:00Z",
+            until="2026-07-26T00:00:00Z",
+        )
+    except ValueError as exc:
+        assert "--since must be earlier" in str(exc)
+    else:
+        raise AssertionError("reversed usage period was accepted")
+
+
 def test_payload_missing_cost_is_not_silent_zero(tmp_path: Path) -> None:
     # Arrange
     state_dir = tmp_path / "runtime" / "ghost"
@@ -219,6 +295,39 @@ def test_usage_human_labels_unknown_coverage() -> None:
     result = runner.invoke(agents_usage, ["ghost"])
     # Assert
     assert "First observed (UTC)" in result.output
+
+
+def test_usage_human_displays_requested_period() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        agents_usage,
+        ["ghost", "--since", "2026-07-26T00:00:00Z"],
+    )
+    # Assert
+    assert "Period start (UTC, inclusive)" in result.output
+
+
+def test_usage_rejects_last_with_explicit_period() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        agents_usage,
+        ["ghost", "--last", "1h", "--since", "2026-07-26"],
+    )
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_usage_rejects_invalid_period_timestamp() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agents_usage, ["ghost", "--since", "yesterdayish"])
+    # Assert
+    assert result.exit_code == 2
 
 
 def test_jpy_display_uses_conventional_half_up_rounding() -> None:

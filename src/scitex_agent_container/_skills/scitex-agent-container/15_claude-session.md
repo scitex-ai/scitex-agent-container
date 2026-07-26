@@ -47,7 +47,7 @@ Same lifecycle CLI surface across every agent (`sac agents start`,
 | TUI prompts | none — `permission_mode='bypassPermissions'` (no auto-accept needed) |
 | Hooks | Python async callbacks (`_runners/_session_hooks.py`) |
 | Resume | `ClaudeAgentOptions(resume=...)` auto-loaded from `state_dir/session_id` |
-| Usage | accumulated tokens and provider-reported cost from SDK result blocks; inspect with `sac agents usage <name>` |
+| Usage | accumulated or period-filtered tokens and provider-reported cost from SDK result blocks; inspect with `sac agents usage <name>` |
 | Auth | `~/.claude/.credentials.json` OAuth (flat-rate) or `SAC_ANTHROPIC_API_KEY` — see below |
 | Human attach | `--foreground` / `sac agents tail` |
 
@@ -100,6 +100,8 @@ SDK takes a one-shot prompt, not a timed sequence.
 sac agents start my-agent          # detach, returns once PID file lands
 sac agents status my-agent    # heartbeat + sdk_session block
 sac agents usage my-agent     # tokens + cost sources (not a subscription invoice)
+sac agents usage my-agent --last 24h
+sac agents usage my-agent --since 2026-07-26T00:00:00Z --until 2026-07-27T00:00:00Z
 sac agents tail my-agent      # rendered transcript from session.jsonl
 sac agents stop my-agent
 ```

@@ -292,6 +292,33 @@ def test_read_agent_spend_missing_agent_is_explicit(tmp_path: Path):
     assert "no OpenAI spend recorded" in result["error"]
 
 
+def test_read_agent_spend_filters_timestamped_events(tmp_path: Path):
+    # Arrange
+    record_usage(
+        _TURN,
+        model="gpt-4o-mini",
+        agent="alpha",
+        home=tmp_path,
+        now=datetime(2026, 7, 25, 12, tzinfo=timezone.utc),
+    )
+    record_usage(
+        _TURN,
+        model="gpt-4o-mini",
+        agent="alpha",
+        home=tmp_path,
+        now=datetime(2026, 7, 26, 12, tzinfo=timezone.utc),
+    )
+    # Act
+    result = read_agent_spend(
+        "alpha",
+        home=tmp_path,
+        since=datetime(2026, 7, 26, tzinfo=timezone.utc),
+        until=datetime(2026, 7, 27, tzinfo=timezone.utc),
+    )
+    # Assert
+    assert (result["requests"], result["estimated_cost_usd"]) == (1, 0.75)
+
+
 # ---------------------------------------------------------------------------
 # read_spend
 # ---------------------------------------------------------------------------

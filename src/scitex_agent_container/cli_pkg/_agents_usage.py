@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 from rich.table import Table
 
+from .._usage_period import (
+    require_usage_timestamp,
+    usage_timestamp_iso,
+)
+from ._agents_usage_period import build_usage_coverage, period_omissions
 from ._helpers import agent_name_complete, console
 
 
@@ -65,9 +71,13 @@ def _resolve_claude_code_home(
     return next((path for path in candidates if path.is_dir()), None)
 
 
-def _combined_tokens(quota: dict, tui: dict) -> dict[str, int]:
+def _combined_tokens(quota: dict, tui: dict, openai: dict) -> dict[str, int]:
     return {
-        key: int(quota.get(key, 0) or 0) + int(tui.get(key, 0) or 0)
+        key: (
+            int(quota.get(key, 0) or 0)
+            + int(tui.get(key, 0) or 0)
+            + int(openai.get(key, 0) or 0)
+        )
         for key in (
             "input_tokens",
             "output_tokens",
@@ -85,25 +95,59 @@ def build_usage_payload(
     agent_home: Path | None = None,
     usd_jpy_rate: float | None = None,
     fetch_fx: bool = False,
+    since: str | datetime | None = None,
+    until: str | datetime | None = None,
 ) -> dict:
     """Build the stable token/cost payload for one agent."""
     from .._account.claude_code_usage import read_claude_code_usage
     from .._account.exchange_rates import resolve_usd_jpy_rate
     from .._account.openai_usage import read_agent_spend
     from .._lifecycle._session_movement import resolve_state_dir
-    from .._runners._session_quota import read_quota
+    from .._runners._session_quota import read_quota, read_quota_period
+
+    since_dt = require_usage_timestamp(since, "--since") if since is not None else None
+    until_dt = require_usage_timestamp(until, "--until") if until is not None else None
+    if since_dt is not None and until_dt is not None and since_dt >= until_dt:
+        raise ValueError("--since must be earlier than --until")
+    filtered = since_dt is not None or until_dt is not None
 
     resolved = state_dir if state_dir is not None else resolve_state_dir(name)
-    quota = read_quota(resolved)
+    if filtered:
+        quota = read_quota_period(resolved, since=since_dt, until=until_dt)
+    else:
+        quota = read_quota(resolved)
+        quota_history = read_quota_period(resolved)
+        for key in (
+            "first_observed_at",
+            "last_observed_at",
+            "retained_first_observed_at",
+            "retained_last_observed_at",
+            "timestamped_turns",
+            "untimestamped_turns",
+            "cumulative_turns",
+            "history_matches_cumulative_totals",
+            "error",
+        ):
+            quota[key] = quota_history[key]
     host_home = Path(home) if home is not None else Path.home()
     tui_home = (
         Path(agent_home)
         if agent_home is not None
         else _resolve_claude_code_home(name, resolved, host_home)
     )
-    tui = read_claude_code_usage(tui_home, name)
-    openai = read_agent_spend(name, home=host_home)
-    raw_tokens = _combined_tokens(quota, tui)
+    tui = read_claude_code_usage(
+        tui_home,
+        name,
+        since=since_dt,
+        until=until_dt,
+    )
+    openai = read_agent_spend(
+        name,
+        home=host_home,
+        since=since_dt,
+        until=until_dt,
+    )
+    raw_tokens = _combined_tokens(quota, tui, openai)
     tokens = {
         "input": raw_tokens["input_tokens"],
         "output": raw_tokens["output_tokens"],
@@ -129,22 +173,27 @@ def build_usage_payload(
         if claude_estimate is not None and fx["rate"] is not None
         else None
     )
+    coverage = build_usage_coverage(
+        quota,
+        tui,
+        openai,
+        since=since_dt,
+        until=until_dt,
+    )
     return {
         "agent": name,
+        "period": {
+            "since": usage_timestamp_iso(since_dt),
+            "until": usage_timestamp_iso(until_dt),
+            "until_exclusive": True,
+        },
         "tokens": tokens,
         "activity": {
             "sdk_turns": int(quota.get("turns", 0) or 0),
             "claude_code_assistant_messages": tui["assistant_messages"],
             "openai_requests": openai["requests"],
         },
-        "coverage": {
-            "first_observed_at": tui["first_observed_at"],
-            "last_observed_at": tui["last_observed_at"],
-            "basis": (
-                "all retained local usage state; Claude Code timestamps cover "
-                "transcript-derived tokens"
-            ),
-        },
+        "coverage": coverage,
         "cost": {
             "currency": "USD",
             "sdk_provider_reported_usd": (
@@ -203,6 +252,7 @@ def _render_human(payload: dict) -> None:
     activity = payload["activity"]
     coverage = payload["coverage"]
     cost = payload["cost"]
+    period = payload["period"]
     table = Table(title=f"Agent usage: {payload['agent']}")
     table.add_column("Counter", style="bold")
     table.add_column("Value", justify="right")
@@ -246,6 +296,15 @@ def _render_human(payload: dict) -> None:
         "OpenAI estimated cost (USD)",
         _fmt_cost(cost["openai_estimated_usd"]),
     )
+    if period["since"] is not None or period["until"] is not None:
+        table.add_row(
+            "Period start (UTC, inclusive)",
+            period["since"] or "unbounded",
+        )
+        table.add_row(
+            "Period end (UTC, exclusive)",
+            period["until"] or "unbounded",
+        )
     table.add_row(
         "First observed (UTC)",
         _fmt_timestamp(coverage["first_observed_at"]),
@@ -256,6 +315,13 @@ def _render_human(payload: dict) -> None:
     )
     console.print(table)
     console.print(f"[dim]Coverage: {coverage['basis']}.[/dim]")
+    omissions = period_omissions(payload)
+    if omissions:
+        console.print(
+            "[yellow]Excluded legacy usage without period timestamps: "
+            + "; ".join(omissions)
+            + ".[/yellow]"
+        )
     console.print(f"[dim]{payload['note']}[/dim]")
 
 
@@ -294,6 +360,24 @@ def _fmt_timestamp(value: str | None) -> str:
 @click.argument("name", shell_complete=agent_name_complete)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option(
+    "--last",
+    type=str,
+    default=None,
+    help="Count only the last duration from now (for example 30m, 24h, 7d).",
+)
+@click.option(
+    "--since",
+    type=str,
+    default=None,
+    help="Inclusive ISO-8601 period start (UTC when no offset is supplied).",
+)
+@click.option(
+    "--until",
+    type=str,
+    default=None,
+    help="Exclusive ISO-8601 period end (UTC when no offset is supplied).",
+)
+@click.option(
     "--usd-jpy-rate",
     type=click.FloatRange(min=0.000001, min_open=False),
     default=None,
@@ -302,8 +386,15 @@ def _fmt_timestamp(value: str | None) -> str:
         "ECB reference rate."
     ),
 )
-def agents_usage(name: str, as_json: bool, usd_jpy_rate: float | None) -> None:
-    """Show an agent's accumulated token usage and cost estimates.
+def agents_usage(
+    name: str,
+    as_json: bool,
+    last: str | None,
+    since: str | None,
+    until: str | None,
+    usd_jpy_rate: float | None,
+) -> None:
+    """Show accumulated or period-filtered agent token usage and costs.
 
     Reads SDK quota state and Claude Code TUI transcripts. Costs remain
     separated by scope: SDK accumulated, Claude Code current-session,
@@ -313,14 +404,38 @@ def agents_usage(name: str, as_json: bool, usd_jpy_rate: float | None) -> None:
     \b
     Example:
       $ sac agents usage sales
+      $ sac agents usage sales --last 24h
+      $ sac agents usage sales --since 2026-07-26T00:00:00Z
+      $ sac agents usage sales --since 2026-07-01 --until 2026-08-01
       $ sac agents usage sales --json
       $ sac agents usage sales --usd-jpy-rate 160
     """
-    payload = build_usage_payload(
-        name,
-        usd_jpy_rate=usd_jpy_rate,
-        fetch_fx=True,
-    )
+    if last is not None and (since is not None or until is not None):
+        raise click.UsageError("--last cannot be combined with --since or --until")
+    try:
+        since_dt = (
+            require_usage_timestamp(since, "--since") if since is not None else None
+        )
+        until_dt = (
+            require_usage_timestamp(until, "--until") if until is not None else None
+        )
+        if last is not None:
+            from .._state.recall import parse_duration
+
+            duration = parse_duration(last)
+            until_dt = datetime.now(timezone.utc)
+            since_dt = until_dt - duration
+        if since_dt is not None and until_dt is not None and since_dt >= until_dt:
+            raise ValueError("--since must be earlier than --until")
+        payload = build_usage_payload(
+            name,
+            usd_jpy_rate=usd_jpy_rate,
+            fetch_fx=True,
+            since=since_dt,
+            until=until_dt,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
     if as_json:
         click.echo(json.dumps(payload, indent=2))
         return

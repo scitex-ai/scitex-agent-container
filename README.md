@@ -228,6 +228,8 @@ sac agents status [<name>] [--snapshot] [--priority]   # fleet view if no name; 
 sac agents list   [<name>]                # alias of `status` (same renderer)
 sac agents health <name>
 sac agents usage  <name> [--json]         # accumulated tokens + honest cost sources
+sac agents usage  <name> --last 24h       # wall-clock window ending now
+sac agents usage  <name> --since ISO [--until ISO]  # UTC [since, until)
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary
 sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
@@ -300,16 +302,26 @@ sac list-python-apis                      # enumerate public Python API
 sac --help-recursive                      # full subcommand tree
 ```
 
-`sac agents usage` reads both supported execution shapes: SDK
-`quota.json` counters and Claude Code TUI project transcripts. It reports
-provider-reported SDK cost, Claude Code's current-session cost, a historical
-Claude API-equivalent list-price estimate in USD and JPY, and the OpenAI
-runner's local list-price estimate separately. USD/JPY resolves from
+`sac agents usage` reads SDK `quota.json` counters and result journals,
+Claude Code TUI project transcripts, and the OpenAI runner's local ledger. It
+reports provider-reported SDK cost, Claude Code's current-session cost, a
+historical Claude API-equivalent list-price estimate in USD and JPY, and the
+OpenAI runner's local list-price estimate separately. USD/JPY resolves from
 `--usd-jpy-rate`, `SAC_USD_JPY_RATE`, or a daily cached ECB reference rate.
 These are usage metrics—not subscription fees and not an invoice—so missing
 cost data is shown as `unavailable`, never as a silent `$0`. The human and
 JSON outputs also show the earliest and latest retained Claude Code usage
 timestamps, making the historical coverage explicit.
+
+Use `--last 30m`, `--last 24h`, or `--last 7d` for a window ending at the
+current wall-clock time. For an explicit interval, use `--since` and
+optionally `--until` with ISO-8601 timestamps; offsets are accepted and a
+missing offset means UTC. The interval is half-open: `--since` is inclusive
+and `--until` is exclusive. Period reports count timestamped Claude Code
+messages, SDK result records, and OpenAI per-agent events. Older
+cumulative-only records cannot be assigned to a period, so they are excluded
+and called out in the coverage metadata instead of being mixed into the
+window.
 
 </details>
 

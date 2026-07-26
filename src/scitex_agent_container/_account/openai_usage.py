@@ -46,6 +46,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .._usage_period import (
+    parse_usage_timestamp,
+    usage_timestamp_iso,
+)
+
 _CACHE_TTL_SECONDS = 300  # 5 minutes — matches claude_usage
 _COSTS_URL = "https://api.openai.com/v1/organization/costs"
 _ADMIN_KEY_ENVS = ("SAC_OPENAI_ADMIN_KEY", "OPENAI_ADMIN_KEY")
@@ -252,7 +257,13 @@ def record_usage(
             agents = ledger.setdefault("agents", {})
             agent_bucket = agents.setdefault(agent, _blank_bucket())
             _accumulate(agent_bucket, usage or {}, cost)
-        ledger["updated_at"] = _iso_now()
+            events = ledger.setdefault("agent_events", {})
+            agent_events = events.setdefault(agent, [])
+            event = _blank_bucket()
+            _accumulate(event, usage or {}, cost)
+            event["timestamp"] = usage_timestamp_iso(parse_usage_timestamp(_now))
+            agent_events.append(event)
+        ledger["updated_at"] = usage_timestamp_iso(parse_usage_timestamp(_now))
         _write_json_atomic(path, ledger)
         return dict(day_bucket)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -308,35 +319,33 @@ def read_spend(home: Path | None = None, now: datetime | None = None) -> dict[st
         return out
 
 
-def read_agent_spend(agent: str, home: Path | None = None) -> dict[str, Any]:
+def read_agent_spend(
+    agent: str,
+    home: Path | None = None,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> dict[str, Any]:
     """Return one agent's cumulative OpenAI list-price estimate.
 
     This reads the local ledger only; it is not an invoice. A stable
     zero-valued shape plus ``error`` is returned when no bucket exists.
     """
-    out: dict[str, Any] = {
-        "requests": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "estimated_cost_usd": 0.0,
-        "unpriced_turns": 0,
-        "error": None,
-    }
     try:
+        from ._openai_agent_spend import summarize_agent_spend
+
         _home = Path(home) if home is not None else Path.home()
         ledger = _load_json(_ledger_path(_home))
-        agents = ledger.get("agents") if isinstance(ledger, dict) else None
-        bucket = agents.get(agent) if isinstance(agents, dict) else None
-        if not isinstance(bucket, dict):
-            out["error"] = f"no OpenAI spend recorded for agent {agent!r}"
-            return out
-        out["requests"] = int(bucket.get("requests") or 0)
-        out["input_tokens"] = int(bucket.get("input_tokens") or 0)
-        out["output_tokens"] = int(bucket.get("output_tokens") or 0)
-        out["estimated_cost_usd"] = round(float(bucket.get("spend_usd") or 0.0), 6)
-        out["unpriced_turns"] = int(bucket.get("unpriced_turns") or 0)
-        return out
+        return summarize_agent_spend(
+            agent,
+            ledger,
+            since=since,
+            until=until,
+        )
     except Exception as exc:  # stx-allow: fallback (reason: usage display must not fail on a corrupt or unreadable best-effort ledger)
+        from ._openai_agent_spend import _zero_agent_spend
+
+        out = _zero_agent_spend()
         out["error"] = f"agent spend read failed: {exc}"
         return out
 

@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1022,6 +1023,39 @@ def test_read_quota_upgrades_legacy_shape(tmp_path: Path) -> None:
     totals = runner.read_quota(tmp_path)
     # Assert
     assert totals["cost_usd"] == 0.0
+
+
+def test_read_quota_period_filters_result_journal(tmp_path: Path) -> None:
+    # Arrange
+    rows = [
+        {
+            "ts": datetime(2026, 7, 25, tzinfo=timezone.utc).timestamp(),
+            "type": "result",
+            "usage": {"input_tokens": 100},
+            "cost_usd": 0.1,
+        },
+        {
+            "ts": datetime(2026, 7, 26, tzinfo=timezone.utc).timestamp(),
+            "type": "result",
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "cost_usd": 0.02,
+        },
+    ]
+    (tmp_path / "session.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+    # Act
+    from scitex_agent_container._runners._session_quota import read_quota_period
+
+    usage = read_quota_period(
+        tmp_path,
+        since=datetime(2026, 7, 26, tzinfo=timezone.utc),
+        until=datetime(2026, 7, 27, tzinfo=timezone.utc),
+    )
+    # Assert
+    assert (usage["input_tokens"], usage["output_tokens"], usage["turns"]) == (
+        10,
+        2,
+        1,
+    )
 
 
 # ---------------------------------------------------------------------------
