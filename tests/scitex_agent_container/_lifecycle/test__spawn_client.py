@@ -203,6 +203,16 @@ def test_post_body_includes_child_name(listen_env) -> None:
     assert json.loads(captured["body"])["name"] == "c"
 
 
+def test_post_body_includes_requested_profile(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", profile="codex", opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["profile"] == "codex"
+
+
 def test_post_body_defaults_caller_from_sac_name_env(listen_env) -> None:
     # Arrange — SAC_NAME present → resolved as caller automatically.
     listen_env("LISTEN_BASE_URL", "http://host:9100")

@@ -246,6 +246,7 @@ def request_spawn(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    profile: str | None = None,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -380,6 +381,8 @@ def request_spawn(
     # the fields above.
     if force:
         body["force"] = True
+    if profile:
+        body["profile"] = profile
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/agents"

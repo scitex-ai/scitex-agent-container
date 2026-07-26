@@ -75,6 +75,7 @@ def run_single_targets(
     yes: bool = False,
     verbose: bool = False,
     tail_lines: int | None = None,
+    profile: str | None = None,
 ) -> None:
     """Start each name/path in ``single_targets`` (directory bulk handled upstream).
 
@@ -149,7 +150,7 @@ def run_single_targets(
             # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
             try:
                 config_path = resolve_with_prefix(raw_target)
-                config = load_config(config_path)
+                config = load_config(config_path, profile=profile)
                 try:
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
@@ -183,6 +184,7 @@ def run_single_targets(
                         peers,
                         dry_run=dry_run,
                         force=force,
+                        profile=profile,
                     ):
                         continue
                 if skip:
@@ -310,6 +312,7 @@ def run_single_targets(
                     one_shot=one_shot,
                     assume_yes=effective_yes,
                     strict_drift=strict_drift,
+                    profile=profile,
                 )
                 if as_json:
                     from ..._state.port_allocator import get_port as _get_port
@@ -329,6 +332,9 @@ def run_single_targets(
                             "host_workdir": host_workdir,
                             "container_workdir": container_workdir,
                             "dry_run": dry_run,
+                            "profile": config.profile,
+                            "harness": config.harness,
+                            "backend": config.backend,
                             "a2a_port": _resolved_port,
                             "started_at": None if dry_run else _now_iso(),
                         }

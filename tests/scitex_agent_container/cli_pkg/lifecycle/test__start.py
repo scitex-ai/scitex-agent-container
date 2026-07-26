@@ -25,16 +25,17 @@ smoke tests.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Iterator
 
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _install_fresh_creds(home: Path) -> Path:
@@ -76,6 +77,14 @@ def _install_fresh_creds(home: Path) -> Path:
 
 
 class TestArgumentValidation:
+    def test_start_help_lists_profile_option(self):
+        # Arrange
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["--help"])
+        # Assert
+        assert "--profile" in result.output
+
     def test_resume_with_session_new_session_is_rejected(self):
         # Arrange
         runner = CliRunner()
@@ -727,10 +736,6 @@ class TestDispatchBranch:
 # No-mocks / no-monkeypatch: hand-rolled context-manager attribute swap
 # for fake ``agent_start`` (same pattern as ``test__a2a_port.py``).
 # ---------------------------------------------------------------------------
-
-
-from contextlib import contextmanager
-from typing import Any, Iterator
 
 
 @contextmanager

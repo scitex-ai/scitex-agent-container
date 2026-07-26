@@ -128,6 +128,7 @@ def broker_start_to_host(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    profile: str | None = None,
 ) -> dict:
     """POST a spawn request to the host-side ``sac listen``; FAIL LOUD on error.
 
@@ -218,6 +219,7 @@ def broker_start_to_host(
             one_shot=one_shot,
             assume_yes=assume_yes,
             force=force,
+            profile=profile,
         )
     except SpawnRequestError as exc:
         # Re-throw under the broker's own error type so the integration
@@ -243,6 +245,7 @@ def maybe_broker_in_sif_spawn(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    profile: str | None = None,
 ) -> bool:
     """Single-call broker chokepoint for the in-SIF redirect in agent_start.
 
@@ -326,6 +329,7 @@ def maybe_broker_in_sif_spawn(
         one_shot=one_shot,
         assume_yes=assume_yes,
         force=force,
+        profile=profile,
     )
     rc = result.get("returncode") if isinstance(result, dict) else None
     if rc != 0:

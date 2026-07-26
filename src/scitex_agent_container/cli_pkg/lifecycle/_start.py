@@ -30,6 +30,11 @@ from ._start_preflight_gate import make_preflight_runner
 )
 @group_option
 @click.option(
+    "--profile",
+    metavar="NAME",
+    help="Select a named launch profile (defaults to spec.default_profile).",
+)
+@click.option(
     "--no-preflight",
     is_flag=True,
     default=False,
@@ -241,6 +246,7 @@ from ._start_preflight_gate import make_preflight_runner
 def start(
     targets: tuple[str, ...],
     groups: tuple[str, ...],
+    profile: str | None,
     no_preflight: bool,
     force: bool,
     resume_id: str | None,
@@ -424,6 +430,7 @@ def start(
         bulk_yamls=bulk_yamls_from_dirs,
         no_redispatch=no_redispatch,
         broker_self=broker_self,
+        profile=profile,
     )
 
     # Serialized multi-start queue (sac-multi-start-queue-oauth, Half-A):
@@ -456,6 +463,7 @@ def start(
         dry_run=dry_run,
         as_json=as_json,
         preflight_runner=_run_preflight_once,
+        profile=profile,
     ):
         return
 
@@ -480,6 +488,7 @@ def start(
                 force=force,
                 dry_run=dry_run,
                 preflight_runner=_run_preflight_once,
+                profile=profile,
             )
         if not single_targets:
             return
@@ -506,6 +515,7 @@ def start(
         yes=yes,
         verbose=verbose,
         tail_lines=tail_lines,
+        profile=profile,
     )
 
 

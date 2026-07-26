@@ -99,6 +99,25 @@ def test_agents_start_shells_plural_agents_form(
     assert argv == ["agents", "start", "broker-child"], argv
 
 
+def test_agents_start_propagates_profile_to_inner_argv(
+    isolated_listen_env, env_save_restore, subprocess_shim
+) -> None:
+    # Arrange
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    subprocess_shim.install("sac", stdout="ok", exit=0)
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        client.post(
+            "/agents",
+            json={"name": "broker-child", "profile": "codex"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    argv = subprocess_shim.argv_for("sac")
+    # Assert
+    assert argv == ["agents", "start", "--profile", "codex", "broker-child"]
+
+
 def test_agents_start_does_not_use_singular_agent_form(
     isolated_listen_env, env_save_restore, subprocess_shim
 ) -> None:

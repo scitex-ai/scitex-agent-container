@@ -145,6 +145,14 @@ async def agents_start(request: Request) -> JSONResponse:
             {"error": "'force' must be a boolean if present"},
             status_code=400,
         )
+    profile = body.get("profile")
+    if profile is not None and (
+        not isinstance(profile, str) or not profile.strip()
+    ):
+        return JSONResponse(
+            {"error": "'profile' must be a non-empty string if present"},
+            status_code=400,
+        )
     decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         return deny_response(reason or "spawn denied")
@@ -244,6 +252,8 @@ async def agents_start(request: Request) -> JSONResponse:
     # silently degraded into an idempotent no-op that still reported SUCC.
     if force:
         inner_argv.append("--force")
+    if profile:
+        inner_argv.extend(["--profile", profile])
     inner_argv.append(name)
     # Single-flight the OAuth-refresh boot window (card
     # sac-multi-start-queue-oauth): concurrent brokered background spawns share

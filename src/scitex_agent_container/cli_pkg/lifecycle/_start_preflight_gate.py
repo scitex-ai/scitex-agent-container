@@ -22,6 +22,7 @@ def make_preflight_runner(
     bulk_yamls: list[str],
     no_redispatch: bool,
     broker_self: bool,
+    profile: str | None = None,
 ) -> Callable[[], None]:
     """Build the idempotent ("once per invocation") OAuth preflight runner.
 
@@ -43,7 +44,9 @@ def make_preflight_runner(
         ran["done"] = True
         if broker_self:
             return
-        if not any_target_needs_anthropic_oauth(single_targets, bulk_yamls):
+        if not any_target_needs_anthropic_oauth(
+            single_targets, bulk_yamls, profile=profile
+        ):
             return
         from ..._state._preflight_creds import check_oauth_token_expiry
 
@@ -57,7 +60,10 @@ def make_preflight_runner(
 
 
 def any_target_needs_anthropic_oauth(
-    single_targets: list[str], bulk_yamls: list[str]
+    single_targets: list[str],
+    bulk_yamls: list[str],
+    *,
+    profile: str | None = None,
 ) -> bool:
     """Return True iff at least one target spec uses Anthropic OAuth.
 
@@ -80,7 +86,7 @@ def any_target_needs_anthropic_oauth(
     for raw in list(single_targets) + list(bulk_yamls):
         try:
             cfg_path = resolve_with_prefix(raw)
-            cfg = load_config(cfg_path)
+            cfg = load_config(cfg_path, profile=profile)
         except Exception:  # stx-allow: fallback (reason: defensive — see docstring)
             return True
         provider = getattr(getattr(cfg, "claude", None), "provider", None)

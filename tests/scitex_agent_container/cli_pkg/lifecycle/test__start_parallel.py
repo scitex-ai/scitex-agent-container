@@ -148,6 +148,14 @@ class TestBuildChildArgv:
         # Assert
         assert "continue" in argv
 
+    def test_profile_propagated_when_set(self):
+        # Arrange
+        # (profile supplied below)
+        # Act
+        argv = _argv(profile="codex")
+        # Assert
+        assert argv[-2:] == ["--profile", "codex"]
+
     def test_no_preflight_absent_when_unset(self):
         # Arrange
         # (defaults supplied by _argv)

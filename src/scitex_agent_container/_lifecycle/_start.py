@@ -51,6 +51,7 @@ def agent_start(
     registry: Registry | None = None,
     force: bool = False,
     *,
+    profile: str | None = None,
     session_override: str | None = None,
     resume_id_override: str | None = None,
     dry_run: bool = False,
@@ -114,7 +115,7 @@ def agent_start(
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
-    config = load_config(config_path)
+    config = load_config(config_path, profile=profile)
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
@@ -143,6 +144,7 @@ def agent_start(
         one_shot=one_shot,
         assume_yes=assume_yes,
         force=force,
+        profile=profile,
     ):
         return True
 

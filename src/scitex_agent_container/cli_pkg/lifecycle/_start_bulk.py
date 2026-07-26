@@ -32,6 +32,7 @@ def run_bulk_path(
     force: bool,
     dry_run: bool,
     preflight_runner: Callable[[], None],
+    profile: str | None = None,
 ) -> None:
     """Drive the bulk-directory branch of ``sac agents start``.
 
@@ -68,7 +69,7 @@ def run_bulk_path(
         # start; printing FAILED and continuing is the correct
         # bulk-safe behavior)
         try:
-            config = load_config(yaml_path)
+            config = load_config(yaml_path, profile=profile)
             skip = _singleton_skip_reason(config, current_host)
             if skip:
                 console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
@@ -86,6 +87,7 @@ def run_bulk_path(
                 no_preflight=no_preflight,
                 force=force,
                 dry_run=dry_run,
+                profile=profile,
             )
             console.print(
                 "[green]DRY-RUN OK[/green]" if dry_run else "[green]OK[/green]"

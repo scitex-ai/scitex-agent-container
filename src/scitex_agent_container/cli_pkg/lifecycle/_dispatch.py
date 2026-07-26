@@ -72,6 +72,7 @@ def _dispatch_remote_start(
     *,
     dry_run: bool = False,
     force: bool = False,
+    profile: str | None = None,
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
@@ -238,11 +239,17 @@ def _dispatch_remote_start(
     # is pinned inside ``build_ssh_argv`` — the single choke point every
     # remote-sac invocation funnels through — so it is NOT injected here.
     # See ``_state/_host_ssh._scitex_dir_prefix``.
-    ssh_argv = build_ssh_argv(
-        peer,
-        ["sac", "agents", "start", name, "--no-redispatch", "--json"],
-        peers_map,
-    )
+    remote_start_argv = [
+        "sac",
+        "agents",
+        "start",
+        name,
+        "--no-redispatch",
+        "--json",
+    ]
+    if profile:
+        remote_start_argv += ["--profile", profile]
+    ssh_argv = build_ssh_argv(peer, remote_start_argv, peers_map)
     ssh_result = subprocess.run(
         ssh_argv,
         capture_output=True,
@@ -322,6 +329,7 @@ def try_dispatch(
     dry_run: bool,
     force: bool,
     local_names: "Collection[str] | None" = None,
+    profile: str | None = None,
 ) -> bool:
     """Route ``config`` to a remote peer when its ``spec.host`` demands it.
 
@@ -381,12 +389,15 @@ def try_dispatch(
     # False so the caller proceeds with the unchanged local launch.
     if kind != "remote" or dispatch_peer is None:
         return False
-    _dispatch_remote_start(
-        name=config.name,
-        peer=dispatch_peer,
-        dry_run=dry_run,
-        force=force,
-    )
+    dispatch_kwargs = {
+        "name": config.name,
+        "peer": dispatch_peer,
+        "dry_run": dry_run,
+        "force": force,
+    }
+    if profile:
+        dispatch_kwargs["profile"] = profile
+    _dispatch_remote_start(**dispatch_kwargs)
     return True
 
 
