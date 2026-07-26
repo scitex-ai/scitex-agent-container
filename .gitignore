@@ -99,3 +99,7 @@ src/scitex_agent_container/_provenance/_build_info.py
 # this keeps it that way. (Two workers hit this independently, from different
 # artifacts, within a day — which is the argument for the ignore, not against.)
 tests/results/
+
+# Operator standing mantra glossary (さいXXX.md) — local only, referenced by
+# agent startup prompts via absolute path; never committed.
+/GITIGNORE/
