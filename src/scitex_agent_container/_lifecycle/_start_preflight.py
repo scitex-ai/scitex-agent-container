@@ -148,11 +148,8 @@ def _rotate_among_credentials_files(
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
     from .._account.quota_cache import quota_cache_present
-    from .._creds import (
-        POLICY_BURN,
-        pick_healthy_account,
-        resolve_7d_policy,
-    )
+    from .._creds import POLICY_BURN, resolve_7d_policy
+    from ._quota_refresh_retry import pick_boot_account
 
     entries: list[tuple[str, Path]] = []
     grandparents: set[str] = set()
@@ -194,7 +191,7 @@ def _rotate_among_credentials_files(
     else:
         preferred = None
 
-    picked = pick_healthy_account(
+    picked = pick_boot_account(
         preferred,
         candidates=slugs,
         store_dir=store_dir,
@@ -204,9 +201,11 @@ def _rotate_among_credentials_files(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
+        log_stream=log_stream,
         # Boot gate (constitution §2): on a host that HAS a quota cache, a
-        # fully-BLIND pick means the populator failed (empty/stale cache) —
-        # fail loud rather than land the agent on an unverifiable, possibly
+        # fully-BLIND pick means the populator failed (empty/stale cache).
+        # The lifecycle refreshes it once and retries; only a still-blind
+        # result fails loud rather than landing on an unverifiable, possibly
         # quota-exhausted account (2026-07-20 incident). A host with NO cache
         # (fresh install / CI / quota-cron-less Spartan node) still degrades
         # to freshness-only and boots — the documented never-block invariant.
@@ -338,10 +337,11 @@ def _rotate_to_healthy_account(
         return  # unpinned agent — host live OAuth, untouched.
 
     from .._account.quota_cache import quota_cache_present
-    from .._creds import pick_healthy_account, resolve_7d_policy
+    from .._creds import resolve_7d_policy
+    from ._quota_refresh_retry import pick_boot_account
 
     policy = resolve_7d_policy()
-    picked = pick_healthy_account(
+    picked = pick_boot_account(
         pinned,
         now=now,
         usage_5h=usage_5h,
@@ -349,9 +349,10 @@ def _rotate_to_healthy_account(
         quota_cache_path=quota_cache_path,
         spread_key=config.name,
         policy=policy,
-        # Boot gate (constitution §2): a blind-quota pin fails loud on a host
-        # that HAS a cache (populator failure); a cache-less host degrades and
-        # boots (never-block invariant). See quota_cache_present.
+        log_stream=log_stream,
+        # Boot gate (constitution §2): a blind-quota pin on a host that HAS a
+        # cache gets one automatic refresh, then fails loud if still blind; a
+        # cache-less host degrades and boots. See quota_cache_present.
         require_quota_evidence=quota_cache_present(quota_cache_path),
     )
     if picked == pinned:

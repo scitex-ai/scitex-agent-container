@@ -87,6 +87,7 @@ from typing import Mapping
 
 from ._account_health import (
     AccountHealth,
+    BlindQuotaCacheError,
     NoHealthyAccountError,
     _discover_candidates,
     _format_states,
@@ -416,7 +417,7 @@ def pick_healthy_account(
     #    account. Refuse rather than boot blind; a fleet with
     #    known-but-busy quota is unaffected.
     if require_quota_evidence and u5.get(picked) is None and u7.get(picked) is None:
-        raise NoHealthyAccountError(
+        raise BlindQuotaCacheError(
             f"quota cache is blind for the selected account {picked!r} "
             "(5h=? 7d=? — no cached utilisation for any fresh candidate), "
             "so the pick cannot be confirmed to have headroom. Refusing to "
@@ -458,6 +459,7 @@ def _blind_cache_remedy(quota_cache_path: Path | str | None) -> str:
 
 __all__ = [
     "AccountHealth",
+    "BlindQuotaCacheError",
     "NoHealthyAccountError",
     "account_5h_usage",
     "account_7d_usage",

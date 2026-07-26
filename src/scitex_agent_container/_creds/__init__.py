@@ -34,6 +34,7 @@ from ._pick_audit import (
 )
 from ._pick_healthy import (
     AccountHealth,
+    BlindQuotaCacheError,
     NoHealthyAccountError,
     account_5h_usage,
     account_7d_usage,
@@ -50,6 +51,7 @@ from ._spend_policy import (
 
 __all__ = [
     "AccountHealth",
+    "BlindQuotaCacheError",
     "CandidateAudit",
     "NoHealthyAccountError",
     "POLICY_BURN",
