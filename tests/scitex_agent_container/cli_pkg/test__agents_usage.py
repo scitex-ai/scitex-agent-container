@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from scitex_agent_container._account.openai_usage import record_usage
 from scitex_agent_container._runners._session_quota import accumulate_quota
 from scitex_agent_container.cli_pkg._agents_usage import (
+    _fmt_jpy,
     agents_usage,
     build_usage_payload,
 )
@@ -45,11 +46,12 @@ def _seed_tui_usage(agent_home: Path) -> None:
                 "uuid": "assistant-1",
                 "timestamp": "2026-07-26T12:48:50.048Z",
                 "message": {
+                    "model": "claude-opus-4-8",
                     "usage": {
                         "input_tokens": 20,
                         "output_tokens": 5,
                         "cache_read_input_tokens": 3,
-                    }
+                    },
                 },
             }
         )
@@ -110,7 +112,40 @@ def test_payload_labels_cost_as_not_an_invoice(tmp_path: Path) -> None:
     # Act
     payload = build_usage_payload("sales", state_dir=state_dir, home=tmp_path)
     # Assert
-    assert "not necessarily" in payload["note"]
+    assert "not Claude Pro/Max subscription fees" in payload["note"]
+
+
+def test_payload_reports_claude_estimate_in_usd(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    agent_home = tmp_path / "agent-home"
+    _seed_tui_usage(agent_home)
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        agent_home=agent_home,
+    )
+    # Assert
+    assert payload["cost"]["claude_api_estimated_usd"] == 0.0002265
+
+
+def test_payload_converts_claude_estimate_to_jpy(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    agent_home = tmp_path / "agent-home"
+    _seed_tui_usage(agent_home)
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        agent_home=agent_home,
+        usd_jpy_rate=160.0,
+    )
+    # Assert
+    assert payload["cost"]["claude_api_estimated_jpy"] == 0.04
 
 
 def test_payload_reports_transcript_coverage_window(tmp_path: Path) -> None:
@@ -184,3 +219,12 @@ def test_usage_human_labels_unknown_coverage() -> None:
     result = runner.invoke(agents_usage, ["ghost"])
     # Assert
     assert "First observed (UTC)" in result.output
+
+
+def test_jpy_display_uses_conventional_half_up_rounding() -> None:
+    # Arrange
+    value = 644_108.5
+    # Act
+    rendered = _fmt_jpy(value)
+    # Assert
+    assert rendered == "¥644,109"

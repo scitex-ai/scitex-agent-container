@@ -16,11 +16,17 @@ def _write_transcript(home: Path, records: list[dict], name: str = "one") -> Non
     path.write_text("\n".join(json.dumps(record) for record in records))
 
 
-def _assistant(uuid: str, *, timestamp: str | None = None, **usage: int) -> dict:
+def _assistant(
+    uuid: str,
+    *,
+    timestamp: str | None = None,
+    model: str = "claude-opus-4-8",
+    **usage: int,
+) -> dict:
     record = {
         "type": "assistant",
         "uuid": uuid,
-        "message": {"type": "message", "usage": usage},
+        "message": {"type": "message", "model": model, "usage": usage},
     }
     if timestamp is not None:
         record["timestamp"] = timestamp
@@ -158,6 +164,38 @@ def test_reader_reports_current_session_provider_cost(tmp_path: Path) -> None:
     usage = read_claude_code_usage(tmp_path, "sales")
     # Assert
     assert usage["current_session_cost_usd"] == 0.012345
+
+
+def test_reader_estimates_api_equivalent_cost(tmp_path: Path) -> None:
+    # Arrange
+    record = _assistant(
+        "priced",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_creation_input_tokens=2_000_000,
+        cache_read_input_tokens=1_000_000,
+    )
+    record["message"]["usage"]["cache_creation"] = {
+        "ephemeral_5m_input_tokens": 1_000_000,
+        "ephemeral_1h_input_tokens": 1_000_000,
+    }
+    _write_transcript(tmp_path, [record])
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["estimated_api_cost_usd"] == 46.75
+
+
+def test_reader_marks_unknown_model_estimate_incomplete(tmp_path: Path) -> None:
+    # Arrange
+    _write_transcript(
+        tmp_path,
+        [_assistant("unknown", model="claude-future-99", input_tokens=1)],
+    )
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["cost_estimate_complete"] is False
 
 
 def test_reader_missing_home_is_explicit() -> None:

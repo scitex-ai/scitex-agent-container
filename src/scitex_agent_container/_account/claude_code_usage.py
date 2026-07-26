@@ -5,9 +5,12 @@ does not write ``runtime/<agent>/quota.json``.  Claude Code does, however,
 persist per-response usage in ``~/.claude/projects/*/*.jsonl`` and its
 status-line payload contains the provider-reported current-session cost.
 
-This module only reads those provider-owned files.  It never estimates a
-subscription charge from tokens, and every failure is returned as data so
-an inspection command cannot break an agent.
+This module only reads those provider-owned files.  Transcript tokens can
+be converted to an API-equivalent estimate at Anthropic's published list
+prices, but that estimate is deliberately separate from the current-session
+provider-reported cost and is never described as a subscription charge.
+Every failure is returned as data so an inspection command cannot break an
+agent.
 """
 
 from __future__ import annotations
@@ -15,6 +18,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
+from .claude_pricing import PRICE_SOURCE, PRICE_VERSION, estimate_message_cost_usd
 
 
 def _zero_usage() -> dict[str, Any]:
@@ -27,6 +32,15 @@ def _zero_usage() -> dict[str, Any]:
         "transcript_files": 0,
         "first_observed_at": None,
         "last_observed_at": None,
+        "estimated_api_cost_usd": None,
+        "cost_estimate_complete": False,
+        "priced_messages": 0,
+        "unpriced_messages": 0,
+        "unpriced_models": [],
+        "server_tool_requests": {},
+        "model_costs_usd": {},
+        "pricing_version": PRICE_VERSION,
+        "pricing_source": PRICE_SOURCE,
         "current_session_cost_usd": None,
         "current_session_id": None,
         "error": None,
@@ -58,6 +72,17 @@ def _read_statusline(home: Path, agent: str, out: dict[str, Any]) -> None:
     session_id = payload.get("session_id")
     if isinstance(session_id, str) and session_id:
         out["current_session_id"] = session_id
+
+
+def _server_tool_requests(usage: dict[str, Any]) -> dict[str, int]:
+    raw = usage.get("server_tool_use")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in raw.items()
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    }
 
 
 def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
@@ -121,6 +146,47 @@ def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
                     "cache_read_input_tokens",
                 ):
                     out[key] += _token(usage.get(key))
+                billable_tokens = sum(
+                    _token(usage.get(key))
+                    for key in (
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                    )
+                )
+                model = message.get("model")
+                model = model if isinstance(model, str) and model else "<unknown>"
+                estimated = estimate_message_cost_usd(
+                    usage,
+                    model,
+                    timestamp=timestamp if isinstance(timestamp, str) else None,
+                )
+                if billable_tokens > 0 and estimated is None:
+                    out["unpriced_messages"] += 1
+                    if model not in out["unpriced_models"]:
+                        out["unpriced_models"].append(model)
+                elif billable_tokens > 0:
+                    out["priced_messages"] += 1
+                    current = float(out["estimated_api_cost_usd"] or 0.0)
+                    out["estimated_api_cost_usd"] = current + estimated
+                    model_costs = out["model_costs_usd"]
+                    model_costs[model] = float(model_costs.get(model, 0.0)) + estimated
+                for tool, count in _server_tool_requests(usage).items():
+                    requests = out["server_tool_requests"]
+                    requests[tool] = int(requests.get(tool, 0)) + count
+    if out["estimated_api_cost_usd"] is not None:
+        out["estimated_api_cost_usd"] = round(out["estimated_api_cost_usd"], 8)
+    out["model_costs_usd"] = {
+        model: round(cost, 8) for model, cost in sorted(out["model_costs_usd"].items())
+    }
+    out["unpriced_models"].sort()
+    out["server_tool_requests"] = dict(sorted(out["server_tool_requests"].items()))
+    out["cost_estimate_complete"] = (
+        out["priced_messages"] > 0
+        and out["unpriced_messages"] == 0
+        and not out["server_tool_requests"]
+    )
     _read_statusline(Path(home), agent, out)
     if not paths and out["current_session_id"] is None:
         out["error"] = "no Claude Code usage state recorded yet"
