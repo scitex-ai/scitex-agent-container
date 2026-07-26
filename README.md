@@ -229,6 +229,8 @@ sac agents health <name>
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary
 sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
+sac agents explain <name> --profile codex # preview one named launch profile
+sac agents start <name> --profile codex   # select it (default: spec.default_profile)
 sac agents find   <capability>            # search by metadata.labels.capabilities
 
 # Control plane (HTTP/JSON, loopback-only)

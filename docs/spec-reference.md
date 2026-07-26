@@ -17,6 +17,59 @@ no `metadata.name` field).
 
 ## Top-level shape
 
+### Named launch profiles
+
+An agent may keep multiple complete harness/backend choices in one spec and
+select them with `sac agents explain|start NAME --profile PROFILE`:
+
+```yaml
+spec:
+  default_profile: claude-code
+  profiles:
+    claude-code:
+      harness: claude-code
+      claude:
+        model: opus[1m]
+        channels: []
+        flags: []
+        raw_options: {}
+        session: continue
+        continue_max_age_minutes: null
+        resume_id: ""
+        auto_accept: true
+        account: ""
+        credentials_file: ""
+        credentials_files: []
+        provider: anthropic
+    codex:
+      harness: claude-code
+      claude:
+        model: gpt-5.6-sol
+        channels: []
+        flags: []
+        raw_options: {}
+        session: fresh
+        continue_max_age_minutes: null
+        resume_id: ""
+        auto_accept: true
+        account: ""
+        credentials_file: ""
+        credentials_files: []
+        provider: codex
+```
+
+`profile` is the named launch choice; `harness` is the frontend process;
+`claude.provider` is its API backend. Today `claude-code` is the only supported
+harness. Thus the `codex` example still runs Claude Code, pointed at the
+registered Codex gateway—it is not a native Codex CLI harness.
+
+When `profiles` is present, `default_profile` is required, root
+`spec.claude` is forbidden, and every profile must contain a full explicit
+Claude block. All profiles are validated on every load. Existing specs with a
+single root `spec.claude` remain backward-compatible, but reject an explicit
+`--profile` because no selection exists. Starts persist the selected profile;
+status/list expose it, and restart preserves it.
+
 ```yaml
 apiVersion: scitex-agent-container/v3    # REQUIRED — v1/v2 raise loud validation errors
 kind: Agent                              # REQUIRED — Agent | AgentProxy
