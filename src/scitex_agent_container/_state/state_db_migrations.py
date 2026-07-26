@@ -15,6 +15,8 @@ every :func:`state_db.init_schema`.
   * :func:`migrate_instances_add_family_tree_cols` — ADD COLUMN the
     sac-agent-spawn family-tree columns (``bound_port``, ``remote``,
     ``spawned_by``) onto a pre-existing ``instances`` table.
+  * :func:`migrate_instances_add_launch_identity_cols` — ADD COLUMN the
+    selected profile, harness, backend, and model identity.
   * :func:`migrate_node_comms_policy_add_group_name` — ADD COLUMN the
     ``group_name`` column (group-based ACL, operator 2026-06-25) onto a
     pre-existing ``node_comms_policy`` table.
@@ -140,6 +142,22 @@ def migrate_instances_add_family_tree_cols(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE instances ADD COLUMN remote INTEGER DEFAULT 0")
     if "spawned_by" not in cols:
         conn.execute("ALTER TABLE instances ADD COLUMN spawned_by TEXT")
+
+
+def migrate_instances_add_launch_identity_cols(conn: sqlite3.Connection) -> None:
+    """Add effective launch-profile identity to pre-existing instances."""
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "instances" not in existing:
+        return
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(instances)").fetchall()}
+    for column in ("profile", "harness", "backend", "model"):
+        if column not in cols:
+            conn.execute(f"ALTER TABLE instances ADD COLUMN {column} TEXT")
 
 
 def migrate_node_comms_policy_add_group_name(conn: sqlite3.Connection) -> None:

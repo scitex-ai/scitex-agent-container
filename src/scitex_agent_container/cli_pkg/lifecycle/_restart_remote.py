@@ -143,6 +143,10 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
         a2a_port=bound,
         bound_port=bound,
         remote=True,
+        profile=envelope.get("profile") or row.get("profile"),
+        harness=envelope.get("harness") or row.get("harness"),
+        backend=envelope.get("backend") or row.get("backend"),
+        model=envelope.get("model") or row.get("model"),
     )
     return envelope if isinstance(envelope, dict) else {}
 

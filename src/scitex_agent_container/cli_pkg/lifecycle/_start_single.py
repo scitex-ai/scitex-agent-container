@@ -332,7 +332,7 @@ def run_single_targets(
                             "host_workdir": host_workdir,
                             "container_workdir": container_workdir,
                             "dry_run": dry_run,
-                            "profile": config.profile,
+                            "profile": config.profile if config.profiled else None,
                             "harness": config.harness,
                             "backend": config.backend,
                             "a2a_port": _resolved_port,

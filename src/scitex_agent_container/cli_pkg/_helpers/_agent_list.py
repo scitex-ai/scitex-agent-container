@@ -262,7 +262,7 @@ def get_agent_list_data(
             # stx-allow: fallback (reason: config YAML may be corrupt or
             # missing — agent still appears in list with empty labels)
             try:
-                cfg = load_config(config_path)
+                cfg = load_config(config_path, profile=entry.get("profile"))
                 labels = cfg.labels
             except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
                 pass
@@ -288,6 +288,7 @@ def get_agent_list_data(
             "labels": labels,
             "cfg": cfg,
             "config_path": config_path,
+            "registry_entry": entry,
         }
         prepared.append(prep)
 
@@ -344,6 +345,7 @@ def get_agent_list_data(
         labels = prep["labels"]
         cfg = prep["cfg"]
         config_path = prep["config_path"]
+        registry_entry = prep["registry_entry"]
 
         # ``multiplexer`` is the F-CS17 successor of the screen / tmux
         # column: it now reports the container engine the agent runs
@@ -430,6 +432,20 @@ def get_agent_list_data(
             "path": spec_path,
             "a2a_port": a2a_port,
             "account": account_label,
+            "profile": getattr(
+                cfg, "profile", registry_entry.get("profile", "default")
+            ),
+            "harness": getattr(
+                cfg, "harness", registry_entry.get("harness", "claude-code")
+            ),
+            "backend": getattr(
+                cfg, "backend", registry_entry.get("backend", "anthropic")
+            ),
+            "model": getattr(
+                getattr(cfg, "claude", None),
+                "model",
+                registry_entry.get("model", ""),
+            ),
         }
         # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
         # session.jsonl movement + last heartbeat per row of ``sac agents

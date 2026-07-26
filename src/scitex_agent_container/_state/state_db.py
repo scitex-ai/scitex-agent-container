@@ -52,6 +52,7 @@ from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
     migrate_instances_add_family_tree_cols,
+    migrate_instances_add_launch_identity_cols,
     migrate_legacy_heartbeats,
     migrate_node_comms_policy_add_group_name,
 )
@@ -174,6 +175,7 @@ def init_schema(db_path: Path | None = None) -> Path:
         # DB (with the family-tree columns) but is a no-op on an
         # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
         migrate_instances_add_family_tree_cols(conn)
+        migrate_instances_add_launch_identity_cols(conn)
         # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
         # column on a pre-existing ``node_comms_policy`` (operator
         # 2026-06-25). No-op on a fresh DB (DDL already has the column).

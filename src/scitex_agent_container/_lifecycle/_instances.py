@@ -179,6 +179,10 @@ def record_local_instance(
         remote=False,
         spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
+        profile=config.profile if config.profiled else None,
+        harness=config.harness,
+        backend=config.backend,
+        model=config.claude.model,
         db_path=db_path,
     )
 

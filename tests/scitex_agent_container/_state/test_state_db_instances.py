@@ -111,6 +111,23 @@ def test_record_instance_start_persists_spawned_by(db_path: Path):
     assert _active_row("sb-1")["spawned_by"] == "parent-agent"
 
 
+def test_record_instance_start_persists_launch_profile(db_path: Path):
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    # Act
+    record_instance_start(
+        name="profiled",
+        host="peer-x",
+        profile="codex",
+        harness="claude-code",
+        backend="codex",
+        model="gpt-5.6-sol",
+    )
+    # Assert
+    assert _active_row("profiled")["profile"] == "codex"
+
+
 def test_record_instance_start_defaults_bound_port_to_a2a_port(db_path: Path):
     # Arrange — caller passes only the resolved a2a_port (no explicit
     # bound_port); the helper must mirror it into bound_port.
@@ -178,6 +195,19 @@ def test_migration_adds_bound_port_to_pre_existing_table(db_path: Path):
     with sqlite3.connect(db_path) as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(instances)")}
     assert "bound_port" in cols
+
+
+def test_migration_adds_profile_to_pre_existing_table(db_path: Path):
+    # Arrange
+    _create_pre_family_tree_instances(db_path)
+    from scitex_agent_container._state.state_db import init_schema
+
+    # Act
+    init_schema()
+    # Assert
+    with sqlite3.connect(db_path) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(instances)")}
+    assert "profile" in cols
 
 
 def test_migration_preserves_legacy_row_on_pre_existing_table(db_path: Path):

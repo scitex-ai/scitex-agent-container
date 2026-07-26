@@ -308,6 +308,7 @@ def print_agent_list(
     table.add_column("Status")
     table.add_column("YAML")
     table.add_column("Host")
+    table.add_column("Profile", no_wrap=True)
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
     # the cell rather than stealing width from the name column.
     # Account folds the long ``<name> (<email>)`` label to ~5 lines; show the
@@ -350,6 +351,7 @@ def print_agent_list(
         else:
             started = format_dt_display_tz(raw_started)
         account_cell = row.get("account") or "—"
+        profile = row.get("profile") or "default"
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.
         if not verbose and " (" in account_cell:
@@ -359,6 +361,7 @@ def print_agent_list(
             _status_cell(row),
             yaml_cell,
             host_cell,
+            profile,
             account_cell,
         ]
         if verbose:

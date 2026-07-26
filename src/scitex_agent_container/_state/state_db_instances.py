@@ -47,6 +47,10 @@ def record_instance_start(
     bound_port: int | None = None,
     remote: bool = False,
     spawned_by: str | None = None,
+    profile: str | None = None,
+    harness: str | None = None,
+    backend: str | None = None,
+    model: str | None = None,
     db_path: Path | None = None,
 ) -> str:
     """Insert an ``instances`` row for a freshly-started agent.
@@ -73,9 +77,10 @@ def record_instance_start(
             INSERT INTO instances (
                 id, definition_id, name, host, scope,
                 pid, ppid, screen, workdir, a2a_port, started_at,
-                bound_port, remote, spawned_by
+                bound_port, remote, spawned_by,
+                profile, harness, backend, model
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -92,6 +97,10 @@ def record_instance_start(
                 bound_port,
                 1 if remote else 0,
                 spawned_by,
+                profile,
+                harness,
+                backend,
+                model,
             ),
         )
         conn.execute(

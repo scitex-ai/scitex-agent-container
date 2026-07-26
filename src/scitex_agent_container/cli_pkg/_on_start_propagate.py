@@ -266,6 +266,10 @@ def propagate_remote_start(
         remote=True,
         spawned_by=_spawned_by(),
         workdir=peer_state.get("host_workdir"),
+        profile=peer_state.get("profile"),
+        harness=peer_state.get("harness"),
+        backend=peer_state.get("backend"),
+        model=peer_state.get("model"),
     )
     click.echo(
         f"[--on] {agent_name!r} started on {peer!r} "

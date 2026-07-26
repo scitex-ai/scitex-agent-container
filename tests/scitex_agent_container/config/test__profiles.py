@@ -70,6 +70,15 @@ def test_load_config_reports_selected_backend(tmp_path: Path) -> None:
     assert config.backend == "codex"
 
 
+def test_load_config_injects_selected_profile_identity(tmp_path: Path) -> None:
+    # Arrange
+    path = _write_doc(tmp_path, _profiled_doc())
+    # Act
+    config = load_config(path, profile="codex")
+    # Assert
+    assert config.env["SCITEX_AGENT_CONTAINER_PROFILE"] == "codex"
+
+
 def test_load_config_uses_declared_default_profile(tmp_path: Path) -> None:
     # Arrange
     path = _write_doc(tmp_path, _profiled_doc())

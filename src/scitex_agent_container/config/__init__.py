@@ -90,6 +90,12 @@ def load_config(path: str | Path, *, profile: str | None = None) -> AgentConfig:
     config.backend = selection.backend
     config.available_profiles = selection.available
     config.profiled = selection.is_profiled
+    # Runtime self-awareness: the selected frontend/backend identity travels
+    # with the agent just like its name/model. These values are derived after
+    # parsing, so they cannot drift from the profile that actually won.
+    config.env["SCITEX_AGENT_CONTAINER_PROFILE"] = selection.name
+    config.env["SCITEX_AGENT_CONTAINER_HARNESS"] = selection.harness
+    config.env["SCITEX_AGENT_CONTAINER_BACKEND"] = selection.backend
     _warn_if_assigned_account_missing(config)
     _warn_if_startup_prompt_long(config)
     return config

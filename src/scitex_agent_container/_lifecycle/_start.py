@@ -457,6 +457,10 @@ def agent_start(
         name=config.name,
         config_path=str(Path(config_path).resolve()),
         screen_name=config.screen_name,
+        profile=config.profile if config.profiled else None,
+        harness=config.harness,
+        backend=config.backend,
+        model=config.claude.model,
     )
 
     # Record the state.db ``instances`` row for a LOCAL start. The

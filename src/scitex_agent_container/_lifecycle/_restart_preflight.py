@@ -331,7 +331,12 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
     )
 
 
-def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
+def preflight_from_config_path(
+    config_path: str,
+    *,
+    profile: str | None = None,
+    opener: Any = None,
+) -> None:
     """Path-based pre-flight entry for :func:`_lifecycle._stop.agent_restart`.
 
     ``agent_restart`` holds a spec PATH (not a loaded config) and stops the
@@ -350,7 +355,7 @@ def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
     from ..config import load_config
     from ._start_preflight import _rotate_to_healthy_account
 
-    config = load_config(config_path)
+    config = load_config(config_path, profile=profile)
     # Resolve the SAME successor account the launch will pick. NoHealthyAccountError
     # propagates as an abort-before-stop (better than stop-then-fail today).
     _rotate_to_healthy_account(config, log_stream=io.StringIO())

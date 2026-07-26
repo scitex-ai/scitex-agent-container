@@ -182,6 +182,10 @@ def defined_agent_rows(
             "path": str(spec_path),
             "a2a_port": port_claims.get(name),
             "account": "" if deferred else _al._safe_account_for(cfg),
+            "profile": getattr(cfg, "profile", "default"),
+            "harness": getattr(cfg, "harness", "claude-code"),
+            "backend": getattr(cfg, "backend", "anthropic"),
+            "model": getattr(getattr(cfg, "claude", None), "model", ""),
         }
         movement = (
             dict(_al._MOVEMENT_DEFAULTS) if deferred else _al._movement_fields(name)
@@ -398,7 +402,9 @@ def remote_instance_rows(
         # spec yields empty labels, never a crash of the list)
         try:
             if spec_path is not None:
-                labels = load_config(str(spec_path)).labels
+                labels = load_config(
+                    str(spec_path), profile=entry.get("profile")
+                ).labels
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             labels = {}
         if machine and labels.get("machine") != machine:
@@ -423,6 +429,10 @@ def remote_instance_rows(
                 or port_claims.get(name),
                 "spec_path": spec_path,
                 "labels": labels,
+                "profile": entry.get("profile"),
+                "harness": entry.get("harness"),
+                "backend": entry.get("backend"),
+                "model": entry.get("model"),
             }
         )
 
@@ -450,7 +460,9 @@ def remote_instance_rows(
             # stx-allow: fallback (a broken/unreadable spec must not crash the
             # list; "" is the honest empty, exactly as before this change)
             try:
-                account = _al._safe_account_for(load_config(str(spec_path)))
+                account = _al._safe_account_for(
+                    load_config(str(spec_path), profile=cand.get("profile"))
+                )
             except Exception:  # stx-allow: fallback (reason: see inline comment)
                 account = ""
         row: dict = {
@@ -467,6 +479,10 @@ def remote_instance_rows(
             "a2a_port": cand["a2a_port"],
             "account": account,
             "remote": True,
+            "profile": cand.get("profile") or "default",
+            "harness": cand.get("harness") or "claude-code",
+            "backend": cand.get("backend") or "anthropic",
+            "model": cand.get("model") or "",
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))
         row.update(verdict_for(None))

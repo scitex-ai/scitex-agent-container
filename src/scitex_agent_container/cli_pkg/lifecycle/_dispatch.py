@@ -295,6 +295,10 @@ def _dispatch_remote_start(
         bound_port=bound,
         remote=True,
         spawned_by=_spawned_by(),
+        profile=peer_state.get("profile"),
+        harness=peer_state.get("harness"),
+        backend=peer_state.get("backend"),
+        model=peer_state.get("model"),
     )
     # ADR-0014 Stage 1 — paired comms_nodes row for the cross-host
     # agent so peers resolving via the federated graph (not just the

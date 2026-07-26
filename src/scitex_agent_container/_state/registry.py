@@ -37,6 +37,11 @@ class Registry:
         config_path: str,
         screen_name: str,
         pid: int | None = None,
+        *,
+        profile: str | None = None,
+        harness: str = "claude-code",
+        backend: str = "anthropic",
+        model: str = "",
     ) -> None:
         """Register an agent as running."""
         data = {
@@ -45,7 +50,12 @@ class Registry:
             "pid": pid or os.getpid(),
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "screen": screen_name,
+            "harness": harness,
+            "backend": backend,
+            "model": model,
         }
+        if profile:
+            data["profile"] = profile
         self.dir.mkdir(parents=True, exist_ok=True)
         with open(self._path(name), "w") as f:
             json.dump(data, f, indent=2)

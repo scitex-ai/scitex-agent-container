@@ -72,7 +72,7 @@ def agent_stop(
 
     # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
-        config = load_config(entry["config"])
+        config = load_config(entry["config"], profile=entry.get("profile"))
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not force:
             raise
@@ -327,7 +327,9 @@ def agent_restart(
 
     if entry is not None:
         config_path = entry["config"]
+        profile = entry.get("profile")
     else:
+        profile = None
         # No registry row (ad-hoc / pre-autorecord launch). Resolve the
         # spec from the standard discovery chain rather than hard-failing.
         resolver = config_resolver
@@ -364,8 +366,10 @@ def agent_restart(
     # check in ``agent_start``'s force branch. Injectable for tests.
     from ._restart_preflight import preflight_from_config_path
 
-    _auth_check = successor_auth_check or preflight_from_config_path
-    _auth_check(config_path)
+    if successor_auth_check is not None:
+        successor_auth_check(config_path)
+    else:
+        preflight_from_config_path(config_path, profile=profile)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
@@ -387,6 +391,7 @@ def agent_restart(
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         timeout_s=wait_for_stop_timeout_s,
+        profile=profile,
     )
     # Clear BOTH the persisted session_id AND session_id_history before the
     # restart. A plain ``agent_restart`` previously called ``agent_start``
@@ -450,4 +455,5 @@ def agent_restart(
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,
+        profile=profile,
     )

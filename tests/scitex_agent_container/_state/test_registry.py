@@ -83,6 +83,32 @@ def test_add_then_get_records_started_at_timestamp_field(
     assert "started_at" in entry
 
 
+def test_add_then_get_persists_launch_profile(registry):
+    # Arrange
+    registry.add(
+        "test-agent",
+        "/path/to/config.yaml",
+        "cld-test",
+        profile="codex",
+        harness="claude-code",
+        backend="codex",
+        model="gpt-5.6-sol",
+    )
+    # Act
+    entry = registry.get("test-agent")
+    # Assert
+    assert entry["profile"] == "codex"
+
+
+def test_add_omits_profile_for_legacy_launch(registry):
+    # Arrange
+    registry.add("test-agent", "/path/to/config.yaml", "cld-test")
+    # Act
+    entry = registry.get("test-agent")
+    # Assert
+    assert "profile" not in entry
+
+
 def test_get_returns_none_for_unregistered_agent_name(registry):
     # Arrange — fresh registry, no entries added.
     name = "nonexistent"

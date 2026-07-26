@@ -55,7 +55,14 @@ CREATE TABLE IF NOT EXISTS instances (
     -- edge the spawn DAG is reconstructed from.
     bound_port          INTEGER,
     remote              INTEGER DEFAULT 0,
-    spawned_by          TEXT
+    spawned_by          TEXT,
+    -- Effective launch identity. These are persisted so status/restart
+    -- reports the profile that actually started, even if the spec's default
+    -- later changes.
+    profile             TEXT,
+    harness             TEXT,
+    backend             TEXT,
+    model               TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_instances_active

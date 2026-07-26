@@ -251,6 +251,7 @@ def ensure_previous_runtime_down(
     runtime_factory: Optional[Callable[[AgentConfig], Any]],
     sleep_fn: Callable[[float], None],
     timeout_s: float,
+    profile: str | None = None,
     settle_s: float = _DEFAULT_SIGKILL_SETTLE_S,
     kill_fn: Callable[[int, int], None] = os.kill,
 ) -> None:
@@ -278,7 +279,7 @@ def ensure_previous_runtime_down(
     # Load once: the config is stable across the gate, and re-loading per
     # poll would multiply YAML parsing on a busy host.
     try:
-        config = load_config(config_path)
+        config = load_config(config_path, profile=profile)
     except Exception:  # stx-allow: fallback (reason: YAML may have been edited mid-restart; fall back to the legacy fixed sleep instead of blocking the restart on a transient parse error — the new container surfaces the real error when it boots)
         sleep_fn(2)
         return

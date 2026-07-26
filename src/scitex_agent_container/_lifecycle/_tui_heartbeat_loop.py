@@ -123,13 +123,15 @@ def list_tui_agents() -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
 
-    def _consider(name: str, config_path: str | None) -> None:
+    def _consider(
+        name: str, config_path: str | None, profile: str | None = None
+    ) -> None:
         if not name or name in seen:
             return
         if not config_path:
             return
         try:
-            cfg = load_config(config_path)
+            cfg = load_config(config_path, profile=profile)
         except Exception:  # stx-allow: fallback (one bad spec contributes nothing — best-effort enumeration)
             return
         if getattr(cfg, "runtime", None) != "tui":
@@ -153,7 +155,11 @@ def list_tui_agents() -> list[dict]:
         for row in Registry().list_all():
             if not isinstance(row, dict):
                 continue
-            _consider(row.get("name", ""), row.get("config"))
+            _consider(
+                row.get("name", ""),
+                row.get("config"),
+                row.get("profile"),
+            )
     except Exception as exc:  # stx-allow: fallback (registry read failure must not blank the on-disk specs below)
         logger.debug("list_tui_agents: registry enumeration failed: %s", exc)
 

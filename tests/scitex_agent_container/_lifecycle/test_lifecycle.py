@@ -115,6 +115,38 @@ def _write_spec(
     return spec
 
 
+def _write_profiled_spec(tmp_path: Path, *, name: str = "alpha") -> Path:
+    """Write one complete Anthropic/Codex profile pair."""
+    import copy
+
+    import yaml
+
+    from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
+
+    doc = explicit_doc(
+        {
+            "workdir": str(tmp_path / "work"),
+            "health": {"enabled": False},
+        }
+    )
+    claude = doc["spec"].pop("claude")
+    anthropic = copy.deepcopy(claude)
+    anthropic["model"] = "opus[1m]"
+    codex = copy.deepcopy(claude)
+    codex["model"] = "gpt-5.6-sol"
+    codex["provider"] = "codex"
+    doc["spec"]["default_profile"] = "claude-code"
+    doc["spec"]["profiles"] = {
+        "claude-code": {"harness": "claude-code", "claude": anthropic},
+        "codex": {"harness": "claude-code", "claude": codex},
+    }
+    agent_dir = tmp_path / name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    spec = agent_dir / "spec.yaml"
+    spec.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return spec
+
+
 # ---------------------------------------------------------------------------
 # Real hand-rolled fakes (no unittest.mock)
 # ---------------------------------------------------------------------------
@@ -416,6 +448,25 @@ def test_agent_start_happy_path_calls_runtime_start_once(
     )
     # Assert
     assert len(runtime.start_calls) == 1
+
+
+def test_agent_start_persists_selected_profile(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_profiled_spec(tmp_path)
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        profile="codex",
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+    )
+    # Assert
+    assert registry.get("alpha")["profile"] == "codex"
 
 
 def test_agent_start_happy_path_registers_agent(
@@ -1366,6 +1417,35 @@ def test_agent_restart_calls_runtime_stop_then_start(
     assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
+def test_agent_restart_preserves_selected_profile(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_profiled_spec(tmp_path)
+    registry.add(
+        "alpha",
+        str(spec),
+        "alpha",
+        profile="codex",
+        harness="claude-code",
+        backend="codex",
+        model="gpt-5.6-sol",
+    )
+    runtime = FakeRuntime(running=False, start_result=True)
+    # Act
+    lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+        sleep_fn=_no_sleep,
+        wait_for_stop_timeout_s=0,
+        successor_auth_check=lambda _path: None,
+    )
+    # Assert
+    assert registry.get("alpha")["profile"] == "codex"
+
+
 def test_agent_restart_clears_dead_session_marker(
     tmp_path: Path, registry: Registry
 ) -> None:
@@ -1959,6 +2039,26 @@ def test_agent_status_remote_row_reports_spawned_by(
     result = lc.agent_status("clew", registry=registry)
     # Assert
     assert result["spawned_by"] == "lead"
+
+
+def test_agent_status_remote_row_reports_launch_profile(
+    tmp_path: Path, registry: Registry, isolated_state_db: Path
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(
+        name="clew",
+        host="spartan",
+        remote=True,
+        profile="codex",
+        harness="claude-code",
+        backend="codex",
+    )
+    # Act
+    result = lc.agent_status("clew", registry=registry)
+    # Assert
+    assert result["profile"] == "codex"
 
 
 def test_agent_status_running_reports_status_running(

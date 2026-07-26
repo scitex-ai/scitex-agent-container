@@ -43,6 +43,7 @@ import click
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_restart
 from ..._state.host_config import load as _load_host_config
+from ..._state.registry import Registry
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console
@@ -204,7 +205,16 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
         restarted = False
         no_op_reason = no_op_reason or _NOT_CYCLED
 
-    out = {"name": name, "restarted": restarted, "dispatched": False}
+    identity = Registry().get(name) or {}
+    out = {
+        "name": name,
+        "restarted": restarted,
+        "dispatched": False,
+        "profile": identity.get("profile"),
+        "harness": identity.get("harness"),
+        "backend": identity.get("backend"),
+        "model": identity.get("model"),
+    }
     out.update(verdict.as_dict())
     if no_op_reason is not None:
         # Name the no-op explicitly. Without this the envelope is

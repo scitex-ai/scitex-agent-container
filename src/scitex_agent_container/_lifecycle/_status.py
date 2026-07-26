@@ -79,6 +79,9 @@ def _remote_instance_status(name: str) -> dict | None:
             "status": "running",
             "model": "unknown",
             "runtime": "unknown",
+            "profile": row.get("profile") or "unknown",
+            "harness": row.get("harness") or "unknown",
+            "backend": row.get("backend") or "unknown",
             # Cross-host agent: its credentials live on the remote host,
             # not resolvable from here. Keep the key for shape parity.
             "account": "unknown",
@@ -163,7 +166,7 @@ def agent_status(
     runtime_factory = runtime_factory or _get_runtime
     # stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)
     try:
-        config = load_config(entry["config"])
+        config = load_config(entry["config"], profile=entry.get("profile"))
         runtime = runtime_factory(config)
         running = runtime.is_running(config)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
@@ -179,6 +182,15 @@ def agent_status(
         "status": "running" if running else "stopped",
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
+        "profile": (
+            config.profile if config else entry.get("profile", "unknown")
+        ),
+        "harness": (
+            config.harness if config else entry.get("harness", "unknown")
+        ),
+        "backend": (
+            config.backend if config else entry.get("backend", "unknown")
+        ),
         # Which Anthropic account this agent authenticates as (operator
         # request 4581). Agents sharing one label share one server-side
         # rate limit. Resolved from the agent's effective auth source.
@@ -329,6 +341,6 @@ def agent_logs(
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     runtime_factory = runtime_factory or _get_runtime
-    config = load_config(entry["config"])
+    config = load_config(entry["config"], profile=entry.get("profile"))
     runtime = runtime_factory(config)
     return runtime.logs(config, lines)
