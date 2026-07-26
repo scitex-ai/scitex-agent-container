@@ -55,13 +55,19 @@ spec:
         account: ""
         credentials_file: ""
         credentials_files: []
-        provider: codex
+        provider:
+          name: codex
+          auth_token: auto
 ```
 
 `profile` is the named launch choice; `harness` is the frontend process;
 `claude.provider` is its API backend. Today `claude-code` is the only supported
 harness. Thus the `codex` example still runs Claude Code, pointed at the
 registered Codex gateway—it is not a native Codex CLI harness.
+The mapping form keeps backend identity and authentication policy together:
+`auth_token: auto` defers secret resolution/generation until a real launch, so
+help, explain, and dry-run remain secret-free. A literal token is supported
+only for private, untracked specs.
 
 When `profiles` is present, `default_profile` is required, root
 `spec.claude` is forbidden, and every profile must contain a full explicit

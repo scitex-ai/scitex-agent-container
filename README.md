@@ -138,10 +138,11 @@ Pick the model per agent under `spec.claude.model`:
 
 Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`.
 
-**Non-Anthropic backend?** Set `spec.claude.provider: codex` with a GPT model
-to use the local scitex-genai ChatGPT-subscription gateway while retaining the
-Claude Code harness. Other bundled entries are `deepseek`, `mimo`, and
-`xiaomi`; a dict `{ base_url: "...", auth_token_env: "..." }` accepts any
+**Non-Anthropic backend?** Set
+`spec.claude.provider: {name: codex, auth_token: auto}` with a GPT model to use
+the local scitex-genai ChatGPT-subscription gateway while retaining the Claude
+Code harness. Other bundled entries are `deepseek`, `mimo`, and `xiaomi`; a
+dict `{ base_url: "...", auth_token_env: "..." }` accepts any
 Anthropic-compatible endpoint. Codex setup and multi-account configuration are
 documented in [`docs/credentials.md`](docs/credentials.md). See
 [`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for the

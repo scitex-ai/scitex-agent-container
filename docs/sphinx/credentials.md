@@ -46,7 +46,9 @@ Then declare the backend in an agent spec and start it normally:
 spec:
   # Omit top-level provider, or keep its default `anthropic` value.
   claude:
-    provider: codex
+    provider:
+      name: codex
+      auth_token: auto
     model: gpt-5.6-sol
     flags:
       - --dangerously-skip-permissions
@@ -57,12 +59,20 @@ spec:
 sac agents start my-codex-agent
 ```
 
-On first use, SAC generates a mode-0600 local-hop key under
+`auth_token: auto` is the tracked-spec-safe declaration: previews and dry-runs
+do not require a key, and a real start resolves an existing key or generates
+one when SAC owns the gateway launch. On first use, SAC stores the key mode
+0600 under
 `~/.scitex/agent-container/runtime/codex-gateway/` and starts the shared
 gateway on `127.0.0.1:18765`. Later Codex-backed agents reuse it. If a gateway
 was started manually, SAC verifies it with `SCITEX_GENAI_GATEWAY_API_KEY`
 resolved from the shell or `$HOME/.env`, then stores that key privately for
 later starts; it never guesses past a key mismatch.
+
+A literal `auth_token` is also accepted for a private, untracked spec, but
+must not be committed. Other registered providers use `auto` to resolve their
+registered host environment variable; only the Codex gateway can generate a
+new local-hop key.
 
 The gateway discovers the collected Codex homes, keeps sessions sticky, ranks
 accounts by available usage-window headroom, spreads concurrent sessions, and
