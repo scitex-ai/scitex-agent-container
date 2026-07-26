@@ -177,10 +177,10 @@ def _heartbeat_usage_fields(state_dir: Path, now: float) -> dict:
 
       * ``elapsed_s`` from the persisted ``started_at`` (None until the
         runner has written it, so legacy / pre-start callers stay clean).
-      * ``input_tokens`` / ``output_tokens`` / ``total_tokens`` from the
-        accumulated ``quota.json`` (the same totals ``accumulate_quota``
-        sums from each ``ResultMessage.usage``). ``total_tokens`` adds the
-        cache tokens so it reflects everything billed against the session.
+      * ``input_tokens`` / ``output_tokens`` / ``total_tokens`` and
+        provider-reported ``cost_usd`` from accumulated ``quota.json``.
+        ``total_tokens`` adds cache tokens so it reflects every token class
+        observed for the session.
 
     Returns only the keys it can populate; ``write_heartbeat`` splats
     them onto the payload so ``elapsed_s`` is absent (not 0) when the
@@ -199,6 +199,11 @@ def _heartbeat_usage_fields(state_dir: Path, now: float) -> dict:
     out["input_tokens"] = input_tokens
     out["output_tokens"] = output_tokens
     out["total_tokens"] = input_tokens + output_tokens + cache_creation + cache_read
+    costed_turns = int(quota.get("costed_turns", 0) or 0)
+    out["costed_turns"] = costed_turns
+    out["uncosted_turns"] = int(quota.get("uncosted_turns", 0) or 0)
+    if costed_turns > 0:
+        out["cost_usd"] = round(float(quota.get("cost_usd", 0.0) or 0.0), 8)
     return out
 
 

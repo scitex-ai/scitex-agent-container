@@ -57,9 +57,17 @@ class _StubAssistant:
 
 
 class _StubResult:
-    def __init__(self, session_id: str, usage: dict | None = None) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        usage: dict | None = None,
+        total_cost_usd: float | None = None,
+        model_usage: dict | None = None,
+    ) -> None:
         self.session_id = session_id
         self.usage = usage or {}
+        self.total_cost_usd = total_cost_usd
+        self.model_usage = model_usage
 
 
 class _StubUser:
@@ -111,7 +119,12 @@ class _StubClient:
         type(self).last_options = options
         self._messages: list[Any] = [
             _StubAssistant([_StubText("hello"), _StubText(" world")]),
-            _StubResult("sess-xyz", {"output_tokens": 7}),
+            _StubResult(
+                "sess-xyz",
+                {"output_tokens": 7},
+                total_cost_usd=0.012345,
+                model_usage={"claude-sonnet": {"costUSD": 0.012345}},
+            ),
         ]
 
     async def __aenter__(self) -> "_StubClient":
@@ -481,6 +494,20 @@ def test_heartbeat_carries_input_and_output_tokens(tmp_path: Path) -> None:
     hb = runner.read_heartbeat(tmp_path)
     # Assert
     assert hb is not None and (hb["input_tokens"], hb["output_tokens"]) == (7, 3)
+
+
+def test_heartbeat_includes_provider_reported_cost(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(
+        tmp_path,
+        {"input_tokens": 7, "output_tokens": 3},
+        cost_usd=0.012345,
+    )
+    # Act
+    runner.write_heartbeat(tmp_path, pid=1, state=runner.STATE_IDLE)
+    hb = runner.read_heartbeat(tmp_path)
+    # Assert
+    assert hb is not None and hb["cost_usd"] == pytest.approx(0.012345)
 
 
 # ---------------------------------------------------------------------------
@@ -930,6 +957,9 @@ def test_read_quota_returns_zeros_when_file_absent(tmp_path: Path) -> None:
         "cache_creation_input_tokens": 0,
         "cache_read_input_tokens": 0,
         "turns": 0,
+        "cost_usd": 0.0,
+        "costed_turns": 0,
+        "uncosted_turns": 0,
     }
 
 
@@ -957,6 +987,41 @@ def test_accumulate_quota_with_none_does_not_create_file(tmp_path: Path) -> None
     runner.accumulate_quota(tmp_path, None)
     # Assert
     assert not (tmp_path / "quota.json").exists()
+
+
+def test_accumulate_quota_sums_provider_reported_cost(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1}, cost_usd=0.1)
+    # Act
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1}, cost_usd=0.2)
+    # Assert
+    assert runner.read_quota(tmp_path)["cost_usd"] == pytest.approx(0.3)
+
+
+def test_accumulate_quota_counts_costed_turns(tmp_path: Path) -> None:
+    # Arrange
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1}, cost_usd=0.1)
+    # Act
+    totals = runner.read_quota(tmp_path)
+    # Assert
+    assert totals["costed_turns"] == 1
+
+
+def test_accumulate_quota_counts_uncosted_turns(tmp_path: Path) -> None:
+    # Arrange
+    # Act
+    runner.accumulate_quota(tmp_path, {"input_tokens": 1})
+    # Assert
+    assert runner.read_quota(tmp_path)["uncosted_turns"] == 1
+
+
+def test_read_quota_upgrades_legacy_shape(tmp_path: Path) -> None:
+    # Arrange
+    (tmp_path / "quota.json").write_text('{"input_tokens": 42}')
+    # Act
+    totals = runner.read_quota(tmp_path)
+    # Assert
+    assert totals["cost_usd"] == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1099,6 +1164,61 @@ def test_conversation_quota_carries_output_tokens_from_stub(tmp_path: Path) -> N
     asyncio.run(_run())
     # Assert
     assert runner.read_quota(state_dir)["output_tokens"] == 7
+
+
+def test_conversation_quota_carries_provider_reported_cost_from_stub(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    # Assert
+    assert runner.read_quota(state_dir)["cost_usd"] == pytest.approx(0.012345)
+
+
+def test_conversation_transcript_preserves_model_usage_from_stub(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    _reset_stub_state()
+    state_dir = tmp_path / "alpha"
+    sdk_mod = _make_sdk_module(_StubClient)
+
+    async def _run():
+        inbox, _fut = await _seed_inbox("go")
+        await runner._run_conversation(
+            "alpha",
+            state_dir,
+            pid=1,
+            inbox=inbox,
+            resume_session_id=None,
+            stop=asyncio.Event(),
+            sdk_module=sdk_mod,
+            build_sdk_options_fn=_fake_build_options,
+        )
+
+    # Act
+    asyncio.run(_run())
+    result = json.loads((state_dir / "session.jsonl").read_text().splitlines()[-1])
+    # Assert
+    assert result["model_usage"]["claude-sonnet"]["costUSD"] == pytest.approx(0.012345)
 
 
 def test_conversation_registers_four_hook_matcher_instances(tmp_path: Path) -> None:

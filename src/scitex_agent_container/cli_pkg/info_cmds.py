@@ -215,9 +215,16 @@ def _tail_one(
             out_tok = usage.get("output_tokens", 0)
             cache_w = usage.get("cache_creation_input_tokens", 0)
             cache_r = usage.get("cache_read_input_tokens", 0)
+            cost = r.get("cost_usd")
+            cost_text = (
+                f" cost_usd={float(cost):.6f}"
+                if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                else ""
+            )
             out.append(
                 f"{tag}[result] session={sid} "
                 f"in={inp} out={out_tok} cache_w={cache_w} cache_r={cache_r}"
+                f"{cost_text}"
             )
         elif kind == "error":
             out.append(f"{tag}[error] {str(r)[:300]}")

@@ -24,8 +24,6 @@ version exercises real production collaborators:
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import json
 import os
@@ -40,6 +38,7 @@ from scitex_agent_container.cli_pkg.info_cmds import (
     list_python_apis,
     tail_session,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real-collaborator fixtures
@@ -52,17 +51,19 @@ def _write_spec_dir(tmp_path: Path, name: str, caps: str = "HPC,GPU") -> Path:
     d.mkdir()
     spec = d / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "metadata:\n"
-        f"  labels:\n    capabilities: '{caps}'\n    machine: m1\n"
-        "spec:\n  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        "  workdir: /home/agent/work\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  claude:\n    model: sonnet\n"
-        "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n"
+            f"  labels:\n    capabilities: '{caps}'\n    machine: m1\n"
+            "spec:\n  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  claude:\n    model: sonnet\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        )
     )
     return spec
 
@@ -275,6 +276,7 @@ def test_tail_one_renders_transcript_records_returns_true(tmp_registry, tmp_home
                     "cache_creation_input_tokens": 1,
                     "cache_read_input_tokens": 2,
                 },
+                "cost_usd": 0.001234,
             },
             {"type": "error", "kind": "ToolError", "detail": "x"},
             {"type": "user_echo", "raw": "tool result raw"},
@@ -284,6 +286,28 @@ def test_tail_one_renders_transcript_records_returns_true(tmp_registry, tmp_home
     ok = _tail_one("ag", lines=10, show_tools=True, as_json=False, prefix=False)
     # Assert
     assert ok is True
+
+
+def test_tail_result_renders_provider_reported_cost(tmp_registry, tmp_home):
+    # Arrange
+    _register(tmp_registry, "ag")
+    _build_transcript(
+        tmp_home,
+        "ag",
+        [
+            {
+                "type": "result",
+                "session_id": "abcdefgh12345",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "cost_usd": 0.001234,
+            }
+        ],
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(tail_session, ["ag"])
+    # Assert
+    assert "cost_usd=0.001234" in result.output
 
 
 def test_tail_one_as_json_returns_true(tmp_registry, tmp_home):

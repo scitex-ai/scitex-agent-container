@@ -213,10 +213,18 @@ async def _drive_turn(
                     # the awaiter sees a consistent (text, session_id).
                     env.session_id = sid
                 usage = getattr(msg, "usage", None)
-                accumulate_quota(state_dir, usage)
+                cost_usd = getattr(msg, "total_cost_usd", None)
+                model_usage = getattr(msg, "model_usage", None)
+                accumulate_quota(state_dir, usage, cost_usd=cost_usd)
                 append_session_message(
                     state_dir,
-                    {"type": "result", "session_id": sid, "usage": usage},
+                    {
+                        "type": "result",
+                        "session_id": sid,
+                        "usage": usage,
+                        "cost_usd": cost_usd,
+                        "model_usage": model_usage,
+                    },
                 )
                 # Clean drain: record the HONEST success outcome + reply
                 # summary on the turn context BEFORE the Stop hook fires
