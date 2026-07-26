@@ -371,6 +371,18 @@ class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
     name: str
+    # Named launch-profile identity. Legacy specs materialize as "default"
+    # while ``profiled`` remains false, so an explicit CLI selection cannot
+    # silently pretend to have taken effect.
+    profile: str = "default"
+    default_profile: str = "default"
+    available_profiles: tuple[str, ...] = field(default_factory=tuple)
+    profiled: bool = False
+    # Frontend process and nested Claude-compatible API backend.  Today the
+    # only supported harness is Claude Code; ``backend=codex`` means that
+    # harness talks to the registered Codex gateway.
+    harness: str = "claude-code"
+    backend: str = "anthropic"
     # Launch-mode selector. Default ``"tui"`` (interactive in-apptainer
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.

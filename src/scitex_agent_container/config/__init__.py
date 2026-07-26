@@ -18,6 +18,7 @@ import yaml
 
 from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
+from ._profiles import ProfileSelectionError, materialize_profile
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
@@ -48,6 +49,7 @@ __all__ = [
     "HostsSpec",
     "ListenPort",
     "ProviderSpec",
+    "ProfileSelectionError",
     "ProxySpec",
     "RestartSpec",
     "SchedulingSpec",
@@ -63,7 +65,7 @@ __all__ = [
 ]
 
 
-def load_config(path: str | Path) -> AgentConfig:
+def load_config(path: str | Path, *, profile: str | None = None) -> AgentConfig:
     """Load and validate a YAML config, returning an AgentConfig.
 
     Only ``scitex-agent-container/v3`` is accepted. Older apiVersions
@@ -80,7 +82,14 @@ def load_config(path: str | Path) -> AgentConfig:
             + "\n".join(f"  - {e}" for e in errors)
         )
 
-    config = load_v3(raw, path)
+    effective, selection = materialize_profile(raw, profile)
+    config = load_v3(effective, path)
+    config.profile = selection.name
+    config.default_profile = selection.default_name
+    config.harness = selection.harness
+    config.backend = selection.backend
+    config.available_profiles = selection.available
+    config.profiled = selection.is_profiled
     _warn_if_assigned_account_missing(config)
     _warn_if_startup_prompt_long(config)
     return config

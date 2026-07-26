@@ -22,6 +22,7 @@ from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
 from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
+from ._profiles import materialize_profile, profile_structure_errors
 
 # spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1
 # foundation) — distinct from spec.claude.provider (validated inside
@@ -152,7 +153,7 @@ _V3_REMOVED_FIELDS: dict[str, str] = {
 # the sibling module for the dict + string forms).
 
 
-def validate_raw(raw: dict, path: str) -> list[str]:
+def _validate_effective_raw(raw: dict, path: str) -> list[str]:
     """Validate raw YAML dict. Returns list of error strings (empty means valid)."""
     errors: list[str] = []
 
@@ -425,6 +426,42 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
         errors.extend(explicit_field_errors(raw, path))
 
+    return errors
+
+
+def validate_raw(raw: dict, path: str) -> list[str]:
+    """Validate a legacy or profile-aware raw YAML document.
+
+    Profile envelopes are resolved into the conventional v3 shape before the
+    existing validators run.  Every declared profile is validated, including
+    profiles other than the default, so a later CLI selection cannot expose a
+    configuration that was never checked.
+    """
+    structural_errors = profile_structure_errors(raw)
+    if structural_errors:
+        return structural_errors
+    if not isinstance(raw, dict):
+        return _validate_effective_raw(raw, path)
+    spec = raw.get("spec")
+    if not isinstance(spec, dict) or "profiles" not in spec:
+        return _validate_effective_raw(raw, path)
+
+    profiles = spec["profiles"]
+    assert isinstance(profiles, dict)
+    errors_to_profiles: dict[str, list[str]] = {}
+    for name in profiles:
+        effective, _selection = materialize_profile(raw, str(name))
+        for error in _validate_effective_raw(effective, path):
+            errors_to_profiles.setdefault(error, []).append(str(name))
+
+    errors: list[str] = []
+    all_profile_names = [str(name) for name in profiles]
+    for error, names in errors_to_profiles.items():
+        if names == all_profile_names:
+            errors.append(error)
+        else:
+            quoted = ", ".join(repr(name) for name in names)
+            errors.append(f"Profile(s) {quoted}: {error}")
     return errors
 
 
