@@ -24,6 +24,7 @@ from scitex_agent_container._account.openai_usage import (
     _check_no_key_leak,
     estimate_cost_usd,
     fetch_usage,
+    read_agent_spend,
     read_spend,
     record_usage,
 )
@@ -157,6 +158,33 @@ def test_estimate_longest_prefix_wins_over_shorter_family():
     assert cost == pytest.approx(0.40)
 
 
+def test_estimate_gpt_5_4_does_not_fall_back_to_gpt_5_price():
+    # Arrange
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+    # Act
+    cost = estimate_cost_usd(usage, "gpt-5.4")
+    # Assert
+    assert cost == pytest.approx(17.50)
+
+
+def test_estimate_codex_snapshot_matches_versioned_family():
+    # Arrange
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+    # Act
+    cost = estimate_cost_usd(usage, "gpt-5.2-codex")
+    # Assert
+    assert cost == pytest.approx(15.75)
+
+
+def test_estimate_future_dotted_family_is_unpriced():
+    # Arrange
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+    # Act
+    cost = estimate_cost_usd(usage, "gpt-5.99")
+    # Assert
+    assert cost is None
+
+
 def test_estimate_unknown_model_returns_none():
     # Arrange
     usage = {"input_tokens": 100, "output_tokens": 100}
@@ -235,6 +263,35 @@ def test_record_never_raises_on_unwritable_home():
     assert isinstance(bucket, dict)
 
 
+def test_read_agent_spend_returns_agent_estimate(tmp_path: Path):
+    # Arrange
+    record_usage(_TURN, model="gpt-4o-mini", agent="alpha", home=tmp_path)
+    # Act
+    result = read_agent_spend("alpha", home=tmp_path)
+    # Assert
+    assert result["estimated_cost_usd"] == pytest.approx(0.75)
+
+
+def test_read_agent_spend_returns_agent_tokens(tmp_path: Path):
+    # Arrange
+    record_usage(_TURN, model="gpt-4o-mini", agent="alpha", home=tmp_path)
+    # Act
+    result = read_agent_spend("alpha", home=tmp_path)
+    # Assert
+    assert (result["input_tokens"], result["output_tokens"]) == (
+        1_000_000,
+        1_000_000,
+    )
+
+
+def test_read_agent_spend_missing_agent_is_explicit(tmp_path: Path):
+    # Arrange
+    # Act
+    result = read_agent_spend("ghost", home=tmp_path)
+    # Assert
+    assert "no OpenAI spend recorded" in result["error"]
+
+
 # ---------------------------------------------------------------------------
 # read_spend
 # ---------------------------------------------------------------------------
@@ -311,9 +368,7 @@ def test_read_spend_total_sums_all_days(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_without_admin_key_reports_actionable_error(
-    tmp_path: Path, admin_env
-):
+def test_fetch_without_admin_key_reports_actionable_error(tmp_path: Path, admin_env):
     # Arrange
     # Act
     result = fetch_usage(home=tmp_path, opener=_opener_must_not_be_called)

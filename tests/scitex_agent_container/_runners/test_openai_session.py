@@ -428,6 +428,16 @@ def test_openai_session_tracing_defaults_off():
     assert session.tracing is False
 
 
+def test_spend_model_prefers_launch_resolved_model():
+    # Arrange
+    session = OpenAISession("alpha", model=None)
+    session._resolved_model = "gpt-5.2"
+    # Act
+    model = session._spend_model()
+    # Assert
+    assert model == "gpt-5.2"
+
+
 def test_module_imports_with_agents_blocked(block_agents_import):
     # Arrange
     name = "scitex_agent_container._runners.openai_session"
@@ -712,10 +722,7 @@ def test_send_failure_surfaces_as_turn_ending_error_event(openai_env: Path):
     async def _go() -> list[NormalizedEvent]:
         await session.start()
         try:
-            events = [
-                e
-                async for e in session.send(Message(role="user", content="hi"))
-            ]
+            events = [e async for e in session.send(Message(role="user", content="hi"))]
         finally:
             await session.close()
         return events

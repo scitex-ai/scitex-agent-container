@@ -65,12 +65,19 @@ _EMPTY_RESULT: dict[str, Any] = {
 
 # ---------------------------------------------------------------------------
 # Price table — USD per 1M tokens, (input, output). ESTIMATES for the
-# local ledger only (list prices as of 2026-01; authoritative spend is
-# fetch_usage's Costs API). Longest-prefix match so dated snapshots
+# local ledger only (official list prices checked 2026-07-26; authoritative
+# spend is fetch_usage's Costs API). Family-aware longest-prefix matching
+# lets dated snapshots
 # ("gpt-5-mini-2026-01-01") price as their family. Unknown models record
 # tokens with spend contribution 0 and bump ``unpriced_turns``.
 # ---------------------------------------------------------------------------
 _PRICES_PER_1M: dict[str, tuple[float, float]] = {
+    "gpt-5.4-pro": (30.00, 180.00),
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.2-pro": (21.00, 168.00),
+    "gpt-5.2": (1.75, 14.00),
+    "gpt-5.1": (1.25, 10.00),
+    "gpt-5-pro": (15.00, 120.00),
     "gpt-5-nano": (0.05, 0.40),
     "gpt-5-mini": (0.25, 2.00),
     "gpt-5": (1.25, 10.00),
@@ -178,7 +185,8 @@ def estimate_cost_usd(usage: dict[str, Any], model: str) -> float | None:
         return None
     match = ""
     for prefix in _PRICES_PER_1M:
-        if model.startswith(prefix) and len(prefix) > len(match):
+        family_match = model == prefix or model.startswith(f"{prefix}-")
+        if family_match and len(prefix) > len(match):
             match = prefix
     if not match:
         return None
@@ -251,9 +259,7 @@ def record_usage(
         return {}
 
 
-def read_spend(
-    home: Path | None = None, now: datetime | None = None
-) -> dict[str, Any]:
+def read_spend(home: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
     """Summarize the local spend ledger. Never raises.
 
     Returns ``{"spend_usd_today", "spend_usd_7d", "spend_usd_total",
@@ -286,7 +292,9 @@ def read_spend(
             # stx-allow: fallback (reason: a hand-edited ledger may hold a malformed date key; skip it rather than zero the report)
             try:
                 day = datetime.strptime(day_str, "%Y-%m-%d").date()
-            except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
+            except (
+                ValueError
+            ):  # stx-allow: fallback (reason: type coercion or format mismatch)
                 continue
             out["days_tracked"] += 1
             out["spend_usd_total"] = round(out["spend_usd_total"] + spend, 6)
@@ -297,6 +305,39 @@ def read_spend(
         return out
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         out["error"] = f"ledger read failed: {exc}"
+        return out
+
+
+def read_agent_spend(agent: str, home: Path | None = None) -> dict[str, Any]:
+    """Return one agent's cumulative OpenAI list-price estimate.
+
+    This reads the local ledger only; it is not an invoice. A stable
+    zero-valued shape plus ``error`` is returned when no bucket exists.
+    """
+    out: dict[str, Any] = {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "unpriced_turns": 0,
+        "error": None,
+    }
+    try:
+        _home = Path(home) if home is not None else Path.home()
+        ledger = _load_json(_ledger_path(_home))
+        agents = ledger.get("agents") if isinstance(ledger, dict) else None
+        bucket = agents.get(agent) if isinstance(agents, dict) else None
+        if not isinstance(bucket, dict):
+            out["error"] = f"no OpenAI spend recorded for agent {agent!r}"
+            return out
+        out["requests"] = int(bucket.get("requests") or 0)
+        out["input_tokens"] = int(bucket.get("input_tokens") or 0)
+        out["output_tokens"] = int(bucket.get("output_tokens") or 0)
+        out["estimated_cost_usd"] = round(float(bucket.get("spend_usd") or 0.0), 6)
+        out["unpriced_turns"] = int(bucket.get("unpriced_turns") or 0)
+        return out
+    except Exception as exc:  # stx-allow: fallback (reason: usage display must not fail on a corrupt or unreadable best-effort ledger)
+        out["error"] = f"agent spend read failed: {exc}"
         return out
 
 
@@ -384,7 +425,10 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
             if fetched_at.tzinfo is None:
                 fetched_at = fetched_at.replace(tzinfo=timezone.utc)
             fresh = (_now_utc() - fetched_at).total_seconds() < _CACHE_TTL_SECONDS
-        except (TypeError, ValueError):  # stx-allow: fallback (reason: type coercion or format mismatch)
+        except (
+            TypeError,
+            ValueError,
+        ):  # stx-allow: fallback (reason: type coercion or format mismatch)
             fresh = False
         if fresh:
             cached["from_cache"] = True
@@ -415,7 +459,9 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
             if not payload.get("has_more") or not next_page:
                 break
             params = dict(params, page=next_page)
-    except urllib.error.HTTPError as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
+    except (
+        urllib.error.HTTPError
+    ) as exc:  # stx-allow: fallback (reason: expected failure — see inline comment)
         return _err(f"HTTP {exc.code} from Costs API (admin key required)")
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         return _err(f"Network error: {exc}")
@@ -438,7 +484,9 @@ def fetch_usage(home: Path | None = None, *, opener=None) -> dict[str, Any]:
     # Security guard — must run before the cache write.
     try:
         _check_no_key_leak(result)
-    except RuntimeError as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
+    except (
+        RuntimeError
+    ) as exc:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
         return _err(str(exc))
 
     _write_json_atomic(_cache_path(_home), result)

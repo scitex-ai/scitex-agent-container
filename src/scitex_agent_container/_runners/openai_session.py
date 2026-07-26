@@ -160,7 +160,9 @@ def _parse_tool_arguments(raw_item: Any) -> dict[str, Any]:
         # stx-allow: fallback (reason: model-produced arguments may be truncated mid-stream; an empty dict keeps the event usable and `raw` retains the original)
         try:
             decoded = json.loads(raw)
-        except ValueError:  # stx-allow: fallback (reason: type coercion or format mismatch)
+        except (
+            ValueError
+        ):  # stx-allow: fallback (reason: type coercion or format mismatch)
             return {}
         if isinstance(decoded, dict):
             return decoded
@@ -334,6 +336,7 @@ class OpenAISession:
         self.tracing = tracing
         self._agent: Any = None
         self._session: Any = None
+        self._resolved_model: str | None = None
         self._started = False
 
     # -- ProviderSession surface ----------------------------------------
@@ -357,6 +360,7 @@ class OpenAISession:
         provision_openai_auth()
         function_tools = [tool_spec_to_function_tool(t) for t in self.tools]
         model = self.model or default_openai_model()
+        self._resolved_model = model
         agent_kwargs: dict[str, Any] = {
             "name": self.agent_name,
             "tools": function_tools,
@@ -417,12 +421,17 @@ class OpenAISession:
         """Tear down the session (closes the ``SQLiteSession`` db handle)."""
         session, self._session = self._session, None
         self._agent = None
+        self._resolved_model = None
         self._started = False
         close = getattr(session, "close", None)
         if callable(close):
             close()
 
     # -- internals -------------------------------------------------------
+
+    def _spend_model(self) -> str:
+        """Return the effective model id used to price this session."""
+        return self._resolved_model or self.model or "openai-default"
 
     def _record_spend(self, result: RunResult) -> None:
         """Append this turn's usage to the spend ledger (best-effort)."""
@@ -432,7 +441,7 @@ class OpenAISession:
 
             record_usage(
                 result.usage,
-                model=self.model or "openai-default",
+                model=self._spend_model(),
                 agent=self.agent_name,
             )
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
