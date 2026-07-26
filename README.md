@@ -227,6 +227,7 @@ sac agents status [<name>] [--snapshot] [--priority]   # fleet view if no name; 
                                                        # JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)
 sac agents health <name>
+sac agents usage  <name> [--json]         # accumulated tokens + honest cost sources
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary
 sac agents check  <name>                  # preflight (validates yaml + probes runtime deps)
@@ -298,6 +299,13 @@ sac installation boot                     # first-time host bootstrap (venv, PAT
 sac list-python-apis                      # enumerate public Python API
 sac --help-recursive                      # full subcommand tree
 ```
+
+`sac agents usage` reads both supported execution shapes: SDK
+`quota.json` counters and Claude Code TUI project transcripts. It reports
+provider-reported SDK cost, Claude Code's current-session cost, and the
+OpenAI runner's local list-price estimate separately. These are usage
+metrics—not necessarily subscription charges and not an invoice—so missing
+cost data is shown as `unavailable`, never as a silent `$0`.
 
 </details>
 

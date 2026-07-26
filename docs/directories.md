@@ -45,7 +45,7 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
     │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
     │   ├── session_id           (persisted SDK session id, resume marker)
     │   ├── session.jsonl        (one JSON object per turn event)
-    │   └── quota.json           (accumulated per-turn token totals)
+    │   └── quota.json           (SDK token totals + provider-reported cost)
     ├── events/                  Claude Code hook event ring-buffer
     │   └── <agent>.jsonl
     └── cache/                   snapshot cache for the dashboard / `sac agents diff`
