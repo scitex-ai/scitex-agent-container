@@ -9,12 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import yaml
+
 from scitex_agent_container.cli_pkg._explain import (
     _identity_lines,
     _pwd_is_backed,
     _redact,
     explain,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 
 def test_redact_masks_a_secret_named_value() -> None:
@@ -73,25 +76,29 @@ def test_explain_unknown_agent_raises_click_exception() -> None:
     assert "no agent named" in result.output
 
 
-def test_explain_forwards_requested_profile(monkeypatch) -> None:
-    # Arrange
+def test_explain_forwards_requested_profile(tmp_path: Path) -> None:
+    # Arrange — a legacy spec has no profiles, so its load error proves
+    # the CLI forwarded the explicit selection without replacing internals.
     from click.testing import CliRunner
 
-    from scitex_agent_container.cli_pkg import _explain as module
-
-    seen: dict[str, object] = {}
-
-    def fake_load(path: str, *, profile: str | None = None):
-        seen.update(path=path, profile=profile)
-        return object()
-
-    monkeypatch.setattr(module, "_spec_path_for", lambda _name: Path("/tmp/spec.yaml"))
-    monkeypatch.setattr(module, "load_config", fake_load)
-    monkeypatch.setattr(module, "render_plan", lambda _config, spec_path=None: "plan")
+    name = "profile-forwarding-test"
+    home = tmp_path / "home"
+    agent_dir = home / ".scitex" / "agent-container" / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "spec.yaml").write_text(
+        yaml.safe_dump(explicit_doc(), sort_keys=False)
+    )
     # Act
-    result = CliRunner().invoke(explain, ["sales", "--profile", "codex"])
+    result = CliRunner().invoke(
+        explain,
+        [name, "--profile", "codex"],
+        env={"HOME": str(home), "SAC_AGENT_SCOPE": "user"},
+    )
     # Assert
-    assert (result.exit_code, seen.get("profile")) == (0, "codex")
+    assert (
+        result.exit_code != 0,
+        "Profile 'codex' was requested" in result.output,
+    ) == (True, True), result.output
 
 
 def test_identity_lines_show_profile_harness_and_backend() -> None:
