@@ -35,7 +35,10 @@ from .status_cmds import status as _status_impl
 
 
 def _rebind(cmd: click.Command, new_name: str) -> click.Command:
-    return click.Command(
+    # Preserve command subclasses: ``create`` live-scans templates in help,
+    # and ``start`` resolves agent-specific profile candidates. Rebinding
+    # everything to bare ``click.Command`` silently discarded those surfaces.
+    return type(cmd)(
         name=new_name,
         callback=cmd.callback,
         params=list(cmd.params),

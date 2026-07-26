@@ -18,9 +18,10 @@ from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
+from ._start_profile_option import StartCommand, profile_name_complete
 
 
-@click.command()
+@click.command(cls=StartCommand)
 @click.argument(
     "targets",
     type=str,
@@ -32,6 +33,7 @@ from ._start_preflight_gate import make_preflight_runner
 @click.option(
     "--profile",
     metavar="NAME",
+    shell_complete=profile_name_complete,
     help="Select a named launch profile (defaults to spec.default_profile).",
 )
 @click.option(

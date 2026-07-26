@@ -32,9 +32,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import click
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._start import start
+from scitex_agent_container.cli_pkg.lifecycle._start_profile_option import (
+    profile_name_complete,
+)
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
@@ -84,6 +88,55 @@ class TestArgumentValidation:
         result = runner.invoke(start, ["--help"])
         # Assert
         assert "--profile" in result.output
+
+    def test_agent_help_lists_available_profiles(self, tmp_path):
+        # Arrange
+        from scitex_agent_container.cli_pkg.agent_group import agent_group
+
+        spec = tmp_path / "profiled" / "spec.yaml"
+        spec.parent.mkdir()
+        spec.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  default_profile: claude-code\n"
+            "  profiles:\n"
+            "    claude-code: {}\n"
+            "    codex: {}\n"
+        )
+        # Act
+        result = CliRunner().invoke(
+            agent_group,
+            ["start", str(spec), "--help"],
+            terminal_width=160,
+        )
+        # Assert
+        assert "claude-code (default), codex" in result.output
+
+    def test_profile_completion_returns_matching_candidate(self, tmp_path):
+        # Arrange
+        spec = tmp_path / "profiled" / "spec.yaml"
+        spec.parent.mkdir()
+        spec.write_text(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  default_profile: claude-code\n"
+            "  profiles:\n"
+            "    claude-code: {}\n"
+            "    codex: {}\n"
+        )
+        ctx = click.Context(start)
+        ctx.params["targets"] = (str(spec),)
+        profile_option = next(
+            param
+            for param in start.params
+            if isinstance(param, click.Option) and "--profile" in param.opts
+        )
+        # Act
+        items = profile_name_complete(ctx, profile_option, "co")
+        # Assert
+        assert [item.value for item in items] == ["codex"]
 
     def test_resume_with_session_new_session_is_rejected(self):
         # Arrange
