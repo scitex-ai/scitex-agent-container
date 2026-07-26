@@ -51,6 +51,7 @@ def build_run_argv(
     runner_argv: list[str] | None = None,
     one_shot: bool = False,
     tui: bool = False,
+    resolve_secrets: bool = True,
 ) -> list[str]:
     """Render the ``apptainer exec`` argv.
 
@@ -289,7 +290,7 @@ def build_run_argv(
     # _apptainer_auth so this runtime file stays under the line cap.
     from ._apptainer_auth import auth_argv
 
-    argv += auth_argv(config, state_dir)
+    argv += auth_argv(config, state_dir, resolve_secrets=resolve_secrets)
 
     # Agent env = the FLEET-DEFAULT layer merged UNDER spec.env (spec.env
     # WINS). See _fleet_env for the precedence rule and why it never raises.

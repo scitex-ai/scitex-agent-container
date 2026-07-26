@@ -37,6 +37,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 
 # Re-exported for back-compat — extracted to _apptainer_build, still
 # imported here so existing `mod._build_sif_* / mod._safe_image_tag`
@@ -67,7 +68,6 @@ from ._apptainer_build_argv import (  # noqa: F401
 from ._apptainer_build_argv import (
     build_run_argv as _build_run_argv_impl,
 )
-from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 from .base import RuntimeBase
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
@@ -101,6 +101,7 @@ class ApptainerContainerRuntime(RuntimeBase):
         state_dir: Path,
         sif_path: Path,
         runner_argv: list[str] | None = None,
+        resolve_secrets: bool = True,
     ) -> list[str]:
         """Render the ``apptainer exec`` argv.
 
@@ -116,6 +117,7 @@ class ApptainerContainerRuntime(RuntimeBase):
             sif_path=sif_path,
             runner_argv=runner_argv,
             one_shot=getattr(self, "_one_shot", False),
+            resolve_secrets=resolve_secrets,
         )
 
     # ------------------------------------------------------------------
@@ -199,7 +201,12 @@ class ApptainerContainerRuntime(RuntimeBase):
         elif self.is_running(config):
             return False
 
-        argv = self.build_run_argv(config, state_dir=state_dir, sif_path=sif_path)
+        argv = self.build_run_argv(
+            config,
+            state_dir=state_dir,
+            sif_path=sif_path,
+            resolve_secrets=not dry_run,
+        )
         if dry_run:
             _write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True

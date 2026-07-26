@@ -20,11 +20,13 @@ from typing import Callable
 
 import click
 
+from ..._lifecycle._codex_gateway import CodexGatewayError
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
+from ...runtimes._apptainer_provider import ProviderEnvError
 from .._helpers import console, system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
@@ -382,6 +384,23 @@ def run_single_targets(
                     )
                 else:
                     console.print(f"[red]{exc}[/red]")
+            except (CodexGatewayError, ProviderEnvError) as exc:
+                # Expected operator-facing configuration/bootstrap failures.
+                # The exception text contains the remedy; a Python traceback
+                # adds noise and made the ordinary first Codex launch look like
+                # an internal SAC crash.
+                any_error = True
+                if as_json:
+                    _emit_json(
+                        {
+                            "name": raw_target,
+                            "status": "error",
+                            "error": str(exc),
+                            "dry_run": dry_run,
+                        }
+                    )
+                else:
+                    console.print(f"[red]Error ({raw_target}): {exc}[/red]")
             except Exception as exc:
                 any_error = True
                 if as_json:

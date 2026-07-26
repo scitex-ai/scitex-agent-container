@@ -55,7 +55,9 @@ from ._apptainer_provider import (
 )
 
 
-def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
+def auth_argv(
+    config: AgentConfig, state_dir: Path, *, resolve_secrets: bool = True
+) -> list[str]:
     """Render the backend-auth ``--env`` / ``--bind`` flags for ``config``.
 
     See the module docstring for the openai-family / provider / OAuth
@@ -78,7 +80,7 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
         # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a clean
         # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker). The OAuth
         # creds bind is intentionally NOT emitted.
-        return provider_env_flags(config)
+        return provider_env_flags(config, resolve_secrets=resolve_secrets)
 
     argv: list[str] = []
 

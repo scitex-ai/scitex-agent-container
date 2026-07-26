@@ -32,15 +32,15 @@ from .._runners._tmux.tmux import (
 )
 from ..config import AgentConfig
 from ._apptainer_build_argv import build_run_argv
+from ._tui_auth_stage import TuiAuthStageError
+from ._tui_boot_drain import TuiBootDrainMixin
+from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_compose import (
     _compose_pending_live,
     clear_compose_buffer,
     verify_submit_by_advancement,
 )
 from ._tui_drain import drain_modals_until_ready
-from ._tui_auth_stage import TuiAuthStageError
-from ._tui_boot_drain import TuiBootDrainMixin
-from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_inject import StartupPromptInjectorMixin
 from ._tui_liveness import (
     is_responsive_from_activity,
@@ -177,11 +177,14 @@ class TuiSessionRuntime(
         # (None → resolve the real launcher lazily to avoid an import cycle).
         self._mux = multiplexer if multiplexer is not None else TmuxManager
         self._claude_bin = claude_bin
+        self._uses_default_command_builder = command_builder is None
         self._command_builder = command_builder or self._default_argv
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
 
-    def _default_argv(self, config: AgentConfig) -> list[str] | None:
+    def _default_argv(
+        self, config: AgentConfig, *, resolve_secrets: bool = True
+    ) -> list[str] | None:
         """Resolve the SIF and render the ``apptainer exec ... claude`` argv
         (``tui=True``) — the production launch command. Returns ``None`` when no
         SIF resolves (:meth:`start` turns that into a fail-loud error). Reuses
@@ -194,7 +197,13 @@ class TuiSessionRuntime(
         if sif_path is None:
             return None
         state_dir = state_dir_for_config(config)
-        return build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
+        return build_run_argv(
+            config,
+            state_dir=state_dir,
+            sif_path=sif_path,
+            tui=True,
+            resolve_secrets=resolve_secrets,
+        )
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         """Materialise per-agent ``to_home/`` + CLAUDE.md into the container
@@ -270,7 +279,10 @@ class TuiSessionRuntime(
         # Render the ``apptainer exec ... claude`` argv via the injection
         # seam (default :meth:`_default_argv` resolves the SIF + calls
         # build_run_argv(tui=True); tests inject a deterministic fake).
-        argv = self._command_builder(config)
+        if dry_run and self._uses_default_command_builder:
+            argv = self._default_argv(config, resolve_secrets=False)
+        else:
+            argv = self._command_builder(config)
         if argv is None:
             import shutil as _shutil
 

@@ -288,6 +288,69 @@ def test_codex_provider_injects_gateway_endpoint_key_and_model(env_save_restore)
     }
 
 
+def test_codex_mapping_resolves_registered_endpoint_and_auth_mode():
+    # Arrange
+    raw = {"provider": {"name": "codex", "auth_token": "auto"}}
+    # Act
+    provider = _parse_provider(raw)
+    # Assert
+    assert (
+        provider.name,
+        provider.base_url,
+        provider.auth_token_env,
+        provider.auth_token,
+    ) == (
+        "codex",
+        "http://127.0.0.1:18765",
+        "SCITEX_GENAI_GATEWAY_API_KEY",
+        "auto",
+    )
+
+
+def test_codex_auto_preview_does_not_require_host_key(
+    env_save_restore, tmp_path
+):
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.delete("SCITEX_GENAI_GATEWAY_API_KEY")
+    provider = _parse_provider(
+        {"provider": {"name": "codex", "auth_token": "auto"}}
+    )
+    cfg = AgentConfig(
+        name="codex-agent",
+        runtime="apptainer",
+        workdir="/tmp/codex-wd",
+        claude=ClaudeSpec(model="gpt-5.6-sol", provider=provider),
+    )
+    # Act
+    env = _env_dict(provider_env_flags(cfg, resolve_secrets=False))
+    # Assert
+    assert env["SAC_ANTHROPIC_API_KEY"] == (
+        "<SCITEX_GENAI_GATEWAY_API_KEY:auto>"
+    )
+
+
+def test_direct_spec_auth_token_wins_without_host_key(
+    env_save_restore, tmp_path
+):
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.delete("SCITEX_GENAI_GATEWAY_API_KEY")
+    provider = _parse_provider(
+        {"provider": {"name": "codex", "auth_token": "private-spec-key"}}
+    )
+    cfg = AgentConfig(
+        name="codex-agent",
+        runtime="apptainer",
+        workdir="/tmp/codex-wd",
+        claude=ClaudeSpec(model="gpt-5.6-sol", provider=provider),
+    )
+    # Act
+    env = _env_dict(provider_env_flags(cfg))
+    # Assert
+    assert env["SAC_ANTHROPIC_API_KEY"] == "private-spec-key"
+
+
 def test_codex_provider_fails_loud_without_gateway_key(env_save_restore, tmp_path):
     # Arrange
     env_save_restore.set("HOME", str(tmp_path))

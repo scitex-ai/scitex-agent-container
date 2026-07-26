@@ -43,7 +43,11 @@ def _argv_for(config: AgentConfig) -> list[str]:
     sif = ApptainerContainerRuntime().resolve_sif(config)
     sif_path = sif if sif is not None else Path(config.image or "<unresolved>.sif")
     return build_run_argv(
-        config, state_dir=state_dir_for_config(config), sif_path=sif_path, tui=True
+        config,
+        state_dir=state_dir_for_config(config),
+        sif_path=sif_path,
+        tui=True,
+        resolve_secrets=False,
     )
 
 

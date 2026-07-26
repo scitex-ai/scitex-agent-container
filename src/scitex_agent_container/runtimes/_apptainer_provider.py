@@ -139,7 +139,9 @@ def provider_active(config: AgentConfig) -> bool:
     return bool(provider is not None and getattr(provider, "base_url", ""))
 
 
-def provider_env_flags(config: AgentConfig) -> list[str]:
+def provider_env_flags(
+    config: AgentConfig, *, resolve_secrets: bool = True
+) -> list[str]:
     """Render the ``--env`` flags for an active provider override.
 
     Returns ``[]`` when no provider is active. Raises
@@ -174,19 +176,31 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
             "holding the key (e.g. DEEPSEEK_API_KEY)."
         )
 
-    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
-    # load_dotenv() is no-op-safe — already-set process env always wins,
-    # so calling it on every provider-env resolution is cheap and
-    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
-    # surprise of the default load_dotenv() search order.
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    resolver = PriorityConfig(auto_uppercase=False)
-    api_key = resolver.resolve(key=auth_token_env, default="")
+    declared_auth = str(getattr(provider, "auth_token", "") or "").strip()
+    if not resolve_secrets:
+        api_key = (
+            f"<{auth_token_env}:auto>"
+            if not declared_auth or declared_auth.lower() == "auto"
+            else "<declared-in-spec>"
+        )
+    elif declared_auth and declared_auth.lower() != "auto":
+        api_key = declared_auth
+    else:
+        # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
+        # load_dotenv() is no-op-safe — already-set process env always wins.
+        load_dotenv(dotenv_path=str(Path.home() / ".env"))
+        resolver = PriorityConfig(auto_uppercase=False)
+        api_key = resolver.resolve(key=auth_token_env, default="")
     if not api_key:
+        declaration = (
+            " The spec declares auth_token: auto."
+            if declared_auth.lower() == "auto"
+            else ""
+        )
         raise ProviderEnvError(
             f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
             "not be resolved through scitex-config (direct → config → env "
-            "→ default cascade). Set the key by EITHER exporting "
+            f"→ default cascade).{declaration} Set the key by EITHER exporting "
             f"{auth_token_env} in the shell that runs `sac agents start` "
             f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
             "(chmod 0600). sac reads the value at start and never logs "
