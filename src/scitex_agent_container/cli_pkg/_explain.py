@@ -14,8 +14,8 @@ from pathlib import Path
 
 import click
 
-from .._state._meta.secrets import _redact_env_entry as _redact
 from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
+from .._state._meta.secrets import _redact_env_entry as _redact
 from ..config import AgentConfig, load_config
 
 
@@ -169,6 +169,12 @@ def _identity_lines(
         lines.append(f"  {meta}")
     if spec_path is not None:
         lines.append(f"  spec: {spec_path}")
+    lines.append(
+        "  profile: "
+        f"{getattr(config, 'profile', 'default')}   "
+        f"harness: {getattr(config, 'harness', 'claude-code')}   "
+        f"backend: {getattr(config, 'backend', 'anthropic')}"
+    )
     lines.append(f"  runtime: {getattr(config, 'runtime', '?')}   image: {sif}")
     account = getattr(claude, "account", "") or ""
     creds = getattr(claude, "credentials_file", "") or ""
@@ -351,7 +357,6 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
         created = apply_host_merge(config, tmp)
         by_dir: dict[str, int] = {}
         for link in created:
-            sub = link.parent
             # climb to the .claude/<subdir> name
             parts = link.relative_to(Path(tmp) / ".claude").parts
             key = parts[0] if parts else "?"
@@ -372,7 +377,12 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
 
 @click.command("explain")
 @click.argument("name")
-def explain(name: str) -> None:
+@click.option(
+    "--profile",
+    metavar="NAME",
+    help="Select a named launch profile (defaults to spec.default_profile).",
+)
+def explain(name: str, profile: str | None) -> None:
     """Render the FULL effective launch plan for agent NAME (no launch).
 
     Mounts + --pwd are parsed from the same build_run_argv the runtime uses,
@@ -385,5 +395,8 @@ def explain(name: str) -> None:
             "(project-scope .scitex/agent-container/agents/ or "
             "~/.scitex/agent-container/agents/). Run `sac agents list`."
         )
-    config = load_config(str(spec))
+    try:
+        config = load_config(str(spec), profile=profile)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(render_plan(config, spec_path=spec))

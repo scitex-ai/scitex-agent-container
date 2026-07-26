@@ -6,7 +6,11 @@ workdir-backing check) plus the unknown-agent error path.
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 from scitex_agent_container.cli_pkg._explain import (
+    _identity_lines,
     _pwd_is_backed,
     _redact,
     explain,
@@ -67,3 +71,45 @@ def test_explain_unknown_agent_raises_click_exception() -> None:
     result = runner.invoke(explain, ["definitely-no-such-agent-xyz"])
     # Assert — fail-loud with a hint, not a stack trace.
     assert "no agent named" in result.output
+
+
+def test_explain_forwards_requested_profile(monkeypatch) -> None:
+    # Arrange
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg import _explain as module
+
+    seen: dict[str, object] = {}
+
+    def fake_load(path: str, *, profile: str | None = None):
+        seen.update(path=path, profile=profile)
+        return object()
+
+    monkeypatch.setattr(module, "_spec_path_for", lambda _name: Path("/tmp/spec.yaml"))
+    monkeypatch.setattr(module, "load_config", fake_load)
+    monkeypatch.setattr(module, "render_plan", lambda _config, spec_path=None: "plan")
+    # Act
+    result = CliRunner().invoke(explain, ["sales", "--profile", "codex"])
+    # Assert
+    assert (result.exit_code, seen.get("profile")) == (0, "codex")
+
+
+def test_identity_lines_show_profile_harness_and_backend() -> None:
+    # Arrange
+    config = SimpleNamespace(
+        name="sales",
+        labels={},
+        profile="codex",
+        harness="claude-code",
+        backend="codex",
+        runtime="tui",
+    )
+    # Act
+    lines = _identity_lines(
+        config, spec_path=Path("/tmp/spec.yaml"), sif="image.sif", claude=object()
+    )
+    # Assert
+    assert any(
+        "profile: codex   harness: claude-code   backend: codex" in line
+        for line in lines
+    )
