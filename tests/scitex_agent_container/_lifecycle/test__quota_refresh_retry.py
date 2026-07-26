@@ -6,8 +6,6 @@ import io
 import json
 from pathlib import Path
 
-import pytest
-
 from scitex_agent_container._account.quota_cache_refresh import refresh_quota_cache
 from scitex_agent_container._creds import POLICY_SPREAD, NoHealthyAccountError
 from scitex_agent_container._lifecycle._quota_refresh_retry import (
@@ -129,7 +127,8 @@ def test_expired_credentials_do_not_trigger_quota_refresh(tmp_path: Path) -> Non
         return {}
 
     # Act
-    with pytest.raises(NoHealthyAccountError):
+    error = None
+    try:
         pick_boot_account(
             slug,
             candidates=[slug],
@@ -141,9 +140,11 @@ def test_expired_credentials_do_not_trigger_quota_refresh(tmp_path: Path) -> Non
             require_quota_evidence=True,
             quota_refresher=refresher,
         )
+    except NoHealthyAccountError as exc:
+        error = exc
 
     # Assert
-    assert calls == 0
+    assert (isinstance(error, NoHealthyAccountError), calls) == (True, 0)
 
 
 def test_failed_refresh_retries_only_once_and_remains_blocked(tmp_path: Path) -> None:
@@ -161,7 +162,8 @@ def test_failed_refresh_retries_only_once_and_remains_blocked(tmp_path: Path) ->
         return {"accounts_found": 1, "ok": 0, "failed": 1}
 
     # Act
-    with pytest.raises(NoHealthyAccountError):
+    error = None
+    try:
         pick_boot_account(
             slug,
             candidates=[slug],
@@ -173,6 +175,8 @@ def test_failed_refresh_retries_only_once_and_remains_blocked(tmp_path: Path) ->
             require_quota_evidence=True,
             quota_refresher=refresher,
         )
+    except NoHealthyAccountError as exc:
+        error = exc
 
     # Assert
-    assert calls == 1
+    assert (isinstance(error, NoHealthyAccountError), calls) == (True, 1)
