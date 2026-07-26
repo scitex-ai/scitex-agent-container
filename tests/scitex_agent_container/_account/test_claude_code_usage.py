@@ -1,0 +1,139 @@
+"""Tests for Claude Code transcript and status-line usage readers."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from scitex_agent_container._account.claude_code_usage import (
+    read_claude_code_usage,
+)
+
+
+def _write_transcript(home: Path, records: list[dict], name: str = "one") -> None:
+    path = home / ".claude" / "projects" / "-work" / f"{name}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records))
+
+
+def _assistant(uuid: str, **usage: int) -> dict:
+    return {
+        "type": "assistant",
+        "uuid": uuid,
+        "message": {"type": "message", "usage": usage},
+    }
+
+
+def _write_statusline(home: Path, agent: str, cost: float) -> None:
+    path = home / ".scitex" / "agent-container" / "statusline" / f"{agent}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "session_id": "session-1",
+                "cost": {"total_cost_usd": cost},
+            }
+        )
+    )
+
+
+def test_reader_sums_all_claude_token_classes(tmp_path: Path) -> None:
+    # Arrange
+    _write_transcript(
+        tmp_path,
+        [
+            _assistant(
+                "a",
+                input_tokens=10,
+                output_tokens=4,
+                cache_creation_input_tokens=3,
+                cache_read_input_tokens=2,
+            )
+        ],
+    )
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert (
+        usage["input_tokens"],
+        usage["output_tokens"],
+        usage["cache_creation_input_tokens"],
+        usage["cache_read_input_tokens"],
+    ) == (10, 4, 3, 2)
+
+
+def test_reader_deduplicates_assistant_uuid_across_transcripts(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    record = _assistant("same", input_tokens=10)
+    _write_transcript(tmp_path, [record], "one")
+    _write_transcript(tmp_path, [record], "fork")
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["input_tokens"] == 10
+
+
+def test_reader_counts_unique_assistant_messages(tmp_path: Path) -> None:
+    # Arrange
+    _write_transcript(
+        tmp_path,
+        [
+            _assistant("a", input_tokens=10),
+            _assistant("b", output_tokens=4),
+        ],
+    )
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["assistant_messages"] == 2
+
+
+def test_reader_includes_nested_subagent_transcripts(tmp_path: Path) -> None:
+    # Arrange
+    path = (
+        tmp_path
+        / ".claude"
+        / "projects"
+        / "-work"
+        / "session"
+        / "subagents"
+        / "agent-one.jsonl"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_assistant("sub", output_tokens=9)))
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["output_tokens"] == 9
+
+
+def test_reader_ignores_malformed_and_non_assistant_records(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    path = tmp_path / ".claude" / "projects" / "-work" / "one.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text('not-json\n{"type":"user","usage":{"input_tokens":99}}')
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["input_tokens"] == 0
+
+
+def test_reader_reports_current_session_provider_cost(tmp_path: Path) -> None:
+    # Arrange
+    _write_statusline(tmp_path, "sales", 0.012345)
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert usage["current_session_cost_usd"] == 0.012345
+
+
+def test_reader_missing_home_is_explicit() -> None:
+    # Arrange
+    # Act
+    usage = read_claude_code_usage(None, "sales")
+    # Assert
+    assert "could not be resolved" in usage["error"]

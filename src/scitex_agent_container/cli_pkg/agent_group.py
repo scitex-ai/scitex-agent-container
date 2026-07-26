@@ -13,6 +13,7 @@ from __future__ import annotations
 import click
 
 from ._agent_prune_claude import prune_claude as _prune_claude_impl
+from ._agents_usage import agents_usage as _usage_impl
 from ._create import create as _create_impl
 from ._explain import explain as _explain_impl
 from ._helpers import HelpRecursiveGroup
@@ -70,7 +71,10 @@ class _AgentsGroup(HelpRecursiveGroup):
             ],
         ),
         ("Interact", ["send", "attach"]),
-        ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
+        (
+            "Inspect",
+            ["list", "status", "health", "auth-status", "usage", "tail", "recall"],
+        ),
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
@@ -197,6 +201,7 @@ agent_group.add_command(_rebind(_status_impl, "list"))
 # help text + the README example call out `sac agents status`, and
 # operators expect it to exist (foundation-polish bug 2).
 agent_group.add_command(_rebind(_status_impl, "status"))
+agent_group.add_command(_usage_impl)
 agent_group.add_command(_rebind(_tail_impl, "tail"))
 agent_group.add_command(_rebind(_health_impl, "health"))
 # `auth-status` — prompt-anchored TUI login-stuck report (near-prompt banner +

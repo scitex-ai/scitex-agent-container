@@ -73,3 +73,20 @@ def test_agents_help_lists_create_under_lifecycle() -> None:
     result = runner.invoke(agent_group, ["--help"])
     # Assert — the Lifecycle section names `create` (renamed from `new`).
     assert "create" in result.output
+
+
+def test_agents_usage_command_is_registered() -> None:
+    # Arrange
+    # Act
+    is_registered = "usage" in agent_group.commands
+    # Assert
+    assert is_registered is True
+
+
+def test_agents_help_lists_usage_under_inspect() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agent_group, ["--help"])
+    # Assert
+    assert "usage" in result.output
