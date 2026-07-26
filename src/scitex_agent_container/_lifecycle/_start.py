@@ -277,6 +277,18 @@ def agent_start(
     really_running = verdict.is_alive
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
+
+    # ``spec.claude.provider: codex`` uses scitex-genai's shared host-local
+    # gateway.  Make that backend a one-command launch: recover/create its
+    # private local-hop key, authenticate an existing gateway, or start it.
+    # This deliberately runs after the already-running verdict (ordinary
+    # idempotent starts need no backend work), but before a forced stop so a
+    # gateway failure cannot tear down a healthy agent we cannot replace.
+    if (not really_running or force) and not dry_run:
+        from ._codex_gateway import ensure_codex_gateway
+
+        ensure_codex_gateway(config)
+
     if really_running:
         if force:
             # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-

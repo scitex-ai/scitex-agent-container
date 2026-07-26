@@ -3,12 +3,10 @@
 # Host prerequisites:
 #   pip install 'scitex-agent-container[codex]'
 #   sac accounts sync-openai
-#   export SCITEX_GENAI_GATEWAY_API_KEY="<local gateway key>"
-#   scitex-genai-gateway --host 127.0.0.1 --port 18765
 #
-# The gateway discovers accounts/openai/*, including a one-account store. Every
-# new session still uses its normal rotation selector. Never put OAuth tokens
-# or the gateway key here.
+# `sac agents start` securely creates/reuses the local-hop key and starts the
+# shared gateway. The gateway discovers accounts/openai/*, including a
+# one-account store. Never put OAuth tokens or the gateway key here.
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
