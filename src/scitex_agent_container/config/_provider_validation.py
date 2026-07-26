@@ -27,8 +27,9 @@ def validate_provider(provider_block: object) -> list[str]:
     * **string** — a registered provider name (see
       :mod:`config._provider_registry`). Unknown names surface a loud
       error listing the registered providers.
-    * **dict** ``{base_url, auth_token_env}`` — existing shape; both
-      fields must be non-empty strings.
+    * **dict** ``{name, auth_token}`` — registered provider plus declarative
+      auth. ``auth_token: auto`` resolves/generates the secret at launch.
+    * **dict** ``{base_url, auth_token_env}`` — legacy explicit endpoint shape.
     * anything else (absent, explicit-null) → no errors (provider
       feature unused).
     """
@@ -47,17 +48,38 @@ def validate_provider(provider_block: object) -> list[str]:
     if not isinstance(provider_block, dict):
         return []
     errors: list[str] = []
-    for field_name in ("base_url", "auth_token_env"):
-        val = provider_block.get(field_name)
-        if val is None or val == "":
+    name = provider_block.get("name")
+    if name is not None:
+        from ._provider_registry import list_providers, resolve_provider
+
+        if not isinstance(name, str) or not name:
             errors.append(
-                f"spec.claude.provider.{field_name} is required and must be "
-                "non-empty when spec.claude.provider is declared."
+                "spec.claude.provider.name must be a non-empty string when set."
             )
-        elif not isinstance(val, str):
+        elif resolve_provider(name) is None:
             errors.append(
-                f"spec.claude.provider.{field_name} must be a string, got "
-                f"{type(val).__name__}"
+                f"spec.claude.provider.name='{name}' is not registered. "
+                f"Known providers: {', '.join(list_providers())}."
+            )
+    else:
+        for field_name in ("base_url", "auth_token_env"):
+            val = provider_block.get(field_name)
+            if val is None or val == "":
+                errors.append(
+                    f"spec.claude.provider.{field_name} is required and must be "
+                    "non-empty when spec.claude.provider.name is omitted."
+                )
+            elif not isinstance(val, str):
+                errors.append(
+                    f"spec.claude.provider.{field_name} must be a string, got "
+                    f"{type(val).__name__}"
+                )
+    if "auth_token" in provider_block:
+        auth_token = provider_block.get("auth_token")
+        if not isinstance(auth_token, str) or not auth_token:
+            errors.append(
+                "spec.claude.provider.auth_token must be a non-empty string "
+                "when set; use 'auto' for launch-time resolution."
             )
     # PR #319 (lead msg a456b610 2026-06-06): optional allowed_tools
     # whitelist. If present it MUST be a list of non-empty strings;
@@ -101,7 +123,15 @@ def provider_is_active(provider_block: object) -> bool:
         if entry is None:
             return False
         return bool(entry.get("base_url"))
-    return isinstance(provider_block, dict)
+    if not isinstance(provider_block, dict):
+        return False
+    name = provider_block.get("name")
+    if isinstance(name, str):
+        from ._provider_registry import resolve_provider
+
+        entry = resolve_provider(name)
+        return bool(entry and entry.get("base_url"))
+    return True
 
 
 __all__ = ["validate_provider", "provider_is_active"]

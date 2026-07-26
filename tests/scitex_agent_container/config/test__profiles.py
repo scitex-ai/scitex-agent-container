@@ -20,7 +20,7 @@ def _profiled_doc() -> dict:
     anthropic["model"] = "opus[1m]"
     codex = copy.deepcopy(claude)
     codex["model"] = "gpt-5.6-sol"
-    codex["provider"] = "codex"
+    codex["provider"] = {"name": "codex", "auth_token": "auto"}
     doc["spec"]["default_profile"] = "claude-code"
     doc["spec"]["profiles"] = {
         "claude-code": {
@@ -68,6 +68,15 @@ def test_load_config_reports_selected_backend(tmp_path: Path) -> None:
     config = load_config(path, profile="codex")
     # Assert
     assert config.backend == "codex"
+
+
+def test_load_config_preserves_declarative_provider_auth(tmp_path: Path) -> None:
+    # Arrange
+    path = _write_doc(tmp_path, _profiled_doc())
+    # Act
+    provider = load_config(path, profile="codex").claude.provider
+    # Assert
+    assert (provider.name, provider.auth_token) == ("codex", "auto")
 
 
 def test_load_config_injects_selected_profile_identity(tmp_path: Path) -> None:

@@ -50,6 +50,9 @@ def _backend_name(claude: object) -> str:
     if isinstance(provider, str) and provider.strip():
         return provider.strip()
     if isinstance(provider, dict):
+        name = provider.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
         return "custom"
     return "anthropic"
 

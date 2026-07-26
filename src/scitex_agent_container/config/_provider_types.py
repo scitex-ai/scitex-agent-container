@@ -80,6 +80,10 @@ class ProviderSpec:
     the runtime rejects loudly.
     """
 
+    name: str = ""
+    """Registered backend name when the mapping form uses
+    ``provider: {name: codex, ...}``. Empty for legacy explicit URL mappings."""
+
     base_url: str = ""
     """Anthropic-compatible base URL, e.g.
     ``https://api.deepseek.com/anthropic``. Required when the provider
@@ -90,6 +94,14 @@ class ProviderSpec:
     ``DEEPSEEK_API_KEY``) — NOT the key value. The operator sources the
     secret file; sac reads the env var's value at start and never logs
     it. Required when the provider block is present."""
+
+    auth_token: str = field(default="", repr=False)
+    """Declarative authentication value.
+
+    ``auto`` means resolve/generate the value at launch. Any other non-empty
+    value is used directly; this supports private, untracked specs, while
+    tracked specs should use ``auto`` so secrets never enter Git.
+    """
 
     allowed_tools: list[str] = field(default_factory=list)
     """Whitelist of built-in Claude Code tools to REGISTER when this

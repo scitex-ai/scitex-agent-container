@@ -48,7 +48,11 @@ def _parse_provider(raw: dict) -> ProviderSpec | None:
         if not base_url and not auth_token_env:
             # Registered "no override" sentinel (e.g. "anthropic").
             return None
-        return ProviderSpec(base_url=base_url, auth_token_env=auth_token_env)
+        return ProviderSpec(
+            name=block,
+            base_url=base_url,
+            auth_token_env=auth_token_env,
+        )
     if not isinstance(block, dict):
         return None
     # PR #319 (lead msg a456b610 2026-06-06): provider.allowed_tools
@@ -60,9 +64,19 @@ def _parse_provider(raw: dict) -> ProviderSpec | None:
     allowed_tools: list[str] = []
     if isinstance(raw_allowed, list):
         allowed_tools = [str(t) for t in raw_allowed if isinstance(t, str) and t]
+    name = str(block.get("name", "") or "")
+    registered = resolve_provider(name) if name else None
     return ProviderSpec(
-        base_url=str(block.get("base_url", "") or ""),
-        auth_token_env=str(block.get("auth_token_env", "") or ""),
+        name=name,
+        base_url=str(
+            block.get("base_url", "")
+            or ((registered or {}).get("base_url") or "")
+        ),
+        auth_token_env=str(
+            block.get("auth_token_env", "")
+            or ((registered or {}).get("auth_token_env") or "")
+        ),
+        auth_token=str(block.get("auth_token", "") or ""),
         allowed_tools=allowed_tools,
     )
 
