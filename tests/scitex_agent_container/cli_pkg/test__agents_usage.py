@@ -43,6 +43,7 @@ def _seed_tui_usage(agent_home: Path) -> None:
             {
                 "type": "assistant",
                 "uuid": "assistant-1",
+                "timestamp": "2026-07-26T12:48:50.048Z",
                 "message": {
                     "usage": {
                         "input_tokens": 20,
@@ -112,6 +113,22 @@ def test_payload_labels_cost_as_not_an_invoice(tmp_path: Path) -> None:
     assert "not necessarily" in payload["note"]
 
 
+def test_payload_reports_transcript_coverage_window(tmp_path: Path) -> None:
+    # Arrange
+    state_dir = tmp_path / "runtime" / "sales"
+    agent_home = tmp_path / "agent-home"
+    _seed_tui_usage(agent_home)
+    # Act
+    payload = build_usage_payload(
+        "sales",
+        state_dir=state_dir,
+        home=tmp_path,
+        agent_home=agent_home,
+    )
+    # Assert
+    assert payload["coverage"]["first_observed_at"] == "2026-07-26T12:48:50.048Z"
+
+
 def test_payload_missing_cost_is_not_silent_zero(tmp_path: Path) -> None:
     # Arrange
     state_dir = tmp_path / "runtime" / "ghost"
@@ -158,3 +175,12 @@ def test_usage_human_marks_missing_cost_unavailable() -> None:
     result = runner.invoke(agents_usage, ["ghost"])
     # Assert
     assert "unavailable" in result.output
+
+
+def test_usage_human_labels_unknown_coverage() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(agents_usage, ["ghost"])
+    # Assert
+    assert "First observed (UTC)" in result.output

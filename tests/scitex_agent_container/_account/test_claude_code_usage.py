@@ -16,12 +16,15 @@ def _write_transcript(home: Path, records: list[dict], name: str = "one") -> Non
     path.write_text("\n".join(json.dumps(record) for record in records))
 
 
-def _assistant(uuid: str, **usage: int) -> dict:
-    return {
+def _assistant(uuid: str, *, timestamp: str | None = None, **usage: int) -> dict:
+    record = {
         "type": "assistant",
         "uuid": uuid,
         "message": {"type": "message", "usage": usage},
     }
+    if timestamp is not None:
+        record["timestamp"] = timestamp
+    return record
 
 
 def _write_statusline(home: Path, agent: str, cost: float) -> None:
@@ -107,6 +110,32 @@ def test_reader_includes_nested_subagent_transcripts(tmp_path: Path) -> None:
     usage = read_claude_code_usage(tmp_path, "sales")
     # Assert
     assert usage["output_tokens"] == 9
+
+
+def test_reader_reports_assistant_usage_timestamp_window(tmp_path: Path) -> None:
+    # Arrange
+    _write_transcript(
+        tmp_path,
+        [
+            _assistant(
+                "later",
+                timestamp="2026-07-26T12:48:50.048Z",
+                output_tokens=1,
+            ),
+            _assistant(
+                "earlier",
+                timestamp="2026-06-27T19:39:10.285Z",
+                input_tokens=1,
+            ),
+        ],
+    )
+    # Act
+    usage = read_claude_code_usage(tmp_path, "sales")
+    # Assert
+    assert (
+        usage["first_observed_at"],
+        usage["last_observed_at"],
+    ) == ("2026-06-27T19:39:10.285Z", "2026-07-26T12:48:50.048Z")
 
 
 def test_reader_ignores_malformed_and_non_assistant_records(

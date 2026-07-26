@@ -25,6 +25,8 @@ def _zero_usage() -> dict[str, Any]:
         "cache_read_input_tokens": 0,
         "assistant_messages": 0,
         "transcript_files": 0,
+        "first_observed_at": None,
+        "last_observed_at": None,
         "current_session_cost_usd": None,
         "current_session_id": None,
         "error": None,
@@ -79,37 +81,46 @@ def read_claude_code_usage(home: Path | None, agent: str) -> dict[str, Any]:
     for path in paths:
         out["transcript_files"] += 1
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            stream = path.open(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line_number, line in enumerate(lines, 1):
-            try:
-                record = json.loads(line)
-            except (ValueError, TypeError):
-                continue
-            if not isinstance(record, dict) or record.get("type") != "assistant":
-                continue
-            message = record.get("message")
-            usage = message.get("usage") if isinstance(message, dict) else None
-            if not isinstance(usage, dict):
-                continue
-            identity = record.get("uuid")
-            dedup_key = (
-                identity
-                if isinstance(identity, str) and identity
-                else f"{path}:{line_number}"
-            )
-            if dedup_key in seen:
-                continue
-            seen.add(dedup_key)
-            out["assistant_messages"] += 1
-            for key in (
-                "input_tokens",
-                "output_tokens",
-                "cache_creation_input_tokens",
-                "cache_read_input_tokens",
-            ):
-                out[key] += _token(usage.get(key))
+        with stream:
+            for line_number, line in enumerate(stream, 1):
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "assistant":
+                    continue
+                message = record.get("message")
+                usage = message.get("usage") if isinstance(message, dict) else None
+                if not isinstance(usage, dict):
+                    continue
+                identity = record.get("uuid")
+                dedup_key = (
+                    identity
+                    if isinstance(identity, str) and identity
+                    else f"{path}:{line_number}"
+                )
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                out["assistant_messages"] += 1
+                timestamp = record.get("timestamp")
+                if isinstance(timestamp, str) and timestamp:
+                    first = out["first_observed_at"]
+                    last = out["last_observed_at"]
+                    if first is None or timestamp < first:
+                        out["first_observed_at"] = timestamp
+                    if last is None or timestamp > last:
+                        out["last_observed_at"] = timestamp
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                ):
+                    out[key] += _token(usage.get(key))
     _read_statusline(Path(home), agent, out)
     if not paths and out["current_session_id"] is None:
         out["error"] = "no Claude Code usage state recorded yet"

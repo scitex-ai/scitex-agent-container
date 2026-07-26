@@ -118,6 +118,14 @@ def build_usage_payload(
             "claude_code_assistant_messages": tui["assistant_messages"],
             "openai_requests": openai["requests"],
         },
+        "coverage": {
+            "first_observed_at": tui["first_observed_at"],
+            "last_observed_at": tui["last_observed_at"],
+            "basis": (
+                "all retained local usage state; Claude Code timestamps cover "
+                "transcript-derived tokens"
+            ),
+        },
         "cost": {
             "currency": "USD",
             "sdk_provider_reported_usd": (
@@ -162,6 +170,7 @@ def _fmt_tokens(value: int) -> str:
 def _render_human(payload: dict) -> None:
     tokens = payload["tokens"]
     activity = payload["activity"]
+    coverage = payload["coverage"]
     cost = payload["cost"]
     table = Table(title=f"Agent usage: {payload['agent']}")
     table.add_column("Counter", style="bold")
@@ -188,12 +197,25 @@ def _render_human(payload: dict) -> None:
         "OpenAI estimated cost",
         _fmt_cost(cost["openai_estimated_usd"]),
     )
+    table.add_row(
+        "First observed (UTC)",
+        _fmt_timestamp(coverage["first_observed_at"]),
+    )
+    table.add_row(
+        "Last observed (UTC)",
+        _fmt_timestamp(coverage["last_observed_at"]),
+    )
     console.print(table)
+    console.print(f"[dim]Coverage: {coverage['basis']}.[/dim]")
     console.print(f"[dim]{payload['note']}[/dim]")
 
 
 def _fmt_cost(value: float | None) -> str:
     return "unavailable" if value is None else f"${value:.6f}"
+
+
+def _fmt_timestamp(value: str | None) -> str:
+    return value or "unknown"
 
 
 @click.command("usage")

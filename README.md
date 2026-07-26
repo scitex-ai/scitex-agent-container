@@ -305,7 +305,9 @@ sac --help-recursive                      # full subcommand tree
 provider-reported SDK cost, Claude Code's current-session cost, and the
 OpenAI runner's local list-price estimate separately. These are usage
 metrics—not necessarily subscription charges and not an invoice—so missing
-cost data is shown as `unavailable`, never as a silent `$0`.
+cost data is shown as `unavailable`, never as a silent `$0`. The human and
+JSON outputs also show the earliest and latest retained Claude Code usage
+timestamps, making the historical coverage explicit.
 
 </details>
 
