@@ -77,7 +77,7 @@ def test_systemd_list_shows_sacs_real_timers() -> None:
 
 def test_systemd_list_shows_every_declared_sac_job() -> None:
     # Arrange — all four, not just the one a pinning test happens to name.
-    from scitex_agent_container._jobs_plugin import provide_jobs
+    from scitex_agent_container._jobs._jobs_plugin import provide_jobs
 
     expected = [j.name for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]]
     runner = CliRunner()
@@ -246,7 +246,7 @@ def test_install_delegates_once_per_declared_timer() -> None:
     # Arrange — the count is the point: a group that silently matched zero
     # jobs delegated zero times and still exited 0.
     import scitex_agent_container.cli_pkg._dev_jobs as dj
-    from scitex_agent_container._jobs_plugin import provide_jobs
+    from scitex_agent_container._jobs._jobs_plugin import provide_jobs
 
     expected = len([j for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]])
     captured: list[tuple] = []

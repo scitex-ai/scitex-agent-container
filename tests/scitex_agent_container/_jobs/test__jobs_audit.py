@@ -24,7 +24,7 @@ jobs_mod = pytest.importorskip(
     reason="installed scitex-dev predates the scitex_dev.jobs contract",
 )
 
-from scitex_agent_container._jobs_audit import (  # noqa: E402
+from scitex_agent_container._jobs._jobs_audit import (  # noqa: E402
     Finding,
     Form,
     InertReport,

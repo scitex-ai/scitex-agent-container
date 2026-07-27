@@ -204,7 +204,7 @@ scitex-agent-container = "scitex_agent_container"
 scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
 
 [project.entry-points."scitex_dev.jobs"]
-scitex-agent-container = "scitex_agent_container._jobs_plugin:provide_jobs"
+scitex-agent-container = "scitex_agent_container._jobs._jobs_plugin:provide_jobs"
 
 # C10 — sac's consumer on scitex-todo's shared card-event bus. When
 # scitex-todo's board emits a card-event (commented / created /
