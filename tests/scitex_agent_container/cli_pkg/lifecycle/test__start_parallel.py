@@ -308,6 +308,43 @@ class TestMaybeRunParallelRouting:
         # Assert
         assert handled is True
 
+    def test_single_target_with_profile_does_not_raise(self):
+        # Regression (sac-launch-profile): the launch-profile feature threads
+        # ``--profile`` from the CLI ``start`` command into ``maybe_run_parallel``.
+        # A half-applied build (caller passes ``profile=`` but the signature
+        # lacks it) crashed the in-process MCP ``agent_start`` path with
+        # ``maybe_run_parallel() got an unexpected keyword argument 'profile'``.
+        # The pre-existing routing tests never passed ``profile=``, so they
+        # could not catch it. This exercises the exact crashing call.
+        # Arrange — single target routes to False, so no child is launched.
+        kwargs = _route_kwargs(single_targets=["only"], profile="codex")
+        # Act
+        handled = maybe_run_parallel(**kwargs)
+        # Assert
+        assert handled is False
+
+    def test_multi_target_with_profile_routes(self, sac_shim):
+        # Regression (sac-launch-profile): drive the FULL parallel dispatch
+        # chain (maybe_run_parallel -> run_parallel_targets -> build_child_argv
+        # -> real subprocess) with ``profile`` set, proving every hop accepts
+        # and forwards the kwarg at runtime, not just build_child_argv alone.
+        # Arrange
+        kwargs = _route_kwargs(single_targets=["a", "b"], profile="codex")
+        # Act
+        handled = maybe_run_parallel(**kwargs)
+        # Assert
+        assert handled is True
+
+    def test_multi_target_with_profile_invokes_every_child(self, sac_shim):
+        # Regression (sac-launch-profile): the profile-carrying parallel path
+        # must still fan out to every target's real ``sac`` subprocess.
+        # Arrange
+        kwargs = _route_kwargs(single_targets=["a", "b"], profile="codex")
+        # Act
+        maybe_run_parallel(**kwargs)
+        # Assert
+        assert {t for _, t in _read_calls(sac_shim)} == {"a", "b"}
+
     def test_bulk_multi_without_yes_exits_two(self):
         # Arrange — a bulk-dir multi-launch still requires --yes.
         kwargs = _route_kwargs(bulk_yamls=["x/x.yaml", "y/y.yaml"], yes=False)
