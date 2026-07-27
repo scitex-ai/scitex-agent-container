@@ -259,7 +259,7 @@ def audit_consumers(
 
 
 def _declared_jobs() -> list:
-    from scitex_agent_container._jobs_plugin import provide_jobs
+    from scitex_agent_container._jobs._jobs_plugin import provide_jobs
 
     return list(provide_jobs())
 

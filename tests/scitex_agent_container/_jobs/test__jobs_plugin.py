@@ -41,7 +41,7 @@ jobs_mod = pytest.importorskip(
     reason="installed scitex-dev predates the scitex_dev.jobs contract",
 )
 
-from scitex_agent_container._jobs_plugin import provide_jobs  # noqa: E402
+from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
 
 
 def _job(name: str):

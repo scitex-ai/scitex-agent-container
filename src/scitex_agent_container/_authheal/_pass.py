@@ -31,7 +31,7 @@ DEPLOY GATE — READ BEFORE ENABLING THE TIMER
     TWO restarters bouncing the same ``tui-<agent>`` sessions with INDEPENDENT
     debounce state = the double-supervisor class (the ``sac.listen`` catastrophe
     in another costume). This timer MUST NOT be enabled on a host until that
-    host's ``auth-heal.py`` ``scan_tui`` is retired. See :mod:`.._jobs_plugin`
+    host's ``auth-heal.py`` ``scan_tui`` is retired. See :mod:`.._jobs._jobs_plugin`
     and the ``sac agents restart-login-expired`` command help.
 
 WHAT A CLEAN PASS IS ALLOWED TO MEAN
