@@ -43,15 +43,6 @@ def _write_config_yaml(path: Path, mapping: dict) -> Path:
 # ----------------------------------------------------------------------
 
 
-def test_fleet_defaults_seeded_with_the_cards_dual_write_flag() -> None:
-    # Arrange
-    absent = Path("/nonexistent/config.yaml")
-    # Act
-    defaults = declared_fleet_defaults(absent)
-    # Assert
-    assert defaults["SCITEX_CARDS_DUAL_WRITE"] == "1"
-
-
 def test_fleet_defaults_seeded_with_the_cards_sqlite_read_backend() -> None:
     # Arrange
     absent = Path("/nonexistent/config.yaml")
@@ -66,9 +57,9 @@ def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> 
     # Arrange
     cfg = _write_config_yaml(tmp_path / "config.yaml", {"ADDED": "x"})
     # Act
-    declared_fleet_defaults(cfg)["SCITEX_CARDS_DUAL_WRITE"] = "MUTATED"
+    declared_fleet_defaults(cfg)["SCITEX_CARDS_READ_BACKEND"] = "MUTATED"
     # Assert
-    assert FLEET_DEFAULT_ENV["SCITEX_CARDS_DUAL_WRITE"] == "1"
+    assert FLEET_DEFAULT_ENV["SCITEX_CARDS_READ_BACKEND"] == "sqlite"
 
 
 # ----------------------------------------------------------------------
@@ -87,11 +78,13 @@ def test_config_yaml_can_add_a_new_fleet_default(tmp_path: Path) -> None:
 
 def test_config_yaml_overrides_a_sac_declared_default(tmp_path: Path) -> None:
     # Arrange
-    cfg = _write_config_yaml(tmp_path / "config.yaml", {"SCITEX_CARDS_DUAL_WRITE": "0"})
+    cfg = _write_config_yaml(
+        tmp_path / "config.yaml", {"SCITEX_CARDS_READ_BACKEND": "yaml"}
+    )
     # Act
     defaults = declared_fleet_defaults(cfg)
     # Assert
-    assert defaults["SCITEX_CARDS_DUAL_WRITE"] == "0"
+    assert defaults["SCITEX_CARDS_READ_BACKEND"] == "yaml"
 
 
 def test_config_yaml_values_are_coerced_to_strings(tmp_path: Path) -> None:
@@ -113,7 +106,7 @@ def test_malformed_config_yaml_degrades_to_sac_defaults(tmp_path: Path) -> None:
     # Act
     defaults = declared_fleet_defaults(cfg)
     # Assert
-    assert defaults["SCITEX_CARDS_DUAL_WRITE"] == "1"
+    assert defaults["SCITEX_CARDS_READ_BACKEND"] == "sqlite"
 
 
 def test_non_mapping_section_is_ignored(tmp_path: Path) -> None:
@@ -359,3 +352,47 @@ def test_raw_args_identity_wins_over_the_spec_env_identity() -> None:
     merged = effective_env(config, defaults={})
     # Assert
     assert merged["SCITEX_CARDS_AGENT_ID"] == "from-raw-args"
+
+
+# ----------------------------------------------------------------------
+# Dual-write must stay GONE. The YAML tier it gated was deleted 2026-07-21;
+# after that the flag routed nothing while still reaching every container,
+# and scitex-cards' health FAILED single_write_target purely on its presence
+# (a false alarm nobody could clear). Dropped 2026-07-28 on the store owner's
+# decision. These assert the absence at BOTH layers, because a key removed
+# from the dict but still rendered into argv would be the same bug.
+# ----------------------------------------------------------------------
+
+DEAD_WRITE_ROUTING_KEYS = ("SCITEX_CARDS_DUAL_WRITE", "SCITEX_TODO_DUAL_WRITE")
+
+
+@pytest.mark.parametrize("key", DEAD_WRITE_ROUTING_KEYS)
+def test_dead_write_routing_key_is_not_a_fleet_default(key: str) -> None:
+    """sac must not declare a write-routing flag for a store tier that is gone."""
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+    # Act
+    defaults = declared_fleet_defaults(absent)
+    # Assert
+    assert key not in defaults and key not in FLEET_DEFAULT_ENV
+
+
+@pytest.mark.parametrize("key", DEAD_WRITE_ROUTING_KEYS)
+def test_dead_write_routing_key_never_reaches_argv(key: str) -> None:
+    """argv is what actually reaches the container, so assert it there too."""
+    # Arrange
+    config = SimpleNamespace(env={})
+    # Act
+    flags = fleet_env_flags(config, defaults=FLEET_DEFAULT_ENV)
+    # Assert
+    assert not any(flag.startswith(f"{key}=") for flag in flags)
+
+
+def test_read_backend_default_is_retained() -> None:
+    """Only the dual-write flag was dropped — the SQLite read pin stays."""
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+    # Act
+    defaults = declared_fleet_defaults(absent)
+    # Assert
+    assert defaults["SCITEX_CARDS_READ_BACKEND"] == "sqlite"
