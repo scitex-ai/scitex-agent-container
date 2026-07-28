@@ -1234,7 +1234,7 @@ def test_fleet_default_env_reaches_the_built_argv(tmp_path) -> None:
     # Act
     argv = _argv_for_env(tmp_path, env_block)
     # Assert — the fleet default arrived without the spec asking for it.
-    assert _env_values(argv, "SCITEX_CARDS_DUAL_WRITE") == ["1"]
+    assert _env_values(argv, "SCITEX_CARDS_READ_BACKEND") == ["sqlite"]
 
 
 def test_spec_env_overrides_fleet_default_in_argv(tmp_path) -> None:
@@ -1245,11 +1245,11 @@ def test_spec_env_overrides_fleet_default_in_argv(tmp_path) -> None:
     read ``1`` and the test FAILS. See the PR body for the recorded run.
     """
     # Arrange — the spec claims a key the fleet also defaults.
-    env_block = "    env:\n      SCITEX_CARDS_DUAL_WRITE: '0'"
+    env_block = "    env:\n      SCITEX_CARDS_READ_BACKEND: 'yaml'"
     # Act
     argv = _argv_for_env(tmp_path, env_block)
     # Assert — the per-agent value won, and it is the ONLY one emitted.
-    assert _env_values(argv, "SCITEX_CARDS_DUAL_WRITE") == ["0"]
+    assert _env_values(argv, "SCITEX_CARDS_READ_BACKEND") == ["yaml"]
 
 
 def test_spec_env_key_not_in_fleet_defaults_still_reaches_argv(tmp_path) -> None:
