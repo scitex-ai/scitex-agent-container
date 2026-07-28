@@ -277,7 +277,7 @@ From: ./sac-base.sif
         # the release it was standing in for sat published and unused. A pin
         # taken to bridge a gap outlives the gap unless something removes it.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards[mcp]>=0.17.2"
+            "scitex-cards[mcp]>=0.17.9"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -321,7 +321,7 @@ From: ./sac-base.sif
         # rather than >=0.16.0 because 0.17.0 destroys card databases and a
         # lower floor lets a resolver reach it again.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards[mcp]>=0.17.2"
+            "scitex-cards[mcp]>=0.17.9"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
