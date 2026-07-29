@@ -232,10 +232,12 @@ def test_render_usage_bars_block_marks_each_account_with_dash():
     # Act
     block = render_usage_bars_block(rows, width=20)
     markers = [ln for ln in block.splitlines() if ln.startswith("- ")]
-    # Assert — one "- <name>" marker per account (operator mockup).
+    # Assert — one "- <name>" marker per account, then the Average block
+    # (operator 2026-07-30: the Average replaced the prose fleet line).
     assert markers == [
         "- claude-code:alpha-example-com",
         "- claude-code:beta-example-com",
+        "- Average (n=2)",
     ]
 
 
@@ -244,8 +246,10 @@ def test_render_usage_bars_block_blank_line_between_accounts():
     rows = _two_bar_rows()
     # Act
     block = render_usage_bars_block(rows, width=20)
-    # Assert — exactly one separator between the two account blocks.
-    assert block.splitlines().count("") == 1
+    # Assert — one separator between the two account blocks, plus one before
+    # the Average block (operator 2026-07-30). The Average is separated the
+    # same way an account is, so the section reads as a uniform list.
+    assert block.splitlines().count("") == 2
 
 
 def test_render_usage_bars_block_hintless_rows_share_bar_column():
@@ -355,6 +359,9 @@ def test_render_usage_bars_block_matches_operator_mockup_exactly():
             "- claude-code:beta-example-com",
             "  5h            [██░░░░░░░░░░] (14%)",
             "  7d            [██░░░░░░░░░░] (15%)",
+            "",
+            "- Average (n=2)",
+            "  7d (in 2d03h) [█████░░░░░░░] (40%)",
         ]
     )
 

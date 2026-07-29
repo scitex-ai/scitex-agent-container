@@ -74,7 +74,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterable
 
-from ._timefmt import format_relative_until
+from ._timefmt import _coerce_dt, format_relative_until
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ._account_list_render import AccountRow
@@ -187,6 +187,66 @@ def render_account_block(
     ]
 
 
+def _mean_reset_at(rows: Iterable["AccountRow"]) -> datetime | None:
+    """Mean 7-day reset instant across rows that have one, or ``None``.
+
+    Averaging absolute reset instants is the reading consistent with the
+    block's label: the Average block answers "where does the fleet sit, and
+    when does that position typically reset". The EARLIEST reset would answer
+    a different question (when does the first account free up) and would not
+    be an average of anything.
+
+    ``reset_at_7d`` is ``str | datetime | None`` — the cache stores ISO-8601
+    strings and only some callers pre-parse. Coerced through the SAME
+    ``_timefmt._coerce_dt`` the per-line hints use, rather than a second
+    parser here: two parsers for one field is how the bars and the Average
+    would come to disagree about the same timestamp. (The first version of
+    this called ``.timestamp()`` directly and crashed on the string form —
+    caught by four pre-existing tests in test__account_usage_bars.py.)
+
+    Unparseable entries are dropped, matching ``format_relative_until``'s
+    contract of degrading to no hint rather than raising.
+    """
+    stamps = [dt for dt in (_coerce_dt(r.reset_at_7d) for r in rows) if dt is not None]
+    if not stamps:
+        return None
+    return datetime.fromtimestamp(
+        sum(s.timestamp() for s in stamps) / len(stamps), tz=stamps[0].tzinfo
+    )
+
+
+def render_average_block(
+    rows: Iterable["AccountRow"],
+    *,
+    hint_width: int,
+    width: int = _DEFAULT_BAR_WIDTH,
+    now: datetime | None = None,
+) -> list[str]:
+    """The Average block (operator request 2026-07-30):
+
+    ``- Average (n=3)`` then a single 7d window line. 7d only, because the
+    5h windows reset on staggered anchors and their mean is not a quantity
+    an operator can act on; the 7d mean is the fleet-capacity number that
+    used to be the ``Fleet 7d capacity used:`` line, rendered in the same
+    visual language as every other bar instead of as prose.
+
+    ``n`` counts only accounts WITH cached 7d usage — the same denominator
+    :func:`fleet_7d_capacity_used` averages over, so the percentage and the
+    count can never describe different populations. Returns ``[]`` when no
+    account has data, so the caller emits nothing rather than an empty bar
+    that would read as 0%.
+    """
+    row_list = list(rows)
+    pct, n = fleet_7d_capacity_used(r.used_pct_7d for r in row_list)
+    if pct is None:
+        return []
+    hint = _wrap_hint(format_relative_until(_mean_reset_at(row_list), now=now))
+    return [
+        f"- Average (n={n})",
+        render_window_line("7d", pct, hint=hint, hint_width=hint_width, width=width),
+    ]
+
+
 def render_usage_bars_block(
     rows: Iterable["AccountRow"],
     *,
@@ -220,7 +280,12 @@ def render_usage_bars_block(
     hints_7d = [
         _wrap_hint(format_relative_until(r.reset_at_7d, now=now)) for r in row_list
     ]
-    hint_width = max(len(h) for h in (*hints_5h, *hints_7d))
+    # The Average block's hint participates in hint_width: computing the
+    # width over the per-account hints alone would leave the Average bar
+    # starting one or two columns left of every other bar, which is exactly
+    # the vertical scan this block exists to provide.
+    hint_avg = _wrap_hint(format_relative_until(_mean_reset_at(row_list), now=now))
+    hint_width = max(len(h) for h in (*hints_5h, *hints_7d, hint_avg))
     lines = ["Usage bars (5h / 7d out of 100%):"]
     for index, (r, hint_5h, hint_7d) in enumerate(zip(row_list, hints_5h, hints_7d)):
         if index:
@@ -234,6 +299,12 @@ def render_usage_bars_block(
                 width=width,
             )
         )
+    average = render_average_block(
+        row_list, hint_width=hint_width, width=width, now=now
+    )
+    if average:
+        lines.append("")
+        lines.extend(average)
     return "\n".join(lines)
 
 
