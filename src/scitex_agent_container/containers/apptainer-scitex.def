@@ -207,10 +207,18 @@ From: ./sac-base.sif
         # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
         # this recipe once already. Never raise a floor without checking that
         # the version exists.
-        #   scitex-dev   >=0.29.0 — keystone aggregator (list/install/check-superset)
-        #   scitex-writer>=2.29.0 — texlive provider (ships the soul.sty fix)
-        #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
-        #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
+        #   scitex-dev    >=0.29.0 — keystone aggregator (list/install/check-superset)
+        #   scitex-writer >=2.29.0 — texlive provider (ships the soul.sty fix)
+        #   scitex-audio  >=0.3.0  — ffmpeg/portaudio provider
+        #   scitex-cv     >=0.2.0  — opencv-python-headless; provider declares []
+        #   scitex-storage>=0.3.0  — structural recipe detector
+        #       (`scitex-storage find-recipe`). Added 2026-07-29: it was in NO
+        #       recipe at all, so paper-scitex-clew's merged post-run cleanup
+        #       (clew PR #212) could not be armed — its purge decision delegates
+        #       to that detector, which did not resolve in sac-scitex.sif. That
+        #       was an ABSENCE, not a propagation failure: no rebake could ever
+        #       have delivered it. Matters most for the Spartan solver container,
+        #       which runs the launcher.
         #
         # scitex-cards — FLOOR (>=0.16.0) + ``-U``, replacing the ==0.16.0 pin
         # (2026-07-17). The two halves do different jobs and BOTH are needed:
@@ -250,7 +258,8 @@ From: ./sac-base.sif
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-storage>=0.3.0"
         # Separate invocation with -U: an exact-version sibling in the same
         # resolve would be a no-op against base's inherited venv (the
         # 2026-07-12 fleet-drift: a floor the inherited version already
@@ -306,7 +315,8 @@ From: ./sac-base.sif
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-storage>=0.3.0"
         # scitex-cards — UNPINNED + ``--upgrade``, mirroring the uv branch
         # above (see it for the operator's 2026-07-17 ruling and why the
         # regression that motivated the pin belongs to the shipping package's
