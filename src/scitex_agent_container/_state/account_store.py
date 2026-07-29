@@ -25,6 +25,7 @@ from typing import Any
 
 _DEFAULT_STORE_SUBDIR = Path(".scitex") / "agent-container" / "accounts"
 _METADATA_FILENAME = "account.json"
+_CREDENTIALS_FILENAME = ".credentials.json"
 
 # ``sac`` is a first-class short alias for ``agent-container``.
 # Both names live under ``~/.scitex/``; the short one is a symlink to
@@ -97,11 +98,59 @@ def list_accounts(
     if not store.is_dir():
         return accounts
     for account_dir in sorted(p for p in store.iterdir() if p.is_dir()):
-        # Skip non-account subdirs (e.g. `_rotations/` holding
-        # auth-rotation telemetry NDJSON files keyed by email).
-        if account_dir.name.startswith("_") or account_dir.name == "openai":
+        # Skip non-account subdirs. Underscore-prefixed ones are the store's
+        # own bookkeeping (`_rotations/` telemetry NDJSON, `_backup/`).
+        #
+        # Everything else is judged STRUCTURALLY rather than by name: an
+        # account holds `account.json` and/or `.credentials.json` (this
+        # module's documented contract, see the header), while PROVIDER
+        # directories — `anthropic/`, `openai/` — contain account dirs and
+        # hold neither file themselves.
+        #
+        # The previous test denylisted the single literal name "openai" and
+        # therefore missed `anthropic/`, which was enumerated as an account.
+        # Measured 2026-07-29: `sac accounts refresh --all` reported
+        # "anthropic FAILED — credentials file not found" and exited 1 on
+        # EVERY run, so systemd marked sac.accounts-refresh.service `failed`
+        # every 10 minutes — while the same run showed all three real
+        # accounts "skipped; token still fresh". A unit doing its job
+        # correctly reported failure indefinitely, which trains readers to
+        # ignore it.
+        #
+        # A name denylist has to be extended for each new provider and is
+        # silently wrong until someone remembers; the structural test cannot
+        # be forgotten. Note it deliberately admits an account whose
+        # credentials snapshot is MISSING but whose `account.json` remains —
+        # that is a real account in a broken state and callers must still
+        # see it, which a "has credentials" test alone would hide.
+        if account_dir.name.startswith("_"):
             continue
         meta_file = account_dir / _METADATA_FILENAME
+        if (
+            not meta_file.is_file()
+            and not (account_dir / _CREDENTIALS_FILENAME).is_file()
+        ):
+            # No account files. Two very different things look like this, and
+            # collapsing them was the first version's bug:
+            #   PROVIDER dir  — holds ACCOUNT SUBDIRECTORIES (measured: real
+            #                   `anthropic/` has 3 child dirs and 0 files,
+            #                   `openai/` has 1 and 0). Not an account.
+            #   BARE dir      — holds NOTHING. That is a real account whose
+            #                   snapshot AND metadata are both gone, and the
+            #                   refresher must still report it (it is asserted
+            #                   by test_missing_snapshot_is_recorded_failure,
+            #                   whose fixture is exactly `mkdir(account)`).
+            # So the discriminator is child DIRECTORIES, not file absence.
+            # stx-allow: fallback (reason: list_accounts never raises; an
+            # unreadable dir degrades to "treat as account", which is the
+            # visible//safe direction — a spurious entry is reported and
+            # investigated, a swallowed one is not)
+            try:
+                has_child_dirs = any(c.is_dir() for c in account_dir.iterdir())
+            except OSError:
+                has_child_dirs = False
+            if has_child_dirs:
+                continue
         # stx-allow: fallback (reason: individual account dir may be corrupt or unreadable; skipping it keeps the rest of the list intact)
         try:
             if meta_file.is_file():
