@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.20] - 2026-07-29
+
+### Changed
+
+- **`sac accounts list` grew an Average block and lost two lines the operator
+  reads past.** Their monitor re-renders this view every 10s, so what it does
+  NOT show matters as much as what it does: the per-account rolling-window
+  legend and the fleet-capacity line are gone, and a trailing
+  `- Average (n=N)` / `7d (…) [bar] (NN%)` pair now summarises the fleet's 7d
+  capacity in one reading. The Average hint participates in the shared
+  `hint_width`, so its bar stays column-aligned with the per-account bars
+  instead of forming a second ragged edge (`cli_pkg/_account_usage_bars.py`,
+  `cli_pkg/_account_list_cmd.py`). `needs_rolling_legend` /
+  `rolling_legend_line` stay in `_account_list_render.py` — exported and
+  separately tested, so dropping the *echo* is not dropping the *renderer*.
+
 ### Fixed
 
 - **A `--yes`-less start refusal was recorded as a permanent STARTUP_FAILED**
