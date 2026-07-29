@@ -361,8 +361,21 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-cards: FLOOR (>=0.17.2), not an exact pin (was ==0.16.0). 2026-07-17,
-    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20.
+    # scitex-cards: FLOOR (>=0.17.9), not an exact pin (was ==0.16.0). 2026-07-17,
+    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20, -> 0.17.9 on 2026-07-28.
+    #
+    # The 0.17.9 raise is EXPLICIT ON PURPOSE, not "latest at bake time". 0.17.8
+    # was published to PyPI and then MORE code was installed onto the host under
+    # that same version, so two codebases shared one number: an agent reading
+    # "0.17.8" in its container got the OLD renderer while the fix read as
+    # deployed. That fix makes an inbox notification name its sender and body
+    # instead of a bare count — the operator's DMs reached agents as the number
+    # "4", and one sat unread for two hours. A floating "latest" here would
+    # silently re-bake 0.17.8 if a bake lands between the merge and the PyPI
+    # publish, reproducing the confusion while the CHANGELOG claims the fix is
+    # in. If 0.17.9 is not published yet this build FAILS LOUDLY, which is
+    # intended: a failed bake is cheap, a fleet silently baked with the old
+    # renderer is not.
     #
     # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
     # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
@@ -449,7 +462,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]>=0.17.2" \
+        "scitex-cards[mcp]>=0.17.9" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
