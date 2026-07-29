@@ -93,15 +93,10 @@ def account_list(as_json: bool, refresh: bool) -> None:
         build_provider_accounts_json,
         build_stored_json,
         build_stored_rows,
-        needs_rolling_legend,
         render_stored_table,
-        rolling_legend_line,
     )
     from ._account_openai import format_openai_account_block
-    from ._account_usage_bars import (
-        fleet_capacity_used_line,
-        render_usage_bars_block,
-    )
+    from ._account_usage_bars import render_usage_bars_block
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
 
@@ -199,14 +194,16 @@ def account_list(as_json: bool, refresh: bool) -> None:
     if bars_block:
         click.echo("")
         click.echo(bars_block)
-    # When the upstream usage API didn't return per-row reset
-    # timestamps (older caches / API outage), the per-line `(→...)`
-    # hint can't render. Print a one-line legend below the bars so the
-    # operator still sees the rolling-window contract instead of
-    # guessing.
-    if needs_rolling_legend(rows):
-        click.echo(rolling_legend_line())
-    click.echo(fleet_capacity_used_line(rows))
+    # Legend and the `Fleet 7d capacity used:` line both DROPPED
+    # (operator 2026-07-30). The legend explained a rolling-window
+    # contract the per-line `(in ...)` hints already carry, and the fleet
+    # line stated in prose the number the new `- Average (n=N)` block now
+    # renders as a bar — the same arithmetic mean, in the visual language
+    # of the rest of the section instead of a sentence under it.
+    #
+    # `needs_rolling_legend` / `rolling_legend_line` are intentionally left
+    # in _account_list_render for now: they are exported and separately
+    # tested, and deleting them is a wider change than the display request.
 
 
 def register_list_command(group: click.Group) -> None:
