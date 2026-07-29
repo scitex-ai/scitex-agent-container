@@ -152,6 +152,38 @@ def test_an_account_with_credentials_but_no_metadata_is_still_listed(
     assert "creds-only" in names
 
 
+def test_a_bare_account_dir_with_no_files_at_all_is_still_listed(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the case my FIRST version of this fix wrongly excluded, caught
+    # by CI via test_missing_snapshot_is_recorded_failure (assert 0 == 1). An
+    # account dir with NO metadata and NO credentials is a real account whose
+    # snapshot is gone; the refresher exists to report exactly that. It differs
+    # from a provider dir by having no child DIRECTORIES, not by having files.
+    (tmp_path / "a-gmail-com").mkdir()
+
+    # Act
+    names = _names(tmp_path)
+
+    # Assert
+    assert "a-gmail-com" in names
+
+
+def test_a_provider_dir_is_told_from_a_bare_dir_by_its_child_dirs(
+    tmp_path: Path,
+) -> None:
+    # Arrange — both hold zero files; only the child directory distinguishes
+    # them. This is the discriminator the fix actually turns on.
+    _provider(tmp_path, "anthropic", holding="nested-account")
+    (tmp_path / "bare-acct").mkdir()
+
+    # Act
+    names = sorted(_names(tmp_path))
+
+    # Assert
+    assert names == ["bare-acct"]
+
+
 def test_underscore_bookkeeping_dirs_stay_excluded(tmp_path: Path) -> None:
     # Arrange — `_rotations/` holds auth-rotation telemetry keyed by email, so
     # it can contain account-looking children.
@@ -168,8 +200,14 @@ def test_underscore_bookkeeping_dirs_stay_excluded(tmp_path: Path) -> None:
 
 def test_an_empty_store_lists_nothing(tmp_path: Path) -> None:
     # Arrange — vacuity guard: if this returned entries the tests above would
-    # pass for the wrong reason.
-    (tmp_path / "anthropic").mkdir()
+    # pass for the wrong reason. A GENUINELY empty store: no dirs at all.
+    #
+    # The first version of this test created a bare `anthropic/` and asserted
+    # []. That was wrong once the discriminator became child DIRECTORIES: a
+    # bare dir with no children is a broken ACCOUNT, not a provider, so it is
+    # correctly listed. The test encoded my earlier misunderstanding, and
+    # tightening the predicate is what exposed it.
+    (tmp_path / "_rotations").mkdir()
 
     # Act
     names = _names(tmp_path)
