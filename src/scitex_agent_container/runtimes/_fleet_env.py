@@ -79,11 +79,40 @@ CONFIG_SECTION = "fleet_default_env"
 # without an owner ruling — asserted by test_dead_write_routing_key_* in
 # tests/scitex_agent_container/runtimes/test__fleet_env.py.
 #
+# SCITEX_CARDS_READ_BACKEND was dropped 2026-07-29 on the store owner's ruling,
+# for the same reason as the dual-write flag above and with the same evidence
+# standard — scitex-cards searched their READ PATH from source (positive control
+# first: SCITEX_CARDS_DB, 73 hits across 32 files) and found the variable in
+# exactly two places, a comment and a key in ``_RETIRED_VARS``. Neither is a
+# read-for-behaviour. They also checked the expressive-range trap that bit
+# several of us that day: the name is CONSTRUCTED (``prefix + suffix``) rather
+# than written literally, so a plain grep could have missed a dynamic read — it
+# is built for one purpose, ``environ.get(name)`` followed by ``logger.error``.
+# The value is never returned, never branched on, never reaches the store.
+#
+# It was not merely useless, it was ACTIVELY MISLEADING. In scitex-cards' own
+# words, from their retired-vars module: the board's systemd unit carried
+# ``SCITEX_CARDS_READ_BACKEND=sqlite`` while the board served 0 cards from a
+# database holding 2,654 — "it did nothing, but it STATED a read policy, so
+# everyone diagnosing the outage read that line, concluded the read target was
+# configured and correct, and looked elsewhere. An inert setting that appears to
+# answer the question is worse than no setting at all: it spends the
+# diagnostician's trust."
+#
+# scitex-cards KEEPS its retired-var warning deliberately — that warning is what
+# makes a stale config say so out loud, and it is the guard against anyone
+# hand-setting these again once the fleet is clean. So expect it to keep firing
+# per agent until each restarts onto this cleaned environment; that is correct
+# behaviour, not a leftover. Do NOT "fix" it by reintroducing the key.
+#
+# FLEET_DEFAULT_ENV is now EMPTY, and that is a valid state — the mechanism
+# survives for operator overrides via ``config.yaml``'s ``fleet_default_env``.
+# Asserted by test_dead_read_routing_key_* in
+# tests/scitex_agent_container/runtimes/test__fleet_env.py.
+#
 # These are opaque strings to sac. It never reads, parses or branches on them.
 # --------------------------------------------------------------------------
-FLEET_DEFAULT_ENV: dict[str, str] = {
-    "SCITEX_CARDS_READ_BACKEND": "sqlite",
-}
+FLEET_DEFAULT_ENV: dict[str, str] = {}
 
 
 def _config_path() -> Path:

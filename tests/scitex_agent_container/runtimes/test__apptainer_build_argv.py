@@ -1228,27 +1228,47 @@ def _argv_for_env(tmp_path: Path, env_block: str) -> list[str]:
     )
 
 
-def test_fleet_default_env_reaches_the_built_argv(tmp_path) -> None:
+def test_sac_injects_no_fleet_default_env_into_the_built_argv(tmp_path) -> None:
+    """Inverts test_fleet_default_env_reaches_the_built_argv.
+
+    That test asserted the seeded SCITEX_CARDS_READ_BACKEND=sqlite arrived
+    without the spec asking. sac stopped declaring it 2026-07-29 on the store
+    owner's ruling (nothing reads it, and it misled a diagnosis by stating a
+    read policy that was never enforced), so the correct assertion is that a
+    spec declaring no env of its own receives no fleet-injected value.
+    """
     # Arrange — a spec that declares NO env of its own.
     env_block = ""
     # Act
     argv = _argv_for_env(tmp_path, env_block)
-    # Assert — the fleet default arrived without the spec asking for it.
-    assert _env_values(argv, "SCITEX_CARDS_READ_BACKEND") == ["sqlite"]
+    # Assert
+    assert _env_values(argv, "SCITEX_CARDS_READ_BACKEND") == []
 
 
-def test_spec_env_overrides_fleet_default_in_argv(tmp_path) -> None:
-    """THE precedence rule, at the layer that reaches the container.
+def test_spec_env_reaches_the_built_argv_as_the_only_value(tmp_path) -> None:
+    """Was test_spec_env_overrides_fleet_default_in_argv.
 
-    MUTATION-PROOF: reversing the precedence in ``_fleet_env.merge_fleet_env``
-    (applying the defaults AFTER spec.env instead of before) makes this assert
-    read ``1`` and the test FAILS. See the PR body for the recorded run.
+    SCOPE NARROWED DELIBERATELY, and the reason is worth stating so nobody
+    "restores" it: that test proved per-agent-beats-fleet-default AT THE ARGV
+    LAYER, and it could only do so because sac shipped a default of the same
+    name to be overridden. With FLEET_DEFAULT_ENV now empty there is nothing to
+    override, so the original assertion would still pass with the precedence
+    REVERSED — a test that can no longer fail.
+
+    The precedence rule itself keeps real, mutation-capable coverage one layer
+    down, where defaults are an explicit injection seam rather than a shipped
+    constant: test__fleet_env.py::test_spec_env_overrides_a_fleet_default_of_
+    the_same_name and ::test_spec_env_can_neutralise_a_fleet_default_with_an_
+    empty_value, both using an injected SHARED_KEY.
+
+    What survives here is the argv-layer claim that still means something: a
+    spec.env value reaches the container, exactly once.
     """
-    # Arrange — the spec claims a key the fleet also defaults.
+    # Arrange
     env_block = "    env:\n      SCITEX_CARDS_READ_BACKEND: 'yaml'"
     # Act
     argv = _argv_for_env(tmp_path, env_block)
-    # Assert — the per-agent value won, and it is the ONLY one emitted.
+    # Assert — emitted, and emitted only once (no duplicate from a default).
     assert _env_values(argv, "SCITEX_CARDS_READ_BACKEND") == ["yaml"]
 
 
