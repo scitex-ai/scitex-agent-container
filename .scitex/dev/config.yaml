@@ -6,6 +6,38 @@ project-type:
   - pip
 
 audit:
+  exemptions:
+    # PS-224 (runner-destination-unregistered). `ubuntu-latest` is unserved BY
+    # DESIGN — we do not pay for hosted runners — so this red is real content,
+    # not a registry artefact. It is exempted rather than fixed because the
+    # blocker is SECURITY, not capability, and moving the job to Spartan would
+    # be a regression. The full argument lives in the block comment at the top
+    # of .github/workflows/cla.yml; the short version is four facts that only
+    # bite when combined:
+    #   1. `issue_comment` / `pull_request_target` are UNAUTHENTICATED triggers
+    #      on a public repo — a GitHub account is the entire barrier to entry.
+    #   2. The fork-PR approval gate covers `pull_request`, NOT these two.
+    #   3. The job body is third-party code (SHA-pinned here, not tag-pinned).
+    #   4. Spartan runners are PERSISTENT and $HOME is the operator's real home,
+    #      holding ~/.claude/.credentials.json — the live fleet credential.
+    # Composed: repointing would let any stranger run third-party code on the
+    # machine holding the fleet's credentials by leaving a comment. Revisit
+    # when an ephemeral/isolated runner exists for untrusted-trigger workflows
+    # (option (a) in the cla.yml comment); that closes this exemption properly.
+    PS-224:
+      - path: .github/workflows/cla.yml::CLAssistant
+        line: 0
+        reason: >-
+          Deliberately GitHub-hosted, escalated to the operator as a named
+          exception. This workflow runs a third-party action under the
+          UNAUTHENTICATED `issue_comment` and `pull_request_target` triggers,
+          which the fork-PR approval gate does not cover. Spartan runners are
+          persistent and their $HOME is the operator's real home holding the
+          live fleet credential, so repointing would let any stranger execute
+          third-party code next to that credential by commenting on an issue —
+          a security regression, not a compliance win. Kept hosted until an
+          ephemeral/isolated runner exists for untrusted-trigger workflows.
+
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
   #   - config/      declarative YAML schema + templates the CLI
