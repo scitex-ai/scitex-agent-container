@@ -23,8 +23,24 @@ from .._state.host_config import (
     ssh_control_options_str,
 )
 from ._helpers import _json_flag, console
-from ._host_list_cmd import register_list_command
-from ._host_validate_cmd import register_validate_command
+from ._host_list_cmd import host_list, register_list_command
+from ._host_validate_cmd import host_validate, register_validate_command
+
+# ``host_list`` / ``host_validate`` are re-exported because callers import them
+# FROM THIS MODULE (tests/scitex_agent_container/_state/test_host_config.py and
+# cli_pkg/test_host_group.py). Moving the leaves out without these two names
+# broke those imports — the extraction preserved the API I had in mind
+# (host_group / split_on_flag / dispatch_remote) rather than the one that was
+# actually imported. Keep them until the callers are migrated deliberately.
+__all__ = [
+    "dispatch_remote",
+    "host_exec",
+    "host_group",
+    "host_list",
+    "host_probe",
+    "host_validate",
+    "split_on_flag",
+]
 
 
 @click.group(
