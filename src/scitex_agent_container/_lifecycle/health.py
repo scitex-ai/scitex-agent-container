@@ -18,17 +18,19 @@ def health_check(
     """Run a single health check. Returns (is_healthy, message).
 
     Two methods:
-      * ``sdk-alive`` (default) — ask the SDK runtime whether its
-        container/process is up.
+      * ``sdk-alive`` (default) — ask THE CONFIG'S runtime whether its
+        process is up. The name is historical: it resolves through
+        ``_get_runtime``, so a ``tui`` spec is asked via
+        ``TuiSessionRuntime`` and an SDK spec via ``ClaudeSessionRuntime``.
       * ``a2a-card`` — probe the A2A AgentCard endpoint (higher
         fidelity, confirms the HTTP surface is actually serving).
 
     Parameters
     ----------
     runtime:
-        Optional injected SDK runtime (real collaborator). Used by
-        ``sdk-alive``. Default ``None`` instantiates the real
-        ``ClaudeSessionRuntime`` lazily.
+        Optional injected runtime (real collaborator). Used by
+        ``sdk-alive``. Default ``None`` resolves the config's runtime via
+        ``_get_runtime`` lazily.
     """
     method = config.health.method or "sdk-alive"
     if method == "sdk-alive":
@@ -43,19 +45,49 @@ def _check_sdk_alive(
     *,
     runtime: object | None = None,
 ) -> tuple[bool, str]:
-    """Ask the SDK runtime whether the container/runner is up.
+    """Ask THE CONFIG'S runtime whether its process is up.
 
-    ``runtime`` is an injectable real collaborator (default: a freshly
-    instantiated ``ClaudeSessionRuntime``). It must expose
-    ``is_running(config) -> bool``.
+    ``runtime`` is an injectable real collaborator. Default ``None``
+    resolves via :func:`._runtime_select._get_runtime` — the canonical
+    selector every other lifecycle path already uses.
+
+    IT USED TO HARDCODE ``ClaudeSessionRuntime``, and that made this check
+    UNPASSABLE for most of the fleet. ``ClaudeSessionRuntime.is_running``
+    delegates to ``_container_runtime_for``, which resolves only
+    ``apptainer`` / ``claude-agent-sdk`` and returns ``None`` for anything
+    else; ``is_running`` then maps that "no runtime to ask" onto ``False``
+    — unknown reported as dead. Since ``spec.runtime`` DEFAULTS to ``tui``
+    (``config/_types.py``), the default configuration reported
+    ``unhealthy: SDK runner not running`` while being demonstrably alive,
+    and ``status_cmds`` gates ``sys.exit(1)`` on it — so ``sac agents
+    health`` failed for every TUI agent, permanently. A check that cannot
+    pass, which is the mirror of the checks that cannot fail.
+
+    Measured on the host for a live ``runtime: tui`` agent before/after:
+
+        ClaudeSessionRuntime().is_running(cfg)        -> False   (the bug)
+        ApptainerContainerRuntime().is_running(cfg)   -> False   (naive fix,
+                                                        ALSO wrong: a tui
+                                                        agent is `apptainer
+                                                        exec` in a tmux pane,
+                                                        not a named instance)
+        TuiSessionRuntime().is_running(cfg)           -> True    (correct)
+
+    ``_get_runtime`` returns the third one for ``tui``/unset and the SDK
+    runtime for the explicit SDK values, so routing through it fixes the
+    default case without changing behaviour for SDK specs.
     """
     if runtime is None:
-        from ..runtimes.claude_session import ClaudeSessionRuntime
+        from ._runtime_select import _get_runtime
 
-        runtime = ClaudeSessionRuntime()
+        runtime = _get_runtime(config)
     if runtime.is_running(config):
         return True, "healthy"
-    return False, "unhealthy: SDK runner not running"
+    # Name WHICH runtime said no. The old text said "SDK runner" regardless
+    # of the runtime actually consulted, which sent readers looking for an
+    # SDK process that a tui agent never had.
+    kind = (getattr(config, "runtime", "") or "tui").strip() or "tui"
+    return False, f"unhealthy: {kind} runtime reports its process not running"
 
 
 def _check_a2a_card(config: AgentConfig) -> tuple[bool, str]:
