@@ -361,8 +361,25 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-cards: FLOOR (>=0.17.9), not an exact pin (was ==0.16.0). 2026-07-17,
-    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20, -> 0.17.9 on 2026-07-28.
+    # scitex-cards: FLOOR (>=0.19.0), not an exact pin (was ==0.16.0). 2026-07-17,
+    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20, -> 0.17.9 on 2026-07-28,
+    # -> 0.19.0 on 2026-07-30 (SECURITY — see below).
+    #
+    # The 0.19.0 raise is a SECURITY floor, not a freshness bump. Through 0.18.0,
+    # `_django/handlers/dm.py` resolved the store as
+    #     getattr(request, STORE_REQUEST_ATTR, None) or _store_of(request)
+    # — a cross-tenant fallback: a request arriving WITHOUT the injected store
+    # attribute silently reads AND WRITES the host store, so under a multi-tenant
+    # mount one user's writes land in another's board. 0.19.0 drops the fallback
+    # and splits read from write (`_store_of` for reads, `_write_store_of` for
+    # writes). Verified in the ARTIFACT, not the version string, because a
+    # dist-info can sit atop missing files:
+    #     0.19.0 wheel  dm.py: "or _store_of(request)" x0, line 108 is a bare
+    #                   getattr; STORE_REQUEST_ATTR referenced 3x
+    #     the copy installed in the CURRENT image: x1 — i.e. the vulnerable
+    #                   path is live in what the fleet is running today
+    # After any bake, re-check by opening the installed dm.py and confirming the
+    # count is 0. `--version` cannot answer this.
     #
     # The 0.17.9 raise is EXPLICIT ON PURPOSE, not "latest at bake time". 0.17.8
     # was published to PyPI and then MORE code was installed onto the host under
@@ -373,9 +390,11 @@ From: ubuntu:24.04
     # "4", and one sat unread for two hours. A floating "latest" here would
     # silently re-bake 0.17.8 if a bake lands between the merge and the PyPI
     # publish, reproducing the confusion while the CHANGELOG claims the fix is
-    # in. If 0.17.9 is not published yet this build FAILS LOUDLY, which is
-    # intended: a failed bake is cheap, a fleet silently baked with the old
-    # renderer is not.
+    # in. If the pinned floor is not published yet this build FAILS LOUDLY,
+    # which is intended: a failed bake is cheap, a fleet silently baked with the
+    # old renderer is not. (That reasoning is why the floor is written as an
+    # explicit literal and raised deliberately; the literal is now 0.19.0, and
+    # 0.19.0 was confirmed installable from the index before it was written here.)
     #
     # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
     # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
@@ -462,7 +481,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]>=0.17.9" \
+        "scitex-cards[mcp]>=0.19.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
