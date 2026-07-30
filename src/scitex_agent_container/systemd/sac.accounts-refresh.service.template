@@ -1,0 +1,32 @@
+[Unit]
+Description=Headless OAuth access-token refresh for all stored Claude accounts including the active one (sole-refresher model), mirroring the rotation into the live ~/.claude login.
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ==========================================================================
+# ABSOLUTE path, NOT `/usr/bin/env sac`.
+#
+# The live unit on ywata-note-win used `ExecStart=/usr/bin/env sac accounts
+# refresh …` — a bare name resolved against the unit's inherited PATH. Measured
+# 2026-07-30: bare `sac` is NOT FOUND under a minimal PATH, and that host
+# carries THREE sac installations at different versions:
+#
+#   ~/.env-3.11/bin/sac                        0.24.20  (current release)
+#   ~/.scitex/agent-container/venv/bin/sac     0.21.22  (2026-07-17 wheel)
+#   ~/.local/bin/sac                           0.21.11  (src, metadata only)
+#
+# So the unit worked only because systemd's environment happened to contain one
+# of them, and WHICH one was unpinned. That ambiguity is not theoretical: it
+# cost two agents a wrong measurement on 2026-07-30 — one reported a JSON field
+# as "absent from the payload" when they had in fact invoked the 0.21.22 binary,
+# which predates the field. An absolute path makes "which code answered" a
+# property of the file instead of a property of the environment.
+# ==========================================================================
+ExecStart=@SAC_BIN@ accounts refresh --all --include-active --sync-active-login
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=no
+TimeoutStartSec=120s

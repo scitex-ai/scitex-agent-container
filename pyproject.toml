@@ -342,6 +342,18 @@ exclude = [".git"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
+# systemd --user unit TEMPLATES. Shipped in the wheel for the same reason the
+# cron script is: they must be reachable from an INSTALLED sac, on a host where
+# the repo is not on disk. They are templates with @PLACEHOLDER@s and nothing
+# installs them — deploying a unit is an operator action (the listen unit
+# brokers host_exec/spawn/restart for every agent). Tracked at all because
+# until 2026-07-30 these units existed ONLY as untracked live files under
+# ~/.config/systemd/user/ while brokering the whole fleet: no history, no
+# review, and gone if the host were rebuilt.
+"src/scitex_agent_container/systemd/sac-listen.service.template" = "scitex_agent_container/systemd/sac-listen.service.template"
+"src/scitex_agent_container/systemd/sac.accounts-refresh.service.template" = "scitex_agent_container/systemd/sac.accounts-refresh.service.template"
+"src/scitex_agent_container/systemd/sac.accounts-refresh.timer.template" = "scitex_agent_container/systemd/sac.accounts-refresh.timer.template"
+"src/scitex_agent_container/systemd/README.md" = "scitex_agent_container/systemd/README.md"
 # Bundle pyproject.toml + README.md inside the wheel so the
 # source-bundled SIF build (cli_pkg/_image_source_build.py) can
 # reconstruct a pip-installable source tree from the INSTALLED
