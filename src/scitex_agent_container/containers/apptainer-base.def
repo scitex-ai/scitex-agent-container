@@ -585,13 +585,26 @@ failures = []
 # way that actually happened. Measured 2026-08-02: site-packages held a bare
 # ``psycopg/`` directory containing only subdirectories — no ``__init__.py``,
 # no ``*.py``, and NO dist-info anywhere. Leftovers from a package that was
-# never requested: the pin was ``scitex-cards[mcp]``, without the ``postgres``
-# extra that carries ``psycopg[binary]``. Python treats such a directory as a
-# NAMESPACE PACKAGE, so ``import psycopg`` SUCCEEDED, ``psycopg.__file__`` was
-# None and ``psycopg.connect`` did not exist. Every agent then failed its card
-# writes with "canonical store postgresql://... does not exist" — blaming the
-# database for a missing driver, and sending three agents to the wrong layer.
-# An import-only check would have passed on that image.
+# never requested: the pin then was ``scitex-cards[mcp]``, a hand-picked
+# PARTIAL extras set that omitted the driver. Python treats such a directory as
+# a NAMESPACE PACKAGE, so ``import psycopg`` SUCCEEDED, ``psycopg.__file__``
+# was None and ``psycopg.connect`` did not exist. Every agent then failed its
+# card writes with "canonical store postgresql://... does not exist" — blaming
+# the database for a missing driver, and sending three agents to the wrong
+# layer. An import-only check would have passed on that image.
+#
+# THE CURRENT PIN IS ``scitex-cards[all]`` (scitex-dev ADR-0005: extras are a
+# subset of {all, dev, docs}). Do NOT "fix" a future recurrence by naming
+# ``postgres`` — scitex-cards has DELETED mcp/web/currency/postgres and folded
+# them into ``all``, and a pin naming a deleted extra does not fail:
+#
+#     uv pip install --dry-run 'pkg[nonexistent]'
+#     -> warning: does not have an extra named `nonexistent`   EXIT=0
+#
+# Warning, not error. So that pin installs less and SUCCEEDS — reproducing this
+# very outage from the fix rather than the bug. This paragraph exists because
+# the sentence above names ``postgres`` as the thing that was missing, and a
+# reader arriving later would reasonably take that as the remedy.
 try:
     import psycopg as _psycopg
 
