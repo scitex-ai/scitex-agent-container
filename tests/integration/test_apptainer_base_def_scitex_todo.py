@@ -1,4 +1,14 @@
-"""Static contract: ``apptainer-base.def`` must install scitex-cards[mcp].
+"""Static contract: ``apptainer-base.def`` must install scitex-cards with
+extras that PROVIDE fastmcp and psycopg.
+
+The pin is ``scitex-cards[all]`` (scitex-dev ADR-0005: extras are a subset of
+{all, dev, docs}). This docstring used to say "must install
+scitex-cards[mcp]", which is what the assertions below used to check — and
+both were wrong the moment the fleet moved to ``[all]``. The assertions were
+rewritten to test the CAPABILITY (``extras & {"mcp", "all"}``); this sentence
+was not, and a peer read it and concluded the suite still demanded the deleted
+extras. A stale summary line is as misleading as a stale assertion, and
+cheaper to overlook because nothing executes it.
 
 Package renamed scitex-todo -> scitex-cards (2026-07-16, migration S1-S3).
 The wheel ships BOTH console scripts (``scitex-todo`` and ``scitex-cards``)
