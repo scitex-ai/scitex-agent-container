@@ -481,7 +481,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]>=0.19.0" \
+        "scitex-cards[mcp,postgres]>=0.31.6" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -577,6 +577,33 @@ print(
 )
 
 failures = []
+
+# psycopg GATE — the cards store is PostgreSQL, so a container without a
+# USABLE driver cannot read or write the fleet board at all.
+#
+# Assert the ATTRIBUTE, not the import, because the import cannot fail in the
+# way that actually happened. Measured 2026-08-02: site-packages held a bare
+# ``psycopg/`` directory containing only subdirectories — no ``__init__.py``,
+# no ``*.py``, and NO dist-info anywhere. Leftovers from a package that was
+# never requested: the pin was ``scitex-cards[mcp]``, without the ``postgres``
+# extra that carries ``psycopg[binary]``. Python treats such a directory as a
+# NAMESPACE PACKAGE, so ``import psycopg`` SUCCEEDED, ``psycopg.__file__`` was
+# None and ``psycopg.connect`` did not exist. Every agent then failed its card
+# writes with "canonical store postgresql://... does not exist" — blaming the
+# database for a missing driver, and sending three agents to the wrong layer.
+# An import-only check would have passed on that image.
+try:
+    import psycopg as _psycopg
+
+    if not hasattr(_psycopg, "connect"):
+        failures.append(
+            "psycopg imports but exposes no .connect (__file__=%r) — a "
+            "namespace-package phantom, not an install. The cards store is "
+            "PostgreSQL; check that the scitex-cards pin carries the "
+            "[postgres] extra." % (getattr(_psycopg, "__file__", None),)
+        )
+except Exception as _exc:
+    failures.append("psycopg is not importable: %r" % (_exc,))
 
 # The version string lies (uv's wheel cache is version-keyed and sac's
 # version does not advance per-commit). File content cannot lie — but the
