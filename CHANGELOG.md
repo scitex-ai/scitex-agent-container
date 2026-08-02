@@ -6,6 +6,47 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.22] - 2026-08-02
+
+### Changed
+
+- **The container defs install `scitex-cards[all]`**, per scitex-dev's ADR-0005
+  (extras are `all` or bare only; `dev`/`docs` move to PEP 735 groups).
+  scitex-cards had already rewritten 25 partial-extra install instructions
+  across 17 files after root-causing that a hand-picked partial set (`[mcp]`,
+  silently missing `postgres`) took the fleet's card board down. The
+  `[mcp,postgres]` shipped in 0.24.21 was itself a hand-picked partial set —
+  correct that day, and the same shape as the defect. All three sites
+  (`apptainer-base.def:484`, `apptainer-scitex.def:297` uv branch, `:368` pip
+  fallback).
+
+  The def contract tests now assert the CAPABILITY rather than the spelling —
+  `extras & {"mcp","all"}` and `extras & {"postgres","all"}`. This file had the
+  same bug twice in one day: first `"scitex-cards[mcp]" in block`, which reads
+  as "carries the mcp extra" and actually freezes the extras list to exactly
+  `[mcp]`; then its replacement `"postgres" in extras`, which then called
+  `[all]` a regression. Both encoded the current spelling instead of the
+  required property, so each went red precisely when someone fixed something.
+
+### Fixed
+
+- **The restart path logged correct operation at WARNING.** The auth pre-flight
+  branch is guarded by `if usable:` — the credential is fine and the restart is
+  proceeding — and the commonest reason is `skipped-token-fresh`, the DESIGNED
+  behaviour (probing would consume the single-use `refresh_token` and rotate
+  the shared token for every other agent on that account). sac printed five
+  alarming lines above EVERY restart, including "PROCEEDING (fail-open; this is
+  NOT a token rejection)", to report success. Demoted to one INFO line; a real
+  auth failure is the `RestartPreflightAbort` beside it, which raises
+  (`_lifecycle/_restart_preflight.py`).
+
+- **`skill 'X' not found under --add-dir roots []`** named the wrong subject.
+  `roots` is empty for every `injection_mode` except `at-import`, so the lookup
+  could not have succeeded for ANY name — it reported the skill as missing when
+  nothing had been searched. Now a debug line naming the actual condition; the
+  warning stays for the case it was written for (roots exist, skill genuinely
+  absent) — `runtimes/claude_md.py`.
+
 ## [0.24.21] - 2026-08-02
 
 ### Fixed
