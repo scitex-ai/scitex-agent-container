@@ -294,7 +294,7 @@ From: ./sac-base.sif
         # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
         # occurrences of that fallback, the copy in the CURRENT image has 1.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards[mcp,postgres]>=0.31.6"
+            "scitex-cards[all]>=0.31.6"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -365,7 +365,7 @@ From: ./sac-base.sif
         # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
         # was guarding against it.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards[mcp,postgres]>=0.31.6"
+            "scitex-cards[all]>=0.31.6"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------

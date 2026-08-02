@@ -141,32 +141,44 @@ def _requirement_extras(requirement: str) -> set[str]:
     return {part.strip() for part in inner.split(",") if part.strip()}
 
 
-def test_uv_pip_install_block_carries_mcp_extra(base_def_text: str) -> None:
+# Extras sets that PROVIDE each capability, per scitex-cards' published
+# metadata. Assert the CAPABILITY, never the spelling: the fleet convention
+# moved from hand-picked sets to ``[all]`` on 2026-08-02, and a test naming one
+# spelling calls the other a regression. This file has now had that bug twice
+# — first as `"scitex-cards[mcp]" in block`, then as `"postgres" in extras` —
+# so the third version pins what the image must be ABLE to do.
+_EXTRAS_PROVIDING_FASTMCP = {"mcp", "all"}
+_EXTRAS_PROVIDING_PSYCOPG = {"postgres", "all"}
+
+
+def test_uv_pip_install_block_can_provide_fastmcp(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
     # Act
     extras = _requirement_extras(_scitex_todo_requirement(block))
     # Assert
-    assert "mcp" in extras, (
-        "scitex-cards install must carry the [mcp] extra (pulls fastmcp>=2.0)"
-        f" in apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
+    assert extras & _EXTRAS_PROVIDING_FASTMCP, (
+        "scitex-cards install must carry an extra that pulls fastmcp>=2.0 "
+        f"(any of {sorted(_EXTRAS_PROVIDING_FASTMCP)}) in apptainer-base.def; "
+        f"got extras {sorted(extras)} in:\n{block}"
     )
 
 
-def test_uv_pip_install_block_carries_postgres_extra(base_def_text: str) -> None:
-    # Arrange — the cards store is PostgreSQL. Without this extra there is no
-    # psycopg in the image and EVERY agent's card writes fail, reported as
-    # "canonical store ... does not exist" (measured 2026-08-02: the pin was
-    # [mcp] only, and site-packages held a bare psycopg/ directory with no
-    # __init__.py, which imports as a namespace package and exposes no
-    # .connect).
+def test_uv_pip_install_block_can_provide_psycopg(base_def_text: str) -> None:
+    # Arrange — the cards store is PostgreSQL. With no psycopg-providing extra
+    # there is no driver in the image and EVERY agent's card writes fail,
+    # reported as "canonical store ... does not exist" — naming the database,
+    # which is fine. Measured 2026-08-02: the pin was [mcp] only, and
+    # site-packages held a bare psycopg/ directory with no __init__.py, which
+    # imports as a NAMESPACE PACKAGE and exposes no .connect, so an
+    # import-guarded check passed while the fleet's board was unreachable.
     block = _uv_pip_install_block(base_def_text)
     # Act
     extras = _requirement_extras(_scitex_todo_requirement(block))
     # Assert
-    assert "postgres" in extras, (
-        "scitex-cards install must carry the [postgres] extra (pulls "
-        "psycopg[binary]>=3.1; the cards store is PostgreSQL) in "
+    assert extras & _EXTRAS_PROVIDING_PSYCOPG, (
+        "scitex-cards install must carry an extra that pulls "
+        f"psycopg[binary]>=3.1 (any of {sorted(_EXTRAS_PROVIDING_PSYCOPG)}) in "
         f"apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
     )
 
