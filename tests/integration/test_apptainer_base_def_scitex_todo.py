@@ -126,15 +126,48 @@ def test_uv_pip_install_block_mentions_scitex_todo(base_def_text: str) -> None:
     )
 
 
+def _requirement_extras(requirement: str) -> set[str]:
+    """The extras NAMED in a requirement — ``[mcp,postgres]`` -> {mcp, postgres}.
+
+    Parsed rather than substring-matched. The old check was
+    ``"scitex-cards[mcp]" in block``, which asserts the extras list is EXACTLY
+    ``[mcp]`` while reading as "carries the mcp extra": adding a second,
+    equally required extra made the substring vanish and turned a correct
+    change red. A contract test should pin what it claims to pin.
+    """
+    if "[" not in requirement or "]" not in requirement:
+        return set()
+    inner = requirement.split("[", 1)[1].split("]", 1)[0]
+    return {part.strip() for part in inner.split(",") if part.strip()}
+
+
 def test_uv_pip_install_block_carries_mcp_extra(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
     # Act
-    present = "scitex-cards[mcp]" in block
+    extras = _requirement_extras(_scitex_todo_requirement(block))
     # Assert
-    assert present, (
+    assert "mcp" in extras, (
         "scitex-cards install must carry the [mcp] extra (pulls fastmcp>=2.0)"
-        f" in apptainer-base.def:\n{block}"
+        f" in apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
+    )
+
+
+def test_uv_pip_install_block_carries_postgres_extra(base_def_text: str) -> None:
+    # Arrange — the cards store is PostgreSQL. Without this extra there is no
+    # psycopg in the image and EVERY agent's card writes fail, reported as
+    # "canonical store ... does not exist" (measured 2026-08-02: the pin was
+    # [mcp] only, and site-packages held a bare psycopg/ directory with no
+    # __init__.py, which imports as a namespace package and exposes no
+    # .connect).
+    block = _uv_pip_install_block(base_def_text)
+    # Act
+    extras = _requirement_extras(_scitex_todo_requirement(block))
+    # Assert
+    assert "postgres" in extras, (
+        "scitex-cards install must carry the [postgres] extra (pulls "
+        "psycopg[binary]>=3.1; the cards store is PostgreSQL) in "
+        f"apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
     )
 
 
