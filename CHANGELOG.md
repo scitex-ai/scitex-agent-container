@@ -6,6 +6,63 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.21] - 2026-08-02
+
+### Fixed
+
+- **A non-empty per-agent `to_home/.claude/CLAUDE.md` silently DELETED the
+  shared safety baseline.** The two-pass overlay deploys the shared baseline
+  first and the per-agent layer second; `_deploy_marker_protected` REPLACED
+  the generated section, preserving only content before the Start marker and
+  after the End marker. In the file a container actually loads the Start
+  marker is line 1, so nothing precedes it: the per-agent body became the
+  WHOLE file and the baseline — prompt-injection rules, hook doctrine,
+  task-board obligations — was gone, while the spec looked clean and the
+  "startup prompt is long" warning disappeared. Armed but untriggered: every
+  per-agent `CLAUDE.md` in the fleet is 0 bytes and an empty source
+  early-returns, so the overwrite never had content to perform. Layers now
+  COMPOSE within one generated section — the run's first layer replaces it
+  (so nothing grows across restarts), later layers in the same run append
+  (`runtimes/_to_home_deployers.py`, `runtimes/_to_home_text.py`,
+  `runtimes/_to_home.py`). `_deploy_mcp_merge` already refused full-overwrite
+  in that same file for the identical "would silently drop the defaults"
+  reason. Found by the dotfiles agent.
+
+- **`sac agents list` reported an 11-37 day old login RECORD as the Account.**
+  The column read `<runtime>/home/.claude.json`, which Claude Code does not
+  rewrite when the credential bind changes; when that file carried no
+  `oauthAccount` key the caller fell back to the SPEC label, which for a pool
+  agent collapses to the host's shared OAuth identity so every such row read
+  alike. Measured on the day it cost an hour: the fleet had ALREADY been moved
+  onto one account and the column still showed three, and the one row that
+  looked correct matched by coincidence. Adds a third signal and puts it
+  first — the live bind, read from each running container's own `mountinfo`
+  (`cli_pkg/_helpers/_agent_list_bound_account.py`). Precedence is now
+  bind → runtime record → spec label; a remote or stopped agent resolves to
+  `None` and degrades to the older signals rather than to a wrong one.
+
+- **Agent containers had no PostgreSQL driver, so every card write failed** with
+  "canonical store postgresql://… does not exist" — naming the database, which
+  was fine and reachable. The pin was `scitex-cards[mcp]` at all three install
+  sites, with no `postgres` extra, so `psycopg[binary]` was never requested;
+  the leftover bare `psycopg/` directory (no `__init__.py`, no dist-info)
+  imports as a NAMESPACE PACKAGE, so `import psycopg` succeeds and
+  `psycopg.connect` does not exist. Raised to
+  `scitex-cards[mcp,postgres]>=0.31.6` at all three sites, closing the schema
+  drift in the same edit (`>=0.19.0` was satisfied by the 0.25.0 and 0.31.3
+  measured in live containers, against a store already on schema v9). Adds a
+  build-time gate asserting `psycopg.connect` EXISTS rather than that psycopg
+  imports — an import-only check would have passed on the broken image.
+  Reported by the scitex-cards agent.
+
+### Changed
+
+- `_blind_cache_remedy` extracted from `_creds/_pick_healthy.py` (518 lines
+  against the 512 cap; now 429) and `build_agent_row` + the movement trio
+  extracted from `cli_pkg/_helpers/_agent_list.py` (507 → 485). Both originals
+  re-export the moved names, so existing import paths and the test seams that
+  rebind them keep resolving.
+
 ## [0.24.20] - 2026-07-29
 
 ### Changed
