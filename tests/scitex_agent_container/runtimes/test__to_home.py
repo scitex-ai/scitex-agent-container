@@ -1080,8 +1080,8 @@ class TestDeployBaselineFromConfig:
 @pytest.fixture
 def overlaid_claude_md(tmp_path: Path) -> Path:
     """Materialize a marker-protected CLAUDE.md from BOTH layers and return
-    the destination. Per-agent must win the overlay. One-shot setup feeds
-    several single-assert tests.
+    the destination. The layers COMPOSE: baseline first, per-agent after.
+    One-shot setup feeds several single-assert tests.
     """
     spec_dir, per_agent, baseline = _build_layered(tmp_path)
     (baseline / ".claude").mkdir()
@@ -1101,12 +1101,21 @@ class TestMarkerProtectedOverlay:
         # Assert
         assert "Agent doctrine" in content
 
-    def test_baseline_body_is_overwritten(self, overlaid_claude_md):
-        # Arrange
+    def test_baseline_body_is_preserved(self, overlaid_claude_md):
+        # Arrange — INVERTED 2026-08-02. This asserted `not in`: that the
+        # per-agent layer DROPS the baseline body. That is the general
+        # plain-file overlay rule ("per-agent wins on conflict") applied to a
+        # MERGE-class file, and it is wrong for the same reason .mcp.json is
+        # already exempt from it — full overwrite "would silently drop the
+        # defaults". Here the defaults are the shared safety baseline: the
+        # prompt-injection rules, hook doctrine and task-board obligations. An
+        # agent gaining its first non-empty per-agent CLAUDE.md silently lost
+        # them while its spec looked clean. This test is why that survived —
+        # it made the correct behaviour look like the regression.
         content = overlaid_claude_md.read_text()
         # Act
         # Assert
-        assert "Base doctrine" not in content
+        assert "Base doctrine" in content
 
     def test_result_has_single_marker_section(self, overlaid_claude_md):
         # Arrange
