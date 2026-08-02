@@ -45,6 +45,18 @@ class NoHealthyAccountError(RuntimeError):
     """
 
 
+class BlindQuotaCacheError(NoHealthyAccountError):
+    """The pick is unconfirmable because the quota cache told us NOTHING.
+
+    A SUBCLASS so callers can discriminate by TYPE rather than by matching
+    the message text. The distinction is operational, not cosmetic: this is
+    the ONE failure in the family that a caller can often repair by itself —
+    refreshing the cache and re-picking — whereas every other
+    ``NoHealthyAccountError`` (no fresh candidate, all accounts expired)
+    needs a human to log in. Callers that retry must retry ONLY this one.
+    """
+
+
 @dataclass(frozen=True)
 class AccountHealth:
     """Health of one stored account's credential snapshot.

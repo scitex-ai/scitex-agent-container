@@ -87,6 +87,7 @@ from typing import Mapping
 
 from ._account_health import (
     AccountHealth,
+    BlindQuotaCacheError,
     NoHealthyAccountError,
     _discover_candidates,
     _format_states,
@@ -417,7 +418,13 @@ def pick_healthy_account(
     #    account. Refuse rather than boot blind; a fleet with
     #    known-but-busy quota is unaffected.
     if require_quota_evidence and u5.get(picked) is None and u7.get(picked) is None:
-        raise NoHealthyAccountError(
+        # BlindQuotaCacheError, not the bare parent: this is the one failure in
+        # the family a CALLER CAN OFTEN REPAIR ITSELF by refreshing the cache
+        # and re-picking. Every other NoHealthyAccountError needs a human to
+        # log in, so a caller that retried all of them would loop on the
+        # unfixable ones. Discriminating by TYPE rather than by matching this
+        # message text is what makes the retry safe to add.
+        raise BlindQuotaCacheError(
             f"quota cache is blind for the selected account {picked!r} "
             "(5h=? 7d=? — no cached utilisation for any fresh candidate), "
             "so the pick cannot be confirmed to have headroom. Refusing to "

@@ -26,6 +26,7 @@ claude. Every pool pick logs its full ranking inputs
 
 from __future__ import annotations
 
+from ._account_health import BlindQuotaCacheError
 from ._pick_audit import (
     CandidateAudit,
     audit_candidates,
@@ -50,6 +51,7 @@ from ._spend_policy import (
 
 __all__ = [
     "AccountHealth",
+    "BlindQuotaCacheError",
     "CandidateAudit",
     "NoHealthyAccountError",
     "POLICY_BURN",
