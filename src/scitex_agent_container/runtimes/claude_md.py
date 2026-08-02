@@ -240,14 +240,30 @@ def build_skills_lines(config: AgentConfig) -> list[str]:
 
     def _resolve_warn(name: str) -> list[Path]:
         paths = _resolve_skill(name, roots, strategies, style)
-        if not paths:
-            logger.warning(
-                "skill %r not found under --add-dir roots %s "
-                "(checked name-as-dir <root>/<name>/SKILL.md and "
-                "frontmatter tag match); injection skipped",
+        if paths:
+            return paths
+        if not roots:
+            # A SEARCH WITH NO CORPUS IS NOT A "NOT FOUND". ``roots`` is empty
+            # for every mode except ``at-import``, so this lookup could not
+            # have succeeded for ANY name — warning per skill reports the
+            # skill as missing when the truth is that nothing was searched.
+            # It printed `not found under --add-dir roots []` on every start,
+            # naming the wrong subject and burying the real warnings.
+            logger.debug(
+                "skill %r not resolved: no --add-dir roots to search "
+                "(injection_mode=%r); nothing was searched, so this says "
+                "nothing about whether the skill exists",
                 name,
-                [str(r) for r in roots],
+                mode,
             )
+            return paths
+        logger.warning(
+            "skill %r not found under --add-dir roots %s "
+            "(checked name-as-dir <root>/<name>/SKILL.md and "
+            "frontmatter tag match); injection skipped",
+            name,
+            [str(r) for r in roots],
+        )
         return paths
 
     def _emit_block(heading: str, intro: str, names: list[str]) -> None:
