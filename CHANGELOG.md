@@ -6,6 +6,30 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The container defs pin `scitex-cards>=0.32.0`, BARE.** scitex-cards moved
+  psycopg, django and fastmcp into core, so there is no extras subset left to
+  pick wrong — which is what took the fleet's board down twice. Verified against
+  published PyPI metadata rather than the release notes: `psycopg[binary]>=3.1`,
+  `django>=4.2` and `fastmcp>=2.0` are all `CORE=True` at 0.32.0.
+
+  **The floor is 0.32.0 and not lower on purpose.** psycopg became core in
+  0.31.8, not 0.31.6 — a peer stated 0.31.6 and measuring says otherwise, and a
+  bare pin at that floor would resolve a version with NO DRIVER and succeed.
+  Same failure, arrived at from the fix.
+
+  The def contract tests now assert the capability by EITHER route: a
+  qualifying extra, or a floor at-or-above the release where the dep became
+  core. This file's assertions have now been wrong three times in one day —
+  `"scitex-cards[mcp]" in block` (freezes the extras list to exactly `[mcp]`),
+  `"postgres" in extras` (calls `[all]` a regression), and
+  `extras & {"mcp","all"}` (correct for extras, blind to the pin going bare).
+  Each encoded a spelling, so each went red exactly when someone fixed
+  something. The predicate now has its own rejection cases — `[mcp]>=0.19.0`,
+  bare `>=0.31.6`, bare `>=0.31.7`, bare unpinned — so "provides psycopg" is
+  demonstrably able to say no.
+
 ## [0.24.22] - 2026-08-02
 
 ### Changed

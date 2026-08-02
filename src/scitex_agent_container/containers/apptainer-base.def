@@ -481,7 +481,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[all]>=0.31.6" \
+        "scitex-cards>=0.32.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -593,18 +593,31 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS ``scitex-cards[all]`` (scitex-dev ADR-0005: extras are a
-# subset of {all, dev, docs}). Do NOT "fix" a future recurrence by naming
-# ``postgres`` — scitex-cards has DELETED mcp/web/currency/postgres and folded
-# them into ``all``, and a pin naming a deleted extra does not fail:
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.32.0``. As of 0.32.0 psycopg,
+# django and fastmcp are CORE dependencies — verified against the published
+# metadata, not the changelog:
+#
+#     psycopg   CORE=True   psycopg[binary]>=3.1
+#     django    CORE=True   django>=4.2
+#     fastmcp   CORE=True   fastmcp>=2.0
+#
+# so a bare install yields a complete client and there is no extras subset left
+# to pick wrong. The floor is 0.32.0 and NOT lower on purpose: psycopg only
+# became core in 0.31.8, so a bare pin admitting 0.31.6/0.31.7 would install NO
+# DRIVER and succeed.
+#
+# Do NOT "fix" a future recurrence by naming ``postgres`` or ``all``. A pin
+# naming an extra that no longer exists does not fail:
 #
 #     uv pip install --dry-run 'pkg[nonexistent]'
 #     -> warning: does not have an extra named `nonexistent`   EXIT=0
 #
 # Warning, not error. So that pin installs less and SUCCEEDS — reproducing this
 # very outage from the fix rather than the bug. This paragraph exists because
-# the sentence above names ``postgres`` as the thing that was missing, and a
-# reader arriving later would reasonably take that as the remedy.
+# the sentences above name ``mcp``/``postgres`` as things that were missing,
+# and a reader arriving later would reasonably take those as the remedy. This
+# comment has already gone stale twice in one day; if you change the pin,
+# change this too.
 try:
     import psycopg as _psycopg
 
