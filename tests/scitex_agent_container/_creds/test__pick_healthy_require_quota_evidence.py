@@ -106,6 +106,37 @@ def test_all_blind_and_required_raises_no_healthy_account_error(_isolate_home):
         )
 
 
+def test_all_blind_raises_the_REPAIRABLE_subclass_so_the_caller_retries(
+    _isolate_home,
+):
+    # Arrange: same fully-blind fleet as above. The caller
+    # (_lifecycle/_start_preflight) auto-refreshes the quota cache and re-picks
+    # ONLY when it catches BlindQuotaCacheError — so if this ever degrades to
+    # the bare parent, the self-repair silently stops firing and the operator
+    # is back to running `sac accounts refresh-quota-cache` by hand. The
+    # isinstance tests elsewhere would NOT catch that: they pin the class
+    # relationship, not what the picker actually raises.
+    from scitex_agent_container._creds import BlindQuotaCacheError
+
+    home = _isolate_home
+    now = 1_784_530_000.0
+    for name in ("wyusuuke-gmail-com", "ywatanabe-scitex-ai"):
+        _write_fresh_snapshot(home, name, now)
+
+    # Act
+    # Assert
+    with pytest.raises(BlindQuotaCacheError):
+        pick_healthy_account(
+            "ywatanabe-scitex-ai",
+            candidates=["wyusuuke-gmail-com", "ywatanabe-scitex-ai"],
+            home=home,
+            now=now,
+            usage_5h={},
+            usage_7d={},
+            require_quota_evidence=True,
+        )
+
+
 def test_all_blind_without_requirement_returns_a_fresh_account(_isolate_home):
     # Arrange: identical all-blind fleet, but the caller does NOT opt in.
     home = _isolate_home

@@ -148,8 +148,10 @@ def _rotate_among_credentials_files(
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
     from .._account.quota_cache import quota_cache_present
+    from .._account.quota_cache_refresh import refresh_quota_cache
     from .._creds import (
         POLICY_BURN,
+        BlindQuotaCacheError,
         pick_healthy_account,
         resolve_7d_policy,
     )
@@ -194,24 +196,50 @@ def _rotate_among_credentials_files(
     else:
         preferred = None
 
-    picked = pick_healthy_account(
-        preferred,
-        candidates=slugs,
-        store_dir=store_dir,
-        now=now,
-        usage_5h=usage_5h,
-        usage_7d=usage_7d,
-        quota_cache_path=quota_cache_path,
-        spread_key=config.name,
-        policy=policy,
-        # Boot gate (constitution §2): on a host that HAS a quota cache, a
-        # fully-BLIND pick means the populator failed (empty/stale cache) —
-        # fail loud rather than land the agent on an unverifiable, possibly
-        # quota-exhausted account (2026-07-20 incident). A host with NO cache
-        # (fresh install / CI / quota-cron-less Spartan node) still degrades
-        # to freshness-only and boots — the documented never-block invariant.
-        require_quota_evidence=quota_cache_present(quota_cache_path),
-    )
+    def _pick() -> str:
+        return pick_healthy_account(
+            preferred,
+            candidates=slugs,
+            store_dir=store_dir,
+            now=now,
+            usage_5h=usage_5h,
+            usage_7d=usage_7d,
+            quota_cache_path=quota_cache_path,
+            spread_key=config.name,
+            policy=policy,
+            # Boot gate (constitution §2): on a host that HAS a quota cache, a
+            # fully-BLIND pick means the populator failed (empty/stale cache) —
+            # fail loud rather than land the agent on an unverifiable, possibly
+            # quota-exhausted account (2026-07-20 incident). A host with NO
+            # cache (fresh install / CI / quota-cron-less Spartan node) still
+            # degrades to freshness-only and boots — the never-block invariant.
+            require_quota_evidence=quota_cache_present(quota_cache_path),
+        )
+
+    try:
+        picked = _pick()
+    except BlindQuotaCacheError as blind:
+        # AUTO-REFRESH, THEN RE-PICK — operator 2026-08-02:
+        # 「refresh quota cache 勝手にやれよ」. A blind cache told the operator
+        # to run `sac accounts refresh-quota-cache` and retry BY HAND, and it
+        # blocked three of five agents in ONE `sac-restart` invocation. sac
+        # knows the remedy, and the remedy is idempotent and takes seconds —
+        # so sac runs it instead of printing it.
+        #
+        # ONE attempt, and ONLY for BlindQuotaCacheError. Refusing to boot on
+        # unverifiable quota (constitution: unknown is not 'OK') is unchanged:
+        # if the cache is STILL blind after a successful refresh, the refusal
+        # stands and its remedy text is then CORRECT rather than misleading —
+        # "the populator is not the problem; look for another writer".
+        logger.info(
+            "quota cache blind for %r — refreshing it once before refusing",
+            config.name,
+        )
+        try:
+            refresh_quota_cache(cache_path=quota_cache_path)
+        except Exception:  # stx-allow: fallback (reason: the refresh is a BEST-EFFORT self-repair. If it fails, the operator must see the ORIGINAL blind refusal and its remedy — not a refresh traceback that hides why the boot was refused.)
+            raise blind from None
+        picked = _pick()
 
     picked_path = next(p for slug, p in entries if slug == picked)
     claude.credentials_file = str(picked_path)
