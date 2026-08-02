@@ -204,8 +204,12 @@ def test_startup_prompt_inject_pastes_text_literally(
     config = _Config(name="figrecipe", startup_prompts=["go work"])
     # Act — full start path runs the inject under the runtime's own gate.
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — the prompt reached the LITERAL (``-l``) paste primitive, once.
-    assert _literal_calls(mux) == [("send_text_literal", "tui-figrecipe", "go work")]
+    # Assert — the prompt reached the LITERAL (``-l``) paste primitive.
+    # Asserted by MEMBERSHIP, not by an exact call list: sac also injects the
+    # missed-input read-back ahead of the spec's prompts (see _boot_recovery),
+    # so an equality assertion here pins the injected COUNT rather than the
+    # property this test is named for.
+    assert ("send_text_literal", "tui-figrecipe", "go work") in _literal_calls(mux)
 
 
 def test_startup_prompt_inject_never_uses_non_literal_submit(
@@ -231,8 +235,11 @@ def test_startup_prompt_inject_submits_via_single_idle_gated_enter(
     config = _Config(name="neurovista", startup_prompts=["mission"])
     # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — exactly one Enter (no blind + no defensive; just the gated one).
-    assert len(_enter_calls(mux)) == 1
+    # Assert — ONE Enter per injected prompt: no blind and no defensive extra.
+    # There are two injected prompts now (the missed-input read-back precedes
+    # the spec's own), so the invariant is enters == pastes, which is what
+    # "exactly one gated Enter each" actually means.
+    assert len(_enter_calls(mux)) == len(_literal_calls(mux))
 
 
 def test_startup_prompt_inject_pastes_before_it_submits(
@@ -292,5 +299,14 @@ def test_startup_prompt_inject_each_prompt_pasted_and_submitted(
     config = _Config(name="multi", startup_prompts=["first turn", "second turn"])
     # Act
     runtime.start(config, boot_drain_timeout_s=0.01)
-    # Assert — exactly 2 literal pastes + 2 idle-gated Enters.
-    assert (len(_literal_calls(mux)), len(_enter_calls(mux))) == (2, 2)
+    # Assert — BOTH spec prompts pasted literally, each with its own gated
+    # Enter. Stated as membership + the enters==pastes invariant rather than a
+    # fixed (2, 2): sac prepends the missed-input read-back, and a raw count
+    # would fail for a correct change while saying nothing about "each prompt
+    # was pasted AND submitted", which is the property under test.
+    pasted = [c[2] for c in _literal_calls(mux)]
+    assert (
+        "first turn" in pasted
+        and "second turn" in pasted
+        and len(_enter_calls(mux)) == len(_literal_calls(mux))
+    )
