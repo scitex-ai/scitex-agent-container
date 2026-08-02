@@ -32,15 +32,15 @@ from .._runners._tmux.tmux import (
 )
 from ..config import AgentConfig
 from ._apptainer_build_argv import build_run_argv
+from ._tui_auth_stage import TuiAuthStageError
+from ._tui_boot_drain import TuiBootDrainMixin
+from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_compose import (
     _compose_pending_live,
     clear_compose_buffer,
     verify_submit_by_advancement,
 )
 from ._tui_drain import drain_modals_until_ready
-from ._tui_auth_stage import TuiAuthStageError
-from ._tui_boot_drain import TuiBootDrainMixin
-from ._tui_bridge_seam import TurnBridgeSeamMixin
 from ._tui_inject import StartupPromptInjectorMixin
 from ._tui_liveness import (
     is_responsive_from_activity,
@@ -205,9 +205,7 @@ class TuiSessionRuntime(
         for the per-step rationale (SDK-parity $HOME surface, settings.json USER
         scope, overlay upper-home, onboarding pre-seed).
         """
-        return _materialize_workspace(
-            config, state_dir_for_config=state_dir_for_config
-        )
+        return _materialize_workspace(config, state_dir_for_config=state_dir_for_config)
 
     def start(
         self,
@@ -290,6 +288,14 @@ class TuiSessionRuntime(
             state_dir.mkdir(parents=True, exist_ok=True)
             write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
+
+        # The console script must RUN in the union we are about to launch, not
+        # merely import in the image. Called after argv exists (so the probe
+        # inherits the real overlay) and after the dry-run return (so
+        # ``--dry-run`` stays subprocess-free).
+        from ._entry_point_gate import assert_entry_point_runs
+
+        assert_entry_point_runs(config.name, argv)
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
         # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).
