@@ -356,6 +356,51 @@ PROMPT_HANDLERS: list[PromptHandler] = [
 ]
 
 
+def _detect_operator_question(content: str) -> bool:
+    """The agent is ASKING THE OPERATOR something (AskUserQuestion).
+
+    MEASURED 2026-08-03: scitex-app sat parked on one of these indefinitely.
+    Every other detector in this file keys on ``"Enter to confirm"`` (16
+    occurrences). This dialog's footer reads ``"Enter to select · ↑/↓ to
+    navigate · n to add notes · Esc to cancel"`` -- a string that appears
+    NOWHERE in this module, so no handler matched, the watchdog never saw it,
+    and the agent waited forever for input nobody was going to give.
+
+    THIS HANDLER DELIBERATELY CARRIES NO KEYS. The other handlers answer SETUP
+    dialogs with a known-correct response -- theme, trust, login method. This
+    one is the opposite: the agent raised it BECAUSE it needs the operator's
+    judgement, and the options are usually not interchangeable. In the observed
+    case option 1 was a packaging decision that contradicted a standing
+    operator ruling. Auto-selecting would fabricate consent, which is worse
+    than hanging: hanging is at least visible once something reports it.
+
+    So the bug being fixed is not "it goes unanswered" -- it is that it goes
+    unanswered SILENTLY.
+    """
+    c = normalize_tui_whitespace(content)
+    return (
+        "Enter to select" in c
+        and ("to navigate" in c or "add notes" in c)
+        # Never fire on the known radio dialogs, which all say "confirm".
+        and "Enter to confirm" not in c
+    )
+
+
+#: Detect-only, appended after the auto-accept handlers are defined. Priority 0
+#: so it is evaluated FIRST: if the agent is genuinely asking the operator
+#: something, no lower-priority auto-accepter may reach it and answer on the
+#: operator's behalf.
+PROMPT_HANDLERS.append(
+    PromptHandler(
+        name="operator-question",
+        detect=_detect_operator_question,
+        keys=[],  # INTENTIONALLY EMPTY -- see the docstring above.
+        priority=0,
+    )
+)
+PROMPT_HANDLERS.sort(key=lambda h: h.priority)
+
+
 def register_prompt(handler: PromptHandler) -> None:
     """Add a custom prompt handler to the registry."""
     PROMPT_HANDLERS.append(handler)
@@ -381,6 +426,25 @@ def detect_and_respond(
         if handler.name in accepted:
             continue
         if handler.detect(content):
+            if not handler.keys:
+                # DETECT-ONLY. A handler with no keys is an ESCALATION, not an
+                # acceptance: the pane is showing something this watchdog must
+                # NOT answer. Returning the name (rather than None) is what
+                # stops a lower-priority auto-accepter from reaching it and
+                # answering on the operator's behalf -- but nothing is sent,
+                # and it must never be logged as "accepted", because that line
+                # is how a silently-unanswered prompt would read as handled.
+                logger.warning(
+                    "OPERATOR INPUT REQUIRED (%s): the pane is showing a "
+                    "question addressed to the operator. The watchdog "
+                    "deliberately did NOT answer it -- the options are not "
+                    "interchangeable and choosing one would fabricate consent. "
+                    "This agent is BLOCKED until a human answers. Attach with "
+                    "`sac agents attach <name>` (or `tmux attach -t tui-<name>`)"
+                    " and answer it.",
+                    handler.name,
+                )
+                return handler.name
             for key in handler.keys:
                 send_keys_fn(key)
             logger.info("Auto-accepted prompt: %s", handler.name)
