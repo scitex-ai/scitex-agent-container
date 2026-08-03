@@ -23,7 +23,6 @@ import click
 from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._creds import NoHealthyAccountError
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
->>>>>>> d9d526c8 (feat(cli): honest output levels — one line per condition, no traceback on an expected refusal)
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname

@@ -114,7 +114,6 @@ def account_refresh_quota_cache(cache_path: str | None, as_json: bool) -> None:
         if result["ok"]:
             tail = f" ({result['failed']} failed)" if result["failed"] else ""
             system_msg(f"refreshed {result['ok']} account(s){tail}", style="success")
->>>>>>> d9d526c8 (feat(cli): honest output levels — one line per condition, no traceback on an expected refusal)
 
     # An empty store is its OWN outcome, checked before the all-failed guard
     # below. That guard's `attempted > 0` used to leave this case uncovered,
