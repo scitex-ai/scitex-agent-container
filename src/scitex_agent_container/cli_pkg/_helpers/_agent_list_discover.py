@@ -99,6 +99,7 @@ def defined_agent_rows(
     machine: str | None = None,
     group: str | None = None,
     running_only: bool = False,
+    discover: Callable[[], list[tuple[str, Path]]] | None = None,
 ) -> list[dict]:
     """Rows for agents DEFINED on disk but absent from the registry.
 
@@ -128,8 +129,13 @@ def defined_agent_rows(
     from ...config import load_config
     from ...config._validation import validate_config
     from . import _agent_list as _al
+    from ._agent_list_beat import beat_is_recent
 
-    discover = getattr(_al, "_discover_defined_agents", _discover_defined_agents)
+    # Injected first (caller/test supplies the real collaborator), else the
+    # module-attribute seam the existing suite rebinds, else the real walk.
+    discover = discover or getattr(
+        _al, "_discover_defined_agents", _discover_defined_agents
+    )
     rows: list[dict] = []
     for name, spec_path in discover():
         if name in registered:
@@ -167,10 +173,24 @@ def defined_agent_rows(
             except Exception as exc:  # stx-allow: fallback (reason: see comment)
                 errors = [str(exc)]
         status = "invalid" if errors else "defined"
-        # PERF: defined agents are never live — in the running-only default
-        # view they are all hidden, so skip their account + movement
-        # enrichment (status is enough for the footer count).
-        deferred = running_only
+        # An absent registry row is not evidence the agent stopped. If its
+        # heartbeat file is STILL BEING WRITTEN it is alive right now, and
+        # "defined" would be a flat contradiction of an observable fact —
+        # measured on five agents 2026-08-03, one of them this CLI's own
+        # host agent, mid-execution. We cannot say "running" (the registry
+        # row that would carry pid/session is the thing that is missing),
+        # so the honest render is UNKNOWN. Positive-only: a stale beat is
+        # left exactly as it was, because SIGKILL leaves a fossil record
+        # behind and "old" is not "gone".
+        beat_live = beat_is_recent(name) if not errors else None
+        if beat_live:
+            status = "unknown"
+        # PERF: a defined agent with no live beat is never live — in the
+        # running-only default view they are all hidden, so skip their
+        # account + movement enrichment (status is enough for the footer
+        # count). An agent we just promoted to "unknown" IS a candidate for
+        # that view, so it must not be deferred.
+        deferred = running_only and not beat_live
         row: dict = {
             "name": name,
             "status": status,
@@ -188,6 +208,11 @@ def defined_agent_rows(
         )
         row.update(movement)
         row.update(verdict_for(None))
+        if beat_live:
+            # The shape the remote-probe path already uses for "could not
+            # tell", so a JSON consumer needs no new vocabulary to see that
+            # liveness is UNRESOLVED here rather than negative.
+            row["liveness_unknown"] = True
         if errors:
             row["validation_errors"] = errors
         if labels:
