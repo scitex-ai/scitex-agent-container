@@ -140,16 +140,23 @@ class HealthProbe:
         return self.serving and self.status not in (401, 403)
 
     def evidence(self) -> str:
-        """One line of what we measured — quotable in an error message."""
+        """One line of what we measured — quotable in an error message.
+
+        THREE decimals, not two. Measured against the live daemon, the
+        authenticated probe answers in ~0.005s, which two decimals render as
+        "in 0.00s" — a timing that reads like the measurement never ran. In a
+        message whose entire purpose is being trustworthy about what it
+        observed, a real reading must not look like an uninitialised one.
+        """
         kind = "an authenticated" if self.authenticated else "an unauthenticated"
         if self.serving:
             return (
                 f"{kind} GET {self.url} answered HTTP "
-                f"{self.status} in {self.elapsed_s:.2f}s"
+                f"{self.status} in {self.elapsed_s:.3f}s"
             )
         return (
             f"{kind} GET {self.url} got no HTTP response "
-            f"({self.error}) after {self.elapsed_s:.2f}s"
+            f"({self.error}) after {self.elapsed_s:.3f}s"
         )
 
 

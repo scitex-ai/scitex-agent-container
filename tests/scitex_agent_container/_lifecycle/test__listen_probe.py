@@ -219,7 +219,9 @@ def test_message_quotes_the_measurement_it_made() -> None:
     # Act
     message = _message(_SERVING)
     # Assert — the evidence is IN the message, so the operator can check it.
-    assert "answered HTTP 401 in 0.18s" in message
+    # Three decimals: the authenticated probe answers in ~0.005s on the live
+    # daemon, which two decimals rendered as "0.00s".
+    assert "answered HTTP 401 in 0.180s" in message
 
 
 def test_message_never_claims_flapping_when_daemon_answers() -> None:
