@@ -24,16 +24,35 @@ The daemon was UP and answering in under a fifth of a second. It was not
 word that asserts a process is crash-looping, which nobody had looked at.
 A timeout on ONE route licenses a claim about THAT ROUTE, and nothing more.
 
-WHY THE SPLIT IS REAL (it is not an accident of routing)
---------------------------------------------------------
-``BearerAuthMiddleware.PUBLIC_PATHS`` exempts ``/v1/health``, and both
-that route and the middleware's own 401 are ``async`` — they answer ON the
-event loop. Every AUTHENTICATED route dispatches through the shared worker
-pool. So a pool exhausted by stacked-up work wedges the authed routes while
-the public path stays fast: exactly the 0.18s-401 / 25s-timeout split that
-was observed. (Root cause of that exhaustion — abandoned heartbeat ticks
-leaking zombie threads into the pool — is fixed in PR #647; this module is
-about not LYING when it happens again for some other reason.)
+WHAT THIS MODULE MAY AND MAY NOT CONCLUDE
+-----------------------------------------
+It probes exactly ONE route — ``/v1/health``, which is UNAUTHENTICATED —
+so it can settle "is the daemon serving HTTP at all" and nothing else.
+
+It used to go further. A previous version explained the split structurally:
+``BearerAuthMiddleware.PUBLIC_PATHS`` exempts ``/v1/health``, that route and
+the middleware's 401 are ``async`` and answer on the event loop, while
+authenticated routes dispatch through a shared worker pool — therefore an
+exhausted pool wedges the authed routes and spares the public one.
+
+THAT INFERENCE IS REFUTED (scitex-dev, 2026-08-04). ``POST /v1/host_exec``
+is AUTHENTICATED and answered in ~2.4s with a 127KB payload while
+``POST /agents`` hung, measured seconds apart on the same daemon. A pool
+shared by both cannot wedge one and spare the other, so pool exhaustion
+cannot be the mechanism — whatever the routing structure is.
+
+The structural facts above may still be true; what does not follow is the
+CAUSE. One observation on an unauthenticated route cannot distinguish
+authentication, this handler, or the work behind it. So the message names
+no cause and instead tells the reader how to get one: call a second
+AUTHENTICATED route and compare.
+
+This is the SECOND wrong story this message has carried. The first
+("unreachable; it may be flapping") was corrected in 2026-07 by replacing
+it with the pool story — a better-sounding cause rather than no cause. Both
+prescribed ``sac listen restart``, which interrupts every agent on the box.
+The lesson is not "find the right explanation"; it is that this module is
+not positioned to have one.
 
 CONTRACT: any HTTP response at all — 200, 401, 403, 404 — proves the daemon
 is UP and serving HTTP. Only the ABSENCE of an HTTP exchange (connection
@@ -184,19 +203,20 @@ def transport_failure_message(
         return (
             f"{verb} of {name!r} failed: {route} to {base!r} got no response "
             f"within {timeout_s:.0f}s ({exc}).\n"
-            f"MEASURED (not guessed): {probe.evidence()} — so the listen "
-            f"daemon is UP and serving. The daemon is NOT down and this is "
-            f"NOT a 'broker unreachable' failure: it is the AUTHENTICATED "
-            f"route that did not answer.\n"
-            f"Why the two differ: authenticated routes dispatch through "
-            f"listen's shared worker pool; the public {HEALTH_PATH} path is "
-            f"served on the event loop and never touches it. A pool exhausted "
-            f"by stacked-up work therefore wedges one and leaves the other "
-            f"fast.\n"
-            f"Fix: `sac listen restart` on the host clears the wedged pool. "
-            f"If it recurs, the host's sac predates the fix for the heartbeat "
-            f"ticks that leaked threads into that pool (PR #647) — upgrade sac "
-            f"on the host."
+            f"OBSERVED: {probe.evidence()} — so the listen daemon is UP and "
+            f"serving. The daemon is NOT down and this is NOT a 'broker "
+            f"unreachable' failure: this ONE route did not answer.\n"
+            f"NOT ESTABLISHED — why. {HEALTH_PATH} is UNAUTHENTICATED, so it "
+            f"does not tell you whether authentication, this handler, or the "
+            f"work behind it is at fault. Two observations, one of them on a "
+            f"route with different properties, cannot single out a cause.\n"
+            f"NEXT, to find out rather than guess: call a DIFFERENT "
+            f"authenticated route (e.g. POST /v1/host_exec with a trivial "
+            f"argv) and compare. If it answers, the fault is specific to "
+            f"{route} and restarting the daemon will not fix it. If it also "
+            f"hangs, the fault is shared and a restart is worth trying — "
+            f"`sac listen restart` on the host, which interrupts EVERY agent "
+            f"mid-operation, so establish that it is shared first."
         )
     return (
         f"{verb} of {name!r} failed: cannot reach listen at {base!r} ({exc}).\n"
