@@ -556,6 +556,89 @@ def test_render_omits_a_dissenters_verbose_prose(dissenting_heartbeat_signals):
 
 
 # --------------------------------------------------------------------------
+# AN ABSTENTION IS NOT A DISSENT. The operator pasted this from a routine
+# ``sac-restart grant`` and called it dirty:
+#
+#   DEAD (process: tmux probe SUCCEEDED and the tmux server has NO session for
+#   this agent) | also: delivery[unknown], heartbeat[unknown],
+#   registry[unknown], screen[unknown]
+#
+# Four tags carrying four copies of the same non-statement. An UNKNOWN signal
+# has no opinion to disagree with, so naming each one spends the reader's
+# attention on the instruments that had nothing to say — and buries any
+# instrument that genuinely DISAGREES in the same undifferentiated list.
+#
+# The count is kept, because it is evidence about the verdict's STRENGTH:
+# DEAD on one instrument with four abstentions is much weaker than DEAD on one
+# with four agreeing. Folding must not become hiding.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def one_dead_four_abstaining():
+    """The operator's exact case: one DEAD reading, four instruments silent."""
+    return [
+        Signal(
+            SOURCE_PROCESS,
+            DEAD,
+            "tmux probe SUCCEEDED and the tmux server has NO session for this agent",
+            INSTRUMENT_HOST_TMUX,
+        ),
+        Signal(SOURCE_DELIVERY, UNKNOWN, "no listen to ask", INSTRUMENT_LISTEN_BROKER),
+        Signal(SOURCE_HEARTBEAT, UNKNOWN, "no beat file", INSTRUMENT_AGENT_SELF),
+        Signal(SOURCE_REGISTRY, UNKNOWN, "no registry row", INSTRUMENT_PID_NAMESPACE),
+        Signal(SOURCE_SCREEN, UNKNOWN, "no pane to capture", INSTRUMENT_HOST_TMUX),
+    ]
+
+
+def test_render_does_not_tag_each_abstaining_signal_by_name(one_dead_four_abstaining):
+    # Arrange — one_dead_four_abstaining fixture
+    # Act
+    rendered = decide("grant", one_dead_four_abstaining).render()
+    # Assert — the four-tag splurge the operator objected to.
+    assert "registry[unknown]" not in rendered
+
+
+def test_render_counts_the_abstaining_signals_instead(one_dead_four_abstaining):
+    # Arrange — one_dead_four_abstaining fixture
+    # Act
+    rendered = decide("grant", one_dead_four_abstaining).render()
+    # Assert — folded, not dropped: four instruments observed nothing, and that
+    # is what makes this DEAD a weak reading.
+    assert "4 signals had no reading" in rendered
+
+
+def test_render_says_signal_singular_for_one_abstention():
+    # Arrange — a lone abstention must not read "1 signals".
+    signals = [
+        Signal(SOURCE_PROCESS, DEAD, "no session", INSTRUMENT_HOST_TMUX),
+        Signal(SOURCE_DELIVERY, UNKNOWN, "no listen to ask", INSTRUMENT_LISTEN_BROKER),
+    ]
+    # Act
+    rendered = decide("grant", signals).render()
+    # Assert
+    assert "1 signal had no reading" in rendered
+
+
+def test_render_still_names_a_signal_that_actually_disagrees():
+    # Arrange — the property folding must never eat: a signal holding a real
+    # contrary reading stays NAMED even when it is outnumbered by silence.
+    # A live heartbeat vetoes the DEAD (one live signal is decisive), so the
+    # verdict is ALIVE and it is the process DEAD reading that dissents — and
+    # that is precisely the reading an operator must not lose behind a count.
+    signals = [
+        Signal(SOURCE_PROCESS, DEAD, "no session", INSTRUMENT_HOST_TMUX),
+        Signal(SOURCE_HEARTBEAT, ALIVE, "beaten 12s ago", INSTRUMENT_AGENT_SELF),
+        Signal(SOURCE_DELIVERY, UNKNOWN, "no listen to ask", INSTRUMENT_LISTEN_BROKER),
+        Signal(SOURCE_SCREEN, UNKNOWN, "no pane to capture", INSTRUMENT_HOST_TMUX),
+    ]
+    # Act
+    rendered = decide("grant", signals).render()
+    # Assert
+    assert "process[dead]" in rendered
+
+
+# --------------------------------------------------------------------------
 # WEDGED — present but NOT working. The P0: a tmux-GREEN agent stuck under a
 # frozen auth banner read ALIVE (false-green; clew sat dead two days). The
 # screen instrument observes WORKING, not mere presence, so a wedged agent now

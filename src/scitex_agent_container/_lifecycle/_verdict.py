@@ -351,7 +351,7 @@ class LivenessVerdict:
 
         e.g. ``ALIVE (delivery: 1 live inbox subscriber)``
              ``UNKNOWN (heartbeat: pid=0 in heartbeat.json)``
-             ``DEAD (process: tmux has no session for this agent) | also: heartbeat[alive], registry[unknown]``
+             ``DEAD (process: tmux has no session for this agent) | also: heartbeat[alive] | 2 signals had no reading``
 
         Each signal's ``detail`` is deliberately verbose and educational — the
         justification an operator can read once and learn from. But a STATUS
@@ -361,6 +361,27 @@ class LivenessVerdict:
         reduces the dissenters to ``source[verdict]`` tags. The complete
         reasoning for every signal is always one ``--json`` away in
         :meth:`to_dict` (``evidence[].detail``) — nothing is lost, only folded.
+
+        AN ABSTENTION IS NOT A DISSENT, and conflating the two is what the
+        operator called dirty. Every non-agreeing signal used to be tagged the
+        same way, so a routine ``sac-restart`` printed::
+
+            DEAD (process: tmux probe SUCCEEDED and the tmux server has NO
+            session for this agent) | also: delivery[unknown],
+            heartbeat[unknown], registry[unknown], screen[unknown]
+
+        Four tags, four times the same non-statement. An UNKNOWN signal holds
+        no opinion to disagree with — it did not observe anything — so listing
+        each by name spends the reader's attention on the instruments that had
+        nothing to say, and buries any instrument that genuinely DISAGREES in
+        the same list.
+
+        The count is NOT dropped, because it is real evidence about the
+        verdict's STRENGTH: DEAD on one instrument with four abstentions is a
+        much weaker reading than DEAD on one with four agreeing, and the reader
+        must be able to see that at a glance. So abstentions fold to a count
+        and genuine opposition is always named, never folded — that tag is the
+        one that vetoes destruction, and it must not be crowded out by silence.
         """
         if not self.signals:
             return f"{self.verdict.upper()} (no signals gathered)"
@@ -371,9 +392,17 @@ class LivenessVerdict:
         parts = [f"{s.source}: {_first_clause(s.detail)}" for s in agreeing]
         why = "; ".join(parts) if parts else "no corroborating signal"
         out = f"{self.verdict.upper()} ({why})"
-        if dissenting:
-            tags = ", ".join(f"{s.source}[{s.verdict}]" for s in dissenting)
+        # Split the non-agreeing signals by whether they actually hold a
+        # contrary opinion. (When the verdict IS unknown, the abstainers agree
+        # with it, so this list is empty by construction.)
+        opposing = [s for s in dissenting if s.verdict != UNKNOWN]
+        abstaining = [s for s in dissenting if s.verdict == UNKNOWN]
+        if opposing:
+            tags = ", ".join(f"{s.source}[{s.verdict}]" for s in opposing)
             out += f" | also: {tags}"
+        if abstaining:
+            noun = "signal" if len(abstaining) == 1 else "signals"
+            out += f" | {len(abstaining)} {noun} had no reading"
         return out
 
     def to_dict(self) -> dict:
