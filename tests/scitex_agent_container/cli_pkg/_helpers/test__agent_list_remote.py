@@ -36,6 +36,7 @@ import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.cli_pkg._helpers import is_live_status
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
+    LocalProbe,
     get_agent_list_data,
     remote_instance_rows,
 )
@@ -119,22 +120,37 @@ def _swap_discover(
 
 
 @contextmanager
-def _swap_probe(impl: Callable[[Any], bool | None]) -> Iterator[None]:
-    """Swap the LOCAL liveness probe (both module + parent-package re-export)."""
+def _swap_probe(impl: Callable[[Any], Any]) -> Iterator[None]:
+    """Swap the LOCAL liveness probe (both module + parent-package re-export).
+
+    Keyed on ``probe_local_detail``, which is what the pool resolves since
+    the probe began recording which adapter answered. Left on the old
+    ``_probe_local`` name this swap would simply stop being consulted, and
+    the tests below would keep passing without exercising anything.
+    """
     import scitex_agent_container.cli_pkg._helpers as _pkg
 
-    saved_al = _al._probe_local
-    saved_pkg = getattr(_pkg, "_probe_local", None)
-    _al._probe_local = impl  # type: ignore[assignment]
-    _pkg._probe_local = impl  # type: ignore[assignment]
+    saved_al = _al.probe_local_detail
+    saved_pkg = getattr(_pkg, "probe_local_detail", None)
+    _al.probe_local_detail = impl  # type: ignore[assignment]
+    _pkg.probe_local_detail = impl  # type: ignore[assignment]
     try:
         yield
     finally:
-        _al._probe_local = saved_al  # type: ignore[assignment]
+        _al.probe_local_detail = saved_al  # type: ignore[assignment]
         if saved_pkg is None:
-            delattr(_pkg, "_probe_local")
+            delattr(_pkg, "probe_local_detail")
         else:
-            _pkg._probe_local = saved_pkg  # type: ignore[assignment]
+            _pkg.probe_local_detail = saved_pkg  # type: ignore[assignment]
+
+
+def _running(value: bool | None, runtime: str = "TestRuntime"):
+    """A probe callable answering ``value`` — the shape the pool consumes."""
+
+    def impl(cfg):
+        return LocalProbe(running=value, runtime=runtime, error=None)
+
+    return impl
 
 
 def _no_discover() -> list[tuple[str, Path]]:
@@ -341,7 +357,7 @@ def test_local_registry_row_wins_over_remote_instance(isolated_state_db, tmp_pat
     registry.add("spartan-dev", str(spec), "tui-spartan-dev")
     _record_remote()
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         rows = get_agent_list_data(registry, remote_run_ssh=lambda argv: 0)
     # Assert — one row, and it is the local one.
     matching = [r for r in rows if r["name"] == "spartan-dev"]

@@ -69,6 +69,8 @@ def build_agent_row(
     errors,
     liveness_unknown: bool,
     labels,
+    probe_runtime: str | None = None,
+    probe_error: str | None = None,
 ) -> dict:
     """Build one row dict.
 
@@ -99,6 +101,17 @@ def build_agent_row(
         row["validation_errors"] = errors
     if liveness_unknown:
         row["liveness_unknown"] = True
+    # HOW the status was reached. ``probe_runtime`` names the adapter that
+    # actually answered, so ``status: "stopped"`` with
+    # ``probe_runtime: "ClaudeSessionRuntime"`` on a ``tui`` agent IS the
+    # thrice-recurring "live agent reads stopped" defect, stated on the row
+    # rather than re-derived from scratch after the fact. ``probe_error`` says
+    # why an ``unknown`` abstained. Both optional, same as the keys above: an
+    # ordinary row stays free of empty noise.
+    if probe_runtime:
+        row["probe_runtime"] = probe_runtime
+    if probe_error:
+        row["probe_error"] = probe_error
     if labels:
         row["labels"] = labels
     return row
