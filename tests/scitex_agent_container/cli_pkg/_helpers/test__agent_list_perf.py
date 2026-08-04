@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
+from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
 from scitex_agent_container.cli_pkg._helpers._agent_list import get_agent_list_data
 
 
@@ -36,18 +37,27 @@ class _FakeRegistry:
 def _swap_probe(impl: Callable[[Any], bool | None]) -> Iterator[None]:
     import scitex_agent_container.cli_pkg._helpers as _pkg
 
-    saved_al = _al._probe_local
-    saved_pkg = getattr(_pkg, "_probe_local", None)
-    _al._probe_local = impl  # type: ignore[assignment]
-    _pkg._probe_local = impl  # type: ignore[assignment]
+    saved_al = _al.probe_local_detail
+    saved_pkg = getattr(_pkg, "probe_local_detail", None)
+    _al.probe_local_detail = impl  # type: ignore[assignment]
+    _pkg.probe_local_detail = impl  # type: ignore[assignment]
     try:
         yield
     finally:
-        _al._probe_local = saved_al  # type: ignore[assignment]
+        _al.probe_local_detail = saved_al  # type: ignore[assignment]
         if saved_pkg is None:
-            delattr(_pkg, "_probe_local")
+            delattr(_pkg, "probe_local_detail")
         else:
-            _pkg._probe_local = saved_pkg  # type: ignore[assignment]
+            _pkg.probe_local_detail = saved_pkg  # type: ignore[assignment]
+
+
+def _running(value: bool | None, runtime: str = "TestRuntime"):
+    """A probe callable answering ``value`` — the shape the pool consumes."""
+
+    def impl(cfg):
+        return LocalProbe(running=value, runtime=runtime, error=None)
+
+    return impl
 
 
 @contextmanager
@@ -122,7 +132,7 @@ def test_ports_come_from_a_single_list_claims_call(tmp_path):
     # Act
     with _swap_attr(port_allocator, "list_claims", _fake_list_claims), _swap_attr(
         port_allocator, "get_port", _fake_get_port
-    ), _swap_probe(lambda cfg: True):
+    ), _swap_probe(_running(True)):
         with _swap_attr(_al, "_discover_defined_agents", _no_discover):
             out = get_agent_list_data(registry)
     # Assert — exactly one bulk query for two agents; no per-agent get_port.
@@ -139,9 +149,7 @@ def test_port_from_claims_map_lands_on_the_row(tmp_path):
     spec_a = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec_a)}])
     # Act
-    with _swap_attr(port_allocator, "list_claims", _fake_list_claims), _swap_probe(
-        lambda cfg: True
-    ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
+    with _swap_attr(port_allocator, "list_claims", _fake_list_claims), _swap_probe(_running(True)), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0]["a2a_port"] == 19001
@@ -154,9 +162,7 @@ def test_port_none_when_agent_has_no_claim(tmp_path):
     spec_a = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec_a)}])
     # Act
-    with _swap_attr(port_allocator, "list_claims", lambda **_k: []), _swap_probe(
-        lambda cfg: True
-    ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
+    with _swap_attr(port_allocator, "list_claims", lambda **_k: []), _swap_probe(_running(True)), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0]["a2a_port"] is None
@@ -180,9 +186,7 @@ def test_validate_config_skipped_when_load_succeeds(tmp_path):
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
     # Act
-    with _swap_attr(_validation, "validate_config", _counting_validate), _swap_probe(
-        lambda cfg: True
-    ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
+    with _swap_attr(_validation, "validate_config", _counting_validate), _swap_probe(_running(True)), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry)
     # Assert — a valid, loaded config is not re-parsed/re-validated.
     assert calls["n"] == 0 and out[0]["status"] == "running"
@@ -220,7 +224,7 @@ def test_running_only_enriches_the_running_row(tmp_path):
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
     # Act
-    with _swap_probe(lambda cfg: True), _swap_attr(
+    with _swap_probe(_running(True)), _swap_attr(
         _al, "_safe_account_for", lambda cfg: "ACCT"
     ), _swap_attr(_al, "_runtime_account_for", lambda name: None), _swap_attr(
         _al, "_discover_defined_agents", _no_discover
@@ -235,7 +239,7 @@ def test_running_only_defers_account_for_stopped_row(tmp_path):
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
     # Act
-    with _swap_probe(lambda cfg: False), _swap_attr(
+    with _swap_probe(_running(False)), _swap_attr(
         _al, "_safe_account_for", lambda cfg: "ACCT"
     ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry, running_only=True)
@@ -248,7 +252,7 @@ def test_running_only_false_still_enriches_stopped_row(tmp_path):
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
     # Act
-    with _swap_probe(lambda cfg: False), _swap_attr(
+    with _swap_probe(_running(False)), _swap_attr(
         _al, "_safe_account_for", lambda cfg: "ACCT"
     ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry, running_only=False)
@@ -261,7 +265,7 @@ def test_deferred_row_keeps_the_movement_key_contract(tmp_path):
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
     # Act
-    with _swap_probe(lambda cfg: False), _swap_attr(
+    with _swap_probe(_running(False)), _swap_attr(
         _al, "_safe_account_for", lambda cfg: "ACCT"
     ), _swap_attr(_al, "_discover_defined_agents", _no_discover):
         out = get_agent_list_data(registry, running_only=True)

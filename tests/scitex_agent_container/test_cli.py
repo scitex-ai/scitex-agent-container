@@ -11,6 +11,9 @@ import yaml
 from click.testing import CliRunner
 
 from scitex_agent_container.cli import main
+from scitex_agent_container.cli_pkg._helpers._agent_list_probe import (
+    LocalProbe as _LocalProbe,
+)
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 VALID_CONFIG = {
@@ -524,8 +527,12 @@ spec:
         )
 
         # PA-306: hand-rolled fake injection with explicit restore.
-        saved_probe = getattr(_helpers, "_probe_local", None)
-        _helpers._probe_local = lambda cfg: _HangingRuntime().is_running(cfg)
+        saved_probe = getattr(_helpers, "probe_local_detail", None)
+        _helpers.probe_local_detail = lambda cfg: _LocalProbe(
+            running=_HangingRuntime().is_running(cfg),
+            runtime="HangingRuntime",
+            error=None,
+        )
         try:
             t0 = time.monotonic()
             rows = _helpers.get_agent_list_data(
@@ -535,10 +542,10 @@ spec:
             elapsed = time.monotonic() - t0
         finally:
             if saved_probe is None:
-                if hasattr(_helpers, "_probe_local"):
-                    delattr(_helpers, "_probe_local")
+                if hasattr(_helpers, "probe_local_detail"):
+                    delattr(_helpers, "probe_local_detail")
             else:
-                _helpers._probe_local = saved_probe
+                _helpers.probe_local_detail = saved_probe
         return elapsed, rows
 
     def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
@@ -603,18 +610,20 @@ spec:
         )
 
         # PA-306: hand-rolled fake injection with explicit restore.
-        saved_probe = getattr(_helpers, "_probe_local", None)
-        _helpers._probe_local = lambda cfg: True
+        saved_probe = getattr(_helpers, "probe_local_detail", None)
+        _helpers.probe_local_detail = lambda cfg: _LocalProbe(
+            running=True, runtime="TestRuntime", error=None
+        )
         try:
             rows = _helpers.get_agent_list_data(
                 _FakeRegistryOneAgent(cfg_path), remote_probe_timeout_s=5.0
             )
         finally:
             if saved_probe is None:
-                if hasattr(_helpers, "_probe_local"):
-                    delattr(_helpers, "_probe_local")
+                if hasattr(_helpers, "probe_local_detail"):
+                    delattr(_helpers, "probe_local_detail")
             else:
-                _helpers._probe_local = saved_probe
+                _helpers.probe_local_detail = saved_probe
         return rows[0]
 
     def test_fast_remote_probe_reports_running_status(self, tmp_path):

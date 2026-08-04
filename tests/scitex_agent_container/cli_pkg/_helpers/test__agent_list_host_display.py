@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
+from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
     get_agent_list_data,
     print_agent_list,
@@ -59,18 +60,27 @@ def _swap_probe(impl: Callable[[Any], bool | None]) -> Iterator[None]:
     """Swap ``_probe_local`` on BOTH the module + parent-package re-export."""
     import scitex_agent_container.cli_pkg._helpers as _pkg
 
-    saved_al = _al._probe_local
-    saved_pkg = getattr(_pkg, "_probe_local", None)
-    _al._probe_local = impl  # type: ignore[assignment]
-    _pkg._probe_local = impl  # type: ignore[assignment]
+    saved_al = _al.probe_local_detail
+    saved_pkg = getattr(_pkg, "probe_local_detail", None)
+    _al.probe_local_detail = impl  # type: ignore[assignment]
+    _pkg.probe_local_detail = impl  # type: ignore[assignment]
     try:
         yield
     finally:
-        _al._probe_local = saved_al  # type: ignore[assignment]
+        _al.probe_local_detail = saved_al  # type: ignore[assignment]
         if saved_pkg is None:
-            delattr(_pkg, "_probe_local")
+            delattr(_pkg, "probe_local_detail")
         else:
-            _pkg._probe_local = saved_pkg  # type: ignore[assignment]
+            _pkg.probe_local_detail = saved_pkg  # type: ignore[assignment]
+
+
+def _running(value: bool | None, runtime: str = "TestRuntime"):
+    """A probe callable answering ``value`` — the shape the pool consumes."""
+
+    def impl(cfg):
+        return LocalProbe(running=value, runtime=runtime, error=None)
+
+    return impl
 
 
 @contextmanager
@@ -224,7 +234,7 @@ def test_registered_row_carries_resolved_host_display(tmp_path):
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec), "started_at": "ts"}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True), _swap_display_host(
+    with _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host(
         "ywata-note-win"
     ):
         out = get_agent_list_data(registry)
@@ -238,7 +248,7 @@ def test_registered_row_keeps_raw_host_local_for_backward_compat(tmp_path):
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec), "started_at": "ts"}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True), _swap_display_host(
+    with _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host(
         "ywata-note-win"
     ):
         out = get_agent_list_data(registry)
@@ -283,7 +293,7 @@ def test_json_row_exposes_both_host_and_host_display(tmp_path, capsys):
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True), _swap_display_host(
+    with _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host(
         "ywata-note-win"
     ):
         print_agent_list_json(registry)
@@ -304,7 +314,7 @@ def test_json_started_at_keeps_raw_iso(tmp_path, capsys):
         [{"name": "x", "config": str(spec), "started_at": _STARTED_ISO}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True), _swap_display_host(
+    with _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host(
         "ywata-note-win"
     ):
         print_agent_list_json(registry)
@@ -325,9 +335,7 @@ def test_print_agent_list_renders_resolved_hostname_in_host_column(tmp_path, cap
         [{"name": "x", "config": str(spec), "started_at": _STARTED_ISO}]
     )
     # Act
-    with _env_set("COLUMNS", "240"), _swap_discover(_no_discover), _swap_probe(
-        lambda cfg: True
-    ), _swap_display_host("ywata-note-win"):
+    with _env_set("COLUMNS", "240"), _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host("ywata-note-win"):
         print_agent_list(registry)
     # Assert — the resolved hostname shows, not the literal "local" sentinel.
     out = capsys.readouterr().out
@@ -343,7 +351,7 @@ def test_print_agent_list_started_column_renders_pinned_jst(tmp_path, capsys):
     # Act
     with _env_set("SAC_DISPLAY_TZ", "Asia/Tokyo"), _env_set(
         "COLUMNS", "240"
-    ), _swap_discover(_no_discover), _swap_probe(lambda cfg: True), _swap_display_host(
+    ), _swap_discover(_no_discover), _swap_probe(_running(True)), _swap_display_host(
         "ywata-note-win"
     ):
         print_agent_list(registry)

@@ -33,6 +33,7 @@ import pytest
 
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
+    LocalProbe,
     _extract_damaged_fields,
     _is_self_peer_marker,
     _probe_local,
@@ -64,28 +65,49 @@ class _FakeRegistry:
 
 
 @contextmanager
-def _swap_probe(impl: Callable[[Any], bool | None]) -> Iterator[None]:
-    """Swap ``_probe_local`` for a real callable returning a fixed value.
+def _swap_probe(impl: Callable[[Any], Any]) -> Iterator[None]:
+    """Swap ``probe_local_detail`` for a real callable returning a fixed value.
 
     Production resolves the probe via the parent ``cli_pkg._helpers``
-    package (``getattr(_pkg, "_probe_local", _probe_local)``) so the
-    swap must land on BOTH the inner module and the parent package
+    package (``getattr(_pkg, "probe_local_detail", probe_local_detail)``)
+    so the swap must land on BOTH the inner module and the parent package
     re-export to actually intercept the call.
+
+    The seam MOVED from ``_probe_local`` to ``probe_local_detail`` when the
+    probe started recording which adapter answered. That rename is not
+    cosmetic: had these swaps been left pointing at ``_probe_local``, the
+    pool would have stopped consulting them and every test built on this
+    fixture would have gone on passing while testing nothing — the exact
+    silently-blind failure mode #861 was about.
+    ``_running(...)`` below builds the value the pool now expects.
     """
     import scitex_agent_container.cli_pkg._helpers as _pkg
 
-    saved_al = _al._probe_local
-    saved_pkg = getattr(_pkg, "_probe_local", None)
-    _al._probe_local = impl  # type: ignore[assignment]
-    _pkg._probe_local = impl  # type: ignore[assignment]
+    saved_al = _al.probe_local_detail
+    saved_pkg = getattr(_pkg, "probe_local_detail", None)
+    _al.probe_local_detail = impl  # type: ignore[assignment]
+    _pkg.probe_local_detail = impl  # type: ignore[assignment]
     try:
         yield
     finally:
-        _al._probe_local = saved_al  # type: ignore[assignment]
+        _al.probe_local_detail = saved_al  # type: ignore[assignment]
         if saved_pkg is None:
-            delattr(_pkg, "_probe_local")
+            delattr(_pkg, "probe_local_detail")
         else:
-            _pkg._probe_local = saved_pkg  # type: ignore[assignment]
+            _pkg.probe_local_detail = saved_pkg  # type: ignore[assignment]
+
+
+def _running(value: bool | None, runtime: str = "TestRuntime"):
+    """A probe callable answering ``value`` — the shape the pool consumes."""
+
+    def impl(cfg):
+        return LocalProbe(
+            running=value,
+            runtime=runtime if value is not None else None,
+            error=None if value is not None else "test abstention",
+        )
+
+    return impl
 
 
 @contextmanager
@@ -396,7 +418,7 @@ def test_get_data_with_capability_filter_includes_matching_agent(tmp_path):
     ]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, capability="HPC")
     # Assert
     assert len(out) == 1 and out[0]["name"] == "x"
@@ -408,7 +430,7 @@ def test_get_data_with_capability_filter_excludes_non_matching_agent(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, capability="HPC")
     # Assert
     assert out == []
@@ -420,7 +442,7 @@ def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, machine="m1")
     # Assert
     assert out == []
@@ -444,7 +466,7 @@ def test_get_data_with_group_filter_includes_matching_agent(tmp_path):
     ]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active")
     # Assert
     assert [r["name"] for r in out] == ["x"]
@@ -456,7 +478,7 @@ def test_get_data_with_group_filter_excludes_non_matching_agent(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active")
     # Assert
     assert out == []
@@ -468,7 +490,7 @@ def test_get_data_with_group_filter_matches_any_of_multiple_wanted_values(tmp_pa
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active,researcher")
     # Assert — OR-match: any overlap between wanted and carried groups hits.
     assert [r["name"] for r in out] == ["x"]
@@ -482,7 +504,7 @@ def test_get_data_with_group_filter_matches_a_non_first_group(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active")
     # Assert
     assert [r["name"] for r in out] == ["x"]
@@ -494,7 +516,7 @@ def test_get_data_with_group_filter_ungrouped_agent_is_excluded(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active")
     # Assert
     assert out == []
@@ -506,7 +528,7 @@ def test_get_data_without_group_filter_includes_ungrouped_agent(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry)
     # Assert
     assert [r["name"] for r in out] == ["x"]
@@ -548,7 +570,7 @@ def test_get_data_group_filter_selects_what_the_tags_filter_used_to_select(tmp_p
         ]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry, group="active")
     # Assert — exactly the formerly-tagged agent, not the whole developer set.
     assert [r["name"] for r in out] == ["figrecipe"]
@@ -575,7 +597,7 @@ def test_get_data_row_status_running_when_probe_returns_true(tmp_path):
     entries = [{"name": "x", "config": str(spec), "screen": "-", "started_at": "-"}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0]["status"] == "running"
@@ -587,7 +609,7 @@ def test_get_data_row_status_stopped_when_probe_returns_false(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+    with _swap_discover(_no_discover), _swap_probe(_running(False)):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0]["status"] == "stopped"
@@ -599,7 +621,7 @@ def test_get_data_row_status_unknown_when_probe_returns_none(tmp_path):
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: None):
+    with _swap_discover(_no_discover), _swap_probe(_running(None)):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0]["status"] == "unknown"
@@ -611,10 +633,89 @@ def test_get_data_row_liveness_unknown_flagged_when_probe_returns_none(tmp_path)
     entries = [{"name": "x", "config": str(spec)}]
     registry = _FakeRegistry(entries)
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: None):
+    with _swap_discover(_no_discover), _swap_probe(_running(None)):
         out = get_agent_list_data(registry)
     # Assert
     assert out[0].get("liveness_unknown") is True
+
+
+# ---------------------------------------------------------------------------
+# HOW the verdict was reached, carried on the row.
+#
+# scitex-dev measured a live agent reading `stopped` on 2026-08-04. By the time
+# it was investigated the host had rebooted, the population had moved, and the
+# row said "stopped" and nothing else — no adapter, no reason. The defect had
+# already been fixed twice and each diagnosis had to be rebuilt from scratch,
+# because the verdict could not say how it was reached. These pin the record.
+# ---------------------------------------------------------------------------
+
+
+def test_get_data_row_names_the_adapter_that_answered(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(_running(True, "TuiSessionRuntime")):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["probe_runtime"] == "TuiSessionRuntime"
+
+
+def test_get_data_stopped_row_names_the_adapter_that_answered(tmp_path):
+    # Arrange — the diagnostic case. "stopped" + the adapter that said so is
+    # what turns a third recurrence into a statement instead of an argument:
+    # ClaudeSessionRuntime on a tui agent IS the bug.
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(_running(False, "ClaudeSessionRuntime")),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["probe_runtime"] == "ClaudeSessionRuntime"
+
+
+def test_get_data_row_label_comes_from_the_probe_not_a_second_lookup(tmp_path):
+    # Arrange — THE design constraint. A row builder that computed the adapter
+    # itself would report the CORRECTLY selected one while the probe used
+    # another, i.e. it would read clean in exactly the case it exists to catch.
+    # The spec here declares runtime `apptainer`; the probe reports answering
+    # through something else entirely. The row must repeat the PROBE.
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with (
+        _swap_discover(_no_discover),
+        _swap_probe(_running(False, "NotTheSelectedOne")),
+    ):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["probe_runtime"] == "NotTheSelectedOne"
+
+
+def test_get_data_unknown_row_says_why_it_abstained(tmp_path):
+    # Arrange — an abstention used to discard its own exception, so `unknown`
+    # meant "no answer, and no way to find out why".
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(_running(None)):
+        out = get_agent_list_data(registry)
+    # Assert
+    assert out[0]["probe_error"] == "test abstention"
+
+
+def test_probe_detail_records_the_adapter_for_a_tui_config():
+    # Arrange — the real probe, no swap: a tui config must be answered by the
+    # tui adapter, and the record must say so.
+    from scitex_agent_container.config._types import AgentConfig
+
+    # Act
+    probe = _al.probe_local_detail(AgentConfig(name="detail-probe-agent"))
+    # Assert
+    assert probe.runtime == "TuiSessionRuntime"
 
 
 def test_get_data_merges_in_defined_agents_absent_from_registry(tmp_path):
@@ -670,7 +771,7 @@ def test_print_agent_list_renders_agent_name_in_table(capsys, tmp_path):
         [{"name": "x", "config": str(spec), "screen": "s", "started_at": "ts"}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert
     assert "x" in capsys.readouterr().out
@@ -683,7 +784,7 @@ def test_print_agent_list_renders_status_word_for_running_agent(capsys, tmp_path
         [{"name": "x", "config": str(spec), "screen": "s", "started_at": "ts"}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert — rich may color, the text always contains the word.
     assert "running" in capsys.readouterr().out
@@ -696,7 +797,7 @@ def test_print_agent_list_prints_full_validation_errors_under_table(capsys, tmp_
     spec = _write_invalid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry, verbose=True)
     # Assert
     assert "spec.runtime" in capsys.readouterr().out
@@ -707,7 +808,7 @@ def test_print_agent_list_json_emits_agent_name_in_first_row(capsys, tmp_path):
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list_json(registry)
     # Assert
     data = json.loads(capsys.readouterr().out)
@@ -900,7 +1001,7 @@ def test_get_data_row_carries_account_field(tmp_path):
     # Act
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "alice@example.com"),
     ):
         out = get_agent_list_data(registry)
@@ -931,7 +1032,7 @@ def test_print_agent_list_renders_account_column_header(capsys, tmp_path):
     # Act
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "alice@example.com"),
     ):
         print_agent_list(registry)
@@ -948,7 +1049,7 @@ def test_print_agent_list_renders_account_value(capsys, tmp_path):
     # Act
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "acct-x"),
     ):
         print_agent_list(registry)
@@ -963,7 +1064,7 @@ def test_print_agent_list_json_emits_account_in_row(capsys, tmp_path):
     # Act
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "alice@example.com"),
     ):
         print_agent_list_json(registry)
@@ -1084,7 +1185,7 @@ def test_print_agent_list_hides_ghost_and_shows_hidden_footer(capsys, tmp_path):
         ]
     )
     # Act — default view.
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert — ghost row hidden + footer shown ("deadrow" avoids collision
     # with the footer's own "stale/ghost" wording).
@@ -1098,7 +1199,7 @@ def test_print_agent_list_show_all_includes_ghost(capsys, tmp_path):
         [{"name": "ghost", "config": str(tmp_path / "gone" / "spec.yaml")}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry, show_all=True)
     # Assert
     assert "ghost" in capsys.readouterr().out
@@ -1111,7 +1212,7 @@ def test_print_agent_list_verbose_adds_path_column(capsys, tmp_path):
         [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry, verbose=True)
     # Assert — the Path header appears only in verbose mode.
     assert "Path" in capsys.readouterr().out
@@ -1124,7 +1225,7 @@ def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
         [{"name": "good", "config": str(good), "screen": "s", "started_at": "ts"}]
     )
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert
     assert "Path" not in capsys.readouterr().out
@@ -1187,7 +1288,7 @@ def test_print_agent_list_default_shows_running_agent(capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act — default view.
-    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert
     assert "runner" in capsys.readouterr().out
@@ -1197,7 +1298,7 @@ def test_print_agent_list_default_hides_definition_and_invalid(capsys, tmp_path)
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act
-    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert — the definition ("def1") + invalid ("bad1") rows are hidden.
     out = capsys.readouterr().out
@@ -1208,7 +1309,7 @@ def test_print_agent_list_default_footer_counts_hidden(capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act
-    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert — footer names both hidden categories.
     out = capsys.readouterr().out
@@ -1220,7 +1321,7 @@ def test_print_agent_list_default_omits_validation_blocks(capsys, tmp_path):
     # print in the default view (the wall the operator asked us to remove).
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act
-    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(discover), _swap_probe(_running(True)):
         print_agent_list(registry)
     # Assert
     assert "spec.runtime" not in capsys.readouterr().out
@@ -1231,7 +1332,7 @@ def test_print_agent_list_default_hides_stopped_agent(capsys, tmp_path):
     spec = _write_valid_spec(tmp_path / "stopper")
     registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+    with _swap_discover(_no_discover), _swap_probe(_running(False)):
         print_agent_list(registry)
     # Assert — no table (name absent); footer reports the hidden stopped one.
     out = capsys.readouterr().out
@@ -1243,7 +1344,7 @@ def test_print_agent_list_verbose_includes_stopped_agent(capsys, tmp_path):
     spec = _write_valid_spec(tmp_path / "stopper")
     registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
     # Act
-    with _swap_discover(_no_discover), _swap_probe(lambda cfg: False):
+    with _swap_discover(_no_discover), _swap_probe(_running(False)):
         print_agent_list(registry, verbose=True)
     # Assert
     assert "stopper" in capsys.readouterr().out
@@ -1253,7 +1354,7 @@ def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act — -v shows every status AND the per-agent validation-error detail.
-    with _swap_discover(discover), _swap_probe(lambda cfg: True):
+    with _swap_discover(discover), _swap_probe(_running(True)):
         print_agent_list(registry, verbose=True)
     # Assert
     out = capsys.readouterr().out
@@ -1277,7 +1378,7 @@ def test_get_data_running_row_prefers_runtime_account(tmp_path):
     # Act — running (probe True): runtime account wins over the spec label.
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "spec-label (host@example.com)"),
         _swap_runtime_account(lambda name: "runtime-pick@example.com"),
     ):
@@ -1293,7 +1394,7 @@ def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
     # Act — stopped (probe False): the runtime probe is NOT consulted.
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: False),
+        _swap_probe(_running(False)),
         _swap_account(lambda cfg: "spec-label"),
         _swap_runtime_account(lambda name: "should-not-be-used@example.com"),
     ):
@@ -1309,7 +1410,7 @@ def test_get_data_running_row_falls_back_to_spec_when_runtime_unresolved(tmp_pat
     # Act
     with (
         _swap_discover(_no_discover),
-        _swap_probe(lambda cfg: True),
+        _swap_probe(_running(True)),
         _swap_account(lambda cfg: "spec-fallback"),
         _swap_runtime_account(lambda name: None),
     ):
