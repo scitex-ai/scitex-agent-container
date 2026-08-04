@@ -72,9 +72,7 @@ def _opener_raising(exc: Exception):
 
 
 def _http_error(status: int) -> urlerror.HTTPError:
-    return urlerror.HTTPError(
-        f"{_BASE}/v1/health", status, "nope", {}, io.BytesIO(b"")
-    )
+    return urlerror.HTTPError(f"{_BASE}/v1/health", status, "nope", {}, io.BytesIO(b""))
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +199,18 @@ def test_message_says_daemon_is_up_when_it_answered() -> None:
     assert "the listen daemon is UP and serving" in message
 
 
-def test_message_blames_the_authenticated_route_not_the_daemon() -> None:
-    # Arrange
+def test_message_blames_the_route_not_the_daemon() -> None:
+    # Arrange — this test previously pinned the literal phrase "it is the
+    # AUTHENTICATED route that did not answer". Its INTENT (attribute the
+    # failure to the route, not the daemon) was right, but that wording
+    # encoded the very claim scitex-dev refuted on 2026-08-04: that being
+    # AUTHENTICATED is what distinguishes the hanging route. /v1/host_exec is
+    # authenticated and answers fast, so it is not. Asserting the intent
+    # instead keeps the guard and drops the theory.
     # Act
     message = _message(_SERVING)
     # Assert
-    assert "it is the AUTHENTICATED route that did not answer" in message.replace(
-        "\n", " "
-    )
+    assert "this ONE route did not answer" in message.replace("\n", " ")
 
 
 def test_message_quotes_the_measurement_it_made() -> None:
@@ -249,3 +251,69 @@ def test_message_keeps_the_listen_restart_remedy_when_down() -> None:
     message = _message(_DEAD)
     # Assert
     assert "sac listen restart" in message
+
+
+# ---------------------------------------------------------------------------
+# The message must REPORT what it observed, never NAME a cause it has not
+# established (scitex-dev, 2026-08-04).
+#
+# This message has now carried TWO different wrong explanations. The first
+# ("the host listen broker is unreachable; it may be flapping") was corrected
+# on 2026-07-14 by replacing it with a second one: authenticated routes share a
+# worker pool that /v1/health bypasses, therefore the pool is exhausted,
+# therefore restart the daemon. That is also wrong — /v1/host_exec is
+# AUTHENTICATED and answers in ~2.4s while /agents hangs, measured seconds
+# apart on the same daemon, so a shared-pool exhaustion cannot wedge one and
+# spare the other.
+#
+# Both times the fix was a better-sounding cause rather than removing the
+# speculation, and both times the prescription was `sac listen restart` — a
+# SHARED daemon restart that interrupts every other agent. scitex-dev declined
+# it on those grounds and stayed blocked 11 days; I followed it and lost two
+# remedies to a diagnosis that could not have been right.
+#
+# So the guard is not "do not say 'flapping'" or "do not say 'pool'" — a third
+# wrong story would pass both. It is: the ONE observation this code has is an
+# UNAUTHENTICATED health check, and it cannot single out a cause.
+# ---------------------------------------------------------------------------
+
+
+def test_message_does_not_blame_the_worker_pool() -> None:
+    # Arrange — /v1/host_exec is authenticated AND fast, so pool exhaustion
+    # cannot explain one authed route hanging while another answers.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "worker pool" not in message
+
+
+def test_message_admits_the_cause_is_not_established() -> None:
+    # Arrange — one unauthenticated observation cannot identify a cause.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "NOT ESTABLISHED" in message
+
+
+def test_message_names_the_health_route_as_unauthenticated() -> None:
+    # Arrange — the reader must know WHY the cheap probe proves so little.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "UNAUTHENTICATED" in message
+
+
+def test_message_offers_a_second_authed_route_as_the_next_step() -> None:
+    # Arrange — the discriminator that separates "this handler" from "shared".
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "/v1/host_exec" in message
+
+
+def test_message_warns_a_restart_interrupts_every_agent() -> None:
+    # Arrange — the remedy's COST is what made following it blindly expensive.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "interrupts EVERY agent" in message
