@@ -422,22 +422,34 @@ def request_spawn(
         # never gets misreported as 'cannot reach / timed out'.
         #
         # But "no response on THIS route" is NOT yet "the daemon is
-        # unreachable" — the authenticated routes dispatch through listen's
-        # shared worker pool and the public health path does not, so one can
-        # hang while the other answers in 0.18s (observed 2026-07-14). The
-        # old text asserted "unreachable; it may be flapping" and was WRONG.
-        # Probe the cheap public path and let the EVIDENCE pick the message.
-        from ._listen_probe import probe_listen_health, transport_failure_message
+        # unreachable" — the old text asserted "unreachable; it may be
+        # flapping" and was WRONG; the daemon was answering in 0.18s.
+        #
+        # This comment used to explain the split as a shared worker pool that
+        # the public health path bypasses. THAT IS REFUTED (scitex-dev,
+        # 2026-08-04): ``POST /v1/host_exec`` is authenticated and answered in
+        # ~2.4s while ``POST /agents`` hung, same daemon, same minutes. The
+        # failures track the ``/agents`` PREFIX, not authentication. So probe
+        # BOTH the public path and an authenticated route on another prefix,
+        # and let the two readings pick the message. See ._listen_probe.
+        from ._listen_probe import (
+            probe_listen_authed,
+            probe_listen_health,
+            transport_failure_message,
+        )
 
         probe = probe_listen_health(base, opener=opener)
+        authed = probe_listen_authed(base, tok, opener=opener)
         logger.warning(
             "spawn_client: POST %s transport error: %s (probe: listen "
-            "serving=%s status=%s in %.2fs)",
+            "serving=%s status=%s in %.2fs; authed serving=%s status=%s)",
             url,
             exc,
             probe.serving,
             probe.status,
             probe.elapsed_s,
+            None if authed is None else authed.serving,
+            None if authed is None else authed.status,
         )
         raise SpawnRequestError(
             transport_failure_message(
@@ -448,6 +460,7 @@ def request_spawn(
                 exc=exc,
                 timeout_s=timeout_s,
                 probe=probe,
+                authed_probe=authed,
             )
         ) from exc
 
