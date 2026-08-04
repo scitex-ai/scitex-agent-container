@@ -166,10 +166,7 @@ def _http_error_message(name: str, status: int, parsed: Any) -> str:
             f"check_lineage_acl MANAGE gate denied this caller. Server "
             f"said: {parsed!r}"
         )
-    return (
-        f"restart of {name!r} rejected: listen returned HTTP "
-        f"{status} ({parsed!r})"
-    )
+    return f"restart of {name!r} rejected: listen returned HTTP {status} ({parsed!r})"
 
 
 def request_restart(
@@ -283,17 +280,29 @@ def request_restart(
         # answering an unauthenticated GET in 0.18s while this authenticated
         # POST hung. Probe the cheap public path and let the EVIDENCE pick
         # the message. See ._listen_probe.
-        from ._listen_probe import probe_listen_health, transport_failure_message
+        from ._listen_probe import (
+            probe_listen_authed,
+            probe_listen_health,
+            transport_failure_message,
+        )
 
         probe = probe_listen_health(base, opener=opener)
+        # The SECOND reading, on an authenticated route with a different
+        # prefix. Probing only the public path is what let a wrong cause
+        # survive in this message for a month: one measurement generalised
+        # to a whole class. Two readings can actually separate "this route"
+        # from "the daemon".
+        authed = probe_listen_authed(base, tok, opener=opener)
         logger.warning(
             "restart_client: POST %s transport error: %s (probe: listen "
-            "serving=%s status=%s in %.2fs)",
+            "serving=%s status=%s in %.2fs; authed serving=%s status=%s)",
             url,
             exc,
             probe.serving,
             probe.status,
             probe.elapsed_s,
+            None if authed is None else authed.serving,
+            None if authed is None else authed.status,
         )
         raise RestartRequestError(
             transport_failure_message(
@@ -304,6 +313,7 @@ def request_restart(
                 exc=exc,
                 timeout_s=timeout_s,
                 probe=probe,
+                authed_probe=authed,
             )
         ) from exc
 
