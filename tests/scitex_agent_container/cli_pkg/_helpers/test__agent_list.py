@@ -22,9 +22,14 @@ no ``SimpleNamespace`` posing as config.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
+
+import pytest
 
 import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container.cli_pkg._helpers._agent_list import (
@@ -267,10 +272,23 @@ def test_probe_local_never_raises_returns_bool_or_none_on_real_runtime(tmp_path)
 # ClaudeSessionRuntime. The default runtime is ``tui``; probing a live
 # TUI agent through ClaudeSessionRuntime → ApptainerContainerRuntime read
 # a nonexistent apptainer_pid and reported "stopped" for a running agent.
+#
+# THE TWO TESTS BELOW DID NOT GUARD THAT, AND WERE NAMED AS IF THEY DID.
+# Neither called ``_probe_local``: one asserted ``_get_runtime``'s mapping,
+# the other ``TuiSessionRuntime.is_running``'s rule — both true statements
+# about components the probe HAPPENS to use, neither an assertion that the
+# probe uses them. Measured 2026-08-04: restoring the exact historical bug
+# (``_probe_local`` hardcoding ``ClaudeSessionRuntime``) left this whole
+# file at 68 passed. A defect that has now recurred TWICE had no test that
+# could go red for it.
+#
+# They are renamed to say what they actually check, and the real guard —
+# ``test_probe_local_reports_a_live_tui_session_as_running`` below — drives
+# ``_probe_local`` itself against a live tmux session.
 # ---------------------------------------------------------------------------
 
 
-def test_probe_local_uses_the_declared_runtime_for_a_tui_config():
+def test_get_runtime_maps_a_tui_config_to_the_tui_runtime():
     # Arrange — default AgentConfig resolves runtime="tui".
     from scitex_agent_container._lifecycle._runtime_select import _get_runtime
     from scitex_agent_container.config._types import AgentConfig
@@ -279,14 +297,14 @@ def test_probe_local_uses_the_declared_runtime_for_a_tui_config():
     cfg = AgentConfig(name="tui-probe-agent")
     # Act
     runtime = _get_runtime(cfg)
-    # Assert — the runtime _probe_local now routes through is the TUI one.
+    # Assert — the SELECTOR's mapping only. Says nothing about its callers.
     assert isinstance(runtime, TuiSessionRuntime)
 
 
-def test_probe_local_agrees_with_status_runtime_selection():
-    # Arrange — a tui config with an injected multiplexer that reports a
-    # live, fresh session; _probe_local must observe the SAME liveness the
-    # declared-runtime probe (what agent_status uses) reports: running.
+def test_tui_runtime_reports_a_live_session_as_running():
+    # Arrange — a tui runtime over an in-memory multiplexer reporting a live
+    # session. Pins the RUNTIME's liveness rule; again says nothing about
+    # which runtime _probe_local reaches.
     import time
 
     from scitex_agent_container.config._types import AgentConfig
@@ -310,9 +328,34 @@ def test_probe_local_agrees_with_status_runtime_selection():
     cfg = AgentConfig(name="tui-live-agent")
     runtime = TuiSessionRuntime(multiplexer=_LiveMux)
     del session_name_for  # imported only to document the tui-<name> convention
-    # Act — the declared-runtime probe (the exact one _probe_local calls
-    # after routing through _get_runtime) sees the live session.
+    # Act
     running = runtime.is_running(cfg)
+    # Assert
+    assert running is True
+
+
+@pytest.mark.skipif(
+    shutil.which("tmux") is None,
+    reason="this guard drives the real probe against a real tmux session",
+)
+def test_probe_local_reports_a_live_tui_session_as_running():
+    # Arrange — a REAL tmux session under the ``tui-<name>`` convention
+    # TuiSessionRuntime keys on, with a live pane process. The original
+    # defect in one line: a running TUI agent the list must not call
+    # "stopped". Hardcode ClaudeSessionRuntime back into _probe_local and
+    # this goes RED (no apptainer pidfile → False) — which is exactly what
+    # the two tests above could not do.
+    from scitex_agent_container.config._types import AgentConfig
+
+    session = f"tui-probe-guard-{os.getpid()}"
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", session, "sleep 120"], check=True
+    )
+    try:
+        # Act — the production probe, not its parts.
+        running = _probe_local(AgentConfig(name=session[len("tui-") :]))
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], check=False)
     # Assert
     assert running is True
 
