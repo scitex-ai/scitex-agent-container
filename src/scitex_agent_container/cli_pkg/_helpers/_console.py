@@ -31,7 +31,8 @@ def system_msg(text: str, style: str = "info") -> None:
                                 downgraded to DEBUG so they only show
                                 under ``SCITEX_LOGGING_LEVEL=DEBUG``
       * ``"green"`` / ``"success"``  — completion summary (started, deleted)
-      * ``"red"``   / ``"fail"``     — failure path
+      * ``"red"``   / ``"error"``    — unambiguous failure (renders ``ERRO``)
+      * ``"fail"``                   — a CHECK that failed (renders ``FAIL``)
       * ``"yellow"``/ ``"warn"``     — warnings (overwrite confirmations etc.)
 
     Rich markup tags inside ``text`` get stripped before logging since
@@ -48,7 +49,10 @@ _STYLE_TO_LEVEL = {
     "dim": scitex_logging.DEBUG,
     "green": scitex_logging.SUCCESS,
     "success": scitex_logging.SUCCESS,
-    "red": scitex_logging.FAIL,
+    # ERRO is the doctrine's name for an unambiguous failure; FAIL stays
+    # available for a caller reporting a failed CHECK rather than an error.
+    "red": scitex_logging.ERROR,
+    "error": scitex_logging.ERROR,
     "fail": scitex_logging.FAIL,
     "yellow": scitex_logging.WARNING,
     "warn": scitex_logging.WARNING,

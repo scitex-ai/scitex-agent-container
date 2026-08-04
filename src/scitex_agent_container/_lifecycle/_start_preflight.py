@@ -7,7 +7,6 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-import sys
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -282,23 +281,27 @@ def _rotate_among_credentials_files(
         "accounts, load-balanced per agent by 7d headroom; time-to-reset "
         "counts only within the 2h expiring horizon"
     )
-    # Readable, structured notice (operator 2026-07-19: the run-on one-liner
-    # was "めっちゃ汚い"): a headline naming the agent + picked account, then
-    # indented fields, then the per-candidate ranking inputs as a ONE-ENTRY-
-    # PER-LINE list. Still emitted through ``stream`` (log_stream or stderr)
-    # so ``preflight_from_config_path``'s throwaway-StringIO suppression of the
-    # dry-probe rotation notice keeps working — do NOT route this to a logger.
     ranking = "\n".join(f"      {part}" for part in pick_audit_parts(records))
-    stream = log_stream if log_stream is not None else sys.stderr
-    print(
-        f"[sac:creds] agent '{config.name}' selected credentials pool account "
-        f"{picked!r} ({len(slugs)} candidates listed)\n"
+    headline = (
+        f"{config.name}: account {picked} "
+        f"(5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))})"
+    )
+    detail = (
         f"  file:          {picked_path}\n"
         f"  policy={policy} — {rationale}\n"
-        f"  picked usage:  5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}\n"
-        f"  ranking inputs:\n{ranking}",
-        file=stream,
+        f"  ranking inputs:\n{ranking}"
     )
+    # A caller-supplied stream means the notice is being CAPTURED to be
+    # discarded (preflight_from_config_path's dry-probe suppression), so it
+    # must not reach a logger at all.
+    if log_stream is not None:
+        print(f"[sac:creds] {headline}\n{detail}", file=log_stream)
+        return
+
+    from ..cli_pkg._helpers._console import system_msg
+
+    system_msg(headline, style="info")
+    system_msg(detail, style="dim")
 
 
 def _rotate_to_healthy_account(
@@ -386,14 +389,17 @@ def _rotate_to_healthy_account(
         return  # pinned is healthy — no rotation, no log line.
 
     config.claude.account = picked
-    stream = log_stream if log_stream is not None else sys.stderr
-    print(
-        f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (policy={policy}; pinned account stale, "
-        f"5h-blocked, or otherwise outranked; rotated to the "
-        f"policy-preferred fresh account)",
-        file=stream,
+    notice = (
+        f"{config.name}: rotated account {pinned} -> {picked} "
+        f"(policy={policy}; {pinned} stale, 5h-blocked, or outranked)"
     )
+    if log_stream is not None:
+        print(f"[sac:creds] {notice}", file=log_stream)
+        return
+
+    from ..cli_pkg._helpers._console import system_msg
+
+    system_msg(notice, style="info")
 
 
 def _check_spec_source_drift_at_launch(
