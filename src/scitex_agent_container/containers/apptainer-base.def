@@ -57,9 +57,18 @@ From: ubuntu:24.04
     # `procps`/`lsof`/`strace`/`less` stay because their NON-interactive
     # modes (pgrep, ps, lsof piped, strace -c, less -F) are agent-useful.
     #
-    # git/curl/ca-certificates/openssh-client are listed here so any
+    # git/curl/ca-certificates/openssh-client/rsync are listed here so any
     # future base-image trim cannot silently drop them — sac runtime
     # hard-depends on each one (HTTPS verify chain, SSH dispatch, git).
+    #
+    # rsync earns its place the hard way. `_dispatch_remote_start` shells
+    # `rsync` to sync the workspace before a CROSS-HOST agent start, and it
+    # runs in the CALLER's environment. Every agent runs inside this image,
+    # so while rsync was missing here NO AGENT COULD EVER START AN AGENT ON
+    # ANOTHER HOST — the multi-host feature was unreachable from precisely
+    # the processes meant to use it. Measured 2026-08-05: the first real
+    # cross-host start died with `FileNotFoundError: 'rsync'`, from a
+    # container, against a target host that had rsync installed.
     #
     # libglib2.0-0 is REQUIRED by the scitex stack: without it,
     # libgthread-2.0.so.0 is missing and ``import scitex.io`` silently
@@ -89,6 +98,7 @@ From: ubuntu:24.04
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg \
         git openssh-client sshpass autossh git-crypt \
+        rsync \
         build-essential pkg-config \
         libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
         python3 python3-pip python3-venv python3-dev \
