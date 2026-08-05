@@ -12,14 +12,20 @@ YAML shape::
       aliases:
         Yusukes-MacBook-Air: mba
         spartan-login1:      spartan
-        DXP480TPLUS-994:     nas
+        DXP480TPLUS-994:     nas-03
       fallback: hostname-short      # 'hostname-short' | 'hostname-fqdn'
 
     peers:
       mba:     { ssh: ywatanabe@mba.local }
       spartan: { ssh: ywatanabe@spartan-login1, via: [mba] }
       bm198:   { ssh: bm198, via: [mba, spartan] }
-      nas:     { ssh: admin@192.168.11.22, reverse_ssh: ywata-note-win }
+      nas-03:  { ssh: nas-03, reverse_ssh: ywata-note-win }
+
+Peer keys must be STABLE names. ``nas-03``, not ``nas`` — the bare name is
+re-pointed to the next machine as hardware is replaced, so it keeps resolving
+while addressing a different host. :mod:`.moving_alias` holds the registry and
+:meth:`Config.validate` refuses one as a key. Convenience aliases belong in
+``~/.ssh/config``, where "the current NAS" is what a human means.
 
     lead:                           # ADR-0013 Phase 1 — agent→lead push inbox.
       name: lead                    # Target name on the lead's `sac listen`
@@ -55,6 +61,17 @@ from scitex_config._ecosystem import local_state as _local_state
 
 from .._env import getenv as _sac_env
 
+# ``LeadConfig`` / ``ResolveSpec`` live in ._host_config_blocks but are
+# re-exported here: ``lead_inbox`` and the config tests import them from
+# this module, and the extraction must not move a public import path.
+from ._host_config_blocks import (  # noqa: F401
+    LeadConfig,
+    ResolveSpec,
+    _parse_lead,
+    _parse_resolve,
+)
+from .moving_alias import MovingAliasError, moving_alias_hint
+
 
 def _default_config_path() -> Path:
     """Resolve config.yaml via the SciTeX local-state cascade.
@@ -69,33 +86,6 @@ def _default_config_path() -> Path:
     if override:
         return Path(override)
     return _local_state.path("agent-container", "config.yaml")
-
-
-@dataclass(frozen=True)
-class ResolveSpec:
-    """Dispatch-time peer-target resolution descriptor (Phase 1 schema).
-
-    Carried on a :class:`PeerSpec` via the ``resolve`` field. When set,
-    the peer's live ``ssh`` target is to be filled in at dispatch time
-    by querying ``source`` (currently only ``"scitex-hpc"``) instead of
-    being pinned statically in ``peers.yaml``. Phase 1 of the
-    label-style-peer migration only *parses and validates* this field —
-    no resolver code runs. Phase 2 will wire the lookup into
-    ``try_dispatch``. Full plan in the lead's planning doc
-    ``sac-dispatch-time-node-resolution.md``.
-
-    Fields:
-      source: backend identifier. Phase 1 accepts only ``"scitex-hpc"``;
-        any other value raises ``ValueError`` at config-load time so
-        operator typos surface immediately, not at dispatch.
-      reservation: the scitex-hpc reservation name (used when
-        ``source == "scitex-hpc"``). Optional at the schema level so
-        future backends can omit it; Phase 2's resolver will enforce
-        presence at resolve time for scitex-hpc.
-    """
-
-    source: str
-    reservation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,42 +172,6 @@ class HostBlock:
 
 
 @dataclass(frozen=True)
-class LeadConfig:
-    """``lead:`` block — agent→lead push inbox target (ADR-0013 Phase 1).
-
-    Identifies the lead's ``sac listen`` instance so an agent can POST a
-    typed completion/blocker/status event to it via
-    ``/agents/<name>/message:send``. The lead is just another A2A node
-    on the existing control plane; this block is the one place every
-    agent learns where it lives.
-
-    Fields:
-      name: target name on the lead's listen (used as ``<name>`` in
-        the POST path and as the ACL identity the lead's listen sees).
-      host: peer key (must exist under ``peers:``) used for two
-        independent jobs — looking up the per-host bearer token under
-        ``peer-tokens/<host>.token`` (the credential the agent
-        authenticates with) and naming the destination host for the
-        outbound HTTP request. Reusing the peer key keeps the lead
-        consistent with how every other cross-host node is addressed.
-      a2a_port: TCP port the lead's ``sac listen`` is bound to (the
-        host-wide listen, not a per-agent sidecar). Required because
-        the lead's listen is not registered in any state.db's
-        ``instances`` table — it is not an agent and has no
-        ``record_instance_start`` call.
-
-    Loud failure is the only failure mode. Phase 1 ships the helper
-    plus CLI; the lead-inbox push refuses to dispatch when any of
-    ``name`` / ``host`` / ``a2a_port`` is missing rather than guessing.
-    See :mod:`scitex_agent_container._state.lead_inbox`.
-    """
-
-    name: str
-    host: str
-    a2a_port: int
-
-
-@dataclass(frozen=True)
 class Config:
     host: HostBlock = field(default_factory=HostBlock)
     peers: dict[str, PeerSpec] = field(default_factory=dict)
@@ -249,6 +203,17 @@ class Config:
         Peers without ``resolve:`` still require an explicit ``ssh:``.
         """
         errors: list[str] = []
+        for pname in self.peers:
+            hint = moving_alias_hint(pname, context="peer key in config.yaml")
+            if hint:
+                errors.append(f"peer '{pname}': {hint}")
+        for alias_from, alias_to in self.host.aliases.items():
+            # The VALUE is the canonical name every state.db row is stamped
+            # with, so a moving alias there makes THIS machine's identity move.
+            # The KEY is a raw `hostname -s` reading and cannot move.
+            hint = moving_alias_hint(alias_to, context="canonical host name")
+            if hint:
+                errors.append(f"host.aliases['{alias_from}']: {hint}")
         for pname, p in self.peers.items():
             # Skip glob-pattern keys — their ssh is synthesized per-query
             # from the matched hostname (see PeersMap.__getitem__).
@@ -305,6 +270,13 @@ class PeersMap(dict):
         matched = self._glob_match(key)
         if matched is not None:
             return matched
+        # Every sac dispatch target lands here, so this is the one place that
+        # can tell "peer you never defined" from "peer whose name moves".
+        # A bare KeyError('nas') reads as a config typo; it is the opposite —
+        # the name is fine and the MACHINE it names is what changed.
+        hint = moving_alias_hint(key, context="dispatch target")
+        if hint:
+            raise MovingAliasError(hint)
         raise KeyError(key)
 
     def __contains__(self, key):
@@ -354,94 +326,6 @@ def load(path: Path | None = None) -> Config:
     lead = _parse_lead(raw.get("lead"), source_path=p)
 
     return Config(host=host, peers=peers, lead=lead, source_path=p)
-
-
-_RESOLVE_ALLOWED_SOURCES = ("scitex-hpc",)
-
-
-def _parse_lead(raw, *, source_path: Path) -> LeadConfig | None:
-    """Normalize the optional ``lead:`` YAML block into a :class:`LeadConfig`.
-
-    Missing block → ``None`` (config-load stays missing-tolerant; the
-    lead-inbox helpers raise their own loud error when an agent tries
-    to push with no lead configured). Present block → strict
-    validation: ``name`` (non-empty string), ``host`` (non-empty
-    string), ``a2a_port`` (positive int). Any other shape raises
-    ``ValueError`` naming ``source_path`` so operator typos surface
-    at config-load time rather than as opaque HTTP failures from the
-    push helper.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"config.yaml at {source_path}: 'lead' must be a mapping with "
-            f"name:/host:/a2a_port:, got {type(raw).__name__}"
-        )
-    name = raw.get("name")
-    host = raw.get("host")
-    port = raw.get("a2a_port")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError(
-            f"config.yaml at {source_path}: 'lead.name' is required and "
-            f"must be a non-empty string (got {name!r})"
-        )
-    if not isinstance(host, str) or not host.strip():
-        raise ValueError(
-            f"config.yaml at {source_path}: 'lead.host' is required and "
-            f"must be a non-empty string (got {host!r})"
-        )
-    if not isinstance(port, int) or isinstance(port, bool) or port <= 0:
-        raise ValueError(
-            f"config.yaml at {source_path}: 'lead.a2a_port' is required "
-            f"and must be a positive integer (got {port!r})"
-        )
-    return LeadConfig(name=name, host=host, a2a_port=port)
-
-
-def _parse_resolve(name: str, raw) -> ResolveSpec | None:
-    """Normalize a peer's ``resolve:`` YAML field into a :class:`ResolveSpec`.
-
-    Phase 1 of the dispatch-time-resolution architecture (full plan at
-    ``~/proj/scitex-lead/GITIGNORED/FUTURE/sac-dispatch-time-node-resolution.md``).
-    This helper only *parses* the field; no network / scitex-hpc lookup
-    happens here.
-
-    Accepted shapes:
-
-    * Missing / ``None`` → returns ``None`` (peer has no resolver).
-    * A mapping with at minimum ``source:``. Phase 1 accepts only
-      ``source: scitex-hpc``; any other value raises ``ValueError``
-      naming the peer, so operator typos surface at config-load time
-      rather than at dispatch.
-
-    Any other shape (scalar, list, ...) raises ``ValueError``.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"config.yaml: peer '{name}' resolve: must be a mapping with "
-            f"source: (and source-specific keys), got {type(raw).__name__}"
-        )
-    source = raw.get("source")
-    if not isinstance(source, str) or not source.strip():
-        raise ValueError(
-            f"config.yaml: peer '{name}' resolve.source is required and "
-            f"must be a non-empty string"
-        )
-    if source not in _RESOLVE_ALLOWED_SOURCES:
-        raise ValueError(
-            f"config.yaml: peer '{name}' resolve.source={source!r} is "
-            f"unknown; allowed values: {list(_RESOLVE_ALLOWED_SOURCES)}"
-        )
-    reservation = raw.get("reservation")
-    if reservation is not None and not isinstance(reservation, str):
-        raise ValueError(
-            f"config.yaml: peer '{name}' resolve.reservation must be a "
-            f"string if set, got {type(reservation).__name__}"
-        )
-    return ResolveSpec(source=source, reservation=reservation)
 
 
 def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:

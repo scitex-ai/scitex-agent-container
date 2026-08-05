@@ -63,7 +63,9 @@ def test_from_dict_defaults_reverse_ssh_to_empty():
 
 def test_validate_accepts_a_peer_with_reverse_ssh(cfg_path: Path):
     # Arrange
-    cfg_path.write_text("peers:\n  nas:\n    ssh: n\n    reverse_ssh: master-x\n")
+    # nas-03, not nas: the bare name is a moving alias and validate() now
+    # refuses it, so a fixture using it would be asserting on the wrong thing.
+    cfg_path.write_text("peers:\n  nas-03:\n    ssh: n\n    reverse_ssh: master-x\n")
     cfg = load(cfg_path)
     # Act
     errors = cfg.validate()
