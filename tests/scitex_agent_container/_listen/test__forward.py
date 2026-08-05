@@ -108,6 +108,49 @@ class _LoopbackHTTP:
         await self._server.wait_closed()
 
 
+class _SilentHTTP:
+    """A real socket that ACCEPTS the connection and then never replies.
+
+    This is the state a bare "connection failed" sentinel cannot tell
+    apart from a refused port, and the two need opposite remedies:
+    refused → start the sidecar; silent → something IS bound and is
+    stuck or busy, so restarting on that signal can kill a healthy
+    mid-turn runner. Holding the reader open (rather than closing it)
+    is what makes the client's own deadline the thing that fires.
+    """
+
+    def __init__(self) -> None:
+        self._server: asyncio.base_events.Server | None = None
+        self.port: int = _free_port()
+        self._held: list[asyncio.StreamWriter] = []
+
+    async def _handle(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        # Hold the connection open and write nothing at all.
+        self._held.append(writer)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            pass
+
+    async def __aenter__(self) -> "_SilentHTTP":
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", self.port)
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        assert self._server is not None
+        for w in self._held:
+            try:
+                w.close()
+            except Exception:  # stx-allow: fallback (reason: test teardown must not mask the assertion under test)
+                pass
+        self._server.close()
+        await self._server.wait_closed()
+
+
 # --- Common fixture: isolate port_allocator's state.db ----------------------
 
 
@@ -159,17 +202,147 @@ def test_returns_none_when_port_is_auto_sentinel(isolated_state_db):
     assert result is None
 
 
-def test_returns_none_when_runner_unreachable(isolated_state_db):
-    # Arrange — explicit port the kernel will refuse on (nothing bound).
+def _refuse(name: str = "ghost"):
+    """Drive a send at a port the kernel will refuse, and return the response.
+
+    Not a fixture: this file's convention is self-contained tests that
+    show their own Arrange/Act, and the lint requires all three AAA
+    markers in every test body regardless.
+    """
     from scitex_agent_container._listen import _forward
 
-    cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=_free_port()))
-    # Act
-    result = asyncio.run(
-        _forward.forward_to_live_runner(cfg, "ghost", "hi", {}, timeout=2.0)
+    port = _free_port()
+    cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=port))
+    return port, asyncio.run(
+        _forward.forward_to_live_runner(cfg, name, "hi", {}, timeout=2.0)
     )
+
+
+def test_refused_port_does_not_return_none(isolated_state_db):
+    """A RECORDED-but-unbound port must fail loud, never return ``None``.
+
+    THIS TEST REPLACES ``test_returns_none_when_runner_unreachable``,
+    which asserted the opposite and in doing so pinned the defect.
+
+    ``None`` is the caller's instruction to re-launch the agent with
+    ``claude --resume <sid>``. That is right when NO port exists (the
+    agent was never started) and wrong when a port IS recorded and the
+    kernel refused instantly, because a refused sidecar usually belongs
+    to an agent that is very much ALIVE. Re-launching then puts a second
+    claude process on the live agent's own session file, and — since a
+    fresh claude takes far longer than the caller's 30s client deadline
+    — the reply is never seen and the work is burned invisibly.
+
+    The old assertion made both states indistinguishable, which is how a
+    routine unbound sidecar got diagnosed as a fleet-wide `sac listen`
+    outage (card sac-listen-send-endpoint-wedged-fleet-wide-20260803).
+    """
+    # Arrange — explicit port the kernel will refuse on (nothing bound).
+    # Act
+    _, result = _refuse()
+    # Assert — emphatically NOT the re-launch signal.
+    assert result is not None, "refused port fell through to the re-launch path"
+
+
+def test_refused_port_uses_503(isolated_state_db):
+    """Service-unavailable is the honest code: the transport, not the agent."""
+    # Arrange
+    # Act
+    _, result = _refuse()
     # Assert
-    assert result is None
+    assert result.status_code == 503
+
+
+def test_refused_response_reports_the_port_as_a_field(isolated_state_db):
+    """Machine-readable: callers branch on the field, not on prose."""
+    # Arrange
+    # Act
+    port, result = _refuse()
+    # Assert
+    assert json.loads(result.body)["a2a_port"] == port
+
+
+def test_refused_error_text_names_the_port(isolated_state_db):
+    """Human-readable: the port is the one actionable fact, so say it."""
+    # Arrange
+    # Act
+    port, result = _refuse()
+    # Assert
+    assert str(port) in json.loads(result.body)["error"]
+
+
+def test_refused_response_points_at_the_a2a_rail(isolated_state_db):
+    """The hint must name the rail that DOES work for most agents."""
+    # Arrange
+    # Act
+    _, result = _refuse()
+    # Assert
+    assert "a2a send" in json.loads(result.body)["hint"]
+
+
+def test_refused_response_is_not_a_death_verdict(isolated_state_db):
+    """Wording guard: must not tell the reader the agent crashed.
+
+    Most agents in this fleet never bind ``/v1/turn`` at all and are
+    reached on the a2a subscriber channel, so "nothing is listening"
+    says the TRANSPORT is down, never that the agent is. A death verdict
+    here invites `--force --fresh`, which destroys a healthy agent.
+    """
+    # Arrange
+    # Act
+    _, result = _refuse()
+    # Assert
+    assert "crashed" not in json.loads(result.body)["error"].lower()
+
+
+def test_refused_is_distinguishable_from_timeout(isolated_state_db):
+    """``kind`` must separate the two — collapsing them caused the incident."""
+    # Arrange
+    # Act
+    _, result = _refuse()
+    # Assert
+    assert json.loads(result.body)["kind"] == "refused"
+
+
+def test_silent_sidecar_is_a_timeout_504(isolated_state_db):
+    """Bound-but-mute → 504, never the 503 that means "nothing is bound".
+
+    The discriminator matters operationally: ``refused`` means start the
+    sidecar, ``timeout`` means something IS bound and is stuck or busy.
+    Prescribing the wrong remedy is what the collapsed sentinel caused.
+    """
+    # Arrange — a real socket that accepts and then says nothing at all.
+    from scitex_agent_container._listen import _forward
+
+    async def _run() -> object:
+        async with _SilentHTTP() as srv:
+            cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
+            return await _forward.forward_to_live_runner(
+                cfg, "mute-agent", "hi", {}, timeout=1.0
+            )
+
+    # Act
+    result = asyncio.run(_run())
+    # Assert
+    assert result.status_code == 504
+
+
+def test_silent_sidecar_kind_is_timeout(isolated_state_db):
+    """The named signal, not merely the status code."""
+    # Arrange
+    from scitex_agent_container._listen import _forward
+
+    async def _run() -> object:
+        async with _SilentHTTP() as srv:
+            cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
+            return await _forward.forward_to_live_runner(
+                cfg, "mute-agent", "hi", {}, timeout=1.0
+            )
+
+    # Act
+    result = asyncio.run(_run())
+    # Assert
+    assert json.loads(result.body)["kind"] == "timeout"
 
 
 def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_db):
