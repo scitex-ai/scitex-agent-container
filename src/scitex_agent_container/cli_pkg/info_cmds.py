@@ -14,6 +14,7 @@ from rich.table import Table
 from ..config import load_config
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, agent_name_complete, console
+from .._state._remote_sac_hint import remote_sac_not_found_hint
 
 
 @click.command()
@@ -288,6 +289,7 @@ def _tail_one_remote(
             f"(rc={rc}):\n"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stderr:\n{err}"
+            + remote_sac_not_found_hint(peer, rc, err, peers)
         )
     return True
 
