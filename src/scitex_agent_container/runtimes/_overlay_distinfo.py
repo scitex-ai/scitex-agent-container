@@ -16,8 +16,74 @@ uninstall lands in the overlay as a whiteout for that one directory name.
 Nothing re-evaluates that whiteout later. Swap the base image underneath and
 the whiteout still masks the OLD name, which is no longer there, while the NEW
 base's ``.dist-info`` is masked by nothing at all. The merged view then shows
-TWO, and ``importlib.metadata`` refuses the distribution — so the agent dies at
-BOOT, on an image that is itself clean, having changed nothing.
+TWO.
+
+What happens next is SILENT, not fatal — measured
+--------------------------------------------------
+An earlier version of this docstring claimed ``importlib.metadata`` refuses a
+duplicated distribution, so the agent dies at BOOT. That is WRONG, and wrong in
+the direction that matters: it invites the inference "no agent died, so the
+fleet is clean". Measured 2026-08-05 on a live masked agent (scitex-hub,
+CPython 3.12.3, twelve shadowed packages, which booted normally):
+
+* ``importlib.metadata`` SEES both dist-infos (``count == 2``) and silently
+  picks one. No exception, no warning.
+* The pick is READDIR ORDER — raw filesystem order, no arbitration. Confirmed
+  against the discriminator: the base entry preceded the overlay in
+  ``os.listdir`` while *sorted* order would have put the overlay first.
+* So the winner is PER-PACKAGE UNPREDICTABLE. Of the six packages with two
+  visible dist-infos, metadata chose the OVERLAY for three and the BASE for
+  three. There is no "metadata reads the base" rule — that guess was made and
+  this measurement refuted it.
+* METADATA RESOLUTION AND CODE RESOLUTION ARE INDEPENDENT. The code comes from
+  whichever package directory the merge exposes; the metadata from whichever
+  ``.dist-info`` readdir yields first. Different mechanisms over different
+  directory entries, so they can split — 12 masked, 6 with duplicate metadata,
+  1 where metadata and code actually disagreed (``openai``: metadata 2.53.0,
+  running code 2.44.0).
+
+The honest statement of the harm is neither "12 are broken" nor "only 1
+disagrees": ANY OF THE SIX COULD DISAGREE, AND ONE DOES. ``__file__`` cannot
+tell you which — the merged view presents a single path either way — so only
+``__version__`` reveals which code actually loaded.
+
+Consequence for anything reading a version through ``importlib.metadata``,
+version-drift detection included: it is not merely blind to masking, it is wrong
+in an UNPREDICTABLE DIRECTION. Metadata may report newer than the running code
+(reads as current — the dangerous way) or older (reads as stale). A consistent
+bias could be corrected for; this cannot.
+
+THREE HARM CHANNELS, AND WHY A VERSION COMPARISON IS THE WRONG DETECTOR
+-----------------------------------------------------------------------
+The obvious remedy — "cross-check ``__version__`` against metadata" — is a
+WEAKER instrument than the duplicate count this module already computes, and
+the third channel is what proves it:
+
+1. STALE CODE. The overlay's package directory wins the merge, so the agent
+   runs an old version. Visible as a version difference host-side.
+2. WRONG VERSION REPORTED. Metadata resolves to the other dist-info than the
+   one whose code loaded (``openai`` above). Visible to a metadata-vs-code
+   comparison.
+3. ENTRY POINTS FROM THE SHADOWED DIST-INFO. Tools that iterate ALL
+   distributions — pytest's ``pytest11``, and anything calling
+   ``entry_points()`` — read the duplicate's declarations too. Measured on the
+   same agent: ``scitex_dev-0.42.0.dist-info`` declares
+   ``pytest11 = scitex_dev._core._test_execution_plugin``; the code on disk is
+   0.21.0 and that module does not exist; pytest raises ``ModuleNotFoundError``
+   before collecting a single test.
+
+Channel 3 is INVISIBLE to channels 1 and 2's detectors. On that agent,
+``scitex_dev`` read as "agree" — metadata 0.21.0, code 0.21.0, both correct and
+consistent — while being the most broken package in the container. A version
+comparison cannot see it, because nothing about the VERSION is wrong; the harm
+is in the other dist-info's metadata being consumed by a third party.
+
+So the detector stays a DUPLICATE COUNT. Two dist-infos for one distribution is
+the hazard, whatever the versions do. A version comparison would have called
+this container healthier than it is.
+
+The 3.12.3 result is not silently claimed for other interpreters —
+``importlib.metadata``'s duplicate handling has changed across releases.
 
 The consequence that makes this worth predicting rather than detecting: a
 rolling restart to pick up a newer base does not merely fail to repair such an
@@ -30,6 +96,16 @@ The only difference was WHICH names their whiteouts covered — i.e. which base
 happened to be mounted when each ran its install. That asymmetry is invisible
 from inside either container (the process sees only the merged view, never the
 whiteout names), which is precisely why this lives host-side.
+
+An inside-out scan does not merely miss some — its blind spot has a SHAPE. It
+can only ever see shadows where the two dist-info names DIFFER, because a
+same-version shadow and a live whiteout each leave exactly ONE directory in the
+merged view, and one directory is indistinguishable from not being shadowed at
+all. Measured on the same agent: 12 found host-side, 6 found from inside. The
+six misses were the four same-version shadows plus ``pydantic`` /
+``pydantic-core``, whose whiteouts were working. That is a systematic bias, not
+a sampling gap, so "I checked from inside and it looked fine" is guaranteed to
+under-report and must not be treated as a negative result.
 
 Why these functions take NAMES and not paths
 --------------------------------------------
