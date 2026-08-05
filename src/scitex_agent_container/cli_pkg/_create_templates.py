@@ -82,7 +82,12 @@ spec:
     auto_accept: true
     account: ""
     credentials_file: ""
-    credentials_files: []
+    # The ROTATION POOL, filled at create time with every account in the store.
+    # A LIST the selector rotates over by headroom — NOT a pin. A single entry
+    # satisfies any "non-empty" check while DISABLING rotation, so an exhausted
+    # account authenticates fine and then dies on every model call. Keep all
+    # healthy accounts here; drop one only for a stated reason.
+    credentials_files: {credentials_files}
     provider: null
 
   health:
@@ -286,7 +291,12 @@ spec:
     # that account's LIVE .credentials.json (else the shared host OAuth is
     # forwarded automatically).
     credentials_file: ""
-    credentials_files: []
+    # The ROTATION POOL, filled at create time with every account in the store.
+    # A LIST the selector rotates over by headroom — NOT a pin. A single entry
+    # satisfies any "non-empty" check while DISABLING rotation, so an exhausted
+    # account authenticates fine and then dies on every model call. Keep all
+    # healthy accounts here; drop one only for a stated reason.
+    credentials_files: {credentials_files}
     provider: null
 
   # Editable-install the agent's own repo so imports resolve to the live
