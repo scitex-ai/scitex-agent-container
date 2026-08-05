@@ -1,4 +1,4 @@
-"""Overlay-masking observation for ``sac agents check-health``.
+"""Overlay-masking observation for ``sac agents health``.
 
 Published NEXT TO ``healthy`` (never folded into the exit code), same as
 :mod:`._health_liveness`. Detector: :mod:`.._maintenance._overlay_masking`.
