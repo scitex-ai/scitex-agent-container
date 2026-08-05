@@ -6,6 +6,44 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.25] - 2026-08-05
+
+### Fixed
+
+- **A host name that is DESIGNED to point elsewhere later is no longer usable
+  as an identity.** `nas` is not a typo for `nas-03`: the operator's numbering
+  scheme deliberately re-points it as hardware is replaced (`nas-01` →
+  `nas-02` → `nas-03` → …), so it resolves correctly every single time and
+  will one day address a different machine with nothing anywhere reporting a
+  problem. sac's own `config.yaml` keyed a peer on it, and so did the script
+  that pushes the production OAuth credential to that machine every four hours.
+
+  `_state/moving_alias.py` is now the single registry of such names.
+  `Config.validate()` refuses one as a peer key or as a `host.aliases` VALUE
+  (the canonical name stamped on every `state.db` row), which also closes the
+  `sac host add/set` write path since it already reverts on validation failure.
+  `PeersMap` lookup turns the post-migration `KeyError('nas')` into a message
+  naming `nas-03`, so every sac dispatch path is covered rather than ssh alone.
+
+  `load()` deliberately still ACCEPTS a config that says `nas` — refusing at
+  import time would take every sac verb on every host down in order to fix a
+  name. Pinned by a test.
+
+- **`sac agents restart-login-expired` could never exit 0.** `exit_code()`
+  returned 2 whenever any report was UNOBSERVED, and the roster is spec FILES
+  while the fleet registers far more agents than it runs, by design. Measured
+  on the host: UNOBSERVED=92, all 92 reason `no-session`, none wedged, exit 2 —
+  for every possible fleet state, healthy or not. A gate that cannot pass is as
+  dead as one that cannot fail.
+
+  `PassOutcome.indeterminate()` now separates the reasons. `no-session` is a
+  DETERMINATE reading of something this pass already delegates in prose ("a
+  missing session is fleet-reconcile's half of the fleet, not ours") — a pass
+  cannot both delegate a case and let it decide its exit code. `pane-unreadable`
+  and `roster-unreadable` remain genuine indeterminacies and still join
+  `BUDGET_UNKNOWN` at 2. `counts()` still reports every UNOBSERVED, so a reader
+  sees "unobserved: 92" beside exit 0.
+
 ### Changed
 
 - **The container defs pin `scitex-cards>=0.32.0`, BARE.** scitex-cards moved
