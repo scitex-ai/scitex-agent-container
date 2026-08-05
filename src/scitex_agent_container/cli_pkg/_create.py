@@ -164,18 +164,22 @@ def _discover_credentials_pool_block() -> tuple[str, bool]:
 
     Returns ``(yaml_block, found_any)``.
 
-    WHY THE WHOLE POOL AND NOT ONE ENTRY. ``credentials_files`` is a LIST the
-    selector rotates over by headroom; it is not a pin. The three ways to get
-    this wrong are not equally bad, which is the point:
+    EMIT EVERY ACCOUNT THE STORE HAS. ``credentials_files`` is the list the
+    selector rotates over by headroom, so the scaffold's job is simply not to
+    under-report what is available.
 
-      ``[]``      fails LOUDLY — no credential bind is emitted at all, so the
-                  agent parks on the interactive OAuth login screen. Obvious.
-      ``[one]``   fails QUIETLY — it satisfies every "is it non-empty" check
-                  while DISABLING rotation, and if that one account is out of
-                  weekly headroom the agent authenticates fine and then dies on
-                  its first model call. Measured 2026-08-05: a one-entry pool
-                  pinned to an exhausted account, auth green, every turn dead.
-      full pool   the only shape that can actually rotate.
+    A ONE-ENTRY LIST IS PERFECTLY VALID and is the correct output for anyone
+    with a single account — which is most people. Rotation not happening with
+    one account is arithmetic, not a defect, and an earlier version of this
+    docstring wrongly called that shape "quiet failure". What actually bit us
+    on 2026-08-05 was not the COUNT: an agent was pinned to a single account
+    that happened to be at 7d 100%, so auth succeeded and every model call
+    died. A three-account pool with all three exhausted fails identically. The
+    hazard is the HEADROOM, not the length.
+
+    ``[]`` is the genuinely broken shape: no credential bind is emitted at all,
+    so the agent falls through to the host default and parks on the interactive
+    OAuth login screen while ``agent_start`` reports success.
 
     So a non-empty check is NOT a sufficient gate, and neither is this
     discovery — only invoking a model distinguishes "authenticated" from

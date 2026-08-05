@@ -83,10 +83,11 @@ spec:
     account: ""
     credentials_file: ""
     # The ROTATION POOL, filled at create time with every account in the store.
-    # A LIST the selector rotates over by headroom — NOT a pin. A single entry
-    # satisfies any "non-empty" check while DISABLING rotation, so an exhausted
-    # account authenticates fine and then dies on every model call. Keep all
-    # healthy accounts here; drop one only for a stated reason.
+    # The selector rotates over this list by remaining headroom. ONE entry is
+    # perfectly valid — it is the right answer for a single-account setup, and
+    # rotation not happening with one account is arithmetic, not a fault. What
+    # matters is HEADROOM, not length: an agent pinned to an account at 7d 100%
+    # authenticates fine and then dies on every model call.
     credentials_files: {credentials_files}
     provider: null
 
@@ -292,10 +293,11 @@ spec:
     # forwarded automatically).
     credentials_file: ""
     # The ROTATION POOL, filled at create time with every account in the store.
-    # A LIST the selector rotates over by headroom — NOT a pin. A single entry
-    # satisfies any "non-empty" check while DISABLING rotation, so an exhausted
-    # account authenticates fine and then dies on every model call. Keep all
-    # healthy accounts here; drop one only for a stated reason.
+    # The selector rotates over this list by remaining headroom. ONE entry is
+    # perfectly valid — it is the right answer for a single-account setup, and
+    # rotation not happening with one account is arithmetic, not a fault. What
+    # matters is HEADROOM, not length: an agent pinned to an account at 7d 100%
+    # authenticates fine and then dies on every model call.
     credentials_files: {credentials_files}
     provider: null
 
