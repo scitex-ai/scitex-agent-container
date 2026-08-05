@@ -67,6 +67,88 @@ _VALID_MODEL_RE = re.compile(
 )
 
 
+def _is_glued_flag(entry: str) -> bool:
+    """True when ``entry`` is a flag and its value crammed into ONE argv token.
+
+    WHY THIS PREDICATE EXISTS — measured 2026-08-06. The ``figrecipe`` agent
+    was unbootable for 15 days because its spec carried, in
+    ``spec.claude.flags``, the single list element::
+
+        - --effort ultracode
+
+    Each flags element becomes ONE argv token, so claude received the single
+    token ``"--effort ultracode"``, rejected it as an unknown option, and the
+    inner process exited during boot. Every restart failed identically and
+    nothing surfaced it — the agent just stayed unreachable and was read as a
+    dead sidecar. The author meant two elements (``--effort`` then
+    ``ultracode``).
+
+    THE AXIS IS THE LEADING DASH, NOT THE WHITESPACE. Keying this on "contains
+    a space" would reject three live capsule specs that legitimately pass
+    ``{"mcpServers": {}}`` as a flags element — that is a VALUE, whose spaces
+    are part of the payload, and it never reaches an option parser.
+
+    ONE MORE DISTINCTION IS NEEDED, or the guard would break a valid form:
+    ``--mcp-config={"mcpServers": {}}`` also starts with a dash and also
+    contains whitespace, yet is a correct single token — the ``--flag=value``
+    spelling, where the space lives inside the value. So the glued case is the
+    one whose FIRST whitespace comes BEFORE any ``=``: that is a flag, then a
+    separator, then something that should have been its own element.
+    """
+    if not entry.startswith("-"):
+        return False  # a bare VALUE; its spaces are payload, not a separator
+    first_space = min(
+        (i for i, ch in enumerate(entry) if ch.isspace()),
+        default=-1,
+    )
+    if first_space < 0:
+        return False  # no whitespace at all — an ordinary flag
+    equals = entry.find("=")
+    # ``--flag=value with spaces`` is legitimate; ``--flag value`` is not.
+    return equals < 0 or first_space < equals
+
+
+def _validate_flags(claude_block: dict) -> list[str]:
+    """Reject a ``spec.claude.flags`` element that glues a flag to its value.
+
+    Split out from :func:`validate_claude` so the boot-killing case documented
+    in :func:`_is_glued_flag` reads as its own rule rather than a clause.
+    """
+    errors: list[str] = []
+    flags = claude_block.get("flags")
+    if flags is None:
+        return errors
+    if not isinstance(flags, list):
+        errors.append(
+            "spec.claude.flags must be a list of individual argv tokens, got "
+            f"{type(flags).__name__}"
+        )
+        return errors
+    for index, entry in enumerate(flags):
+        if not isinstance(entry, str):
+            errors.append(
+                "spec.claude.flags[%d] must be a string argv token, got %r"
+                % (index, entry)
+            )
+            continue
+        if _is_glued_flag(entry):
+            flag, _, value = entry.partition(" ")
+            errors.append(
+                f"spec.claude.flags[{index}] glues a flag to its value in one "
+                f"argv token:\n    {entry!r}\n"
+                "Every flags element is passed as ONE argv token, so claude "
+                "receives this whole string as a single option name, fails "
+                f"with \"unknown option '{entry}'\", and EXITS DURING BOOT. "
+                "That is how figrecipe stayed dead for 15 days (2026-07-22 to "
+                "2026-08-06): the restart failed the same way every time and "
+                "nothing surfaced it. Split it into two elements:\n"
+                f"    - {flag}\n    - {value.strip()}\n"
+                "(Use the --flag=value spelling instead if the value itself "
+                "contains spaces.)"
+            )
+    return errors
+
+
 def validate_claude(spec: dict) -> list[str]:
     """Return validation errors for the ``spec.claude`` block (empty = valid)."""
     errors: list[str] = []
@@ -167,6 +249,9 @@ def validate_claude(spec: dict) -> list[str]:
                     "malformed id is silently discarded to a fresh session by "
                     "the SDK/CLI, so the pin would be lost without this check."
                 )
+
+    # spec.claude.flags — raw argv tokens forwarded to the claude CLI.
+    errors.extend(_validate_flags(claude_block))
 
     return errors
 
