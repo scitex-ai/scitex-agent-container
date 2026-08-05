@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_create.py"
+            "command": "python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_create.py"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_remove.py"
+            "command": "python3 $HOME/.claude/hooks/claude_worktree_hooks/worktree_remove.py"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/opt/venv-agent/bin/python3 $HOME/.claude/hooks/claude_worktree_hooks/session_start_reap_stale.py"
+            "command": "python3 $HOME/.claude/hooks/claude_worktree_hooks/session_start_reap_stale.py"
           }
         ]
       }
