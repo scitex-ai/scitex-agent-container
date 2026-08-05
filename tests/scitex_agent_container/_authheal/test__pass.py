@@ -259,16 +259,25 @@ def test_registered_agent_with_no_session_is_reported(roster, history, events):
     assert _verdict(outcome, "scitex-hub") == Verdict.UNOBSERVED
 
 
-def test_registered_agent_with_no_session_could_not_be_determined(
+def test_registered_agent_with_no_session_does_not_block_a_clean_exit(
     roster, history, events
 ):
+    """This test used to assert 2, and that assertion was the bug.
+
+    A sessionless agent is still REPORTED (the test above pins that) and still
+    never restarted (the test below pins that) — what changed is that it no
+    longer decides the exit code. The roster is spec files, this fleet
+    registers far more agents than it runs, so the old rule made exit 0
+    unreachable for every possible fleet state: measured 92/92 sessionless on
+    the host, none wedged, exit 2 forever. See PassOutcome.indeterminate.
+    """
     # Arrange
     register_agents(roster, "scitex-hub")
     rec = Recorder()
     # Act
     outcome = _run({"writer": (OK, OK)}, history, events, rec)
     # Assert
-    assert outcome.exit_code() == 2
+    assert outcome.exit_code() == 0
 
 
 def test_registered_agent_with_no_session_is_never_restarted(roster, history, events):
