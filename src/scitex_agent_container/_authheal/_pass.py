@@ -39,9 +39,16 @@ WHAT A CLEAN PASS IS ALLOWED TO MEAN
     happened to contain. Every registered agent must leave this pass in exactly
     one of three states — wedged, observed-and-fine, or UNOBSERVED — and only
     the wedged ones are ever restarted. That third state is what makes exit 0 a
-    real claim: "we accounted for the whole roster and none of it is wedged",
-    rather than the far weaker "we produced no reports", which is also what a
-    pass that read nothing at all produces.
+    real claim rather than the far weaker "we produced no reports", which is
+    also what a pass that read nothing at all produces.
+
+    UNOBSERVED is not one thing, and the difference decides the exit code. A
+    live session whose pane would not capture is US failing to look. A
+    registered agent with NO session is a determinate reading of something this
+    pass explicitly delegates to fleet-reconcile — and since the roster is spec
+    files on a fleet that registers far more agents than it runs, treating it as
+    an indeterminacy made exit 0 unreachable for every possible fleet state.
+    See :meth:`PassOutcome.indeterminate`.
 
 Every collaborator is an injectable seam with a REAL default, so tests drive the
 whole pass against real panes, a real temp history file and a real temp event
@@ -75,6 +82,16 @@ from ._detect import (
 )
 from ._observe import observe_wedge
 
+# The report record and the NON-RESTART report constructors live in ._reports
+# (extracted for the line cap); re-exported so existing imports of
+# ``AgentReport`` from this module keep resolving.
+from ._reports import (  # noqa: F401
+    _ROSTER_SUBJECT,
+    AgentReport,
+    _roster_unreadable,
+    _unobserved,
+)
+
 __all__ = [
     "DEFAULT_INTERVAL",
     "DEFAULT_PASS_CAP",
@@ -102,11 +119,6 @@ _BUDGET_VERDICTS = {
 #: before the next agent (a killed pass must not forget what it already bounced).
 _SPENT = (Verdict.RESTARTED, Verdict.FAILED)
 
-#: The report subject used when the ROSTER ITSELF could not be read. Not an
-#: agent — it is the population we failed to establish — and named so that a
-#: cron log says WHICH reading failed instead of showing an unexplained exit 2.
-_ROSTER_SUBJECT = "<fleet-roster>"
-
 
 def history_path() -> Path:
     """Where the restart history lives. Resolved PER CALL, never cached."""
@@ -133,24 +145,6 @@ def _real_restart(name: str) -> bool:
 
 
 @dataclass(frozen=True)
-class AgentReport:
-    """One agent's line in the report. ``detail`` is ALWAYS printed."""
-
-    name: str
-    verdict: Verdict
-    reason: str
-    detail: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "verdict": self.verdict.value,
-            "reason": self.reason,
-            "detail": self.detail,
-        }
-
-
-@dataclass(frozen=True)
 class PassOutcome:
     """Everything one pass concluded and did."""
 
@@ -168,23 +162,54 @@ class PassOutcome:
             out[report.verdict.value] += 1
         return {k: v for k, v in out.items() if v}
 
+    def indeterminate(self) -> tuple[AgentReport, ...]:
+        """UNOBSERVED reports that mean THIS pass could not determine something.
+
+        Not every UNOBSERVED is an indeterminacy of ours. ``no-session`` is a
+        DETERMINATE reading: there is no session, therefore there is no pane to
+        be wedged, and :func:`_unobserved` already says whose problem it is —
+        "a missing session is fleet-reconcile's half of the fleet, not ours".
+        A pass cannot both delegate a case and let that case decide its answer.
+
+        ``pane-unreadable`` and ``roster-unreadable`` are the real ones: a live
+        session we failed to read, and not knowing who should have been read at
+        all. Those are this pass failing at its own job.
+
+        The load-bearing assumption, stated so it can be argued with: an agent
+        wedged on auth still HAS its ``tui-`` session — it is sitting at a login
+        prompt, which is exactly what the pane read detects. Sessionless means
+        crashed or never started, a different failure with a different owner. If
+        that ever stops holding, this method is where the bug will be.
+        """
+        return tuple(r for r in self.of(Verdict.UNOBSERVED) if r.reason != "no-session")
+
     def exit_code(self) -> int:
         """0 confirmed-clean · 1 something is wedged · 2 could-not-determine.
 
         0 is the STRONGEST claim this pass can make, so it is reserved for
-        earning it: EVERY agent in the registered roster was actually observed,
-        and none of them is wedged. It is never the answer to "we produced no
-        reports", because a pass that observed nothing at all produces no
-        reports either — and while those two spelled the same 0, a wedged agent
-        could sit for hours while the timer recorded a healthy tick for each
-        pass that had failed to look at it.
+        earning it: every agent this pass COULD observe was observed, and none
+        of them is wedged. It is never the answer to "we produced no reports",
+        because a pass that observed nothing at all produces no reports either —
+        and while those two spelled the same 0, a wedged agent could sit for
+        hours while the timer recorded a healthy tick for each pass that had
+        failed to look at it.
 
-        Anything UNOBSERVED therefore outranks the clean answer and joins
+        A genuine indeterminacy therefore outranks the clean answer and joins
         BUDGET_UNKNOWN at 2. They are one statement in two costumes — we could
         not determine the thing this pass exists to determine — and 2 is the
         code that lets a cron tell that apart from a fleet genuinely healthy.
+
+        WHAT CHANGED, AND WHY. This used to count EVERY UNOBSERVED, including
+        the registered-but-sessionless. The roster is spec FILES, and this fleet
+        has far more registered agents than running ones by design, so every
+        pass carried sessionless reports and the supervisor could NEVER return
+        0 — not "rarely", never, for any fleet state whatsoever. A gate that
+        cannot go green is a gate nobody reads, and the operator had already
+        stopped reading this one. The count is not lost: :meth:`counts` still
+        reports every UNOBSERVED, so a log line says "unobserved: 92" beside
+        exit 0. What it can no longer do is impersonate "we failed to look".
         """
-        if self.of(Verdict.BUDGET_UNKNOWN, Verdict.UNOBSERVED):
+        if self.of(Verdict.BUDGET_UNKNOWN) or self.indeterminate():
             return 2
         if self.of(
             Verdict.FAILED,
@@ -304,55 +329,6 @@ def _perform(
         Verdict.FAILED,
         "restart-returned-false",
         f"{base}; restart ran but reported FAILURE — the agent is still wedged",
-    )
-
-
-def _unobserved(name: str, *, live: bool) -> AgentReport:
-    """An agent we took NO reading of — reported, never restarted.
-
-    There are two ways to be unobserved and the detail must say which, because
-    they send the operator to different places: a LIVE session whose pane would
-    not capture (tmux is there, the read failed), versus a registered agent with
-    no session at all (the reading could not even have had a row for it — the
-    shape that let an agent go missing rather than red). Neither is evidence of
-    a wedge, so neither is restarted; neither is evidence of health either, so
-    neither is silently dropped.
-    """
-    if live:
-        return AgentReport(
-            name,
-            Verdict.UNOBSERVED,
-            "pane-unreadable",
-            f"{name} has a live tui- session but its pane could NOT be captured, "
-            f"so nothing was learned about its auth. NOT restarted (absence of "
-            f"evidence is not evidence of a wedge) and NOT counted healthy",
-        )
-    return AgentReport(
-        name,
-        Verdict.UNOBSERVED,
-        "no-session",
-        f"{name} is REGISTERED but has no live tui- session, so this pass could "
-        f"not read it at all. NOT restarted — a missing session is "
-        f"fleet-reconcile's half of the fleet, not ours — but its absence from "
-        f"the reading is not evidence that {name} is healthy",
-    )
-
-
-def _roster_unreadable(detail: str) -> AgentReport:
-    """The ROSTER is the thing we could not read, so no pass can be clean.
-
-    Without it we do not know which agents SHOULD have been observed, so we
-    cannot claim to have observed them all however many panes we did read. The
-    finding is carried as a report of its own rather than a bare exit code, so
-    the reason travels with the verdict to whoever reads the log.
-    """
-    return AgentReport(
-        _ROSTER_SUBJECT,
-        Verdict.UNOBSERVED,
-        "roster-unreadable",
-        f"could not establish which agents SHOULD be running: {detail}. Agents "
-        f"missing from this pass's reading cannot be told apart from agents that "
-        f"do not exist, so this pass cannot report a clean fleet",
     )
 
 
