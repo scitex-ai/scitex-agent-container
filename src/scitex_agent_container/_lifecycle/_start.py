@@ -23,6 +23,10 @@ from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 
+# Re-exported from _start_announce for back-compat: this helper lived here
+# before the 512-line-cap split.
+from ._start_announce import _announce_start_verdict  # noqa: F401
+
 # Re-exported from _start_failure_diag for back-compat: this helper lived here
 # before the 512-line-cap split.
 from ._start_failure_diag import _format_boot_stderr_section  # noqa: F401
@@ -40,28 +44,6 @@ from ._start_preflight import (  # noqa: F401
     _verify_real_liveness,
 )
 from .health import health_monitor
-
-
-def _announce_start_verdict(verdict) -> None:
-    """Print the liveness verdict + its evidence before a non-no-op start.
-
-    An operator staring at ``running | pid=None`` learns nothing. This prints
-    WHY — ``ALIVE (delivery: 1 live inbox subscriber)`` / ``UNKNOWN (heartbeat:
-    beat is 5086s stale …)`` — and, on UNKNOWN, says plainly that we are
-    starting the agent anyway and that doing so destroys nothing.
-    """
-    import sys as _sys
-
-    print(f"[sac:liveness] {verdict.agent}: {verdict.render()}", file=_sys.stderr)
-    if verdict.is_unknown:
-        print(
-            f"[sac:liveness] cannot CONFIRM '{verdict.agent}' is alive, and "
-            f"nothing answers for it — starting it. This is NOT destructive: "
-            f"if it is in fact alive, the runtime's own duplicate-session "
-            f"guard no-ops instead of relaunching over it. (`--force` is the "
-            f"only verb that tears an existing session down.)",
-            file=_sys.stderr,
-        )
 
 
 def agent_start(
@@ -320,20 +302,21 @@ def agent_start(
             # agent is running — the prep does not touch the container.
             pass
         else:
-            # Idempotent start: re-running ``sac agent start <name>`` on an
-            # agent we have POSITIVE evidence is alive is a no-op, not an
-            # error. Use ``--force`` to actually restart.
-            #
-            # The verdict + its evidence is printed, not just the conclusion:
-            # a no-op that says only "already running" is unfalsifiable from
-            # the outside — the operator cannot tell whether we OBSERVED the
-            # agent (delivery: a message would reach it) or merely found a
-            # process-shaped shadow of one. Now they can read which.
-            print(
-                f"Agent '{config.name}' is already running "
-                f"[{verdict.render()}]. No-op. Use --force to restart.",
-                file=__import__("sys").stderr,
+            # INFO, not SUCC: the requested end state holds, but nothing was
+            # launched — so the line must not read as an accomplishment.
+            # The verdict evidence stays: a no-op that says only "already
+            # running" is unfalsifiable from the outside, and the operator
+            # could not tell an OBSERVED agent from a process-shaped shadow.
+            from ..cli_pkg._helpers._console import system_msg
+            from ._start_noop_notice import render_already_running
+
+            system_msg(
+                render_already_running(config.name, verdict.render()),
+                style="info",
             )
+            from ._startup_failed import retract_marker_for
+
+            retract_marker_for(config.name)
             return NOOP_ALREADY_RUNNING
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
@@ -394,7 +377,7 @@ def agent_start(
     # agent_start. ``ensure_instance_uuid`` writes
     # ``SAC_INSTANCE_UUID`` into ``config.env`` so the runtime's
     # ``_build_env_exports`` (claude_code.py) propagates it; the runtime
-    # is supposed to read it back when wiring up the orochi WS connect
+    # is supposed to read it back when wiring up the hub WS connect
     # (FR-E). ``hydrate_from_hub`` is pre-start so the agent's boot-time
     # skill can pick up the snapshot before claude actually launches.
     _h = handover_mod if handover_mod is not None else _load_handover_module()

@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._resolve &mdash; scitex-agent-container v0.21.11</title>
+  <title>scitex_agent_container.config._resolve &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -151,8 +151,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -171,30 +175,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -202,6 +182,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -223,8 +204,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -239,6 +221,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -252,6 +235,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -331,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -384,6 +369,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -394,9 +380,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -440,6 +431,64 @@
 
 <span class="n">_ENV_VAR</span> <span class="o">=</span> <span class="s2">&quot;SCITEX_AGENT_CONTAINER_YAML_DIRS&quot;</span>
 
+<span class="c1"># Operator-facing disambiguator for the project-local-vs-fleet registry</span>
+<span class="c1"># ambiguity. ``user`` → search ONLY the user-scope fleet registry;</span>
+<span class="c1"># ``project`` → search ONLY the project-local registry; unset/empty/any</span>
+<span class="c1"># other value → auto (and fail loud if BOTH registries exist — see</span>
+<span class="c1"># ``AmbiguousRegistryScope`` and ``_apply_scope``).</span>
+<span class="n">_SCOPE_ENV_VAR</span> <span class="o">=</span> <span class="s2">&quot;SAC_AGENT_SCOPE&quot;</span>
+
+<span class="c1"># Sentinel ``primary`` used when ``SAC_AGENT_SCOPE=project`` scopes the</span>
+<span class="c1"># fleet registry out. It is a guaranteed-absent path so the existing</span>
+<span class="c1"># ``is_dir`` / ``exists`` guards skip it, and the not-found message</span>
+<span class="c1"># renders a clear &quot;scoped out&quot; line instead of pointing at the real</span>
+<span class="c1"># fleet dir the operator asked to ignore.</span>
+<span class="n">_SCOPED_OUT_FLEET</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;&lt;fleet scoped out by SAC_AGENT_SCOPE=project&gt;&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_read_scope</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the requested registry scope: ``&quot;user&quot;``, ``&quot;project&quot;``, or None.</span>
+
+<span class="sd">    Reads ``$SAC_AGENT_SCOPE`` case-insensitively and trimmed. Anything</span>
+<span class="sd">    that is not exactly ``user`` / ``project`` (including empty / unset /</span>
+<span class="sd">    a typo) maps to ``None`` = &quot;auto / unset&quot; — the caller then applies</span>
+<span class="sd">    the fail-loud-on-ambiguity rule. Kept deliberately strict + simple so</span>
+<span class="sd">    the behaviour is predictable: only the two documented values switch</span>
+<span class="sd">    scope; everything else is &quot;unset&quot;.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">_SCOPE_ENV_VAR</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">raw</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;project&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">raw</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AmbiguousRegistryScope</span><span class="p">(</span><span class="ne">LookupError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised when project-local and fleet registries both exist + scope is unset.</span>
+
+<span class="sd">    A fleet-management op run from inside a repo that ships its own</span>
+<span class="sd">    project-local ``.scitex/agent-container/agents/`` would otherwise</span>
+<span class="sd">    silently resolve the project-local registry and never see the</span>
+<span class="sd">    user-scope fleet (the &quot;sac-from-sac&quot; breakage). Rather than guess,</span>
+<span class="sd">    sac fails loud and tells the operator how to disambiguate via</span>
+<span class="sd">    ``$SAC_AGENT_SCOPE``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">project_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">fleet_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">project_dir</span> <span class="o">=</span> <span class="n">project_dir</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fleet_dir</span> <span class="o">=</span> <span class="n">fleet_dir</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="n">lead</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;agent </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2"> exists in BOTH registries: &quot;</span>
+            <span class="k">if</span> <span class="n">name</span>
+            <span class="k">else</span> <span class="s2">&quot;Registry scope is ambiguous: &quot;</span>
+        <span class="p">)</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">lead</span><span class="si">}</span><span class="s2">project-local </span><span class="si">{</span><span class="n">project_dir</span><span class="si">}</span><span class="s2"> &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;shadows the fleet registry </span><span class="si">{</span><span class="n">fleet_dir</span><span class="si">}</span><span class="s2">. &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Set </span><span class="si">{</span><span class="n">_SCOPE_ENV_VAR</span><span class="si">}</span><span class="s2">=user to target the fleet, or &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_SCOPE_ENV_VAR</span><span class="si">}</span><span class="s2">=project for this repo&#39;s local agents.&quot;</span>
+        <span class="p">)</span>
+
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_project_local_dirs</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``[&lt;scope&gt;/agents]`` for the closest project scope, or [].</span>
@@ -454,16 +503,80 @@
 <span class="sd">    The git boundary is deliberate: it provides an unambiguous</span>
 <span class="sd">    &quot;this is a project&quot; marker. Users who want project scope without</span>
 <span class="sd">    git can simply ``git init``.</span>
+
+<span class="sd">    When ``scitex-config`` is not installed (it is an optional dep), a</span>
+<span class="sd">    self-contained native walk-up provides the SAME discovery so the</span>
+<span class="sd">    project-local scope still works — sac does not silently lose</span>
+<span class="sd">    project-local agents just because the optional package is absent.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">scitex_config._ecosystem</span><span class="w"> </span><span class="kn">import</span> <span class="n">local_state</span>
-    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: scitex-config is an optional dep — degrade to no project-local discovery rather than break sac install)</span>
-        <span class="k">return</span> <span class="p">[]</span>
-    <span class="n">scope</span> <span class="o">=</span> <span class="n">local_state</span><span class="o">.</span><span class="n">find_project_scope</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># stx-allow: fallback (reason: scitex-config is an optional dep — fall through to the native git-walk below rather than break sac install)</span>
+        <span class="n">scope</span> <span class="o">=</span> <span class="n">_native_project_scope</span><span class="p">(</span><span class="n">start</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">scope</span> <span class="o">=</span> <span class="n">local_state</span><span class="o">.</span><span class="n">find_project_scope</span><span class="p">(</span><span class="s2">&quot;agent-container&quot;</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">scope</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">return</span> <span class="p">[]</span>
     <span class="n">agents</span> <span class="o">=</span> <span class="n">scope</span> <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
     <span class="k">return</span> <span class="p">[</span><span class="n">agents</span><span class="p">]</span> <span class="k">if</span> <span class="n">agents</span><span class="o">.</span><span class="n">is_dir</span><span class="p">()</span> <span class="k">else</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_native_project_scope</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;``scitex-config``-free fallback for project-scope discovery.</span>
+
+<span class="sd">    Walks upward from ``start`` (default: cwd) looking for a directory</span>
+<span class="sd">    that is a git repo (``.git`` present) AND carries a</span>
+<span class="sd">    ``.scitex/agent-container/`` subtree; returns that subtree (the</span>
+<span class="sd">    &quot;scope&quot; dir, parent of ``agents/``) or None. Matches the</span>
+<span class="sd">    ecosystem-wide ``find_project_scope`` contract closely enough for</span>
+<span class="sd">    sac&#39;s single consumer here.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">here</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">start</span><span class="p">)</span> <span class="k">if</span> <span class="n">start</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">Path</span><span class="o">.</span><span class="n">cwd</span><span class="p">()</span>
+    <span class="n">here</span> <span class="o">=</span> <span class="n">here</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="p">(</span><span class="n">here</span><span class="p">,</span> <span class="o">*</span><span class="n">here</span><span class="o">.</span><span class="n">parents</span><span class="p">):</span>
+        <span class="n">scope</span> <span class="o">=</span> <span class="n">d</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">d</span> <span class="o">/</span> <span class="s2">&quot;.git&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="ow">and</span> <span class="n">scope</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">scope</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_operator_env_dirs</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the operator-supplied ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` dirs.</span>
+
+<span class="sd">    Colon-separated, ``~`` expanded, empty segments dropped. This is the</span>
+<span class="sd">    explicit plugin-port extension and is NEVER part of the</span>
+<span class="sd">    project-local-vs-fleet ambiguity — it is honoured as-is regardless of</span>
+<span class="sd">    ``$SAC_AGENT_SCOPE``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">env_raw</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">_ENV_VAR</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">env_raw</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_user_agents_dir</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;User-scope agents dir — ``$SCITEX_DIR/agent-container/agents``.</span>
+
+<span class="sd">    Honours ``$SCITEX_DIR`` (default ``~/.scitex``) instead of hardcoding</span>
+<span class="sd">    ``~``. sac&#39;s own docs already promise the user-state root is</span>
+<span class="sd">    &quot;relocatable via ``$SCITEX_DIR``&quot;, and ``_drift/_fleet.py`` already</span>
+<span class="sd">    implements exactly that (``base=&quot;${SCITEX_DIR:-$HOME/.scitex}&quot;``) —</span>
+<span class="sd">    this resolver was simply the one place that never got the memo, and it</span>
+<span class="sd">    is the one that decides where ``sac agents start &lt;name&gt;`` LOOKS for a</span>
+<span class="sd">    spec.</span>
+
+<span class="sd">    The cost of that miss, measured on Spartan 2026-07-14: a remote start</span>
+<span class="sd">    dispatched with ``SCITEX_DIR=&lt;registry root&gt;`` still searched</span>
+<span class="sd">    ``~/.scitex/agent-container/agents/`` — which on that host is a symlink</span>
+<span class="sd">    into an unrelated paper project — and reported the agent &quot;not found&quot;</span>
+<span class="sd">    for a spec that had just been rsynced, correctly, into the</span>
+<span class="sd">    registry-declared root. Resolving the root and then ignoring it is</span>
+<span class="sd">    worse than never resolving it at all.</span>
+
+<span class="sd">    Unset ``$SCITEX_DIR`` → byte-identical to the previous behaviour, so</span>
+<span class="sd">    every existing local agent resolves exactly as before.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.._state.state_paths</span><span class="w"> </span><span class="kn">import</span> <span class="n">agents_root</span>
+
+    <span class="k">return</span> <span class="n">agents_root</span><span class="p">()</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_search_dirs</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]]:</span>
@@ -476,7 +589,7 @@
 <span class="sd">         over stale globals.</span>
 <span class="sd">      1. ``~/.scitex/agent-container/agents/`` — sac&#39;s own install root.</span>
 <span class="sd">      2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port for external</span>
-<span class="sd">         orchestrators (e.g. orochi) to extend the search scope without</span>
+<span class="sd">         orchestrators to extend the search scope without</span>
 <span class="sd">         sac knowing about them. Colon-separated; each path treated as</span>
 <span class="sd">         a base dir holding ``&lt;name&gt;/spec.yaml`` agents.</span>
 
@@ -486,20 +599,66 @@
 <span class="sd">    e.g. in their startup script:</span>
 
 <span class="sd">        export SCITEX_AGENT_CONTAINER_YAML_DIRS=\\</span>
-<span class="sd">            ~/.scitex/orochi/$(hostname -s)/agents:\\</span>
-<span class="sd">            ~/.scitex/orochi/shared/agents</span>
+<span class="sd">            ~/.scitex/&lt;orchestrator&gt;/$(hostname -s)/agents:\\</span>
+<span class="sd">            ~/.scitex/&lt;orchestrator&gt;/shared/agents</span>
+
+<span class="sd">    Scope (``$SAC_AGENT_SCOPE``): ``user`` searches only the fleet,</span>
+<span class="sd">    ``project`` only the project-local. When unset, BOTH are returned and</span>
+<span class="sd">    :func:`resolve_config` raises :class:`AmbiguousRegistryScope` ONLY for</span>
+<span class="sd">    an agent name that resolves in BOTH registries (a real collision) —</span>
+<span class="sd">    not merely because both registry dirs exist. The operator-supplied</span>
+<span class="sd">    ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` extension is always honoured.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">home</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="s2">&quot;~&quot;</span><span class="p">))</span>
-    <span class="n">primary</span> <span class="o">=</span> <span class="n">home</span> <span class="o">/</span> <span class="s2">&quot;.scitex&quot;</span> <span class="o">/</span> <span class="s2">&quot;agent-container&quot;</span> <span class="o">/</span> <span class="s2">&quot;agents&quot;</span>
-    <span class="n">env_raw</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">_ENV_VAR</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-    <span class="n">env_dirs</span> <span class="o">=</span> <span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">env_raw</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+    <span class="n">primary</span> <span class="o">=</span> <span class="n">_user_agents_dir</span><span class="p">()</span>
+    <span class="n">operator_env_dirs</span> <span class="o">=</span> <span class="n">_operator_env_dirs</span><span class="p">()</span>
+    <span class="n">project_local</span> <span class="o">=</span> <span class="n">_project_local_dirs</span><span class="p">()</span>
+
+    <span class="c1"># Apply $SAC_AGENT_SCOPE: drop one side per the explicit scope, or</span>
+    <span class="c1"># fail loud when both registries exist and the scope is unset.</span>
+    <span class="n">primary</span><span class="p">,</span> <span class="n">project_local</span> <span class="o">=</span> <span class="n">_apply_scope</span><span class="p">(</span><span class="n">primary</span><span class="p">,</span> <span class="n">project_local</span><span class="p">)</span>
+
     <span class="c1"># Project-local takes priority OVER the home install root: prepend</span>
     <span class="c1"># it as the highest-priority entry. Returned via the env_dirs slot</span>
     <span class="c1"># but inserted before the existing primary check at the call site</span>
-    <span class="c1"># below by ordering primary AFTER it in resolve_config().</span>
-    <span class="n">env_dirs</span> <span class="o">=</span> <span class="n">_project_local_dirs</span><span class="p">()</span> <span class="o">+</span> <span class="n">env_dirs</span>
+    <span class="c1"># below by ordering primary AFTER it in resolve_config(). The</span>
+    <span class="c1"># operator extension follows project-local.</span>
+    <span class="n">env_dirs</span> <span class="o">=</span> <span class="n">project_local</span> <span class="o">+</span> <span class="n">operator_env_dirs</span>
     <span class="n">fleet_dirs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># always empty; preserved for back-compat tuple shape</span>
     <span class="k">return</span> <span class="n">primary</span><span class="p">,</span> <span class="n">env_dirs</span><span class="p">,</span> <span class="n">fleet_dirs</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_apply_scope</span><span class="p">(</span><span class="n">primary</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">project_local</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve the project-local-vs-fleet ambiguity per ``$SAC_AGENT_SCOPE``.</span>
+
+<span class="sd">    Rule (simple + predictable):</span>
+
+<span class="sd">    * ``SAC_AGENT_SCOPE=user``    → search ONLY the user-scope fleet</span>
+<span class="sd">      ``primary``; drop project-local entirely.</span>
+<span class="sd">    * ``SAC_AGENT_SCOPE=project`` → search ONLY project-local; signal</span>
+<span class="sd">      &quot;skip primary&quot; by returning a sentinel non-existent fleet dir so</span>
+<span class="sd">      the existing call-site loops never hit it.</span>
+<span class="sd">    * unset/auto: return BOTH untouched. The ambiguity check is</span>
+<span class="sd">      deferred to :func:`resolve_config`, which raises</span>
+<span class="sd">      :class:`AmbiguousRegistryScope` ONLY when the SAME agent name</span>
+<span class="sd">      resolves in both registries (a real collision) — NOT merely</span>
+<span class="sd">      because both registry DIRS exist. So an unrelated project-local</span>
+<span class="sd">      registry (e.g. the sac repo&#39;s ``sdk-test``/``self`` test fixtures)</span>
+<span class="sd">      never blocks a fleet-only agent like ``sac agents start &lt;fleet&gt;``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scope</span> <span class="o">=</span> <span class="n">_read_scope</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">scope</span> <span class="o">==</span> <span class="s2">&quot;user&quot;</span><span class="p">:</span>
+        <span class="c1"># Fleet only: ignore any project-local registry.</span>
+        <span class="k">return</span> <span class="n">primary</span><span class="p">,</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">scope</span> <span class="o">==</span> <span class="s2">&quot;project&quot;</span><span class="p">:</span>
+        <span class="c1"># Project-local only: neutralise the fleet primary with the</span>
+        <span class="c1"># sentinel below so the call-site loops + the not-found message</span>
+        <span class="c1"># both skip / render it as scoped-out (rather than searching the</span>
+        <span class="c1"># real fleet dir).</span>
+        <span class="k">return</span> <span class="n">_SCOPED_OUT_FLEET</span><span class="p">,</span> <span class="n">project_local</span>
+
+    <span class="c1"># scope unset → return both; per-name ambiguity is decided in</span>
+    <span class="c1"># resolve_config (raise only when the requested name is in both).</span>
+    <span class="k">return</span> <span class="n">primary</span><span class="p">,</span> <span class="n">project_local</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_try_dir</span><span class="p">(</span><span class="n">base</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
@@ -535,6 +694,11 @@
 <span class="sd">    in any search-chain directory. The flat-form ``&lt;dir&gt;/&lt;name&gt;.yaml``</span>
 <span class="sd">    and the legacy ``&lt;dir&gt;/&lt;name&gt;/&lt;name&gt;.yaml`` no longer count.</span>
 <span class="sd">    Duplicates are collapsed; ordering is alphabetical.</span>
+
+<span class="sd">    Honours ``$SAC_AGENT_SCOPE`` via the shared ``_search_dirs`` seam:</span>
+<span class="sd">    raises :class:`AmbiguousRegistryScope` when both the project-local</span>
+<span class="sd">    and fleet registries exist and the scope is unset (same rule as</span>
+<span class="sd">    :func:`resolve_config`).</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">primary</span><span class="p">,</span> <span class="n">env_dirs</span><span class="p">,</span> <span class="n">fleet_dirs</span> <span class="o">=</span> <span class="n">_search_dirs</span><span class="p">()</span>
     <span class="n">seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
@@ -602,6 +766,14 @@
 <span class="sd">    1. ``~/.scitex/agent-container/agents/&lt;name&gt;/spec.yaml`` (sac install root).</span>
 <span class="sd">    2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` (colon-separated extra dirs, each searched as ``&lt;dir&gt;/&lt;name&gt;/spec.yaml``). Plugin port for downstream orchestrators to inject extra paths without sac knowing about them.</span>
 
+<span class="sd">    Scope (``$SAC_AGENT_SCOPE``): if the requested NAME resolves in BOTH a</span>
+<span class="sd">    project-local registry AND the fleet and the scope is unset, this</span>
+<span class="sd">    raises :class:`AmbiguousRegistryScope` (a real collision) instead of</span>
+<span class="sd">    silently preferring project-local. A name present in only one registry</span>
+<span class="sd">    resolves with no error, even when both registry dirs exist.</span>
+<span class="sd">    ``SAC_AGENT_SCOPE=user`` searches only the fleet; ``=project`` only</span>
+<span class="sd">    project-local.</span>
+
 <span class="sd">    Pass an explicit path (with / or .yaml/.yml) to bypass the search entirely.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">p</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">name_or_path</span><span class="p">)</span>
@@ -611,19 +783,40 @@
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Config file not found: </span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
     <span class="n">primary</span><span class="p">,</span> <span class="n">env_dirs</span><span class="p">,</span> <span class="n">fleet_dirs</span> <span class="o">=</span> <span class="n">_search_dirs</span><span class="p">()</span>
-    <span class="c1"># Split env_dirs into the project-local prefix (added by</span>
-    <span class="c1"># ``_search_dirs``) and the operator-supplied extension.</span>
-    <span class="n">project_local_dirs</span> <span class="o">=</span> <span class="n">_project_local_dirs</span><span class="p">()</span>
-    <span class="n">operator_env_dirs</span> <span class="o">=</span> <span class="n">env_dirs</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">project_local_dirs</span><span class="p">)</span> <span class="p">:]</span>
+    <span class="c1"># Split env_dirs into the project-local prefix (which ``_search_dirs``</span>
+    <span class="c1"># may have dropped per ``$SAC_AGENT_SCOPE``) and the operator-supplied</span>
+    <span class="c1"># ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` extension. Derive the split</span>
+    <span class="c1"># from the operator count (scope-invariant) so it stays correct even</span>
+    <span class="c1"># when the project-local prefix was scoped out.</span>
+    <span class="n">operator_env_dirs</span> <span class="o">=</span> <span class="n">_operator_env_dirs</span><span class="p">()</span>
+    <span class="n">split</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">env_dirs</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">operator_env_dirs</span><span class="p">)</span>
+    <span class="n">project_local_dirs</span> <span class="o">=</span> <span class="n">env_dirs</span><span class="p">[:</span><span class="n">split</span><span class="p">]</span>
 
-    <span class="c1"># Order: project-local → primary (~/.scitex…) → env → fleet.</span>
+    <span class="c1"># Per-name scope ambiguity (operator 2026-06-29): raise ONLY when the</span>
+    <span class="c1"># SAME agent name resolves in BOTH a project-local registry AND the</span>
+    <span class="c1"># fleet, with no explicit $SAC_AGENT_SCOPE. A name present in only ONE</span>
+    <span class="c1"># registry resolves with no error even when both registry DIRS exist —</span>
+    <span class="c1"># so an unrelated project-local registry (e.g. the sac repo&#39;s</span>
+    <span class="c1"># sdk-test/self test fixtures) never blocks a fleet-only agent like</span>
+    <span class="c1"># `sac agents start &lt;fleet-agent&gt;`. When it IS a real collision, the</span>
+    <span class="c1"># message lets the operator pick (=project for this repo&#39;s local one,</span>
+    <span class="c1"># =user for the fleet).</span>
+    <span class="n">proj_hit</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">project_local_dirs</span><span class="p">:</span>
-        <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">hit</span>
-    <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">primary</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">hit</span>
+        <span class="n">proj_hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">proj_hit</span><span class="p">:</span>
+            <span class="k">break</span>
+    <span class="n">fleet_hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">primary</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">proj_hit</span> <span class="ow">and</span> <span class="n">fleet_hit</span> <span class="ow">and</span> <span class="n">_read_scope</span><span class="p">()</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">AmbiguousRegistryScope</span><span class="p">(</span>
+            <span class="n">Path</span><span class="p">(</span><span class="n">proj_hit</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span><span class="p">,</span> <span class="n">primary</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">name_or_path</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Resolution order: project-local → primary (~/.scitex…) → env → fleet.</span>
+    <span class="k">if</span> <span class="n">proj_hit</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">proj_hit</span>
+    <span class="k">if</span> <span class="n">fleet_hit</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">fleet_hit</span>
     <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">operator_env_dirs</span><span class="p">:</span>
         <span class="n">hit</span> <span class="o">=</span> <span class="n">_try_dir</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name_or_path</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
@@ -641,10 +834,15 @@
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">d</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">operator_env_dirs</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">operator_env_dirs</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&lt;unset&gt;&#39;</span><span class="si">}</span><span class="s2">)&quot;</span>
     <span class="p">)</span>
     <span class="n">fleet_lines</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">/spec.yaml&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">fleet_dirs</span><span class="p">)</span>
+    <span class="n">primary_line</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">primary</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="n">primary</span> <span class="o">==</span> <span class="n">_SCOPED_OUT_FLEET</span>
+        <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">primary</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">/spec.yaml&quot;</span>
+    <span class="p">)</span>
     <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
         <span class="sa">f</span><span class="s2">&quot;Agent &#39;</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">&#39; not found. Searched:</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="o">+</span> <span class="p">(</span><span class="n">project_lines</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="k">if</span> <span class="n">project_lines</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-        <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">primary</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name_or_path</span><span class="si">}</span><span class="s2">/spec.yaml</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">primary_line</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">env_line</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fleet_lines</span><span class="si">}</span><span class="s2">&quot;</span>
     <span class="p">)</span></div>

@@ -91,7 +91,7 @@ realistic answer; pure isolation kills the agent.
 
 **Realistic trade-off (current sac default).** sac currently uses the
 host netns — agents reach `sac listen` on `127.0.0.1` (A2A) and any
-MCP server on host loopback (orochi push channels, etc.) over the same
+MCP server on host loopback (hub push channels, etc.) over the same
 path. Naive `--network=bridge` would isolate host services but break
 both A2A and MCP-over-loopback. The realistic path forward is
 `--network=bridge` + binding `sac listen` on the bridge interface +
@@ -319,8 +319,8 @@ explicit error.
 | Network: shared host netns for MCP/A2A interop (known limitation) | ⏳ planned migration to `--network=bridge` + bridge-IF bind + `sac-host` hostname injection — keeps MCP URLs transport-stable while closing host-loopback exposure |
 | `sac image overlay {init,reset,prune}` for ephemeral-overlay workflows | ⏳ planned |
 
-The AgentCard field is the differentiator: external verifiers (orochi,
-Clew) can attest "this agent ran at isolation level X" by reading the
+The AgentCard field is the differentiator: external verifiers (fleet
+hubs, Clew) can attest "this agent ran at isolation level X" by reading the
 card alone, no SIF introspection required. The shape published at
 `/.well-known/agent-card.json` (D3 + D5):
 

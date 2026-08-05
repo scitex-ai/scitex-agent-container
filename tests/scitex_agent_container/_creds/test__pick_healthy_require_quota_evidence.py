@@ -106,6 +106,37 @@ def test_all_blind_and_required_raises_no_healthy_account_error(_isolate_home):
         )
 
 
+def test_all_blind_raises_the_REPAIRABLE_subclass_so_the_caller_retries(
+    _isolate_home,
+):
+    # Arrange: same fully-blind fleet as above. The caller
+    # (_lifecycle/_start_preflight) auto-refreshes the quota cache and re-picks
+    # ONLY when it catches BlindQuotaCacheError — so if this ever degrades to
+    # the bare parent, the self-repair silently stops firing and the operator
+    # is back to running `sac accounts refresh-quota-cache` by hand. The
+    # isinstance tests elsewhere would NOT catch that: they pin the class
+    # relationship, not what the picker actually raises.
+    from scitex_agent_container._creds import BlindQuotaCacheError
+
+    home = _isolate_home
+    now = 1_784_530_000.0
+    for name in ("wyusuuke-gmail-com", "ywatanabe-scitex-ai"):
+        _write_fresh_snapshot(home, name, now)
+
+    # Act
+    # Assert
+    with pytest.raises(BlindQuotaCacheError):
+        pick_healthy_account(
+            "ywatanabe-scitex-ai",
+            candidates=["wyusuuke-gmail-com", "ywatanabe-scitex-ai"],
+            home=home,
+            now=now,
+            usage_5h={},
+            usage_7d={},
+            require_quota_evidence=True,
+        )
+
+
 def test_all_blind_without_requirement_returns_a_fresh_account(_isolate_home):
     # Arrange: identical all-blind fleet, but the caller does NOT opt in.
     home = _isolate_home
@@ -171,6 +202,40 @@ def test_known_but_capped_fleet_returns_least_bad_not_raise(_isolate_home):
 
     # Assert: no NoHealthyAccountError; a known account is returned.
     assert picked in {"wyusuuke-gmail-com", "ywatanabe-scitex-ai"}
+
+
+def test_blind_pin_with_sighted_near_capped_siblings_boots_on_a_sighted_one(
+    _isolate_home,
+):
+    # Arrange: the 2026-07-25 incident shape. The pinned account is BLIND
+    # (cancelled — its usage fetch FAILED so the cache has no entry), and
+    # every sighted sibling is near-capped (7d ≥ 90). The blind account's
+    # tier (not blocked, not near-capped, d7-unknown) sorts AHEAD of the
+    # sighted-but-capped tier, so without the sighted-pool restriction the
+    # ranking hands the gate a blind winner and the boot is refused even
+    # though a verifiable least-bad account exists.
+    home = _isolate_home
+    now = 1_784_530_000.0
+    for name in ("wyusuuke-gmail-com", "ywata1989-gmail-com", "ywatanabe-scitex-ai"):
+        _write_fresh_snapshot(home, name, now)
+
+    # Act: under the gate, blind candidates must not displace sighted ones.
+    picked = pick_healthy_account(
+        "wyusuuke-gmail-com",  # blind pin (no cached quota at all)
+        candidates=[
+            "wyusuuke-gmail-com",
+            "ywata1989-gmail-com",
+            "ywatanabe-scitex-ai",
+        ],
+        home=home,
+        now=now,
+        usage_5h={"ywata1989-gmail-com": 0.0, "ywatanabe-scitex-ai": 1.0},
+        usage_7d={"ywata1989-gmail-com": 100.0, "ywatanabe-scitex-ai": 90.0},
+        require_quota_evidence=True,
+    )
+
+    # Assert: least-bad SIGHTED account (lowest 7d %), not a refusal.
+    assert picked == "ywatanabe-scitex-ai"
 
 
 def test_blind_pick_error_names_the_selected_account(_isolate_home):

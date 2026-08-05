@@ -46,7 +46,7 @@ __all__ = ["Broker", "NodeRegistry", "synthesize_external_card"]
 
 
 # Tag that distinguishes an external-node AgentCard from a YAML-backed
-# one. Consumers (orochi, fleet viz) read this to decide whether to
+# one. Consumers (orchestrators, fleet viz) read this to decide whether to
 # show lifecycle controls. Public so tests can import it.
 EXTERNAL_NODE_KIND = "external"
 
@@ -112,8 +112,7 @@ def synthesize_external_card(name: str, base_url: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": (
-            f"external node {name!r} — identity + inbox only, no sac-managed "
-            "lifecycle"
+            f"external node {name!r} — identity + inbox only, no sac-managed lifecycle"
         ),
         # Version field is required by the proto. Use the v3 marker with
         # an ``-external`` suffix so it's obvious in JSON dumps that the

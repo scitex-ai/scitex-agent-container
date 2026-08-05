@@ -1,6 +1,6 @@
 """Bearer-token auth middleware for ``sac listen``.
 
-Per SAC_OROCHI_SCOPES.md §4.4: sac listen binds loopback or to a
+sac listen binds loopback or to a
 private tunnel-only interface, so the bearer token is defense-in-depth
 rather than the primary transport security. Constant-time comparison
 to dodge timing oracles; clear 401/403 separation.

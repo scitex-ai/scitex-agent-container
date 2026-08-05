@@ -10,6 +10,8 @@ per test, AAA markers each on their own line per STX-TQ002/007.
 
 from __future__ import annotations
 
+import logging
+
 from scitex_agent_container._runners._tmux.auto import accept as A
 
 
@@ -96,3 +98,12 @@ def test_respond_login_url_without_url_skips_email() -> None:
     )
     # Assert
     assert calls == []
+
+
+def test_default_escalation_logs_locally_without_outbound_push(caplog) -> None:
+    # Arrange
+    caplog.set_level(logging.WARNING)
+    # Act
+    A.respond("cap-002", "limit_reached", send_fn=lambda *k: None)
+    # Assert
+    assert "escalation [healer]" in caplog.text

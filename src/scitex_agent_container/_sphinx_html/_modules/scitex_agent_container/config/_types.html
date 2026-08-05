@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.21.11</title>
+  <title>scitex_agent_container.config._types &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -151,8 +151,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -171,30 +175,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -202,6 +182,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -223,8 +204,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -239,6 +221,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -252,6 +235,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -331,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -384,6 +369,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -394,9 +380,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -441,14 +432,18 @@
 <span class="c1"># Phase-3 ACL dataclasses (kept in a sibling module under the per-file</span>
 <span class="c1"># line cap; re-exported here for the :class:`AgentConfig` field defaults).</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._acl_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">CommsSpec</span><span class="p">,</span> <span class="n">LineageSpec</span>  <span class="c1"># noqa: E402,F401</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProviderSpec</span>
+
+<span class="c1"># ApptainerSpec extracted to a sibling module (per-file line cap);</span>
+<span class="c1"># re-exported here so ``from ...config._types import ApptainerSpec`` resolves.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._apptainer_spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">ApptainerSpec</span>  <span class="c1"># noqa: E402,F401</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._provider_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_AGENT_PROVIDER</span><span class="p">,</span> <span class="n">AgentProvider</span><span class="p">,</span> <span class="n">ProviderSpec</span>
 
 
 <div class="viewcode-block" id="ContainerSpec">
 <a class="viewcode-back" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ContainerSpec">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ContainerSpec</span><span class="p">:</span>
-    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>  <span class="c1"># none | docker | apptainer</span>
+    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>  <span class="c1"># none | apptainer (see VALID_CONTAINER_RUNTIMES)</span>
     <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;scitex-agent-container:latest&quot;</span>
     <span class="n">volumes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">network</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;host&quot;</span>
@@ -475,14 +470,33 @@
     <span class="c1"># ``ClaudeAgentOptions`` so power users can reach any SDK option</span>
     <span class="c1"># sac doesn&#39;t model. Merged on top of curated keys; raw_options wins.</span>
     <span class="n">raw_options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
-    <span class="c1"># Session restart strategy. One of:</span>
-    <span class="c1">#   continue     try --continue; fall back to a fresh launch if no</span>
-    <span class="c1">#                prior session jsonl exists (default; safe).</span>
-    <span class="c1">#   new-session  never pass --continue — always start fresh.</span>
+    <span class="c1"># Session continuity strategy. One of:</span>
+    <span class="c1">#   fresh        never pass ``-c``/``--continue`` — every launch is an</span>
+    <span class="c1">#                independent session (DEFAULT). This is the right</span>
+    <span class="c1">#                behaviour for experiment trials, where each capsule</span>
+    <span class="c1">#                run must be hermetic and must not inherit the prior</span>
+    <span class="c1">#                conversation.</span>
+    <span class="c1">#   continue     resume the latest session for this cwd (TUI: ``claude</span>
+    <span class="c1">#                -c``; SDK: auto-resume the persisted session_id). The</span>
+    <span class="c1">#                right behaviour for LONG-LIVED coordinator agents</span>
+    <span class="c1">#                (lead/head/worker/telegrammer/project-maintainer/...)</span>
+    <span class="c1">#                that must keep their working memory across restarts.</span>
     <span class="c1">#   resume       pass --resume &lt;resume_id&gt; (explicit session ID).</span>
-    <span class="c1"># Legacy aliases accepted at load time: `continue-or-new` -&gt; `continue`,</span>
-    <span class="c1"># `new` -&gt; `new-session`.</span>
-    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;continue&quot;</span>
+    <span class="c1"># Aliases accepted at load time (parse_claude):</span>
+    <span class="c1">#   new-session, new  -&gt; fresh   (back-compat: the pre-2026-06 names)</span>
+    <span class="c1">#   continue-or-new   -&gt; continue</span>
+    <span class="c1"># NOTE the default flipped from ``continue`` to ``fresh`` (2026-06-22,</span>
+    <span class="c1"># &quot;fresh by default, opt-in continue&quot;): a spec that omits ``session``</span>
+    <span class="c1"># now starts fresh. Coordinator/long-lived roles are mapped back to</span>
+    <span class="c1"># ``continue`` BY ROLE so omitting the field keeps those agents</span>
+    <span class="c1"># continuous WITHOUT editing every deployed spec, while experiment</span>
+    <span class="c1"># capsules (non-coordinator roles) get fresh. See</span>
+    <span class="c1"># ``config/_session_continuity.py`` (``role_wants_continuity`` /</span>
+    <span class="c1"># ``default_session_for_role`` / ``_CONTINUITY_ROLES``) for the</span>
+    <span class="c1"># role-default, applied in ``config/_loaders.py`` after ``parse_claude``;</span>
+    <span class="c1"># and ``runtimes/_apptainer_inner_argv._tui_runner_argv`` for where the</span>
+    <span class="c1"># resolved mode becomes ``claude -c`` (continue) or no flag (fresh).</span>
+    <span class="n">session</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;fresh&quot;</span>
     <span class="c1"># Only resume if the most recent session jsonl is newer than this many minutes.</span>
     <span class="c1"># None = no age check (always resume if session exists).</span>
     <span class="n">continue_max_age_minutes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
@@ -525,6 +539,23 @@
     <span class="c1"># in-place is safe; designate a path NOT concurrently atomic-renamed</span>
     <span class="c1"># by host-side ``sac accounts``/watch-live tooling.</span>
     <span class="n">credentials_file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="c1"># Account POOL: a list of host paths to ``.credentials.json`` files</span>
+    <span class="c1"># (one per saved account). When non-empty, the start pre-flight picks</span>
+    <span class="c1"># ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked</span>
+    <span class="c1"># and 7d-near-capped accounts, load-balanced across the fleet per</span>
+    <span class="c1"># agent name (see ``_creds.pick_healthy_account`` +</span>
+    <span class="c1"># ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and</span>
+    <span class="c1"># binds the PICKED file exactly as if it had been named in the singular</span>
+    <span class="c1"># ``credentials_file`` field. Each entry&#39;s ACCOUNT SLUG is its parent</span>
+    <span class="c1"># directory name (the fleet layout is</span>
+    <span class="c1"># ``~/.scitex/agent-container/accounts/&lt;slug&gt;/.credentials.json``), and</span>
+    <span class="c1"># that slug is the account name the quota-aware picker keys off. The</span>
+    <span class="c1"># singular ``credentials_file`` remains supported and is treated as a</span>
+    <span class="c1"># 1-element pool (pick returns it) for back-compat. Fail-loud: when NO</span>
+    <span class="c1"># listed entry has a usable (non-expired) snapshot the start aborts with</span>
+    <span class="c1"># ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``</span>
+    <span class="c1"># (an API-key backend needs no OAuth).</span>
+    <span class="n">credentials_files</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="c1"># Vendor-agnostic backend override (see :class:`ProviderSpec`).</span>
     <span class="c1"># When set, the SDK session runs against an Anthropic-SDK-compatible</span>
     <span class="c1"># backend (DeepSeek, a gateway, ...) on an API key instead of</span>
@@ -577,122 +608,6 @@
 <span class="c1"># (consume these fields in _runners.claude_session) lands in phase 2.</span>
 <span class="c1"># An ``enabled`` row authored under the schema before phase 2 ships</span>
 <span class="c1"># is harmless — the runner just ignores it for now.</span>
-<span class="c1"># F-CS18 — apptainer-specific extension hook.</span>
-<span class="c1">#</span>
-<span class="c1"># Apptainer reads OCI images natively (`apptainer build sif docker://...`),</span>
-<span class="c1"># so for the no-extras case spec.image alone is enough — sac just</span>
-<span class="c1"># `apptainer build`s the SIF and runs it. For HPC-specific layering</span>
-<span class="c1"># (extra pip packages, system libs, env vars), the operator can either:</span>
-<span class="c1">#</span>
-<span class="c1">#   * declare `spec.apptainer.post` — sac synthesises a `.def` with</span>
-<span class="c1">#     `Bootstrap: docker` + `%post` + `%environment` and builds from it.</span>
-<span class="c1">#   * declare `spec.apptainer.def_file` — sac runs `apptainer build`</span>
-<span class="c1">#     against the operator&#39;s hand-written `.def` (full control).</span>
-<span class="c1">#</span>
-<span class="c1"># All fields are optional; an `apptainer:` block with no fields set is</span>
-<span class="c1"># equivalent to none at all.</span>
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">ApptainerSpec</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apptainer-specific image-build extensions (F-CS18).&quot;&quot;&quot;</span>
-
-    <span class="c1"># v3-realign: apptainer-engine-scoped knobs promoted from top-level.</span>
-    <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;SIF path or docker:// URL — promoted from top-level spec.image (§3).</span>
-<span class="sd">    Empty = fall back to the default sac-scitex SIF.&quot;&quot;&quot;</span>
-
-    <span class="n">binds</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bind mounts as ``host:container[:mode]`` strings — promoted from</span>
-<span class="sd">    top-level spec.mounts (§3).&quot;&quot;&quot;</span>
-
-    <span class="n">env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Env vars exported into the container — promoted from top-level</span>
-<span class="sd">    spec.env (§3).&quot;&quot;&quot;</span>
-
-    <span class="n">raw_args</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;v3 escape hatch (§1 invariant): appended verbatim to the</span>
-<span class="sd">    ``apptainer exec`` argv after all curated args. Lets operators bolt</span>
-<span class="sd">    on flags sac doesn&#39;t model.&quot;&quot;&quot;</span>
-
-    <span class="n">container_workdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;/work&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Path inside the container where ``spec.workdir`` gets bind-mounted</span>
-<span class="sd">    (and where the runner&#39;s ``--pwd`` lands). Default ``/work``.</span>
-<span class="sd">    Override when the SIF expects a different mount point (e.g. a</span>
-<span class="sd">    pre-baked ``WORKDIR`` in the .def file).&quot;&quot;&quot;</span>
-
-    <span class="n">post</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Shell snippet run inside the SIF build (apptainer&#39;s `%post`).</span>
-<span class="sd">    Lines are concatenated verbatim. Empty = no extension.&quot;&quot;&quot;</span>
-
-    <span class="n">environment</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Env vars baked into the SIF (apptainer&#39;s `%environment`). Same</span>
-<span class="sd">    shape as ``spec.env`` — KEY: VALUE pairs.&quot;&quot;&quot;</span>
-
-    <span class="n">def_file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Path to a hand-authored ``.def`` file (apptainer&#39;s native</span>
-<span class="sd">    build language). Mutually exclusive with `post`/`environment`:</span>
-<span class="sd">    when set, sac uses this file verbatim and ignores `post`.&quot;&quot;&quot;</span>
-
-    <span class="n">nv</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward host NVIDIA driver/libs into the container (apptainer&#39;s</span>
-<span class="sd">    ``--nv``). Required for CUDA workloads on GPU nodes; harmless on</span>
-<span class="sd">    CPU-only hosts but only set when needed.&quot;&quot;&quot;</span>
-
-    <span class="n">rocm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward host AMD ROCm libs (apptainer&#39;s ``--rocm``). Mutually</span>
-<span class="sd">    exclusive with ``nv`` in practice (no host has both).&quot;&quot;&quot;</span>
-
-    <span class="n">overlay</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Writable apptainer overlay image (``--overlay &lt;file&gt;``). Empty =</span>
-<span class="sd">    no overlay (tmpfs writable layer). Non-absolute paths resolve</span>
-<span class="sd">    against ``spec.workdir``. See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
-
-    <span class="n">overlay_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;When set together with ``overlay``, sac auto-creates the overlay</span>
-<span class="sd">    image with the given size if it doesn&#39;t exist before launching.</span>
-<span class="sd">    Accepts apptainer-style sizes with units M/MB/G/GB only (e.g.</span>
-<span class="sd">    ``&quot;5G&quot;``, ``&quot;500M&quot;``, ``&quot;1024MB&quot;``). K/KB are explicitly rejected —</span>
-<span class="sd">    apptainer&#39;s ``overlay create --size`` takes integer MB so sub-MB</span>
-<span class="sd">    granularity makes no sense. Empty = no auto-create (default;</span>
-<span class="sd">    missing overlay raises FileNotFoundError at launch with a clear</span>
-<span class="sd">    message). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
-
-    <span class="n">overlay_create_if_missing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;When True (default) AND ``overlay_size`` is set AND the overlay</span>
-<span class="sd">    path does not exist, sac runs ``apptainer overlay create --size</span>
-<span class="sd">    &lt;MB&gt; &lt;path&gt;`` before launching. When False, sac never creates</span>
-<span class="sd">    overlays even if size is given (operator must pre-create — sac</span>
-<span class="sd">    raises FileNotFoundError instead). See ``docs/isolation.md`` §7.&quot;&quot;&quot;</span>
-
-    <span class="n">tmpfs_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2G&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimum free-space guarantee for the container&#39;s ``/tmp`` (and</span>
-<span class="sd">    ``/var/tmp``). A ``--containall`` apptainer container otherwise gets</span>
-<span class="sd">    a 64 MB session tmpfs at ``/tmp`` — too small for the full test</span>
-<span class="sd">    suite, coverage XML generation, or pytest fixtures with file IO,</span>
-<span class="sd">    which fill it mid-run with &quot;No space left on device&quot;.</span>
-
-<span class="sd">    sac emits ``--workdir &lt;state_dir&gt;/tmp-scratch`` to relocate ``/tmp``</span>
-<span class="sd">    onto the host filesystem (capacity &gt;&gt; 64 MB) and verifies that</span>
-<span class="sd">    filesystem has at least this many bytes free before launch, failing</span>
-<span class="sd">    loud otherwise. Accepts apptainer-style sizes with units M/MB/G/GB</span>
-<span class="sd">    only (e.g. ``&quot;2G&quot;``, ``&quot;512M&quot;``, ``&quot;2048MB&quot;``); K/KB rejected.</span>
-
-<span class="sd">    NOT a hard cap — an unprivileged apptainer user cannot mount a</span>
-<span class="sd">    size-capped tmpfs (``--mount type=tmpfs`` is unsupported), so the</span>
-<span class="sd">    contract is &quot;at least this much room&quot;, backed by host disk. Set to</span>
-<span class="sd">    ``&quot;&quot;`` to opt out entirely (legacy 64 MB tmpfs). See</span>
-<span class="sd">    ``runtimes/_apptainer_tmpfs.py``.&quot;&quot;&quot;</span>
-
-    <span class="n">relaxed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Opt out of sac&#39;s hardened defaults (auto-prepended</span>
-<span class="sd">    ``--containall``/``--cleanenv``/``--writable-tmpfs``/``--home``).</span>
-<span class="sd">    See ``docs/isolation.md``.&quot;&quot;&quot;</span>
-
-    <span class="n">fakeroot</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apptainer ``--fakeroot`` — uid 0 inside via user-namespace</span>
-<span class="sd">    remapping; operator uid on host. Pairs with the D5 preflight&#39;s</span>
-<span class="sd">    ``/proc/self/uid_map`` detection (see ``docs/isolation.md``).&quot;&quot;&quot;</span>
-
-
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">AutonomousSpec</span><span class="p">:</span>
     <span class="n">enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
@@ -710,7 +625,15 @@
     <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
     <span class="n">backoff_initial</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span>
     <span class="n">backoff_max</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span>
-    <span class="n">backoff_multiplier</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span></div>
+    <span class="n">backoff_multiplier</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="c1"># Inode-hygiene opt-in (sac-runtime-state-hygiene incident): when</span>
+    <span class="c1"># True AND ``policy == &quot;never&quot;``, a CLEAN terminal ``sac agents stop``</span>
+    <span class="c1"># prunes this agent&#39;s runtime dir + overlay so ephemeral capsules</span>
+    <span class="c1"># don&#39;t accumulate one-per-run forever. EXPLICIT opt-in is required</span>
+    <span class="c1"># (default False) — ``policy`` itself DEFAULTS to &quot;never&quot;, so a</span>
+    <span class="c1"># persistent coordinator that merely omits a ``restart:`` block must</span>
+    <span class="c1"># NOT be pruned; only specs that deliberately set this flag are.</span>
+    <span class="n">prune_on_stop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></div>
 
 
 
@@ -849,7 +772,7 @@
 <span class="sd">    The container NEVER binds these — it just validates the shape and</span>
 <span class="sd">    echoes them in ``status --json`` so orchestrators can see what</span>
 <span class="sd">    sidecars are expected to exist. ``owner`` is free-form (e.g.</span>
-<span class="sd">    ``&quot;orochi&quot;``) to identify the plugin that actually listens.</span>
+<span class="sd">    ``&quot;fleet-hub&quot;``) to identify the plugin that actually listens.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
@@ -916,6 +839,19 @@
     <span class="c1"># TUI — operator directive 2026-06-15). ``&quot;claude-agent-sdk&quot;`` =</span>
     <span class="c1"># headless SDK runner; legacy ``&quot;apptainer&quot;`` maps to the SDK runner.</span>
     <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tui&quot;</span>
+    <span class="c1"># Agent SDK family selector (top-level, sibling of ``runtime`` — NOT</span>
+    <span class="c1"># the same field as ``claude.provider`` below; see the naming-collision</span>
+    <span class="c1"># note in ``config._provider_types.AgentProvider``). Default</span>
+    <span class="c1"># &quot;anthropic&quot; = claude-agent-sdk, the only implemented family today.</span>
+    <span class="c1"># &quot;openai&quot; validates (openai-compat-1 foundation) but has no runner</span>
+    <span class="c1"># until openai-compat-2 lands — this field is inert until then.</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="n">AgentProvider</span> <span class="o">=</span> <span class="n">DEFAULT_AGENT_PROVIDER</span>
+    <span class="c1"># spec.access REMOVED 2026-06-23 — host access + cwd are the single</span>
+    <span class="c1"># source of truth in apptainer.binds + spec.workdir. There is no posture</span>
+    <span class="c1"># enum: a &quot;full&quot; agent declares ``- /home/&lt;user&gt;:/home/&lt;user&gt;:rw``; a</span>
+    <span class="c1"># capsule declares only the binds it wants. build_run_argv emits exactly</span>
+    <span class="c1"># the spec&#39;s binds + ``--pwd &lt;workdir&gt;`` and nothing implicit. A spec</span>
+    <span class="c1"># still carrying ``access:`` is rejected loud (config/_validation.py).</span>
     <span class="c1"># Top-level container image. Empty = use the default sac-scitex SIF.</span>
     <span class="c1"># (`spec.dockerfile` was dropped 2026-05-13 with the docker ripout.)</span>
     <span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
@@ -958,6 +894,12 @@
     <span class="c1"># (§3). startup_commands are SHELL commands run BEFORE claude starts;</span>
     <span class="c1"># startup_prompts are TEXT fed to claude as the first user message(s).</span>
     <span class="n">startup_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="c1"># Opt-OUT switches (No-Surprise: see what an agent gets via `sac agents</span>
+    <span class="c1"># explain`, then turn specific items off). Each entry is a substring matched</span>
+    <span class="c1"># against a materialized hook COMMAND (e.g. &quot;report_to_lead_on_stop&quot; drops</span>
+    <span class="c1"># that Stop hook) or a skill @-import path. Empty = nothing excluded.</span>
+    <span class="n">exclude_hooks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">exclude_skills</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">mcp_servers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
     <span class="n">multiplexer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;tmux&quot;</span>  <span class="c1"># &quot;tmux&quot; (default) or &quot;screen&quot;</span>
     <span class="n">hosts_spec</span><span class="p">:</span> <span class="n">HostsSpec</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">HostsSpec</span><span class="p">)</span>

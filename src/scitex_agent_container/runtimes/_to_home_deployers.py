@@ -33,6 +33,7 @@ from ._mcp_reliability import inject_always_load
 from ._to_home_errors import WorkspaceMcpMergeError
 from ._to_home_text import (
     END_MARKER,
+    extract_generated_body,
     interpolate_env,
     interpolate_metadata,
     split_around_generated_section,
@@ -237,8 +238,31 @@ def _deploy_marker_protected(
     *,
     config: AgentConfig | None,
     rel: Path,
+    composed_dsts: set[Path] | None = None,
 ) -> None:
     """Marker-protected merge for CLAUDE.md / state.md.
+
+    ``composed_dsts`` is the RUN-SCOPED set of destinations a marker-protected
+    deploy has already written during THIS deploy. It is what makes the
+    two-pass overlay compose instead of clobber, and it is the whole point of
+    this signature:
+
+      - ``dst`` NOT in the set — this is the run's FIRST layer for that file
+        (the shared baseline). Its body REPLACES whatever section a previous
+        run left, which is what keeps the file from growing without bound.
+      - ``dst`` in the set — a LATER layer in the same run (the per-agent
+        ``to_home/``). Its body is APPENDED to the section, so the earlier
+        layer survives.
+
+    Passing ``None`` keeps the old replace-only behaviour and is the reason
+    this defect shipped: the per-agent pass overwrote the generated section
+    the baseline pass had just written, so an agent that gained a NON-EMPTY
+    per-agent CLAUDE.md silently stopped receiving the shared safety baseline
+    — the prompt-injection rules, hook doctrine and task-board obligations —
+    while its spec looked clean. It went unnoticed because every per-agent
+    CLAUDE.md in the fleet is currently 0 bytes, and an empty source
+    early-returns below, so the overwrite never had content to perform.
+    ``_deploy_mcp_merge`` refuses full-overwrite for the identical reason.
 
     Invariants:
       - Source wrapped in Start/End markers.
@@ -267,9 +291,18 @@ def _deploy_marker_protected(
         section_content,
     ).strip()
 
+    existing_text = dst.read_text() if dst.exists() else ""
+
+    # COMPOSE with the earlier layer of THIS run rather than replacing it.
+    # Order is deliberate: the earlier (baseline) body stays FIRST so the
+    # shared safety rules lead and the per-agent role prose follows.
+    if composed_dsts is not None and dst in composed_dsts:
+        earlier_body = extract_generated_body(existing_text)
+        if earlier_body and section_body not in earlier_body:
+            section_body = f"{earlier_body}\n\n{section_body}"
+
     new_content = f"{start_tag}\n{section_body}\n{END_MARKER}\n"
 
-    existing_text = dst.read_text() if dst.exists() else ""
     # Preserve content AROUND a prior generated section: the ``head`` BEFORE it
     # (e.g. the setup_claude_md auto agent-section, which uses its OWN marker
     # style — so the two now compose instead of fatal-ing when the baseline
@@ -290,6 +323,8 @@ def _deploy_marker_protected(
     dst.parent.mkdir(parents=True, exist_ok=True)
     _clear_readonly_dst(dst)
     dst.write_text(updated)
+    if composed_dsts is not None:
+        composed_dsts.add(dst)
     logger.info(
         "to_home: marker-protected %s -> %s (user tail preserved: %s)",
         rel,

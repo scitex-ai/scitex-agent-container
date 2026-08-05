@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>scitex_agent_container.config._loaders &mdash; scitex-agent-container v0.21.11</title>
+  <title>scitex_agent_container.config._loaders &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
@@ -13,7 +13,7 @@
   
       <script src="../../../_static/jquery.js?v=5d32c60e"></script>
       <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../../../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../../../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -151,8 +151,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -171,30 +175,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../../../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -202,6 +182,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -223,8 +204,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -239,6 +221,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -252,6 +235,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -331,6 +315,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -384,6 +369,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -394,9 +380,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -434,9 +425,15 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_hostname</span><span class="p">,</span> <span class="n">substitute_hostnames</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._explicit_validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate</span> <span class="k">as</span> <span class="n">_validate_explicit_fields</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._host</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">contains_hostname_placeholder</span><span class="p">,</span>
+    <span class="n">resolve_hostname</span><span class="p">,</span>
+    <span class="n">substitute_hostnames</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._parsers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">MODEL_DISPLAY_NAMES</span><span class="p">,</span>
     <span class="n">interpolate_mcp_servers</span><span class="p">,</span>
@@ -459,7 +456,67 @@
     <span class="n">parse_startup_commands</span><span class="p">,</span>
     <span class="n">parse_watchdog</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">HostsSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentConfig</span><span class="p">,</span> <span class="n">HostsSpec</span><span class="p">,</span> <span class="n">StartupCommand</span>
+
+<span class="c1"># Guarded default startup command APPENDED to EVERY agent&#39;s ``startup_commands``</span>
+<span class="c1"># (operator directive, Telegram 2862 / card</span>
+<span class="c1"># ``sac-auto-direnv-allow-at-agent-start-guarded-20260717``). It whitelists a</span>
+<span class="c1"># project&#39;s ``.envrc`` with direnv so the project&#39;s NON-SECRET environment</span>
+<span class="c1"># surfaces inside the container — WITHOUT any per-spec hand-editing, and VISIBLE</span>
+<span class="c1"># in the materialized spec (``AgentConfig.startup_commands``), not buried in the</span>
+<span class="c1"># launch code the operator explicitly did not want.</span>
+<span class="c1">#</span>
+<span class="c1"># GUARDED + FAIL-SOFT + IDEMPOTENT:</span>
+<span class="c1">#   * ``command -v direnv`` — no-op when direnv is not installed;</span>
+<span class="c1">#   * ``[ -f &quot;$PWD/.envrc&quot; ]`` — no-op when the workdir has no ``.envrc``;</span>
+<span class="c1">#   * trailing ``|| true`` — a failed allow NEVER breaks the boot.</span>
+<span class="c1">#</span>
+<span class="c1"># ``$PWD`` is the agent workdir AT RUN TIME: the inner ``bash -lc`` wrapper that</span>
+<span class="c1"># runs ``startup_commands`` inherits apptainer&#39;s ``--pwd</span>
+<span class="c1"># str(Path(config.workdir).expanduser())`` (runtimes/_apptainer_build_argv.py)</span>
+<span class="c1"># and sac emits NO ``cd`` before the commands, so ``$PWD`` == the workdir. If a</span>
+<span class="c1"># workdir is not bound in-container ``$PWD`` falls back to ``$HOME``/``/`` where</span>
+<span class="c1"># the ``-f &quot;$PWD/.envrc&quot;`` guard simply finds no ``.envrc`` and skips — still</span>
+<span class="c1"># fail-soft. This surfaces ONLY the project&#39;s ``.envrc``; sac SECRETS and</span>
+<span class="c1"># IDENTITY (SCITEX_TODO_AGENT_ID, cct token pool, listen bearer) stay</span>
+<span class="c1"># sac-DIRECT-injected and are never routed through direnv.</span>
+<span class="n">DEFAULT_DIRENV_ALLOW_COMMAND</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s1">&#39;command -v direnv &gt;/dev/null 2&gt;&amp;1 &amp;&amp; [ -f &quot;$PWD/.envrc&quot; ] &#39;</span>
+    <span class="s1">&#39;&amp;&amp; direnv allow &quot;$PWD&quot; || true&#39;</span>
+<span class="p">)</span>
+
+<span class="c1"># Recognises an already-authored ``direnv allow`` in a startup command so the</span>
+<span class="c1"># default is not duplicated (idempotency; tolerates extra whitespace).</span>
+<span class="n">_DIRENV_ALLOW_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\bdirenv\s+allow\b&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_with_default_direnv_allow</span><span class="p">(</span>
+    <span class="n">commands</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StartupCommand</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">StartupCommand</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Append the guarded direnv-allow default unless one is already present.</span>
+
+<span class="sd">    Idempotent: a spec whose ``startup_commands`` ALREADY run ``direnv allow``</span>
+<span class="sd">    (authored explicitly) is returned unchanged — no duplicate. Otherwise the</span>
+<span class="sd">    guarded, fail-soft :data:`DEFAULT_DIRENV_ALLOW_COMMAND` is APPENDED so it</span>
+<span class="sd">    runs last, just before the claude runner ``exec``s. Appended (not</span>
+<span class="sd">    prepended) so an authored ``startup_commands[0]`` keeps its position.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">cmd</span> <span class="ow">in</span> <span class="n">commands</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">_DIRENV_ALLOW_RE</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">cmd</span><span class="o">.</span><span class="n">command</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">commands</span>
+    <span class="k">return</span> <span class="p">[</span><span class="o">*</span><span class="n">commands</span><span class="p">,</span> <span class="n">StartupCommand</span><span class="p">(</span><span class="n">command</span><span class="o">=</span><span class="n">DEFAULT_DIRENV_ALLOW_COMMAND</span><span class="p">)]</span>
+
+
+<span class="c1"># Generic boot-kick used when a spec omits ``startup_prompts``. Role/ID live in</span>
+<span class="c1"># the auto-generated $HOME/.claude/CLAUDE.md and the task lives on the agent&#39;s</span>
+<span class="c1"># scitex-todo card slice, so the boot prompt only needs a generic kick — per-spec</span>
+<span class="c1"># restatement of scope/task is the anti-pattern (operator, 2026-06-25). Bare +</span>
+<span class="c1"># period (no colon) so it also parses plain in YAML without &gt;-/quotes.</span>
+<span class="n">DEFAULT_STARTUP_PROMPT</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;Start or continue. Scan your scitex-todo card slice, resume any in-flight &quot;</span>
+    <span class="s2">&quot;or assigned work (hold idle if none), then report readiness. Follow &quot;</span>
+    <span class="s2">&quot;CLAUDE.md + your skills; don&#39;t restate, don&#39;t invent scope.&quot;</span>
+<span class="p">)</span>
 
 <span class="c1"># Default workdir layout: sac&#39;s own state root. Per-agent runtime state</span>
 <span class="c1"># (CLAUDE.md, .mcp.json, .claude/) lives at</span>
@@ -632,16 +689,35 @@
 <span class="sd">    No backward compatibility — old apiVersions raise loud validation</span>
 <span class="sd">    errors at config-load time.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Red-start explicit-fields gate (operator ruling 2026-07-21): every</span>
+    <span class="c1"># spec field must be WRITTEN — an omitted field is a load error with</span>
+    <span class="c1"># a complete, paste-ready hint. Runs BEFORE any parsing so an</span>
+    <span class="c1"># under-specified spec fails with the full field list, not a parser</span>
+    <span class="c1"># TypeError. No bypass, no migration phase.</span>
+    <span class="n">_validate_explicit_fields</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
+
     <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
     <span class="n">hosts_spec</span> <span class="o">=</span> <span class="n">parse_hosts_spec</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
 
-    <span class="c1"># ${HOSTNAME} substitution only meaningful when this is a multi-host</span>
-    <span class="c1"># template (``hosts:`` set). Singletons run on the canonical host name.</span>
+    <span class="c1"># Whole-document ${HOSTNAME} substitution stays multi-host-only</span>
+    <span class="c1"># (``hosts:`` templates) — env values / command strings in singleton</span>
+    <span class="c1"># specs may deliberately carry the placeholder for a runtime shell.</span>
+    <span class="c1"># SINGLETON PLACEMENT is the one exception: ``host: ${HOSTNAME}`` is</span>
+    <span class="c1"># the portable spelling of &quot;this machine, resolved concretely at load</span>
+    <span class="c1"># time&quot; (the replacement for the banned ``host: local``; operator</span>
+    <span class="c1"># directive 2026-07-10), so the placement field alone is substituted.</span>
     <span class="n">is_multi</span> <span class="o">=</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span> <span class="ow">and</span> <span class="n">hosts_spec</span><span class="o">.</span><span class="n">hosts</span> <span class="o">!=</span> <span class="p">[]</span>
-    <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span> <span class="k">if</span> <span class="n">is_multi</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">singleton_placement_token</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">is_multi</span> <span class="ow">and</span> <span class="n">contains_hostname_placeholder</span><span class="p">(</span>
+        <span class="n">hosts_spec</span><span class="o">.</span><span class="n">host</span>
+    <span class="p">)</span>
+    <span class="n">hostname</span> <span class="o">=</span> <span class="n">resolve_hostname</span><span class="p">()</span> <span class="k">if</span> <span class="p">(</span><span class="n">is_multi</span> <span class="ow">or</span> <span class="n">singleton_placement_token</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
     <span class="k">if</span> <span class="n">is_multi</span><span class="p">:</span>
         <span class="n">raw</span> <span class="o">=</span> <span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
         <span class="n">spec</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;spec&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="k">elif</span> <span class="n">singleton_placement_token</span><span class="p">:</span>
+        <span class="n">hosts_spec</span> <span class="o">=</span> <span class="n">HostsSpec</span><span class="p">(</span>
+            <span class="n">host</span><span class="o">=</span><span class="n">substitute_hostnames</span><span class="p">(</span><span class="n">hosts_spec</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="n">hostname</span><span class="p">),</span> <span class="n">hosts</span><span class="o">=</span><span class="s2">&quot;&quot;</span>
+        <span class="p">)</span>
 
     <span class="n">metadata</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}</span>
     <span class="n">raw_name</span> <span class="o">=</span> <span class="n">_name_from_path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
@@ -660,7 +736,7 @@
     <span class="n">screen_name</span> <span class="o">=</span> <span class="n">screen_raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
 
     <span class="c1"># Auto-derive env: user values override auto-derived.</span>
-    <span class="c1"># Only sac&#39;s own namespace is injected. External consumers (orochi etc.)</span>
+    <span class="c1"># Only sac&#39;s own namespace is injected. External consumers</span>
     <span class="c1"># declare their own env vars explicitly in agent YAML&#39;s ``spec.env`` if</span>
     <span class="c1"># they want them set.</span>
     <span class="n">auto_env</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
@@ -676,12 +752,36 @@
     <span class="c1"># back-compat consumers and populated from the new homes.</span>
     <span class="n">claude_spec</span> <span class="o">=</span> <span class="n">parse_claude</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
     <span class="n">apptainer_spec</span> <span class="o">=</span> <span class="n">parse_apptainer</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+    <span class="c1"># Role-based session-continuity default (&quot;fresh by default, opt-in</span>
+    <span class="c1"># continue&quot;, 2026-06-22). ``claude.session`` now defaults to ``fresh``</span>
+    <span class="c1"># (parse_claude) so experiment capsules — which carry no coordinator</span>
+    <span class="c1"># role — start hermetic. But LONG-LIVED coordinator agents</span>
+    <span class="c1"># (lead/head/worker/telegrammer/project-maintainer/…) must keep their</span>
+    <span class="c1"># conversation across restarts. Those specs are hand-deployed OUTSIDE</span>
+    <span class="c1"># this repo and none of them set ``claude.session``, so we map an</span>
+    <span class="c1"># OMITTED field back to ``continue`` BY ROLE here — the one place that</span>
+    <span class="c1"># sees both the ``metadata.labels.role`` and the env-injected fleet</span>
+    <span class="c1"># role. An EXPLICIT ``session:`` (top-level or nested) is authored</span>
+    <span class="c1"># intent and is left untouched (so ``session: fresh`` on a coordinator</span>
+    <span class="c1"># stays fresh); a later CLI ``--continue`` / ``--fresh`` still wins by</span>
+    <span class="c1"># mutating ``config.claude.session`` after load.</span>
+    <span class="n">_session_authored</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;claude&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_session_authored</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">._session_continuity</span><span class="w"> </span><span class="kn">import</span> <span class="n">default_session_for_role</span>
+
+        <span class="n">_role</span> <span class="o">=</span> <span class="p">(</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">env</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="s2">&quot;SCITEX_AGENT_CONTAINER_ROLE&quot;</span>
+        <span class="p">)</span> <span class="ow">or</span> <span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;role&quot;</span><span class="p">)</span>
+        <span class="n">claude_spec</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">default_session_for_role</span><span class="p">(</span><span class="n">_role</span><span class="p">)</span>
     <span class="n">model</span> <span class="o">=</span> <span class="n">claude_spec</span><span class="o">.</span><span class="n">model</span> <span class="ow">or</span> <span class="s2">&quot;sonnet&quot;</span>
     <span class="n">display_model</span> <span class="o">=</span> <span class="n">MODEL_DISPLAY_NAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">model</span><span class="p">)</span>
     <span class="n">auto_env</span><span class="p">[</span><span class="s2">&quot;SCITEX_AGENT_CONTAINER_MODEL&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">display_model</span>
 
     <span class="c1"># CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.</span>
-    <span class="c1"># Propagate the per-agent account dir-name (e.g. &quot;researcher-example-org&quot;)</span>
+    <span class="c1"># Propagate the per-agent account dir-name (e.g. &quot;alpha-example-com&quot;)</span>
     <span class="c1"># into the container so:</span>
     <span class="c1">#   - claude-code-telegrammer enriches its outbound signature with</span>
     <span class="c1">#     the live quota for THIS account (PR-A reads this env);</span>
@@ -710,6 +810,11 @@
 
     <span class="n">startup_prompts_raw</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;startup_prompts&quot;</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[]</span>
     <span class="n">startup_prompts</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">startup_prompts_raw</span> <span class="k">if</span> <span class="n">p</span><span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">startup_prompts</span><span class="p">:</span>
+        <span class="c1"># DRY default: specs omit startup_prompts and inherit the generic kick.</span>
+        <span class="n">startup_prompts</span> <span class="o">=</span> <span class="p">[</span><span class="n">DEFAULT_STARTUP_PROMPT</span><span class="p">]</span>
+    <span class="n">exclude_hooks</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">h</span><span class="p">)</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;exclude_hooks&quot;</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[])</span> <span class="k">if</span> <span class="n">h</span><span class="p">]</span>
+    <span class="n">exclude_skills</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;exclude_skills&quot;</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[])</span> <span class="k">if</span> <span class="n">s</span><span class="p">]</span>
 
     <span class="n">kind</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;Agent&quot;</span><span class="p">))</span>
     <span class="n">proxy_spec</span> <span class="o">=</span> <span class="n">parse_proxy</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="n">kind</span><span class="p">)</span>
@@ -747,6 +852,13 @@
     <span class="k">return</span> <span class="n">AgentConfig</span><span class="p">(</span>
         <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
         <span class="n">runtime</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;runtime&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;tui&quot;</span><span class="p">),</span>
+        <span class="c1"># Agent SDK family (top-level; NOT spec.claude.provider — see the</span>
+        <span class="c1"># naming-collision note in config._provider_types.AgentProvider).</span>
+        <span class="c1"># Default mirrors the dataclass default; openai-compat-1 foundation.</span>
+        <span class="n">provider</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;provider&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;anthropic&quot;</span><span class="p">),</span>
+        <span class="c1"># spec.access REMOVED 2026-06-23 — host access + cwd are declared</span>
+        <span class="c1"># explicitly via apptainer.binds + spec.workdir (SSoT). A spec still</span>
+        <span class="c1"># carrying `access:` is rejected loud in _validation.validate_raw.</span>
         <span class="n">image</span><span class="o">=</span><span class="n">apptainer_spec</span><span class="o">.</span><span class="n">image</span><span class="p">,</span>
         <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
         <span class="n">workdir</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span>
@@ -764,8 +876,10 @@
         <span class="n">apptainer</span><span class="o">=</span><span class="n">apptainer_spec</span><span class="p">,</span>
         <span class="n">hooks</span><span class="o">=</span><span class="n">hooks</span><span class="p">,</span>
         <span class="n">skills</span><span class="o">=</span><span class="n">parse_skills</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
-        <span class="n">startup_commands</span><span class="o">=</span><span class="n">parse_startup_commands</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
+        <span class="n">startup_commands</span><span class="o">=</span><span class="n">_with_default_direnv_allow</span><span class="p">(</span><span class="n">parse_startup_commands</span><span class="p">(</span><span class="n">spec</span><span class="p">)),</span>
         <span class="n">startup_prompts</span><span class="o">=</span><span class="n">startup_prompts</span><span class="p">,</span>
+        <span class="n">exclude_hooks</span><span class="o">=</span><span class="n">exclude_hooks</span><span class="p">,</span>
+        <span class="n">exclude_skills</span><span class="o">=</span><span class="n">exclude_skills</span><span class="p">,</span>
         <span class="n">context_management</span><span class="o">=</span><span class="n">parse_context_management</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">listen</span><span class="o">=</span><span class="n">parse_listen</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>
         <span class="n">extensions</span><span class="o">=</span><span class="n">parse_extensions</span><span class="p">(</span><span class="n">spec</span><span class="p">),</span>

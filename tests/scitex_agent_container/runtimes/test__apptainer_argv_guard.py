@@ -22,8 +22,6 @@ AAA blocks, markers on their own line, one assert per test.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 import socket
 from pathlib import Path
@@ -37,6 +35,7 @@ from scitex_agent_container.runtimes._apptainer_argv_guard import (
     validate_flag_argv,
 )
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Fixtures (mirror test__apptainer_build_argv.py — real HOME + bearer token)
@@ -73,29 +72,31 @@ def _write_spec(tmp_path: Path, raw_args_yaml: str) -> Path:
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "metadata:\n"
-        "  labels:\n"
-        "    project: t\n"
-        '    sac-builtin: "off"\n'
-        "spec:\n"
-        "  runtime: tui\n"
-        "  host: ${HOSTNAME}\n"
-        "  workdir: /tmp/agt-work\n"
-        "  apptainer:\n"
-        "    image: /x.sif\n"
-        "    fakeroot: true\n"
-        "    binds: []\n"
-        f"{raw_args_yaml}"
-        "  health:\n"
-        "    enabled: true\n"
-        "    interval: 60\n"
-        "  restart:\n"
-        "    policy: on-failure\n"
-        "    max_retries: 3\n"
-        "  claude:\n"
-        "    model: claude-opus-4-8[1m]\n"),
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n"
+            "  labels:\n"
+            "    project: t\n"
+            '    sac-builtin: "off"\n'
+            "spec:\n"
+            "  runtime: tui\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /tmp/agt-work\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    fakeroot: true\n"
+            "    binds: []\n"
+            f"{raw_args_yaml}"
+            "  health:\n"
+            "    enabled: true\n"
+            "    interval: 60\n"
+            "  restart:\n"
+            "    policy: on-failure\n"
+            "    max_retries: 3\n"
+            "  claude:\n"
+            "    model: claude-opus-4-8[1m]\n"
+        ),
         encoding="utf-8",
     )
     return spec
@@ -239,6 +240,104 @@ def test_build_run_argv_no_stray_fakeroot_file_in_cwd(
     stray = clean_cwd / "--fakeroot"
     # Assert
     assert not stray.exists()
+
+
+# ---------------------------------------------------------------------------
+# Provenance — the message must name WHICH artefact is at fault (2026-07-23).
+# The three branches below are the three inputs that make it say something
+# different; without all three the attribution would be untestable.
+# ---------------------------------------------------------------------------
+
+_MALFORMED_ARGV = ["apptainer", "exec", "--env", "--env", "K=V", "/x.sif"]
+
+
+def _message(argv: list[str], **kwargs: object) -> str:
+    try:
+        validate_flag_argv(argv, **kwargs)  # type: ignore[arg-type]
+    except ApptainerArgvError as exc:
+        return str(exc)
+    return ""
+
+
+def test_malformed_raw_args_blames_the_spec() -> None:
+    # Arrange — the orphan --env that scitex-cards-chat carried.
+    raw = ["--env", "--env", "K=V"]
+    # Act
+    message = _message(_MALFORMED_ARGV, raw_args=raw)
+    # Assert
+    assert "spec.apptainer.raw_args" in message and "index 0" in message
+
+
+def test_clean_raw_args_exonerates_the_spec() -> None:
+    # Arrange — spec is well-formed, so the pair came from sac's assembly.
+    raw = ["--userns", "--containall"]
+    # Act
+    message = _message(_MALFORMED_ARGV, raw_args=raw)
+    # Assert — the reader is told NOT to go edit a correct spec.
+    assert "NOT the spec" in message
+
+
+def test_absent_raw_args_reports_unknown_provenance() -> None:
+    # Arrange — caller supplied no raw_args, so attribution is a third state.
+    # Act
+    message = _message(_MALFORMED_ARGV)
+    # Assert
+    assert "CAUSE UNKNOWN" in message
+
+
+def test_message_names_the_agent() -> None:
+    # Arrange
+    # Act
+    message = _message(_MALFORMED_ARGV, raw_args=["--env", "--env"], agent="agt")
+    # Assert — with 100+ specs, an unnamed agent sends the reader to the
+    # wrong file (the 2026-07-23 incident).
+    assert "'agt'" in message
+
+
+def test_message_shows_the_offending_index_and_neighbours() -> None:
+    # Arrange
+    argv = ["apptainer", "exec", "--containall", "--env", "--env", "K=V", "/x.sif"]
+    # Act
+    message = _message(argv, raw_args=["--env", "--env", "K=V"])
+    # Assert — the actual tokens, not just a rule about them.
+    assert "'--containall'" in message
+
+
+def test_build_run_argv_orphan_env_in_raw_args_names_the_raw_args_index(
+    tmp_path: Path, listen_bearer_token: Path
+) -> None:
+    # Arrange — the live shape: a `--env KEY=VALUE` whose VALUE line was
+    # deleted, leaving the flag behind.
+    raw = (
+        "    raw_args:\n      - --env\n      - --env\n"
+        "      - SCITEX_CARDS_DB=/home/agent/x.db\n"
+    )
+    cfg = load_config(str(_write_spec(tmp_path, raw)))
+    message = ""
+    try:
+        build_run_argv(
+            cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+        )
+    except ApptainerArgvError as exc:
+        message = str(exc)
+    # Act
+    blames_spec = "spec.apptainer.raw_args" in message and "index 0" in message
+    # Assert
+    assert blames_spec is True
+
+
+def test_build_run_argv_repaired_env_pair_does_not_raise(
+    tmp_path: Path, listen_bearer_token: Path
+) -> None:
+    # Arrange — the same spec with the orphan removed (the applied fix).
+    raw = "    raw_args:\n      - --env\n      - SCITEX_CARDS_DB=/home/agent/x.db\n"
+    cfg = load_config(str(_write_spec(tmp_path, raw)))
+    # Act
+    argv = build_run_argv(
+        cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+    )
+    # Assert
+    assert "SCITEX_CARDS_DB=/home/agent/x.db" in argv
 
 
 @pytest.fixture

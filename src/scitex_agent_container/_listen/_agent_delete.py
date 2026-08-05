@@ -84,6 +84,8 @@ async def agent_delete(request: Request) -> JSONResponse:
 
         marker = read_marker(sd)
         if marker is not None:
+            from .._lifecycle._startup_failed_supersede import liveness_since_failure
+
             runtime_dir = marker.get("runtime_dir", str(sd.resolve()))
             body: dict[str, Any] = {
                 "name": name,
@@ -96,6 +98,9 @@ async def agent_delete(request: Request) -> JSONResponse:
                 "see_also": f"{runtime_dir}/{MARKER_FILENAME}",
                 "details": marker,
             }
+            refuted_by = liveness_since_failure(sd, marker, name=name)
+            if refuted_by:
+                body["startup_failed_superseded_by"] = refuted_by
             return JSONResponse(body, status_code=410)
         return JSONResponse({"error": "no pid file"}, status_code=404)
     try:

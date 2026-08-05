@@ -196,10 +196,18 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
     # No-clobber: a per-agent / bundled same-name skill is left untouched.
     deploy_host_skills(workspace_home)
+    # Run-scoped, SHARED across both layers: marker-protected files (CLAUDE.md
+    # / state.md) compose onto the earlier layer instead of replacing it. The
+    # baseline pass still resets the section, so nothing grows across runs.
+    composed_dsts: set[Path] = set()
     if baseline is not None:
-        _walk_and_apply(baseline, baseline, workspace_home, config=None)
+        _walk_and_apply(
+            baseline, baseline, workspace_home, config=None, composed_dsts=composed_dsts
+        )
     if root.is_dir():
-        _walk_and_apply(root, root, workspace_home, config=None)
+        _walk_and_apply(
+            root, root, workspace_home, config=None, composed_dsts=composed_dsts
+        )
     fold_envrc_into_env(workspace_home)
     # settings.json CASCADE (ADR-0018) — same deep-merge as deploy_to_home, so
     # the lower-level (spec_dir, workspace_home) entrypoint composes layers too
@@ -259,10 +267,14 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
     # No-clobber: a per-agent / bundled same-name skill is left untouched.
     deploy_host_skills(dest)
+    # Run-scoped and SHARED across both layers — see materialize_to_home.
+    composed_dsts: set[Path] = set()
     if baseline is not None:
-        _walk_and_apply(baseline, baseline, dest, config=config)
+        _walk_and_apply(
+            baseline, baseline, dest, config=config, composed_dsts=composed_dsts
+        )
     if root is not None:
-        _walk_and_apply(root, root, dest, config=config)
+        _walk_and_apply(root, root, dest, config=config, composed_dsts=composed_dsts)
     # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
     # → the spec's _shared baseline → the agent's workdir (the project's OWN
     # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
@@ -367,6 +379,7 @@ def _walk_and_apply(
     dst_dir: Path,
     *,
     config: AgentConfig | None,
+    composed_dsts: set[Path] | None = None,
 ) -> None:
     """Recursively replicate ``src_dir`` under ``dst_dir``.
 
@@ -395,7 +408,9 @@ def _walk_and_apply(
 
         if child.is_dir():
             dst.mkdir(parents=True, exist_ok=True)
-            _walk_and_apply(src_root, child, dst, config=config)
+            _walk_and_apply(
+                src_root, child, dst, config=config, composed_dsts=composed_dsts
+            )
             continue
 
         # Regular file.
@@ -405,7 +420,9 @@ def _walk_and_apply(
         if child.name in _CASCADE_DEPLOYED_BASENAMES:
             continue
         if child.name in _MARKER_PROTECTED_BASENAMES:
-            _deploy_marker_protected(child, dst, config=config, rel=rel)
+            _deploy_marker_protected(
+                child, dst, config=config, rel=rel, composed_dsts=composed_dsts
+            )
         elif child.name in _MCP_MERGE_BASENAMES:
             _deploy_mcp_merge(child, dst, config=config, rel=rel)
         elif child.name in _TIGHT_PERM_BASENAMES:

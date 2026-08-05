@@ -266,11 +266,11 @@ def test_a_legacy_only_spec_still_gets_the_canonical_name() -> None:
     rather than in a single flag-day sweep across every agent.
     """
     # Arrange
-    env = {LEGACY_BOARD_ID_ENV: "worker-telegrammer-orochi"}
+    env = {LEGACY_BOARD_ID_ENV: "worker-telegrammer-nas"}
     # Act
     out = apply_board_identity_alias(env)
     # Assert
-    assert out[BOARD_ID_ENV] == "worker-telegrammer-orochi"
+    assert out[BOARD_ID_ENV] == "worker-telegrammer-nas"
 
 
 def test_an_explicit_current_name_is_not_clobbered() -> None:

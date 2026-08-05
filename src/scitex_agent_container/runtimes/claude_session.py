@@ -167,7 +167,7 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         "out spawning MCP servers (the bun telegrammer server is the canary",
         "— it just won't show up in the SDK's tool surface) or makes the",
         "agent return 0 tokens per turn with no log line. Verified field",
-        "failure: proj-scitex-orochi at 41,873 files / 884 MB (2026-06-03).",
+        "failure: one agent workdir at 41,873 files / 884 MB (2026-06-03).",
         "",
     ]
     if audit.bloat_sources:

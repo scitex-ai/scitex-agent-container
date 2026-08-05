@@ -800,15 +800,22 @@ def test_account_list_human_shows_dash_last_update_when_no_cache(sandbox_home):
     assert " - " in output
 
 
-def test_account_list_human_prints_legend_after_bars_when_no_reset(sandbox_home):
-    """With no cached reset timestamps the rolling-window legend prints
-    BELOW the usage-bars block it explains (2026-07-11 relocation)."""
+def test_account_list_human_prints_no_legend_even_without_resets(sandbox_home):
+    """INVERTED 2026-07-30: the rolling-window legend is no longer printed.
+
+    Was ``..._prints_legend_after_bars_when_no_reset``, which pinned the
+    2026-07-11 relocation of the legend below the bars. The operator dropped
+    the legend outright, so the assertion is inverted rather than deleted —
+    the removal is now the pinned behaviour, and a re-added legend fails here.
+    The no-cached-reset case is kept deliberately: that is the ONLY case that
+    ever emitted the legend, so it is the only one where a regression shows.
+    """
     # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
     home = sandbox_home
     # Act
     output = _invoke_account_list_with_no_usage_cache(home)
-    # Assert — bars section first, legend after it.
-    assert output.index("Usage bars") < output.index("Legend:")
+    # Assert
+    assert "Legend:" not in output
 
 
 def test_account_list_json_includes_plan_label(sandbox_home):

@@ -7,12 +7,12 @@ For each package, attempts:
 
 Packages not installed are reported as SKIP. Exit 0 if no FAIL, else 1.
 
-Fleet regression prevention script. Validated across the Orochi fleet
+Fleet regression prevention script. Validated across the fleet
 (Spartan, NAS, MBA, ywata-note-win) prior to landing here. Lives beside
 the scitex-agent-container skill so agents and CI can discover it.
 
 Tracks: ywatanabe1989/todo#194
-Origin: authored by head-spartan in the Orochi fleet.
+Origin: authored by head-spartan.
 Usage:
     ./scitex-smoke-test.py            # human-readable
     ./scitex-smoke-test.py --json     # machine-readable
@@ -32,7 +32,6 @@ PACKAGES = [
     ("scitex-agent-container", "scitex_agent_container", "scitex-agent-container"),
     ("scitex-container", "scitex_container", "scitex-container"),
     ("scitex-dev", "scitex_dev", "scitex-dev"),
-    ("scitex-orochi", "scitex_orochi", "scitex-orochi"),
     ("scitex-ui", "scitex_ui", "scitex-ui"),
     ("scitex-io", "scitex_io", "scitex-io"),
     ("scitex-plt", "scitex_plt", "scitex-plt"),

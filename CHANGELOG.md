@@ -6,6 +6,290 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.25] - 2026-08-05
+
+### Fixed
+
+- **A host name that is DESIGNED to point elsewhere later is no longer usable
+  as an identity.** `nas` is not a typo for `nas-03`: the operator's numbering
+  scheme deliberately re-points it as hardware is replaced (`nas-01` →
+  `nas-02` → `nas-03` → …), so it resolves correctly every single time and
+  will one day address a different machine with nothing anywhere reporting a
+  problem. sac's own `config.yaml` keyed a peer on it, and so did the script
+  that pushes the production OAuth credential to that machine every four hours.
+
+  `_state/moving_alias.py` is now the single registry of such names.
+  `Config.validate()` refuses one as a peer key or as a `host.aliases` VALUE
+  (the canonical name stamped on every `state.db` row), which also closes the
+  `sac host add/set` write path since it already reverts on validation failure.
+  `PeersMap` lookup turns the post-migration `KeyError('nas')` into a message
+  naming `nas-03`, so every sac dispatch path is covered rather than ssh alone.
+
+  `load()` deliberately still ACCEPTS a config that says `nas` — refusing at
+  import time would take every sac verb on every host down in order to fix a
+  name. Pinned by a test.
+
+- **`sac agents restart-login-expired` could never exit 0.** `exit_code()`
+  returned 2 whenever any report was UNOBSERVED, and the roster is spec FILES
+  while the fleet registers far more agents than it runs, by design. Measured
+  on the host: UNOBSERVED=92, all 92 reason `no-session`, none wedged, exit 2 —
+  for every possible fleet state, healthy or not. A gate that cannot pass is as
+  dead as one that cannot fail.
+
+  `PassOutcome.indeterminate()` now separates the reasons. `no-session` is a
+  DETERMINATE reading of something this pass already delegates in prose ("a
+  missing session is fleet-reconcile's half of the fleet, not ours") — a pass
+  cannot both delegate a case and let it decide its exit code. `pane-unreadable`
+  and `roster-unreadable` remain genuine indeterminacies and still join
+  `BUDGET_UNKNOWN` at 2. `counts()` still reports every UNOBSERVED, so a reader
+  sees "unobserved: 92" beside exit 0.
+
+### Changed
+
+- **The container defs pin `scitex-cards>=0.32.0`, BARE.** scitex-cards moved
+  psycopg, django and fastmcp into core, so there is no extras subset left to
+  pick wrong — which is what took the fleet's board down twice. Verified against
+  published PyPI metadata rather than the release notes: `psycopg[binary]>=3.1`,
+  `django>=4.2` and `fastmcp>=2.0` are all `CORE=True` at 0.32.0.
+
+  **The floor is 0.32.0 and not lower on purpose.** psycopg became core in
+  0.31.8, not 0.31.6 — a peer stated 0.31.6 and measuring says otherwise, and a
+  bare pin at that floor would resolve a version with NO DRIVER and succeed.
+  Same failure, arrived at from the fix.
+
+  The def contract tests now assert the capability by EITHER route: a
+  qualifying extra, or a floor at-or-above the release where the dep became
+  core. This file's assertions have now been wrong three times in one day —
+  `"scitex-cards[mcp]" in block` (freezes the extras list to exactly `[mcp]`),
+  `"postgres" in extras` (calls `[all]` a regression), and
+  `extras & {"mcp","all"}` (correct for extras, blind to the pin going bare).
+  Each encoded a spelling, so each went red exactly when someone fixed
+  something. The predicate now has its own rejection cases — `[mcp]>=0.19.0`,
+  bare `>=0.31.6`, bare `>=0.31.7`, bare unpinned — so "provides psycopg" is
+  demonstrably able to say no.
+
+## [0.24.22] - 2026-08-02
+
+### Changed
+
+- **The container defs install `scitex-cards[all]`**, per scitex-dev's ADR-0005
+  (extras are `all` or bare only; `dev`/`docs` move to PEP 735 groups).
+  scitex-cards had already rewritten 25 partial-extra install instructions
+  across 17 files after root-causing that a hand-picked partial set (`[mcp]`,
+  silently missing `postgres`) took the fleet's card board down. The
+  `[mcp,postgres]` shipped in 0.24.21 was itself a hand-picked partial set —
+  correct that day, and the same shape as the defect. All three sites
+  (`apptainer-base.def:484`, `apptainer-scitex.def:297` uv branch, `:368` pip
+  fallback).
+
+  The def contract tests now assert the CAPABILITY rather than the spelling —
+  `extras & {"mcp","all"}` and `extras & {"postgres","all"}`. This file had the
+  same bug twice in one day: first `"scitex-cards[mcp]" in block`, which reads
+  as "carries the mcp extra" and actually freezes the extras list to exactly
+  `[mcp]`; then its replacement `"postgres" in extras`, which then called
+  `[all]` a regression. Both encoded the current spelling instead of the
+  required property, so each went red precisely when someone fixed something.
+
+### Fixed
+
+- **The restart path logged correct operation at WARNING.** The auth pre-flight
+  branch is guarded by `if usable:` — the credential is fine and the restart is
+  proceeding — and the commonest reason is `skipped-token-fresh`, the DESIGNED
+  behaviour (probing would consume the single-use `refresh_token` and rotate
+  the shared token for every other agent on that account). sac printed five
+  alarming lines above EVERY restart, including "PROCEEDING (fail-open; this is
+  NOT a token rejection)", to report success. Demoted to one INFO line; a real
+  auth failure is the `RestartPreflightAbort` beside it, which raises
+  (`_lifecycle/_restart_preflight.py`).
+
+- **`skill 'X' not found under --add-dir roots []`** named the wrong subject.
+  `roots` is empty for every `injection_mode` except `at-import`, so the lookup
+  could not have succeeded for ANY name — it reported the skill as missing when
+  nothing had been searched. Now a debug line naming the actual condition; the
+  warning stays for the case it was written for (roots exist, skill genuinely
+  absent) — `runtimes/claude_md.py`.
+
+## [0.24.21] - 2026-08-02
+
+### Fixed
+
+- **A non-empty per-agent `to_home/.claude/CLAUDE.md` silently DELETED the
+  shared safety baseline.** The two-pass overlay deploys the shared baseline
+  first and the per-agent layer second; `_deploy_marker_protected` REPLACED
+  the generated section, preserving only content before the Start marker and
+  after the End marker. In the file a container actually loads the Start
+  marker is line 1, so nothing precedes it: the per-agent body became the
+  WHOLE file and the baseline — prompt-injection rules, hook doctrine,
+  task-board obligations — was gone, while the spec looked clean and the
+  "startup prompt is long" warning disappeared. Armed but untriggered: every
+  per-agent `CLAUDE.md` in the fleet is 0 bytes and an empty source
+  early-returns, so the overwrite never had content to perform. Layers now
+  COMPOSE within one generated section — the run's first layer replaces it
+  (so nothing grows across restarts), later layers in the same run append
+  (`runtimes/_to_home_deployers.py`, `runtimes/_to_home_text.py`,
+  `runtimes/_to_home.py`). `_deploy_mcp_merge` already refused full-overwrite
+  in that same file for the identical "would silently drop the defaults"
+  reason. Found by the dotfiles agent.
+
+- **`sac agents list` reported an 11-37 day old login RECORD as the Account.**
+  The column read `<runtime>/home/.claude.json`, which Claude Code does not
+  rewrite when the credential bind changes; when that file carried no
+  `oauthAccount` key the caller fell back to the SPEC label, which for a pool
+  agent collapses to the host's shared OAuth identity so every such row read
+  alike. Measured on the day it cost an hour: the fleet had ALREADY been moved
+  onto one account and the column still showed three, and the one row that
+  looked correct matched by coincidence. Adds a third signal and puts it
+  first — the live bind, read from each running container's own `mountinfo`
+  (`cli_pkg/_helpers/_agent_list_bound_account.py`). Precedence is now
+  bind → runtime record → spec label; a remote or stopped agent resolves to
+  `None` and degrades to the older signals rather than to a wrong one.
+
+- **Agent containers had no PostgreSQL driver, so every card write failed** with
+  "canonical store postgresql://… does not exist" — naming the database, which
+  was fine and reachable. The pin was `scitex-cards[mcp]` at all three install
+  sites, with no `postgres` extra, so `psycopg[binary]` was never requested;
+  the leftover bare `psycopg/` directory (no `__init__.py`, no dist-info)
+  imports as a NAMESPACE PACKAGE, so `import psycopg` succeeds and
+  `psycopg.connect` does not exist. Raised to
+  `scitex-cards[mcp,postgres]>=0.31.6` at all three sites, closing the schema
+  drift in the same edit (`>=0.19.0` was satisfied by the 0.25.0 and 0.31.3
+  measured in live containers, against a store already on schema v9). Adds a
+  build-time gate asserting `psycopg.connect` EXISTS rather than that psycopg
+  imports — an import-only check would have passed on the broken image.
+  Reported by the scitex-cards agent.
+
+### Changed
+
+- `_blind_cache_remedy` extracted from `_creds/_pick_healthy.py` (518 lines
+  against the 512 cap; now 429) and `build_agent_row` + the movement trio
+  extracted from `cli_pkg/_helpers/_agent_list.py` (507 → 485). Both originals
+  re-export the moved names, so existing import paths and the test seams that
+  rebind them keep resolving.
+
+## [0.24.20] - 2026-07-29
+
+### Changed
+
+- **`sac accounts list` grew an Average block and lost two lines the operator
+  reads past.** Their monitor re-renders this view every 10s, so what it does
+  NOT show matters as much as what it does: the per-account rolling-window
+  legend and the fleet-capacity line are gone, and a trailing
+  `- Average (n=N)` / `7d (…) [bar] (NN%)` pair now summarises the fleet's 7d
+  capacity in one reading. The Average hint participates in the shared
+  `hint_width`, so its bar stays column-aligned with the per-account bars
+  instead of forming a second ragged edge (`cli_pkg/_account_usage_bars.py`,
+  `cli_pkg/_account_list_cmd.py`). `needs_rolling_legend` /
+  `rolling_legend_line` stay in `_account_list_render.py` — exported and
+  separately tested, so dropping the *echo* is not dropping the *renderer*.
+
+### Fixed
+
+- **A `--yes`-less start refusal was recorded as a permanent STARTUP_FAILED**
+  (21 markers on the live fleet, at least 3 confirmed declines). The
+  brokered listen's only discriminator on the `sac agents start` subprocess
+  is its exit code, and a refusal exits 1 exactly like a real launch
+  failure — `write_marker` could not tell them apart. Fix, four pieces:
+  (1) the refusal branch (`cli_pkg/lifecycle/_start_single.py`) now emits a
+  shared sentinel (`_lifecycle._start_decline.DECLINE_SENTINEL`) that
+  `write_marker` matches and refuses to act on — not an exit-code test,
+  since a stale host `sac` binary is known to return rc=2 for an unrelated
+  reason; (2) `retract_marker` renames `STARTUP_FAILED` to
+  `STARTUP_FAILED.retracted` — never deletes, since the marker is the only
+  copy of its `stderr_tail`; (3) the ONE retraction call site is the
+  already-running no-op in `agent_start`, reached only on a positively
+  ALIVE liveness verdict — never on a bare `runtime.start()` returning
+  `True` (a background `Popen` or an existing tmux session name is not
+  evidence the agent came up); (4) `GET /agents/<name>/status` additionally
+  relabels a marker `startup_failed_superseded` when `heartbeat.json`'s
+  MTIME (PROCESS ALIVE) — never the `ts` payload field, which routinely
+  lags MTIME by tens of thousands of seconds for an idle agent — postdates
+  `failed_at` by at least one staleness window. Existing markers are
+  untouched by this change; each is superseded/retracted only the next
+  time its own agent is observed alive.
+
+### Added
+
+- **Detector: agent overlays that silently mask a base-baked package**
+  (incident 2026-07-22). Historical per-agent `pip install`s left stale
+  `scitex_cards` copies (0.16.0–0.17.4) in overlay UPPER layers
+  (`~/.scitex/agent-container/containers/overlays/<agent>/upper/opt/venv-sac/
+  …/site-packages/`); the upper wins over the base SIF, so restarts onto a
+  rebuilt base were silent no-ops and the all-clear had to be retracted. New
+  `_maintenance._overlay_masking` (+ `_overlay_masking_model`) implements the
+  sweep-validated rule: a `*.dist-info` in the upper for a package the base
+  provides = MASKED; a bare package dir with only `__pycache__` (zero
+  top-level `*.py`, no dist-info) is a benign overlayfs copy-up, NOT masking
+  (counting those once caused a false fleet scare). Three-valued throughout —
+  missing/unreadable overlay or unreadable base package set reports UNKNOWN,
+  never clean. Surfaced per-agent in `sac agents check-health` (human +
+  `--json` `overlay_masking` key, flowing through the MCP `agent_health`
+  tool) as an observation NEXT TO `healthy`, never folded into the exit code;
+  fleet-wide via `sweep_agent_overlays()`. The base package set is read
+  lazily (only when the upper actually carries a dist-info) via an
+  UNFILTERED live `pip list` of the SIF venv, falling back to the baked
+  scitex-\* manifest honestly labelled PARTIAL. The operational rule ships as
+  one string (`OPERATIONAL_RULE`, quoted verbatim by the RED rendering and
+  `docs/isolation.md` §7): NEVER pip-install a base-baked package into a
+  running agent's overlay — hotfix by force-reinstalling the EXACT base
+  version or recreating the overlay. `status_cmds.health`'s inbox rendering
+  moved to `_health_liveness.print_inbox` (512-line per-file cap).
+
+### Changed
+
+- **CLI output: honest levels, one line per condition** (operator ruling
+  2026-07-22 — 「フィードバックがクソ長い、ユーザ目線に立って短く、読みやすく」).
+  User-facing start/account paths now route through `scitex-logging` so INFO
+  (dim, skippable) / WARN / ERRO / SUCC carry meaning instead of arriving as
+  undifferentiated prose:
+  - `NoHealthyAccountError` is an EXPECTED refusal, so `sac agents start` no
+    longer lets it escape as a traceback (a stack trace reads "sac crashed,
+    file a bug", which is false) nor prints the same paragraph twice. It
+    carries a new one-line `brief` — e.g. `ERRO: dotfiles: quota unknown for
+    wyusuuke-gmail-com — run \`sac accounts refresh-quota-cache\`` — and the
+    full per-account diagnosis drops to DEBUG. `--json` gains a
+    `no-healthy-account` status.
+  - `sac accounts refresh-quota-cache` reports through `logger.success`
+    instead of bare `click.echo`, and the summary drops the absolute cache
+    path (implementation detail). The per-account 5h/7d/ttl figures stay —
+    they are what the operator reads to pick an account.
+  - `sac agents start` on an already-running agent no longer prints "No-op"
+    and then a contradicting `SUCC: <name> started`. The no-op branch reports
+    INFO + the three commands that WOULD act; the SUCC line is suppressed and
+    `--json` reports `already_running`. **Exit code stays 0** (PR #756's
+    idempotent-start decision, matching `systemctl`/`docker start`). Every
+    hinted command was executed before shipping: `restart` requires `-y`,
+    `stop` does NOT (its `-y` gate covers only the fleet-wide selection
+    flags).
+  - The ~8 lines of credential-ranking detail (`policy=`, ranking inputs,
+    per-account usage) move from the default path to DEBUG; a one-line
+    headline naming the agent and picked account stays at INFO. The
+    `log_stream` capture seam is preserved unchanged, so the dry-probe
+    rotation-notice suppression still works.
+- auto-merge-to-develop: trimmed the prose comments added in 0.24.12 to minimal one-liners (operator style ruling — meaning in names, comments minimal); behaviour unchanged.
+
+### Removed
+
+- **Dead runtime dispatch that advertised docker / podman / ssh-remote.**
+  `_runners/_tmux/claude_code.py` carried four dispatch blocks (`start`,
+  `stop`, `is_running`, `logs`) importing `.docker` / `.podman` /
+  `.apptainer` — modules that do not exist in that package — plus
+  `_should_dispatch_remote`, which read `config.remote.is_remote` after
+  `RemoteSpec` was deleted in WI-6. Neither half could execute
+  (ImportError / AttributeError). The live start path is unaffected:
+  `_lifecycle/_start.py` → `_runtime_select._get_runtime` branches on the
+  top-level `spec.runtime` launch-mode selector into `TuiSessionRuntime` /
+  `ClaudeSessionRuntime` → `runtimes/_apptainer_*`, and never reads
+  `spec.container.runtime`.
+- `spec.container.runtime` no longer accepts `docker` / `podman`. The
+  accepted set is now `none | apptainer` (`VALID_CONTAINER_RUNTIMES`),
+  matching the 2026-05-13 docker/podman ripout that left `apptainer` as the
+  only implemented engine. A spec naming a ripped-out engine now fails
+  yaml-validate with a message listing only the engines that exist, instead
+  of validating cleanly and dying at dispatch. New
+  `tests/scitex_agent_container/config/test__validation_container_runtime.py`
+  probes the LIVE resolver (`_container_runtime_for`) for every advertised
+  value, so re-adding an unimplemented engine to the enum fails the suite.
+
 ## [0.24.11] - 2026-07-22
 
 ### Changed
@@ -2098,8 +2382,8 @@ set + the empty-ack fix + the smoke-test contract update.
   in-container Claude CLI's ~1h OAuth refresh wrote back to that
   per-agent copy — not the source snapshot. After ~8h drift, every
   SDK turn 401'd silently (the telegram bridge still marked inbound
-  👀 but the agent could not complete a turn). Hit hub, orochi, and
-  proj-scitex-agent-container (revived only by restart). Fix:
+  👀 but the agent could not complete a turn). Hit the hub and multiple
+  project agents (revived only by restart). Fix:
   `runtimes/_apptainer_creds.resolve_cred_file` pinned branch now
   returns the snapshot path directly. The caller's existing `:rw`
   bind in `_apptainer_auth.auth_argv` lands on the snapshot — the
@@ -2397,13 +2681,14 @@ set + the empty-ack fix + the smoke-test contract update.
 - **docs/agent-spec-schema.yaml** moved to
   `docs/legacy/agent-spec-schema-cld-v1.yaml`. It documented the
   pre-v3 `cld-agent/v1` schema (`metadata.name`, `runtime: claude-code
-  | slurm | slurm-tenant`, `container:` block, `orochi:` block) which
+  | slurm | slurm-tenant`, `container:` block, an external-hub block) which
   is now rejected at load time. Kept under `docs/legacy/` for
   historical reference only.
 
 ### Added
 - **telegram fold (Phase 2 + Phase 3)** — the Telegram fold is now a
-  first-class sac feature. `TelegramBridge` is fully ported from orochi
+  first-class sac feature. `TelegramBridge` is fully ported from the
+  upstream fleet bridge
   (`_telegram/_bridge.py`): aiohttp long-poll against the Telegram Bot
   API, `allowed_users` filter enforced on inbound updates (empty list
   fails closed), and graceful shutdown that closes the API session and

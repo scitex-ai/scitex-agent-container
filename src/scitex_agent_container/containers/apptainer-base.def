@@ -361,8 +361,40 @@ From: ubuntu:24.04
     # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
     # plumbing, so the [mcp] extra adds just fastmcp.
     #
-    # scitex-cards: FLOOR (>=0.17.2), not an exact pin (was ==0.16.0). 2026-07-17,
-    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20.
+    # scitex-cards: FLOOR (>=0.19.0), not an exact pin (was ==0.16.0). 2026-07-17,
+    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20, -> 0.17.9 on 2026-07-28,
+    # -> 0.19.0 on 2026-07-30 (SECURITY — see below).
+    #
+    # The 0.19.0 raise is a SECURITY floor, not a freshness bump. Through 0.18.0,
+    # `_django/handlers/dm.py` resolved the store as
+    #     getattr(request, STORE_REQUEST_ATTR, None) or _store_of(request)
+    # — a cross-tenant fallback: a request arriving WITHOUT the injected store
+    # attribute silently reads AND WRITES the host store, so under a multi-tenant
+    # mount one user's writes land in another's board. 0.19.0 drops the fallback
+    # and splits read from write (`_store_of` for reads, `_write_store_of` for
+    # writes). Verified in the ARTIFACT, not the version string, because a
+    # dist-info can sit atop missing files:
+    #     0.19.0 wheel  dm.py: "or _store_of(request)" x0, line 108 is a bare
+    #                   getattr; STORE_REQUEST_ATTR referenced 3x
+    #     the copy installed in the CURRENT image: x1 — i.e. the vulnerable
+    #                   path is live in what the fleet is running today
+    # After any bake, re-check by opening the installed dm.py and confirming the
+    # count is 0. `--version` cannot answer this.
+    #
+    # The 0.17.9 raise is EXPLICIT ON PURPOSE, not "latest at bake time". 0.17.8
+    # was published to PyPI and then MORE code was installed onto the host under
+    # that same version, so two codebases shared one number: an agent reading
+    # "0.17.8" in its container got the OLD renderer while the fix read as
+    # deployed. That fix makes an inbox notification name its sender and body
+    # instead of a bare count — the operator's DMs reached agents as the number
+    # "4", and one sat unread for two hours. A floating "latest" here would
+    # silently re-bake 0.17.8 if a bake lands between the merge and the PyPI
+    # publish, reproducing the confusion while the CHANGELOG claims the fix is
+    # in. If the pinned floor is not published yet this build FAILS LOUDLY,
+    # which is intended: a failed bake is cheap, a fleet silently baked with the
+    # old renderer is not. (That reasoning is why the floor is written as an
+    # explicit literal and raised deliberately; the literal is now 0.19.0, and
+    # 0.19.0 was confirmed installable from the index before it was written here.)
     #
     # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
     # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
@@ -449,7 +481,7 @@ From: ubuntu:24.04
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards[mcp]>=0.17.2" \
+        "scitex-cards>=0.32.0" \
         "/opt/scitex-agent-container-src[openai]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -545,6 +577,59 @@ print(
 )
 
 failures = []
+
+# psycopg GATE — the cards store is PostgreSQL, so a container without a
+# USABLE driver cannot read or write the fleet board at all.
+#
+# Assert the ATTRIBUTE, not the import, because the import cannot fail in the
+# way that actually happened. Measured 2026-08-02: site-packages held a bare
+# ``psycopg/`` directory containing only subdirectories — no ``__init__.py``,
+# no ``*.py``, and NO dist-info anywhere. Leftovers from a package that was
+# never requested: the pin then was ``scitex-cards[mcp]``, a hand-picked
+# PARTIAL extras set that omitted the driver. Python treats such a directory as
+# a NAMESPACE PACKAGE, so ``import psycopg`` SUCCEEDED, ``psycopg.__file__``
+# was None and ``psycopg.connect`` did not exist. Every agent then failed its
+# card writes with "canonical store postgresql://... does not exist" — blaming
+# the database for a missing driver, and sending three agents to the wrong
+# layer. An import-only check would have passed on that image.
+#
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.32.0``. As of 0.32.0 psycopg,
+# django and fastmcp are CORE dependencies — verified against the published
+# metadata, not the changelog:
+#
+#     psycopg   CORE=True   psycopg[binary]>=3.1
+#     django    CORE=True   django>=4.2
+#     fastmcp   CORE=True   fastmcp>=2.0
+#
+# so a bare install yields a complete client and there is no extras subset left
+# to pick wrong. The floor is 0.32.0 and NOT lower on purpose: psycopg only
+# became core in 0.31.8, so a bare pin admitting 0.31.6/0.31.7 would install NO
+# DRIVER and succeed.
+#
+# Do NOT "fix" a future recurrence by naming ``postgres`` or ``all``. A pin
+# naming an extra that no longer exists does not fail:
+#
+#     uv pip install --dry-run 'pkg[nonexistent]'
+#     -> warning: does not have an extra named `nonexistent`   EXIT=0
+#
+# Warning, not error. So that pin installs less and SUCCEEDS — reproducing this
+# very outage from the fix rather than the bug. This paragraph exists because
+# the sentences above name ``mcp``/``postgres`` as things that were missing,
+# and a reader arriving later would reasonably take those as the remedy. This
+# comment has already gone stale twice in one day; if you change the pin,
+# change this too.
+try:
+    import psycopg as _psycopg
+
+    if not hasattr(_psycopg, "connect"):
+        failures.append(
+            "psycopg imports but exposes no .connect (__file__=%r) — a "
+            "namespace-package phantom, not an install. The cards store is "
+            "PostgreSQL; check that the scitex-cards pin carries the "
+            "[postgres] extra." % (getattr(_psycopg, "__file__", None),)
+        )
+except Exception as _exc:
+    failures.append("psycopg is not importable: %r" % (_exc,))
 
 # The version string lies (uv's wheel cache is version-keyed and sac's
 # version does not advance per-commit). File content cannot lie — but the

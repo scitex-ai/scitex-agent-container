@@ -35,8 +35,26 @@ from ._agent_list_auth import (  # noqa: F401
     resolve_auth,
 )
 
+# The LIVE credential bind — ground truth for a running local agent, and the
+# STRONGEST of the three Account signals. Same re-import rationale as above.
+from ._agent_list_bound_account import bound_accounts_by_agent  # noqa: F401
+
 # Host-DISPLAY resolution (Host column) — sibling module, 512-line cap split.
 from ._agent_list_host import _host_display_for, _resolve_display_host
+
+# The local liveness probe AND its record of how it answered. Kept in a
+# sibling so the adapter name can only ever come from the probe call itself
+# — see that module's header for why a separately-computed label would lie
+# in exactly the case it exists to catch.
+from ._agent_list_probe import LocalProbe, probe_local_detail  # noqa: F401
+
+# Row shaping + the movement trio. Re-exported so the bare-name call sites
+# here, and the test seams that rebind ``_al._movement_fields``, keep working.
+from ._agent_list_row import (  # noqa: F401
+    _MOVEMENT_DEFAULTS,
+    _movement_fields,
+    build_agent_row,
+)
 
 
 def _all_port_claims() -> dict[str, int]:
@@ -57,42 +75,6 @@ def _all_port_claims() -> dict[str, int]:
         return {c["name"]: c["port"] for c in port_allocator.list_claims()}
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return {}
-
-
-# The always-present movement trio in its empty shape — the tolerant fallback
-# AND what a PERF-deferred (hidden, non-running) row carries in place of the
-# movement IO. One definition so the two paths can never drift.
-_MOVEMENT_DEFAULTS: dict = {
-    "session_jsonl_bytes": 0,
-    "session_jsonl_last_write": "",
-    "heartbeat_at": "",
-}
-
-
-def _movement_fields(name: str) -> dict:
-    """Return the three movement keys for ``name`` (always all-present).
-
-    Operator mandate (lead a2a 1781e82a, 2026-06-14): the fleet view's
-    per-agent rows must carry the same ``session_jsonl_bytes`` /
-    ``session_jsonl_last_write`` / ``heartbeat_at`` trio that the
-    per-agent ``agent_status`` payload exposes, so a single fleet
-    ``--json`` read answers "is each agent producing?".
-
-    Tolerant: any state-dir resolution / IO failure degrades to the
-    all-defaults shape (zero bytes + empty ISO strings) so the list
-    command never crashes on a movement-probe hiccup.
-    """
-    # stx-allow: fallback (reason: list output must never crash on a
-    # state-dir probe hiccup; explicit empty-values shape is the right UX.)
-    try:
-        from ..._lifecycle._session_movement import (
-            resolve_state_dir,
-            status_movement_fields,
-        )
-
-        return status_movement_fields(resolve_state_dir(name))
-    except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return dict(_MOVEMENT_DEFAULTS)
 
 
 def _probe_local(cfg) -> bool | None:
@@ -125,16 +107,16 @@ def _probe_local(cfg) -> bool | None:
 
     Returns None on exception (e.g. malformed config) so the caller
     surfaces ``status='unknown'`` rather than crashing the list.
-    """
-    # stx-allow: fallback (reason: runtime may be missing or state-dir may
-    # not exist for an agent that never ran; either case maps to
-    # liveness_unknown rather than a hard error.)
-    try:
-        from ..._lifecycle._runtime_select import _get_runtime
 
-        return _get_runtime(cfg).is_running(cfg)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        return None
+    THE TRI-STATE ANSWER ONLY. The probe itself now lives in
+    :func:`._agent_list_probe.probe_local_detail`, which additionally
+    records WHICH adapter answered and, on an abstention, why. This
+    remains the bool-or-None view because that is what the merged
+    regression guard drives (``test_probe_local_reports_a_live_tui_session
+    _as_running``) and what external callers have always had. It delegates
+    rather than re-implementing, so the two can never disagree.
+    """
+    return probe_local_detail(cfg).running
 
 
 def _label_group_matches(labels: dict, wanted: str) -> bool:
@@ -231,6 +213,11 @@ def get_agent_list_data(
 
     entries = registry.list_all()
 
+    # Live credential binds, measured ONCE for this listing (one /proc walk,
+    # not one per row). Re-measured on every call, so ``--watch`` never
+    # renders a bind read minutes ago.
+    live_binds = bound_accounts_by_agent()
+
     # Host DISPLAY column hostname, resolved ONCE (test-swappable seam).
     display_host = _resolve_display_host()
 
@@ -299,19 +286,19 @@ def get_agent_list_data(
     # Explicit shutdown(wait=False) instead of ``with ... as pool:``
     # so the context manager's __exit__ doesn't join all workers
     # (todo#254 regression: that would defeat the per-probe timeout).
-    probe_results: dict[int, bool | None] = {}
+    probe_results: dict[int, LocalProbe] = {}
     probe_targets = [
         (prep["idx"], prep["cfg"]) for prep in prepared if prep["cfg"] is not None
     ]
     if probe_targets:
-        # Resolve _probe_local via the parent package at call time so
-        # test monkeypatching of ``_helpers._probe_local`` still takes
-        # effect (tests historically patched the flat-module attribute;
-        # the __init__ re-export keeps that contract working post-split).
+        # Resolve the probe via the parent package at call time so a test
+        # swapping ``_helpers.probe_local_detail`` still takes effect (tests
+        # historically patched the flat-module attribute; the __init__
+        # re-export keeps that contract working post-split).
         import sys as _sys
 
         _pkg = _sys.modules[__name__.rsplit(".", 1)[0]]
-        _probe_fn = getattr(_pkg, "_probe_local", _probe_local)
+        _probe_fn = getattr(_pkg, "probe_local_detail", probe_local_detail)
 
         pool = ThreadPoolExecutor(max_workers=max_parallel_probes)
         try:
@@ -320,15 +307,23 @@ def get_agent_list_data(
             }
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
-                # stx-allow: fallback (reason: per-probe runtime exception
-                # maps to None = "liveness unknown", not "stopped")
+                # stx-allow: fallback (reason: an abstention, NOT a "stopped" —
+                # and it says which of the two ways it abstained, because a
+                # verdict that cannot explain itself is what made the third
+                # "live agent reads stopped" report undiagnosable.)
                 try:
                     probe_results[idx] = future.result(timeout=remote_probe_timeout_s)
                 except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
-                    probe_results[idx] = None
+                    probe_results[idx] = LocalProbe(
+                        running=None,
+                        runtime=None,
+                        error=f"probe exceeded {remote_probe_timeout_s}s",
+                    )
                     future.cancel()
-                except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-                    probe_results[idx] = None
+                except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+                    probe_results[idx] = LocalProbe(
+                        running=None, runtime=None, error=f"probe raised: {exc}"
+                    )
         finally:
             pool.shutdown(wait=False)
 
@@ -356,15 +351,25 @@ def get_agent_list_data(
 
         liveness_unknown = False
         probe = probe_results.get(prep["idx"])
+        # HOW the verdict was reached, carried on the row. A bare "stopped"
+        # is exactly what made the 2026-08-04 report undiagnosable once the
+        # host had rebooted: no adapter, no reason, nothing to re-derive from.
+        probe_runtime: str | None = None
+        probe_error: str | None = None
         if cfg is None:
             # Couldn't load the yaml — can't probe.
             is_running = False
             liveness_unknown = True
-        elif probe is None:
+            probe_error = "spec did not load"
+        elif probe is None or probe.running is None:
             is_running = False
             liveness_unknown = True
+            if probe is not None:
+                probe_runtime = probe.runtime
+                probe_error = probe.error
         else:
-            is_running = bool(probe)
+            is_running = probe.running
+            probe_runtime = probe.runtime
 
         status_val: str
         if liveness_unknown:
@@ -416,34 +421,33 @@ def get_agent_list_data(
         else:
             account_label = _safe_account_for(cfg)
             if is_live_status(status_val):
-                runtime_label = _runtime_account_for(name)
-                if runtime_label:
-                    account_label = runtime_label
-        row: dict = {
-            "name": name,
-            "status": status_val,
-            "screen": screen_name,
-            "multiplexer": multiplexer,
-            "started_at": started,
-            "host": host_label,
-            "host_display": _host_display_for(host_label, display_host),
-            "path": spec_path,
-            "a2a_port": a2a_port,
-            "account": account_label,
-        }
-        # Operator mandate (lead a2a 1781e82a, 2026-06-14): surface
-        # session.jsonl movement + last heartbeat per row of ``sac agents
-        # status --json``. All three keys are ALWAYS present; a deferred
-        # (hidden, non-running) row gets the default empty shape instead of
-        # the movement IO.
-        row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
-        if errors:
-            row["validation_errors"] = errors
-        if liveness_unknown:
-            row["liveness_unknown"] = True
-        if labels:
-            row["labels"] = labels
-        results.append(row)
+                # Precedence: live BIND > runtime login RECORD > spec label.
+                # See ``_agent_list_bound_account`` for why leading with the
+                # record was wrong — it is a PAST login, measured 11-37 days
+                # stale, and the spec label collapses to one host identity.
+                account_label = (
+                    live_binds.get(name) or _runtime_account_for(name) or account_label
+                )
+        results.append(
+            build_agent_row(
+                name=name,
+                status_val=status_val,
+                screen_name=screen_name,
+                multiplexer=multiplexer,
+                started=started,
+                host_label=host_label,
+                host_display=_host_display_for(host_label, display_host),
+                spec_path=spec_path,
+                a2a_port=a2a_port,
+                account_label=account_label,
+                deferred=deferred,
+                errors=errors,
+                liveness_unknown=liveness_unknown,
+                probe_runtime=probe_runtime,
+                probe_error=probe_error,
+                labels=labels,
+            )
+        )
 
     # Merge in agents recorded as running on a REMOTE peer (master-authoritative
     # cross-host visibility). The master already wrote an ``instances`` row on

@@ -80,8 +80,8 @@ def test_auth_error_state_returned_for_real_head_mba_2026_04_20_capture():
     """
     # Arrange
     pane = (
-        "  Listening for channel messages from: server:scitex-orochi\n"
-        "  ← scitex-orochi · ywatanabe: hello\n"
+        "  Listening for channel messages from: server:fleet-hub\n"
+        "  ← fleet-hub · ywatanabe: hello\n"
         '  ⎿  Please run /login · API Error: 401 {"type":"error",'
         '"error":{"type":"authentication_error","message":'
         '"Invalid authentication credentials"},'
@@ -103,8 +103,8 @@ def test_auth_error_snippet_carries_actionable_signal_for_real_capture():
     """
     # Arrange
     pane = (
-        "  Listening for channel messages from: server:scitex-orochi\n"
-        "  ← scitex-orochi · ywatanabe: hello\n"
+        "  Listening for channel messages from: server:fleet-hub\n"
+        "  ← fleet-hub · ywatanabe: hello\n"
         '  ⎿  Please run /login · API Error: 401 {"type":"error",'
         '"error":{"type":"authentication_error","message":'
         '"Invalid authentication credentials"},'

@@ -4,9 +4,9 @@ Extracted from :mod:`state_db` to keep that module under the project
 line cap. Public symbols are re-exported from :mod:`state_db` so
 existing ``from .state_db import export_state`` imports keep working.
 
-Each host writes locally; orochi (a separate concern) pulls deltas
-via ssh and aggregates them. sac never reaches out — orochi-agnostic
-by design.
+Each host writes locally; an external aggregator (a separate concern)
+pulls deltas via ssh and aggregates them. sac never reaches out —
+orchestrator-agnostic by design.
 
   ssh <peer> sac db export --since <ts> --format json
 
@@ -27,8 +27,8 @@ Wire format::
 Filtering: each table picks a sensible "advance" column and emits
 only rows where that column >= since (or all rows when since is None).
 instances and definitions emit when *either* their start/seen
-timestamp OR end timestamp is >= since — orochi needs both halves
-of the lifecycle.
+timestamp OR end timestamp is >= since — an aggregator needs both
+halves of the lifecycle.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def export_state(
 ) -> dict:
     """Dump the registry tables (and ``attempts``) into a JSON-able dict.
 
-    Used by ``sac db export``; orochi consumes the result via
+    Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).
 
     ``tables`` (added 2026-05 alongside ADR-0014's anti-entropy sync)

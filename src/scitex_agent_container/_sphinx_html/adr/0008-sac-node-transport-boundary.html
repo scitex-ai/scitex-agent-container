@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20) &mdash; scitex-agent-container v0.21.11</title>
+  <title>ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20) &mdash; scitex-agent-container v0.24.19</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
       <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
@@ -14,7 +14,7 @@
   
       <script src="../_static/jquery.js?v=5d32c60e"></script>
       <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../_static/documentation_options.js?v=9af9119e"></script>
+      <script src="../_static/documentation_options.js?v=e0b4eee3"></script>
       <script src="../_static/doctools.js?v=fd6eb6e6"></script>
       <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
       <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -152,8 +152,12 @@
 <li class="toctree-l2"><a class="reference internal" href="../directories.html#configuration-cascade">Configuration cascade</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../credentials.html">Claude Code credential &amp; settings files</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../credentials.html#files">Files</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="../credentials.html">Provider credential and account files</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#openai-codex">OpenAI Codex</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-code-harness-with-codex-subscriptions">Claude Code harness with Codex subscriptions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../credentials.html#claude-code-files">Claude Code files</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-json"><code class="docutils literal notranslate"><span class="pre">~/.claude.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-credentials-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/.credentials.json</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../credentials.html#claude-settings-json"><code class="docutils literal notranslate"><span class="pre">~/.claude/settings.json</span></code></a></li>
@@ -172,30 +176,6 @@
 </ul>
 </li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Ecosystem</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../sac-and-orochi.html">sac and orochi</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-comms-model-what-sac-knows">The comms model — what sac knows</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#lineage-parent-children">Lineage — parent / children</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#group-the-unit-of-default-acl">Group — the unit of default ACL</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#depth-limit-a-policy-not-a-structural-limit">Depth limit — a POLICY, not a structural limit</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#acl-permissioned-messaging">ACL — permissioned messaging</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#authenticated-identity-handoff-4-acceptance">Authenticated identity (handoff §4 acceptance)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#cross-host-forwarding-per-host-bearer-registry">Cross-host forwarding — per-host bearer registry</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#a2a-compliance">A2A compliance</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#what-sac-knows-vs-doesnt">What sac knows vs doesn’t</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#the-corrected-boundary">The corrected boundary</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="../sac-and-orochi.html#responsibility-split">Responsibility split</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#how-orochi-consumes-sac">How orochi consumes sac</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#standalone-use">Standalone use</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../sac-and-orochi.html#live-instance">Live instance</a></li>
-</ul>
-</li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../api/scitex_agent_container.html">scitex_agent_container API Reference</a><ul>
@@ -203,6 +183,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig"><code class="docutils literal notranslate"><span class="pre">AgentConfig</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.name"><code class="docutils literal notranslate"><span class="pre">AgentConfig.name</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.runtime"><code class="docutils literal notranslate"><span class="pre">AgentConfig.runtime</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.provider"><code class="docutils literal notranslate"><span class="pre">AgentConfig.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.image"><code class="docutils literal notranslate"><span class="pre">AgentConfig.image</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.model"><code class="docutils literal notranslate"><span class="pre">AgentConfig.model</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.workdir</span></code></a></li>
@@ -224,8 +205,9 @@
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.context_management"><code class="docutils literal notranslate"><span class="pre">AgentConfig.context_management</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_commands"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_commands</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.startup_prompts"><code class="docutils literal notranslate"><span class="pre">AgentConfig.startup_prompts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_hooks"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_hooks</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.exclude_skills"><code class="docutils literal notranslate"><span class="pre">AgentConfig.exclude_skills</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.mcp_servers"><code class="docutils literal notranslate"><span class="pre">AgentConfig.mcp_servers</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.multiplexer"><code class="docutils literal notranslate"><span class="pre">AgentConfig.multiplexer</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.hosts_spec"><code class="docutils literal notranslate"><span class="pre">AgentConfig.hosts_spec</span></code></a></li>
@@ -240,6 +222,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.proxy"><code class="docutils literal notranslate"><span class="pre">AgentConfig.proxy</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.to_home"><code class="docutils literal notranslate"><span class="pre">AgentConfig.to_home</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.expanded_workdir"><code class="docutils literal notranslate"><span class="pre">AgentConfig.expanded_workdir</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.AgentConfig.__init__"><code class="docutils literal notranslate"><span class="pre">AgentConfig.__init__()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec</span></code></a><ul>
@@ -253,6 +236,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.auto_accept"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.auto_accept</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.account"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.account</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_file"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_file</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.credentials_files"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.credentials_files</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.provider"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.provider</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.ClaudeSpec.__init__"><code class="docutils literal notranslate"><span class="pre">ClaudeSpec.__init__()</span></code></a></li>
 </ul>
@@ -332,6 +316,7 @@
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_initial"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_initial</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_max"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_max</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.backoff_multiplier"><code class="docutils literal notranslate"><span class="pre">RestartSpec.backoff_multiplier</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.prune_on_stop"><code class="docutils literal notranslate"><span class="pre">RestartSpec.prune_on_stop</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.config.RestartSpec.__init__"><code class="docutils literal notranslate"><span class="pre">RestartSpec.__init__()</span></code></a></li>
 </ul>
 </li>
@@ -385,6 +370,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_bypass_permissions"><code class="docutils literal notranslate"><span class="pre">_detect_bypass_permissions()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_dev_channels"><code class="docutils literal notranslate"><span class="pre">_detect_dev_channels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.has_esc_cancel_modal"><code class="docutils literal notranslate"><span class="pre">has_esc_cancel_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_thinking_effort"><code class="docutils literal notranslate"><span class="pre">_detect_thinking_effort()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_skip_permissions_yn"><code class="docutils literal notranslate"><span class="pre">_detect_skip_permissions_yn()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_mcp_json_edit"><code class="docutils literal notranslate"><span class="pre">_detect_mcp_json_edit()</span></code></a></li>
@@ -395,9 +381,14 @@
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_login_method"><code class="docutils literal notranslate"><span class="pre">_detect_login_method()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_theme_selection"><code class="docutils literal notranslate"><span class="pre">_detect_theme_selection()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_compose_pending_unsent"><code class="docutils literal notranslate"><span class="pre">_detect_compose_pending_unsent()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_resume_session"><code class="docutils literal notranslate"><span class="pre">_detect_resume_session()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._detect_done"><code class="docutils literal notranslate"><span class="pre">_detect_done()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.register_prompt"><code class="docutils literal notranslate"><span class="pre">register_prompt()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._LIVE_WINDOW_LINES"><code class="docutils literal notranslate"><span class="pre">_LIVE_WINDOW_LINES</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts._recent_tail"><code class="docutils literal notranslate"><span class="pre">_recent_tail()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect_and_respond"><code class="docutils literal notranslate"><span class="pre">detect_and_respond()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.detect"><code class="docutils literal notranslate"><span class="pre">detect()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.respond_modal"><code class="docutils literal notranslate"><span class="pre">respond_modal()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="../api/scitex_agent_container.html#scitex_agent_container.runtimes.prompts.is_ready"><code class="docutils literal notranslate"><span class="pre">is_ready()</span></code></a></li>
 </ul>
 </li>
@@ -432,9 +423,8 @@
   <section class="tex2jax_ignore mathjax_ignore" id="adr-0008-sac-is-the-node-transport-substrate-comms-model-is-nodes-lineage-groups-acl-2026-05-20">
 <h1>ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20)<a class="headerlink" href="#adr-0008-sac-is-the-node-transport-substrate-comms-model-is-nodes-lineage-groups-acl-2026-05-20" title="Link to this heading"></a></h1>
 <p><strong>Status:</strong> Accepted.
-<strong>Supersedes:</strong> the implicit “sac = one host; orochi = across hosts”
-framing in <a class="reference internal" href="../sac-and-orochi.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/sac-and-orochi.md</span></code></span></a> (pre-2026-05-20
-revision).
+<strong>Supersedes:</strong> the implicit “sac = one host; an external hub = across
+hosts” framing carried by the package docs before 2026-05-20.
 <strong>Related:</strong> <a class="reference internal" href="0004-a2a-v1-compliance.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">ADR-0004</span></code></span></a> (A2A v1 compliance —
 §D12 defines the push primitive this ADR builds on).
 <strong>Handoff:</strong> <code class="docutils literal notranslate"><span class="pre">GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md</span></code>.</p>
@@ -442,12 +432,12 @@ revision).
 <h2>Problem<a class="headerlink" href="#problem" title="Link to this heading"></a></h2>
 <p>Two boundaries had drifted out of alignment with reality:</p>
 <ol class="arabic simple">
-<li><p><strong>The “one host vs many hosts” split between sac and orochi was
-wrong.</strong> sac already places and drives agents on remote hosts via
+<li><p><strong>The “one host vs many hosts” split between sac and the fleet hub
+was wrong.</strong> sac already places and drives agents on remote hosts via
 <code class="docutils literal notranslate"><span class="pre">spec.host</span></code> (and SSH hops in <code class="docutils literal notranslate"><span class="pre">spec.remote.hops</span></code>); the moment it does
 so, it must also carry their messages — there is no “off-host” sac
-could hand the messaging off to without orochi installed. Yet the
-doc said “sac = one host, orochi = across hosts.”</p></li>
+could hand the messaging off to without a hub installed. Yet the
+doc said “sac = one host, the hub = across hosts.”</p></li>
 <li><p><strong>sac had no model for non-sac-managed nodes on its comms graph.</strong>
 A plain <code class="docutils literal notranslate"><span class="pre">claude</span></code> CLI session — the official CLI is stable and good
 for terminal/human interaction — could not address or be addressed by
@@ -466,13 +456,13 @@ forward messages).</p>
 <section id="d1-sac-is-the-node-transport-substrate">
 <h3>D1. sac is the node-transport substrate<a class="headerlink" href="#d1-sac-is-the-node-transport-substrate" title="Link to this heading"></a></h3>
 <p>sac carries messages <strong>any node ↔ any node</strong>, on <strong>any host</strong> (same
-host, LAN, SSH-alias, tunnel), <strong>ACL-gated</strong>, self-sufficient with zero
-orochi installed.</p>
-<p>Orochi is the human/product layer: web chatops UI, dashboard, topology
+host, LAN, SSH-alias, tunnel), <strong>ACL-gated</strong>, self-sufficient with no
+fleet hub installed.</p>
+<p>The hub is the human/product layer: web chatops UI, dashboard, topology
 viz, presence, channels/DMs/threads as features, <em>and</em> the connectivity
 mesh (cloudflared / autossh) that <strong>establishes</strong> host reachability.
-Orochi is a <em>consumer</em> of sac transport, not the transport.</p>
-<p>sac assumes reachability. Orochi establishes it.</p>
+The hub is a <em>consumer</em> of sac transport, not the transport.</p>
+<p>sac assumes reachability. The hub establishes it.</p>
 </section>
 <section id="d2-two-kinds-of-node-distinguished-only-by-who-owns-the-lifecycle">
 <h3>D2. Two kinds of node, distinguished only by who owns the lifecycle<a class="headerlink" href="#d2-two-kinds-of-node-distinguished-only-by-who-owns-the-lifecycle" title="Link to this heading"></a></h3>
@@ -556,15 +546,15 @@ for sac-managed-agent SDK plumbing.</p>
 <p>No new channel protocol. The MCP server emits
 <code class="docutils literal notranslate"><span class="pre">notifications/claude/channel</span></code>; Claude Code renders it as a
 <code class="docutils literal notranslate"><span class="pre">&lt;channel</span> <span class="pre">source=&quot;...&quot;</span> <span class="pre">...&gt;</span></code> block in the running session. This is
-the same protocol orochi’s <code class="docutils literal notranslate"><span class="pre">server:orochi-push</span></code> uses — sac just adds
+the same protocol a fleet hub’s own push channel uses — sac just adds
 the <code class="docutils literal notranslate"><span class="pre">server:sac</span></code> flavour pointing at the local listen.</p>
 </section>
 </section>
 <section id="what-this-rules-out">
 <h2>What this rules out<a class="headerlink" href="#what-this-rules-out" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p>No UI, dashboard, or topology viz in sac — orochi’s.</p></li>
-<li><p>No orochi awareness in sac. The boundary stays one-way (orochi → sac).</p></li>
+<li><p>No UI, dashboard, or topology viz in sac — the hub’s.</p></li>
+<li><p>No hub awareness in sac. The boundary stays one-way (hub → sac).</p></li>
 <li><p>No new channel protocol — use Claude Code channels as-is.</p></li>
 <li><p>No “lead” / “head” / “worker” / role concept in sac — only nodes,
 lineage, groups, ACL.</p></li>
@@ -581,7 +571,7 @@ stops any external node.</p></li>
 phone / email; replies in that app). Backed by
 <code class="docutils literal notranslate"><span class="pre">claude-code-telegrammer</span></code> + <code class="docutils literal notranslate"><span class="pre">scitex-notification</span></code> today; phase 2
 registers them behind the same <code class="docutils literal notranslate"><span class="pre">node</span> <span class="pre">=</span> <span class="pre">identity</span> <span class="pre">+</span> <span class="pre">inbox</span> <span class="pre">+</span> <span class="pre">ACL</span></code> model.</p></li>
-<li><p>A possible HTTP webhook adapter or the orochi UI as an adapter.</p></li>
+<li><p>A possible HTTP webhook adapter or a hub UI as an adapter.</p></li>
 </ul>
 <p>The phase-1 work (WI-1…6 from the handoff) builds exactly one adapter:
 the Claude-session adapter (<code class="docutils literal notranslate"><span class="pre">sac</span> <span class="pre">mcp</span> <span class="pre">channel</span></code>, MCP
@@ -610,8 +600,6 @@ symmetric handler in <code class="docutils literal notranslate"><span class="pre
 <section id="references">
 <h2>References<a class="headerlink" href="#references" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">docs/sac-and-orochi.md</span></code> — narrative version of this ADR for the
-package docs.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md</span></code> — the handoff that
 motivated this work; superseded once WI-1…6 land.</p></li>
 <li><p><a class="reference external" href="https://code.claude.com/docs/en/channels-reference">Claude Code channels reference</a>

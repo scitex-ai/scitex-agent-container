@@ -1,7 +1,7 @@
 """Auto-generate .mcp.json from agent config's ``spec.mcp_servers``.
 
 Only v2's explicit ``spec.mcp_servers`` block is supported. Legacy v1
-auto-generation from an ``orochi`` block has been dropped — external
+auto-generation from a vendor-specific block has been dropped — external
 orchestrators declare their MCP servers explicitly in v2 YAML.
 """
 

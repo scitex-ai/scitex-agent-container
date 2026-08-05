@@ -1,4 +1,17 @@
-"""Static contract: ``apptainer-base.def`` must install scitex-cards[mcp].
+"""Static contract: ``apptainer-base.def``'s scitex-cards install must PROVIDE
+fastmcp and psycopg — by an extra, or by core at a high enough floor.
+
+The pin is BARE: ``scitex-cards>=0.32.0``. Both deps are core from 0.32.0
+(psycopg from 0.31.8), so there is no extras subset left to pick wrong, and the
+floor is what carries the guarantee.
+
+This docstring has been WRONG THREE TIMES: it said "must install
+scitex-cards[mcp]", then "the pin is ``scitex-cards[all]``", each time
+outliving the assertions below by hours. Once, a peer read the stale line and
+concluded the suite still demanded a deleted extra. A stale summary is as
+misleading as a stale assertion and cheaper to overlook, because nothing
+executes it — so state the PROPERTY (provides fastmcp + psycopg) and mention
+today's spelling only as an example.
 
 Package renamed scitex-todo -> scitex-cards (2026-07-16, migration S1-S3).
 The wheel ships BOTH console scripts (``scitex-todo`` and ``scitex-cards``)
@@ -126,15 +139,93 @@ def test_uv_pip_install_block_mentions_scitex_todo(base_def_text: str) -> None:
     )
 
 
-def test_uv_pip_install_block_carries_mcp_extra(base_def_text: str) -> None:
+def _requirement_extras(requirement: str) -> set[str]:
+    """The extras NAMED in a requirement — ``[mcp,postgres]`` -> {mcp, postgres}.
+
+    Parsed rather than substring-matched. The old check was
+    ``"scitex-cards[mcp]" in block``, which asserts the extras list is EXACTLY
+    ``[mcp]`` while reading as "carries the mcp extra": adding a second,
+    equally required extra made the substring vanish and turned a correct
+    change red. A contract test should pin what it claims to pin.
+    """
+    if "[" not in requirement or "]" not in requirement:
+        return set()
+    inner = requirement.split("[", 1)[1].split("]", 1)[0]
+    return {part.strip() for part in inner.split(",") if part.strip()}
+
+
+# A capability can be provided TWO ways: by an extra, or by CORE at a
+# sufficient floor. Asserting only the extras spelling has now failed this file
+# THREE times in one day:
+#   1. `"scitex-cards[mcp]" in block`  -- froze the extras list to exactly [mcp];
+#      adding `postgres` turned a correct change red
+#   2. `"postgres" in extras`          -- my replacement; then called `[all]`
+#      a regression for the same reason
+#   3. `extras & {"mcp","all"}`        -- correct for extras, and blind to the
+#      pin going BARE when 0.32.0 moved the deps to core
+# So the fourth version asks the real question: WILL THIS INSTALL PROVIDE THE
+# CAPABILITY -- from an extra, or from core because the floor is high enough.
+_EXTRAS_PROVIDING_FASTMCP = {"mcp", "all"}
+_EXTRAS_PROVIDING_PSYCOPG = {"postgres", "all"}
+
+#: scitex-cards versions at which each dep became a CORE requirement, verified
+#: against published PyPI metadata rather than the changelog. psycopg went core
+#: in 0.31.8 -- NOT 0.31.6, which is what a peer told me and what would have
+#: made a bare pin admit two driverless versions.
+_CORE_SINCE_FASTMCP = (0, 32, 0)
+_CORE_SINCE_PSYCOPG = (0, 31, 8)
+
+
+def _provides(requirement: str, extras_providing: set[str], core_since) -> bool:
+    """Does this requirement deliver the capability, by EITHER route?
+
+    Reuses ``_requirement_floor`` deliberately. A second, local floor parser is
+    how ">=0.32" would compare LESS than (0, 32, 0) — the padding bug that
+    function already carries a comment about. One parser, one behaviour.
+    """
+    if _requirement_extras(requirement) & extras_providing:
+        return True
+    floor = _requirement_floor(requirement)
+    return floor is not None and floor >= core_since
+
+
+def test_uv_pip_install_block_can_provide_fastmcp(base_def_text: str) -> None:
     # Arrange
     block = _uv_pip_install_block(base_def_text)
+    requirement = _scitex_todo_requirement(block)
     # Act
-    present = "scitex-cards[mcp]" in block
+    provided = _provides(requirement, _EXTRAS_PROVIDING_FASTMCP, _CORE_SINCE_FASTMCP)
     # Assert
-    assert present, (
-        "scitex-cards install must carry the [mcp] extra (pulls fastmcp>=2.0)"
-        f" in apptainer-base.def:\n{block}"
+    assert provided, (
+        "scitex-cards install must PROVIDE fastmcp — via an extra "
+        f"{sorted(_EXTRAS_PROVIDING_FASTMCP)} or a floor >= "
+        f"{'.'.join(map(str, _CORE_SINCE_FASTMCP))} where it is core. "
+        f"Got {requirement!r} in:\n{block}"
+    )
+
+
+def test_uv_pip_install_block_can_provide_psycopg(base_def_text: str) -> None:
+    # Arrange — the cards store is PostgreSQL. Without a driver EVERY agent's
+    # card writes fail, reported as "canonical store ... does not exist" —
+    # naming the database, which is fine. Measured 2026-08-02: the pin was
+    # [mcp] only, and site-packages held a bare psycopg/ directory with no
+    # __init__.py, which imports as a NAMESPACE PACKAGE and exposes no
+    # .connect, so an import-guarded check passed while the board was down.
+    #
+    # The floor matters as much as the extra here: psycopg became core in
+    # 0.31.8, so a BARE pin of >=0.31.6 would resolve a driverless version and
+    # succeed. That is why this asserts the floor and not merely bareness.
+    block = _uv_pip_install_block(base_def_text)
+    requirement = _scitex_todo_requirement(block)
+    # Act
+    provided = _provides(requirement, _EXTRAS_PROVIDING_PSYCOPG, _CORE_SINCE_PSYCOPG)
+    # Assert
+    assert provided, (
+        "scitex-cards install must PROVIDE psycopg — via an extra "
+        f"{sorted(_EXTRAS_PROVIDING_PSYCOPG)} or a floor >= "
+        f"{'.'.join(map(str, _CORE_SINCE_PSYCOPG))} where it is core. "
+        f"Got {requirement!r} in:\n{block}. Old form kept for reference: "
+        f"apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
     )
 
 
@@ -219,3 +310,47 @@ def test_requirement_floor_rejects_unpinned_or_pre_wip_gate(requirement: str) ->
     floor = _requirement_floor(requirement)
     # Assert
     assert floor is None or floor < minimum, requirement
+
+
+# ---------------------------------------------------------------------------
+# ...and the CAPABILITY predicate itself. Without these, "provides psycopg"
+# passes for the same reason the fixture-that-cannot-fail passes: nothing
+# demonstrates the predicate can say NO. The rejection cases below are the ones
+# that actually shipped the outage.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "scitex-cards>=0.32.0",  # today's bare pin — psycopg is core
+        "scitex-cards>=0.31.8",  # the release psycopg became core in
+        "scitex-cards[postgres]>=0.20.0",  # the old extras route
+        "scitex-cards[all]>=0.31.6",  # the interim [all] pin
+    ],
+)
+def test_provides_psycopg_accepts_extras_or_a_core_floor(requirement: str) -> None:
+    # Arrange
+    providing = _EXTRAS_PROVIDING_PSYCOPG
+    # Act
+    provided = _provides(requirement, providing, _CORE_SINCE_PSYCOPG)
+    # Assert
+    assert provided, requirement
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "scitex-cards[mcp]>=0.19.0",  # THE OUTAGE: mcp only, no driver
+        "scitex-cards>=0.31.6",  # bare but BELOW core — driverless
+        "scitex-cards>=0.31.7",  # ditto, the release right before
+        "scitex-cards",  # bare and unpinned — resolves to anything
+    ],
+)
+def test_provides_psycopg_rejects_a_driverless_install(requirement: str) -> None:
+    # Arrange
+    providing = _EXTRAS_PROVIDING_PSYCOPG
+    # Act
+    provided = _provides(requirement, providing, _CORE_SINCE_PSYCOPG)
+    # Assert
+    assert not provided, requirement

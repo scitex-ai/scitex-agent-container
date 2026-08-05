@@ -38,10 +38,27 @@ _ABSENT = "ABSENT"
 class NoHealthyAccountError(RuntimeError):
     """Raised when no stored account currently has a usable snapshot.
 
-    The message names every probed account and its state so the
-    operator sees the full picture in one error line — they should
-    ``claude /login`` to one of them and ``sac accounts sync-live``,
-    then restart the agent. Surfaced through ``sac agents start``.
+    ``str(exc)`` is the full diagnosis (every probed account, its state,
+    and the evidence path); :attr:`brief` is the single line the CLI
+    shows by default — what is wrong and the one command that fixes it.
+    An expected, deliberately-raised condition: callers render
+    :attr:`brief` instead of letting it escape as a traceback.
+    """
+
+    def __init__(self, message: str, *, brief: str = "") -> None:
+        super().__init__(message)
+        self.brief = brief or message
+
+
+class BlindQuotaCacheError(NoHealthyAccountError):
+    """The pick is unconfirmable because the quota cache told us NOTHING.
+
+    A SUBCLASS so callers can discriminate by TYPE rather than by matching
+    the message text. The distinction is operational, not cosmetic: this is
+    the ONE failure in the family that a caller can often repair by itself —
+    refreshing the cache and re-picking — whereas every other
+    ``NoHealthyAccountError`` (no fresh candidate, all accounts expired)
+    needs a human to log in. Callers that retry must retry ONLY this one.
     """
 
 

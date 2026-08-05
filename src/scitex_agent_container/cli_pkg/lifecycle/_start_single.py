@@ -20,6 +20,9 @@ from typing import Callable
 
 import click
 
+from ..._lifecycle._start_decline import DECLINE_SENTINEL
+from ..._creds import NoHealthyAccountError
+from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
@@ -263,6 +266,12 @@ def run_single_targets(
                         "with --yes to launch.",
                         style="yellow",
                     )
+                    # STARTUP_FAILED must never be minted for a decline (the
+                    # host listen's only signal on this subprocess is its
+                    # exit code, and this branch's sys.exit(1) below is
+                    # indistinguishable from a real launch failure without
+                    # this sentinel — see write_marker's guard).
+                    click.echo(DECLINE_SENTINEL, err=True)
                     refused = True
                     continue
 
@@ -292,7 +301,7 @@ def run_single_targets(
                         is_remote=is_remote,
                         tail_lines=tail_lines,
                     )
-                agent_start(
+                _outcome = agent_start(
                     config_path,
                     no_preflight=no_preflight,
                     force=force,
@@ -304,6 +313,7 @@ def run_single_targets(
                     assume_yes=effective_yes,
                     strict_drift=strict_drift,
                 )
+                _noop = outcome_kind(_outcome) == KIND_ALREADY_RUNNING
                 if as_json:
                     from ..._state.port_allocator import get_port as _get_port
                     from ..._state.state_db import now_iso as _now_iso
@@ -317,7 +327,11 @@ def run_single_targets(
                     _emit(
                         {
                             "name": config.name,
-                            "status": "dry_run_ok" if dry_run else "started",
+                            "status": (
+                                "dry_run_ok"
+                                if dry_run
+                                else ("already_running" if _noop else "started")
+                            ),
                             "host": host,
                             "host_workdir": host_workdir,
                             "container_workdir": container_workdir,
@@ -330,13 +344,19 @@ def run_single_targets(
                     if foreground and not dry_run:
                         # Agent stdout often lacks a trailing newline.
                         click.echo("")
-                    verb = (
-                        "dry-run prepared the workspace for" if dry_run else "started"
-                    )
-                    tail = "" if dry_run else f" [dim]({location})[/dim]"
-                    system_msg(
-                        f"[bold]{config.name}[/bold] {verb}{tail}", style="green"
-                    )
+                    # The no-op branch already reported the state and the
+                    # options; a SUCC "started" after it would assert an
+                    # action that did not happen.
+                    if not _noop:
+                        verb = (
+                            "dry-run prepared the workspace for"
+                            if dry_run
+                            else "started"
+                        )
+                        tail = "" if dry_run else f" [dim]({location})[/dim]"
+                        system_msg(
+                            f"[bold]{config.name}[/bold] {verb}{tail}", style="green"
+                        )
                     if (
                         not dry_run
                         and not config.claude.auto_accept
@@ -368,7 +388,24 @@ def run_single_targets(
                         }
                     )
                 else:
-                    console.print(f"[red]{exc}[/red]")
+                    system_msg(str(exc), style="red")
+            except NoHealthyAccountError as exc:
+                # An EXPECTED, deliberately-raised refusal — not a crash. One
+                # line naming the agent, the fault, and the fixing command;
+                # the full per-account diagnosis stays one -v away.
+                any_error = True
+                if as_json:
+                    _emit_json(
+                        {
+                            "name": raw_target,
+                            "status": "no-healthy-account",
+                            "error": str(exc),
+                            "dry_run": dry_run,
+                        }
+                    )
+                else:
+                    system_msg(f"{raw_target}: {exc.brief}", style="red")
+                    system_msg(str(exc), style="dim")
             except Exception as exc:
                 any_error = True
                 if as_json:
@@ -381,7 +418,7 @@ def run_single_targets(
                         }
                     )
                 else:
-                    console.print(f"[red]Error ({raw_target}): {exc}[/red]")
+                    system_msg(f"{raw_target}: {exc}", style="red")
                     traceback.print_exc()
     # Non-zero on a real failure OR on a shown-and-refused interactive launch
     # (nothing started without --yes) — so scripts/operators see it clearly.

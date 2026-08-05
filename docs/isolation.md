@@ -91,7 +91,7 @@ realistic answer; pure isolation kills the agent.
 
 **Realistic trade-off (current sac default).** sac currently uses the
 host netns — agents reach `sac listen` on `127.0.0.1` (A2A) and any
-MCP server on host loopback (orochi push channels, etc.) over the same
+MCP server on host loopback (hub push channels, etc.) over the same
 path. Naive `--network=bridge` would isolate host services but break
 both A2A and MCP-over-loopback. The realistic path forward is
 `--network=bridge` + binding `sac listen` on the bridge interface +
@@ -209,6 +209,29 @@ Semantics:
   path are what mark an overlay as an IMAGE; sac never `mkdir`s one.)
 - K/KB units are explicitly rejected — apptainer's
   `overlay create --size` takes integer MB.
+
+**Overlay masking of base-baked packages (incident 2026-07-22).**
+The overlay upper WINS over the base SIF. A `pip install` of a package the
+base already bakes into `/opt/venv-sac` lands in
+`<overlay>/upper/opt/venv-sac/.../site-packages/` and silently shadows the
+base copy for that one agent — across every later base rebuild and restart.
+The fleet carried stale `scitex_cards` fossils (0.16.0–0.17.4) this way:
+restarts onto a new base were no-ops, and the all-clear had to be retracted.
+
+The operational rule (also printed by `sac agents check-health` when the
+detector fires): **NEVER pip-install a base-baked package into a running
+agent's overlay.** A hotfix either force-reinstalls the EXACT base version,
+or recreates the overlay (stop the agent, remove
+`<overlay>/upper/opt/venv-sac`, restart onto the base).
+
+Detection (per-agent in `sac agents check-health`, fleet-wide via
+`scitex_agent_container._maintenance.sweep_agent_overlays`): a
+`*.dist-info` in the upper's site-packages for a package the base provides
+= MASKED. A bare package directory holding only `__pycache__` (zero
+top-level `*.py`, no dist-info) is a benign overlayfs copy-up, NOT masking
+— counting those once produced a false fleet scare. The verdict is
+three-valued: an overlay we cannot read (missing root, unreadable upper,
+unreadable base package set) reports UNKNOWN, never clean.
 
 ### 8. `--writable` vs `--writable-tmpfs` confusion
 
@@ -356,8 +379,8 @@ explicit error.
 | Network: shared host netns for MCP/A2A interop (known limitation) | ⏳ planned migration to `--network=bridge` + bridge-IF bind + `sac-host` hostname injection — keeps MCP URLs transport-stable while closing host-loopback exposure |
 | `sac image overlay {init,reset,prune}` for ephemeral-overlay workflows | ⏳ planned |
 
-The AgentCard field is the differentiator: external verifiers (orochi,
-Clew) can attest "this agent ran at isolation level X" by reading the
+The AgentCard field is the differentiator: external verifiers (fleet
+hubs, Clew) can attest "this agent ran at isolation level X" by reading the
 card alone, no SIF introspection required. The shape published at
 `/.well-known/agent-card.json` (D3 + D5):
 

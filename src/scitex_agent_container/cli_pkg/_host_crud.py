@@ -40,7 +40,7 @@ def _refuse_if_generated(path: Path) -> None:
     next `--check` shouts about and the next push refuses to overwrite.
     The fix belongs on the MASTER, so the refusal names it and stops
     BEFORE any bytes change. Reads through symlinks (``read_text``
-    follows them), so orochi-shared layouts are guarded too.
+    follows them), so shared-config layouts are guarded too.
     """
     from .._hostsync import is_generated
 
@@ -89,9 +89,9 @@ def _load_round_trip(path: Path):
 def _resolve_write_target(path: Path) -> Path:
     """Return the effective write target for ``path``.
 
-    When ``path`` is a symlink (typical in orochi-shared layouts where
-    ``~/.scitex/agent-container/config.yaml`` is symlinked to
-    ``~/.scitex/orochi/shared/config.yaml``), we follow the link and
+    When ``path`` is a symlink (typical in shared-config layouts where
+    ``~/.scitex/agent-container/config.yaml`` is symlinked to a
+    fleet-shared ``config.yaml``), we follow the link and
     write through to the resolved target. Opening the symlink path
     directly for writing would replace the symlink with a regular file
     and silently break the shared-config relationship — see PA-foundation

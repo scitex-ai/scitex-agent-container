@@ -206,7 +206,7 @@ class TestLabelsDescription:
 # 5 — existing shared agent YAMLs: valid ones still pass, invalid ones fail
 # ---------------------------------------------------------------------------
 
-_SHARED_AGENTS_DIR = Path.home() / ".scitex" / "orochi" / "shared" / "agents"
+_SHARED_AGENTS_DIR = Path.home() / ".scitex" / "fleet" / "shared" / "agents"
 
 # Mirror of validator's _KNOWN_SPEC_KEYS — re-imported instead of
 # duplicated so additions in _validation.py don't silently misclassify

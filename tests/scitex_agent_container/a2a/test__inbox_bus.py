@@ -1,5 +1,5 @@
 """Tests for the per-agent inbox pub/sub broker (commit 1 of the
-A2A push channel slice). See docs/sac-and-orochi.md.
+A2A push channel slice). See docs/adr/0008-sac-node-transport-boundary.md.
 """
 
 from __future__ import annotations

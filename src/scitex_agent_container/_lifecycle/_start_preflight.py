@@ -7,7 +7,6 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-import sys
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -148,8 +147,10 @@ def _rotate_among_credentials_files(
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
     """
     from .._account.quota_cache import quota_cache_present
+    from .._account.quota_cache_refresh import refresh_quota_cache
     from .._creds import (
         POLICY_BURN,
+        BlindQuotaCacheError,
         pick_healthy_account,
         resolve_7d_policy,
     )
@@ -194,24 +195,50 @@ def _rotate_among_credentials_files(
     else:
         preferred = None
 
-    picked = pick_healthy_account(
-        preferred,
-        candidates=slugs,
-        store_dir=store_dir,
-        now=now,
-        usage_5h=usage_5h,
-        usage_7d=usage_7d,
-        quota_cache_path=quota_cache_path,
-        spread_key=config.name,
-        policy=policy,
-        # Boot gate (constitution §2): on a host that HAS a quota cache, a
-        # fully-BLIND pick means the populator failed (empty/stale cache) —
-        # fail loud rather than land the agent on an unverifiable, possibly
-        # quota-exhausted account (2026-07-20 incident). A host with NO cache
-        # (fresh install / CI / quota-cron-less Spartan node) still degrades
-        # to freshness-only and boots — the documented never-block invariant.
-        require_quota_evidence=quota_cache_present(quota_cache_path),
-    )
+    def _pick() -> str:
+        return pick_healthy_account(
+            preferred,
+            candidates=slugs,
+            store_dir=store_dir,
+            now=now,
+            usage_5h=usage_5h,
+            usage_7d=usage_7d,
+            quota_cache_path=quota_cache_path,
+            spread_key=config.name,
+            policy=policy,
+            # Boot gate (constitution §2): on a host that HAS a quota cache, a
+            # fully-BLIND pick means the populator failed (empty/stale cache) —
+            # fail loud rather than land the agent on an unverifiable, possibly
+            # quota-exhausted account (2026-07-20 incident). A host with NO
+            # cache (fresh install / CI / quota-cron-less Spartan node) still
+            # degrades to freshness-only and boots — the never-block invariant.
+            require_quota_evidence=quota_cache_present(quota_cache_path),
+        )
+
+    try:
+        picked = _pick()
+    except BlindQuotaCacheError as blind:
+        # AUTO-REFRESH, THEN RE-PICK — operator 2026-08-02:
+        # 「refresh quota cache 勝手にやれよ」. A blind cache told the operator
+        # to run `sac accounts refresh-quota-cache` and retry BY HAND, and it
+        # blocked three of five agents in ONE `sac-restart` invocation. sac
+        # knows the remedy, and the remedy is idempotent and takes seconds —
+        # so sac runs it instead of printing it.
+        #
+        # ONE attempt, and ONLY for BlindQuotaCacheError. Refusing to boot on
+        # unverifiable quota (constitution: unknown is not 'OK') is unchanged:
+        # if the cache is STILL blind after a successful refresh, the refusal
+        # stands and its remedy text is then CORRECT rather than misleading —
+        # "the populator is not the problem; look for another writer".
+        logger.info(
+            "quota cache blind for %r — refreshing it once before refusing",
+            config.name,
+        )
+        try:
+            refresh_quota_cache(cache_path=quota_cache_path)
+        except Exception:  # stx-allow: fallback (reason: the refresh is a BEST-EFFORT self-repair. If it fails, the operator must see the ORIGINAL blind refusal and its remedy — not a refresh traceback that hides why the boot was refused.)
+            raise blind from None
+        picked = _pick()
 
     picked_path = next(p for slug, p in entries if slug == picked)
     claude.credentials_file = str(picked_path)
@@ -254,23 +281,27 @@ def _rotate_among_credentials_files(
         "accounts, load-balanced per agent by 7d headroom; time-to-reset "
         "counts only within the 2h expiring horizon"
     )
-    # Readable, structured notice (operator 2026-07-19: the run-on one-liner
-    # was "めっちゃ汚い"): a headline naming the agent + picked account, then
-    # indented fields, then the per-candidate ranking inputs as a ONE-ENTRY-
-    # PER-LINE list. Still emitted through ``stream`` (log_stream or stderr)
-    # so ``preflight_from_config_path``'s throwaway-StringIO suppression of the
-    # dry-probe rotation notice keeps working — do NOT route this to a logger.
     ranking = "\n".join(f"      {part}" for part in pick_audit_parts(records))
-    stream = log_stream if log_stream is not None else sys.stderr
-    print(
-        f"[sac:creds] agent '{config.name}' selected credentials pool account "
-        f"{picked!r} ({len(slugs)} candidates listed)\n"
+    headline = (
+        f"{config.name}: account {picked} "
+        f"(5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))})"
+    )
+    detail = (
         f"  file:          {picked_path}\n"
         f"  policy={policy} — {rationale}\n"
-        f"  picked usage:  5h={fmt(u5.get(picked))} 7d={fmt(u7.get(picked))}\n"
-        f"  ranking inputs:\n{ranking}",
-        file=stream,
+        f"  ranking inputs:\n{ranking}"
     )
+    # A caller-supplied stream means the notice is being CAPTURED to be
+    # discarded (preflight_from_config_path's dry-probe suppression), so it
+    # must not reach a logger at all.
+    if log_stream is not None:
+        print(f"[sac:creds] {headline}\n{detail}", file=log_stream)
+        return
+
+    from ..cli_pkg._helpers._console import system_msg
+
+    system_msg(headline, style="info")
+    system_msg(detail, style="dim")
 
 
 def _rotate_to_healthy_account(
@@ -358,14 +389,17 @@ def _rotate_to_healthy_account(
         return  # pinned is healthy — no rotation, no log line.
 
     config.claude.account = picked
-    stream = log_stream if log_stream is not None else sys.stderr
-    print(
-        f"[sac:creds] agent '{config.name}' rotated account: "
-        f"{pinned!r} -> {picked!r} (policy={policy}; pinned account stale, "
-        f"5h-blocked, or otherwise outranked; rotated to the "
-        f"policy-preferred fresh account)",
-        file=stream,
+    notice = (
+        f"{config.name}: rotated account {pinned} -> {picked} "
+        f"(policy={policy}; {pinned} stale, 5h-blocked, or outranked)"
     )
+    if log_stream is not None:
+        print(f"[sac:creds] {notice}", file=log_stream)
+        return
+
+    from ..cli_pkg._helpers._console import system_msg
+
+    system_msg(notice, style="info")
 
 
 def _check_spec_source_drift_at_launch(

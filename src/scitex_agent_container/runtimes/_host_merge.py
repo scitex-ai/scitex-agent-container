@@ -123,12 +123,10 @@ _HOOK_EVENT_SUBDIRS: frozenset[str] = frozenset(
     }
 )
 
-# Roles that, ABSENT an explicit ``metadata.labels.group``, qualify an agent as
-# a full developer (host deep-merge ON). Decoupled from the ACL ``lineage.group``
-# knob on purpose — this gate is about WHO the agent is, not its comms ACL.
-_DEVELOPER_ROLES: frozenset[str] = frozenset(
-    {"project-maintainer", "maintainer", "dev-agent", "contributor"}
-)
+# _DEVELOPER_ROLES moved to ._developer_gate alongside the gate that reads it
+# (re-exported below). Kept in ONE place deliberately: a second copy here would
+# be dead the moment the import lands, and a dead copy of a policy constant is
+# exactly what drifts apart and then gets cited as authoritative.
 
 # Env override for the host ``~/.claude`` root (test seam — NO monkeypatch).
 # When set, host files are read from ``$SAC_HOST_CLAUDE_DIR`` instead of the
@@ -158,29 +156,11 @@ class HostMergeDriftError(RuntimeError):
 # --- gate ------------------------------------------------------------------
 
 
-def is_full_developer(config: AgentConfig) -> bool:
-    """True iff ``config`` is a FULL-DEVELOPER agent (host deep-merge ON).
-
-    Gate (decoupled from the ACL PR):
-
-      * ``metadata.labels.group == "developer"``                         → True
-      * ``metadata.labels.group == "solitary"``                          → False
-        (a capsule/solitary agent gets the ``_shared``/per-agent layers ONLY)
-      * group UNSET and ``metadata.labels.role`` in :data:`_DEVELOPER_ROLES`
-                                                                          → True
-      * otherwise                                                        → False
-
-    ``metadata.labels`` lands on :attr:`AgentConfig.labels` at load time.
-    """
-    labels = getattr(config, "labels", None) or {}
-    group = str(labels.get("group", "") or "").strip().lower()
-    if group == "developer":
-        return True
-    if group:  # any explicit non-developer group (e.g. "solitary") → no merge
-        return False
-    role = str(labels.get("role", "") or "").strip().lower()
-    return role in _DEVELOPER_ROLES
-
+# The gate now lives in ._developer_gate — it is a POLICY decision with two
+# consumers (this module and cli_pkg._explain's provenance section), not merge
+# mechanics, and this module was over the line cap. Re-exported here so every
+# existing `from ._host_merge import is_full_developer` keeps resolving.
+from ._developer_gate import _DEVELOPER_ROLES, is_full_developer  # noqa: E402,F401
 
 # --- host root resolution --------------------------------------------------
 

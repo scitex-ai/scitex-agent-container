@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer for sac.accounts-refresh
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=2h
+Persistent=true
+Unit=sac.accounts-refresh.service
+
+[Install]
+WantedBy=timers.target

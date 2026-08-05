@@ -64,12 +64,24 @@ class StartupPromptInjectorMixin:
         restart (e.g. a burst of stale ``/compact``); clearing before the first
         paste stops the boot submit from committing that stale stack.
         """
+        from ._boot_recovery import with_missed_input_recovery
         from .tui_session import session_name_for
 
         log = logging.getLogger(__name__)
-        prompts = list(getattr(config, "startup_prompts", []) or [])
-        if not prompts:
+        spec_prompts = list(getattr(config, "startup_prompts", []) or [])
+        # An EXPLICITLY empty startup_prompts stays a no-op. That guard predates
+        # me and I did not establish why it exists, so I am not overwriting it
+        # to deliver the read-back: an agent deliberately left silent (a
+        # non-interactive runner, say) must not suddenly receive a boot turn.
+        # Coverage is effectively complete anyway -- 83 of the fleet's specs
+        # carry a boot kick -- so the narrow reading costs nothing real.
+        if not spec_prompts:
             return
+        # A restart is the one moment an agent is GUARANTEED to have a gap: the
+        # process being replaced is the one that held the queue. So the
+        # read-back instruction LEADS -- see _boot_recovery for the lost
+        # operator message this rule was written from.
+        prompts = with_missed_input_recovery(spec_prompts)
         name = session_name_for(config)
         # Short pre-clear drain: the boot-drain already spent the long window;
         # this only needs to CONFIRM no cancelable modal remains before the

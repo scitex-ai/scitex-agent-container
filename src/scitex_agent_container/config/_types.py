@@ -18,7 +18,7 @@ from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
 
 @dataclass
 class ContainerSpec:
-    runtime: str = "none"  # none | docker | apptainer
+    runtime: str = "none"  # none | apptainer (see VALID_CONTAINER_RUNTIMES)
     image: str = "scitex-agent-container:latest"
     volumes: list[str] = field(default_factory=list)
     network: str = "host"
@@ -320,7 +320,7 @@ class ListenPort:
     The container NEVER binds these — it just validates the shape and
     echoes them in ``status --json`` so orchestrators can see what
     sidecars are expected to exist. ``owner`` is free-form (e.g.
-    ``"orochi"``) to identify the plugin that actually listens.
+    ``"fleet-hub"``) to identify the plugin that actually listens.
     """
 
     port: int = 0

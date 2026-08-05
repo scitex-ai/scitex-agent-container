@@ -304,17 +304,21 @@ def assert_successor_auth_usable(config: AgentConfig, *, opener: Any = None) -> 
     usable, kind, reason = probe_credential_usable(credential_path, opener=opener)
     if usable:
         if kind is not None:
-            logger.warning(
-                "restart auth pre-flight for %r: successor credential for "
-                "account %r could not be positively verified (%s: %s) — "
-                "PROCEEDING (fail-open; this is NOT a token rejection, so it "
-                "must not block a healthy restart). If the successor boots "
-                "dead, run `sac accounts refresh %s` and retry.",
+            # NOT A WARNING — this is the HEALTHY path. ``usable`` is True and
+            # the pre-flight is proceeding; the commonest ``kind`` is
+            # ``skipped-token-fresh``, which is the DESIGNED behaviour (probing
+            # would consume the single-use refresh_token and rotate the shared
+            # token for every other agent on the account). Logging correct
+            # operation at WARNING put five alarming lines above every single
+            # restart and trained the reader to skim past the level that is
+            # supposed to mean "look at this". The abort below is where a real
+            # auth failure is reported, and it raises rather than logs.
+            logger.info(
+                "restart auth pre-flight for %r: account %r not probed "
+                "(%s) — proceeding",
                 name,
                 label,
                 kind,
-                reason,
-                label,
             )
         return
 

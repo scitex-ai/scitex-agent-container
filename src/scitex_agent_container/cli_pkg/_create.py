@@ -154,6 +154,53 @@ class _CreateCommand(click.Command):
                 )
 
 
+def _accounts_root() -> Path:
+    """The anthropic account store, mirroring ``_account.codex_account``."""
+    return Path.home() / ".scitex" / "agent-container" / "accounts" / "anthropic"
+
+
+def _discover_credentials_pool_block() -> tuple[str, bool]:
+    """Render ``credentials_files:`` as the FULL pool, and say if it is empty.
+
+    Returns ``(yaml_block, found_any)``.
+
+    EMIT EVERY ACCOUNT THE STORE HAS. ``credentials_files`` is the list the
+    selector rotates over by headroom, so the scaffold's job is simply not to
+    under-report what is available.
+
+    A ONE-ENTRY LIST IS PERFECTLY VALID and is the correct output for anyone
+    with a single account — which is most people. Rotation not happening with
+    one account is arithmetic, not a defect, and an earlier version of this
+    docstring wrongly called that shape "quiet failure". What actually bit us
+    on 2026-08-05 was not the COUNT: an agent was pinned to a single account
+    that happened to be at 7d 100%, so auth succeeded and every model call
+    died. A three-account pool with all three exhausted fails identically. The
+    hazard is the HEADROOM, not the length.
+
+    ``[]`` is the genuinely broken shape: no credential bind is emitted at all,
+    so the agent falls through to the host default and parks on the interactive
+    OAuth login screen while ``agent_start`` reports success.
+
+    So a non-empty check is NOT a sufficient gate, and neither is this
+    discovery — only invoking a model distinguishes "authenticated" from
+    "able to do work" (card sac-preflight-must-invoke-a-model-20260805).
+
+    Discovery is deliberately conservative. It globs the CREATING user's
+    account store; run inside a container ``Path.home()`` is the container
+    home, which holds no accounts, so we return ``found_any=False`` and let
+    the caller say so LOUDLY rather than emitting a plausible-looking path
+    that resolves to nothing on the target host.
+    """
+    root = _accounts_root()
+    try:
+        creds = sorted(p for p in root.glob("*/.credentials.json") if p.is_file())
+    except OSError:
+        creds = []
+    if not creds:
+        return "[]", False
+    return "".join(f"\n      - {p}" for p in creds), True
+
+
 @click.command(name="create", cls=_CreateCommand)
 @click.argument("name", type=str)
 @click.option(
@@ -310,8 +357,31 @@ def create(
     # Surplus kwargs for tokens a template lacks are harmless.
     from ..config._host import resolve_hostname
 
+    creds_block, creds_found = _discover_credentials_pool_block()
+    if not creds_found:
+        # LOUD, because the spec we are about to write CANNOT BOOT. A scaffold
+        # whose output parks on the OAuth login screen is the defect; it cost
+        # the operator two manual logins on 2026-08-05 before anyone traced it
+        # back to here.
+        click.echo(
+            click.style(
+                f"WARNING: no account credentials found under "
+                f"{_accounts_root()} — writing `credentials_files: []`.\n"
+                f"         {name!r} WILL NOT BOOT with this spec: with no "
+                f"credential bind it falls through to the host default and "
+                f"parks on the interactive OAuth login screen.\n"
+                f"         Populate spec.claude.credentials_files with EVERY "
+                f"healthy account before starting it.",
+                fg="red",
+            ),
+            err=True,
+        )
+
     body = template.format(
-        name=name, home=str(Path.home()), host=resolve_hostname()
+        name=name,
+        home=str(Path.home()),
+        host=resolve_hostname(),
+        credentials_files=creds_block,
     )
 
     agent_dir.mkdir(parents=True, exist_ok=True)

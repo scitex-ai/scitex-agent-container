@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.24.12"
+version = "0.24.25"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -204,7 +204,7 @@ scitex-agent-container = "scitex_agent_container"
 scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
 
 [project.entry-points."scitex_dev.jobs"]
-scitex-agent-container = "scitex_agent_container._jobs_plugin:provide_jobs"
+scitex-agent-container = "scitex_agent_container._jobs._jobs_plugin:provide_jobs"
 
 # C10 — sac's consumer on scitex-todo's shared card-event bus. When
 # scitex-todo's board emits a card-event (commented / created /
@@ -342,6 +342,18 @@ exclude = [".git"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/scitex_agent_container/cron/post-merge-pull.sh" = "scitex_agent_container/cron/post-merge-pull.sh"
+# systemd --user unit TEMPLATES. Shipped in the wheel for the same reason the
+# cron script is: they must be reachable from an INSTALLED sac, on a host where
+# the repo is not on disk. They are templates with @PLACEHOLDER@s and nothing
+# installs them — deploying a unit is an operator action (the listen unit
+# brokers host_exec/spawn/restart for every agent). Tracked at all because
+# until 2026-07-30 these units existed ONLY as untracked live files under
+# ~/.config/systemd/user/ while brokering the whole fleet: no history, no
+# review, and gone if the host were rebuilt.
+"src/scitex_agent_container/systemd/sac-listen.service.template" = "scitex_agent_container/systemd/sac-listen.service.template"
+"src/scitex_agent_container/systemd/sac.accounts-refresh.service.template" = "scitex_agent_container/systemd/sac.accounts-refresh.service.template"
+"src/scitex_agent_container/systemd/sac.accounts-refresh.timer.template" = "scitex_agent_container/systemd/sac.accounts-refresh.timer.template"
+"src/scitex_agent_container/systemd/README.md" = "scitex_agent_container/systemd/README.md"
 # Bundle pyproject.toml + README.md inside the wheel so the
 # source-bundled SIF build (cli_pkg/_image_source_build.py) can
 # reconstruct a pip-installable source tree from the INSTALLED

@@ -766,7 +766,7 @@ def test_db_tick_via_cli_emits_no_human_readable_output_on_success(
 
 
 # ---------------------------------------------------------------------------
-# F-CS14 — export / import (cross-host orochi pull)
+# F-CS14 — export / import (cross-host aggregator pull)
 # ---------------------------------------------------------------------------
 
 

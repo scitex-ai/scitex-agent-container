@@ -18,7 +18,6 @@ from pathlib import Path
 #   from .._network.Y  ->  from ..._network.Y
 # Within-subpackage siblings (tmux, multiplexer, pane_capture,
 # prompts) still use the local `from .X` form.
-from ..._network.host_identity import is_local_host
 from ...config import AgentConfig
 from ...runtimes.a2a_sidecar import start_sidecar as _a2a_start_sidecar
 from ...runtimes.a2a_sidecar import stop_sidecar as _a2a_stop_sidecar
@@ -32,13 +31,8 @@ from ...runtimes.settings_json import (
     setup_settings_json,
 )
 
-# BLOCKER (Day-1 salvage): ``src_files`` and ``ssh_remote`` modules
-# were removed from runtimes/ by later commits (6fb9131 replaced
-# src_files with dot_claude/; d21e999 deleted ssh_remote/RemoteSpec).
-# These imports therefore raise ModuleNotFoundError at runtime. They
-# are kept in their original shape so the orchestrator's call-sites
-# remain visible to Day-2 work, which will either reintroduce the
-# legacy modules under _runners/_tmux/ or refactor the call-sites.
+# ``src_files`` was replaced by dot_claude/ in 6fb9131; this import still
+# raises ModuleNotFoundError, so the whole module is unimportable.
 from .src_files import (  # noqa: F401  # MISSING — Day-2 blocker
     cleanup_src_claude_md,
     cleanup_src_env,
@@ -47,37 +41,12 @@ from .src_files import (  # noqa: F401  # MISSING — Day-2 blocker
     deploy_src_env,
     deploy_src_mcp_json,
 )
-from .ssh_remote import (
-    SSHPreflightError as SSHPreflightError,  # noqa: F401  # MISSING — Day-2 blocker
-)
-from .ssh_remote import SSHRemote  # MISSING — Day-2 blocker
 
 logger = logging.getLogger(__name__)
-
-# Backward-compatible alias: existing code imports _SSHRemote from this module
-_SSHRemote = SSHRemote
 
 # Backward-compatible aliases for extracted functions
 _setup_claude_md = setup_claude_md
 _cleanup_claude_md = cleanup_claude_md
-
-
-def _should_dispatch_remote(config: AgentConfig) -> bool:
-    """True iff the config is remote AND the remote host is not ourselves.
-
-    If ``remote.host`` matches a local identity (hostname / alias / env /
-    YAML / fleet default), log an INFO message and return False so callers
-    fall back to the local in-process runtime instead of self-SSH.
-    """
-    if not config.remote.is_remote:
-        return False
-    if is_local_host(config.remote.host):
-        logger.info(
-            "remote.host=%r matches local identity -> falling back to LocalRuntime",
-            config.remote.host,
-        )
-        return False
-    return True
 
 
 def _encode_workdir_for_claude_projects(workdir: str) -> str:
@@ -267,25 +236,22 @@ class ClaudeCodeRuntime(RuntimeBase):
             )
         for key, value in config.env.items():
             lines.append(f'export {key}="{_resolve(str(value))}"')
-        # Always export the canonical fleet hostname so downstream consumers
-        # (orochi MCP sidecar, telegram, etc.) register with "mba" rather
-        # than the OS-reported FQDN ("Yusukes-MacBook-Air.local"). The
-        # sidecar already prefers SCITEX_OROCHI_MACHINE over Node's
-        # hostname() — this just hands it the canonical value.
-        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving SCITEX_OROCHI_MACHINE unset is safe because the sidecar falls back to its own hostname() call)
+        # Always export the canonical fleet hostname so downstream
+        # consumers register with "mba" rather than the OS-reported FQDN
+        # ("Yusukes-MacBook-Air.local").
+        # stx-allow: fallback (reason: resolve_hostname() can fail on misconfiguration; leaving the hostname unset is safe because consumers fall back to their own hostname() call)
         try:
             from ..config._host import resolve_hostname
 
             _canonical = resolve_hostname()
             if _canonical:
-                lines.append(f'export SCITEX_OROCHI_MACHINE="{_canonical}"')
                 lines.append(f'export SCITEX_AGENT_CONTAINER_HOSTNAME="{_canonical}"')
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             # resolve_hostname falls through to socket.gethostname() short
             # form on misconfig; if even that raises, leave the env unset
-            # and let the sidecar fall back to its own hostname() call.
+            # and let consumers fall back to their own hostname() call.
             pass
-        # Cross-package env vars (e.g., orochi-side channel/auth config)
+        # Cross-package env vars (e.g., a fleet hub's channel/auth config)
         # are caller's concern: declare them in the agent YAML's env
         # block and they are exported above with the rest of config.env.
         return "\n".join(lines)
@@ -584,35 +550,16 @@ class ClaudeCodeRuntime(RuntimeBase):
     ) -> bool:
         """Start a Claude Code agent.
 
-        ``force`` is passed through to SSHRemote.start so the remote
-        ``scitex-agent-container start`` call receives ``--force`` and
-        stops any existing instance before relaunching.
-
         ``dry_run``: materialize the workspace (CLAUDE.md, .mcp.json,
         .env, settings.json) but do NOT launch the multiplexer or the
         Claude Code process. Returns True when prep succeeds.
         """
-        if _should_dispatch_remote(config):
-            return SSHRemote.start(config, no_preflight=no_preflight, force=force)
-
-        if config.container.runtime != "none":
-            from .apptainer import ApptainerRuntime
-            from .docker import DockerRuntime
-            from .podman import PodmanRuntime
-
-            if config.container.runtime == "docker":
-                return DockerRuntime().start(config)
-            elif config.container.runtime == "podman":
-                return PodmanRuntime().start(config)
-            elif config.container.runtime == "apptainer":
-                return ApptainerRuntime().start(config)
-
         cmd = self._build_command(config)
         env_exports = self._build_env_exports(config)
         workdir = config.expanded_workdir
 
         # Source workspace .env before explicit env so path-based token vars
-        # (SCITEX_OROCHI_A2A_TOKEN_PATH, etc.) reach the agent process.
+        # (a fleet hub's token-path vars, etc.) reach the agent process.
         # config.env exports follow and take precedence over .env values.
         env_file = Path(workdir) / ".env"
         env_source = (
@@ -675,21 +622,6 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def stop(self, config: AgentConfig) -> bool:
         """Stop a Claude Code agent."""
-        if _should_dispatch_remote(config):
-            return SSHRemote.stop(config)
-
-        if config.container.runtime != "none":
-            from .apptainer import ApptainerRuntime
-            from .docker import DockerRuntime
-            from .podman import PodmanRuntime
-
-            if config.container.runtime == "docker":
-                return DockerRuntime().stop(config)
-            elif config.container.runtime == "podman":
-                return PodmanRuntime().stop(config)
-            elif config.container.runtime == "apptainer":
-                return ApptainerRuntime().stop(config)
-
         # stx-allow: fallback (reason: a2a sidecar cleanup is best-effort; a stop failure must not prevent the agent session from being torn down)
         try:
             _a2a_stop_sidecar(config)
@@ -710,40 +642,8 @@ class ClaudeCodeRuntime(RuntimeBase):
 
     def is_running(self, config: AgentConfig) -> bool:
         """Check if the Claude Code agent is running."""
-        if _should_dispatch_remote(config):
-            return SSHRemote.is_running(config)
-
-        if config.container.runtime == "docker":
-            from .docker import DockerRuntime
-
-            return DockerRuntime().is_running(config)
-        elif config.container.runtime == "podman":
-            from .podman import PodmanRuntime
-
-            return PodmanRuntime().is_running(config)
-        elif config.container.runtime == "apptainer":
-            from .apptainer import ApptainerRuntime
-
-            return ApptainerRuntime().is_running(config)
-
         return self._get_mux(config).exists(config.screen_name)
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Get logs from the Claude Code agent."""
-        if _should_dispatch_remote(config):
-            return SSHRemote.logs(config, lines)
-
-        if config.container.runtime == "docker":
-            from .docker import DockerRuntime
-
-            return DockerRuntime().logs(config, lines)
-        elif config.container.runtime == "podman":
-            from .podman import PodmanRuntime
-
-            return PodmanRuntime().logs(config, lines)
-        elif config.container.runtime == "apptainer":
-            from .apptainer import ApptainerRuntime
-
-            return ApptainerRuntime().logs(config, lines)
-
         return self._get_mux(config).capture_logs(config.screen_name, lines)

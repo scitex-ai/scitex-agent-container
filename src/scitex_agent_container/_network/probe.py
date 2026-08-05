@@ -2,7 +2,7 @@
 
 Filed under ``todo#457`` (bug(infra/wsl): ywata-note-win loses WSL
 internet connectivity periodically). When the WSL side drops
-connectivity to the Orochi hub, the fleet's external view becomes
+connectivity to the fleet hub, the fleet's external view becomes
 ``Connection timed out during banner exchange`` — the WSL agents
 look dead from outside but the Windows host itself is usually fine.
 

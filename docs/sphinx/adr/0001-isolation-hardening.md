@@ -107,7 +107,7 @@ Instead of `isolation_level: hardened | relaxed | custom`:
 ```
 
 `level: hardened` is the human shorthand for "all booleans true +
-`preflight_allowed: []`". External verifiers (Clew, orochi attestation)
+`preflight_allowed: []`". External verifiers (Clew, external attestation)
 read the structured booleans to attest specific properties.
 
 **Rationale.** A flat `custom` label hides what's custom about it.

@@ -69,7 +69,7 @@ DEFAULT_BIND = "127.0.0.1:7878"
     default=False,
     help=(
         "Permit binding to non-loopback addresses. Required for "
-        "tailscale/tunnel binds; orochi-side mesh is the supported transport."
+        "tailscale/tunnel binds; an external mesh is the supported transport."
     ),
 )
 @click.option(

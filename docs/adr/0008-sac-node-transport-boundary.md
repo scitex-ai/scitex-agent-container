@@ -1,9 +1,8 @@
 # ADR-0008: sac is the node-transport substrate; comms model is nodes / lineage / groups / ACL (2026-05-20)
 
 **Status:** Accepted.
-**Supersedes:** the implicit "sac = one host; orochi = across hosts"
-framing in [`docs/sac-and-orochi.md`](../sac-and-orochi.md) (pre-2026-05-20
-revision).
+**Supersedes:** the implicit "sac = one host; an external hub = across
+hosts" framing carried by the package docs before 2026-05-20.
 **Related:** [`ADR-0004`](0004-a2a-v1-compliance.md) (A2A v1 compliance —
 §D12 defines the push primitive this ADR builds on).
 **Handoff:** `GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md`.
@@ -12,12 +11,12 @@ revision).
 
 Two boundaries had drifted out of alignment with reality:
 
-1. **The "one host vs many hosts" split between sac and orochi was
-   wrong.** sac already places and drives agents on remote hosts via
+1. **The "one host vs many hosts" split between sac and the fleet hub
+   was wrong.** sac already places and drives agents on remote hosts via
    `spec.host` (and SSH hops in `spec.remote.hops`); the moment it does
    so, it must also carry their messages — there is no "off-host" sac
-   could hand the messaging off to without orochi installed. Yet the
-   doc said "sac = one host, orochi = across hosts."
+   could hand the messaging off to without a hub installed. Yet the
+   doc said "sac = one host, the hub = across hosts."
 
 2. **sac had no model for non-sac-managed nodes on its comms graph.**
    A plain `claude` CLI session — the official CLI is stable and good
@@ -37,15 +36,15 @@ forward messages).
 ### D1. sac is the node-transport substrate
 
 sac carries messages **any node ↔ any node**, on **any host** (same
-host, LAN, SSH-alias, tunnel), **ACL-gated**, self-sufficient with zero
-orochi installed.
+host, LAN, SSH-alias, tunnel), **ACL-gated**, self-sufficient with no
+fleet hub installed.
 
-Orochi is the human/product layer: web chatops UI, dashboard, topology
+The hub is the human/product layer: web chatops UI, dashboard, topology
 viz, presence, channels/DMs/threads as features, *and* the connectivity
 mesh (cloudflared / autossh) that **establishes** host reachability.
-Orochi is a *consumer* of sac transport, not the transport.
+The hub is a *consumer* of sac transport, not the transport.
 
-sac assumes reachability. Orochi establishes it.
+sac assumes reachability. The hub establishes it.
 
 ### D2. Two kinds of node, distinguished only by who owns the lifecycle
 
@@ -127,13 +126,13 @@ for sac-managed-agent SDK plumbing.
 No new channel protocol. The MCP server emits
 `notifications/claude/channel`; Claude Code renders it as a
 `<channel source="..." ...>` block in the running session. This is
-the same protocol orochi's `server:orochi-push` uses — sac just adds
+the same protocol a fleet hub's own push channel uses — sac just adds
 the `server:sac` flavour pointing at the local listen.
 
 ## What this rules out
 
-* No UI, dashboard, or topology viz in sac — orochi's.
-* No orochi awareness in sac. The boundary stays one-way (orochi → sac).
+* No UI, dashboard, or topology viz in sac — the hub's.
+* No hub awareness in sac. The boundary stays one-way (hub → sac).
 * No new channel protocol — use Claude Code channels as-is.
 * No "lead" / "head" / "worker" / role concept in sac — only nodes,
   lineage, groups, ACL.
@@ -149,7 +148,7 @@ The model is shaped to accept **transport adapters** in a phase-2:
   phone / email; replies in that app). Backed by
   `claude-code-telegrammer` + `scitex-notification` today; phase 2
   registers them behind the same `node = identity + inbox + ACL` model.
-* A possible HTTP webhook adapter or the orochi UI as an adapter.
+* A possible HTTP webhook adapter or a hub UI as an adapter.
 
 The phase-1 work (WI-1..6 from the handoff) builds exactly one adapter:
 the Claude-session adapter (`sac mcp channel`, MCP
@@ -175,8 +174,6 @@ Claude-session adapter is the only transport.
 
 ## References
 
-* `docs/sac-and-orochi.md` — narrative version of this ADR for the
-  package docs.
 * `GITIGNORED/HANDOFF_AGENT_COMMS_2026-05-19.md` — the handoff that
   motivated this work; superseded once WI-1..6 land.
 * [Claude Code channels reference](https://code.claude.com/docs/en/channels-reference)

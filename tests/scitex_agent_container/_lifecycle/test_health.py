@@ -226,14 +226,76 @@ def test_check_sdk_alive_unhealthy_flag_when_runtime_stopped() -> None:
     assert ok is False
 
 
-def test_check_sdk_alive_unhealthy_message_when_runtime_stopped() -> None:
+def test_check_sdk_alive_unhealthy_message_names_the_runtime_kind() -> None:
+    """REPLACES an assertion on the literal "SDK runner not running".
+
+    That text was emitted for EVERY runtime, including ``tui`` agents that
+    have no SDK runner at all, so it sent readers hunting a process that
+    never existed. The message now names the runtime actually consulted.
+    """
     # Arrange
     cfg = _make_cfg()
     runtime = FakeRuntime(running=False)
     # Act
     _ok, msg = health_mod._check_sdk_alive(cfg, runtime=runtime)
     # Assert
-    assert "SDK runner not running" in msg
+    assert "tui runtime reports its process not running" in msg
+
+
+def test_check_sdk_alive_unhealthy_message_names_an_explicit_sdk_runtime() -> None:
+    # Arrange
+    cfg = _make_cfg()
+    cfg.runtime = "claude-agent-sdk"
+    runtime = FakeRuntime(running=False)
+    # Act
+    _ok, msg = health_mod._check_sdk_alive(cfg, runtime=runtime)
+    # Assert
+    assert "claude-agent-sdk runtime reports its process not running" in msg
+
+
+def test_default_runtime_resolution_uses_the_canonical_selector() -> None:
+    """The regression this PR exists for.
+
+    ``_check_sdk_alive`` used to hardcode ``ClaudeSessionRuntime``, whose
+    ``is_running`` returns False for any spec the container-runtime lookup
+    cannot resolve — and ``spec.runtime`` DEFAULTS to ``tui``. So the default
+    configuration reported unhealthy while alive, and ``sac agents health``
+    exits non-zero on that bool. Pinning the resolution to the canonical
+    selector is what fixes it, so the test pins the resolution, not a message.
+    """
+    # Arrange
+    from scitex_agent_container._lifecycle._runtime_select import _get_runtime
+    from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+
+    cfg = _make_cfg()
+    # Act
+    resolved = _get_runtime(cfg)
+    # Assert
+    assert isinstance(resolved, TuiSessionRuntime)
+
+
+def test_default_runtime_is_tui_so_the_default_path_is_the_tui_path() -> None:
+    """Pins WHY the bug was fleet-wide rather than opt-in."""
+    # Arrange
+    cfg = _make_cfg()
+    # Act
+    runtime_kind = getattr(cfg, "runtime", "")
+    # Assert
+    assert runtime_kind == "tui"
+
+
+def test_explicit_sdk_runtime_still_resolves_to_the_sdk_runtime() -> None:
+    """The fix must not change behaviour for specs that really are SDK."""
+    # Arrange
+    from scitex_agent_container._lifecycle._runtime_select import _get_runtime
+    from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+
+    cfg = _make_cfg()
+    cfg.runtime = "claude-agent-sdk"
+    # Act
+    resolved = _get_runtime(cfg)
+    # Assert
+    assert isinstance(resolved, ClaudeSessionRuntime)
 
 
 # ---------------------------------------------------------------------------

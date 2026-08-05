@@ -59,7 +59,7 @@ StandardError=journal
 Restart=always
 # Brief debounce: avoid hot-looping a launch that always fails (e.g.
 # uvicorn import error after a bad pip upgrade). 5s is the same
-# value scitex-orochi's persistent-services use.
+# value the fleet's other persistent services use.
 RestartSec=5s
 # Honour SIGTERM-then-SIGKILL with a generous window so any in-flight
 # SSE responses have a chance to flush.

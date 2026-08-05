@@ -32,6 +32,41 @@ __all__ = [
 ]
 
 
+#: Bound on the ``claude --resume`` fallback, in seconds. Generous by
+#: design — a real turn can take minutes, and the point of the bound is
+#: that one EXISTS, not that it is tight. Override per-host with
+#: ``SAC_LISTEN_RESUME_TIMEOUT_S``.
+DEFAULT_RESUME_TIMEOUT_S = 300.0
+
+
+def _resume_timeout_s() -> float:
+    """Read the re-launch bound from the environment, or fail loud.
+
+    A malformed value RAISES rather than quietly reverting to the
+    default: an operator who writes ``SAC_LISTEN_RESUME_TIMEOUT_S=30s``
+    has stated an intent, and silently ignoring it would restore the
+    very "looks configured, isn't" shape this whole change is about.
+    """
+    raw = os.environ.get("SAC_LISTEN_RESUME_TIMEOUT_S")
+    if raw is None or raw == "":
+        return DEFAULT_RESUME_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"SAC_LISTEN_RESUME_TIMEOUT_S={raw!r} is not a number of seconds. "
+            f"Set it to a bare float (e.g. '300') or unset it to use the "
+            f"default {DEFAULT_RESUME_TIMEOUT_S:g}s."
+        ) from None
+    if value <= 0:
+        raise ValueError(
+            f"SAC_LISTEN_RESUME_TIMEOUT_S={raw!r} must be > 0. A zero or "
+            f"negative bound would kill every re-launch instantly. Unset it "
+            f"to use the default {DEFAULT_RESUME_TIMEOUT_S:g}s."
+        )
+    return value
+
+
 def _find_claude_binary() -> str:
     """Same resolver as send_cmds — bundled SDK copy first, then PATH."""
     bundled = (
@@ -169,14 +204,63 @@ async def agent_send(request: Request) -> Response:
         )
 
     # Buffered branch (default): run to completion, return one JSON blob.
-    proc = await asyncio.to_thread(
-        subprocess.run,
-        argv,
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    #
+    # BOUNDED ON PURPOSE. This ran with no timeout at all, so a claude
+    # invocation that never returned held the request open forever while
+    # every caller absorbed the wait privately and then blamed its own
+    # 30s client deadline on a `sac listen` outage. An unbounded wait on
+    # a subprocess is not patience, it is a hang with no upper bound and
+    # no signal — the daemon looked healthy the whole time because, on
+    # every other route, it was.
+    try:
+        timeout_s = _resume_timeout_s()
+    except ValueError as exc:
+        # Misconfiguration, not a transport fault — say so, and say which
+        # variable, rather than dying as a bodyless ASGI 500.
+        return JSONResponse(
+            {"name": name, "kind": "bad_config", "error": str(exc)},
+            status_code=500,
+        )
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # subprocess.run kills the child before raising, so we are not
+        # leaking a claude process here.
+        return JSONResponse(
+            {
+                "name": name,
+                "session_id": sid,
+                "kind": "resume_timeout",
+                "timeout_s": timeout_s,
+                "error": (
+                    f"the `claude --resume` re-launch for {name!r} did not "
+                    f"finish within {timeout_s:g}s and was killed. The agent "
+                    f"itself is untouched — this bounds the RE-LAUNCH, not "
+                    f"the agent."
+                ),
+                "hint": (
+                    f"Raise the bound with SAC_LISTEN_RESUME_TIMEOUT_S if "
+                    f"long turns are expected here. If {name!r} is actually "
+                    f"running, prefer its live rail instead of a re-launch: "
+                    f"`sac a2a send {name} ...`."
+                ),
+                "stdout_tail": (exc.stdout or "")[-2_000:]
+                if isinstance(exc.stdout, str)
+                else "",
+                "stderr_tail": (exc.stderr or "")[-2_000:]
+                if isinstance(exc.stderr, str)
+                else "",
+            },
+            status_code=504,
+        )
     return JSONResponse(
         {
             "name": name,

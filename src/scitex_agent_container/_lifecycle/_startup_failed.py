@@ -66,6 +66,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._start_decline import start_was_declined
+
 # Schema version. Bump when the shape changes; readers should
 # downgrade gracefully on a higher value.
 SCHEMA_VERSION = 1
@@ -80,6 +82,10 @@ _TAIL_BYTES_LIMIT = 8 * 1024  # 8 KiB
 # style sentinel files — easy to grep, hard to mistake for runtime
 # state the agent owns.
 MARKER_FILENAME = "STARTUP_FAILED"
+
+# Retracted markers are renamed aside, never deleted — this is the ONLY
+# copy of the marker's stderr_tail (runtime/events/*.jsonl carries none).
+RETRACTED_MARKER_FILENAME = "STARTUP_FAILED.retracted"
 
 
 def _now_iso() -> str:
@@ -182,7 +188,7 @@ def write_marker(
     stdout: str,
     stderr: str,
     kind_override: str | None = None,
-) -> Path:
+) -> Path | None:
     """Write ``runtime_dir/STARTUP_FAILED`` and return its path.
 
     ``runtime_dir`` is the agent's per-instance state directory
@@ -207,10 +213,17 @@ def write_marker(
             that already know the cause (e.g. an explicit ``sdk_init``
             failure that doesn't look like an apptainer FATAL).
 
+    Returns ``None``, writing nothing, when ``stdout``/``stderr`` carry
+    the shared decline sentinel (``_start_decline.DECLINE_SENTINEL``) —
+    an operator's `--yes`-less refusal is not a failure and must never
+    be recorded as one.
+
     The write is best-effort atomic: written to a ``.tmp`` sibling
     and ``os.replace``-d into place so partial markers aren't visible
     to ``DELETE`` / ``STATUS`` readers.
     """
+    if start_was_declined(stdout, stderr):
+        return None
     runtime_dir.mkdir(parents=True, exist_ok=True)
     if kind_override is not None:
         kind = kind_override
@@ -266,11 +279,36 @@ def is_stillborn(runtime_dir: Path) -> bool:
     return (runtime_dir / MARKER_FILENAME).is_file()
 
 
+def retract_marker(runtime_dir: Path) -> bool:
+    """Rename ``STARTUP_FAILED`` aside to ``STARTUP_FAILED.retracted``.
+
+    Never deletes: the marker is the only copy of its ``stderr_tail``.
+    Returns ``False`` (no-op, no exception) when there is nothing to
+    retract — a clean runtime_dir, or one already retracted.
+    """
+    target = runtime_dir / MARKER_FILENAME
+    try:
+        target.rename(runtime_dir / RETRACTED_MARKER_FILENAME)
+    except OSError:
+        return False
+    return True
+
+
+def retract_marker_for(name: str) -> bool:
+    """``retract_marker`` keyed by agent name (resolves its state dir)."""
+    from .._runners._session_state import state_dir_for
+
+    return retract_marker(state_dir_for(name))
+
+
 __all__ = [
     "MARKER_FILENAME",
+    "RETRACTED_MARKER_FILENAME",
     "SCHEMA_VERSION",
     "classify_apptainer_failure",
     "is_stillborn",
     "read_marker",
+    "retract_marker",
+    "retract_marker_for",
     "write_marker",
 ]

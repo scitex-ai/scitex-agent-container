@@ -166,7 +166,7 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
          over stale globals.
       1. ``~/.scitex/agent-container/agents/`` — sac's own install root.
       2. ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` — plugin port for external
-         orchestrators (e.g. orochi) to extend the search scope without
+         orchestrators to extend the search scope without
          sac knowing about them. Colon-separated; each path treated as
          a base dir holding ``<name>/spec.yaml`` agents.
 
@@ -176,8 +176,8 @@ def _search_dirs() -> Tuple[Path, List[Path], List[Path]]:
     e.g. in their startup script:
 
         export SCITEX_AGENT_CONTAINER_YAML_DIRS=\\
-            ~/.scitex/orochi/$(hostname -s)/agents:\\
-            ~/.scitex/orochi/shared/agents
+            ~/.scitex/<orchestrator>/$(hostname -s)/agents:\\
+            ~/.scitex/<orchestrator>/shared/agents
 
     Scope (``$SAC_AGENT_SCOPE``): ``user`` searches only the fleet,
     ``project`` only the project-local. When unset, BOTH are returned and

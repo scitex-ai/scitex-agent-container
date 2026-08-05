@@ -68,10 +68,10 @@ ignores the `x-*` namespace; sac-aware clients walk into it.
 
 1. sac-specific data MUST live under `x-scitex-agent-container.*`.
    Never at the top level of the card. Never under a different
-   namespace (e.g. `x-orochi`, `x-sac`, `vendor` — all forbidden).
-2. `x-orochi` is owned by the orochi fleet hub, not by sac. A
-   standalone `sac a2a serve` agent intentionally carries no
-   `x-orochi` block.
+   namespace (e.g. `x-sac`, `vendor` — all forbidden).
+2. Another project's extension namespace is owned by that project, not
+   by sac. A standalone `sac a2a serve` agent intentionally carries no
+   foreign extension block.
 3. `validate_card_v1` strips the `x-scitex-agent-container` key (and
    any other `x-*` key) before proto validation. New fields therefore
    only need to be valid JSON; they don't need a proto schema. This is
@@ -106,7 +106,7 @@ The `isolation` block (see ADR-0001) carries:
 | `binds_count` | int | Total apptainer `--bind` entries. |
 | `binds_writable_count` | int | Number of binds NOT carrying `:ro`. |
 
-External attestation surfaces (Clew, orochi) read these booleans to
+External attestation surfaces (Clew, fleet hubs) read these booleans to
 prove isolation properties without re-parsing the YAML.
 
 ### Per-agent `capabilities.extensions[]` entries
@@ -205,7 +205,7 @@ to the new ones.
 | AgentCard shape update (supportedInterfaces, drop top-level url, streaming=true) | `a2a/_card.py` | ⏳ this PR |
 | Card consumer updates (sac mcp channel SSE URL, sidecar references) | `_mcp/channel.py`, `runtimes/_apptainer_runtime.py`, `_runners/...` | ⏳ this PR |
 | Tests updated to new paths + shape | `tests/.../a2a/*`, `tests/.../runtimes/*` | ⏳ this PR |
-| docs (`isolation.md`, `sac-and-orochi.md`, `spec-reference.md`) | docs | ⏳ this PR |
+| docs (`isolation.md`, `spec-reference.md`) | docs | ⏳ this PR |
 | A2A TCK as CI gate | `.github/workflows/a2a-tck.yml` | ⏳ follow-up |
 | JWS-signed AgentCard | `a2a/_card.py` + new dep | ⏳ follow-up (ADR-0005) |
 

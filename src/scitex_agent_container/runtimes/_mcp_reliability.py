@@ -58,7 +58,7 @@ CRITICAL_MCP_SERVERS: tuple[str, ...] = (
 # (the same dark-tool-MCPs failure the aggregator is meant to close). 120 s
 # gives cold starts wide margin while still bounding a genuinely dead server.
 # Revert toward 30 s once the SIF bakes the matplotlib font cache and the
-# hung-import peers (types/resource/orochi) are fixed — both drop the
+# hung-import peers (types/resource/fleet-hub) are fixed — both drop the
 # aggregator cold start to a few seconds.
 MCP_STARTUP_TIMEOUT_MS: str = "120000"
 

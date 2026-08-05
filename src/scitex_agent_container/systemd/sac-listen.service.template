@@ -1,0 +1,76 @@
+[Unit]
+Description=sac listen — host-level HTTP/JSON control plane for sac agents
+Documentation=https://github.com/ywatanabe1989/scitex-agent-container
+# Loopback-only by default; the network stack is enough, no internet route
+# required.
+After=network.target
+# DECOUPLED from any agent/lead lifecycle ON PURPOSE. sac listen is FLEET
+# INFRASTRUCTURE (the a2a + registry control plane). Retiring, restarting or
+# crashing any individual agent — or the lead — must NEVER take it down, so
+# there is deliberately NO After=/Requires=/BindsTo=/PartOf= against any
+# agent/lead/scope unit. Incident 2026-06-26: the listen died mid-session with
+# nothing restarting it and the whole fleet lost a2a comms silently.
+#
+# Rate-limit the restart loop so a permanently-broken launch (e.g. an
+# ImportError after a bad upgrade) cannot spin forever. Past 5 restarts in 60s
+# systemd gives up and enters `failed`; the companion sac-listen-health.timer
+# then alarms LOUDLY and runs `systemctl reset-failed && restart`, so a
+# transient burst self-heals while a genuine hard-down stays visible. These two
+# keys belong in [Unit] in modern systemd.
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# ==========================================================================
+# ExecStart MUST be an ABSOLUTE path, and it MUST point at the CURRENT venv.
+#
+# Absolute, because systemd --user inherits the user's default PATH but never
+# sources ~/.bashrc or ~/.bash_profile, so a venv-rooted `sac` is not on PATH
+# here. (Measured: bare `sac` is NOT FOUND under a minimal PATH.)
+#
+# CURRENT, because of a second effect that is easy to miss and was live on
+# ywata-note-win on 2026-07-30. The daemon was pinned at an OLD venv and so ran
+# sac 0.21.22 (a 2026-07-17 wheel) while the release was 0.24.20 — thirteen
+# releases behind — and the supervisor faithfully re-armed the old code on every
+# restart. Worse, the staleness PROPAGATES: `_sac_binary.sac_binary()` resolves
+# a child `sac` by falling back to the executable NEXT TO ``sys.executable``
+# (deliberate, for venv coherence), so a stale daemon hands its own stale
+# binary to every agent it spawns or restarts. One wrong path here becomes a
+# fleet-wide version regression that no agent could see in any version string
+# it reads about itself.
+#
+# Consequence for whoever edits this: repointing ExecStart fixes BOTH halves at
+# once — the daemon's own code, and the binary it hands children. Verify with
+# the RUNNING PROCESS, never the unit file:
+#   pgrep -f 'sac listen'
+#   tr '\0' ' ' < /proc/<pid>/cmdline      # which interpreter + which sac
+#   <that venv>/bin/python -c "import importlib.metadata as m; \
+#       print(m.version('scitex-agent-container'))"
+# A unit file that pins a stale interpreter is a config that is correct about
+# what it SAYS and wrong about what it RUNS.
+# ==========================================================================
+ExecStart=@SAC_BIN@ listen
+# Single tail point for both streams: `journalctl --user -u sac-listen`. The
+# pre-flight diagnostics from listen_cmds.py (token file / pidfile / health URL)
+# land here, so the boot trace is visible with no extra config.
+StandardOutput=journal
+StandardError=journal
+# Colon-separated list of secret .src files to source. Host-specific; fill in
+# per host. Intentionally NOT committed with real paths — see __init__.py.
+Environment=SAC_SECRETS_ENVRC=@SAC_SECRETS_ENVRC@
+
+# Restart=always, NOT on-failure. Incident 2026-06-26: a listen that exits 0 for
+# ANY reason (a clean uvicorn shutdown from an unexpected SIGTERM, a bug
+# returning 0 on a fatal path, an operator `kill` turned into a graceful exit)
+# must STILL come back. on-failure does not cover a 0-exit, which is exactly how
+# the fleet lost a2a comms silently. The flock-backed single-instance guard
+# prevents a double-bind; the kernel releases the flock on every dirty exit.
+Restart=always
+RestartSec=5s
+# Generous stop window so in-flight SSE responses can flush.
+TimeoutStopSec=20s
+LimitNOFILE=8192
+
+[Install]
+WantedBy=default.target

@@ -37,6 +37,31 @@ Only the curated + raw flag region is checked. The inner command
 (``bash -c "<preflight>\nexec …"`` or the flat relaxed inner argv) sits
 AFTER the SIF and is the container's business, not apptainer's flag
 parser — so it is excluded.
+
+Naming the culprit
+------------------
+The first version of this message ended with a single unconditional
+sentence: "Fix the spec.apptainer.raw_args ordering." That is the right
+remedy for the common case and the WRONG one for two others — sac's own
+assembly can in principle emit the bad pair, and the message never said
+WHICH agent's spec to open. On 2026-07-23 an operator hit the ``--env
+--env`` form on ``scitex-cards-{chat,gui,mobile}`` (an orphan ``--env``
+left behind when a ``KEY=VALUE`` line was deleted), read the message,
+opened the similarly-named ``scitex-cards`` spec — which was clean — and
+concluded the guard was lying. It was not; it just never named the file.
+
+So the message now reports PROVENANCE as a tri-state, computed from the
+``raw_args`` the caller passes in:
+
+* ``raw_args`` malformed          → the SPEC is at fault; the offending
+  ``raw_args`` index is named.
+* ``raw_args`` present and clean  → the spec is EXONERATED in the text
+  and the reader is told sac's assembly introduced it.
+* ``raw_args`` not supplied       → provenance is stated as UNKNOWN
+  rather than guessed.
+
+The offending flag-region index and a window of neighbouring tokens are
+always printed, so the reader sees the actual argv instead of a rule.
 """
 
 from __future__ import annotations
@@ -71,39 +96,105 @@ class ApptainerArgvError(ValueError):
     """
 
 
-def validate_flag_argv(argv: list[str]) -> None:
+def find_missing_value(tokens: list[str]) -> tuple[int, str, str | None] | None:
+    """First ``(index, flag, swallowed)`` where a value-taking flag has no value.
+
+    ``swallowed`` is the token apptainer would consume as the value, or
+    ``None`` when the flag is last. Returns ``None`` for a well-formed
+    list. Pairs are skipped whole so a value that legitimately starts
+    with ``--`` is not itself re-checked.
+    """
+    i = 0
+    n = len(tokens)
+    while i < n:
+        token = tokens[i]
+        if token in VALUE_TAKING_FLAGS:
+            nxt = tokens[i + 1] if i + 1 < n else None
+            if nxt is None or nxt.startswith("--"):
+                return (i, token, nxt)
+            i += 2
+            continue
+        i += 1
+    return None
+
+
+def validate_flag_argv(
+    argv: list[str],
+    *,
+    raw_args: list[str] | None = None,
+    agent: str | None = None,
+) -> None:
     """Fail loud if a value-taking apptainer flag is missing its value.
 
     Inspects only the flag region between ``apptainer exec`` and the SIF
     path (first positional that is not consumed as a flag value). Raises
-    :class:`ApptainerArgvError` describing the offending flag + the token
-    that would be wrongly swallowed.
+    :class:`ApptainerArgvError` describing the offending flag, the token
+    that would be wrongly swallowed, its index + neighbours, and where the
+    malformation came from.
+
+    ``raw_args`` is ``spec.apptainer.raw_args``. Supplying it is what lets
+    the message ATTRIBUTE the fault instead of always blaming the spec;
+    omitting it yields an explicit "provenance unknown" rather than a
+    guess. ``agent`` names the agent in the message so the reader opens
+    the right spec.
 
     A no-op for a well-formed argv.
     """
-    flag_region = _flag_region(argv)
-    i = 0
-    n = len(flag_region)
-    while i < n:
-        token = flag_region[i]
-        if token in VALUE_TAKING_FLAGS:
-            nxt = flag_region[i + 1] if i + 1 < n else None
-            if nxt is None or nxt.startswith("--"):
-                swallowed = nxt if nxt is not None else "<end-of-flags / the SIF>"
-                raise ApptainerArgvError(
-                    f"apptainer flag {token!r} is missing its required value: "
-                    f"the next token is {swallowed!r}. apptainer would swallow "
-                    f"that token as {token}'s value and, if it is a flag like "
-                    "'--fakeroot', create a stray relative file (e.g. "
-                    "'--fakeroot') in the launch cwd / project root. Fix the "
-                    "spec.apptainer.raw_args ordering so every value-taking "
-                    "flag is immediately followed by its value."
-                )
-            # Skip the value so a value that legitimately starts with
-            # '--' (rare, but possible) isn't itself re-checked.
-            i += 2
-            continue
-        i += 1
+    found = find_missing_value(_flag_region(argv))
+    if found is None:
+        return
+    raise ApptainerArgvError(
+        _render_error(_flag_region(argv), found, raw_args=raw_args, agent=agent)
+    )
+
+
+def _render_error(
+    region: list[str],
+    found: tuple[int, str, str | None],
+    *,
+    raw_args: list[str] | None,
+    agent: str | None,
+) -> str:
+    index, flag, nxt = found
+    swallowed = nxt if nxt is not None else "<end-of-flags / the SIF>"
+    window = region[max(0, index - 3) : index + 4]
+    who = f" for agent {agent!r}" if agent else ""
+    return (
+        f"apptainer flag {flag!r} is missing its required value: the next "
+        f"token is {swallowed!r}. apptainer would swallow that token as "
+        f"{flag}'s value and, if it is a flag like '--fakeroot', create a "
+        "stray relative file (e.g. '--fakeroot') in the launch cwd / project "
+        f"root.\n  at flag-region index {index}; surrounding tokens: {window}\n"
+        f"  {_provenance(raw_args, who)}"
+    )
+
+
+def _provenance(raw_args: list[str] | None, who: str) -> str:
+    if raw_args is None:
+        return (
+            "CAUSE UNKNOWN: spec.apptainer.raw_args was not supplied to this "
+            "check, so it cannot say whether the spec or sac's own argv "
+            "assembly introduced the pair. Check the spec's raw_args first "
+            "for a value-taking flag with no value, then sac's assembly."
+        )
+    tokens = [str(a) for a in raw_args]
+    raw_found = find_missing_value(tokens)
+    if raw_found is None:
+        return (
+            f"CAUSE: NOT the spec — spec.apptainer.raw_args{who} is "
+            f"well-formed ({len(tokens)} tokens checked), so editing it "
+            "cannot fix this. The pair was introduced while sac ASSEMBLED "
+            "the argv; this is a sac bug. Report it with the token window "
+            "above."
+        )
+    raw_index, raw_flag, raw_next = raw_found
+    return (
+        f"CAUSE: spec.apptainer.raw_args{who} is itself malformed at index "
+        f"{raw_index}: {raw_flag!r} is followed by {raw_next!r}. Give that "
+        "flag its value, or delete the orphan flag — an orphan is exactly "
+        "what deleting the VALUE line of an `--env KEY=VALUE` pair leaves "
+        "behind. Run `sac agents find <agent>` for the spec path."
+    )
 
 
 def _flag_region(argv: list[str]) -> list[str]:
@@ -148,4 +239,9 @@ def _flag_region(argv: list[str]) -> list[str]:
     return region
 
 
-__all__ = ["ApptainerArgvError", "VALUE_TAKING_FLAGS", "validate_flag_argv"]
+__all__ = [
+    "ApptainerArgvError",
+    "VALUE_TAKING_FLAGS",
+    "find_missing_value",
+    "validate_flag_argv",
+]

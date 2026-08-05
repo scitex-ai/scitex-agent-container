@@ -310,7 +310,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     screen_name = screen_raw.get("name", name)
 
     # Auto-derive env: user values override auto-derived.
-    # Only sac's own namespace is injected. External consumers (orochi etc.)
+    # Only sac's own namespace is injected. External consumers
     # declare their own env vars explicitly in agent YAML's ``spec.env`` if
     # they want them set.
     auto_env: dict[str, str] = {

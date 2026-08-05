@@ -172,6 +172,27 @@ def split_around_generated_section(text: str, source_name: str) -> tuple[str, st
     return text[:start], text[end:]
 
 
+def extract_generated_body(text: str) -> str:
+    """Return the content INSIDE the sac generated section, or ``""``.
+
+    The companion to :func:`split_around_generated_section`, which returns what
+    SURROUNDS the section and discards what is in it. The two-pass to_home
+    overlay needs the inside: the per-agent layer composes ONTO the baseline
+    layer's body, and without reading that body the baseline is dropped.
+
+    Returns ``""`` when the text has no complete section — an absent section is
+    an empty body to compose onto, which is exactly the first-layer case.
+    """
+    start = text.find(START_MARKER_PREFIX)
+    end = text.find(END_MARKER)
+    if start == -1 or end == -1 or end < start:
+        return ""
+    body_start = text.find("\n", start)
+    if body_start == -1 or body_start > end:
+        return ""
+    return text[body_start + 1 : end].strip()
+
+
 def extract_user_tail(workspace_path: Path) -> str:
     """Return content past the End marker in an existing workspace file.
 
@@ -265,6 +286,7 @@ def interpolate_metadata(text: str, config: AgentConfig) -> str:
 __all__ = [
     "END_MARKER",
     "START_MARKER_PREFIX",
+    "extract_generated_body",
     "extract_user_tail",
     "interpolate_env",
     "interpolate_metadata",

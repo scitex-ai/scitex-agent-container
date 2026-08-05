@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         is_live_status,
         print_agent_list,
         print_agent_list_json,
+        probe_local_detail,
     )
     from ._completion import agent_name_complete  # noqa: F401
     from ._console import console, system_msg  # noqa: F401
@@ -57,6 +58,7 @@ _LAZY_ATTR_SOURCES = {
     "_discover_defined_agents": "._agent_list",
     "_extract_damaged_fields": "._agent_list",
     "_probe_local": "._agent_list",
+    "probe_local_detail": "._agent_list",
     "get_agent_list_data": "._agent_list",
     "is_live_status": "._agent_list",
     "print_agent_list": "._agent_list",

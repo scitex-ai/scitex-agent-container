@@ -54,7 +54,7 @@ def test_exact_coordinator_role_wants_continuity(role):
 @pytest.mark.parametrize(
     "role",
     [
-        "worker-telegrammer-orochi",
+        "worker-telegrammer-nas",
         "lead-ywata-note-win",
         "head-ywata-note-win",
         "contributor-figrecipe",

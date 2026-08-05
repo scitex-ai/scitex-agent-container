@@ -207,10 +207,18 @@ From: ./sac-base.sif
         # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
         # this recipe once already. Never raise a floor without checking that
         # the version exists.
-        #   scitex-dev   >=0.29.0 — keystone aggregator (list/install/check-superset)
-        #   scitex-writer>=2.29.0 — texlive provider (ships the soul.sty fix)
-        #   scitex-audio >=0.3.0  — ffmpeg/portaudio provider
-        #   scitex-cv    >=0.2.0  — opencv-python-headless; provider declares []
+        #   scitex-dev    >=0.29.0 — keystone aggregator (list/install/check-superset)
+        #   scitex-writer >=2.29.0 — texlive provider (ships the soul.sty fix)
+        #   scitex-audio  >=0.3.0  — ffmpeg/portaudio provider
+        #   scitex-cv     >=0.2.0  — opencv-python-headless; provider declares []
+        #   scitex-storage>=0.3.0  — structural recipe detector
+        #       (`scitex-storage find-recipe`). Added 2026-07-29: it was in NO
+        #       recipe at all, so paper-scitex-clew's merged post-run cleanup
+        #       (clew PR #212) could not be armed — its purge decision delegates
+        #       to that detector, which did not resolve in sac-scitex.sif. That
+        #       was an ABSENCE, not a propagation failure: no rebake could ever
+        #       have delivered it. Matters most for the Spartan solver container,
+        #       which runs the launcher.
         #
         # scitex-cards — FLOOR (>=0.16.0) + ``-U``, replacing the ==0.16.0 pin
         # (2026-07-17). The two halves do different jobs and BOTH are needed:
@@ -250,7 +258,8 @@ From: ./sac-base.sif
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-storage>=0.3.0"
         # Separate invocation with -U: an exact-version sibling in the same
         # resolve would be a no-op against base's inherited venv (the
         # 2026-07-12 fleet-drift: a floor the inherited version already
@@ -276,8 +285,16 @@ From: ./sac-base.sif
         # have quietly baked a two-month-old tree into every agent image while
         # the release it was standing in for sat published and unused. A pin
         # taken to bridge a gap outlives the gap unless something removes it.
+        # SECURITY floor >=0.19.0 (2026-07-30). This layer builds ON TOP of base
+        # and installs last, so ITS constraint is the effective one in the shipped
+        # image — a floor raised only in apptainer-base.def would be silently
+        # overridden here. Through 0.18.0, `_django/handlers/dm.py` fell back to
+        # `... or _store_of(request)`, so a request without the injected store
+        # attribute read AND WROTE the host store (cross-tenant under a
+        # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
+        # occurrences of that fallback, the copy in the CURRENT image has 1.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards[mcp]>=0.17.2"
+            "scitex-cards>=0.32.0"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -306,7 +323,8 @@ From: ./sac-base.sif
             "scitex-dev>=0.29.0" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
-            "scitex-cv>=0.2.0"
+            "scitex-cv>=0.2.0" \
+            "scitex-storage>=0.3.0"
         # scitex-cards — UNPINNED + ``--upgrade``, mirroring the uv branch
         # above (see it for the operator's 2026-07-17 ruling and why the
         # regression that motivated the pin belongs to the shipping package's
@@ -315,13 +333,39 @@ From: ./sac-base.sif
         # actually moves it past whatever version base baked — without it a
         # satisfied requirement is a no-op and the layer silently freezes on
         # base's build (the 2026-07-12 fleet-drift).
-        # FLOOR RESTORED — mirrors the uv branch above; see it for the full
-        # reason. Short version: 0.17.2 is now a real artifact on PyPI, so the
-        # floor can finally express "the fixed version"; it stays at >=0.17.2
-        # rather than >=0.16.0 because 0.17.0 destroys card databases and a
-        # lower floor lets a resolver reach it again.
+        # SECURITY floor >=0.19.0 — MUST TRACK THE uv BRANCH ABOVE.
+        #
+        # This comment used to say "FLOOR RESTORED — mirrors the uv branch
+        # above" while naming >=0.17.9 against the uv branch's >=0.19.0. It had
+        # stopped mirroring anything: PR #836 raised the uv branch and this one,
+        # eleven lines and one `else` away, was missed. The claim of parallelism
+        # outlived the parallelism, which is the more dangerous half — a reader
+        # checking "do both branches agree?" would have been told yes by the
+        # prose.
+        #
+        # Why the miss happened, recorded so the next person greps differently:
+        # #836's search was `rg -n 'scitex-cards' <def> | head -6` and this site
+        # is the SEVENTH match. The floor was raised everywhere the search
+        # looked. There are TWO install sites in this file, one per branch of
+        # `if command -v uv`, and only a whole-file read shows both.
+        #
+        # The exposure is latent rather than live: the build host has uv, so the
+        # branch above is what runs today. But a host without uv would install
+        # >=0.17.9 — i.e. 0.18.0 is permitted — and 0.18.0 carries the
+        # cross-tenant fallback in `_django/handlers/dm.py` where a request
+        # lacking the injected store attribute reads AND WRITES the host store.
+        # A fallback path is exactly where a weakened security floor survives
+        # unnoticed, because nothing exercises it until the day it matters.
+        #
+        # Retains --upgrade for the reason the uv branch documents: without it a
+        # satisfied requirement is a no-op and the layer silently freezes on
+        # base's build (the 2026-07-12 fleet-drift). Stays a SEPARATE invocation
+        # so its resolve cannot reach into the providers' above. The 0.17.0
+        # exclusion the old text argued for is subsumed — 0.17.0 destroys card
+        # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
+        # was guarding against it.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards[mcp]>=0.17.2"
+            "scitex-cards>=0.32.0"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------

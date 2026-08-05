@@ -26,6 +26,7 @@ from urllib import error as urlerror
 
 from scitex_agent_container._lifecycle._listen_probe import (
     HealthProbe,
+    probe_listen_authed,
     probe_listen_health,
     transport_failure_message,
 )
@@ -72,9 +73,7 @@ def _opener_raising(exc: Exception):
 
 
 def _http_error(status: int) -> urlerror.HTTPError:
-    return urlerror.HTTPError(
-        f"{_BASE}/v1/health", status, "nope", {}, io.BytesIO(b"")
-    )
+    return urlerror.HTTPError(f"{_BASE}/v1/health", status, "nope", {}, io.BytesIO(b""))
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +200,18 @@ def test_message_says_daemon_is_up_when_it_answered() -> None:
     assert "the listen daemon is UP and serving" in message
 
 
-def test_message_blames_the_authenticated_route_not_the_daemon() -> None:
-    # Arrange
+def test_message_blames_the_route_not_the_daemon() -> None:
+    # Arrange — this test previously pinned the literal phrase "it is the
+    # AUTHENTICATED route that did not answer". Its INTENT (attribute the
+    # failure to the route, not the daemon) was right, but that wording
+    # encoded the very claim scitex-dev refuted on 2026-08-04: that being
+    # AUTHENTICATED is what distinguishes the hanging route. /v1/host_exec is
+    # authenticated and answers fast, so it is not. Asserting the intent
+    # instead keeps the guard and drops the theory.
     # Act
     message = _message(_SERVING)
     # Assert
-    assert "it is the AUTHENTICATED route that did not answer" in message.replace(
-        "\n", " "
-    )
+    assert "this ONE route did not answer" in message.replace("\n", " ")
 
 
 def test_message_quotes_the_measurement_it_made() -> None:
@@ -216,7 +219,9 @@ def test_message_quotes_the_measurement_it_made() -> None:
     # Act
     message = _message(_SERVING)
     # Assert — the evidence is IN the message, so the operator can check it.
-    assert "answered HTTP 401 in 0.18s" in message
+    # Three decimals: the authenticated probe answers in ~0.005s on the live
+    # daemon, which two decimals rendered as "0.00s".
+    assert "answered HTTP 401 in 0.180s" in message
 
 
 def test_message_never_claims_flapping_when_daemon_answers() -> None:
@@ -249,3 +254,253 @@ def test_message_keeps_the_listen_restart_remedy_when_down() -> None:
     message = _message(_DEAD)
     # Assert
     assert "sac listen restart" in message
+
+
+# ---------------------------------------------------------------------------
+# The message must REPORT what it observed, never NAME a cause it has not
+# established (scitex-dev, 2026-08-04).
+#
+# This message has now carried TWO different wrong explanations. The first
+# ("the host listen broker is unreachable; it may be flapping") was corrected
+# on 2026-07-14 by replacing it with a second one: authenticated routes share a
+# worker pool that /v1/health bypasses, therefore the pool is exhausted,
+# therefore restart the daemon. That is also wrong — /v1/host_exec is
+# AUTHENTICATED and answers in ~2.4s while /agents hangs, measured seconds
+# apart on the same daemon, so a shared-pool exhaustion cannot wedge one and
+# spare the other.
+#
+# Both times the fix was a better-sounding cause rather than removing the
+# speculation, and both times the prescription was `sac listen restart` — a
+# SHARED daemon restart that interrupts every other agent. scitex-dev declined
+# it on those grounds and stayed blocked 11 days; I followed it and lost two
+# remedies to a diagnosis that could not have been right.
+#
+# So the guard is not "do not say 'flapping'" or "do not say 'pool'" — a third
+# wrong story would pass both. It is: the ONE observation this code has is an
+# UNAUTHENTICATED health check, and it cannot single out a cause.
+# ---------------------------------------------------------------------------
+
+
+def test_message_does_not_blame_the_worker_pool() -> None:
+    # Arrange — /v1/host_exec is authenticated AND fast, so pool exhaustion
+    # cannot explain one authed route hanging while another answers.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "worker pool" not in message
+
+
+def test_message_admits_the_cause_is_not_established() -> None:
+    # Arrange — one unauthenticated observation cannot identify a cause.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "NOT ESTABLISHED" in message
+
+
+def test_message_names_the_health_route_as_unauthenticated() -> None:
+    # Arrange — the reader must know WHY the cheap probe proves so little.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "UNAUTHENTICATED" in message
+
+
+def test_message_offers_a_second_authed_route_as_the_next_step() -> None:
+    # Arrange — the discriminator that separates "this handler" from "shared".
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "/v1/host_exec" in message
+
+
+def test_message_warns_a_restart_interrupts_every_agent() -> None:
+    # Arrange — the remedy's COST is what made following it blindly expensive.
+    # Act
+    message = _message(_SERVING)
+    # Assert
+    assert "interrupts EVERY agent" in message
+
+
+# ---------------------------------------------------------------------------
+# THE SECOND READING. scitex-dev asked for this twice: "the observation is
+# cheap (it already probes /v1/health — probing one authenticated route
+# alongside it would have shown this immediately)."
+#
+# Their samples, one daemon, one window:
+#     POST /agents              -> timed out at 30s
+#     POST /agents/<n>/send     -> timed out at 30s, TWICE consecutively
+#     POST /v1/host_exec        -> HTTP 200 in ~2.4s
+#     GET  /v1/health           -> 200 in 0.01s
+# The failures track the /agents PREFIX, not authentication. And the same
+# /agents/<n>/send had SUCCEEDED earlier that night, so the handler degrades
+# rather than being dead — the shape that gets dismissed as a flake and
+# "fixed" by a restart that was never needed.
+#
+# With two readings the message can stop saying "go measure" and say what was
+# measured. These pin each of the four arms.
+# ---------------------------------------------------------------------------
+
+
+def _authed(status: int = 200, serving: bool = True) -> HealthProbe:
+    return HealthProbe(
+        serving=serving,
+        status=status if serving else None,
+        elapsed_s=2.40,
+        error=None if serving else "timed out",
+        url=f"{_BASE}/v1/host_exec/inflight",
+        authenticated=True,
+    )
+
+
+def _message2(probe: HealthProbe, authed: HealthProbe | None) -> str:
+    return transport_failure_message(
+        verb="restart",
+        name="neurovista",
+        base=_BASE,
+        route="POST /agents/neurovista/restart",
+        exc=TimeoutError("timed out"),
+        timeout_s=60.0,
+        probe=probe,
+        authed_probe=authed,
+    )
+
+
+def test_message_calls_the_fault_route_specific_when_authed_answers() -> None:
+    # Arrange — authenticated work IS being served, in the same seconds.
+    #
+    # This asserted on "the fault is specific to" and my own mutation control
+    # caught it: that phrase ALSO appears in the no-second-reading arm, so the
+    # test passed with the authed probe ignored entirely. It could not have
+    # disagreed. "not daemon-wide" is the claim only this arm is entitled to
+    # make, because only this arm measured a daemon serving authed work.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "not daemon-wide" in message
+
+
+def test_message_refuses_a_restart_when_authed_answers() -> None:
+    # Arrange — THE point of the second reading. A per-route fault must not
+    # cost every agent on the box a restart; scitex-dev declined exactly that
+    # remedy in July and was right to.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "Do NOT run `sac listen restart`" in message
+
+
+def test_message_warns_the_route_can_answer_then_degrade() -> None:
+    # Arrange — measured intermittency: the same route succeeded earlier the
+    # same night, so one later success is not proof of a fix.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "does not mean it was fixed" in message
+
+
+def test_message_calls_the_fault_shared_when_authed_also_hangs() -> None:
+    # Arrange — both an authenticated route and this one hung while the public
+    # path answered. NOW a daemon-wide fault is the supported reading.
+    # Act
+    message = _message2(_SERVING, _authed(serving=False))
+    # Assert
+    assert "the fault is SHARED" in message
+
+
+def test_message_recommends_a_restart_when_the_fault_is_shared() -> None:
+    # Arrange — the restart is still reachable; it just has to be earned.
+    # Act
+    message = _message2(_SERVING, _authed(serving=False))
+    # Assert
+    assert "worth its cost" in message
+
+
+def test_message_treats_a_401_on_the_authed_probe_as_no_reading() -> None:
+    # Arrange — a 401 comes from the middleware BEFORE any handler runs, so it
+    # proves the daemon is up and says NOTHING about authenticated work. Taking
+    # it as "authenticated work is fine" would make this probe lie in exactly
+    # the case it was added for.
+    # Act
+    message = _message2(_SERVING, _authed(status=401))
+    # Assert
+    assert "AUTH REJECTION" in message
+
+
+def test_message_refuses_a_restart_on_an_auth_rejection() -> None:
+    # Arrange — an unusable second reading is not evidence of a daemon fault.
+    # Act
+    message = _message2(_SERVING, _authed(status=401))
+    # Assert
+    assert "Do NOT restart the daemon on this" in message
+
+
+def test_message_admits_it_measured_nothing_without_a_token() -> None:
+    # Arrange — no bearer, so no second reading was even attempted.
+    # Act
+    message = _message2(_SERVING, None)
+    # Assert
+    assert "no authenticated route was measured" in message
+
+
+# ---------------------------------------------------------------------------
+# probe_listen_authed — what it actually sends
+# ---------------------------------------------------------------------------
+
+
+def test_authed_probe_returns_none_without_a_token() -> None:
+    # Arrange — an honest "did not measure" beats a 401 the reader will
+    # misread as a measurement.
+    opener, _ = _opener_returning()
+    # Act
+    probe = probe_listen_authed(_BASE, None, opener=opener)
+    # Assert
+    assert probe is None
+
+
+def test_authed_probe_sends_the_bearer() -> None:
+    # Arrange — the whole point is to exercise the path /v1/health cannot.
+    opener, captured = _opener_returning()
+    # Act
+    probe_listen_authed(_BASE, "tok-123", opener=opener)
+    # Assert
+    assert captured["headers"]["authorization"] == "Bearer tok-123"
+
+
+def test_authed_probe_hits_a_route_off_the_agents_prefix() -> None:
+    # Arrange — the observed failures track /agents, so a second reading on
+    # /agents would measure the suspect rather than the control.
+    opener, captured = _opener_returning()
+    # Act
+    probe_listen_authed(_BASE, "tok-123", opener=opener)
+    # Assert
+    assert captured["url"] == f"{_BASE}/v1/host_exec/inflight"
+
+
+def test_authed_probe_never_executes_a_host_command() -> None:
+    # Arrange — POST /v1/host_exec RUNS a command on the host and writes an
+    # audit line. A probe that fires on every transport failure must not do
+    # that, however convenient the route is.
+    opener, captured = _opener_returning()
+    # Act
+    probe_listen_authed(_BASE, "tok-123", opener=opener)
+    # Assert
+    assert captured["method"] == "GET"
+
+
+def test_authed_probe_reads_a_401_as_not_authorized() -> None:
+    # Arrange — serving (an HTTP response arrived) but NOT authorized.
+    opener = _opener_raising(_http_error(401))
+    # Act
+    probe = probe_listen_authed(_BASE, "bad-token", opener=opener)
+    # Assert
+    assert probe.authorized is False
+
+
+def test_authed_probe_reads_a_200_as_authorized() -> None:
+    # Arrange
+    opener, _ = _opener_returning(status=200)
+    # Act
+    probe = probe_listen_authed(_BASE, "tok-123", opener=opener)
+    # Assert
+    assert probe.authorized is True

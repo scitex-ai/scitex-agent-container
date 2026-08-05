@@ -352,7 +352,7 @@ def test_workdir_claude_size_does_not_follow_symlinks(workdir, tmp_path):
 def test_warns_on_file_count_alone(workdir, capsys, env_save_restore):
     # Arrange — tiny bytes (10 × 1 B) but force file-count threshold low
     # enough that the count alone trips the F-CS8 warn. Confirms the warn
-    # now uses BOTH thresholds (the orochi failure was count-driven).
+    # now uses BOTH thresholds (the observed failure was count-driven).
     from scitex_agent_container.runtimes import claude_session as cs
 
     env_save_restore.set("SAC_WORKDIR_CLAUDE_WARN_FILES", "5")
