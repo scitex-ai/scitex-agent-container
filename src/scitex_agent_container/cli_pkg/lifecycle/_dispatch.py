@@ -230,6 +230,7 @@ def _dispatch_remote_start(
     import json as _json
 
     from ..._state.host_config import build_ssh_argv
+    from ..._state._remote_sac_hint import remote_sac_not_found_hint
     from ..._state.host_config import load as _load_host_config
     from ..._state.state_db import record_instance_start
 
@@ -256,6 +257,9 @@ def _dispatch_remote_start(
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{ssh_result.stdout}\n"
             f"stderr:\n{ssh_result.stderr}"
+            + remote_sac_not_found_hint(
+                peer, ssh_result.returncode, ssh_result.stderr, peers_map
+            )
         )
     try:
         peer_state = _json.loads(ssh_result.stdout)
