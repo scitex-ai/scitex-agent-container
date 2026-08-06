@@ -526,7 +526,7 @@ def test_load_config_warns_when_startup_prompt_is_long(
     )
     # Act
     with caplog.at_level(scitex_logging.WARNING):
-        load_config(p)
+        load_config(p, advise=True)
     # Assert
     assert "startup_prompts" in caplog.text
 
@@ -539,6 +539,27 @@ def test_load_config_no_warn_for_short_startup_kick(
         tmp_path,
         "kick",
         {"startup_prompts": ["You restarted — check inbox + todo; report readiness."]},
+    )
+    # Act — advise=True, so this asserts the LENGTH rule, not the gate. Without
+    # it the test would pass even if the warning were deleted outright.
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p, advise=True)
+    # Assert
+    assert "startup_prompts" not in caplog.text
+
+
+def test_load_config_is_silent_about_prompt_length_unless_asked(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # A style advisory must not fire on commands that merely READ specs.
+    # `sac agents list` loads every definition on the host; ungated, this
+    # printed 18 WARN lines above the table on every single invocation, which
+    # is how a reader learns to scroll past warnings — including the ones that
+    # matter. Same long prompt as the test above; the only difference is that
+    # nobody asked a question about spec style.
+    # Arrange
+    p = _v3_yaml(
+        tmp_path, "verbose", {"startup_prompts": ["You are X. " + "rule. " * 120]}
     )
     # Act
     with caplog.at_level(scitex_logging.WARNING):
