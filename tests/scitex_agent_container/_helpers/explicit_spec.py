@@ -56,26 +56,12 @@ def explicitize_yaml(yaml_text: str) -> str:
     body as the authored surface while the dump satisfies the red-start
     validator. Comments are lost (fixture bodies only); placeholder
     tokens inside VALUES survive verbatim.
-
-    Adds ``host: ${HOSTNAME}`` when the doc declares neither ``host`` nor
-    ``hosts`` — the same terseness affordance :func:`explicit_doc` gives the
-    dict path. The two were asymmetric until 2026-08-07 and that asymmetry
-    silently voided tests: ``spec.host`` became REQUIRED on 2026-06-24, so a
-    string-template fixture without it made ``load_config`` RAISE, the caller
-    saw ``cfg is None``, and the code under test quietly took a different
-    branch. Nothing failed — the tests kept reporting, on a path they were not
-    written for. A fixture-migration pass on 2026-07-21 edited the very file
-    holding one of them and still missed it, because a missed fixture and a
-    correct one look identical from the outside.
     """
     import yaml
 
     doc = yaml.safe_load(yaml_text)
     kind = doc.get("kind", "Agent")
-    spec = deep_merge(explicit_spec_defaults(kind), doc.get("spec") or {})
-    if "host" not in spec and "hosts" not in spec:
-        spec["host"] = "${HOSTNAME}"
-    doc["spec"] = spec
+    doc["spec"] = deep_merge(explicit_spec_defaults(kind), doc.get("spec") or {})
     return yaml.safe_dump(doc, sort_keys=False)
 
 
