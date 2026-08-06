@@ -521,7 +521,6 @@ class TestListJsonTimeoutBudget:
 kind: Agent
 spec:
   runtime: apptainer
-  host: ${HOSTNAME}
 """)
         )
         ld = tmp_path / "test-local"
@@ -532,7 +531,6 @@ spec:
 kind: Agent
 spec:
   runtime: apptainer
-  host: ${HOSTNAME}
 """)
         )
 
