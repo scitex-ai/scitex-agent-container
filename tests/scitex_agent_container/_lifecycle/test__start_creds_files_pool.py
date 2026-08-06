@@ -27,8 +27,23 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container._creds import NoHealthyAccountError
+from scitex_agent_container._lifecycle._quota_evidence import UNVERIFIABLE_MARKER
 from scitex_agent_container._lifecycle._start import _rotate_to_healthy_account
 from scitex_agent_container.config import AgentConfig
+
+
+def _without_quota_warning(log: str) -> str:
+    """Drop the unverifiable-quota warning, keeping every other line.
+
+    The autouse fixture below points the reader at an ABSENT cache, so the
+    preflight now warns once per boot that it could not confirm the picked
+    account's headroom (see ``._quota_evidence``). That is an orthogonal
+    signal; the assertions here are about POOL-SELECTION output. The marker is
+    imported rather than spelled out so a reworded warning cannot silently
+    start slipping past this filter.
+    """
+    kept = [line for line in log.splitlines() if UNVERIFIABLE_MARKER not in line]
+    return "".join(f"{line}\n" for line in kept)
 
 
 @pytest.fixture
@@ -274,8 +289,8 @@ def test_singular_credentials_file_emits_no_notice(_isolate_home: Path) -> None:
     log = io.StringIO()
     # Act
     _rotate_to_healthy_account(cfg, log_stream=log)
-    # Assert — a 1-element pool that keeps its entry logs nothing.
-    assert log.getvalue() == ""
+    # Assert — a 1-element pool that keeps its entry narrates no selection.
+    assert _without_quota_warning(log.getvalue()) == ""
 
 
 # ---------------------------------------------------------------------------
