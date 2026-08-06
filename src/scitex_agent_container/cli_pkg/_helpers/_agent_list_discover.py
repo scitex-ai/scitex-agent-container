@@ -44,8 +44,19 @@ def _is_self_peer_marker(spec_path: Path) -> bool:
 
         from ..._listen._self_peers import is_self_peer_spec
 
-        blob = yaml.safe_load(spec_path.read_text())
-        return is_self_peer_spec(blob)
+        text = spec_path.read_text()
+        # Cheap NECESSARY condition before the expensive parse.
+        # is_self_peer_spec requires a `listen_url` key, and a YAML key is
+        # written literally in the document defining it -- so text without
+        # "listen_url" cannot parse into a mapping that has it. Absence is
+        # conclusive, so skipping the parse cannot change the answer.
+        # NOT a path check: _self_peers.py says an external orchestrator may
+        # drop a self-peer spec anywhere in an agents dir, so keying on the
+        # directory name WOULD change behaviour. This keys on content.
+        # Measured 2026-08-06: this parsed all ~105 specs to find one marker.
+        if "listen_url" not in text:
+            return False
+        return is_self_peer_spec(yaml.safe_load(text))
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return False
 
