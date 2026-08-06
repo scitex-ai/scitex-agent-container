@@ -32,8 +32,22 @@ APPTAINER="${APPTAINER/#\~/$HOME}"
 SIF="${SIF/#\~/$HOME}"
 export PATH="$HOME/.env-3.11/bin:$PATH"
 
+# The Actions Variable names ONE host's apptainer (~/.env-3.11/bin/apptainer is
+# the Spartan shim); on a runner that ships apptainer in /usr/bin the same
+# variable points at nothing. Fall back to whatever is on PATH.
+#
+# This does NOT weaken the fail-loud rule in the header. That rule forbids
+# falling back to a BARE-RUNNER install — running the suite outside the SIF, in
+# a different environment from the release gate, which is the drift the whole
+# script exists to prevent. Locating the apptainer BINARY elsewhere still execs
+# the same SIF. No apptainer at all is still a hard error.
+if [ ! -x "$APPTAINER" ]; then
+    _found="$(command -v apptainer 2>/dev/null || true)"
+    [ -n "$_found" ] && APPTAINER="$_found"
+fi
 [ -x "$APPTAINER" ] || {
-    echo "::error::apptainer shim not executable at $APPTAINER"
+    echo "::error::apptainer not executable at '$APPTAINER' and not on PATH." \
+         "Set the SCITEX_CI_APPTAINER Actions Variable to this runner's path."
     exit 1
 }
 [ -f "$SIF" ] || {
@@ -41,8 +55,16 @@ export PATH="$HOME/.env-3.11/bin:$PATH"
     exit 1
 }
 
-# apptainer scratch on the shared FS — keeps HOME clean.
-export APPTAINER_TMPDIR="/data/gpfs/projects/punim0264/ywatanabe/ci/apptainer-tmp"
+# apptainer scratch. The GPFS path is Spartan's project filesystem and does not
+# exist on our own machines, where `mkdir -p` under `set -e` would abort the job
+# before a single test ran. Use it when it is there, a node-local scratch when
+# it is not.
+_SPARTAN_PROJ="/data/gpfs/projects/punim0264"
+if [ -d "$_SPARTAN_PROJ" ]; then
+    export APPTAINER_TMPDIR="$_SPARTAN_PROJ/ywatanabe/ci/apptainer-tmp"
+else
+    export APPTAINER_TMPDIR="${TMPDIR:-/tmp}/apptainer-tmp-${USER:-ci}"
+fi
 mkdir -p "$APPTAINER_TMPDIR"
 
 # Reap leaked CI processes from PRIOR runs on this persistent self-hosted node.
@@ -90,7 +112,12 @@ else
          "An unscoped pkill would SIGTERM the sibling matrix legs (see run 29284554656)."
 fi
 
-# --bind punim0264: $HOME/.scitex is a symlink into punim0264; bind it so the
-# symlink resolves inside the container. --pwd "$PWD" keeps the checkout as cwd.
-exec "$APPTAINER" exec --pwd "$PWD" --bind /data/gpfs/projects/punim0264 \
+# --bind punim0264: on Spartan $HOME/.scitex is a symlink into punim0264, so the
+# bind is what makes that symlink resolve inside the container. Elsewhere the
+# path does not exist and apptainer refuses to start with it ("bind path does
+# not exist"), so bind it only where it is real. --pwd "$PWD" keeps the checkout
+# as cwd.
+_BINDS=()
+[ -d "$_SPARTAN_PROJ" ] && _BINDS=(--bind "$_SPARTAN_PROJ")
+exec "$APPTAINER" exec --pwd "$PWD" "${_BINDS[@]+"${_BINDS[@]}"}" \
     "$SIF" bash ".github/ci/$INNER" "$@"
