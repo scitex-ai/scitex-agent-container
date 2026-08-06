@@ -53,6 +53,12 @@ on:
 env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+  # Same knob as the PR gate, on purpose. The PR workflow's header exists to
+  # keep these two gates the SAME BYTES in the SAME environment — a difference
+  # between them is what left PyPI on 0.21.17 while nine tags shipped nothing.
+  # Adding a worker-count input to one and not the other would re-open exactly
+  # that gap.
+  CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
 
 jobs:
   test:
