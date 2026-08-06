@@ -434,13 +434,21 @@ class TestCLI:
 # ----------------------------------------------------------------------------
 
 
+# How long the fake peer hangs. The probe budget is ~1s, so a healthy run is
+# cut at the BUDGET and a regressed one runs to this. Deliberately far above
+# the budget: the test's margin comes from the GAP between those two outcomes,
+# not from a tight bound, so a loaded machine cannot walk a healthy run across
+# it. See test_hanging_remote_probe_respects_timeout_budget.
+_HANG_S = 30.0
+
+
 class _HangingRuntime:
     """Fake runtime that simulates a hung probe (todo#254 regression)."""
 
     def is_running(self, cfg):
         import time
 
-        time.sleep(10)  # longer than the probe timeout
+        time.sleep(_HANG_S)  # far longer than the probe timeout
         return True
 
 
@@ -513,6 +521,7 @@ class TestListJsonTimeoutBudget:
 kind: Agent
 spec:
   runtime: apptainer
+  host: ${HOSTNAME}
 """)
         )
         ld = tmp_path / "test-local"
@@ -523,6 +532,7 @@ spec:
 kind: Agent
 spec:
   runtime: apptainer
+  host: ${HOSTNAME}
 """)
         )
 
@@ -554,11 +564,22 @@ spec:
         probe = self._run_hanging_probe
         # Act
         elapsed, _rows = probe(tmp_path)
-        # Assert
-        # Bound: the 10s hang must be cut short by the 1s timeout.
-        assert elapsed < 3.0, (
-            f"get_agent_list_data blocked for {elapsed:.1f}s despite 1s "
-            "probe timeout — todo#254 regression re-introduced"
+        # Assert — the bound belongs to the HANG, not to a constant picked
+        # against the budget. Healthy: cut at the ~1s budget. Regressed:
+        # runs the full _HANG_S. A third of the hang sits far from both, so
+        # the assertion separates the two OUTCOMES rather than measuring how
+        # busy the machine is.
+        #
+        # The previous form asserted `elapsed < 3.0` — 3x a 1s budget — and
+        # that is the assertion that reddened develop under 32-way xdist:
+        # observed 3.78s, i.e. scheduling delay alone crossed it while the
+        # timeout was working perfectly. Tightening or nudging that constant
+        # only moves the coin-flip; widening the GAP between healthy and
+        # regressed is what removes it.
+        assert elapsed < _HANG_S / 3, (
+            f"get_agent_list_data blocked for {elapsed:.1f}s against a 1s "
+            f"probe timeout and a {_HANG_S:.0f}s hang — the budget is not "
+            "cutting the wait short; todo#254 regression re-introduced"
         )
 
     def test_hanging_remote_probe_marks_status_unknown(self, tmp_path):
