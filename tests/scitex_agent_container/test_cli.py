@@ -168,7 +168,12 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "list", "--json"])
         # Assert
-        data = json.loads(result.output)
+        # ``result.output`` folds stderr in (click 8.4 dropped mix_stderr).
+        # This command walks the AMBIENT fleet, so a spec whose account has
+        # no saved snapshot logs a WARN during config load -- ahead of the
+        # payload -- and json.loads dies at char 0. Intermittently, because
+        # it depends on what is on disk. Parse the payload stream only.
+        data = json.loads(result.stdout)
         assert isinstance(data, dict) and "agents" in data
 
     def test_removed_ps_command_exits_nonzero(self):
