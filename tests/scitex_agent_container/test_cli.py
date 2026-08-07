@@ -435,12 +435,26 @@ class TestCLI:
 
 
 class _HangingRuntime:
-    """Fake runtime that simulates a hung probe (todo#254 regression)."""
+    """Fake runtime that simulates a hung probe (todo#254 regression).
+
+    ``release`` is set by the caller once the measurement window closes. The
+    probe still blocks far past the 1s budget while it is being timed -- that
+    is the point -- but a worker thread cannot outlive the test that started
+    it. ``pool.shutdown(wait=False)`` deliberately does not join these
+    threads, so an unconditional ``sleep(10)`` leaves them running inside the
+    xdist worker long after the test returned.
+    """
+
+    def __init__(self, release=None):
+        self._release = release
 
     def is_running(self, cfg):
         import time
 
-        time.sleep(10)  # longer than the probe timeout
+        if self._release is not None:
+            self._release.wait(10)  # longer than the probe timeout
+        else:
+            time.sleep(10)
         return True
 
 
@@ -511,7 +525,7 @@ spec:
 """
 
     @staticmethod
-    def _run_probe(tmp_path, probe_factory):
+    def _run_probe(tmp_path, probe_factory, release=None):
         import time
 
         from scitex_agent_container.cli_pkg import _helpers
@@ -543,6 +557,10 @@ spec:
             )
             elapsed = time.monotonic() - t0
         finally:
+            # Measurement window is closed: let any probe thread the pool
+            # abandoned return NOW rather than sleep out its full hang.
+            if release is not None:
+                release.set()
             if saved_probe is None:
                 if hasattr(_helpers, "probe_local_detail"):
                     delattr(_helpers, "probe_local_detail")
@@ -552,13 +570,18 @@ spec:
 
     @classmethod
     def _run_hanging_probe(cls, tmp_path):
+        import threading
+
+        release = threading.Event()
+        runtime = _HangingRuntime(release)
         return cls._run_probe(
             tmp_path,
             lambda cfg: _LocalProbe(
-                running=_HangingRuntime().is_running(cfg),
+                running=runtime.is_running(cfg),
                 runtime="HangingRuntime",
                 error=None,
             ),
+            release=release,
         )
 
     @classmethod
