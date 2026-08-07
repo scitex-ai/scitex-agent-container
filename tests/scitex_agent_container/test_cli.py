@@ -494,8 +494,24 @@ class TestListJsonTimeoutBudget:
     status="unknown" + liveness_unknown=True in the output row.
     """
 
+    # ``host`` is REQUIRED since the explicit-placement directive
+    # (2026-06-23). Without it ``load_config`` raises, ``_agent_list`` swallows
+    # that into ``cfg = None``, the agent never enters ``probe_targets``, and
+    # the fake probe below IS NEVER CALLED — while the row still reads
+    # status="unknown" for that unrelated reason. All three hanging-probe
+    # tests then passed while guarding nothing (measured 2026-08-07: 0 probe
+    # invocations). ``_run_fast_probe`` already carried ``host``; this fixture
+    # was missed. The ``calls`` counter below is the positive control that
+    # makes a repeat of that silent voiding FAIL instead of going green.
+    _SPEC = """apiVersion: scitex-agent-container/v3
+kind: Agent
+spec:
+  runtime: apptainer
+  host: ${HOSTNAME}
+"""
+
     @staticmethod
-    def _run_hanging_probe(tmp_path):
+    def _run_probe(tmp_path, probe_factory):
         import time
 
         from scitex_agent_container.cli_pkg import _helpers
@@ -504,35 +520,21 @@ class TestListJsonTimeoutBudget:
         rd = tmp_path / "test-remote"
         rd.mkdir()
         remote_cfg_path = rd / "test-remote.yaml"
-        # v3-realign: spec.remote removed; the agent-list-data probe still
-        # treats agents without a runtime PID as "remote-ish" (liveness
-        # unknown) — that's what this test exercises, so a minimal v3
-        # spec without spec.remote is sufficient.
-        remote_cfg_path.write_text(
-            explicitize_yaml("""apiVersion: scitex-agent-container/v3
-kind: Agent
-spec:
-  runtime: apptainer
-""")
-        )
+        remote_cfg_path.write_text(explicitize_yaml(TestListJsonTimeoutBudget._SPEC))
         ld = tmp_path / "test-local"
         ld.mkdir()
         local_cfg_path = ld / "test-local.yaml"
-        local_cfg_path.write_text(
-            explicitize_yaml("""apiVersion: scitex-agent-container/v3
-kind: Agent
-spec:
-  runtime: apptainer
-""")
-        )
+        local_cfg_path.write_text(explicitize_yaml(TestListJsonTimeoutBudget._SPEC))
+
+        calls = []
+
+        def _counting_probe(cfg):
+            calls.append(cfg)
+            return probe_factory(cfg)
 
         # PA-306: hand-rolled fake injection with explicit restore.
         saved_probe = getattr(_helpers, "probe_local_detail", None)
-        _helpers.probe_local_detail = lambda cfg: _LocalProbe(
-            running=_HangingRuntime().is_running(cfg),
-            runtime="HangingRuntime",
-            error=None,
-        )
+        _helpers.probe_local_detail = _counting_probe
         try:
             t0 = time.monotonic()
             rows = _helpers.get_agent_list_data(
@@ -546,19 +548,70 @@ spec:
                     delattr(_helpers, "probe_local_detail")
             else:
                 _helpers.probe_local_detail = saved_probe
-        return elapsed, rows
+        return elapsed, rows, len(calls)
 
-    def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
-        """A hanging remote probe must not exceed the per-probe timeout."""
+    @classmethod
+    def _run_hanging_probe(cls, tmp_path):
+        return cls._run_probe(
+            tmp_path,
+            lambda cfg: _LocalProbe(
+                running=_HangingRuntime().is_running(cfg),
+                runtime="HangingRuntime",
+                error=None,
+            ),
+        )
+
+    @classmethod
+    def _run_instant_probe(cls, tmp_path):
+        """Baseline arm: identical call, only the hang removed."""
+        return cls._run_probe(
+            tmp_path,
+            lambda cfg: _LocalProbe(running=True, runtime="InstantRuntime", error=None),
+        )
+
+    def test_hanging_probe_actually_reaches_the_probe_path(self, tmp_path):
+        """Positive control for the whole hanging-probe suite.
+
+        The other tests are only meaningful if the fake probe RUNS. A spec
+        that fails validation silently skips it and every assertion below
+        still passes, so assert the invocation directly.
+        """
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        elapsed, _rows = probe(tmp_path)
+        _elapsed, _rows, calls = probe(tmp_path)
         # Assert
-        # Bound: the 10s hang must be cut short by the 1s timeout.
-        assert elapsed < 3.0, (
-            f"get_agent_list_data blocked for {elapsed:.1f}s despite 1s "
-            "probe timeout — todo#254 regression re-introduced"
+        assert calls > 0, (
+            "the hanging probe was never invoked — get_agent_list_data "
+            "skipped the probe path (likely load_config rejected the "
+            "fixture spec), so the todo#254 timeout guards are VACUOUS"
+        )
+
+    def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
+        """A hanging remote probe must not exceed the per-probe timeout."""
+        # Arrange: baseline arm measures the same call WITHOUT the hang, so
+        # the assertion charges the budget only for the hang. Asserting raw
+        # wall clock instead made this flaky — the non-probe work (config
+        # load, auth states, row build) reached 8.4s on a loaded CI runner
+        # and was charged to the 1s probe timeout, failing and passing on
+        # the SAME commit (1ebfb71f, 2026-08-06).
+        base_dir = tmp_path / "base"
+        base_dir.mkdir()
+        hang_dir = tmp_path / "hang"
+        hang_dir.mkdir()
+        baseline, _rows, _base_calls = self._run_instant_probe(base_dir)
+        # Act
+        elapsed, _rows, _calls = self._run_hanging_probe(hang_dir)
+        # Assert
+        # (that both arms reached the probe path is asserted separately by
+        # test_hanging_probe_actually_reaches_the_probe_path — the positive
+        # control that makes this comparison meaningful.)
+        overshoot = elapsed - baseline
+        # The 10s hang must cost no more than its 1s budget (+ pool overhead).
+        assert overshoot < 2.5, (
+            f"a hung probe added {overshoot:.1f}s over the {baseline:.1f}s "
+            f"baseline despite a 1s probe timeout — todo#254 regression "
+            f"re-introduced"
         )
 
     def test_hanging_remote_probe_marks_status_unknown(self, tmp_path):
@@ -566,7 +619,7 @@ spec:
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        _elapsed, rows = probe(tmp_path)
+        _elapsed, rows, _calls = probe(tmp_path)
         # Assert
         remote_row = next(r for r in rows if r["name"] == "test-remote")
         assert remote_row["status"] == "unknown"
@@ -576,7 +629,7 @@ spec:
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        _elapsed, rows = probe(tmp_path)
+        _elapsed, rows, _calls = probe(tmp_path)
         # Assert
         remote_row = next(r for r in rows if r["name"] == "test-remote")
         assert remote_row.get("liveness_unknown") is True
