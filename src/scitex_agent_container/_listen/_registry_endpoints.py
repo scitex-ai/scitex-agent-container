@@ -129,7 +129,44 @@ def derive_turn_url(host: str | None, port: int | None) -> str | None:
     return f"http://{host}:{port}/v1/turn"
 
 
-def enrich_row_with_endpoint(row: dict) -> dict:
+def port_claims_map() -> dict[str, int]:
+    """Return ``{agent_name: port}`` for every active claim, in ONE query.
+
+    The batched counterpart to :func:`resolve_a2a_port`, for callers that
+    enrich many rows. Pass the result to ``enrich_row*(…, ports=…)``.
+
+    WHY THIS EXISTS — measured 2026-08-09, warm, wall clock, 19 rows:
+
+        enrich_row over all rows          635.6ms
+          resolve_a2a_port x all          222.2ms   (~11.7ms/row)
+          resolve_agent_identity x all    256.9ms
+
+    `resolve_a2a_port` calls `port_allocator.get_port(name)` PER ROW, and each
+    of those opens state.db (the CLI-side note records ~3 opens, ~62ms/agent on
+    a full host). `list_claims()` answers for every agent in one query.
+
+    This is FIX A#1 from `sac-agents-list-slowness-measured` (July), which was
+    applied to `cli_pkg/_helpers/_agent_list.py` and never reached this path —
+    the third instance in one night of a fix landing on one of two parallel
+    listing implementations. Best-effort: any failure yields ``{}`` and every
+    caller falls back to the per-row lookup, so this can only be faster, never
+    wronger.
+    """
+    try:
+        from .._state.port_allocator import list_claims
+
+        out: dict[str, int] = {}
+        for claim in list_claims():
+            nm = claim.get("name")
+            pt = claim.get("port")
+            if isinstance(nm, str) and nm and pt is not None:
+                out[nm] = int(pt)
+        return out
+    except Exception:  # stx-allow: fallback (reason: best-effort batch — callers degrade to the per-row resolve_a2a_port)
+        return {}
+
+
+def enrich_row_with_endpoint(row: dict, *, ports: dict[str, int] | None = None) -> dict:
     """Add ``a2a_port`` and ``turn_url`` to ``row`` (idempotent).
 
     Reads ``row["name"]`` and computes both fields via the helpers
@@ -138,6 +175,13 @@ def enrich_row_with_endpoint(row: dict) -> dict:
     self-peer rows that already know their own endpoint (e.g. the
     lead's own ``listen_url`` neighbour writes a turn_url at
     discovery time and the registry refresh must not clobber it).
+
+    ``ports`` is an optional pre-computed ``{name: port}`` from
+    :func:`port_claims_map`. A name ABSENT from it falls through to the
+    per-row :func:`resolve_a2a_port`, which also carries the cross-host
+    instances-table fallback — so a partial map degrades in speed only, never
+    in correctness. Omitting it preserves the original per-row behaviour
+    exactly, which is why every existing caller is unaffected.
     """
     name = row.get("name") if isinstance(row, dict) else None
     if not isinstance(name, str) or not name:
@@ -151,7 +195,12 @@ def enrich_row_with_endpoint(row: dict) -> dict:
     existing_port = row.get("a2a_port")
     existing_url = row.get("turn_url")
 
-    a2a_port = existing_port if existing_port is not None else resolve_a2a_port(name)
+    if existing_port is not None:
+        a2a_port = existing_port
+    elif ports is not None and name in ports:
+        a2a_port = ports[name]
+    else:
+        a2a_port = resolve_a2a_port(name)
     if existing_url is not None:
         turn_url = existing_url
     else:
@@ -250,7 +299,7 @@ def enrich_row_with_role_owner(row: dict, *, resolver=resolve_agent_identity) ->
     return out
 
 
-def enrich_row(row: dict) -> dict:
+def enrich_row(row: dict, *, ports: dict[str, int] | None = None) -> dict:
     """Apply BOTH registry enrichments to ``row`` — the composed shape every
     registry surface ships.
 
@@ -260,8 +309,12 @@ def enrich_row(row: dict) -> dict:
     ``GET /agents/<name>/status`` bodies carry an identical, uniform shape.
     Both layers are idempotent + best-effort, so this is safe to apply to
     rows that already carry some of the fields.
+
+    ``ports`` is forwarded to :func:`enrich_row_with_endpoint` — pass
+    :func:`port_claims_map` once when enriching many rows. Omitted, behaviour is
+    unchanged from before the batch existed.
     """
-    return enrich_row_with_role_owner(enrich_row_with_endpoint(row))
+    return enrich_row_with_role_owner(enrich_row_with_endpoint(row, ports=ports))
 
 
 __all__ = [
@@ -269,6 +322,7 @@ __all__ = [
     "enrich_row",
     "enrich_row_with_endpoint",
     "enrich_row_with_role_owner",
+    "port_claims_map",
     "resolve_a2a_host",
     "resolve_a2a_port",
     "resolve_agent_identity",
