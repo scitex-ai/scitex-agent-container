@@ -75,6 +75,24 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # widening would expose it to every agent. One bind per store; each new
     # store pays its own explicit line. That cost is the feature.
     #
+    # AND THE PARENT IS NOT ONLY "overlay-local" — 2026-08-08 measured a SECOND
+    # way it moves under you, which none of these binds defend against. A
+    # dotfiles deploy ran inside a container, treated ~/.scitex as a DOTFILE,
+    # moved the real tree aside as .scitex_back_<timestamp> and symlinked its
+    # own copy in:
+    #     /home/agent/.scitex -> ~/.dotfiles/.worktrees/<branch>/src/.scitex
+    # The agent then booted into the substituted tree with a month-stale message
+    # store and reported healthy, and the credential path resolved to a
+    # directory that does not exist. The operator lost an hour of his evening to
+    # it (card sac-cct-store-diverges-across-restart-two-dbs-20260808).
+    #
+    # WHY THAT MATTERS TO WHOEVER EDITS THIS LIST: a per-store bind here cannot
+    # survive its PARENT being replaced. These lines make each store
+    # host-persistent, which is necessary and not sufficient. Do not read a
+    # green bind as proof the agent is using the store you think it is —
+    # `readlink -f` the path from INSIDE the container, which is the only check
+    # that sees a substituted parent.
+    #
     # Skip-if-missing applies (see default_binds_for_host): on a host with no
     # ~/.scitex/cards this entry is a SILENT no-op — safe, but NOT a signal.
     # Verify a rollout by comparing dev:inode from INSIDE a booted container
