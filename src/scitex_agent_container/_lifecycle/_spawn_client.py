@@ -55,7 +55,26 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["SpawnRequestError", "request_spawn"]
 
-_DEFAULT_TIMEOUT_S = 30.0
+# DERIVED from the server's grace, never hand-picked. ``agents_start``
+# deliberately BLOCKS up to ``_POST_ACK_LIVENESS_TIMEOUT_S`` waiting for the
+# spawned agent's apptainer pid to appear and still be alive, so it can answer
+# 502-with-a-diagnostic instead of a misleading success.
+#
+# Measured 2026-08-09: grace 20s, this budget 30s (picked independently here),
+# observed POST 21.97s. Eight seconds of headroom on a host the server's own
+# comment describes as idling at load 60-70 — and when it flips the caller gets
+# a TIMEOUT, which carries no status, so "slow" / "dead" / "already succeeded"
+# become indistinguishable on a MUTATING route. That day the spawn had SUCCEEDED
+# and was reported as failed; the natural retry can start a SECOND agent. Two
+# constants in two modules that must stay ordered will drift, and no reviewer of
+# either file can see the other. ``_agent_exec_liveness`` is import-free.
+from .._listen._agent_exec_liveness import _POST_ACK_LIVENESS_TIMEOUT_S
+
+# Launch work outside the grace window (spec load, account resolution, apptainer
+# exec, and a uv download on first boot). Measured ~2s; generous on purpose.
+_SPAWN_LAUNCH_OVERHEAD_S = 15.0
+
+_DEFAULT_TIMEOUT_S = _POST_ACK_LIVENESS_TIMEOUT_S + _SPAWN_LAUNCH_OVERHEAD_S
 
 
 class SpawnRequestError(RuntimeError):
