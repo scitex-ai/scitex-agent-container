@@ -98,15 +98,28 @@ def _resolve_base_url(explicit: str | None) -> str:
 def _resolve_bearer(explicit: str | None) -> str | None:
     """Return the listen-server bearer token, or ``None`` if unset.
 
-    Unlike ``SAC_LISTEN_BASE_URL``, an absent bearer is not fatal:
-    a listen started without bearer auth still accepts the call.
-    The server enforces its own auth contract.
-    """
-    if explicit is not None:
-        return explicit or None
-    from .._env import getenv
+    Unlike ``SAC_LISTEN_BASE_URL``, an absent bearer is not fatal: a listen
+    started without bearer auth still accepts the call, and the server enforces
+    its own auth contract. But "absent" must mean genuinely absent, not merely
+    "not in the env": this used to stop at ``SAC_LISTEN_BEARER`` and so brokered
+    ACL decisions UNAUTHENTICATED whenever the runtime had not injected that
+    variable, even with a valid token readable on disk. The runtime injects it
+    only for agents whose spec registers the ``server:sac`` channel, so for
+    every other agent this route 401'd while the spawn route authenticated —
+    same container, same token, different copy of the resolver.
 
-    return ((getenv("LISTEN_BEARER", "") or "").strip()) or None
+    Delegates to the canonical resolver so the fallback chain
+    (explicit -> SAC_LISTEN_BEARER -> host token file) is defined ONCE. Its
+    contract matches what this function already promised: return the token or
+    ``None``, never raise. Only ``_resolve_bearer`` is shared —
+    ``_resolve_base_url`` deliberately stays local because its fail-loud
+    exception TYPE (``AclBrokerError``) is part of this module's contract.
+    """
+    from .._lifecycle._listen_client_resolve import (
+        _resolve_bearer as _canonical_resolve_bearer,
+    )
+
+    return _canonical_resolve_bearer(explicit)
 
 
 def _parse_body(raw: bytes) -> Any:
