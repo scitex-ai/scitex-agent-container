@@ -164,6 +164,24 @@ def enrich_row_with_endpoint(row: dict) -> dict:
     return out
 
 
+# Parsed-spec cache, keyed on the file's IDENTITY so an edited spec is never
+# served stale. Measured 2026-08-09 (warm, WALL CLOCK, 19 rows):
+#
+#     resolve_agent_identity x all rows   256.9ms   (~13.5ms each)
+#
+# One read+parse per agent per request, with no duplication WITHIN a request —
+# so this buys nothing on a single call and everything on the next one. Agents
+# poll this listing, so repeat requests are the normal case.
+#
+# Deliberately NOT justified by parse COUNT. PR #903 removed 23 of 41 parses per
+# request (host_config) and moved wall time not at all, because the cProfile
+# figure that motivated it had inflated PyYAML's call-dense pure-Python work.
+# The 256.9ms above is direct wall-clock measurement of this specific call, which
+# is why it is expected to pay where that one did not — and the A/B must confirm
+# it before anyone claims it did.
+_SPEC_CACHE: dict[tuple[str, int, int], dict | None] = {}
+
+
 def _load_spec_dict(agent_name: str) -> dict | None:
     """Return the raw v3 spec dict for ``agent_name``, or ``None``.
 
@@ -174,14 +192,35 @@ def _load_spec_dict(agent_name: str) -> dict | None:
     blocked — the registry list is a discovery surface, not a gate.
     """
     try:
+        import os
+
         import yaml
 
         from ..config._resolve import resolve_config
 
         path = resolve_config(agent_name)
+        # Cache on the file's IDENTITY, not the agent name — an edited spec
+        # must be picked up, and two names resolving to one file share an entry.
+        try:
+            _st = os.stat(path)
+            _key: tuple[str, int, int] | None = (
+                str(path),
+                _st.st_mtime_ns,
+                _st.st_size,
+            )
+        except OSError:  # stx-allow: fallback (reason: stat failure degrades to an uncached read, never to a wrong answer)
+            _key = None
+        if _key is not None and _key in _SPEC_CACHE:
+            return _SPEC_CACHE[_key]
         with open(path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
-        return data if isinstance(data, dict) else None
+        out = data if isinstance(data, dict) else None
+        if _key is not None:
+            if len(_SPEC_CACHE) >= 256:
+                for _stale in list(_SPEC_CACHE)[:128]:
+                    _SPEC_CACHE.pop(_stale, None)
+            _SPEC_CACHE[_key] = out
+        return out
     except Exception:  # stx-allow: fallback (reason: best-effort role/owner enrichment — a missing/unreadable spec surfaces as absent fields)
         return None
 
