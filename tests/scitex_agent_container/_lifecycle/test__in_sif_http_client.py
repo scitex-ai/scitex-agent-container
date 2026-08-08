@@ -9,6 +9,7 @@ one assert per test (PA-307).
 from __future__ import annotations
 
 import io
+import os
 from typing import Any
 from urllib import error as urlerror
 
@@ -16,6 +17,7 @@ import pytest
 
 from scitex_agent_container._lifecycle._in_sif_http_client import (
     HostListenTransportError,
+    _resolve_bearer,
     host_listen_call,
 )
 
@@ -327,3 +329,95 @@ def test_content_type_set_when_body_present() -> None:
     )
     # Assert
     assert captured["headers"].get("Content-type") == "application/json"
+
+
+# ---------------------------------------------------------------------------
+# The bearer must be findable ON DISK, not just in the env
+#
+# `_resolve_bearer` here stopped at SAC_LISTEN_BEARER while the spawn / restart
+# / card-event clients also read the host token file at
+# ~/.scitex/agent-container/tokens/listen-<host>.token. The runtime injects that
+# env var ONLY for agents whose spec registers the `server:sac` channel, so for
+# every other agent this route sent an UNAUTHENTICATED request and the listen
+# answered 401 — same container, same readable token, different copy of the
+# resolver.
+# ---------------------------------------------------------------------------
+
+_BEARER_KEYS = (
+    "SAC_LISTEN_BEARER",
+    "SCITEX_AGENT_CONTAINER_LISTEN_BEARER",
+)
+
+
+@pytest.fixture
+def isolated_bearer_env(tmp_path):
+    """Clear BOTH env spellings and redirect HOME to a clean tmp dir.
+
+    Clearing both matters: a stray value in the operator's shell would make the
+    must-fall-back-to-file test pass for the wrong reason. Redirecting HOME
+    keeps the token-file read isolated from the real host token.
+    """
+    saved = {k: os.environ.get(k) for k in _BEARER_KEYS}
+    saved_home = os.environ.get("HOME")
+    for k in _BEARER_KEYS:
+        os.environ.pop(k, None)
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
+def _write_host_token_file(home, token: str) -> None:
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    path = default_token_path(home=home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+
+
+def test_bearer_falls_back_to_the_host_token_file(isolated_bearer_env) -> None:
+    """The regression: an on-disk token was invisible to this client."""
+    # Arrange — no bearer env; a real token file on disk.
+    _write_host_token_file(isolated_bearer_env, "file-tok-in-sif")
+    # Act
+    resolved = _resolve_bearer(None)
+    # Assert
+    assert resolved == "file-tok-in-sif"
+
+
+def test_env_bearer_still_wins_over_the_token_file(isolated_bearer_env) -> None:
+    # Arrange — both sources present; the env must win.
+    _write_host_token_file(isolated_bearer_env, "file-tok")
+    os.environ["SAC_LISTEN_BEARER"] = "env-tok"
+    # Act
+    resolved = _resolve_bearer(None)
+    # Assert
+    assert resolved == "env-tok"
+
+
+def test_an_empty_explicit_bearer_stays_unauthenticated(isolated_bearer_env) -> None:
+    """``""`` is the deliberate opt-out — it must NOT reach for the file."""
+    # Arrange
+    _write_host_token_file(isolated_bearer_env, "file-tok")
+    # Act
+    resolved = _resolve_bearer("")
+    # Assert
+    assert resolved is None
+
+
+def test_no_env_and_no_file_resolves_to_none(isolated_bearer_env) -> None:
+    """An absent bearer stays non-fatal — a dev listen may run without auth."""
+    # Arrange — cleared env, no token file written.
+    # Act
+    resolved = _resolve_bearer(None)
+    # Assert
+    assert resolved is None
