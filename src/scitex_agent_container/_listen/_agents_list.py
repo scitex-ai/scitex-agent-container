@@ -84,9 +84,17 @@ async def list_agents(request: Request) -> JSONResponse:
     # Idempotent: self-peer rows that already carry a non-None value
     # keep theirs (the discovery layer is the authoritative source for
     # those).
-    from ._registry_endpoints import enrich_row
+    from ._registry_endpoints import enrich_row, port_claims_map
 
-    rows = [enrich_row(row) for row in rows]
+    # ONE query for every port claim, instead of one state.db lookup per row.
+    # Measured 2026-08-09 (warm, wall clock, 19 rows): the per-row path cost
+    # 222.2ms of a ~635ms enrichment. This is FIX A#1 from the July card
+    # `sac-agents-list-slowness-measured`, which landed in the CLI's row builder
+    # and never reached this one. Best-effort — an empty map simply falls back
+    # to the per-row lookup, which also carries the cross-host instances-table
+    # fallback that the claims table alone does not.
+    _ports = port_claims_map()
+    rows = [enrich_row(row, ports=_ports) for row in rows]
     rows = await _annotate_reachability(request, rows)
     return JSONResponse({"agents": rows})
 
