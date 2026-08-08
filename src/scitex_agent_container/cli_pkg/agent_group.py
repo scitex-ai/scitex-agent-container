@@ -187,6 +187,14 @@ agent_group.add_command(_rebind(_forget_impl, "forget"))
 from ._spawn_from_here import spawn_from_here as _spawn_from_here_impl  # noqa: E402
 
 agent_group.add_command(_rebind(_spawn_from_here_impl, "spawn-from-here"))
+# `relocate` — move an agent to a DIFFERENT HOST. The agent relocates; the host
+# does not, and identity/count are unchanged (1 -> 1). Distinct from `twin`,
+# which changes WHAT an agent does and takes the count to two. Dry-run only for
+# now: it reports what must be true about the target BEFORE anything is touched,
+# and refuses to execute while the cross-host transcript transport is unbuilt.
+from ._relocate_cmd import register as _register_relocate  # noqa: E402
+
+_register_relocate(agent_group)
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "list"))
