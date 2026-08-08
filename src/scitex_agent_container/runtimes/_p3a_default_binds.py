@@ -84,6 +84,25 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # in-container stat confirmed one directory / two names before this went
     # fleet-wide.
     "~/.scitex/cards:/home/agent/.scitex/cards:rw",
+    # The operator's OWN MESSAGE HISTORY — third store to pay the toll above,
+    # and the one whose absence he felt directly. On 2026-08-08 he asked whether
+    # I remembered eleven things he had sent an hour earlier; my previous run had
+    # answered every one of them, and my restarted run could find none. He
+    # forwarded the whole conversation back by hand: 「忘れている、思い出せない、
+    # となると結構辛いです。」
+    #
+    # cct had done its part correctly — it migrated that day to the
+    # scitex-standard deterministic path (ts/lib/config.ts::resolveStateDir,
+    # ~/.scitex/claude-code-telegrammer/runtime/<agent>), whose own docstring
+    # names "a drifting default path opened a fresh empty DB and lost the
+    # operator's message history" as the reason it exists. sac never grew the
+    # matching bind, so that store landed OVERLAY-LOCAL — the exact shape the
+    # cards note above records from 2026-07-16, one store later.
+    #
+    # Bound at the PACKAGE root (not .../runtime/<agent>) so the per-agent
+    # subdir cct creates on first boot lands on the host rather than in the
+    # overlay; a bind of a not-yet-existing leaf would skip silently.
+    "~/.scitex/claude-code-telegrammer:/home/agent/.scitex/claude-code-telegrammer:rw",
     # 2026-06-13 STOPGAP (lead a2a b6f3916c) — bind the host's working
     # ``scitex_agent_container`` source over the in-SIF install so
     # agents pick up new CLI surface (e.g., ``sac pytest spartan run``
