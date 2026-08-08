@@ -368,6 +368,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text("tasks: []\n")
     cards_db = tmp_path / "board" / "cards.db"
+    _materialise_cards_db(cards_db)
 
     yield from _yield_value(
         store,
@@ -412,6 +413,33 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
             }
         ),
     )
+
+
+def _materialise_cards_db(cards_db: Path) -> None:
+    """Create the tmp cards store, schema and all, before any test touches it.
+
+    Pointing ``$SCITEX_CARDS_DB`` at a path is no longer enough. scitex-cards
+    REFUSES a target that does not exist rather than creating one, and says why:
+    the exporter answers a missing database with an empty document, and that
+    empty document is written back as the WHOLE store — every card replaced by
+    nothing. Refusing is the correct behaviour and it is the direct lesson of
+    2026-07-20, when this fixture's own five seeded cards replaced ~2,777 real
+    ones. See the long note on ``$SCITEX_CARDS_DB`` above.
+
+    So the isolation now has to build a real store, not merely name one:
+    ``open_db`` resolves, connects, and runs ``init_schema`` (a no-op on an
+    existing file).
+
+    THIS DELIBERATELY DOES NOT SWALLOW FAILURES. If the store cannot be created,
+    the tests that follow would run against whatever ``$SCITEX_CARDS_DB``
+    resolves to next — which is the LIVE fleet board, and the mirror reconciles
+    by deleting. A test helper that cannot isolate must stop the run, not
+    proceed quietly: "could not isolate" and "isolated" must never look the same
+    from the caller's side.
+    """
+    from scitex_cards._db import open_db
+
+    open_db(cards_db).close()
 
 
 def _yield_value(value, guard: Iterator[None]) -> Iterator:
