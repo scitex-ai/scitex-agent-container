@@ -368,6 +368,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text("tasks: []\n")
     cards_db = tmp_path / "board" / "cards.db"
+    _materialise_cards_db(cards_db)
 
     yield from _yield_value(
         store,
@@ -412,6 +413,43 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
             }
         ),
     )
+
+
+def _materialise_cards_db(cards_db: Path) -> None:
+    """Create the tmp cards store, schema and all, before any test touches it.
+
+    Pointing ``$SCITEX_CARDS_DB`` at a path is no longer enough. scitex-cards
+    REFUSES a target that does not exist rather than creating one, and says why:
+    the exporter answers a missing database with an empty document, and that
+    empty document is written back as the WHOLE store — every card replaced by
+    nothing. Refusing is the correct behaviour and it is the direct lesson of
+    2026-07-20, when this fixture's own five seeded cards replaced ~2,777 real
+    ones. See the long note on ``$SCITEX_CARDS_DB`` above.
+
+    So the isolation now has to build a real store, not merely name one:
+    ``open_db`` resolves, connects, and runs ``init_schema`` (a no-op on an
+    existing file).
+
+    A MISSING scitex-cards IS THE ONE SAFE FAILURE, and it is caught NARROWLY.
+    The CI SIF does not install scitex-cards (`ModuleNotFoundError: No module
+    named 'scitex_cards'`, measured on PR #897). That case is safe for a precise
+    reason rather than by hope: the dual-write mirror that endangers the live
+    board IS scitex-cards code, so if the package cannot be imported there is no
+    mirror to run and no board to reconcile away. Nothing to isolate FROM.
+
+    EVERY OTHER FAILURE STILL RAISES. The catch is `ImportError` only, never a
+    bare `except`. If scitex-cards IS present and the store cannot be built, the
+    tests that follow would run against whatever `$SCITEX_CARDS_DB` resolves to
+    next — the LIVE fleet board, which the mirror reconciles by DELETING. A
+    helper that cannot isolate must stop the run: "could not isolate" and
+    "isolated" must never look the same from the caller's side.
+    """
+    try:
+        from scitex_cards._db import open_db
+    except ImportError:
+        return
+
+    open_db(cards_db).close()
 
 
 def _yield_value(value, guard: Iterator[None]) -> Iterator:
