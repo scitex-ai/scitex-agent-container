@@ -31,7 +31,7 @@ import time
 from typing import Callable
 
 from . import prompts as _prompts
-from ._pane_context_log import log_pane_context
+from ._pane_context_log import log_pane_fault
 
 __all__ = [
     "drain_modals_until_ready",
@@ -150,7 +150,10 @@ def drain_modals_until_ready(
         # Fail FAST on session death — a dead session can never reach ready;
         # polling out the whole window here is a silent stall.
         if not exists_fn(name):
-            log.error(
+            log_pane_fault(
+                log,
+                name,
+                last_pane,
                 "TuiSessionRuntime: boot-drain ABORTED for %s — the inner "
                 "claude process EXITED during boot (tmux session gone), so it "
                 "can never reach ready. This is NOT a login wall or a timeout; "
@@ -159,7 +162,6 @@ def drain_modals_until_ready(
                 name,
                 name,
             )
-            log_pane_context(log, name, last_pane)
             return False
         pane = capture_fn(name)
         if pane.strip():
@@ -175,7 +177,10 @@ def drain_modals_until_ready(
             continue
         n = resends.get(modal, 0)
         if n >= max_resends:
-            log.error(
+            log_pane_fault(
+                log,
+                name,
+                last_pane or pane,
                 "TuiSessionRuntime: boot-drain STUCK on modal %r for %s — its "
                 "keystrokes did NOT dismiss it after %d verified resends. The "
                 "detector/keys in runtimes/prompts.py are likely stale for this "
@@ -186,7 +191,6 @@ def drain_modals_until_ready(
                 n,
                 name,
             )
-            log_pane_context(log, name, last_pane or pane)
             return False
         # BUG 2 — wait for the pane to SETTLE before sending keys, so a large
         # --continue replay's re-render race does not eat them. Re-detect after
@@ -233,7 +237,10 @@ def drain_modals_until_ready(
             "Session has EXITED — the inner command died (read the last pane "
             "for the cause; this is NOT a credential/login problem)."
         )
-    log.error(
+    log_pane_fault(
+        log,
+        name,
+        last_pane,
         "TuiSessionRuntime: boot-drain window (%.0fs) elapsed for %s without a "
         "ready signal. %s Reproduce live: `tmux attach -t %s`.",
         timeout_s,
@@ -241,7 +248,6 @@ def drain_modals_until_ready(
         diagnosis,
         name,
     )
-    log_pane_context(log, name, last_pane)
     return False
 
 

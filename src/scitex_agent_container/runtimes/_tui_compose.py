@@ -36,7 +36,7 @@ import re
 import time
 from typing import Callable
 
-from ._pane_context_log import log_pane_context
+from ._pane_context_log import log_pane_fault
 from ._pane_context_log import pane_tail as _pane_tail
 
 __all__ = [
@@ -238,7 +238,10 @@ def clear_compose_buffer(
         # A dev-channels / "Esc to cancel" modal is up: an Escape here would
         # CANCEL the launch and kill the session. Refuse to clear now — the
         # modal drainer must dismiss it (Enter → option 1) first.
-        log.error(
+        log_pane_fault(
+            log,
+            name,
+            pane,
             "TuiSessionRuntime: REFUSING compose-buffer clear for %s — a "
             "cancelable modal ('Esc to cancel', e.g. dev-channels) is on "
             "screen; sending Escape would CANCEL the launch and kill the "
@@ -248,7 +251,6 @@ def clear_compose_buffer(
             name,
             name,
         )
-        log_pane_context(log, name, pane)
         return False
     if is_fresh_boot_welcome_screen(pane):
         # BUG 3 — the fresh-boot welcome/model-info/promo screen is up and
@@ -272,13 +274,15 @@ def clear_compose_buffer(
         # attempts, and an Escape into it would cancel/kill the session.
         current = capture_fn(name)
         if _prompts.has_esc_cancel_modal(current):
-            log.error(
+            log_pane_fault(
+                log,
+                name,
+                current,
                 "TuiSessionRuntime: aborting compose-buffer clear for %s "
                 "mid-loop — a cancelable modal appeared; Escape would kill the "
                 "session. Let the modal drainer dismiss it first.",
                 name,
             )
-            log_pane_context(log, name, current)
             return False
         if is_fresh_boot_welcome_screen(current):
             # BUG 3 — (re)appeared mid-loop (a slow mount can outlast the
@@ -303,7 +307,10 @@ def clear_compose_buffer(
         # every Escape send (BUG 3 guard), so it would be misleading to blame
         # "the Ink TUI kept dropping the clear keystroke" — no keystroke was
         # ever sent. The welcome screen itself never released within budget.
-        log.error(
+        log_pane_fault(
+            log,
+            name,
+            last_pane,
             "TuiSessionRuntime: compose-buffer clear for %s gave up after "
             "%d attempts — the fresh-boot welcome/model-info screen never "
             "cleared within the wait budget, so no Escape was sent at all "
@@ -314,10 +321,12 @@ def clear_compose_buffer(
             max_attempts,
             name,
         )
-        log_pane_context(log, name, last_pane)
         return False
 
-    log.error(
+    log_pane_fault(
+        log,
+        name,
+        last_pane,
         "TuiSessionRuntime: stale compose buffer for %s did NOT clear after "
         "%d attempts of %r — the Ink TUI kept dropping the clear keystroke (or "
         "new text keeps arriving). Boot will proceed (verify_submit_by_advancement "
@@ -328,7 +337,6 @@ def clear_compose_buffer(
         list(_COMPOSE_CLEAR_KEYS),
         name,
     )
-    log_pane_context(log, name, last_pane)
     return False
 
 
@@ -451,7 +459,10 @@ def verify_submit_by_advancement(
         # 2d — not advanced; loop to next attempt (re-checks idle).
 
     pane = capture_fn(name)
-    log.error(
+    log_pane_fault(
+        log,
+        name,
+        pane or last_pane,
         "TuiSessionRuntime: startup_prompt for %s stayed pasted-but-UNSENT "
         "after %d wait-for-idle Enter attempts — the Ink TUI keeps dropping "
         "Enter (or the pane never left BUSY). Attach to inspect/recover: "
@@ -460,5 +471,4 @@ def verify_submit_by_advancement(
         max_resends,
         name,
     )
-    log_pane_context(log, name, pane or last_pane)
     return False
