@@ -123,6 +123,12 @@ from ._host_exec_inflight import (
     register_inflight,
     unregister_inflight,
 )
+from ._plane_restart_detach import (
+    PLANE_RESTART_DELAY_S,
+    plane_restart_log_path,
+    spawn_detached_plane_command,
+)
+from ._plane_targeting_argv import targets_listen_plane
 
 # Operator-scoped groups (2026-07-01 Q1a + researcher; ``privileged`` added
 # 2026-07-02 per operator request). Members of these groups are permitted to
@@ -285,6 +291,57 @@ async def host_exec(
         merged_env.update(extra_env)
     else:
         merged_env = None  # inherit parent env
+
+    # DON'T RUN A COMMAND THAT WOULD KILL THIS REQUEST'S OWN SERVER.
+    #
+    # This endpoint is served BY the sac listen daemon, so `systemctl restart
+    # sac-listen` (or `sac listen restart`) run INLINE kills the process group
+    # answering the call. Measured 2026-08-09: exit_code -15, empty stdout, no
+    # status — while the restart had actually SUCCEEDED. The caller cannot tell
+    # "succeeded and killed my reporter" from "failed", so it retries, and a
+    # retry restarts a healthy plane. scitex-storage reported the CLI form of
+    # this on 2026-07-28: such a restart "must report ACCEPTED, else callers
+    # retry and STACK restarts."
+    #
+    # So schedule it DETACHED and answer 202 — the same mechanism
+    # `_agent_restart.py` already uses for agent self-restart (setsid + a short
+    # delay so THIS response flushes before the bounce), rather than inventing a
+    # third variant of "don't decapitate yourself".
+    verdict = targets_listen_plane(argv)
+    if verdict.targets_plane:
+        log_path = plane_restart_log_path()
+        try:
+            spawn_detached_plane_command(argv, env=merged_env, log_path=log_path)
+        except OSError as exc:
+            # Launch failure of the detached child itself — surface it typed,
+            # never a fake "scheduled".
+            return JSONResponse(
+                {
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "argv": argv,
+                    "detached": False,
+                },
+                status_code=500,
+            )
+        return JSONResponse(
+            {
+                "status": "scheduled",
+                "argv": argv,
+                "caller": caller,
+                "reason": verdict.reason,
+                "delay_s": PLANE_RESTART_DELAY_S,
+                "log": log_path,
+                "detail": (
+                    "This command would restart the listen daemon that is serving "
+                    "the request, so it was NOT run inline — running it inline "
+                    "returns exit_code -15 with no output and no way to tell "
+                    f"success from failure. It is scheduled detached in "
+                    f"~{PLANE_RESTART_DELAY_S}s. Verify with an INDEPENDENT probe "
+                    "(e.g. GET /v1/health) rather than by re-running this command."
+                ),
+            },
+            status_code=202,
+        )
 
     started = time.monotonic()
     timed_out = False
