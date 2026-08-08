@@ -430,14 +430,24 @@ def _materialise_cards_db(cards_db: Path) -> None:
     ``open_db`` resolves, connects, and runs ``init_schema`` (a no-op on an
     existing file).
 
-    THIS DELIBERATELY DOES NOT SWALLOW FAILURES. If the store cannot be created,
-    the tests that follow would run against whatever ``$SCITEX_CARDS_DB``
-    resolves to next — which is the LIVE fleet board, and the mirror reconciles
-    by deleting. A test helper that cannot isolate must stop the run, not
-    proceed quietly: "could not isolate" and "isolated" must never look the same
-    from the caller's side.
+    A MISSING scitex-cards IS THE ONE SAFE FAILURE, and it is caught NARROWLY.
+    The CI SIF does not install scitex-cards (`ModuleNotFoundError: No module
+    named 'scitex_cards'`, measured on PR #897). That case is safe for a precise
+    reason rather than by hope: the dual-write mirror that endangers the live
+    board IS scitex-cards code, so if the package cannot be imported there is no
+    mirror to run and no board to reconcile away. Nothing to isolate FROM.
+
+    EVERY OTHER FAILURE STILL RAISES. The catch is `ImportError` only, never a
+    bare `except`. If scitex-cards IS present and the store cannot be built, the
+    tests that follow would run against whatever `$SCITEX_CARDS_DB` resolves to
+    next — the LIVE fleet board, which the mirror reconciles by DELETING. A
+    helper that cannot isolate must stop the run: "could not isolate" and
+    "isolated" must never look the same from the caller's side.
     """
-    from scitex_cards._db import open_db
+    try:
+        from scitex_cards._db import open_db
+    except ImportError:
+        return
 
     open_db(cards_db).close()
 
