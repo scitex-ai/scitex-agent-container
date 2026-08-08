@@ -19,7 +19,12 @@ from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-from ._spawn_client import _parse_body, _resolve_base_url, _resolve_bearer
+from ._listen_client_resolve import (
+    _parse_body,
+    _resolve_base_url,
+    _resolve_bearer,
+    _resolve_caller,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +151,27 @@ def request_host_exec(
         body["timeout_s"] = timeout_s
     if env is not None:
         body["env"] = env
-    if caller is not None:
-        body["caller"] = caller
+    # AUTO-RESOLVE the caller identity from SAC_NAME when one is not supplied.
+    # Without this, an in-container agent that omits `caller` sends a body with
+    # no identity at all; the server has no per-node bearer on the host-wide
+    # bearer path either, so `check_group_acl` refuses with
+    #   403 "host_exec requires a resolvable caller (per-node bearer or 'caller'
+    #        body claim)"
+    # even though SAC_NAME is set in that container. Reported by scitex-storage
+    # 2026-07-28 (sac-listen-restart-defect-cluster) and hit again 2026-08-09.
+    #
+    # The tool's own documentation already PROMISED this behaviour — "defaults
+    # to SAC_NAME from the container" — while no layer implemented it: the MCP
+    # tool passes `caller` straight through and this client only forwarded a
+    # non-None value. Documented-but-absent is worse than missing, because the
+    # 403 then reads as a permissions problem rather than an unsent field.
+    #
+    # `_resolve_caller` keeps an explicit argument verbatim (including "" ->
+    # None, the deliberate opt-out for the admin path), so this only fills the
+    # gap and never overrides a caller's choice.
+    resolved_caller = _resolve_caller(caller)
+    if resolved_caller is not None:
+        body["caller"] = resolved_caller
 
     payload = json.dumps(body).encode("utf-8")
     url = f"{base}/v1/host_exec"
