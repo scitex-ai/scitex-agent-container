@@ -87,16 +87,26 @@ def _resolve_base_url(explicit: str | None) -> str:
 def _resolve_bearer(explicit: str | None) -> str | None:
     """Return the listen bearer, or ``None`` if unset.
 
-    An absent bearer is NOT fatal — the listen server may run
-    without auth in dev. Production injects the value via the
-    apptainer runtime; the CLI verb forwards what it received.
-    """
-    if explicit is not None:
-        return explicit or None
-    from .._env import getenv
+    An absent bearer is NOT fatal — the listen server may run without auth in
+    dev. But "absent" must mean genuinely absent, not merely "not in the env":
+    this used to stop at ``SAC_LISTEN_BEARER`` and so sent an UNAUTHENTICATED
+    request whenever the runtime had not injected that variable, even though a
+    valid token was sitting readable on disk. The runtime injects the bearer
+    only for agents whose spec registers the ``server:sac`` channel, so for
+    every other agent this route 401'd while the spawn route (which already had
+    the file fallback) authenticated fine — same container, same token.
 
-    raw = (getenv("LISTEN_BEARER", "") or "").strip()
-    return raw or None
+    Delegates to the canonical resolver so the fallback chain
+    (explicit -> SAC_LISTEN_BEARER -> host token file) is defined ONCE. Its
+    contract is identical to what this function already promised: return the
+    token or ``None``, never raise. Only ``_resolve_bearer`` is shared —
+    ``_resolve_base_url`` deliberately stays local because its fail-loud
+    exception TYPE (``HostListenTransportError``) is part of this module's
+    contract and callers catch it.
+    """
+    from ._listen_client_resolve import _resolve_bearer as _canonical_resolve_bearer
+
+    return _canonical_resolve_bearer(explicit)
 
 
 def _parse_body(raw: bytes) -> Any:
