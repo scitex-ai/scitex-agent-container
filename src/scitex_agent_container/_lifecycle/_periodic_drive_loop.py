@@ -38,6 +38,40 @@ from ._periodic_drive import PeriodicDriveEnvelope, _AgentState, sweep
 
 logger = logging.getLogger(__name__)
 
+
+def _log_emit_outcome(log: logging.Logger, agent: str, task: asyncio.Task) -> None:
+    """Report what a scheduled ``publish`` actually did.
+
+    ``Broker.publish`` returns the number of live subscribers that took the
+    event. Scheduling it with a bare ``create_task`` threw that away along with
+    any exception, so a drive that reached NOBODY was indistinguishable from one
+    that landed — the shape the operator ruled out on 2026-08-08
+    (「送ったつもりで黙って失敗はありえないです」).
+
+    A zero here is INFO rather than an error: the periodic drive is a nudge, and
+    an agent that is simply stopped is a normal, expected state. What was not
+    acceptable is that it looked like a success.
+    """
+    if task.cancelled():
+        log.info("periodic_drive_loop: emit to %s was cancelled", agent)
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error(
+            "periodic_drive_loop: emit to %s FAILED: %s: %s",
+            agent,
+            type(exc).__name__,
+            exc,
+        )
+        return
+    if task.result() == 0:
+        log.info(
+            "periodic_drive_loop: emit to %s reached NO live subscriber "
+            "(agent stopped or not subscribed) — nudge not delivered",
+            agent,
+        )
+
+
 # How often the listen-side ticker wakes to invoke ``sweep``.
 # ``sweep`` itself honours per-agent ``last_drive_at + interval_s``
 # so this is JUST the polling-cadence floor — finer than the
@@ -195,7 +229,21 @@ async def periodic_drive_loop(
                     # ``Broker.publish`` is async; schedule it via the
                     # running loop so emit stays a synchronous side-
                     # effect from sweep's POV.
-                    asyncio.create_task(inbox.publish(envelope.agent_name, payload))
+                    task = asyncio.create_task(
+                        inbox.publish(envelope.agent_name, payload)
+                    )
+                    # OBSERVE THE TASK. A bare create_task discards both the
+                    # return value and any exception, so a drive that reached
+                    # NO subscriber — or raised — looked identical to one that
+                    # landed. Operator, 2026-08-08: 「送ったつもりで黙って失敗は
+                    # ありえないです」. The callback is the cheapest way to keep
+                    # emit synchronous while still confirming arrival rather
+                    # than dispatch.
+                    task.add_done_callback(
+                        lambda t, agent=envelope.agent_name: _log_emit_outcome(
+                            logger, agent, t
+                        )
+                    )
                     last_emit_at[envelope.agent_name] = envelope.generated_at
 
                 emitted = sweep(agents, emit=_emit, now=now_fn())
