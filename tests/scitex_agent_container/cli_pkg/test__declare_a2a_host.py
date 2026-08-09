@@ -75,6 +75,30 @@ def test_a_clean_dry_run_exits_zero(fleet) -> None:
     assert result.exit_code == 0
 
 
+def test_a_dry_run_that_found_a_problem_does_not_exit_zero(fleet) -> None:
+    # Arrange — an unreadable spec means the plan does not describe what would
+    # happen. Anything scripting this verb reads the exit code, not the prose,
+    # so a plan that is not safe to apply must not look like a clean run.
+    root = fleet
+    (root / "broken").mkdir()
+    (root / "broken" / "spec.yaml").write_bytes(b"\xff\xfe\x00binary")
+    # Act
+    result = CliRunner().invoke(declare_a2a_host, [])
+    # Assert
+    assert result.exit_code != 0
+
+
+def test_an_unreadable_spec_is_named_in_the_dry_run(fleet) -> None:
+    # Arrange — an exit code alone does not say WHICH spec to go and fix.
+    root = fleet
+    (root / "broken").mkdir()
+    (root / "broken" / "spec.yaml").write_bytes(b"\xff\xfe\x00binary")
+    # Act
+    result = CliRunner().invoke(declare_a2a_host, [])
+    # Assert
+    assert "broken" in result.output
+
+
 def test_applying_writes_the_declaration(fleet) -> None:
     # Arrange
     root = fleet
