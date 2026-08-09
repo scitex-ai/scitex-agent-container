@@ -12,10 +12,10 @@ versioning follows [SemVer](https://semver.org/).
   `HostsSpec.host` has said "list: priority order; first available host wins
   (fallback chain)" since v3 shipped. Every site that reduced the list took
   `host[0]` and never asked whether that host was usable, so a chain degraded
-  exactly as well as a string: not at all. Measured across all five reduction
+  exactly as well as a string: not at all. Measured across all six reduction
   sites — `_lifecycle/_verdict_remote.py`, `cli_pkg/lifecycle/_common.py`,
-  `_start_single.py`, `_host_routing.py`, `_dispatch.py` — not one contained a
-  liveness or reachability check.
+  `_start_single.py`, `_host_routing.py`, `_dispatch.py` and `_attach.py` —
+  not one contained a liveness or reachability check.
 
   On 2026-08-09 specs reverted to a single pinned host, sac ssh-dispatched
   every lifecycle verb to it, the hop answered `Permission denied (publickey)`,
@@ -23,7 +23,10 @@ versioning follows [SemVer](https://semver.org/).
   was sitting inert in the type.
 
   `cli_pkg/lifecycle/_host_chain.py` is now the ONE place a `spec.host` chain
-  is reduced, and all five sites route through it. A list is walked in
+  is reduced, and all six sites route through it — including `_attach.py`,
+  whose docstring already promised it agreed with `start` about where an agent
+  lives and would otherwise have opened a session on a different machine than
+  the one the agent was launched on. A list is walked in
   priority order and the first candidate not positively REJECTED wins: a local
   entry wins immediately (we are that machine — an ssh hop to self is never
   rendered), a remote entry wins if the reachability probe does not say no, and

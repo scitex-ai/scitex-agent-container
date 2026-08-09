@@ -437,6 +437,66 @@ def test_verdict_remote_reports_no_peer_for_a_local_placement(
     assert peer is None
 
 
+def _write_chain_spec(home, name: str, host_line: str):
+    """Write a minimal VALID v3 spec pinned by ``host_line`` under fake HOME."""
+    from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+
+    d = home / ".scitex" / "agent-container" / "agents" / name
+    d.mkdir(parents=True)
+    body = (
+        "apiVersion: scitex-agent-container/v3\n"
+        "kind: Agent\n"
+        "spec:\n"
+        "  runtime: apptainer\n"
+        f"  host: {host_line}\n"
+        "  workdir: /tmp/hc-test\n"
+        "  apptainer:\n"
+        "    image: /tmp/does-not-need-to-exist.sif\n"
+        "    binds: []\n"
+        "  claude:\n"
+        "    model: haiku\n"
+        "  health:\n"
+        "    enabled: true\n"
+        "    interval: 60\n"
+        "  restart:\n"
+        "    policy: on-failure\n"
+        "    max_retries: 3\n"
+    )
+    spec = d / "spec.yaml"
+    spec.write_text(explicitize_yaml(body))
+    return spec
+
+
+def test_attach_routes_a_chain_to_the_same_peer_start_would(
+    tmp_path, env_save_restore
+):
+    # Arrange — `sac agents attach` must agree with `sac agents start` about
+    # where an agent lives, or the operator is sent to a different machine
+    # than the one it was launched on. Chain led by an unroutable name.
+    env_save_restore.set("HOME", str(tmp_path))
+    _write_peer_config(tmp_path, env_save_restore)
+    _write_chain_spec(tmp_path, "hc-attach", "[spartn-typo, peer-a]")
+    from scitex_agent_container.cli_pkg.lifecycle._attach import _classify_agent_host
+
+    # Act
+    kind_peer = _classify_agent_host("hc-attach")
+    # Assert
+    assert kind_peer == ("remote", "peer-a")
+
+
+def test_attach_keeps_a_local_chain_entry_local(tmp_path, env_save_restore):
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    _write_peer_config(tmp_path, env_save_restore)
+    _write_chain_spec(tmp_path, "hc-attach-local", f"[spartn-typo, {_HERE}]")
+    from scitex_agent_container.cli_pkg.lifecycle._attach import _classify_agent_host
+
+    # Act
+    kind, _peer = _classify_agent_host("hc-attach-local")
+    # Assert
+    assert kind == "local"
+
+
 def test_singleton_liveness_probe_covers_every_chain_host_when_none_are_live():
     # Arrange
     config = _cfg(["peer-a", "peer-b"])
