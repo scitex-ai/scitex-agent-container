@@ -20,7 +20,23 @@ def db_query(
     limit: int = 50,
 ) -> dict[str, Any]:
     """Query the state-db. Filter by table / agent / host. Mirrors
-    ``sac db query --json``."""
+    ``sac db query --json``.
+
+    The result carries ``store`` — the database the rows came from —
+    because an MCP caller never sees the CLI's console rendering, and an
+    empty ``data`` is otherwise indistinguishable from having queried the
+    WRONG database. ``SCITEX_AGENT_CONTAINER_STATE_DB`` is set per-agent
+    in every sac container, so each agent reads its own shard, which
+    never holds fleet rows. On 2026-08-09 three agents independently
+    concluded the fleet registry had been wiped from all-zero output
+    here; two escalated it as P1 data loss while the host DB was healthy.
+
+    It is a SIBLING key: ``data`` keeps its exact shape, and the CLI's
+    stdout stays a bare array. The store deliberately does NOT travel on
+    stderr — ``invoke_cli_json`` reads Click's merged ``result.output``,
+    so a stderr line would make ``data`` unparseable and hand every
+    caller ``None``.
+    """
     argv = ["db", "query", "--json", "--limit", str(limit)]
     if table:
         argv += ["--table", table]
@@ -28,7 +44,14 @@ def db_query(
         argv += ["--agent", agent]
     if host:
         argv += ["--host", host]
-    return invoke_cli_json(argv)
+    result = invoke_cli_json(argv)
+    # Read through the MODULE: the constant binds from the environment at
+    # import time, so a captured copy goes stale and would report a path
+    # that is not the one just queried.
+    from ..._state import state_db as _state_db
+
+    result["store"] = str(_state_db.DEFAULT_DB_PATH)
+    return result
 
 
 def db_clean(heartbeat_stale_seconds: int = 600) -> dict[str, Any]:
