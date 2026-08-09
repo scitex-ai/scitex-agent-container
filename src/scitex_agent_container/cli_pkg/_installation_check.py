@@ -205,4 +205,4 @@ def register(install_group) -> None:
     install_group.add_command(installation_check)
 
 
-__all__ = ["STATE_BROKEN", "installation_check", "register"]
+__all__ = ["installation_check", "register"]
