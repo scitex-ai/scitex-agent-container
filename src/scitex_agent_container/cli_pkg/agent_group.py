@@ -71,7 +71,15 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
-        ("Maintenance", ["prune-claude", "archive-claude-bloat", "refresh-acl"]),
+        (
+            "Maintenance",
+            [
+                "prune-claude",
+                "archive-claude-bloat",
+                "refresh-acl",
+                "declare-a2a-host",
+            ],
+        ),
     ]
 
 
@@ -240,5 +248,15 @@ agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloa
 from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
 
 agent_group.add_command(_refresh_acl_impl)
+
+# `declare-a2a-host` — one-shot fleet sweep making every spec state its own
+# a2a bind address instead of inheriting one from a code default. Sits beside
+# `refresh-acl` because it is the same shape: reads every spec in the
+# user-scope registry, safe to re-run, dry-run by default. Writes the value
+# the code already falls back to, so it changes what specs SAY and not what
+# agents BIND.
+from ._declare_a2a_host import declare_a2a_host as _declare_a2a_host_impl  # noqa: E402
+
+agent_group.add_command(_declare_a2a_host_impl)
 
 __all__ = ["agent_group"]
