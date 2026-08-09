@@ -71,6 +71,23 @@ def _recorder():
     return _fn
 
 
+def _write_peer_config(home, env_save_restore):
+    """Register ``peer-a`` in a REAL config.yaml and pin this machine's name.
+
+    Both hostname env forms are set so the override never conflicts with a
+    pre-set ``SAC_HOSTNAME`` in the runner env (the pattern the sibling
+    routing tests already use).
+    """
+    cfg = home / "config.yaml"
+    cfg.write_text(
+        "host:\n  fallback: hostname-short\npeers:\n  peer-a:\n    ssh: peer-a\n"
+    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+    env_save_restore.set("SAC_HOSTNAME", _HERE)
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", _HERE)
+    return cfg
+
+
 def _dispatch(config, oracle, dispatcher):
     return try_dispatch(
         config,
@@ -371,6 +388,53 @@ def test_singleton_liveness_probe_stops_at_the_first_live_chain_host():
     )
     # Assert
     assert asked == ["peer-a"]
+
+
+def test_verdict_remote_skips_a_typo_head_for_the_next_chain_entry(
+    tmp_path, env_save_restore
+):
+    # Arrange — chain led by a name that routes nowhere, real peer at entry
+    # 2. Head-only reduction answered "not remote", so the resolver probed
+    # the LOCAL tmux and a live remote agent rendered DEAD in listings.
+    _write_peer_config(tmp_path, env_save_restore)
+    from scitex_agent_container._lifecycle._verdict_remote import (
+        _remote_peer_for_config,
+    )
+
+    # Act
+    peer = _remote_peer_for_config(_cfg(["spartn-typo", "peer-a"]))
+    # Assert
+    assert peer == "peer-a"
+
+
+def test_verdict_remote_still_resolves_a_plain_string_peer(
+    tmp_path, env_save_restore
+):
+    # Arrange — the unchanged single-pin path.
+    _write_peer_config(tmp_path, env_save_restore)
+    from scitex_agent_container._lifecycle._verdict_remote import (
+        _remote_peer_for_config,
+    )
+
+    # Act
+    peer = _remote_peer_for_config(_cfg("peer-a"))
+    # Assert
+    assert peer == "peer-a"
+
+
+def test_verdict_remote_reports_no_peer_for_a_local_placement(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    _write_peer_config(tmp_path, env_save_restore)
+    from scitex_agent_container._lifecycle._verdict_remote import (
+        _remote_peer_for_config,
+    )
+
+    # Act
+    peer = _remote_peer_for_config(_cfg(_HERE))
+    # Assert
+    assert peer is None
 
 
 def test_singleton_liveness_probe_covers_every_chain_host_when_none_are_live():
