@@ -29,8 +29,19 @@ export LC_ALL=C.UTF-8 LANG=C.UTF-8
 # Real writable scratch. The runner profile exports TMPDIR=~/.cache/tmp, a host
 # path that does NOT resolve inside the container; tests (tmp_path) and the
 # install target both need a working, writable tmp. Node-local /tmp is writable
-# + ephemeral and per-version-isolated so concurrent matrix legs don't collide.
-export TMPDIR="/tmp/ci-scitex_agent_container-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-$V"
+# + per-version-isolated so concurrent matrix legs don't collide.
+#
+# "+ ephemeral" USED TO BE CLAIMED HERE AND WAS NEVER TRUE. Nothing removed this
+# directory — on the persistent self-hosted node 116 of them at 1.8-2.2 GB each
+# filled the root filesystem (2026-08-09). tmpdir-lib.sh now owns the whole
+# lifecycle: it names the directory (once, here), an `if: always()` job step
+# removes it at the end of the job, and exec-in-sif.sh prunes what a SIGKILL or
+# a reboot left behind. The name is unchanged, so this also reclaims the
+# directories already on disk.
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+TMPDIR="$(ci_tmpdir_path ci "$V")"
+export TMPDIR
 rm -rf "$TMPDIR"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
