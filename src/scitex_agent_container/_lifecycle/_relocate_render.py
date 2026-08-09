@@ -18,6 +18,11 @@ keeps the exception text rather than discarding it, so the line can say
 observed" the checks alone can offer. Without it the operator knows a fact is
 missing but not why, which turns a five-second fix into an investigation.
 
+That lookup goes through :data:`_CHECK_FACTS`, because the errors are keyed by
+FACT and the report is written in CHECKS, and four of the nine are named
+differently on the two sides. Keying only by check name silently drops exactly
+those four reasons — they are present, correct, and never shown.
+
 Pure: strings in, strings out. No click, no console, no colour — the caller
 decides how to paint them, and tests can assert on exact lines.
 """
@@ -41,6 +46,44 @@ VERDICT_REFUSED = "REFUSED"
 VERDICT_UNKNOWN = "REFUSED (undetermined)"
 
 _LABEL = {True: "PASS", False: "FAIL", None: "UNKNOWN"}
+
+#: Which FACTS feed each CHECK. ``gather_target_facts`` keys its failures by
+#: fact name, and four checks are named differently from the fact behind them
+#: (``credentials_valid`` is fed by ``credential_expires_in_s``, and so on).
+#: Without this map those four print a bare UNKNOWN while the reason for it sits
+#: unused in the errors dict — measured 2026-08-09 against a busybox NAS, where
+#: four of five unknowns lost their explanation on the way to the screen.
+_CHECK_FACTS: dict[str, tuple[str, ...]] = {
+    "target_reachable": ("reachable",),
+    "image_present": ("image_present",),
+    "binds_exist_on_target": ("missing_bind_sources",),
+    "card_store_reachable": ("card_store_reachable", "card_store_url"),
+    "credentials_valid": (
+        "credential_expires_in_s",
+        "credential_refresh_token_present",
+    ),
+    "runtime_supported": ("supported_runtimes",),
+    "spec_schema_accepted": ("rejected_spec_keys",),
+    "ports_free": ("ports_in_use",),
+    "hub_reachable_from_target": ("hub_reachable_from_target",),
+}
+
+
+def _why(check_name: str, errors: dict[str, str]) -> str:
+    """The probe failure behind ``check_name``, by its own key or its facts'.
+
+    The check's own name wins, so a caller that already keyed by check name
+    keeps working; the fact names are the fallback that makes the adapter's
+    reasons reach the reader.
+    """
+    direct = errors.get(check_name)
+    if direct:
+        return direct
+    for fact in _CHECK_FACTS.get(check_name, ()):
+        reason = errors.get(fact)
+        if reason:
+            return reason
+    return ""
 
 
 def render_declared(declared: dict[str, object]) -> list[str]:
@@ -84,7 +127,7 @@ def render_observed(
     width = max((len(c.name) for c in report.checks), default=0)
     for check in report.checks:
         lines.append(f"  {_LABEL[check.ok]:<8} {check.name:<{width}}  {check.detail}")
-        why = errors.get(check.name)
+        why = _why(check.name, errors)
         if why:
             lines.append(f"           probe error: {why}")
         if check.ok is not True and check.hint:

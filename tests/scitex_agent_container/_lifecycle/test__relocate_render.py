@@ -134,6 +134,19 @@ def test_the_probe_error_is_printed_beside_the_unknown() -> None:
     assert "SSHTimeout: no route to host" in text
 
 
+def test_a_probe_error_keyed_by_fact_still_reaches_the_reader() -> None:
+    # Arrange: `gather_target_facts` keys its failures by FACT name, and four
+    # checks are named differently from the fact behind them. Looking up by
+    # check name alone drops exactly those four reasons — present, correct, and
+    # never shown (measured 2026-08-09 against a busybox NAS).
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "supported_runtimes": None})
+    errors = {"supported_runtimes": "FactUnavailable: sac is not importable there"}
+    # Act
+    text = _text(render_observed(_report(facts), errors))
+    # Assert
+    assert "sac is not importable there" in text
+
+
 def test_passing_checks_are_printed_too() -> None:
     # Arrange: showing only problems makes "passed" and "never ran"
     # indistinguishable — the ambiguity the three outcomes exist to remove.
