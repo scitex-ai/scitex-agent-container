@@ -226,7 +226,14 @@ def _both_kinds_fields() -> list[RequiredField]:
         ApptainerSpec,
         # container_workdir is BANNED (removed with spec.access); banned
         # stays banned, never required.
-        exclude=("container_workdir",),
+        #
+        # bind_intents is DERIVED, not a YAML key: the parser builds it
+        # from the same ``binds`` entries the operator already wrote (see
+        # config._bind_intent). Requiring a key that no spec can legally
+        # contain — validate_raw would have to reject it — would turn the
+        # whole fleet red in both directions at once. Same category as the
+        # module docstring's "list-ITEM internals" exclusion, one level up.
+        exclude=("container_workdir", "bind_intents"),
     )
     fields += _section("hooks", HookSpec)
     fields += _section("context_management", ContextManagementConfig)

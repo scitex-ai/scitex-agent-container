@@ -36,7 +36,30 @@ class ApptainerSpec:
 
     binds: list[str] = field(default_factory=list)
     """Bind mounts as ``host:container[:mode]`` strings — promoted from
-    top-level spec.mounts (§3)."""
+    top-level spec.mounts (§3).
+
+    Stays the SINGLE SOURCE OF TRUTH for WHICH binds a spec declares,
+    whatever YAML shape they were written in. A declared-intent mapping
+    (``config._bind_intent``) is normalised into exactly one string here,
+    so every consumer that only needs the mount — the jailed-capsule
+    guardrail's forbidden-prefix scan, the fleet-default de-dup — keeps
+    reading a flat list of strings and is unaffected by the new shape."""
+
+    bind_intents: list = field(default_factory=list)
+    """Per-entry declared intent (``required`` / ``ensure`` / ``hosts``),
+    one :class:`config._bind_intent.BindIntent` per ``binds`` entry, in the
+    same order.
+
+    DERIVED, not operator-writable: there is no ``bind_intents:`` YAML
+    key. The parser builds it alongside ``binds`` from the same entries,
+    which is why it is excluded from the explicit-fields required map
+    (``config._explicit_fields``) — requiring a key nobody can write
+    would turn every spec in the fleet red.
+
+    Empty means "no intent recorded", which the launch-time resolver
+    treats as "every bind required and unconditional" — the pre-intent
+    behaviour. So an ``ApptainerSpec`` built in code with ``binds=[...]``
+    and no intents still mounts everything, exactly as before."""
 
     env: dict[str, str] = field(default_factory=dict)
     """Env vars exported into the container — promoted from top-level

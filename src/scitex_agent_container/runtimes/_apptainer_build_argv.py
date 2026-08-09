@@ -204,36 +204,15 @@ def build_run_argv(
             argv += ["--bind", str(vol)]
 
     # v3-realign: spec.apptainer.binds (promoted from top-level
-    # spec.mounts per §3). Strings already in `host:container[:mode]`
-    # form — appended verbatim.
-    #
-    # ADR-0003 D6 follow-up: when the destination is under
-    # /home/agent/ (the host-side runtime/<name>/home/ bind), apptainer
-    # no longer scaffolds parent directories — the host dir IS the
-    # filesystem at /home/agent. We pre-create the parent on the
-    # host side so the bind has somewhere to land.
-    # P3a-2 (operator directive feedback_scitex_todo_single_shared_store,
-    # lead a2a 214dd26d): prepend the fleet-default binds (today:
-    # ~/.scitex/todo for scitex-todo's single shared store) so every
-    # agent inherits the store mount even when its spec doesn't carry
-    # the explicit line. Explicit spec entries to the same destination
-    # override the default — see ``_p3a_default_binds``.
-    from ._p3a_default_binds import apply_default_binds
+    # spec.mounts per §3), merged under the fleet defaults and resolved
+    # against this host's declared intent. Extracted to
+    # ``_apptainer_bind_intent`` (mirrors the overlay_flags /
+    # tmpfs_workdir_flags / nested_build_flags pattern below) so this file
+    # stays under the 512-line cap; see that module for the gate order and
+    # for why a plain-string spec is byte-identical to the pre-intent argv.
+    from ._apptainer_bind_intent import spec_bind_flags
 
-    ap_for_binds = getattr(config, "apptainer", None)
-    spec_binds = (
-        [str(b) for b in getattr(ap_for_binds, "binds", None) or []]
-        if ap_for_binds is not None
-        else []
-    )
-    for bs in apply_default_binds(spec_binds):
-        if ":" in bs:
-            _, _, rest = bs.partition(":")
-            dst = rest.split(":", 1)[0]
-            if dst.startswith("/home/agent/"):
-                rel = dst[len("/home/agent/") :]
-                (home_backing / rel).mkdir(parents=True, exist_ok=True)
-        argv += ["--bind", bs]
+    argv += spec_bind_flags(config, home_backing=home_backing)
 
     # GPU passthrough — apptainer's --nv binds the host CUDA libs
     # and devices into the container. --rocm does the same for AMD.

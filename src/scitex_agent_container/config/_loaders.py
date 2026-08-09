@@ -325,7 +325,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # top-level AgentConfig.image/model/env/mounts fields are kept for
     # back-compat consumers and populated from the new homes.
     claude_spec = parse_claude(spec)
-    apptainer_spec = parse_apptainer(spec)
+    # ``source_path`` is quoted in every apptainer.binds validation error —
+    # a malformed entry must name the file to edit, not send the operator
+    # through the fleet's specs looking for it.
+    apptainer_spec = parse_apptainer(spec, source_path=str(path))
     # Role-based session-continuity default ("fresh by default, opt-in
     # continue", 2026-06-22). ``claude.session`` now defaults to ``fresh``
     # (parse_claude) so experiment capsules — which carry no coordinator

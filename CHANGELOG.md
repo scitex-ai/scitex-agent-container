@@ -6,6 +6,78 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A bind entry can now say WHEN it applies, not just where it mounts.**
+  `spec.apptainer.binds[]` accepted only `host:container[:mode]` strings, so
+  every entry was unconditional and mandatory and a spec that was valid on the
+  operator's laptop killed the same agent elsewhere — apptainer refuses to
+  create a container whose bind source is missing. `/mnt/c` is the standing
+  case: WSL-only, and present in **101 of the fleet's 107 specs**. The
+  workaround was to comment the line out per host, and the commented-out line
+  was still sitting in the specs. That hand-hack is what this replaces.
+
+  An entry may now be a mapping declaring `required:` / `ensure:` / `hosts:`:
+
+  ```yaml
+  binds:
+  - /home/ywatanabe:/home/ywatanabe:rw     # string form — unchanged
+  - {source: /mnt/c, dest: /mnt/c, mode: rw, required: false}
+  - {source: ~/.scitex/cards, dest: /home/agent/.scitex/cards, mode: rw, ensure: dir}
+  - {source: /home/ywatanabe/.bun/bin/bun, dest: /usr/local/bin/bun, hosts: [ywata-note-win]}
+  ```
+
+  `required: true` is the DEFAULT and nothing implies it away: a spec that
+  declares no intent behaves EXACTLY as before, down to a byte-identical
+  `--bind` argv (pinned by a golden list recorded from the pre-change tree).
+  A missing source still FATALs.
+
+  `required: false` skips an absent source, `ensure: dir` provisions one, and
+  `hosts:` restricts an entry to named machines — resolved through sac's own
+  hostname authority (`config._host.resolve_hostname()` unioned with the
+  `config.yaml` alias registry), not a second one invented here.
+
+  **The interaction rule, decided and documented rather than left implicit:**
+  when `hosts:` excludes this host AND `required: true`, the entry SKIPS — it
+  does not fatal. The gates run `hosts:` → `ensure:` → `required:`, because
+  `hosts:` asks whether the entry is declared here at all and `required:` asks
+  only, of an entry that IS declared here, whether a missing source is
+  tolerable. Fataling would force every host-conditional entry to also write
+  `required: false`, and would fatal on the everyday path — `/mnt/c` is absent
+  on every non-WSL host — rather than the rare one.
+
+  **No skip is silent.** Every skipped bind is a `WARNING` naming the bind, the
+  reason, the agent, and (for a host-gated skip) both the declared host list
+  and this host, plus `required: true` when it was set — a silently-dropped
+  mount is how an agent comes up looking healthy while reaching none of its
+  data, which is the failure this feature exists to end, not to relocate.
+
+  `ensure: dir` failing to create the directory is a loud `RuntimeError`, never
+  downgraded to a skip, and that holds under `required: false` too: "optional"
+  excuses a source that was never there, not a creation you asked for that
+  failed.
+
+  Malformed declared-intent entries are rejected at config-load time naming the
+  spec FILE, the entry, the valid keys and a paste-ready correction — a typo
+  like `requred: false` cannot silently leave `required: true` in force.
+  Entries that declare no intent keep their historical defensive tolerance
+  byte for byte (non-list `binds:`, empty-string entries, legacy `{src, dst}`
+  dicts missing a side), since "no declared intent ⇒ exactly as today" governs.
+
+  The jailed-capsule guardrail is deliberately NOT taught about intent: it
+  still realpath-scans every DECLARED bind source, including ones that would
+  have been skipped on this host. Conservative on purpose, and pinned by tests
+  that clear `$APPTAINER_BIND` first so they cannot pass on an env-injected
+  refusal instead of the spec entry under test.
+
+### Fixed
+
+- `runtimes/_apptainer_build_argv.py` was 516 lines, over the repo's 512-line
+  per-file cap. The bind block moved wholesale into the new
+  `runtimes/_apptainer_bind_intent.py` (mirroring the existing `overlay_flags`
+  / `tmpfs_workdir_flags` / `nested_build_flags` extractions), taking the file
+  to 489.
+
 ## [0.24.25] - 2026-08-05
 
 ### Fixed

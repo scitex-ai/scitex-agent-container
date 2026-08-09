@@ -151,7 +151,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `overlay_size` | size string (e.g. `"5G"`, `"500M"`) | When set together with `overlay`, sac auto-creates the overlay image at that path with the given size if it doesn't exist (declarative — no manual `apptainer overlay create` step). Units: M/MB/G/GB only (K/KB rejected). Empty = no auto-create (missing overlay raises a clear FileNotFoundError at launch). |
 | `overlay_create_if_missing` | bool (default `true`) | Gate for the auto-create behaviour above. When `false` AND the overlay is missing, sac raises FileNotFoundError without attempting creation (operator must pre-create with `apptainer overlay create`). |
 | `tmpfs_size`  | size string (default `"2G"`)  | Minimum free-space guarantee for the container's `/tmp` (and `/var/tmp`). A `--containall` container otherwise gets a 64 MB session tmpfs at `/tmp` that fills mid-run during the full test suite. sac emits `--workdir <state_dir>/tmp-scratch` to relocate `/tmp` onto the host filesystem (capacity >> 64 MB) and fails loud (`TmpfsSpaceError`) if that filesystem has less than `tmpfs_size` free. Units: M/MB/G/GB only (K/KB rejected). NOT a hard cap (unprivileged apptainer can't size-cap a tmpfs). Set to `""` to opt out (legacy 64 MB tmpfs). Skipped when the operator declares their own `--workdir`/`-W` in `raw_args`. |
-| `binds[]`     | `host:container[:ro\|rw]` (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. |
+| `binds[]`     | `host:container[:ro\|rw]` string, **or** a declared-intent mapping (or legacy `{src,dst,mode}` dict) | Bind mounts. Source side supports `~` / `$VAR` (sac expands before calling apptainer). Destination MUST be absolute (apptainer rejects relative / `~` / `$VAR`); conventional roots are `/home/agent/...` (D5 canonical HOME), `/srv/`, `/work/`, `/opt/`, `/data/`. The legacy `{src, dst, mode}` dict form is still accepted by the parser and normalized to the string form. **A plain string is unconditional and mandatory** — a missing source is a container-creation FATAL, unchanged. See **Declared-intent binds** below to make an entry optional, host-conditional, or self-provisioning. |
 | `env`         | key-value dict                | Env vars exported into the container                       |
 | `container_workdir` | path (default `/work`)  | Working directory inside the container.                    |
 | `nv` / `rocm` | bool                          | Forward host NVIDIA / AMD ROCm libs. (DESIGN — mutual exclusion not currently enforced by the parser.) |
@@ -160,6 +160,69 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `relaxed`     | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). TODO: wire into `ApptainerSpec`. |
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 | `nested_build` | bool (default `false`)       | Enable **NESTED** apptainer build/pull from INSIDE the agent container — a solver reproduces a capsule's pinned env itself (pull a published `docker://` image, or build a Dockerfile-derived def whose `%post` runs as root), then `apptainer exec`s it. Binds `/dev/fuse`, masks `/etc/subuid`+`/etc/subgid` (→ root-mapped + `fakeroot`-command build path; the SIF's `newuidmap` is `agent`-owned so plain `--fakeroot` FATALs), and points `APPTAINER_TMPDIR`/`CACHEDIR` at the real-disk `/tmp` (size via `tmpfs_size` — the 2G default is too small for a multi-GB image). Composes with `access: capsule` (adds **no** host-FS bind). Fail-loud if the host lacks `/dev/fuse`. Build-from-Dockerfile needs the base image to contain `/etc/subuid` (every real distro base does; busybox doesn't). Verified 2026-06-20 inside `sac-scitex.sif`. See [`runtimes/_apptainer_nested.py`](../src/scitex_agent_container/runtimes/_apptainer_nested.py). |
+
+#### Declared-intent binds (`spec.apptainer.binds[]`)
+
+A bind entry used to say only *where* to mount, never *when*, so every
+entry was unconditional and mandatory. A spec valid on the operator's
+laptop then killed the same agent elsewhere — apptainer refuses to create
+a container whose bind source is missing. `/mnt/c` is the standing
+example: WSL-only, and present in 101 of the fleet's 107 specs. The
+workaround was to comment the line out per host; declared intent replaces
+that hand-hack.
+
+An entry may be a plain string (**unchanged in every respect**) or a
+mapping:
+
+```yaml
+binds:
+- /home/ywatanabe:/home/ywatanabe:rw     # string form — unconditional, mandatory
+- source: /mnt/c                          # host side (~ / $VAR expanded)
+  dest: /mnt/c                            # container side (must be absolute)
+  mode: rw                                # optional; omitted = no :mode suffix
+  required: false                         # absent source -> visible skip
+- source: ~/.scitex/cards
+  dest: /home/agent/.scitex/cards
+  mode: rw
+  ensure: dir                             # create the source dir first
+- source: /home/ywatanabe/.bun/bin/bun
+  dest: /usr/local/bin/bun
+  hosts: [ywata-note-win]                 # applies only on the listed hosts
+```
+
+| Key        | Default | Meaning |
+|------------|---------|---------|
+| `source`   | —       | Host path. Required. `~` / `$VAR` expanded by sac (apptainer expands neither). `src` accepted as a legacy alias. |
+| `dest`     | —       | Container path. Required, must be absolute. `dst` accepted as a legacy alias. |
+| `mode`     | `""`    | `ro` / `rw`. Omitted emits no `:mode` suffix. |
+| `required` | `true`  | **`true` is the default and nothing implies it away.** A mapping that says nothing about it behaves exactly like a plain string: a missing source still reaches apptainer and still FATALs. `false` SKIPS the bind when the source is absent — and logs a WARNING naming it. Never silent. |
+| `ensure`   | `""`    | `dir` creates the source directory (with parents) before binding. A creation FAILURE is a loud `RuntimeError`, never downgraded to a skip — including under `required: false`, because "optional" excuses a source that was never there, not a creation you asked for that failed. |
+| `hosts`    | *(all)* | List of host names this entry applies on, resolved through sac's own hostname authority (`config._host.resolve_hostname()` unioned with the `config.yaml` alias registry — the same one dispatch uses). Elsewhere the entry SKIPS, visibly. |
+
+**Interaction rule — `hosts:` excludes this host AND `required: true`: it
+SKIPS, never fatals.** The gates are evaluated in the order `hosts:` →
+`ensure:` → `required:`. `hosts:` asks whether the entry is declared for
+this machine at all; `required:` asks, of an entry that *is* declared
+here, whether a missing source is tolerable. On an excluded host the
+entry is simply not declared, so `required:` is never reached. The
+alternative would force every host-conditional entry to also write
+`required: false` (conflating two axes) and would fatal on the everyday
+path rather than the rare one. Because the case is common and the rule is
+surprising, the skip log line names the host list, this host, **and**
+`required: true` when it was set.
+
+Nothing is ever dropped quietly: every skip is a `WARNING` naming the
+bind and the reason. A silently-dropped mount is how an agent comes up
+looking healthy while reaching none of its data.
+
+Malformed mappings are rejected at config-load time, naming the spec
+file, the offending entry, the valid keys and a paste-ready correction —
+so a typo like `requred: false` cannot silently leave `required: true` in
+force. Entries that declare no intent keep their historical defensive
+tolerance unchanged. See
+[`config/_bind_intent.py`](../src/scitex_agent_container/config/_bind_intent.py)
+and
+[`runtimes/_apptainer_bind_intent.py`](../src/scitex_agent_container/runtimes/_apptainer_bind_intent.py).
 
 ### `spec.claude` — SDK knobs
 
