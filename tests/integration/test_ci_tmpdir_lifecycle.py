@@ -169,7 +169,10 @@ def test_prefix_table_maps_inner_script_to_prefix(root: Path, inner: str, prefix
     assert res.stdout == prefix, res.stderr
 
 
-@pytest.fixture(scope="module")
+# Function-scoped on purpose: STX-TQ004 rejects a module/session fixture that
+# mutates in its body, and the accumulator here is exactly that shape. Re-globbing
+# six shell scripts per test costs nothing.
+@pytest.fixture
 def scratch_creating_scripts() -> list[str]:
     """Scripts that assign TMPDIR — derived from the SCRIPTS, not the table."""
     found = []
@@ -719,7 +722,8 @@ def _tail_invocation(run: str, script: str):
     return (m.group(1), m.group(2).strip()) if m else None
 
 
-@pytest.fixture(scope="module")
+# Function-scoped for the same reason as `scratch_creating_scripts` above.
+@pytest.fixture
 def wiring():
     """Every (workflow, job, inner, args) that creates scratch, paired with the
     cleanup invocations present in the same job."""
