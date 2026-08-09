@@ -57,12 +57,36 @@ def db_show(ctx: click.Context, as_json: bool) -> None:
       $ sac db show
       $ sac db show --json
     """
+    # Classify the store BEFORE counting. `table_counts()` goes through
+    # `open_db`, which calls `init_schema` unconditionally — so on a wrong or
+    # zero-byte path it CREATES empty tables and then truthfully reports zero
+    # rows for all of them. Measured 2026-08-09: that is how a 0-byte
+    # state.db produced a confident "no agents registered" while twelve
+    # agents were running. Counting first and asking questions later is what
+    # made the failure invisible.
+    from .._state.state_db import DEFAULT_DB_PATH
+    from .._state.state_db_health import inspect_store
+
+    store = inspect_store(DEFAULT_DB_PATH)
     counts = table_counts()
-    payload = {"tables": counts, "known_tables": list(KNOWN_TABLES)}
+    payload = {
+        "tables": counts,
+        "known_tables": list(KNOWN_TABLES),
+        # Three-valued, at the reporting boundary: a zero here means "zero
+        # rows" ONLY when store_state is "populated".
+        "store_state": store.state,
+        "store_path": str(store.path),
+        "counts_are_authoritative": store.is_populated,
+    }
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
         return
     console.print("[bold]sac state.db[/bold]")
+    if not store.is_populated:
+        console.print(f"  [yellow]{store.describe()}[/yellow]")
+        console.print(
+            "  [yellow]the counts below are NOT evidence about the fleet[/yellow]"
+        )
     for table in KNOWN_TABLES:
         n = counts.get(table, 0)
         console.print(f"  {table:<14}  {n:>6}")
