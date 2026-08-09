@@ -530,6 +530,181 @@ def test_clean_deletes_nothing_when_it_cannot_scope_the_target(
     assert leg.is_dir(), "an unscoped invocation deleted a leg's scratch"
 
 
+# --- a removal that FAILED must not be reported as a removal --------------
+#
+# The whole fix is verified in production by one log line — `clean-tmpdir:
+# removing <path> (2.0G)`. An earlier draft printed that line whether or not
+# anything was reclaimed, because ci_tmpdir_cleanup swallowed rm's status. On a
+# sticky /tmp shared by twelve agents, "I could not remove it" is exactly the
+# case that must be visible.
+
+_AS_ROOT = pytest.mark.skipif(
+    os.geteuid() == 0, reason="root ignores the permission bits these tests rely on"
+)
+
+
+@pytest.fixture
+def denied_subtree(root: Path):
+    """The realistic failure: ~10 tests in this suite chmod a ``tmp_path``
+    directory to 0o555 and restore it in a ``finally``. A worker SIGKILLed in
+    between — the cancellation path this fix exists for — leaves that behind."""
+    scratch = _mkdir(root, _leg("3.12"))
+    denied = scratch / "pytest-of-ci" / "pytest-0" / "test_x0" / "denied"
+    denied.mkdir(parents=True)
+    (denied / "payload").write_text("x", encoding="utf-8")
+    denied.chmod(0o555)
+    try:
+        yield scratch, _bash(f'ci_tmpdir_cleanup "{scratch}"; echo rc=$?', root)
+    finally:
+        if denied.exists():
+            denied.chmod(0o755)
+
+
+@_AS_ROOT
+def test_cleanup_reclaims_a_subtree_left_non_writable(denied_subtree):
+    # Arrange
+    scratch, _res = denied_subtree
+    # Act
+    survived = scratch.exists()
+    # Assert
+    assert not survived, "an unwritable subtree defeated the cleanup"
+
+
+@_AS_ROOT
+def test_cleanup_exits_zero_after_reclaiming_a_non_writable_subtree(denied_subtree):
+    # Arrange
+    _scratch, res = denied_subtree
+    # Act
+    log = res.stdout
+    # Assert
+    assert "rc=0" in log, res.stderr
+
+
+@pytest.fixture
+def unremovable(root: Path):
+    """A scratch dir inside a READ-ONLY root: no chmod of ours can unlink it,
+    so this is a removal that genuinely cannot succeed."""
+    scratch = _mkdir(root, _leg("3.12"))
+    root.chmod(0o500)
+    try:
+        yield scratch
+    finally:
+        root.chmod(0o700)
+
+
+@_AS_ROOT
+def test_cleanup_reports_a_removal_it_could_not_perform(root: Path, unremovable: Path):
+    # Arrange
+    target = unremovable
+    # Act
+    res = _bash(f'ci_tmpdir_cleanup "{target}"; echo rc=$?', root)
+    # Assert
+    assert "rc=1" in res.stdout, f"a failed removal returned success: {res.stdout!r}"
+
+
+@_AS_ROOT
+def test_clean_step_warns_when_the_removal_failed(root: Path, unremovable: Path):
+    """clean-tmpdir.sh's `::warning::` branch was unreachable while cleanup
+    always returned 0 — the step logged a removal that never happened."""
+    # Arrange
+    _target = unremovable
+    # Act
+    res = _run_clean(root, "run-in-sif.sh", "3.12")
+    # Assert
+    assert "::warning::" in res.stdout + res.stderr, res.stdout
+
+
+@_AS_ROOT
+def test_clean_step_still_exits_zero_when_the_removal_failed(
+    root: Path, unremovable: Path
+):
+    """Honest, but still never reds the job it is `always()`-attached to."""
+    # Arrange
+    _target = unremovable
+    # Act
+    res = _run_clean(root, "run-in-sif.sh", "3.12")
+    # Assert
+    assert res.returncode == 0, res.stderr
+
+
+def test_clean_refuses_an_unmanaged_target_before_announcing_it(root: Path):
+    """A malformed version composed a path outside the managed set, and the
+    step announced `removing <root> (270G)` before refusing it — a line that
+    reads like an imminent disaster and burns the 30 s `du` bound saying so."""
+    # Arrange
+    _bystander = _mkdir(root, _leg("3.12"))
+    # Act
+    res = _run_clean(root, "run-in-sif.sh", "../..")
+    # Assert
+    assert "removing" not in res.stdout, res.stdout
+
+
+def test_clean_says_so_when_the_library_cannot_be_loaded(tmp_path: Path):
+    """A partial checkout used to produce "creates no per-run scratch" — the
+    opposite of the truth, while a directory leaked."""
+    # Arrange
+    orphan = tmp_path / "ci-no-lib"
+    orphan.mkdir()
+    (orphan / "clean-tmpdir.sh").write_text(
+        _CLEAN.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    # Act
+    res = subprocess.run(
+        ["bash", str(orphan / "clean-tmpdir.sh"), "run-in-sif.sh", "3.12"],
+        capture_output=True,
+        text=True,
+        env=_env(tmp_path),
+    )
+    # Assert
+    assert "could not load" in res.stdout + res.stderr, res.stdout
+
+
+# --- the age knob is clamped: its failure mode is destructive --------------
+
+
+def _prune_with_age(root: Path, age: str):
+    return subprocess.run(
+        ["bash", "-c", f'set -euo pipefail; . "{_LIB}"\nci_tmpdir_prune; echo rc=$?'],
+        capture_output=True,
+        text=True,
+        env=_env(root, SAC_CI_TMPDIR_MAX_AGE_H=age),
+    )
+
+
+@pytest.mark.parametrize("age", ["0", "abc", "-1", "", "2.5"])
+def test_prune_ignores_an_age_override_that_is_not_a_floor(root: Path, age: str):
+    """``=0`` deleted a 3-minute-old concurrent run's LIVE scratch — the exact
+    outage this fix exists to prevent, reachable from one stray env var."""
+    # Arrange
+    live = _mkdir(root, "ci-scitex_agent_container-99990000-1-3.12")
+    # Act
+    _prune_with_age(root, age)
+    # Assert
+    assert live.is_dir(), f"SAC_CI_TMPDIR_MAX_AGE_H={age!r} destroyed a live run"
+
+
+@pytest.mark.parametrize("age", ["abc", "", "2.5"])
+def test_prune_survives_a_malformed_age_override_under_errexit(root: Path, age: str):
+    """``=abc`` aborted with `abc: unbound variable`, and exec-in-sif.sh runs
+    under `set -euo pipefail` — so it failed the job before the SIF started."""
+    # Arrange
+    _mkdir(root, "ci-scitex_agent_container-99990000-1-3.12")
+    # Act
+    res = _prune_with_age(root, age)
+    # Assert
+    assert "rc=0" in res.stdout, res.stderr
+
+
+def test_prune_still_reclaims_a_leftover_under_a_valid_age_override(root: Path):
+    """The clamp must not neuter the knob the tests above rely on."""
+    # Arrange
+    old = _mkdir(root, "ci-scitex_agent_container-11110000-1-3.12", age_s=2 * 3600)
+    # Act
+    _prune_with_age(root, "1")
+    # Assert
+    assert not old.exists(), "the clamp swallowed a legitimate age override"
+
+
 # --- wiring: every job that creates scratch must also remove it ------------
 
 

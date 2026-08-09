@@ -34,6 +34,16 @@ _CI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$_CI_DIR/tmpdir-lib.sh"
 
+# A partial checkout leaves the library unsourced, and every helper below then
+# resolves to "command not found" — which fell through to the "creates no
+# per-run scratch" message, i.e. told a future reader the OPPOSITE of the truth
+# while a directory leaked. Say what actually happened; still never fail the job.
+if ! command -v ci_tmpdir_prefix_for_inner >/dev/null 2>&1; then
+    echo "::warning::clean-tmpdir: could not load ${_CI_DIR}/tmpdir-lib.sh —" \
+        "no scratch was removed. The next run's startup prune will reclaim it."
+    exit 0
+fi
+
 INNER="${1:-}"
 VERSION="${2:-}"
 
@@ -54,6 +64,16 @@ if [ -z "$VERSION" ]; then
 fi
 
 TARGET="$(ci_tmpdir_path "$PREFIX" "$VERSION")"
+
+# Decide MANAGED-NESS BEFORE announcing or measuring anything. A malformed
+# version arg can compose a path that ci_tmpdir_cleanup will (correctly) refuse,
+# and announcing first printed `clean-tmpdir: removing /tmp (270G)` on the
+# incident host — a line that reads like an imminent disaster and spends the
+# 30 s `du` bound to say nothing.
+if ! _ci_tmpdir_is_managed "$TARGET"; then
+    echo "::error::clean-tmpdir: refusing to remove '$TARGET' — not a managed CI scratch path" >&2
+    exit 0
+fi
 
 if [ -d "$TARGET" ]; then
     # Size is the evidence that this fix reclaims what the incident measured.

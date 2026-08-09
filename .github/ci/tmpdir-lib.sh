@@ -145,13 +145,32 @@ _ci_tmpdir_is_managed() {
 # removing the same path both succeed). Both properties are load-bearing, not
 # defensive padding: the `always()` step and the NEXT run's prune can and do
 # fire on the same directory, and a re-run of a cancelled job re-enters here.
+#
+# THE RETURN VALUE IS HONEST: 0 only when the path is GONE. An earlier draft did
+# `rm -rf … || true; return 0`, which made clean-tmpdir.sh's `::warning::` branch
+# unreachable and printed "removing <path> (2.0G)" for a directory that was still
+# there — the exact line a human is told to grep for as proof the fix worked. A
+# cleanup that cannot report failure is a leak that reports success.
+#
+# The one failure that actually happens here is a NON-WRITABLE SUBTREE: ~10 tests
+# in this suite chmod a `tmp_path` directory to 0o555/0o000 and restore it in a
+# `finally`, and `tmp_path` lives under $TMPDIR. A worker SIGKILLed between the
+# chmod and the finally — precisely the cancellation path this fix covers — leaves
+# a subtree `rm -rf` cannot enter. So retry once after restoring owner write/search
+# bits, which is exactly what that case needs and nothing more.
 ci_tmpdir_cleanup() {
     local d="${1:-}"
     if ! _ci_tmpdir_is_managed "$d"; then
         echo "::error::refusing to remove '$d' — not a managed CI scratch path" >&2
         return 1
     fi
+    [ -e "$d" ] || return 0
+    rm -rf -- "$d" 2>/dev/null && return 0
+    chmod -R u+rwX -- "$d" 2>/dev/null || true
     rm -rf -- "$d" 2>/dev/null || true
+    if [ -e "$d" ]; then
+        return 1
+    fi
     return 0
 }
 
@@ -172,9 +191,12 @@ ci_tmpdir_cleanup() {
 #
 #  (b) AN AGE FLOOR for every OTHER run id, because a different workflow run can
 #      legitimately be in flight on the same runner. Note what the floor
-#      actually measures: after the shims are written nothing creates or removes
-#      entries directly in $TMPDIR, so its top-level mtime is frozen at job
-#      start and `-mmin` prunes by JOB AGE, not idle time. The floor must
+#      actually measures: `-mmin` reads the TOP-LEVEL mtime, which only a DIRECT
+#      child of $TMPDIR refreshes (pytest's `pytest-of-*` basetemp, an
+#      XDG_CACHE_HOME entry, a `tempfile.mkdtemp()`); writes nested deeper leave
+#      it untouched. So the apparent age is at most the job's age and is often
+#      exactly it — a job that creates no direct child after setup has a mtime
+#      frozen at job start. Design to that worst case: the floor must
 #      therefore exceed the longest a job can legitimately LIVE. pytest-matrix
 #      caps at `timeout-minutes: 45`, but the release workflow's test job sets
 #      NO timeout-minutes and inherits GitHub's 6-HOUR platform default. 24 h is
@@ -189,7 +211,17 @@ ci_tmpdir_prune() {
     local root age_h age_min run_id attempt victims d
     root="$(_ci_tmpdir_root)"
     [ -d "$root" ] || return 0
+    # CLAMPED, because this knob's failure mode is destructive and its input is
+    # a string. `=0` would delete a 3-minute-old concurrent run's LIVE scratch;
+    # `=abc` made `$((age_h * 60))` abort with `abc: unbound variable`, which
+    # under exec-in-sif.sh's `set -euo pipefail` failed the job before the SIF
+    # even started. Anything that is not a whole number of hours >= 1 is not a
+    # floor, so fall back to the contract default instead of honouring it.
     age_h="${SAC_CI_TMPDIR_MAX_AGE_H:-24}"
+    case "$age_h" in
+    '' | *[!0-9]*) age_h=24 ;;
+    esac
+    [ "$age_h" -ge 1 ] 2>/dev/null || age_h=24
     age_min=$((age_h * 60))
     run_id="${GITHUB_RUN_ID:-0}"
     attempt="${GITHUB_RUN_ATTEMPT:-0}"
