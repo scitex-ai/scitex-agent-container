@@ -1,12 +1,17 @@
 """Host-hygiene maintenance rails that run on a schedule, not on a whim.
 
-Two concerns live here:
+Three concerns live here:
 
 * **git worktree sprawl** (:mod:`._worktree_gc`), the standing liability
   behind the incident card ``incident-worktree-sprawl-permanent-gc-20260710``
   — one repo reached 105 worktrees and helped trigger a host load-spike.
 * **overlay masking of base-baked packages** (:mod:`._overlay_masking`),
   surfaced per-agent in ``sac agents check-health``.
+* **install integrity** (:mod:`._install_integrity_probe`), surfaced as
+  ``sac installation check`` — dead/shadowed editable pointers, orphaned
+  and duplicated dist-info. Twice now (2026-07-16, 2026-08-09) an agent
+  has executed code from a deleted or abandoned tree while ``--version``
+  reported a healthy number; only path-level inspection exposes it.
 
 The shape every rail in this package follows, learned from
 ``_hostsync``:
@@ -20,6 +25,35 @@ The shape every rail in this package follows, learned from
   never crashes the maintenance pass that feeds it.
 """
 
+from ._install_integrity_model import (
+    IMPORTS_LIVE,
+    IMPORTS_UNAVAILABLE,
+    REASON_DEAD_POINTER,
+    REASON_DUPLICATE_DIST_INFO,
+    REASON_ORPHANED_DIST_INFO,
+    REASON_RESOLVES_OUTSIDE,
+    REASON_SHADOWED_POINTER,
+    STATE_BROKEN,
+    STATE_OK,
+    STATE_UNKNOWN,
+    DistributionEvidence,
+    DistributionVerdict,
+    EditablePointer,
+    InstallIntegrityReport,
+    SiteEvidence,
+)
+from ._install_integrity_predicate import (
+    build_report,
+    classify_distribution,
+)
+from ._install_integrity_predicate import (
+    exit_code_for as install_integrity_exit_code,
+)
+from ._install_integrity_probe import (
+    inspect_install,
+    read_site_evidence,
+    resolve_site_packages,
+)
 from ._overlay_masking import (
     base_package_set_for,
     inspect_agent_overlay,
@@ -55,9 +89,30 @@ from ._worktree_gc_repos import discover_repos, spec_workdirs
 __all__ = [
     "DEFAULT_CAP",
     "DEFAULT_MIN_AGE_HOURS",
+    "IMPORTS_LIVE",
+    "IMPORTS_UNAVAILABLE",
     "OPERATIONAL_RULE",
+    "REASON_DEAD_POINTER",
+    "REASON_DUPLICATE_DIST_INFO",
+    "REASON_ORPHANED_DIST_INFO",
+    "REASON_RESOLVES_OUTSIDE",
+    "REASON_SHADOWED_POINTER",
+    "STATE_BROKEN",
+    "STATE_OK",
+    "STATE_UNKNOWN",
     "BasePackageSet",
+    "DistributionEvidence",
+    "DistributionVerdict",
+    "EditablePointer",
     "GcOutcome",
+    "InstallIntegrityReport",
+    "SiteEvidence",
+    "build_report",
+    "classify_distribution",
+    "inspect_install",
+    "install_integrity_exit_code",
+    "read_site_evidence",
+    "resolve_site_packages",
     "OverlayMaskVerdict",
     "RepoGcResult",
     "ShadowInstall",
