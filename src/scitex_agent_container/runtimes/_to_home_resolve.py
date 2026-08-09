@@ -135,6 +135,55 @@ def _user_baseline_to_home_dir() -> Path | None:
     return None
 
 
+def _collapse_duplicate_paths(
+    layers: "list[tuple[str, Path | None]]",
+) -> "list[tuple[str, Path | None]]":
+    """Drop any layer whose directory an EARLIER layer already contributes.
+
+    ``user-shared`` and ``project-shared`` both search
+    ``<agents root>/_shared/to_home``. For a spec living under the USER agents
+    root those two roots are the same directory, so the cascade merges one
+    directory into itself. Measured 2026-08-09: this is the case for ALL 102
+    registered specs — the "three layer cascade" is really two.
+
+    Merging a directory with itself cannot contribute anything, so today this
+    is invisible: equal scalars are idempotent, hook groups de-dupe on
+    equality, list merges append uniques, ``_comment`` keeps the first. Every
+    one of those has to KEEP being true. One non-idempotent merge rule — a
+    counter, an append-always list, a timestamp — and the duplicate silently
+    doubles it for every agent at once.
+
+    Collapsing here removes that standing trap and makes the layer list honest:
+    what it reports is what actually contributes. The EARLIER (lower
+    precedence) layer keeps the path, which matches the cascade's own
+    first-layer-owns rule, so provenance attribution is unchanged.
+
+    A ``None`` layer is left alone — absence is not a duplicate.
+    """
+    seen: set[Path] = set()
+    collapsed: list[tuple[str, Path | None]] = []
+    for name, path in layers:
+        if path is None:
+            collapsed.append((name, None))
+            continue
+        try:
+            key = path.resolve()
+        except OSError:  # stx-allow: fallback (unresolvable path -> compare raw)
+            key = path
+        if key in seen:
+            logger.debug(
+                "to_home: layer %r resolves to %s, already contributed by an "
+                "earlier layer — collapsed",
+                name,
+                key,
+            )
+            collapsed.append((name, None))
+            continue
+        seen.add(key)
+        collapsed.append((name, path))
+    return collapsed
+
+
 def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     """The ordered settings.json cascade layers (lowest precedence first).
 
@@ -155,11 +204,13 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     refusing here would disarm the entire fleet in one deploy. The warning is
     what makes the migration visible before the refusal replaces it.
     """
-    resolved = [
-        ("user-shared", _user_baseline_to_home_dir()),
-        ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
-        ("per-agent", resolve_to_home_dir(config)),
-    ]
+    resolved = _collapse_duplicate_paths(
+        [
+            ("user-shared", _user_baseline_to_home_dir()),
+            ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
+            ("per-agent", resolve_to_home_dir(config)),
+        ]
+    )
 
     declared = getattr(config, "to_home_layers", None)
     if declared is None:

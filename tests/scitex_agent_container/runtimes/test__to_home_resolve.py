@@ -17,6 +17,7 @@ import pytest
 
 from scitex_agent_container.runtimes._to_home_errors import UnknownToHomeLayer
 from scitex_agent_container.runtimes._to_home_resolve import (
+    _collapse_duplicate_paths,
     _user_baseline_to_home_dir,
     settings_layer_dirs,
 )
@@ -150,6 +151,91 @@ class TestToHomeLayerDeclaration:
         order = [name for name, _ in settings_layer_dirs(spec)]
         # Assert
         assert order == ["user-shared", "project-shared", "per-agent"]
+
+
+class TestDuplicateLayerCollapse:
+    """``user-shared`` and ``project-shared`` both search
+    ``<agents root>/_shared/to_home``, so for a spec under the USER agents root
+    they are ONE directory and the cascade merges it into itself. Measured
+    2026-08-09: true for all 102 registered specs. Harmless only while every
+    merge rule stays idempotent, so the duplicate is collapsed rather than
+    left as a standing trap."""
+
+    def test_duplicate_path_is_dropped_from_the_later_layer(self, tmp_path):
+        # Arrange — two layer names pointing at one real directory.
+        shared = tmp_path / "_shared" / "to_home"
+        shared.mkdir(parents=True)
+        # Act
+        collapsed = _collapse_duplicate_paths(
+            [("user-shared", shared), ("project-shared", shared)]
+        )
+        # Assert
+        assert collapsed[1] == ("project-shared", None)
+
+    def test_the_earlier_layer_keeps_the_path(self, tmp_path):
+        # Arrange — first-layer-owns, matching the cascade's own rule.
+        shared = tmp_path / "_shared" / "to_home"
+        shared.mkdir(parents=True)
+        # Act
+        collapsed = _collapse_duplicate_paths(
+            [("user-shared", shared), ("project-shared", shared)]
+        )
+        # Assert
+        assert collapsed[0] == ("user-shared", shared)
+
+    def test_distinct_paths_are_both_kept(self, tmp_path):
+        # Arrange — a genuine two-layer cascade must be untouched.
+        a = tmp_path / "a" / "to_home"
+        a.mkdir(parents=True)
+        b = tmp_path / "b" / "to_home"
+        b.mkdir(parents=True)
+        # Act
+        collapsed = _collapse_duplicate_paths([("user-shared", a), ("per-agent", b)])
+        # Assert
+        assert collapsed == [("user-shared", a), ("per-agent", b)]
+
+    def test_absent_layer_is_not_treated_as_a_duplicate(self, tmp_path):
+        # Arrange — two Nones must not collapse into each other.
+        a = tmp_path / "a" / "to_home"
+        a.mkdir(parents=True)
+        # Act
+        collapsed = _collapse_duplicate_paths(
+            [("user-shared", None), ("project-shared", None), ("per-agent", a)]
+        )
+        # Assert
+        assert collapsed == [
+            ("user-shared", None),
+            ("project-shared", None),
+            ("per-agent", a),
+        ]
+
+    def test_layer_names_and_order_are_preserved(self, tmp_path):
+        # Arrange — collapsing must not reorder or rename; only blank out.
+        shared = tmp_path / "_shared" / "to_home"
+        shared.mkdir(parents=True)
+        # Act
+        collapsed = _collapse_duplicate_paths(
+            [("user-shared", shared), ("project-shared", shared), ("per-agent", None)]
+        )
+        # Assert
+        assert [name for name, _ in collapsed] == [
+            "user-shared",
+            "project-shared",
+            "per-agent",
+        ]
+
+    def test_symlinked_duplicate_is_also_collapsed(self, tmp_path):
+        # Arrange — the same dir reached by a symlink is still the same dir.
+        real = tmp_path / "real" / "to_home"
+        real.mkdir(parents=True)
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        # Act
+        collapsed = _collapse_duplicate_paths(
+            [("user-shared", real), ("project-shared", link)]
+        )
+        # Assert
+        assert collapsed[1] == ("project-shared", None)
 
 
 class TestToHomeReExportContract:
