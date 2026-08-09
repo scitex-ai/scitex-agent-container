@@ -188,16 +188,21 @@ def format_route_error(
     """Pick the right unroutable message for ``spec_host``'s shape.
 
     A plain string gets :func:`format_unknown_host_error` VERBATIM — one bad
-    name, one explanation, unchanged from before chains existed. A list gets
-    :func:`._host_chain.format_unroutable_chain_error`, which must account for
-    every entry because the operator cannot otherwise tell which of them is a
-    typo and which is merely down.
+    name, one explanation, unchanged from before chains existed. Anything else
+    gets :func:`._host_chain.format_unroutable_chain_error`, which must account
+    for every entry because the operator cannot otherwise tell which of them is
+    a typo and which is merely down.
+
+    The "is this a chain?" test is ``isinstance(spec_host, str)`` — the SAME
+    one :func:`._host_chain.resolve_host_chain` uses to decide whether to
+    probe. Two different tests here would eventually disagree about some
+    sequence type and explain a refusal the resolver never made.
     """
-    if isinstance(spec_host, list):
-        return format_unroutable_chain_error(
-            name, route, peers, verb=verb, current_host=current_host
-        )
-    return format_unknown_host_error(name, str(spec_host), peers, verb=verb)
+    if isinstance(spec_host, str):
+        return format_unknown_host_error(name, spec_host, peers, verb=verb)
+    return format_unroutable_chain_error(
+        name, route, peers, verb=verb, current_host=current_host
+    )
 
 
 def resolve_start_dispatch_peer(
