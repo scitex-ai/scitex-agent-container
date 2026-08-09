@@ -50,7 +50,6 @@ from ._host_chain import (
 
 if TYPE_CHECKING:
     from ..._state.host_config import PeerSpec
-
     from ._host_chain import HostChainRoute, ReachabilityOracle
 
 

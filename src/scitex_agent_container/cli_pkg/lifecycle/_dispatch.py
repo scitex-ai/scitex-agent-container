@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection
 
     from ..._state.host_config import PeerSpec
-
     from ._host_chain import ReachabilityOracle
 
 
