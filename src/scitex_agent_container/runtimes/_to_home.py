@@ -63,6 +63,7 @@ from pathlib import Path
 from ..config import AgentConfig
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
+from ._hook_origin_manifest import write_hook_manifest
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
@@ -314,7 +315,13 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
-    deploy_settings_cascade(dest, settings_layer_dirs(config))
+    settings_provenance = deploy_settings_cascade(dest, settings_layer_dirs(config))
+    # ...then record WHICH layer armed each hook, to runtime (not to the home
+    # we just wrote). The deployed settings.json is the flattened result, so it
+    # cannot answer "where is this hook coming from?" — the origin only exists
+    # here, while the cascade is still un-flattened. Best-effort by design: an
+    # observability file must never be the reason a deploy fails.
+    write_hook_manifest(getattr(config, "name", "") or "unknown", settings_provenance)
     # HOST DEEP-MERGE (developer agents only). For a FULL-DEVELOPER agent
     # (metadata.labels.group==developer, or group-unset + a developer role),
     # overlay the host operator's ~/.claude/{commands,skills,hooks} as per-file
