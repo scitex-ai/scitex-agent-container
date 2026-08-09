@@ -31,9 +31,16 @@ the public ``_tui_turn_bridge.start_turn_bridge`` / ``stop_turn_bridge`` /
 THIS module as ``python -m`` (see :func:`main`), and :func:`stop_turn_bridge`
 SIGTERMs it, waits for the port to release, and force-kills any own-port
 survivor (the restart port-collision fix). Both are best-effort — a failed
-bridge must never block agent start/stop. Bound to ``127.0.0.1`` (loopback
-wake POST; the bind is the security boundary, matching the SDK runner's
-unauthed endpoint).
+bridge must never block agent start/stop.
+
+BIND ADDRESS: ``spec.a2a.host``, resolved by
+:func:`_tui_turn_bridge_lifecycle.resolved_a2a_host` and threaded through the
+launcher's ``--host`` into :func:`serve`. It defaults to ``127.0.0.1``
+(loopback wake POST; the bind is the security boundary, matching the SDK
+runner's unauthed endpoint), which is what every fleet spec declares today —
+so an unmodified spec binds loopback exactly as before. A spec that names a
+different address now MOVES this bind with it, instead of leaving the bridge
+on loopback while ``a2a_sidecar`` alone honoured the declaration.
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ from ._tui_turn_bridge_lifecycle import (
     PID_FILENAME,
     _pid_path,
     _state_dir,
+    resolved_a2a_host,
     resolved_a2a_port,
     start_turn_bridge,
     stop_turn_bridge,
@@ -292,14 +300,18 @@ def main(
     parser = argparse.ArgumentParser(prog="tui-turn-bridge")
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--host", default=DEFAULT_HOST)
+    # No literal default: an omitted --host resolves from the spec the bridge
+    # is about to serve (``resolved_a2a_host``), which itself falls back to
+    # DEFAULT_HOST. The launcher always passes --host explicitly; this keeps a
+    # hand-run bridge on the SAME address as its spec instead of loopback.
+    parser.add_argument("--host", default=None)
     args = parser.parse_args(argv)
 
     from ..config import load_config
 
     config = load_config(args.config_path)
     serve(
-        host=args.host,
+        host=args.host or resolved_a2a_host(config),
         port=args.port,
         on_turn=_build_on_turn(config),
         agent_name=config.name,
@@ -312,6 +324,7 @@ if __name__ == "__main__":  # pragma: no cover -- exercised as a subprocess
 
 
 __all__ = [
+    "resolved_a2a_host",
     "resolved_a2a_port",
     "is_turn_route",
     "build_server",
