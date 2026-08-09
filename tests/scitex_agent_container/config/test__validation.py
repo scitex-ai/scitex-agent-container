@@ -1153,3 +1153,47 @@ def test_labels_groups_only_is_accepted():
     errors = validate_raw(raw, path="<test>")
     # Assert
     assert not [e for e in errors if "metadata.labels" in e]
+
+
+# ---------------------------------------------------------------------------
+# spec.to_home_layers — the field must be PERMITTED, and must stay OPTIONAL
+# ---------------------------------------------------------------------------
+#
+# ``config._types`` / ``config._loaders`` gained ``to_home_layers``, but
+# ``_KNOWN_SPEC_KEYS`` did not — so every spec that declared it failed to load
+# with "Unknown spec field 'to_home_layers'". That made the whole declaration
+# mechanism unreachable, and would have had the fleet-wide migration sweep
+# write the key into ~101 specs that could then no longer be parsed at all.
+
+
+def _layers_spec(spec_extra: dict) -> dict:
+    return {**_BASE, "spec": {**_BASE["spec"], **spec_extra}}
+
+
+def test_to_home_layers_is_an_accepted_spec_field():
+    # Arrange — a spec declaring the cascade it inherits.
+    raw = _layers_spec({"to_home_layers": ["user-shared", "per-agent"]})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "to_home_layers" in e]
+
+
+def test_a_misspelt_layers_field_is_still_rejected():
+    # Arrange — CONTROL: the acceptance above must not come from the
+    # unknown-field check having stopped rejecting anything.
+    raw = _layers_spec({"to_home_layerz": ["user-shared"]})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "to_home_layerz" in e]
+
+
+def test_omitting_to_home_layers_is_not_an_error():
+    # Arrange — it stays OPTIONAL: an undeclared spec still loads and still
+    # inherits the implicit cascade. Requiring it is a separate, later step.
+    raw = _layers_spec({})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "to_home_layers" in e]

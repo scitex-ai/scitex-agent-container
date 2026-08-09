@@ -78,6 +78,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "archive-claude-bloat",
                 "refresh-acl",
                 "declare-a2a-host",
+                "migrate-layers",
             ],
         ),
     ]
@@ -248,6 +249,17 @@ agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloa
 from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
 
 agent_group.add_command(_refresh_acl_impl)
+# `migrate-layers` — step 3 of the to_home_layers migration: write into each
+# spec the ``to_home`` cascade it ALREADY resolves, so what an agent inherits
+# is readable from the spec instead of only derivable by re-running the
+# resolver. Dry-run by default. Behaviour-preserving by construction AND by
+# measurement: the apply compares what every agent ARMS before and after and
+# restores every original unless they are identical over the whole population.
+# Agent-spec-scoped, so it lives here rather than under a new top-level noun
+# that would outlive the one-shot verb needing it.
+from ._agents_migrate_layers import register as _register_migrate_layers  # noqa: E402
+
+_register_migrate_layers(agent_group)
 
 # `declare-a2a-host` — one-shot fleet sweep making every spec state its own
 # a2a bind address instead of inheriting one from a code default. Sits beside
