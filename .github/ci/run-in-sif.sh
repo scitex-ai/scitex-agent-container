@@ -26,6 +26,41 @@ test -x "$VENV/bin/python" || {
 
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
+# NEVER SIGN COMMITS MADE BY THE TEST SUITE. Dozens of tests build throwaway
+# git repos under tmp_path and commit into them (worktree GC, prune, drift,
+# doctor, the git-identity hooks). They inherit the AMBIENT global config, and
+# the operator's dotfiles set:
+#
+#     ~/.dotfiles/src/.gitconfig
+#       commit.gpgsign  = true
+#       tag.gpgsign     = true
+#       gpg.format      = ssh
+#       user.signingkey = ~/.ssh/id_ed25519_scitex.pub
+#
+# When that key is absent — as it was on 2026-08-09 — every one of those
+# commits dies, and git reports it like this:
+#
+#     error: Couldn't load public key .../id_ed25519_scitex.pub: No such file
+#     fatal: failed to write commit object
+#     exit 128
+#
+# THAT SECOND LINE IS THE TRAP. "failed to write commit object" reads as disk
+# I/O, so the obvious diagnosis is a full filesystem or a broken runner. It
+# cost most of an afternoon and two WRONG root causes broadcast to other
+# agents (a shared-runner git-identity fault, then ENOSPC) before anyone read
+# the line above it. Reproduced exactly, and verified fixed, before this
+# landed — see tests/integration/test_ci_commit_signing_disabled.py.
+#
+# A test's scratch repo has no business carrying a signature. Signing stays ON
+# for real commits; this scopes it off for CI only, and additively — two
+# overrides on top of the ambient config rather than replacing it, so
+# safe.directory and everything else the runner relies on survives.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=commit.gpgsign
+export GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=tag.gpgsign
+export GIT_CONFIG_VALUE_1=false
+
 # Real writable scratch. The runner profile exports TMPDIR=~/.cache/tmp, a host
 # path that does NOT resolve inside the container; tests (tmp_path) and the
 # install target both need a working, writable tmp. Node-local /tmp is writable
