@@ -54,6 +54,17 @@ from ._install_integrity_probe import (
     read_site_evidence,
     resolve_site_packages,
 )
+from ._layers_migration_gate import (
+    ArmingGateVerdict,
+    ArmingSnapshot,
+    fleet_arming_snapshot,
+    gate_arming,
+)
+from ._layers_migration_plan import (
+    already_declared,
+    plan_migration,
+    resolved_layer_names,
+)
 from ._overlay_masking import (
     base_package_set_for,
     inspect_agent_overlay,
@@ -100,6 +111,8 @@ __all__ = [
     "STATE_BROKEN",
     "STATE_OK",
     "STATE_UNKNOWN",
+    "ArmingGateVerdict",
+    "ArmingSnapshot",
     "BasePackageSet",
     "DistributionEvidence",
     "DistributionVerdict",
@@ -113,6 +126,11 @@ __all__ = [
     "install_integrity_exit_code",
     "read_site_evidence",
     "resolve_site_packages",
+    "already_declared",
+    "fleet_arming_snapshot",
+    "gate_arming",
+    "plan_migration",
+    "resolved_layer_names",
     "OverlayMaskVerdict",
     "RepoGcResult",
     "ShadowInstall",
