@@ -105,6 +105,26 @@ def _write_spec(tmp_path: Path, binds_yaml: str) -> Path:
     return spec
 
 
+@pytest.fixture
+def unreadable_parent(tmp_path: Path) -> Iterator[Path]:
+    """A real directory whose parent cannot be traversed (mode 0o000).
+
+    Statting anything under it raises ``PermissionError`` — EACCES is NOT
+    in ``pathlib._IGNORED_ERRNOS``, so ``Path.exists()`` throws instead of
+    answering. This is the on-disk stand-in for every "cannot find out"
+    source: another user's 0700 home, a stale NFS handle, an autofs
+    timeout. Restored to 0o700 on teardown so tmp_path cleanup works.
+    """
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "child").mkdir()
+    locked.chmod(0o000)
+    try:
+        yield locked / "child"
+    finally:
+        locked.chmod(0o700)
+
+
 def _gh_bind_yaml(source: Path) -> str:
     return f"    binds:\n      - {source}:/home/agent/.config/gh:ro\n"
 
@@ -336,4 +356,103 @@ def test_empty_bind_entry_is_ignored(tmp_path: Path) -> None:
     # Act
     result = validate_capability_binds(cfg, ["   "])
     # Assert — no raise, returns None.
+    assert result is None
+
+
+def test_error_message_names_the_host(tmp_path: Path) -> None:
+    # Arrange — every path in this message is byte-identical across the
+    # fleet, so a relayed log must also say WHICH machine to log in on.
+    gh_dir = _gh_dir_without_hosts_yml(tmp_path)
+    cfg = load_config(str(_write_spec(tmp_path, _gh_bind_yaml(gh_dir))))
+    message = ""
+    try:
+        validate_capability_binds(cfg, list(cfg.apptainer.binds))
+    except BindCapabilityError as exc:
+        message = str(exc)
+    # Act
+    names_host = socket.gethostname() in message
+    # Assert
+    assert names_host is True
+
+
+# ---------------------------------------------------------------------------
+# A source that cannot be STATTED — "could not find out" is not "missing"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-0o000 dirs")
+def test_unstattable_optional_bind_still_builds(
+    tmp_path: Path, listen_bearer_token: Path, unreadable_parent: Path
+) -> None:
+    # Arrange — an optional data mount under a parent this user cannot
+    # traverse. Path.exists() raises EACCES here rather than returning
+    # False, and an escaping OSError would abort a start develop allows.
+    binds = f"    binds:\n      - {unreadable_parent}:/data:rw\n"
+    cfg = load_config(str(_write_spec(tmp_path, binds)))
+    # Act
+    argv = build_run_argv(
+        cfg, state_dir=tmp_path / "st", sif_path=tmp_path / "x.sif", tui=True
+    )
+    # Assert — the start is NOT grounded by an unanswerable stat.
+    assert f"{unreadable_parent}:/data:rw" in argv
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-0o000 dirs")
+def test_unstattable_optional_bind_logs_the_errno(
+    tmp_path: Path, unreadable_parent: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    binds = f"    binds:\n      - {unreadable_parent}:/data:rw\n"
+    cfg = load_config(str(_write_spec(tmp_path, binds)))
+    # Act
+    with caplog.at_level(logging.ERROR):
+        validate_capability_binds(cfg, list(cfg.apptainer.binds))
+    # Assert — silent-continue would be the original bug in a new costume.
+    assert "PermissionError" in caplog.text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-0o000 dirs")
+def test_unstattable_gh_bind_does_not_refuse(
+    tmp_path: Path, unreadable_parent: Path
+) -> None:
+    # Arrange — the same unanswerable stat on a CREDENTIAL destination.
+    bind = f"{unreadable_parent}:/home/agent/.config/gh:ro"
+    cfg = load_config(str(_write_spec(tmp_path, "    binds: []\n")))
+    # Act — refusal is earned by proof that the mount is empty; EACCES
+    # proves nothing, and grounding an agent on a transient I/O error is
+    # the outage this guard must not trade for.
+    result = validate_capability_binds(cfg, [bind])
+    # Assert
+    assert result is None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-0o000 dirs")
+def test_unstattable_gh_bind_still_logs_loudly(
+    tmp_path: Path, unreadable_parent: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    bind = f"{unreadable_parent}:/home/agent/.config/gh:ro"
+    cfg = load_config(str(_write_spec(tmp_path, "    binds: []\n")))
+    # Act
+    with caplog.at_level(logging.ERROR):
+        validate_capability_binds(cfg, [bind])
+    # Assert — not refused, but named: the operator still learns of it.
+    assert str(unreadable_parent) in caplog.text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses mode-0o000 dirs")
+def test_unreadable_gh_dir_does_not_refuse(tmp_path: Path) -> None:
+    # Arrange — the directory itself answers, but hosts.yml inside it
+    # cannot be statted (mode 0o000 on the gh dir). Second probe site,
+    # same rule as the first.
+    gh_dir = _gh_dir_with_hosts_yml(tmp_path)
+    gh_dir.chmod(0o000)
+    cfg = load_config(str(_write_spec(tmp_path, "    binds: []\n")))
+    bind = f"{gh_dir}:/home/agent/.config/gh:ro"
+    try:
+        # Act
+        result = validate_capability_binds(cfg, [bind])
+    finally:
+        gh_dir.chmod(0o700)
+    # Assert
     assert result is None

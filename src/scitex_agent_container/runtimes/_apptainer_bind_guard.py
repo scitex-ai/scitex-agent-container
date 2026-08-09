@@ -65,6 +65,25 @@ verdict. The split follows the precedent already in this package
   a fleet over an optional mount would be worse than the bug this module
   exists to fix. Degraded is not the same as falsified.
 
+* A bind — credential or not — whose source cannot be STATTED at all
+  gets a ``logging.error`` and the start CONTINUES, including for a
+  destination in :data:`CAPABILITY_BINDS`. This third case is not a
+  nicety: ``Path.exists()`` swallows only ENOENT/ENOTDIR/EBADF/ELOOP
+  (``pathlib._IGNORED_ERRNOS``) and RE-RAISES everything else, so an
+  EACCES from another user's ``0700`` parent, or an ESTALE/ETIMEDOUT
+  from an autofs/NFS/GPFS hiccup, escapes as a bare ``OSError``. Left
+  unhandled it aborts ``build_run_argv`` for a bind two paragraphs above
+  promise is non-fatal, and surfaces through ``_start_single``'s generic
+  handler as ``[Errno 13]`` plus a traceback — no agent, no spec file,
+  no remedy: precisely what the operator ruled against. And it must not
+  REFUSE either, even for a credential bind: refusal here is earned by
+  PROOF that the mount is empty, and an unanswerable stat proves
+  nothing. Refusing on an unproven premise would ground agents on a
+  transient I/O error, which is the fleet outage this module is
+  explicitly not willing to trade for. So the verdict is: say so, name
+  the errno, and point at this line as the first thing to check if the
+  capability later reports "not configured".
+
 * Fleet-default binds are untouched. They are filtered by existence in
   ``_p3a_default_binds.default_binds_for_host`` and their silent skip is
   documented there as deliberate — they are sac's suggestion, not the
@@ -89,6 +108,7 @@ the one command that makes both work again.
 from __future__ import annotations
 
 import logging
+import socket
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
@@ -177,6 +197,28 @@ def _split_bind(bind_str: str) -> tuple[str, str] | None:
     return src, dst
 
 
+def _probe(path: Path) -> tuple[bool, OSError | None]:
+    """Answer "does this exist" WITHOUT letting the answer kill the start.
+
+    ``Path.exists()`` is not total. It swallows exactly four errnos —
+    ``pathlib._IGNORED_ERRNOS`` is ``ENOENT, ENOTDIR, EBADF, ELOOP`` —
+    and re-raises the rest, so EACCES (a parent directory owned by
+    another user, mode ``0700``), ESTALE (a stale NFS handle), EIO and
+    ETIMEDOUT (autofs / GPFS not answering) all come back as a thrown
+    ``OSError`` rather than as ``False``.
+
+    That distinction is the whole point: "the path is not there" is a
+    FACT this module is entitled to act on, while "I could not find out"
+    is not. Returning the two separately — ``(exists, None)`` when the
+    question was answerable and ``(False, err)`` when it was not — is
+    what lets the callers below refuse only on proof.
+    """
+    try:
+        return path.exists(), None
+    except OSError as exc:  # EACCES / ESTALE / EIO / ETIMEDOUT / ...
+        return False, exc
+
+
 def _rule_for(dst: str) -> CapabilityBind | None:
     """Return the capability rule matching this destination, if any.
 
@@ -198,10 +240,15 @@ def _render_capability_failure(
     spec_path: str,
     bind_str: str,
     source: Path,
+    source_exists: bool,
     required: Path,
     rule: CapabilityBind,
 ) -> str:
-    if not source.exists():
+    # `source_exists` is PASSED IN, never re-statted here: the caller has
+    # already probed it once through _probe, and a second stat could both
+    # disagree with the first and raise the very OSError _probe exists to
+    # contain — from inside the error formatter, of all places.
+    if not source_exists:
         state = (
             f"the host path {source} DOES NOT EXIST, so the bind cannot "
             "deliver anything"
@@ -214,6 +261,7 @@ def _render_capability_failure(
     return (
         f"bind {bind_str!r} declared for agent {agent!r} cannot deliver "
         f"{rule.capability}: {state}.\n"
+        f"  host:       {socket.gethostname()}\n"
         f"  spec file:  {spec_path}\n"
         f"  host path:  {required}\n"
         "  WHY THIS IS FATAL AND NOT A WARNING: the mount would SUCCEED — "
@@ -227,6 +275,45 @@ def _render_capability_failure(
     )
 
 
+def _render_unverifiable(
+    *,
+    agent: str,
+    spec_path: str,
+    bind_str: str,
+    path: Path,
+    error: OSError,
+    rule: CapabilityBind | None,
+) -> str:
+    """The message for a bind source this process could not stat at all."""
+    if rule is None:
+        return (
+            f"bind source UNVERIFIABLE for agent {agent!r}: the spec "
+            f"{spec_path} declares {bind_str!r} but the host path {path} "
+            f"could not be checked ({error.__class__.__name__}: {error}). "
+            f"host: {socket.gethostname()}. NOT fatal — this bind carries no "
+            "credential and the start continues; apptainer will report its "
+            "own error if the mount is genuinely unusable. If the agent "
+            "needs it: fix the permissions or the mount on this host, or "
+            f"fix/remove the bind line in {spec_path}."
+        )
+    return (
+        f"bind {bind_str!r} declared for agent {agent!r} MAY NOT deliver "
+        f"{rule.capability}: the host path {path} could not be checked "
+        f"({error.__class__.__name__}: {error}), so this process can prove "
+        "neither that the credential is there nor that it is missing.\n"
+        f"  host:       {socket.gethostname()}\n"
+        f"  spec file:  {spec_path}\n"
+        f"  host path:  {path}\n"
+        "  NOT REFUSING: a refusal here is earned by PROOF that the "
+        "credential mount is empty, and an unanswerable stat proves "
+        "nothing. Grounding an agent on a permission or transient-I/O error "
+        "would be the fleet outage this guard is explicitly unwilling to "
+        "trade for. The start continues.\n"
+        "  IF the capability later reports 'not configured' inside the "
+        f"container, START HERE — then: {rule.remedy}."
+    )
+
+
 def validate_capability_binds(config: object, spec_binds: Iterable[str]) -> None:
     """Refuse (or loudly report) spec binds that cannot deliver.
 
@@ -235,10 +322,17 @@ def validate_capability_binds(config: object, spec_binds: Iterable[str]) -> None
     docstring for the refuse-vs-log split and why each half is what it
     is.
 
-    Raises :class:`BindCapabilityError` for a credential bind that
-    cannot deliver. Returns ``None`` otherwise, having emitted one
-    ``logging.error`` per non-credential bind whose host source is
-    absent.
+    Three verdicts, and only the first one stops anything:
+
+    * credential bind PROVEN unable to deliver → ``logging.error`` and
+      :class:`BindCapabilityError`;
+    * non-credential bind whose source is PROVEN absent → one
+      ``logging.error``, start continues;
+    * any bind whose source could not be statted at all (EACCES, ESTALE,
+      …) → one ``logging.error`` naming the errno, start continues,
+      credential destinations included. Never refuse on a non-answer.
+
+    Returns ``None`` in the last two cases.
     """
     agent = str(getattr(config, "name", "") or "<unnamed agent>")
     spec_path = str(getattr(config, "config_path", "") or "<spec path unknown>")
@@ -249,8 +343,23 @@ def validate_capability_binds(config: object, spec_binds: Iterable[str]) -> None
         src_raw, dst = parts
         source = Path(src_raw).expanduser()
         rule = _rule_for(dst)
+        src_ok, src_err = _probe(source)
+        if src_err is not None:
+            # Could not find out. Say so; never refuse on a non-answer.
+            logger.error(
+                "%s",
+                _render_unverifiable(
+                    agent=agent,
+                    spec_path=spec_path,
+                    bind_str=str(bind_str),
+                    path=source,
+                    error=src_err,
+                    rule=rule,
+                ),
+            )
+            continue
         if rule is None:
-            if not source.exists():
+            if not src_ok:
                 # Loud, not fatal — a host-specific data/scratch mount.
                 logger.error(
                     "bind source MISSING for agent %r: the spec %s declares "
@@ -270,13 +379,31 @@ def validate_capability_binds(config: object, spec_binds: Iterable[str]) -> None
                 )
             continue
         required = source / rule.proof if rule.proof else source
-        if required.exists():
+        req_ok, req_err = _probe(required)
+        if req_err is not None:
+            # The directory answered but the proof file did not (an
+            # unreadable credential dir, mode 0700 owned by someone else).
+            # Same rule as above: no proof, no refusal.
+            logger.error(
+                "%s",
+                _render_unverifiable(
+                    agent=agent,
+                    spec_path=spec_path,
+                    bind_str=str(bind_str),
+                    path=required,
+                    error=req_err,
+                    rule=rule,
+                ),
+            )
+            continue
+        if req_ok:
             continue
         message = _render_capability_failure(
             agent=agent,
             spec_path=spec_path,
             bind_str=str(bind_str),
             source=source,
+            source_exists=src_ok,
             required=required,
             rule=rule,
         )
