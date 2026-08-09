@@ -70,6 +70,21 @@ class LayerMergeConflict(RuntimeError):
     """
 
 
+class UnknownToHomeLayer(RuntimeError):
+    """``spec.to_home_layers`` names a cascade layer that does not exist.
+
+    The declaration exists so a spec states which layers get merged into it
+    (``user-shared`` / ``project-shared`` / ``per-agent``). A misspelt name has
+    no matching layer, so it would quietly contribute nothing — an agent could
+    declare ``user_shared`` and silently inherit no hooks at all while looking
+    correctly configured.
+
+    That is the failure the declaration was introduced to remove, so a name
+    that matches no layer is refused rather than ignored. The message names the
+    unknown value and the valid set.
+    """
+
+
 class WorkspaceSettingsMergeError(RuntimeError):
     """A ``settings.json`` to_home layer is not valid JSON — refused.
 

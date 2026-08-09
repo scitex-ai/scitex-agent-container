@@ -19,10 +19,14 @@ home by spec alone (see the two ``*_ENV_VAR`` constants).
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._to_home_errors import UnknownToHomeLayer
+
+logger = logging.getLogger(__name__)
 
 # Env var: explicit override for the shared/common baseline to_home dir.
 # Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
@@ -139,12 +143,45 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     :func:`_to_home_settings.deploy_settings_cascade` /
     :func:`_to_home_settings.settings_cascade_provenance`. Shared by
     ``deploy_to_home`` and ``sac agents explain`` so both resolve identically.
+
+    When the spec DECLARES ``to_home_layers``, only the named layers are
+    resolved; every other layer is dropped to ``None`` and contributes nothing.
+    Declaring the empty list therefore inherits nothing, which is a sandboxed
+    agent's legitimate way of pinning its home to its own spec.
+
+    When the spec declares NOTHING, every layer applies — today's behaviour —
+    and a WARNING names the agent. That asymmetry is deliberate and temporary:
+    all 102 registered specs are currently undeclared (measured 2026-08-09), so
+    refusing here would disarm the entire fleet in one deploy. The warning is
+    what makes the migration visible before the refusal replaces it.
     """
-    return [
+    resolved = [
         ("user-shared", _user_baseline_to_home_dir()),
         ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
         ("per-agent", resolve_to_home_dir(config)),
     ]
+
+    declared = getattr(config, "to_home_layers", None)
+    if declared is None:
+        logger.warning(
+            "to_home: agent %r declares no 'to_home_layers'; inheriting the "
+            "implicit cascade (%s). Declare the layers in the spec so what "
+            "gets merged into this agent is visible from the spec alone.",
+            getattr(config, "name", "<unnamed>"),
+            ", ".join(name for name, path in resolved if path is not None) or "none",
+        )
+        return resolved
+
+    wanted = set(declared)
+    unknown = wanted - {name for name, _ in resolved}
+    if unknown:
+        raise UnknownToHomeLayer(
+            f"spec.to_home_layers names unknown layer(s) {sorted(unknown)!r} "
+            f"for agent {getattr(config, 'name', '<unnamed>')!r}. Valid names: "
+            f"{[name for name, _ in resolved]!r}. A misspelt layer would "
+            f"silently inherit nothing, so this is refused rather than ignored."
+        )
+    return [(name, path if name in wanted else None) for name, path in resolved]
 
 
 def _spec_dir(config: AgentConfig) -> Path | None:
