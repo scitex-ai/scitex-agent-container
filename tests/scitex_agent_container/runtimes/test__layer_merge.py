@@ -83,7 +83,10 @@ def test_lists_union_preserving_order() -> None:
 
 def test_comment_key_conflict_is_exempt_and_keeps_first() -> None:
     # Arrange — two layers each document themselves via ``_comment``.
-    layers = [("user", {"_comment": "user layer"}), ("agent", {"_comment": "agent layer"})]
+    layers = [
+        ("user", {"_comment": "user layer"}),
+        ("agent", {"_comment": "agent layer"}),
+    ]
     # Act
     merged, _ = deep_merge_layers(layers)
     # Assert
@@ -123,3 +126,99 @@ def test_hooks_block_is_additive_per_event() -> None:
     merged, _ = deep_merge_layers(layers)
     # Assert
     assert merged["hooks"]["PreToolUse"] == [grp_a, grp_b]
+
+
+def test_lower_layer_hook_names_the_lower_layer() -> None:
+    # Arrange — the additively-merged case: two layers, one guard each.
+    grp_a = {"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]}
+    grp_b = {"matcher": "Bash", "hooks": [{"type": "command", "command": "b"}]}
+    layers = [
+        ("user", {"hooks": {"PreToolUse": [grp_a]}}),
+        ("agent", {"hooks": {"PreToolUse": [grp_b]}}),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert
+    assert prov["hooks.PreToolUse.a"] == "user"
+
+
+def test_higher_layer_hook_names_the_higher_layer() -> None:
+    # Arrange — the same cascade, asserting the overlay's own guard.
+    grp_a = {"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]}
+    grp_b = {"matcher": "Bash", "hooks": [{"type": "command", "command": "b"}]}
+    layers = [
+        ("user", {"hooks": {"PreToolUse": [grp_a]}}),
+        ("agent", {"hooks": {"PreToolUse": [grp_b]}}),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert
+    assert prov["hooks.PreToolUse.b"] == "agent"
+
+
+def test_hooks_provenance_is_never_the_merged_sentinel() -> None:
+    # Arrange — the regression: a merged block used to report "(merged)",
+    # which names no layer and so cannot answer "who armed this hook?".
+    grp_a = {"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]}
+    grp_b = {"matcher": "Bash", "hooks": [{"type": "command", "command": "b"}]}
+    layers = [
+        ("user", {"hooks": {"PreToolUse": [grp_a]}}),
+        ("agent", {"hooks": {"PreToolUse": [grp_b]}}),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert — the bare "hooks" key must be checked too: the regression wrote
+    # the sentinel there, and a "hooks."-prefixed filter alone silently misses
+    # it, which makes this test pass with the fix reverted.
+    owners = {v for k, v in prov.items() if k == "hooks" or k.startswith("hooks.")}
+    assert "(merged)" not in owners
+
+
+def test_repeated_hook_command_stays_owned_by_the_lower_layer() -> None:
+    # Arrange — the same guard shipped by both layers has ONE origin.
+    grp = {"matcher": "Bash", "hooks": [{"type": "command", "command": "guard"}]}
+    layers = [
+        ("user", {"hooks": {"PreToolUse": [grp]}}),
+        ("agent", {"hooks": {"PreToolUse": [grp]}}),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert
+    assert prov["hooks.PreToolUse.guard"] == "user"
+
+
+def test_same_command_on_another_event_keeps_its_own_owner() -> None:
+    # Arrange — identical command text armed on two DIFFERENT events must not
+    # collapse onto one provenance key and mis-attribute the second event.
+    pre = {"matcher": "", "hooks": [{"type": "command", "command": "x"}]}
+    stop = {"matcher": "", "hooks": [{"type": "command", "command": "x"}]}
+    layers = [
+        ("user", {"hooks": {"PreToolUse": [pre]}}),
+        ("agent", {"hooks": {"Stop": [stop]}}),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert
+    assert prov["hooks.Stop.x"] == "agent"
+
+
+def test_malformed_hook_entries_do_not_break_provenance() -> None:
+    # Arrange — a hand-edited layer with junk where groups/hooks should be.
+    layers = [
+        ("user", {"hooks": {"PreToolUse": "not-a-list", "Stop": ["not-a-dict"]}}),
+        (
+            "agent",
+            {
+                "hooks": {
+                    "Stop": [
+                        {"matcher": "", "hooks": [{"type": "command"}]},
+                        {"matcher": "", "hooks": [{"command": "real"}]},
+                    ]
+                }
+            },
+        ),
+    ]
+    # Act
+    _, prov = deep_merge_layers(layers)
+    # Assert
+    assert prov["hooks.Stop.real"] == "agent"
