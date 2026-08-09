@@ -110,3 +110,23 @@ jobs:
           files: ./coverage.xml
           use_oidc: true
           fail_ci_if_error: true
+
+      # THE RUNNER IS PERSISTENT — WHAT THIS JOB WRITES TO /tmp IS OURS TO
+      # REMOVE. run-in-sif.sh's scratch (the [all,dev] --target install, the uv
+      # cache, XDG_CACHE_HOME, every tmp_path) is 1.8-2.2 GB per leg. Nothing
+      # removed it until 2026-08-09, by which point 116 survivors had filled the
+      # root filesystem of a box running twelve fleet agents.
+      #
+      # `always()` so it also fires on FAILURE and on CANCELLATION — a separate
+      # step process the runner starts after the work step is torn down, so it
+      # races none of the signals that killed it. Traps cannot do this: both
+      # script layers end in `exec`, which discards them.
+      #
+      # LAST, and scoped to ${{ matrix.python-version }}. Last because Codecov
+      # reads ./coverage.xml — that file is in the checkout, not in the scratch,
+      # but ordering removes the question. Scoped because all three legs share
+      # GITHUB_RUN_ID: a cleanup keyed on the run alone would delete the LIVE
+      # scratch of the two siblings still running.
+      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
