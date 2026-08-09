@@ -137,6 +137,40 @@ def test_an_empty_declaration_renders_as_an_empty_flow_list() -> None:
     assert rendered == "[]"
 
 
+def test_it_composes_with_the_other_spec_editor_in_either_order() -> None:
+    # Arrange — `_group_sync.sync_groups_line` ALREADY bulk-edits these same
+    # hand-maintained spec files. Two independent line editors over 102 files
+    # is exactly the shape that yields a corrupted spec nobody can attribute,
+    # so their independence is pinned rather than assumed.
+    from scitex_agent_container.config._group_sync import sync_groups_line
+
+    spec = (
+        "metadata:\n"
+        "  labels:\n"
+        "    groups: [developer, infra]\n"
+        "spec:\n"
+        "  to_home: ./to_home\n"
+    )
+    # Act
+    a, _ = sync_groups_line(insert_to_home_layers(spec, ["user-shared"])[0], "active")
+    b, _ = insert_to_home_layers(sync_groups_line(spec, "active")[0], ["user-shared"])
+    # Assert
+    assert a == b
+
+
+def test_the_other_editors_line_is_left_intact() -> None:
+    # Arrange — neither editor may disturb the line the other owns.
+    from scitex_agent_container.config._group_sync import sync_groups_line
+
+    spec = "metadata:\n  groups: [developer]\nspec:\n  to_home: ./to_home\n"
+    # Act
+    both, _ = sync_groups_line(
+        insert_to_home_layers(spec, ["user-shared"])[0], "active"
+    )
+    # Assert
+    assert "  groups: [developer, active]\n" in both
+
+
 def test_only_the_first_anchor_is_used() -> None:
     # Arrange — two to_home: lines is a shape we have not seen; touch one.
     text = "a:\n  to_home: ./x\nb:\n  to_home: ./y\n"
