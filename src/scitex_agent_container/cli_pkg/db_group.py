@@ -19,6 +19,7 @@ from pathlib import Path
 
 import click
 
+from .._state import state_db as _state_db
 from .._state.state_db import (
     KNOWN_TABLES,
     export_state,
@@ -52,17 +53,34 @@ def db_group() -> None:
 def db_show(ctx: click.Context, as_json: bool) -> None:
     """Schema overview + per-table row counts.
 
+    The output NAMES THE DATABASE IT READ (``store``).
+    ``SCITEX_AGENT_CONTAINER_STATE_DB`` is set per-agent in every sac
+    container, so an agent reads its OWN shard — which never holds
+    fleet rows — while the populated registry sits elsewhere. Without
+    the path, all-zero counts look exactly like a wiped fleet registry:
+    on 2026-08-09 two agents independently escalated P1 data loss from
+    their own empty shard while the host DB was healthy.
+
     \b
     Example:
       $ sac db show
       $ sac db show --json
     """
     counts = table_counts()
-    payload = {"tables": counts, "known_tables": list(KNOWN_TABLES)}
+    # Read through the MODULE, not a from-import: the constant is bound
+    # at import time from the env, so a captured copy goes stale the
+    # moment anything re-resolves it. Reporting a stale path would be
+    # the very bug this line exists to prevent.
+    payload = {
+        "store": str(_state_db.DEFAULT_DB_PATH),
+        "tables": counts,
+        "known_tables": list(KNOWN_TABLES),
+    }
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
         return
     console.print("[bold]sac state.db[/bold]")
+    console.print(f"  [dim]store: {_state_db.DEFAULT_DB_PATH}[/dim]")
     for table in KNOWN_TABLES:
         n = counts.get(table, 0)
         console.print(f"  {table:<14}  {n:>6}")
@@ -122,8 +140,13 @@ def db_query(
         rows = [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
 
     if _json_flag(ctx, as_json):
+        # Stays a bare ARRAY on purpose: wrapping it to carry the store
+        # path (as `db show` now does) would break every consumer that
+        # indexes the result, and a published output contract is a
+        # MIGRATION, not a rename. Tracked separately.
         click.echo(json.dumps(rows, indent=2))
         return
+    console.print(f"[dim]store: {_state_db.DEFAULT_DB_PATH}[/dim]")
     if not rows:
         console.print(f"[dim]({table}: no rows)[/dim]")
         return
