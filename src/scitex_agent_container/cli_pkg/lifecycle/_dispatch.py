@@ -35,9 +35,11 @@ from ._common import _local_host_names
 from ._dispatch_paths import local_spec_dir, remote_spec_target
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
     from ..._state.host_config import PeerSpec
+
+    from ._host_chain import ReachabilityOracle
 
 
 def _spawned_by() -> str:
@@ -326,6 +328,8 @@ def try_dispatch(
     dry_run: bool,
     force: bool,
     local_names: "Collection[str] | None" = None,
+    reachability: "ReachabilityOracle | None" = None,
+    dispatcher: "Callable[..., int] | None" = None,
 ) -> bool:
     """Route ``config`` to a remote peer when its ``spec.host`` demands it.
 
@@ -344,48 +348,53 @@ def try_dispatch(
       handoff (drift-check + rsync + remote ``sac agents start
       --no-redispatch --json`` + lead-side ``state.db.instances`` row) and
       returns ``True``. Only this branch ever reaches ssh.
-    * **unknown** — ``spec.host`` names neither this machine nor a peer.
-      Raises ``RuntimeError`` with the registered-peer list (the
-      ``sac host list`` view) and the concrete fixes — operator directive
-      2026-07-10: a placement that cannot be routed is an ERROR, never a
-      silent local start on the wrong machine. The historical fall-through
+    * **unknown** — nothing in ``spec.host`` is usable: a name that resolves
+      to neither this machine nor a peer, or a fallback CHAIN whose every
+      candidate was rejected. Raises ``RuntimeError`` with the registered-peer
+      list (the ``sac host list`` view) and the concrete fixes — operator
+      directive 2026-07-10: a placement that cannot be routed is an ERROR,
+      never a silent local start on the wrong machine. For a chain the message
+      names EVERY candidate and why it was rejected (unreachable vs unknown
+      name), because those have different fixes. The historical fall-through
       survives in two explicit forms: ``--no-redispatch`` skips this
       dispatcher entirely (the documented force-local escape, which also
-      disarms the singleton skip), and a fallback CHAIN whose tail names
-      THIS machine still classifies local (``classify_spec_host_route``).
-      The negative-safety guarantee is unchanged — an unknown host never
-      becomes an ssh target.
+      disarms the singleton skip), and a chain whose tail names THIS machine
+      still classifies local. The negative-safety guarantee is unchanged — an
+      unknown host never becomes an ssh target.
 
-    ``local_names`` defaults to :func:`_local_host_names` (the union of both
-    hostname authorities); tests inject an explicit set to keep the routing
-    decision pure and hermetic.
+    A LIST ``spec.host`` is walked in priority order with each remote
+    candidate probed by one bounded ssh round-trip, so a head answering
+    ``Permission denied (publickey)`` degrades to the next entry instead of
+    taking the agent down. A plain STRING is never probed and routes exactly
+    as it always has. The walk itself lives in
+    :func:`._host_routing.resolve_start_dispatch_peer`.
+
+    ``local_names`` defaults to :func:`_local_host_names`, ``reachability`` to
+    the real ssh prober (chains only), ``dispatcher`` to
+    :func:`_dispatch_remote_start` — injection seams so tests exercise the
+    routing decision hermetically, with no network and no PATH shim.
 
     Raises:
-        RuntimeError: ``spec.host`` resolves to neither this machine nor a
-            registered peer (message body from
-            ``_host_routing.format_unknown_host_error``).
+        RuntimeError: ``spec.host`` resolves nowhere usable (message body from
+            ``_host_routing.format_route_error``).
     """
-    from ._host_routing import classify_spec_host_route, format_unknown_host_error
+    from ._host_routing import resolve_start_dispatch_peer
 
-    spec_host = config.hosts_spec.host
     if local_names is None:
         local_names = _local_host_names(current_host)
-    kind, dispatch_peer = classify_spec_host_route(
-        spec_host,
+    # ONLY a resolved remote peer triggers ssh dispatch; None means local, so
+    # the caller proceeds with the unchanged local launch.
+    dispatch_peer = resolve_start_dispatch_peer(
+        config.name,
+        config.hosts_spec.host,
         current_host,
         peers,
         local_names=local_names,
+        reachability=reachability,
     )
-    if kind == "unknown":
-        head = spec_host[0] if isinstance(spec_host, list) else spec_host
-        raise RuntimeError(
-            format_unknown_host_error(config.name, str(head), peers, verb="start")
-        )
-    # ONLY a resolved remote peer triggers ssh dispatch; "local" returns
-    # False so the caller proceeds with the unchanged local launch.
-    if kind != "remote" or dispatch_peer is None:
+    if dispatch_peer is None:
         return False
-    _dispatch_remote_start(
+    (dispatcher or _dispatch_remote_start)(
         name=config.name,
         peer=dispatch_peer,
         dry_run=dry_run,

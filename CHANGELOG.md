@@ -6,6 +6,58 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`host:` documented a fallback chain that nothing implemented.**
+  `HostsSpec.host` has said "list: priority order; first available host wins
+  (fallback chain)" since v3 shipped. Every site that reduced the list took
+  `host[0]` and never asked whether that host was usable, so a chain degraded
+  exactly as well as a string: not at all. Measured across all five reduction
+  sites — `_lifecycle/_verdict_remote.py`, `cli_pkg/lifecycle/_common.py`,
+  `_start_single.py`, `_host_routing.py`, `_dispatch.py` — not one contained a
+  liveness or reachability check.
+
+  On 2026-08-09 specs reverted to a single pinned host, sac ssh-dispatched
+  every lifecycle verb to it, the hop answered `Permission denied (publickey)`,
+  and twelve agents went down. The documented mechanism for degrading instead
+  was sitting inert in the type.
+
+  `cli_pkg/lifecycle/_host_chain.py` is now the ONE place a `spec.host` chain
+  is reduced, and all five sites route through it. A list is walked in
+  priority order and the first candidate not positively REJECTED wins: a local
+  entry wins immediately (we are that machine — an ssh hop to self is never
+  rendered), a remote entry wins if the reachability probe does not say no, and
+  a chain in which every candidate was rejected raises rather than silently
+  starting locally on the wrong machine. The refusal names every candidate and
+  its own reason, because "down" and "mistyped" have different fixes.
+
+  **A plain string `host: <name>` is NEVER probed and behaves byte-identically
+  to before.** It has nothing to fall back to, so a probe could only convert a
+  working dispatch into a refusal — a pure regression. Pinned by test, oracle
+  and all.
+
+  Reachability is three-valued (`reachable` / `unreachable` / `unknown`) and
+  the third value is never folded into either pole, which is this codebase's
+  most-shipped bug class. Only EVIDENCE rejects a host: a probe that answered
+  no, or a name that routes nowhere. "I could not check" — no oracle supplied,
+  a probe that could not run, an oracle that raised — rejects nothing and
+  leaves the operator's priority order standing, which is also what makes the
+  no-oracle call sites (listings, preflights) byte-identical to the old
+  `host[0]`.
+
+  The probe is an injected `(host) -> verdict` callable, matching the
+  `peers` / `local_names` seam `classify_dispatch_host` already uses, so the
+  resolver stays pure and no test touches the network. The production oracle is
+  one bounded ssh round-trip rendered by `build_ssh_argv` — the same primitive
+  the dispatch itself uses, so the probe cannot answer about a different route
+  than the one taken — memoized per verb, and only ever built for a LIST.
+
+  Two further consequences of asking the whole chain instead of its head:
+  `_resolve_singleton_skip` now checks liveness on EVERY bound host (asking
+  only the head reported "not live", released the pin, and started a SECOND
+  copy beside one already running down-chain), and the `--resume` preflight no
+  longer calls a placement remote when the chain names this machine.
+
 ## [0.24.25] - 2026-08-05
 
 ### Fixed
