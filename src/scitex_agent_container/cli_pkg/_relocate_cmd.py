@@ -27,12 +27,18 @@ WHAT COMES FROM WHERE — the operator's requirement, 2026-08-08:
 Collapsing those into one column is how `sac agents list` reports a running
 agent as `defined`, and this command must not repeat it.
 
-UNPROBED IS UNKNOWN, AND UNKNOWN REFUSES. Any fact with no probe supplied stays
-``None``, which preflight reports as UNKNOWN and refuses on, exactly as it would
-for a probe that ran and failed. That is deliberate: from the decision's point
-of view "nobody asked" and "asked and could not tell" are the same thing, and
-both differ from an answer. So a dry run with no probes wired is not a green
-light — it is a list of what still has to be measured.
+UNPROBED IS UNKNOWN, AND UNKNOWN REFUSES. Any fact a probe could not answer
+stays ``None``, which preflight reports as UNKNOWN and refuses on, exactly as it
+would for a probe that ran and failed. That is deliberate: from the decision's
+point of view "nobody asked" and "asked and could not tell" are the same thing,
+and both differ from an answer. A dry run that cannot measure something is not a
+green light — it is a list of what still has to be measured, each entry carrying
+the reason it could not be.
+
+THE PROBES ARE ONE ssh ROUND TRIP, NOT ELEVEN. See
+:mod:`.._lifecycle._relocate_probe_adapter`: the batch is deliberately built so
+that a partial answer degrades PER FACT — eight measured and three unknown,
+never eleven of either because one section failed.
 """
 
 from __future__ import annotations
@@ -40,7 +46,11 @@ from __future__ import annotations
 import click
 
 from .._lifecycle._relocate_preflight import preflight
-from .._lifecycle._relocate_probe import TargetProbes, gather_target_facts
+from .._lifecycle._relocate_probe import gather_target_facts
+from .._lifecycle._relocate_probe_adapter import (
+    build_target_probes,
+    card_store_url_from_spec,
+)
 from .._lifecycle._relocate_render import render_dry_run
 from ._helpers import console
 
@@ -85,8 +95,12 @@ def declared_from_spec(spec: dict) -> dict[str, object]:
         b.split(":", 1)[0] if isinstance(b, str) else str(b)
         for b in (binds if isinstance(binds, list) else [])
     )
-    env = _dig(body, "apptainer", "env")
-    card_store = env.get("SCITEX_CARDS_DB") if isinstance(env, dict) else None
+    # Read through the SAME resolver the probe uses, so DECLARED and OBSERVED
+    # cannot disagree about which store this agent has. An ``apptainer.env``-only
+    # lookup printed "(unset)" for this repo's own spec — which carries the URL
+    # in a ``--env`` raw arg — while the probe went and successfully dialled it:
+    # two sections of one report describing the same agent differently.
+    card_store = card_store_url_from_spec(spec) or None
     return {
         "runtime": body.get("runtime"),
         "host": body.get("host"),
@@ -168,10 +182,14 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         )
         raise SystemExit(EXIT_REFUSED)
 
-    # No probes are wired yet, so every fact is UNOBSERVED and the report is a
-    # list of what must be measured. That is the honest state of this command
-    # and it is preferable to a probe set that guesses.
-    gathered = gather_target_facts(TargetProbes())
+    # ONE batched ssh round trip answers all eleven facts; each is parsed on its
+    # own marker line, so a section that fails costs only its own fact. See
+    # `.._lifecycle._relocate_probe_adapter` for how per-fact degradation
+    # survives the batching.
+    probes, _batch = build_target_probes(
+        to_host, spec, required_ports=_required_ports(declared)
+    )
+    gathered = gather_target_facts(probes)
     report = preflight(
         agent=name,
         to_host=to_host,
