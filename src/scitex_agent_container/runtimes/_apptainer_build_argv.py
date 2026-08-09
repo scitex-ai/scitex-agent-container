@@ -218,15 +218,15 @@ def build_run_argv(
     # agent inherits the store mount even when its spec doesn't carry
     # the explicit line. Explicit spec entries to the same destination
     # override the default — see ``_p3a_default_binds``.
+    # 2026-08-09 gh-hosts.yml incident: a spec bind reached the argv with NO
+    # check, so a credential dir that EXISTED but was EMPTY mounted fine and
+    # delivered nothing — 12 agents spent hours believing they had no GitHub
+    # token. spec_binds_checked is the gate: a credential bind that cannot
+    # deliver REFUSES the start, any other absent source logs ERROR.
+    from ._apptainer_bind_guard import spec_binds_checked
     from ._p3a_default_binds import apply_default_binds
 
-    ap_for_binds = getattr(config, "apptainer", None)
-    spec_binds = (
-        [str(b) for b in getattr(ap_for_binds, "binds", None) or []]
-        if ap_for_binds is not None
-        else []
-    )
-    for bs in apply_default_binds(spec_binds):
+    for bs in apply_default_binds(spec_binds_checked(config)):
         if ":" in bs:
             _, _, rest = bs.partition(":")
             dst = rest.split(":", 1)[0]
