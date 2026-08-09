@@ -25,6 +25,7 @@ from ._channel_send_errors import (
     error_result,
     lookup_error_result,
     no_subscriber_error,
+    unknown_target_error,
     unreachable_error,
 )
 from .channel import _recent
@@ -213,8 +214,58 @@ def register_tools(
                     "(delivered_subscriber_count=0) — NOT DELIVERED",
                     target,
                 )
+                # A 0-subscriber count has TWO causes that need OPPOSITE
+                # actions, and the count alone cannot tell them apart:
+                #
+                #   registered agent, adapter detached -> WAIT (it replays)
+                #   name never registered (a typo)     -> FIX THE NAME
+                #
+                # Only ask the registry on this failure path, so the happy
+                # path pays nothing for the distinction.
+                if not await _target_is_registered(target):
+                    raise unknown_target_error(target, await _registered_names())
                 raise no_subscriber_error(target)
         return res
+
+    async def _registered_names() -> list[str]:
+        """Registered agent names, from the same ``/agents`` view a2a_peers uses.
+
+        Returns ``[]`` when the registry cannot be read — the CALLER must
+        treat that as "could not determine", never as "no agents exist".
+        """
+        try:
+            res = await _get("/agents")
+        except Exception:  # noqa: BLE001 - registry unreadable is not a send failure
+            return []
+        body = res.get("body")
+        rows = body.get("agents") if isinstance(body, dict) else body
+        if not isinstance(rows, list):
+            return []
+        names: list[str] = []
+        for row in rows:
+            if isinstance(row, dict):
+                name = row.get("name") or row.get("agent")
+                if isinstance(name, str) and name:
+                    names.append(name)
+            elif isinstance(row, str) and row:
+                names.append(row)
+        return names
+
+    async def _target_is_registered(target: str) -> bool:
+        """True unless the registry can AFFIRMATIVELY say ``target`` is absent.
+
+        Deliberately biased toward the existing behaviour. An empty list
+        means the registry was unreadable (or genuinely empty), and
+        "I could not check" is NOT evidence of a bad name — reporting an
+        unknown target on a failed lookup would invent the very false
+        certainty this whole module exists to prevent. So we downgrade to
+        the pre-existing no_subscriber_error and say less, rather than
+        saying something confident and possibly wrong.
+        """
+        names = await _registered_names()
+        if not names:
+            return True
+        return target in names
 
     def _find(msg_id: str) -> dict[str, Any] | None:
         for ev in reversed(_recent):
