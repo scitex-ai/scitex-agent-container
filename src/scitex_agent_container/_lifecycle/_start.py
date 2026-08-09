@@ -29,6 +29,7 @@ from ._start_announce import _announce_start_verdict  # noqa: F401
 
 # Re-exported from _start_failure_diag for back-compat: this helper lived here
 # before the 512-line-cap split.
+from ._identity_drift import check_board_identity_at_launch
 from ._start_failure_diag import _format_boot_stderr_section  # noqa: F401
 from ._start_outcome import NOOP_ALREADY_RUNNING
 
@@ -156,6 +157,16 @@ def agent_start(
     # a non-git source / unreachable remote / any error warns-and-continues
     # — the check never crashes a launch (resilience is the contract).
     _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
+
+    # Launch-time BOARD IDENTITY check, same contract as the drift check
+    # above: LOUD WARNING, never a block, never crashes a launch. An agent
+    # whose name and SCITEX_TODO_AGENT_ID disagree is one process with two
+    # identities — peers address it by one, it owns cards and polls its
+    # inbox as the other — and every symptom is SILENT, because a card
+    # query for the wrong spelling returns a well-formed empty list rather
+    # than an error. Measured 2026-08-09: that hid a P1 from the agent
+    # that owned it for over an hour. See :mod:`._identity_drift`.
+    check_board_identity_at_launch(config)
 
     # CREDS-PHASE1 — auto-rotate ``spec.claude.account`` to a healthy
     # stored account when the pinned one's snapshot is EXPIRED/ABSENT.
