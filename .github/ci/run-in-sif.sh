@@ -69,6 +69,36 @@ export TMPDIR="/tmp/ci-scitex_agent_container-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_A
 rm -rf "$TMPDIR"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
+# REMOVE OUR OWN SCRATCH ON THE WAY OUT. The `rm -rf` above only ever deletes a
+# RE-RUN of this exact (run_id, attempt, version) triple, because the name it
+# cleans is the name it is about to use. Every new run gets a new GITHUB_RUN_ID
+# and therefore a new directory, so nothing has ever removed the previous one.
+#
+# MEASURED 2026-08-09 on scitex-compute-04: 153 orphaned ci-* directories,
+# 1.8-2.2G each, ~290G total — the root filesystem hit 393G/393G, 0 bytes free.
+# Every writing test then failed with `fatal: failed to write commit object`, on
+# EVERY pull request regardless of its diff, which reads as a runner fault and
+# is not one. `sac listen` also began returning HTTP 500 (it could not write its
+# audit log). One PR costs ~6G across the three matrix legs.
+#
+# The trap preserves the script's exit status (bash re-raises it after the
+# handler), so a failing test suite still fails.
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# ...and sweep SIBLINGS left behind by jobs that never reached the trap — a
+# cancelled workflow, a SIGKILL, an OOM, or any run that predates this change.
+# Without this the 153-directory backlog needs a human with sudo, which is how
+# it reached 290G in the first place: the only cleanup path was one nobody ran.
+#
+# Age-gated rather than name-gated: a concurrent matrix leg on this same runner
+# owns a sibling directory that is minutes old and MUST NOT be removed, while
+# anything untouched for hours belongs to a job that is long gone. Mirrors the
+# `_REAP_MIN_AGE_S` process reap in exec-in-sif.sh — same hazard, same guard.
+_TMPDIR_REAP_MIN_AGE_MIN="${SCITEX_CI_TMPDIR_REAP_MIN_AGE_MIN:-360}"
+find /tmp -maxdepth 1 -type d -name 'ci-scitex_agent_container-*' \
+    -mmin "+$_TMPDIR_REAP_MIN_AGE_MIN" ! -path "$TMPDIR" \
+    -exec rm -rf {} + 2>/dev/null || true
+
 # The HPC compute-node $HOME is READ-ONLY inside the container, so uv/pip cannot
 # create their default caches under ~/.cache — point them at the writable
 # scratch instead (else `uv pip install` dies: "failed to create directory

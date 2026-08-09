@@ -46,6 +46,7 @@ from typing import Any
 from .state_db_acl_policy import (
     DEFAULT_COMMS_POLICY,
     apply_may_spawn_gate,
+    comms_policy_row_exists,
     read_comms_policy,
     record_comms_policy,
     sender_target_relationship,
@@ -62,6 +63,7 @@ __all__ = [
     "CommsNodeConflictError",
     "DEFAULT_COMMS_POLICY",
     "apply_may_spawn_gate",
+    "comms_policy_row_exists",
     "derive_group",
     "grant_send",
     "has_grant",

@@ -181,6 +181,15 @@ def read_comms_policy(
     A missing row yields :data:`DEFAULT_COMMS_POLICY` so the
     "no-row" vs "row-with-default-values" distinction is invisible to
     callers. Defaults are byte-equivalent to pre-Phase-3 behaviour.
+
+    That invisibility is correct for POLICY EVALUATION — a caller asking
+    "may this agent spawn?" wants an answer, not a lecture about rows.
+    It is wrong for DIAGNOSIS: when an ACL refuses, "this agent is
+    registered and ungrouped" and "this host has never heard of this
+    agent" are different facts and the operator needs to know which.
+    Use :func:`comms_policy_row_exists` for that; do NOT infer it from
+    a returned value equal to the defaults, which is ambiguous by
+    design.
     """
     if not name:
         return dict(DEFAULT_COMMS_POLICY)
@@ -205,6 +214,42 @@ def read_comms_policy(
         "may_spawn": bool(row["may_spawn"]),
         "group_name": str(row["group_name"]),
     }
+
+
+def comms_policy_row_exists(
+    *,
+    name: str,
+    db_path: Path | None = None,
+) -> bool:
+    """True iff THIS store holds a policy row for ``name``.
+
+    The narrow question :func:`read_comms_policy` deliberately hides, and
+    the one a denial message needs.
+
+    INCIDENT 2026-08-09: three agents were refused ``host_exec`` with
+    "caller '<name>' resolves to group ''". That message asserts one
+    cause — you are registered and ungrouped — when the truth was the
+    other: the caller was being looked up in a store that had no row for
+    it at all. Both produce the empty string, at two layers
+    (``resolve_group_name`` collapses them, and so does this module's
+    ``read_comms_policy``), each documented as intended. So the message
+    sent three readers after their group labels instead of after WHICH
+    DATABASE was consulted, and cost about fifteen minutes.
+
+    This does NOT change any decision. Both cases still deny, and deny
+    for the same reason. It exists so the denial can say which one it
+    was.
+    """
+    if not name:
+        return False
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM node_comms_policy WHERE name = ?",
+            (name,),
+        ).fetchone()
+    return row is not None
 
 
 def sender_target_relationship(
