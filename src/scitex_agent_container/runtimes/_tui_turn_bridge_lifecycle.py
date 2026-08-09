@@ -67,6 +67,28 @@ def resolved_a2a_port(config: AgentConfig) -> int | None:
     return None
 
 
+def resolved_a2a_host(config: AgentConfig) -> str:
+    """Return the agent's declared ``spec.a2a.host``, else :data:`DEFAULT_HOST`.
+
+    The bridge is the TUI runtime's half of the SAME ``/v1/turn`` endpoint the
+    SDK runner serves, so it must bind the SAME address the spec declares —
+    ``runtimes/a2a_sidecar.py`` already reads ``spec.a2a.host`` for its
+    ``a2a serve --host``. This module previously hardcoded :data:`DEFAULT_HOST`,
+    so a spec asking for a reachable address bound loopback here anyway and
+    nothing reported the disagreement: the spec said one thing, the runtime did
+    another, and ``sac agents health`` was happy either way.
+
+    A missing / blank / non-string host falls back to :data:`DEFAULT_HOST` —
+    the same value every other reader defaults to — so a spec that declares
+    nothing binds exactly where it bound before.
+    """
+    a2a = getattr(config, "a2a", None)
+    host = getattr(a2a, "host", None) if a2a is not None else None
+    if isinstance(host, str) and host.strip():
+        return host.strip()
+    return DEFAULT_HOST
+
+
 # ---------------------------------------------------------------------------
 # Launcher / lifecycle
 # ---------------------------------------------------------------------------
@@ -84,7 +106,7 @@ def start_turn_bridge(
     config: AgentConfig,
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
-    host: str = DEFAULT_HOST,
+    host: str | None = None,
     port_free_timeout_s: float = _PORT_FREE_TIMEOUT_S,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], float] = time.monotonic,
@@ -103,10 +125,18 @@ def start_turn_bridge(
     If the port cannot be freed within ``port_free_timeout_s`` we FAIL LOUD
     (:class:`TurnBridgePortBusyError`, naming port + holder + remediation)
     instead of spawning into that crash. ``*_fn`` seams are injected by tests.
+
+    ``host`` defaults to the agent's declared ``spec.a2a.host``
+    (:func:`resolved_a2a_host`) — the SAME address ``a2a_sidecar`` binds — and
+    is threaded into the spawned bridge's ``--host`` as well as into the
+    port-free probes, which must ask about the address we are about to bind.
+    An explicit ``host=`` still wins (test seam / caller override).
     """
     port = resolved_a2a_port(config)
     if port is None:
         return None
+    if host is None:
+        host = resolved_a2a_host(config)
     # Tear down any prior bridge for THIS agent, now also WAITING for it to
     # release the port. ``force_free_survivors=False`` — at START the port's
     # holder is UNKNOWN (could be a foreign service that grabbed the configured
@@ -182,7 +212,7 @@ def start_turn_bridge(
 def stop_turn_bridge(
     config: AgentConfig,
     *,
-    host: str = DEFAULT_HOST,
+    host: str | None = None,
     grace_s: float = _STOP_SIGTERM_GRACE_S,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], float] = time.monotonic,
@@ -216,7 +246,13 @@ def stop_turn_bridge(
     :class:`TurnBridgePortBusyError`) rather than let the next start crash on
     ``EADDRINUSE``. The PID file is removed regardless. ``*_fn`` seams are
     injected for tests.
+
+    ``host`` defaults to the agent's declared ``spec.a2a.host``
+    (:func:`resolved_a2a_host`) so the port-release probes ask about the
+    address the bridge actually bound; an explicit ``host=`` still wins.
     """
+    if host is None:
+        host = resolved_a2a_host(config)
     pid_path = _pid_path(config)
     if not pid_path.is_file():
         return False
@@ -283,6 +319,7 @@ __all__ = [
     "LOG_FILENAME",
     "MODULE_PATH",
     "PID_FILENAME",
+    "resolved_a2a_host",
     "resolved_a2a_port",
     "start_turn_bridge",
     "stop_turn_bridge",

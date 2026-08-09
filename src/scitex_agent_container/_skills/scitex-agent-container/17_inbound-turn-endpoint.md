@@ -16,7 +16,8 @@ The endpoint lives in `_runners/_session_http.py`, spawned by the SDK
 runner (`_runners/claude_session.py::run`) when its argv carries
 `--a2a-port N`. The runner — and therefore this HTTP server — runs
 **inside the apptainer container** (`apptainer exec`); the runtime adapter
-sets `--a2a-port` from `spec.a2a.port`. See
+sets `--a2a-port` from `spec.a2a.port` and `--a2a-host` from
+`spec.a2a.host`. See
 [15_claude-session.md](15_claude-session.md) for the container shape.
 
 ## YAML
@@ -83,7 +84,9 @@ non-SDK runtimes (see [07_a2a-protocol.md](07_a2a-protocol.md)).
 
 ## Wiring details
 
-The runner's argv `--a2a-port`/`--a2a-host` is set automatically by `runtimes/claude_session.py::start` from `spec.a2a.port` / `spec.a2a.host`. The handler enqueues a `TurnEnvelope` on the runner's `asyncio.Queue` and awaits `env.response`; the conversation task drains it, calls `client.query(text)`, drains `receive_response()`, and resolves the future.
+The runner's argv `--a2a-port`/`--a2a-host` is built by `runtimes/_apptainer_inner_argv.py::_a2a_argv` from `spec.a2a.port` / `spec.a2a.host` (this file previously named `runtimes/claude_session.py::start`, which never built either flag; `--a2a-host` was not emitted at all until the bind-path threading change). The host continues `--a2a-host` → `_session_cli.main` → `claude_session.run(a2a_host=)` → `_session_http.serve_inbound(host=)` → `uvicorn.Config(host=)`. The handler enqueues a `TurnEnvelope` on the runner's `asyncio.Queue` and awaits `env.response`; the conversation task drains it, calls `client.query(text)`, drains `receive_response()`, and resolves the future.
+
+`spec.a2a.host` now reaches all three of sac's a2a bind paths — the sidecar (`runtimes/a2a_sidecar.py` → `a2a serve --host`), the TUI turn bridge (`runtimes/_tui_turn_bridge.py`), and this SDK runner. Every fleet spec declares `127.0.0.1`, so all three bind loopback today; changing the declared value now moves all three together instead of one.
 
 ## Implementation files
 
