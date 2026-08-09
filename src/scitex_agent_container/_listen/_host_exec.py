@@ -108,6 +108,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
+from .._state.state_db_groups import resolve_group
 from ._acl import deny_response, resolve_group_name
 from ._host_exec_child import (
     _POST_KILL_DRAIN_S,
@@ -188,6 +189,9 @@ async def host_exec(
     request: Request,
     *,
     group_resolver=resolve_group_name,
+    # Diagnostics only — never consulted for the allow/deny decision, so a
+    # test that injects `group_resolver` alone keeps its existing behaviour.
+    group_detail=resolve_group,
     audit_writer=_append_audit,
 ) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
@@ -277,10 +281,20 @@ async def host_exec(
 
     group = group_resolver(name=caller)
     if group not in ELIGIBLE_GROUPS:
+        # The DECISION stays with group_resolver (a plain string compare, and
+        # the seam tests inject through). Only the EXPLANATION is enriched:
+        # `group ''` is three different situations wearing one face, and the
+        # operator reading this denial has to pick between "label the agent"
+        # and "you are looking at the wrong database". Saying which costs one
+        # query on a path that is already failing.
+        try:
+            detail = group_detail(name=caller).describe()
+        except Exception:  # noqa: BLE001 - never let diagnostics break a deny
+            detail = f"group {group!r}"
         return deny_response(
             reason=(
                 f"host_exec is restricted to groups {sorted(ELIGIBLE_GROUPS)}; "
-                f"caller {caller!r} resolves to group {group!r}"
+                f"caller {caller!r} has {detail}"
             )
         )
 

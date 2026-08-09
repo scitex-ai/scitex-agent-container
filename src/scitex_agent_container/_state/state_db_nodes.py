@@ -197,93 +197,24 @@ def derive_group(
 
 
 # ---------------------------------------------------------------------------
-# named groups (operator 2026-06-25) — a SECOND grouping axis layered on
-# top of the lineage-derived group mesh above. The group NAME is resolved
-# at agent_start from ``metadata.labels.group`` (else role-derived) and
-# persisted in ``node_comms_policy.group_name``; these readers apply it at
-# ACL-check time. Pure DB reads — the resolver itself is in
-# :mod:`scitex_agent_container.config._group_resolver`.
+# named groups + role predicates — EXTRACTED to .state_db_groups (this module
+# was 587 lines, over the 512 budget). Re-exported here so every existing
+# `from ...state_db_nodes import resolve_group_name` keeps working.
+#
+# state_db_groups also adds `resolve_group`, which returns the group AND its
+# provenance — use that one wherever the answer reaches a human, because a
+# bare "" cannot say whether an agent is ungrouped or has no policy row.
 # ---------------------------------------------------------------------------
 
-
-def resolve_group_name(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> str:
-    """Return ``name``'s persisted NAMED group, or ``""`` if ungrouped.
-
-    Reads ``node_comms_policy.group_name`` (written at ``agent_start``
-    from the resolved ``metadata.labels.group`` / role default). An
-    agent with no policy row, or a row with an empty ``group_name``,
-    is "ungrouped" and shares a named group with no one.
-    """
-    if not name:
-        return ""
-    policy = read_comms_policy(name=name, db_path=db_path)
-    return str(policy.get("group_name", "") or "")
-
-
-def same_named_group(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
-
-    Both groups must be NON-EMPTY and equal. Two ungrouped agents
-    (empty group) do NOT match — that keeps absence byte-equivalent to
-    the pre-group-name behaviour (an ungrouped fleet falls through to
-    the lineage-mesh + explicit-grant ACL exactly as before).
-    """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
-    if not sender_group:
-        return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
-    return target_group == sender_group
-
-
-def is_developer(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``developer``.
-
-    The developer group has FULL AUTHORITY (operator 2026-06-25):
-    members may CRUD agents (spawn / start / stop / restart / delete)
-    and CRUD the ACL (grant / revoke). The spawn + lineage ACL gates
-    consult this to short-circuit their default (root-only / lineage-
-    descendant) checks.
-    """
-    from ..config._group_resolver import is_developer_group
-
-    return is_developer_group(resolve_group_name(name=name, db_path=db_path))
-
-
-def is_researcher(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``researcher``.
-
-    Mirrors :func:`is_developer` for the research-role group
-    (:data:`scitex_agent_container.config._group_resolver.RESEARCHER_GROUP`).
-    Per the operator's 2026-07-05 ruling ("dev agents and research
-    agents MUST have full permissions — including the ability to
-    start/stop peer agents"), a researcher-group member gets the same
-    spawn authority as a developer-group member; see
-    :func:`spawn_allowed`.
-    """
-    from ..config._group_resolver import RESEARCHER_GROUP
-
-    group = resolve_group_name(name=name, db_path=db_path)
-    if not group:
-        return False
-    return group.strip().lower() == RESEARCHER_GROUP.lower()
-
+from .state_db_groups import (  # noqa: E402,F401
+    GROUP_SOURCES,
+    GroupResolution,
+    is_developer,
+    is_researcher,
+    resolve_group,
+    resolve_group_name,
+    same_named_group,
+)
 
 # ---------------------------------------------------------------------------
 # spawn permission — root nodes, plus dev/research-role children
