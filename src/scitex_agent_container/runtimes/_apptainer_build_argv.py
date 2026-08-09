@@ -149,18 +149,10 @@ def build_run_argv(
     if env_file.is_file():
         argv += ["--env-file", str(env_file)]
 
-    # Quota-cache bind (#16) — see module-level docstring in
-    # _apptainer_runtime. Bind read-only + advertise the in-container
-    # path to the telegrammer bridge so its default-path lookup hits
-    # the bind without any per-agent spec change.
-    quota_src = _resolve_quota_cache_host_path()
-    if quota_src.is_file():
-        argv += [
-            "--bind",
-            f"{quota_src}:{QUOTA_CACHE_CONTAINER_PATH}:ro",
-            "--env",
-            f"CCT_QUOTA_CACHE_PATH={QUOTA_CACHE_CONTAINER_PATH}",
-        ]
+    # Quota-cache bind (#16) — extracted to _apptainer_quota_env.
+    from ._apptainer_quota_env import quota_cache_flags
+
+    argv += quota_cache_flags()
 
     # Host access + working directory are the SOLE responsibility of the
     # explicit ``apptainer.binds`` + ``spec.workdir`` — there is NO
@@ -310,6 +302,13 @@ def build_run_argv(
     from ._apptainer_listen_env import listen_env_flags
 
     argv += listen_env_flags(config)
+
+    # GitHub token for the in-container ``gh``. Safe as ``--env`` ONLY because
+    # redact_secret_env_to_file below lifts ``*_TOKEN`` out of the argv. Why
+    # this is needed at all: see _github_token.
+    from ._github_token import github_token_env_flags
+
+    argv += github_token_env_flags(agent_name=config.name)
 
     # TUI parity with the SDK's telegrammer wake (apply_channels →
     # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an
