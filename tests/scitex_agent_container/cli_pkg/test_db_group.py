@@ -118,6 +118,42 @@ def test_db_query_console_output_names_the_store_it_read(db_path: Path):
     assert "store:" in result.output
 
 
+def test_db_query_json_still_emits_a_bare_array(db_path: Path):
+    # Arrange: the published contract. Consumers index this result, so
+    # wrapping it would be a migration, not a rename.
+    from scitex_agent_container.cli_pkg.db_group import db_query
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_query, ["--table", "instances", "--json"])
+    # Assert
+    assert json.loads(result.stdout) == []
+
+
+def test_db_query_mcp_result_names_the_store(db_path: Path):
+    # Arrange: an MCP caller never sees the console rendering, so the
+    # provenance has to ride on the RESULT. Sibling key, not an envelope
+    # — and deliberately not stderr, which invoke_cli_json merges into
+    # stdout and which would make `data` unparseable.
+    from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
+
+    # Act
+    result = mcp_db_query(table="instances")
+    # Assert
+    assert result["store"] == str(db_path)
+
+
+def test_db_query_mcp_data_still_parses(db_path: Path):
+    # Arrange: the guard against "fixing" this with a stderr line again,
+    # which is what turns `data` into None for every agent.
+    from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
+
+    # Act
+    result = mcp_db_query(table="instances")
+    # Assert
+    assert result["data"] == []
+
+
 # ---------------------------------------------------------------------------
 # db query — --where branch + non-JSON renderings (lines 104, 124-132)
 # ---------------------------------------------------------------------------
