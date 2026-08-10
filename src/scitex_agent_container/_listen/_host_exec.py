@@ -286,6 +286,9 @@ async def host_exec(
     # ``grant`` — whose spec lists privileged AND developer — ineligible
     # here for the same reason it could not spawn.
     groups = group_resolver(name=caller)
+    # The eligible group(s) this caller actually holds — what AUTHORISED the
+    # exec, and what the audit line records. Sorted so the value is stable.
+    authorised = sorted(ELIGIBLE_GROUPS & {str(g).strip().lower() for g in groups})
     if not groups_intersect(groups, ELIGIBLE_GROUPS):
         # SAME DECISION, HONEST MESSAGE. An empty group set means one of
         # two things, and the old message asserted the first while the
@@ -455,7 +458,8 @@ async def host_exec(
         {
             "ts": time.time(),
             "caller": caller,
-            "caller_group": group,
+            "caller_group": ",".join(authorised),
+            "caller_groups": sorted(str(g).strip() for g in groups),
             "argv": argv,
             "cwd": cwd_raw,
             "timeout_s": timeout_s,
