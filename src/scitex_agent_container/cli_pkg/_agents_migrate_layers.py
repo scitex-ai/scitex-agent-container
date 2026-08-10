@@ -53,7 +53,6 @@ from .._maintenance._layers_migration_apply import apply_migration
 from .._maintenance._layers_migration_gate import fleet_arming_snapshot, gate_arming
 from .._maintenance._layers_migration_plan import (
     already_declared,
-    fleet_spec_paths,
     plan_migration,
     quiet_undeclared_warning,
 )
