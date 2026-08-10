@@ -199,10 +199,15 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     agent's legitimate way of pinning its home to its own spec.
 
     When the spec declares NOTHING, every layer applies — today's behaviour —
-    and a WARNING names the agent. That asymmetry is deliberate and temporary:
-    all 102 registered specs are currently undeclared (measured 2026-08-09), so
-    refusing here would disarm the entire fleet in one deploy. The warning is
-    what makes the migration visible before the refusal replaces it.
+    and this function says nothing about it. It used to log a WARNING here, and
+    that was the wrong place: this is a PURE resolver, and a single start calls
+    it TWICE (workspace home, then the apptainer overlay upper — see
+    ``_to_home_overlay.deploy_to_home_overlay``), so one agent produced two
+    identical paragraphs. The missing declaration is a property of the SPEC,
+    decided once per launch, so the complaint — and, once the fleet's specs are
+    migrated, the REFUSAL — lives in
+    :func:`.._lifecycle._layers_preflight.check_to_home_layers_at_launch`,
+    which ``agent_start`` calls exactly once.
     """
     resolved = _collapse_duplicate_paths(
         [
@@ -214,13 +219,6 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
 
     declared = getattr(config, "to_home_layers", None)
     if declared is None:
-        logger.warning(
-            "to_home: agent %r declares no 'to_home_layers'; inheriting the "
-            "implicit cascade (%s). Declare the layers in the spec so what "
-            "gets merged into this agent is visible from the spec alone.",
-            getattr(config, "name", "<unnamed>"),
-            ", ".join(name for name, path in resolved if path is not None) or "none",
-        )
         return resolved
 
     wanted = set(declared)

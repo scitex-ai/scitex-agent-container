@@ -85,6 +85,22 @@ class UnknownToHomeLayer(RuntimeError):
     """
 
 
+class UndeclaredToHomeLayers(RuntimeError):
+    """The spec declares no ``to_home_layers`` at all — refused at launch.
+
+    The sibling of :class:`UnknownToHomeLayer`: that one is a declaration that
+    names nothing real, this one is the absence of a declaration. Both leave
+    the reader unable to tell from the spec what gets merged into the agent,
+    which is the exact failure the field exists to remove.
+
+    Raised by :func:`.._lifecycle._layers_preflight.check_to_home_layers_at_launch`
+    BEFORE the runtime is built, so a refusal never leaves a half-deployed
+    workspace behind. ``--allow-undeclared-layers`` /
+    ``SAC_ALLOW_UNDECLARED_LAYERS=1`` starts anyway and logs the bypass at
+    ERROR level naming the agent.
+    """
+
+
 class WorkspaceSettingsMergeError(RuntimeError):
     """A ``settings.json`` to_home layer is not valid JSON — refused.
 
@@ -98,6 +114,8 @@ class WorkspaceSettingsMergeError(RuntimeError):
 
 __all__ = [
     "LayerMergeConflict",
+    "UndeclaredToHomeLayers",
+    "UnknownToHomeLayer",
     "WorkspaceSettingsMergeError",
     "WorkspaceCLAUDEMarkerError",
     "WorkspaceCredentialLeakError",

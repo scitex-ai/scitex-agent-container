@@ -16,6 +16,7 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
+from ._start_gate_options import spec_gate_options
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
 
@@ -52,7 +53,11 @@ from ._start_preflight_gate import make_preflight_runner
     "and overrides the YAML's claude.session / claude.resume_id.",
 )
 @click.option(
-    "-n", "--tail-lines", "tail_lines", type=int, default=None,
+    "-n",
+    "--tail-lines",
+    "tail_lines",
+    type=int,
+    default=None,
     help="Trailing transcript messages to preview per resumable session "
     "on a stale --resume (sac-session-candidates-tail-preview).",
 )
@@ -180,14 +185,7 @@ from ._start_preflight_gate import make_preflight_runner
     default=False,
     help="Replace existing materialised yamls under --params-out.",
 )
-@click.option(
-    "--strict-drift",
-    "strict_drift",
-    is_flag=True,
-    default=False,
-    help="Hard-block (non-zero exit) on a drifted spec-source git repo "
-    "instead of warn-and-launch. Equivalent to SAC_STRICT_DRIFT=1.",
-)
+@spec_gate_options
 @click.option(
     "--no-redispatch",
     "no_redispatch",
@@ -256,7 +254,7 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
-    strict_drift: bool,
+    strict_drift: bool | None,
     no_redispatch: bool,
     broker_self: bool,
     concurrency: int,

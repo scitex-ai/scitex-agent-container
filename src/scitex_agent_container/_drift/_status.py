@@ -70,6 +70,20 @@ class DriftStatus:
             DriftState.DIVERGED,
         )
 
+    @property
+    def is_stale(self) -> bool:
+        """True when the LOCAL spec may be OUT OF DATE (BEHIND or DIVERGED).
+
+        The narrower half of :attr:`is_drifted`, and the one a start-time
+        refusal keys off. AHEAD is drift but it is not staleness: unpushed
+        local commits mean the spec will not PROPAGATE to other hosts, while
+        the spec this host is about to launch is the newest one that exists.
+        Refusing on AHEAD would stop hosts that legitimately carry local
+        commits from booting at all, which is a different (and worse) failure
+        than the one the refusal is for.
+        """
+        return self.state in (DriftState.BEHIND, DriftState.DIVERGED)
+
     def summary(self) -> str:
         """One-line human summary of the drift verdict."""
         if self.state is DriftState.CURRENT:

@@ -51,11 +51,7 @@ from rich.markup import escape
 
 from .._maintenance._layers_migration_apply import apply_migration
 from .._maintenance._layers_migration_gate import fleet_arming_snapshot, gate_arming
-from .._maintenance._layers_migration_plan import (
-    already_declared,
-    plan_migration,
-    quiet_undeclared_warning,
-)
+from .._maintenance._layers_migration_plan import already_declared, plan_migration
 from ._helpers import _json_flag, console
 
 _EXIT_OK = 0
@@ -296,15 +292,17 @@ def migrate_layers(
             "drop both flags to preview, pass --apply to write."
         )
 
-    # Quieted around the resolver calls only: the "declares no layers" WARNING
-    # fires once per undeclared spec (101 on this host) and this command's whole
-    # output IS that finding, aggregated. See quiet_undeclared_warning.
-    with quiet_undeclared_warning():
-        # No arguments: plan_migration resolves the roster AND records the root
-        # it searched. Handing it fleet_spec_paths() would give it the same
-        # paths and hide where they came from, which is exactly how a run
-        # against a non-existent root reported a sound plan.
-        plan = plan_migration()
+    # No arguments: plan_migration resolves the roster AND records the root it
+    # searched. Handing it fleet_spec_paths() would give it the same paths and
+    # hide where they came from, which is exactly how a run against a
+    # non-existent root reported a sound plan.
+    #
+    # This used to run inside a ``quiet_undeclared_warning()`` context, because
+    # the resolver logged "declares no layers" once per undeclared spec and 101
+    # copies buried the report they duplicated. The resolver no longer logs at
+    # all (the finding moved to the launch gate), so the silencer was deleted
+    # rather than left in place muting a logger nothing writes to.
+    plan = plan_migration()
     payload = _plan_payload(plan)
     payload["mode"] = "apply" if apply else "dry-run"
 
@@ -355,8 +353,7 @@ def migrate_layers(
         )
         raise SystemExit(_EXIT_OK)
 
-    with quiet_undeclared_warning():
-        code, applied = _run_apply(plan, [e.path for e in plan.edits])
+    code, applied = _run_apply(plan, [e.path for e in plan.edits])
     payload.update(applied)
     payload["exit_code"] = code
     if _json_flag(ctx, as_json):

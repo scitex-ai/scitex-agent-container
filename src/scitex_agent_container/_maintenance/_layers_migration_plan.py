@@ -40,7 +40,6 @@ first ``": "``.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from pathlib import Path
 
@@ -52,7 +51,6 @@ from ._roster_state import inspect_roster
 logger = logging.getLogger(__name__)
 
 _NO_ANCHOR = "no 'to_home:' line to anchor the declaration to"
-_RESOLVE_LOGGER = "scitex_agent_container.runtimes._to_home_resolve"
 #: An unreadable spec's reason, capped. The full exception is logged; this is
 #: the one-line form a report and a JSON field can carry without either
 #: swallowing the useful half or spilling a 60-line validation dump per spec.
@@ -71,29 +69,6 @@ def _reason(agent: str, exc: BaseException) -> str:
     if len(flat) > _REASON_CHARS:
         flat = flat[: _REASON_CHARS - 1] + "…"
     return f"{agent}: {type(exc).__name__}: {flat}"
-
-
-@contextlib.contextmanager
-def quiet_undeclared_warning():
-    """Silence ``settings_layer_dirs``' per-agent "declares no layers" WARNING.
-
-    That warning exists to make this migration visible, and it works: measured
-    on this host it fires 101 times in one dry-run, once per undeclared spec.
-    Inside THIS verb it is pure noise — the command's entire output is that
-    same finding, counted, attributed and per-agent, and 101 copies on stderr
-    bury the report they duplicate.
-
-    Scoped as tightly as it can be: one named logger, restored in ``finally``,
-    and never touched on any production path. Suppressing it anywhere else
-    would hide the signal instead of rendering it.
-    """
-    log = logging.getLogger(_RESOLVE_LOGGER)
-    previous = log.level
-    log.setLevel(logging.ERROR)
-    try:
-        yield
-    finally:
-        log.setLevel(previous)
 
 
 def fleet_spec_paths(specs_dir: "Path | None" = None) -> "list[Path]":
@@ -223,6 +198,5 @@ __all__ = [
     "fleet_spec_paths",
     "plan_migration",
     "plan_spec",
-    "quiet_undeclared_warning",
     "resolved_layer_names",
 ]
