@@ -21,7 +21,23 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Eight jobs today:
+    Nine jobs today:
+
+    * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
+      of the single-refresher model, and the sibling of
+      ``sac.accounts-refresh`` below. That job rotates the token on the ONE
+      host holding refresh material; this one COPIES the result out to the
+      access-only hosts and proves each of them accepts it. Without it those
+      hosts hold a credential nothing can renew and 401 within one
+      access-token lifetime — measured 2026-08-10, three fleet-wide deaths
+      in a day. It never mints (minting rotates, which revokes the token
+      running agents are holding).
+
+      HOST GAP, stated rather than papered over: ``JobSpec`` has no
+      host-pinning field, so nothing here can declare "only on the refresh
+      holder". The verb defends itself instead — ``--all`` resolves to the
+      accounts THIS host holds refresh material for and exits NON-ZERO when
+      that set is empty, so an install on the wrong host is loud, not quiet.
 
     * ``sac.freshness-refresh`` (``kind="timer"``) — the REFRESHER half of
       the version-currency check. The CLI's startup banner reads a cached
@@ -188,6 +204,68 @@ def provide_jobs() -> "list[JobSpec]":
             on_boot_sec="15min",
             on_unit_active_sec="2h",
             timeout_sec=120,
+        ),
+        JobSpec(
+            name="sac.accounts-keepalive",
+            schedule="*/15 * * * *",  # every 15min (cron form; timer below)
+            command=(
+                "sac accounts keepalive --all "
+                "--to ywata-note-win "
+                "--to scitex-compute-03 "
+                "--to scitex-compute-04"
+            ),
+            description=(
+                "The DISTRIBUTION half of the single-refresher model, and "
+                "the only thing keeping the access-only hosts alive. "
+                "sac.accounts-refresh rotates the token on the ONE host that "
+                "holds refresh material (scitex-nas-03 as of 2026-08-10); "
+                "every other host holds an ACCESS-ONLY copy that nothing on "
+                "that box can renew, so without this job those hosts simply "
+                "expire and 401 within one access-token lifetime. COPIES the "
+                "current token (never mints — minting rotates, which revokes "
+                "the token running agents hold), refuses a payload carrying "
+                "refresh material, refuses under 300s of validity, refuses "
+                "to overwrite a valid remote credential with a dead one, "
+                "backs up what it replaces, publishes 0600, and PROVES the "
+                "far side answers HTTP 200. CONVERGENT: it compares "
+                "fingerprints and rewrites a peer only when the master's "
+                "token actually changed, so most runs are cheap verified "
+                "no-ops. WORST-CASE FOLLOWER OUTAGE THE OPERATOR IS "
+                "ACCEPTING AT THIS CADENCE: 15 minutes — the moment the "
+                "master refreshes, every follower's copy is revoked, and "
+                "they stay dead until the next tick converges them. Exits "
+                "non-zero on any peer's failure. NOT armed by this "
+                "declaration."
+            ),
+            kind="timer",
+            # HOST PINNING IS NOT EXPRESSIBLE HERE. JobSpec has no host
+            # field (name/kind/schedule/command/description/on_boot_sec/
+            # on_unit_active_sec/timeout_sec/restart_policy/watchdog_sec/
+            # venv), so WHERE this runs is decided by where the operator
+            # installs it. It must run ONLY on the refresh holder. sac's
+            # own mitigation is inside the verb: `--all` resolves to the
+            # accounts THIS host holds refresh material for, and exits
+            # non-zero when that set is empty — so a keepalive installed on
+            # the wrong host fails loudly instead of pretending to work.
+            #
+            # 15min is a BOUND, not a guess. Measured 2026-08-10: Claude
+            # Code refreshes only when the token is genuinely near expiry,
+            # so the master's token changes ONCE in ~7h at an unpredictable
+            # moment — and the instant it does, every follower's copy is
+            # revoked and its agents 401. The tick therefore does not decide
+            # when work happens (the fingerprint comparison does); it decides
+            # only how long that revoked window lasts. 15min bounds the
+            # follower outage to 15min; hourly would bound it to an hour.
+            # The cost of the extra ticks is near zero because a converged
+            # peer is verified, not rewritten.
+            on_boot_sec="10min",
+            on_unit_active_sec="15min",
+            # Per peer: a handful of coreutils ssh ops plus ONE outbound
+            # HTTPS verification from the peer (15s cap inside the probe).
+            # 300s covers three peers including a slow one without ever
+            # hanging forever. A pass killed here leaves the peer's previous
+            # credential intact — nothing is published unverified.
+            timeout_sec=300,
         ),
         JobSpec(
             name="sac.host-sync-check",
