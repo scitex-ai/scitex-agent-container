@@ -28,9 +28,11 @@ from ._parsers import (
     parse_lineage,
     parse_listen,
     parse_proxy,
+    parse_required_claude_hooks,
     parse_restart,
     parse_skills,
     parse_startup_commands,
+    parse_to_home_layers,
     parse_watchdog,
 )
 from ._types import AgentConfig, HostsSpec, StartupCommand
@@ -477,31 +479,19 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         # legitimate thing for a sandboxed agent to declare. Only `is None`
         # distinguishes them, so the default here cannot be `[]`.
         to_home_layers=_parse_to_home_layers(spec.get("to_home_layers")),
+        # ABSENT key -> None ("declare nothing, enforce nothing"). An explicit
+        # empty mapping is NOT the same thing and must not collapse into it:
+        # ``{}`` is a spec deliberately requiring no hooks, which is a
+        # statement; absence is the lack of one. Only ``is None`` separates
+        # them, so the default here cannot be ``{}``.
+        required_claude_hooks=_parse_required_claude_hooks(
+            spec.get("required_claude_hooks")
+        ),
     )
 
 
-def _parse_to_home_layers(value: object) -> "list[str] | None":
-    """Normalise ``spec.to_home_layers`` to a list of names, or ``None``.
-
-    ``None``/absent keeps the implicit cascade. A string is accepted as a
-    one-element list, because a single-layer declaration is the common case and
-    writing it as a bare scalar in YAML is the obvious thing to do.
-
-    Any other type RAISES. Returning ``None`` for, say, a mapping would make an
-    unusable declaration indistinguishable from an absent one — the spec would
-    silently fall back to inheriting everything while its author believed it had
-    restricted the cascade. That is the exact class of surprise this field
-    exists to remove, so it cannot be how the field itself fails.
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if isinstance(value, (list, tuple)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    raise ValueError(
-        f"spec.to_home_layers must be a list of layer names (or a single name), "
-        f"got {type(value).__name__}: {value!r}. Valid names: "
-        f"user-shared, project-shared, per-agent. Omit the key entirely to "
-        f"inherit the implicit cascade."
-    )
+# The two DECLARATION-field parsers moved to ``._parsers._declarations`` (this
+# module was 515 lines, over the 512-line cap). Bound to their original private
+# names so ``_loaders._parse_to_home_layers`` remains the same callable.
+_parse_to_home_layers = parse_to_home_layers
+_parse_required_claude_hooks = parse_required_claude_hooks

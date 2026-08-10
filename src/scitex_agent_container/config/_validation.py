@@ -105,6 +105,14 @@ _KNOWN_SPEC_KEYS = frozenset(
         # still loads and still inherits the implicit cascade. Turning that
         # omission into an error is a separate, later step.
         "to_home_layers",
+        # The Claude Code hook FLOOR: {<event dir>: [<script names>]} this
+        # agent may not run without. OPTIONAL by the same rule as
+        # to_home_layers above — absent from the explicit-required map in
+        # `_explicit_fields`, so a spec that omits it loads, starts, and is
+        # never warned at. Listed HERE because omitting the allowlist entry is
+        # what made `to_home_layers` unreachable for a whole release: every
+        # spec declaring it failed to load with "Unknown spec field".
+        "required_claude_hooks",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         # v3 removed (rejected explicitly below with relocation hints):

@@ -15,6 +15,7 @@ from ._claude import parse_claude
 from ._comms import parse_comms, parse_lineage
 from ._container import parse_container
 from ._context_management import parse_context_management
+from ._declarations import parse_required_claude_hooks, parse_to_home_layers
 from ._extensions import parse_extensions
 from ._health import parse_health
 from ._helpers import (
@@ -54,6 +55,7 @@ __all__ = [
     "parse_lineage",
     "parse_listen",
     "parse_proxy",
+    "parse_required_claude_hooks",
     "parse_restart",
     "parse_scheduling",
     "parse_skills",

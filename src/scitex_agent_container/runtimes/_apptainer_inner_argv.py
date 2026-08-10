@@ -80,6 +80,43 @@ _GIT_ENV_ALIAS_STEPS: list[str] = [
 ]
 
 
+def hook_floor_gate_steps(config: "AgentConfig") -> "list[str]":
+    """In-container step that REFUSES the launch when a declared hook floor is unmet.
+
+    Empty for a spec that declares no ``required_claude_hooks`` — most specs
+    today. No step, no refusal, no line to scroll past: the declaration IS the
+    opt-in.
+
+    Why the check lives HERE and not in ``agent_start``: an agent's effective
+    hook set is the union of two stacked mounts over ``/home/agent``, and every
+    host-side proxy for that union has UNDERCOUNTED. Measured 2026-08-10 for
+    ``scitex-agent-container``, the layer-1 read reported 67 pre-tool-use hooks
+    and called ``log_post_tool_use.sh`` missing; the same listing INSIDE that
+    container returned 71 and the hook was there. ``agent_start`` runs on the
+    bare host, where the only ``$HOME`` it can read is the operator's — so a
+    gate placed there would answer confidently about the wrong machine. This
+    step runs after the mounts exist and before ``exec``, which is the only
+    place the guarantee is measurable.
+
+    A non-zero exit aborts the ``bash -lc`` chain BEFORE ``exec``, so the
+    container dies, ``runtime.start`` returns False, and the existing
+    ``_start_failure_diag`` path carries the refusal text (which the command
+    prints to stderr) back to the operator. ``SAC_ALLOW_MISSING_HOOKS=1`` in
+    ``spec.env`` is the named override; it is honoured by the command itself,
+    so nothing about this step needs to know the policy.
+
+    ``|| exit 1`` is explicit rather than relying on ``set -e``: the git-alias
+    steps run BEFORE any ``set -e`` (see ``_GIT_ENV_ALIAS_STEPS``), and a spec
+    with no ``startup_commands`` never emits one at all.
+    """
+    if getattr(config, "required_claude_hooks", None) is None:
+        return []
+    sac_bin = resolve_sac_bin_in_sif()
+    name = str(getattr(config, "name", "") or "")
+    cmd = " ".join(shlex.quote(p) for p in [sac_bin, "agents", "hooks", name])
+    return [f"{cmd} || exit 1"]
+
+
 def _format_shell_steps(cmds: list) -> list[str]:
     # list[StartupCommand] -> shell statement list. `set -e` so any
     # failing step aborts launch loudly; delay=N becomes `sleep N`.
@@ -155,10 +192,18 @@ def build_inner_argv(
         )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
-    # Alias step is unconditional (every agent gets it); startup_cmds steps
-    # follow it when present. This means shell_steps is NEVER empty, so the
-    # bash -lc wrap now ALWAYS happens — see docstring.
-    shell_steps = _GIT_ENV_ALIAS_STEPS + _format_shell_steps(startup_cmds)
+    # Alias step is unconditional (every agent gets it); the hook-floor gate
+    # follows for a spec that declares one; startup_cmds steps follow those
+    # when present. This means shell_steps is NEVER empty, so the bash -lc wrap
+    # now ALWAYS happens — see docstring.
+    #
+    # The gate is placed BEFORE startup_commands deliberately: an agent whose
+    # guard hooks are missing must not run the spec's own bootstrap either.
+    shell_steps = (
+        _GIT_ENV_ALIAS_STEPS
+        + hook_floor_gate_steps(config)
+        + _format_shell_steps(startup_cmds)
+    )
 
     quoted_runner = " ".join(shlex.quote(p) for p in runner_tail)
     inline = "; ".join(shell_steps + [f"exec {quoted_runner}"])
@@ -334,4 +379,5 @@ __all__ = [
     "RUNNER_MODULE_AGENT",
     "RUNNER_MODULE_PROXY",
     "build_inner_argv",
+    "hook_floor_gate_steps",
 ]
