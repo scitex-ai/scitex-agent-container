@@ -74,7 +74,7 @@ def ensure_github_token(config, dest: Path) -> None:
 
     Never raises. Never logs the token value.
     """
-    from ._cct_token_pool import (  # local import: shared pool, one source
+    from ._secret_pool import (  # the shared pool toolkit, one source
         _pool_env,
         _pool_source_label,
         _read_env_file,

@@ -310,8 +310,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # shipping one that starts, finds an empty token and fails on every boot.
     # MUST run after ensure_cct_bot_token — that call is what populates the
     # token this reads. See prune_tokenless_telegrammer_mcp (card
-    # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702).
-    prune_tokenless_telegrammer_mcp(dest)
+    # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702). `config` is passed
+    # so the prune can tell a DESIGNED bot-less agent (INFO) from one whose
+    # spec DECLARES a CCT_BOT_TOKEN_SLOT that does not resolve (ERROR — the
+    # removed entry leaves it mute AND deaf; card
+    # sac-cct-prune-hides-misconfigured-telegram-agent-20260810).
+    prune_tokenless_telegrammer_mcp(dest, config=config)
     # GITHUB_TOKEN, same pool and the same ordering rationale: the fleet
     # secrets live in ~/.bash.d/secrets, which only a LOGIN shell sources,
     # and sac starts containers without one — so the token was present and
