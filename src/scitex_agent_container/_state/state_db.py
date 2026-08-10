@@ -54,6 +54,7 @@ from .state_db_migrations import (
     migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
     migrate_node_comms_policy_add_group_name,
+    migrate_node_comms_policy_add_group_names,
 )
 from .state_db_schema import (
     _SCHEMA_ATTEMPTS,
@@ -178,6 +179,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         # column on a pre-existing ``node_comms_policy`` (operator
         # 2026-06-25). No-op on a fresh DB (DDL already has the column).
         migrate_node_comms_policy_add_group_name(conn)
+        # Same idempotent ADD COLUMN for the MULTI-value ``group_names``
+        # column the authority gates read (incident 2026-08-10 — an agent
+        # whose spec lists several groups was reduced to its FIRST one).
+        migrate_node_comms_policy_add_group_names(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
         # Task #27 — ACL block/unblock flow tables. Both CREATE TABLE
