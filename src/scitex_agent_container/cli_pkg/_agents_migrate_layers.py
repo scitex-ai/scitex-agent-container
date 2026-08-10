@@ -25,8 +25,15 @@ not measure on either side blocks the sweep rather than being skipped.
 **Exit codes**, and the distinction that drives them:
 
   0  the plan is sound (refusals included), or the apply was verified
-  1  a spec is MALFORMED or UNREADABLE — the plan does not describe the sweep
+  1  a spec is MALFORMED or UNREADABLE, or NO ROSTER WAS SEARCHED — in every
+     case the plan does not describe the sweep
   2  the apply was refused or rolled back by the arming gate
+
+The third case in ``1`` was measured, not imagined: run inside an agent
+container the fleet root resolves under ``$HOME`` = ``/home/agent``, which does
+not exist there, so the sweep discovered 0 specs and called the plan sound.
+A sweep over a roster it never searched is never sound — see
+:mod:`.._maintenance._roster_state`.
 
 A REFUSAL is not a failure. "This spec has no ``to_home:`` line to anchor to"
 is an expected outcome that a human resolves; exiting non-zero on it would
@@ -93,6 +100,11 @@ def _plan_payload(plan) -> dict:
     """Everything the plan knows, with every key present on every call."""
     return {
         "specs": len(plan.edits) + len(plan.unreadable),
+        # WHERE it looked, on every call. A consumer reading `specs: 0` cannot
+        # otherwise tell a finished migration from a searched-nowhere one, and
+        # that ambiguity is what shipped.
+        "root": str(plan.roster.root) if plan.roster else None,
+        "roster": plan.roster.state if plan.roster else None,
         "writable": len(plan.writable),
         "refused": [
             {"agent": e.agent, "reason": e.refusal, "path": str(e.path)}
@@ -111,8 +123,15 @@ def _plan_payload(plan) -> dict:
 
 def _render_plan(plan, *, verbose: bool) -> None:
     payload = _plan_payload(plan)
+    if plan.roster is not None and not plan.roster.is_populated:
+        # Print the roster verdict INSTEAD of the counts, not above them. A
+        # "0 spec(s) — 0 would gain a declaration" headline over a root that
+        # does not exist is a true sentence that answers a question nobody
+        # asked, and it is the sentence that read as success.
+        console.print(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}")
+        return
     console.print(
-        f"[bold]{payload['specs']} spec(s)[/bold] — "
+        f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
         f"{payload['writable']} would gain a to_home_layers declaration\n"
     )
     for layers, count in payload["layer_sets"].items():
@@ -282,7 +301,11 @@ def migrate_layers(
     # fires once per undeclared spec (101 on this host) and this command's whole
     # output IS that finding, aggregated. See quiet_undeclared_warning.
     with quiet_undeclared_warning():
-        plan = plan_migration(fleet_spec_paths())
+        # No arguments: plan_migration resolves the roster AND records the root
+        # it searched. Handing it fleet_spec_paths() would give it the same
+        # paths and hide where they came from, which is exactly how a run
+        # against a non-existent root reported a sound plan.
+        plan = plan_migration()
     payload = _plan_payload(plan)
     payload["mode"] = "apply" if apply else "dry-run"
 
@@ -321,10 +344,15 @@ def migrate_layers(
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_OK)
+        # Names the root and the count it is making this claim about. The
+        # unqualified form of this sentence — "every spec already declares its
+        # layers ... this is what a completed one looks like" — was printed
+        # verbatim by a run that had discovered ZERO specs. An assertion that
+        # the migration is FINISHED is the last place to omit its population.
         console.print(
-            "[green]Nothing to write[/green] — every spec already declares its "
-            "layers. The sweep is idempotent; this is what a completed one "
-            "looks like."
+            f"[green]Nothing to write[/green] — all {payload['specs']} spec(s) "
+            f"under {_lit(payload['root'])} already declare their layers. The "
+            f"sweep is idempotent; this is what a completed one looks like."
         )
         raise SystemExit(_EXIT_OK)
 
