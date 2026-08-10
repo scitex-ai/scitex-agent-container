@@ -84,6 +84,16 @@ jobs:
       - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
 
+      # The persistent runner keeps whatever this job leaves in /tmp — 1.8-2.2 GB
+      # per leg. `always()` covers failure and cancellation; the version arg
+      # scopes the removal to THIS leg, because all three share GITHUB_RUN_ID and
+      # an unscoped cleanup would delete the siblings' live scratch. Mirrors the
+      # step above by design (tests/integration/test_ci_tmpdir_lifecycle.py
+      # enforces the pairing).
+      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
+
   build:
     needs: test
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
@@ -128,6 +138,15 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # build-in-sif.sh leaks the same way run-in-sif.sh did, just once per
+      # release instead of three times per push — slower to notice, not smaller
+      # a bug. LAST, after the wheel assertion and the artifact upload, so the
+      # scratch is only removed once nothing can still want it. `always()` so a
+      # failed or cancelled build does not keep the disk.
+      - name: Remove this job's build scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh build-in-sif.sh 3.12
 
   publish:
     needs: build
@@ -221,6 +240,14 @@ jobs:
           echo "::error::The upload call returned, but no artifact is being served."
           echo "::error::Do NOT cut the GitHub release. Fix publish, then re-tag."
           exit 1
+
+      # publish-in-sif.sh's scratch, third member of the same leaking family.
+      # LAST, after the ghost-tag verification, and `always()` so it fires even
+      # when that verification reds the release — a failed release is exactly
+      # when a persistent runner most needs its disk back.
+      - name: Remove this job's publish scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh publish-in-sif.sh 3.12
 
   release:
     needs: [build, publish]

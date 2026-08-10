@@ -450,27 +450,28 @@ def check_spawn(
 
     **Read BOTH layers before concluding what is denied.** The
     ``is_developer`` branch below is a SHORT-CIRCUIT, not the policy —
-    the RESEARCHER allow lives one level down, in :func:`spawn_allowed`.
-    Reading only this file, and seeing ``is_developer`` with no
-    ``is_researcher`` beside it, reads as "researchers fall through to
-    the root-only gate". That is FALSE, and has been mis-triaged that
-    way. Effective policy across both layers:
+    the RESEARCHER + PRIVILEGED allows live one level down, in
+    :func:`spawn_allowed`. Reading only this file, and seeing
+    ``is_developer`` alone, reads as "researchers fall through to the
+    root-only gate". That is FALSE, and has been mis-triaged that way.
+    Effective policy across both layers:
 
       * ``caller=None`` — administrative / operator path. Allowed.
       * ``developer`` group — allowed regardless of the root-only
         default, so a developer CHILD may spawn. Short-circuited here.
-      * ``researcher`` group — likewise allowed, resolved one layer
-        down in :func:`spawn_allowed` (operator ruling: dev AND
-        research agents must both be able to start/stop peers).
+      * ``researcher`` / ``privileged`` — likewise allowed, one layer
+        down in :func:`spawn_allowed` (dev AND research agents must
+        both start/stop peers; denying privileged "is a sac bug").
       * ROOT node (no lineage parent) — allowed.
-      * Any other child — DENIED: ``generalist`` / ``privileged`` /
-        an isolated solver group / ungrouped. Note generalist and
-        privileged DO mesh for *manage* (:func:`check_lineage_acl`)
-        but get NO spawn authority; only developer + researcher do.
+      * Any other child — DENIED: ``generalist`` / an isolated solver
+        group / ungrouped. Generalist DOES mesh for *manage*
+        (:func:`check_lineage_acl`) but gets NO spawn authority.
       * ``spec.lineage.may_spawn=false`` denies even a researcher —
-        but NOT a developer, whose short-circuit here bypasses
-        :func:`spawn_allowed` and the ``may_spawn`` gate with it. An
-        agent that must never spawn has to stay out of ``developer``.
+        but NOT a developer, whose short-circuit here bypasses it.
+
+    All three group checks are MEMBERSHIP over the caller's WHOLE
+    named-group set, never primary-group equality — see
+    :mod:`..._state.state_db_groups` (incident 2026-08-10, grant).
     """
     if caller and is_developer(name=caller, db_path=db_path):
         return ("allow", None)

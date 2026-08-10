@@ -112,6 +112,26 @@ else
          "An unscoped pkill would SIGTERM the sibling matrix legs (see run 29284554656)."
 fi
 
+# THE DISK-SIDE SIBLING OF THE REAP ABOVE, and the same reasoning: age is what
+# separates a leftover from a live concurrent sibling.
+#
+# MEASURED 2026-08-09 on scitex-04-cpu-01: the three in-SIF scripts each created
+# a per-run scratch under /tmp and NOTHING ever removed it. 116 survivors at
+# 1.8-2.2 GB each put /tmp at 270 GB of a 393 GB root — root 100% FULL (39 MB
+# free), inodes 92% — on a box hosting twelve fleet agents. A leaked temp dir is
+# free on a hosted runner, where the VM is discarded; on a persistent one it is
+# a slow outage.
+#
+# Here, host-side, because this is the ONE place all five in-SIF call sites pass
+# through, it still runs when the SIF never starts, and /tmp is shared with the
+# container anyway (`mount tmp = yes`, no --contain below). This sweep is only
+# the backstop for SIGKILL/reboot; the normal ending is the `if: always()`
+# clean-tmpdir.sh step in each job. Guards (self-exclusion by run identity, 24 h
+# age floor) and the /scratch decision are argued in tmpdir-lib.sh.
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
+ci_tmpdir_prune
+
 # --bind punim0264: on Spartan $HOME/.scitex is a symlink into punim0264, so the
 # bind is what makes that symlink resolve inside the container. Elsewhere the
 # path does not exist and apptainer refuses to start with it ("bind path does

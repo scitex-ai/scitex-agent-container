@@ -108,7 +108,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
-from ._acl import deny_response, resolve_group_name
+from .._state import state_db as _state_db
+from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
+from ..config._group_resolver import groups_intersect
+from ._acl import deny_response
 from ._host_exec_child import (
     _POST_KILL_DRAIN_S,
     _TERM_GRACE_S,
@@ -187,7 +190,8 @@ def _append_audit(entry: dict[str, Any]) -> None:
 async def host_exec(
     request: Request,
     *,
-    group_resolver=resolve_group_name,
+    group_resolver=resolve_group_names,
+    registration_probe=comms_policy_row_exists,
     audit_writer=_append_audit,
 ) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
@@ -275,12 +279,48 @@ async def host_exec(
             reason="host_exec requires a resolvable caller (per-node bearer or 'caller' body claim)"
         )
 
-    group = group_resolver(name=caller)
-    if group not in ELIGIBLE_GROUPS:
+    # MEMBERSHIP over the caller's WHOLE named-group set, not equality
+    # against its primary group (incident 2026-08-10): eligibility is a
+    # capability the operator grants by naming the group anywhere in
+    # ``metadata.labels.groups``. Resolving only the FIRST element made
+    # ``grant`` — whose spec lists privileged AND developer — ineligible
+    # here for the same reason it could not spawn.
+    groups = group_resolver(name=caller)
+    # The eligible group(s) this caller actually holds — what AUTHORISED the
+    # exec, and what the audit line records. Sorted so the value is stable.
+    authorised = sorted(ELIGIBLE_GROUPS & {str(g).strip().lower() for g in groups})
+    if not groups_intersect(groups, ELIGIBLE_GROUPS):
+        # SAME DECISION, HONEST MESSAGE. An empty group set means one of
+        # two things, and the old message asserted the first while the
+        # truth was often the second:
+        #   (a) registered here, genuinely ungrouped -> denial is correct
+        #   (b) NOT IN THIS STORE AT ALL            -> we cannot decide,
+        #       we are simply refusing, which is the right SAFE action
+        #       but a different FACT.
+        # INCIDENT 2026-08-09: three agents were refused with "resolves to
+        # group ''" and went looking at their group labels, when the real
+        # question was WHICH DATABASE was consulted. ~15 minutes lost.
+        # Both cases still deny and still fail CLOSED — this is
+        # observability, not a permissions change.
+        registered = registration_probe(name=caller)
+        if registered:
+            cause = (
+                f"caller {caller!r} IS registered here but resolves to groups "
+                f"{sorted(groups)}, none of which is eligible"
+            )
+        else:
+            cause = (
+                f"caller {caller!r} has NO policy row in this store, so its "
+                "group could not be determined at all — this is NOT the same "
+                "as being denied a group you hold. If the caller is a live "
+                "agent, the likely causes are that the listen daemon restarted "
+                "and has not yet replayed registrations, or that it resolved a "
+                "DIFFERENT store than the agents register into"
+            )
         return deny_response(
             reason=(
                 f"host_exec is restricted to groups {sorted(ELIGIBLE_GROUPS)}; "
-                f"caller {caller!r} resolves to group {group!r}"
+                f"{cause}. Store consulted: {_state_db.DEFAULT_DB_PATH}"
             )
         )
 
@@ -418,7 +458,8 @@ async def host_exec(
         {
             "ts": time.time(),
             "caller": caller,
-            "caller_group": group,
+            "caller_group": ",".join(authorised),
+            "caller_groups": sorted(str(g).strip() for g in groups),
             "argv": argv,
             "cwd": cwd_raw,
             "timeout_s": timeout_s,

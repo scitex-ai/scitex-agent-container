@@ -139,12 +139,43 @@ async def _consume_sse(
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
 
+    # Replay cursor: the SQLite row id of the last event we actually
+    # dispatched, echoed back as ``Last-Event-ID`` so a reconnect resumes
+    # where we stopped instead of at "now".
+    #
+    # WITHOUT THIS, EVERY DISCONNECT SILENTLY DROPS MESSAGES. The server
+    # side has always supported replay — ``a2a/_inbox_stream.py`` stamps the
+    # row id on every frame's ``id:`` line and replays ``id > Last-Event-ID``
+    # from ``channel_events`` — but this consumer parsed only ``data:``,
+    # discarded the ``id:`` line, and rebuilt no header on reconnect. So the
+    # durable log kept everything and the agent was simply never handed the
+    # events that arrived while it was re-dialing.
+    #
+    # Measured 2026-08-09: across ONE `sac listen` restart my a2a_inbox went
+    # 10 items -> 2 and scitex-storage's 2 -> 0, and we jointly filed it as a
+    # durability defect ("it cost a real message"). It had not: channel_events
+    # held 355 rows, 51 addressed to me, spanning the restart, 350 stamped
+    # delivered — including the message I reported lost. The loss was in the
+    # asking, not in the storing.
+    #
+    # None means "no cursor yet" (first connect) and is DISTINCT from 0, which
+    # would be a valid row id meaning "replay everything". Only send the header
+    # once we hold an id the server gave us: the server 400s a malformed
+    # cursor, and inventing one would turn a reconnect into a hard failure.
+    last_event_id: str | None = None
+
     backoff = _SSE_BACKOFF_START_S
     sse_timeout = httpx.Timeout(_SSE_CONNECT_TIMEOUT_S, read=_sse_read_timeout_s())
     while True:
         try:
+            # Rebuild per attempt so the cursor advances across reconnects.
+            # A dict built once outside the loop would pin the FIRST cursor
+            # forever and replay the same window on every re-dial.
+            attempt_headers = dict(headers)
+            if last_event_id is not None:
+                attempt_headers["Last-Event-ID"] = last_event_id
             async with httpx.AsyncClient(timeout=sse_timeout) as client:
-                async with client.stream("GET", url, headers=headers) as resp:
+                async with client.stream("GET", url, headers=attempt_headers) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()
                         log.warning(
@@ -156,12 +187,15 @@ async def _consume_sse(
                     else:
                         backoff = _SSE_BACKOFF_START_S
                         data_lines: list[str] = []
+                        frame_id: str | None = None
                         async for line in resp.aiter_lines():
                             if not line:
                                 # frame separator — dispatch what we have
                                 if data_lines:
                                     payload = "\n".join(data_lines)
                                     data_lines = []
+                                    pending_id = frame_id
+                                    frame_id = None
                                     try:
                                         event = json.loads(payload)
                                     except json.JSONDecodeError:
@@ -171,9 +205,23 @@ async def _consume_sse(
                                         )
                                         continue
                                     await on_event(event)
+                                    # Advance the cursor ONLY after on_event
+                                    # returns. Advancing on receipt would ack
+                                    # an event we then failed to hand over —
+                                    # the reconnect would skip past it and the
+                                    # message would be lost for good, which is
+                                    # the exact failure this whole change
+                                    # exists to close.
+                                    if pending_id is not None:
+                                        last_event_id = pending_id
+                                else:
+                                    frame_id = None
                                 continue
                             if line.startswith(":"):
                                 continue  # comment frame (incl. the keepalive beat)
+                            if line.startswith("id:"):
+                                frame_id = line[3:].strip()
+                                continue
                             if line.startswith("data:"):
                                 data_lines.append(line[5:].lstrip())
         except Exception as exc:  # stx-allow: fallback (reason: long-lived SSE — must retry on any transient error, including the ReadTimeout that a silently-dead stream now raises)

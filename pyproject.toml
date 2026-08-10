@@ -206,6 +206,15 @@ scitex-agent-container = "scitex_agent_container._linter_plugin:get_plugin"
 [project.entry-points."scitex_dev.jobs"]
 scitex-agent-container = "scitex_agent_container._jobs._jobs_plugin:provide_jobs"
 
+# sac's SYSTEM (apt) dependency declarations, aggregated by
+# scitex_dev.system_deps.discover_system_deps. sac registered NOTHING here
+# until 2026-08-09 while apptainer-base.def hardcoded its apt list — so the
+# BASE image bypassed the federation the SCITEX def calls "SSoT — NOT a
+# hardcoded list". Declaring them is what makes the list auditable; the
+# reason field on each dep is the part that carries the value.
+[project.entry-points."scitex_dev.system_deps"]
+scitex-agent-container = "scitex_agent_container._system_deps:provide"
+
 # C10 — sac's consumer on scitex-todo's shared card-event bus. When
 # scitex-todo's board emits a card-event (commented / created /
 # reassigned / status_changed / completed / committed / pushed /
