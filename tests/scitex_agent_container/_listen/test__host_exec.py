@@ -25,7 +25,6 @@ from scitex_agent_container._listen._host_exec import (
     host_exec,
 )
 
-
 _BAD_BODY = object()
 
 
@@ -134,9 +133,7 @@ def test_host_exec_returns_400_when_env_is_not_a_mapping():
 
 def test_host_exec_returns_400_when_caller_is_not_a_string():
     # Arrange
-    req = _FakeRequest(
-        {"argv": ["echo", "hi"], "caller": 42}, authenticated_node=None
-    )
+    req = _FakeRequest({"argv": ["echo", "hi"], "caller": 42}, authenticated_node=None)
     # Act
     resp = _run(host_exec(req))
     # Assert
@@ -165,7 +162,7 @@ def test_host_exec_denies_when_group_is_not_eligible():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "generalist",
+            group_resolver=lambda name: {"generalist"},
             audit_writer=_noop_audit,
         )
     )
@@ -180,7 +177,7 @@ def test_host_exec_allows_the_researcher_group():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "researcher",
+            group_resolver=lambda name: {"researcher"},
             audit_writer=_noop_audit,
         )
     )
@@ -195,7 +192,7 @@ def test_host_exec_allows_the_privileged_group():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "privileged",
+            group_resolver=lambda name: {"privileged"},
             audit_writer=_noop_audit,
         )
     )
@@ -212,7 +209,7 @@ def test_host_exec_denies_unlabeled_privileged_style_caller_helpfully():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "",
+            group_resolver=lambda name: set(),
             audit_writer=_noop_audit,
         )
     )
@@ -234,8 +231,8 @@ def test_host_exec_eligible_groups_set_matches_operator_scope():
 # --------------------------------------------------------------------------
 
 
-def _dev_resolver(name: str) -> str:
-    return "developer"
+def _dev_resolver(name: str) -> set[str]:
+    return {"developer"}
 
 
 def test_host_exec_returns_zero_exit_on_true_command():
@@ -392,12 +389,18 @@ def test_host_exec_does_not_block_the_event_loop():
 
 
 def _deny_reason(caller: str, *, group: str, registered: bool):
-    """Drive the gate with both seams injected; return the response."""
+    """Drive the gate with both seams injected; return the response.
+
+    ``group`` stays a single name for these fixtures' readability; the
+    seam itself answers with the caller's whole group SET (2026-08-10),
+    so an empty ``group`` becomes the empty set — still "ungrouped",
+    still denied, which is exactly what these tests pin.
+    """
     req = _FakeRequest({"argv": ["true"]}, authenticated_node=caller)
     return _run(
         host_exec(
             req,
-            group_resolver=lambda name: group,
+            group_resolver=lambda name: {group} if group else set(),
             registration_probe=lambda name: registered,
             audit_writer=lambda *a, **k: None,
         )

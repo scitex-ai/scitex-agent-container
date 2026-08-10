@@ -18,6 +18,8 @@ Schema (see ``_SCHEMA_REGISTRY`` in :mod:`.state_db`):
         inbound_parent    TEXT NOT NULL DEFAULT 'allow',
         lineage_group     TEXT NOT NULL DEFAULT '',
         may_spawn         INTEGER NOT NULL DEFAULT 1,
+        group_name        TEXT NOT NULL DEFAULT '',
+        group_names       TEXT NOT NULL DEFAULT '',
         updated_at        REAL NOT NULL
     );
 
@@ -83,11 +85,63 @@ DEFAULT_COMMS_POLICY: dict[str, Any] = {
     "inbound_parent": "allow",
     "lineage_group": "",
     "may_spawn": True,
-    # Group-based ACL (operator 2026-06-25): the agent's NAMED group.
+    # Group-based ACL (operator 2026-06-25): the agent's PRIMARY named
+    # group — the single bucket the default-ACL mesh resolves through.
     # "" (ungrouped) is the default; absence is byte-equivalent to the
     # pre-group-name behaviour (same-group allow needs a non-empty match).
     "group_name": "",
+    # EVERY named group the spec's ``metadata.labels`` lists (incident
+    # 2026-08-10). The AUTHORITY gates read this set, not the primary
+    # above, so an agent authored as ``groups: [generalist, developer]``
+    # is a developer regardless of list order. Empty tuple on a row
+    # written before the column existed — ``resolve_group_names`` unions
+    # it with ``group_name``, so that row keeps its old meaning exactly.
+    "group_names": (),
 }
+
+
+def _split_group_names(raw: str) -> tuple[str, ...]:
+    """Decode the comma-separated ``group_names`` column into a tuple.
+
+    Blank / whitespace-only members are dropped, so ``""`` decodes to the
+    empty tuple and a trailing comma is harmless.
+    """
+    return tuple(part.strip() for part in str(raw or "").split(",") if part.strip())
+
+
+def _join_group_names(groups) -> str:
+    """Encode an iterable of group names for the ``group_names`` column.
+
+    De-duplicated and SORTED, so the stored string is deterministic for a
+    given set (the column answers a MEMBERSHIP question — order carries
+    no meaning, and a stable encoding keeps diffs and denial messages
+    readable). Blank members are dropped.
+
+    Raises :class:`ValueError` on a name containing a comma: the encoding
+    is comma-separated, so accepting one would silently split a single
+    group into two. Fail loudly rather than corrupt an ACL input.
+    """
+    if groups is None:
+        return ""
+    if isinstance(groups, str):
+        raise ValueError(
+            "group_names must be an iterable of group names, not a bare "
+            f"string ({groups!r}) — pass e.g. ['developer']"
+        )
+    out: set[str] = set()
+    for item in groups:
+        if item is None:
+            continue
+        trimmed = str(item).strip()
+        if not trimmed:
+            continue
+        if "," in trimmed:
+            raise ValueError(
+                f"group name {trimmed!r} contains a comma; the group_names "
+                "column is comma-separated and cannot encode it"
+            )
+        out.add(trimmed)
+    return ",".join(sorted(out))
 
 
 def record_comms_policy(
@@ -100,6 +154,7 @@ def record_comms_policy(
     lineage_group: str = "",
     may_spawn: bool = True,
     group_name: str = "",
+    group_names=None,
     db_path: Path | None = None,
 ) -> None:
     """Upsert the Phase-3 per-spec ACL policy for ``name``.
@@ -108,6 +163,13 @@ def record_comms_policy(
     row always reflects the *current* ``spec.comms`` / ``spec.lineage``
     blocks on disk. A re-start refreshes the row in place (a spec edit
     becomes live on the next start without manual state.db surgery).
+
+    ``group_name`` is the PRIMARY group (the default-ACL mesh bucket);
+    ``group_names`` is EVERY group the spec names (the authority set).
+    Both are projections of the same ``metadata.labels`` and are written
+    together — that is what keeps them from disagreeing. ``group_names``
+    defaults to ``None``, which stores the PRIMARY alone, so an existing
+    caller that passes only ``group_name`` keeps its exact old meaning.
 
     Raises :class:`ValueError` on an empty name or out-of-domain values
     (the parser/validator already reject these — defence-in-depth).
@@ -138,6 +200,19 @@ def record_comms_policy(
         raise ValueError(f"may_spawn must be a bool, got {type(may_spawn).__name__}")
     if not isinstance(group_name, str):
         raise ValueError(f"group_name must be a str, got {type(group_name).__name__}")
+    primary = group_name.strip()
+    # A caller that names only the primary keeps its old meaning: the
+    # stored set is {primary}. A caller that names the full set gets it
+    # stored verbatim, with the primary folded in so the set is never a
+    # strict subset of what the mesh already resolves.
+    if group_names is None:
+        encoded_groups = _join_group_names([primary])
+    elif isinstance(group_names, str):
+        # Reject BEFORE the splat below, which would silently expand a
+        # string into its characters and store those as group names.
+        encoded_groups = _join_group_names(group_names)
+    else:
+        encoded_groups = _join_group_names([*group_names, primary])
     from .state_db import open_db
 
     now = time.time()
@@ -146,8 +221,8 @@ def record_comms_policy(
             "INSERT INTO node_comms_policy ("
             "name, outbound_siblings, outbound_parent, "
             "inbound_siblings, inbound_parent, lineage_group, "
-            "may_spawn, group_name, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "may_spawn, group_name, group_names, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET "
             "outbound_siblings=excluded.outbound_siblings, "
             "outbound_parent=excluded.outbound_parent, "
@@ -156,6 +231,7 @@ def record_comms_policy(
             "lineage_group=excluded.lineage_group, "
             "may_spawn=excluded.may_spawn, "
             "group_name=excluded.group_name, "
+            "group_names=excluded.group_names, "
             "updated_at=excluded.updated_at",
             (
                 name,
@@ -165,7 +241,8 @@ def record_comms_policy(
                 inbound_parent,
                 lineage_group,
                 1 if may_spawn else 0,
-                group_name.strip(),
+                primary,
+                encoded_groups,
                 now,
             ),
         )
@@ -199,7 +276,7 @@ def read_comms_policy(
         row = conn.execute(
             "SELECT outbound_siblings, outbound_parent, "
             "inbound_siblings, inbound_parent, lineage_group, may_spawn, "
-            "group_name "
+            "group_name, group_names "
             "FROM node_comms_policy WHERE name = ?",
             (name,),
         ).fetchone()
@@ -213,6 +290,7 @@ def read_comms_policy(
         "lineage_group": str(row["lineage_group"]),
         "may_spawn": bool(row["may_spawn"]),
         "group_name": str(row["group_name"]),
+        "group_names": _split_group_names(row["group_names"]),
     }
 
 

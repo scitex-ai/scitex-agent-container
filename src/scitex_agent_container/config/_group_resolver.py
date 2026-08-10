@@ -64,6 +64,7 @@ __all__ = [
     "RESEARCHER_GROUP",
     "all_named_groups",
     "group_from_labels",
+    "groups_intersect",
     "groups_mesh",
     "is_developer_group",
     "is_privileged_group",
@@ -350,6 +351,32 @@ def is_mesh_group(group: str | None) -> bool:
     if not group:
         return False
     return str(group).strip().lower() in MESH_GROUPS
+
+
+def groups_intersect(groups, wanted) -> bool:
+    """True iff any member of ``groups`` appears in ``wanted``.
+
+    Case-insensitive, whitespace-trimmed on both sides — the set-level
+    counterpart of :func:`is_developer_group` & friends, used wherever a
+    gate asks "does this agent hold ANY of these groups" (host_exec's
+    ``ELIGIBLE_GROUPS``, the spawn authority trio).
+
+    Rejects a BARE STRING for ``groups`` LOUDLY. The callers here used to
+    resolve one group name and now resolve the whole set; a caller still
+    passing a single string would be iterated CHARACTER BY CHARACTER,
+    intersecting nothing — silently denying every agent while looking
+    exactly like a correctly fail-shut ACL. That is the worst shape a
+    permissions bug can take, so it raises instead of denying.
+    """
+    if isinstance(groups, str):
+        raise TypeError(
+            "groups must be a collection of group names, not the bare string "
+            f"{groups!r}: iterating a string yields characters, which would "
+            "silently match nothing"
+        )
+    have = {str(g).strip().lower() for g in groups if str(g).strip()}
+    want = {str(g).strip().lower() for g in wanted if str(g).strip()}
+    return bool(have & want)
 
 
 def groups_mesh(group_a: str | None, group_b: str | None) -> bool:
