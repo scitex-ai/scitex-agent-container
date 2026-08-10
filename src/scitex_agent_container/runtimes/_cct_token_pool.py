@@ -95,6 +95,22 @@ def _upper_snake(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text.strip()).strip("_").upper()
 
 
+def _requested_telegrammer(config) -> bool:
+    """Did this spec ASK for the Telegram rail?
+
+    The one fact that separates "bot-less by design" from "misconfigured", and
+    the reason both :func:`ensure_cct_bot_token` and
+    :func:`prune_tokenless_telegrammer_mcp` need it rather than one of them.
+    A ``config`` of None means the caller did not say, which is not the same as
+    "no" — callers without a config get the conservative old behaviour.
+    """
+    if config is None:
+        return False
+    claude_spec = getattr(config, "claude", None)
+    channels = list(getattr(claude_spec, "channels", None) or [])
+    return any(str(c).strip() == _TELEGRAMMER_CHANNEL for c in channels)
+
+
 def _slot_candidates(name: str, workdir: str) -> list[str]:
     """Ordered, deduped mechanical slot candidates for an agent.
 
@@ -263,9 +279,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     does not fail a boot. The token VALUE is never logged; only slot names,
     paths, and the agent name appear.
     """
-    claude_spec = getattr(config, "claude", None)
-    channels = list(getattr(claude_spec, "channels", None) or [])
-    if not any(str(c).strip() == _TELEGRAMMER_CHANNEL for c in channels):
+    if not _requested_telegrammer(config):
         return
     agent_name = getattr(config, "name", "") or ""
     workdir = getattr(config, "workdir", "") or ""
@@ -318,9 +332,11 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     _logger().warning(
         "cct: no Telegram bot token for agent %r although spec.claude.channels "
         "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "
-        "STARTS NORMALLY — this is NOT a startup failure; only the Telegram "
-        "rail is down (the telegrammer MCP comes up without a token, so the "
-        "bot stays silent until a token is provided). Expected for a "
+        "STARTS NORMALLY — this is NOT a startup failure; but the Telegram rail "
+        "is GONE IN BOTH DIRECTIONS: the telegrammer MCP server is REMOVED from "
+        ".mcp.json (not merely started tokenless), so the agent can neither send "
+        "nor receive, and cannot self-detect it because the only in-agent check "
+        "is itself an MCP tool. Expected for a "
         "brand-new agent that has no bot yet. To wire one up, do ONE of: "
         "(1) add %s<SLOT>=<token> for slot %r to a secrets file listed in %s "
         "(canonical pool; restart `sac listen` afterwards if it provides the "
@@ -370,7 +386,7 @@ def _default_agent_id(agent_name: str, workdir: str) -> str:
     return agent_name
 
 
-def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
+def prune_tokenless_telegrammer_mcp(dest: Path, config=None) -> bool:
     """Drop the telegrammer MCP server from ``dest/.mcp.json`` when no token resolved.
 
     Card ``sac-omit-telegram-mcp-when-no-cct-bot-token-20260702`` (operator
@@ -383,9 +399,32 @@ def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
     forever — which is noise in the one view the operator actually checks.
 
     That fail-loud is right for a MISCONFIGURED agent and wrong for a
-    deliberately bot-less one. The two cases are indistinguishable once the
-    entry exists, so the fix is to not emit the entry: no token → no server →
-    nothing to fail. An agent WITH a token is untouched.
+    deliberately bot-less one, so the fix is to not emit the entry: no token →
+    no server → nothing to fail. An agent WITH a token is untouched.
+
+    *** THE TWO CASES ARE NOT INDISTINGUISHABLE, AND TREATING THEM AS ONE COST
+    FOUR DAYS OF OPERATOR SILENCE. ***
+
+    This docstring used to assert they were. That is true of the ``.mcp.json``
+    entry in isolation and false HERE: ``config.claude.channels`` separates them
+    exactly, and :func:`ensure_cct_bot_token` — which runs immediately before —
+    already reads it. The function simply was not passed ``config``.
+
+        (A) no ``server:claude-code-telegrammer`` in the spec
+            -> bot-less BY DESIGN. Prune is correct, INFO is correct.
+        (B) the spec REQUESTS the channel and no token resolved
+            -> MISCONFIGURED, and pruning HIDES it.
+
+    Measured 2026-08-10: scitex-agent-container-04, scitex-app, scitex-db and
+    scitex-priv-setup each logged only the case-(A) INFO — "this is the
+    intentional no-bot path, not an error" — while the operator sat on the other
+    end of Telegram concluding his agents were ignoring him. 91 of 102 fleet
+    specs declare the channel, so 91 agents are eligible for case (B).
+
+    Case (B) is now an ERROR naming the agent, the slots tried, the pool source,
+    and the true consequence. ``config`` is optional so existing callers keep
+    working; without it the function cannot tell (A) from (B) and stays at INFO,
+    which is the old behaviour and the honest answer when the data is absent.
 
     Ordering is load-bearing: this must run AFTER :func:`ensure_cct_bot_token`,
     because that is what resolves a pool token into ``dest/.env``. Running it
@@ -421,6 +460,42 @@ def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
         return False
     del servers[_TELEGRAMMER_MCP_KEY]
     mcp_path.write_text(json.dumps(doc, indent=2) + "\n")
+
+    if _requested_telegrammer(config):
+        agent_name = getattr(config, "name", "") or "<unknown>"
+        spec_env = getattr(config, "env", None) or {}
+        override = str(spec_env.get(_SLOT_OVERRIDE_VAR, "") or "").strip()
+        candidates = (
+            [_upper_snake(override)]
+            if override
+            else _slot_candidates(agent_name, getattr(config, "workdir", "") or "")
+        )
+        _logger().error(
+            "cct: agent %r REQUESTS %r in spec.claude.channels but no %s "
+            "resolved, so the %r MCP server was REMOVED from %s. THE AGENT IS "
+            "NOW MUTE AND DEAF ON TELEGRAM — it cannot send, it cannot receive, "
+            "and it has no way to notice, because the only in-agent check is "
+            "itself an MCP tool. This is NOT the intentional no-bot path: the "
+            "spec asked for the rail. Tried pool slot(s) %s against the pool "
+            "(%s). Fix by ONE of: (1) add %s<SLOT>=<token> for slot %r to a "
+            "secrets file listed in %s, (2) set spec.apptainer.env %s: "
+            "<existing-slot>, or (3) drop %r from spec.claude.channels if this "
+            "agent genuinely needs no Telegram rail.",
+            agent_name,
+            _TELEGRAMMER_CHANNEL,
+            _TOKEN_VAR,
+            _TELEGRAMMER_MCP_KEY,
+            mcp_path,
+            ", ".join(f"{_POOL_PREFIX}{c}" for c in candidates) or "(none)",
+            _pool_source_label(),
+            _POOL_PREFIX,
+            candidates[0] if candidates else "<SLOT>",
+            _SECRETS_ENVRC_VAR,
+            _SLOT_OVERRIDE_VAR,
+            _TELEGRAMMER_CHANNEL,
+        )
+        return True
+
     _logger().info(
         "cct: no %s resolved for this agent — omitted the %r MCP server from "
         "%s so it does not start and fail on an empty token. This is the "

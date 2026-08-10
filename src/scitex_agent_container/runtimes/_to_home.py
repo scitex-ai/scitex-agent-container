@@ -310,7 +310,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # MUST run after ensure_cct_bot_token — that call is what populates the
     # token this reads. See prune_tokenless_telegrammer_mcp (card
     # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702).
-    prune_tokenless_telegrammer_mcp(dest)
+    # `config` is passed so the prune can tell "bot-less by design" (INFO) from
+    # "the spec REQUESTED the rail and no token resolved" (ERROR). Without it
+    # the second silently wears the first's clothing, which is how four agents
+    # went mute and deaf on Telegram while logging that it was intentional
+    # (card sac-cct-prune-hides-misconfigured-telegram-agent-20260810).
+    prune_tokenless_telegrammer_mcp(dest, config)
     # settings.json CASCADE (same precedence order as .envrc): deep-merge each
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
