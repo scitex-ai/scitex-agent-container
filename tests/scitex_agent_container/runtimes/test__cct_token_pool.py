@@ -678,3 +678,246 @@ def test_absent_telegrammer_entry_is_a_noop(tmp_path: Path) -> None:
     removed = prune_tokenless_telegrammer_mcp(tmp_path)
     # Assert
     assert removed is False
+
+
+# ---------------------------------------------------------------------------
+# The prune's LEVEL splits on what the spec DECLARED — card
+# sac-cct-prune-hides-misconfigured-telegram-agent-20260810.
+#
+# Removing the entry is right in every tokenless case (a server that cannot
+# start is worse than an absent one), but removing it SILENTLY is how a
+# misconfigured agent hides: four agents went mute AND deaf on a new host
+# behind one INFO line each, and the operator concluded they were ignoring him.
+#
+# The trigger is the DECLARED slot, NOT the channel request. Measured on
+# compute-04: 80 specs request the channel, 14 resolve a token, 66 do not — and
+# the 66 include _template_generalist / _template_python_developer /
+# _template_researcher. The request is inherited from the templates, so an
+# ERROR keyed on it would print 66 red lines into the panel this prune exists
+# to keep clean.
+# ---------------------------------------------------------------------------
+
+
+def _declaring_cfg(name: str, slot: str) -> AgentConfig:
+    """A spec that DECLARES a pool slot — the statement of intent."""
+    return _cfg(name, env={"CCT_BOT_TOKEN_SLOT": slot})
+
+
+def test_declared_slot_that_does_not_resolve_logs_at_error(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — the spec names a slot; the pool does not have it.
+    _pool_file(tmp_path, "export CCT_BOT_TOKEN_ZZ_OTHER=tok-other\n")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+        )
+    # Assert — a stated mapping that does not work is an ERROR, not an INFO.
+    assert [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_declared_slot_miss_still_removes_the_entry(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — loud does NOT mean "ship a server that cannot start".
+    _pool_file(tmp_path, "")
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(
+        tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+    )
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_declared_slot_miss_error_names_the_agent(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.ERROR):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-mute-and-deaf", "ZZ_GHOST")
+        )
+    # Assert — the operator must learn WHICH agent went quiet.
+    assert "zz-mute-and-deaf" in caplog.text
+
+
+def test_declared_slot_miss_error_names_the_declared_slot(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.ERROR):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+        )
+    # Assert — slot NAMES are loggable; token values never are.
+    assert "CCT_BOT_TOKEN_ZZ_GHOST" in caplog.text
+
+
+def test_declared_slot_miss_error_says_mute_and_deaf(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — deafness is the half that surprises: the absent entry kills
+    # INBOUND too, which is why the operator read silence as being ignored.
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.ERROR):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+        )
+    # Assert
+    assert "DEAF" in caplog.text
+
+
+def test_declared_slot_miss_error_says_the_agent_cannot_self_diagnose(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — `health` is itself a tool on the server that was just removed,
+    # so the agent cannot check its own rail. Say so, or the next reader will
+    # tell it to "run health".
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.ERROR):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+        )
+    # Assert
+    assert "health" in caplog.text
+
+
+def test_declared_slot_miss_error_names_the_pool_source(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.ERROR):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-declared", "ZZ_GHOST")
+        )
+    # Assert — WHERE sac looked, so the fix can be applied to the right file.
+    assert _SECRETS_VAR in caplog.text
+
+
+def test_no_declared_slot_keeps_the_quiet_intentional_no_bot_path(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — the channel IS requested (every template requests it) but no
+    # slot was ever declared. This is 66 of the 80 live specs: silence here is
+    # the whole point, or the fix becomes the noise it was written to remove.
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        prune_tokenless_telegrammer_mcp(tmp_path, config=_cfg("zz-template-default"))
+    # Assert
+    assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_no_declared_slot_still_says_intentional_no_bot_path(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.INFO):
+        prune_tokenless_telegrammer_mcp(tmp_path, config=_cfg("zz-template-default"))
+    # Assert — unchanged wording for the designed case.
+    assert "intentional no-bot path" in caplog.text
+
+
+def test_no_declared_slot_still_removes_the_entry(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    _pool_file(tmp_path, "")
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    prune_tokenless_telegrammer_mcp(tmp_path, config=_cfg("zz-template-default"))
+    # Assert
+    assert _TELEGRAMMER not in _servers_in(mcp)
+
+
+def test_declared_slot_without_the_channel_is_not_an_error(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — an inert override on a spec that never asked for the rail.
+    # Resolution was never attempted, so the slot cannot be blamed for missing.
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    cfg = _cfg("zz-no-channel", channel=False, env={"CCT_BOT_TOKEN_SLOT": "ZZ_GHOST"})
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        prune_tokenless_telegrammer_mcp(tmp_path, config=cfg)
+    # Assert
+    assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_declared_slot_that_resolves_leaves_the_entry_alone(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — the declared mapping WORKS: ensure_cct_bot_token wrote the
+    # token, so there is nothing to prune and nothing to report.
+    _pool_file(tmp_path, "")
+    mcp = _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=123:abc\n")
+    # Act
+    prune_tokenless_telegrammer_mcp(
+        tmp_path, config=_declaring_cfg("zz-working", "ZZ_REAL")
+    )
+    # Assert
+    assert _TELEGRAMMER in _servers_in(mcp)
+
+
+def test_token_present_never_logs_an_error(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — a working agent must stay entirely quiet.
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("CCT_BOT_TOKEN=123:abc\n")
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        prune_tokenless_telegrammer_mcp(
+            tmp_path, config=_declaring_cfg("zz-working", "ZZ_REAL")
+        )
+    # Assert
+    assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
+
+
+def test_prune_without_a_config_keeps_the_pre_spec_aware_behaviour(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange — no spec in hand means the two cases cannot be told apart, so
+    # the blind INFO is the only honest answer.
+    _pool_file(tmp_path, "")
+    _write_mcp_json(tmp_path, _telegrammer_entry())
+    (tmp_path / ".env").write_text("")
+    # Act
+    with caplog.at_level(scitex_logging.DEBUG):
+        prune_tokenless_telegrammer_mcp(tmp_path)
+    # Assert
+    assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
