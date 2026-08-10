@@ -216,6 +216,17 @@ register_mint_token_command(account)
 
 
 # ---------------------------------------------------------------------------
+# keepalive — DELIVER that access-only artifact to peers and prove the far
+# side accepts it. `mint-token` produces the shape; this is what keeps the
+# access-only hosts from silently expiring. Own module (per-file line cap);
+# attached at import time like mint-token / refresh.
+# ---------------------------------------------------------------------------
+from ._account_keepalive import register_keepalive_command
+
+register_keepalive_command(account)
+
+
+# ---------------------------------------------------------------------------
 # login — semi-automated `claude /login` re-auth. Drives claude in a tmux
 # pane, extracts + delivers the OAuth URL to the operator, awaits the
 # browser/code step, then reuses `account save`. Lives in its own module
