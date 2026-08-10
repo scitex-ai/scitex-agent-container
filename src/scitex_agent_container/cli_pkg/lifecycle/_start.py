@@ -254,7 +254,7 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
-    strict_drift: bool,
+    strict_drift: bool | None,
     no_redispatch: bool,
     broker_self: bool,
     concurrency: int,

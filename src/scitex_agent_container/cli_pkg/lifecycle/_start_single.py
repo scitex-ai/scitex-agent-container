@@ -70,7 +70,7 @@ def run_single_targets(
     as_json: bool,
     foreground: bool,
     one_shot: bool,
-    strict_drift: bool,
+    strict_drift: bool | None,
     no_redispatch: bool,
     multi_foreground: bool,
     preflight_runner: Callable[[], None],

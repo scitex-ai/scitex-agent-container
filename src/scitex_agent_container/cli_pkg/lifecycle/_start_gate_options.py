@@ -45,6 +45,21 @@ from ..._drift._local import ALLOW_STALE_ENV
 from ..._lifecycle._layers_preflight import ALLOW_ENV as ALLOW_LAYERS_ENV
 
 
+def _true_or_unset(ctx, param, value):  # noqa: ARG001 - click callback signature
+    """``--strict-drift`` yields ``True`` when passed and ``None`` when not.
+
+    NOT ``False``. This is load-bearing and it is easy to get wrong: since the
+    refusal became the DEFAULT, ``_resolve_strict_drift`` treats an explicit
+    ``False`` as "the caller demanded leniency" and returns it unchanged. A
+    click flag's natural default IS ``False``, so leaving it would have had the
+    CLI silently disable the gate on every single start — the flag nobody
+    passed would be the one turning the refusal off. ``None`` means "no
+    instruction", which is what an absent flag actually means, and lets the
+    default policy (and the env overrides) apply.
+    """
+    return True if value else None
+
+
 def _set_env_when_given(env_var: str):
     """Build a click callback that sets ``env_var=1`` when the flag is passed.
 
@@ -70,6 +85,7 @@ def spec_gate_options(func):
             "strict_drift",
             is_flag=True,
             default=False,
+            callback=_true_or_unset,
             help="Hard-block on a STALE spec-source git repo. This is now the "
             "DEFAULT; the flag remains so a caller can state it explicitly.",
         ),
