@@ -407,6 +407,76 @@ def test_pool_keeps_currently_effective_entry_when_it_is_healthy(
     assert cfg.claude.credentials_file == str(p_a)
 
 
+# ---------------------------------------------------------------------------
+# The pick must be VISIBLE — operator 2026-08-11: `sac agents start` /
+# `sac agents restart` printed nothing about the account, so a correct,
+# well-reasoned pick was indistinguishable from no pick at all.
+# ---------------------------------------------------------------------------
+
+
+def test_pool_narrates_the_pick_even_when_it_keeps_the_bound_entry(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — the live fleet shape: a 3-entry pool whose currently bound
+    # entry is still the healthiest, so churn-minimisation re-confirms it and
+    # the binding does not move. That was the SILENT case, and it is the
+    # case that happens on nearly every boot.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    p_c = _write_snapshot(home, "acct-c", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b, p_c])
+    cfg.claude.credentials_file = str(p_a)
+    log = io.StringIO()
+    # Act — both siblings are 7d near-capped, so acct-a is re-confirmed.
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=log,
+        usage_5h={"acct-a": 20.0, "acct-b": 4.0, "acct-c": 0.0},
+        usage_7d={"acct-a": 25.0, "acct-b": 99.0, "acct-c": 100.0},
+    )
+    # Assert — re-confirming one account over two rejected siblings IS a
+    # decision, and an unnarrated decision cannot be told from none.
+    assert "acct-a" in _without_quota_warning(log.getvalue())
+
+
+@pytest.fixture
+def _logger_at_info() -> Iterator[None]:
+    """Pin the project logger to INFO — the level an operator's console runs at.
+
+    Measured inside a live sac container: ``getEffectiveLevel() == 20`` and
+    ``isEnabledFor(DEBUG) is False``. Pinning it makes the DEBUG-vs-INFO
+    discrimination a property of THIS test rather than of whatever configured
+    logging first in the session.
+    """
+    from scitex_agent_container.cli_pkg._helpers._console import logger
+
+    saved = logger.level
+    logger.setLevel(20)
+    try:
+        yield
+    finally:
+        logger.setLevel(saved)
+
+
+def test_pool_notice_reason_is_emitted_at_info_not_debug(
+    _isolate_home: Path,
+    _logger_at_info: None,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # Arrange — the WHY (policy, rationale, per-candidate ranking inputs) went
+    # out under style="dim", which maps to DEBUG, so the logger dropped it and
+    # only the headline ever reached the operator.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    # Act — no log_stream, so the notice takes the real system_msg path.
+    _rotate_to_healthy_account(cfg, usage_7d={"acct-a": 95.0, "acct-b": 5.0})
+    # Assert — the ranking inputs survive an INFO-level console.
+    assert "ranking inputs:" in capfd.readouterr().err
+
+
 def test_pool_first_listed_entry_is_not_implicitly_preferred(
     _isolate_home: Path,
 ) -> None:
