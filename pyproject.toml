@@ -312,13 +312,26 @@ mcp_parity_exempt = true
 #     ``SAC_HOST_IDENTITY_PATH`` /
 #     ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` — operations knobs.
 #
+# ``CODEX_HOME`` is a THIRD-PARTY CONTRACT, not our namespace. It is
+# OpenAI Codex's own variable — the way Codex publishes where its
+# ``auth.json`` lives — and ``_account/codex_account.py:_auth_path()``
+# reads it to find the login Codex actually wrote. Renaming it would
+# not move a name into our namespace; it would simply stop reading
+# Codex's login, and do so SILENTLY, in the credential path that is
+# hardest to test. It belongs in the same category as the universal
+# list's ``GH_TOKEN`` / ``OPENAI_`` entries and is listed by EXACT
+# NAME (no trailing underscore) so it grants exactly one variable and
+# opens no ``CODEX_*`` namespace. Our own override alongside it,
+# ``SCITEX_GENAI_CODEX_HOMES``, is already canonically prefixed and
+# needs no entry.
+#
 # Spec: scitex_dev/_cli/audit/_summary/_env_allowlist.py — the entry
 # applies "equal-to-stripped or prefix-match", so ``"SAC_"`` matches
 # every ``SAC_*`` env var without listing them individually. New
 # code that does not need brand-compat MUST still use the canonical
 # ``SCITEX_AGENT_CONTAINER_*`` prefix — this allowlist closes the
 # audit-cli ERROR on the legacy surface, not on future regressions.
-env_allowlist = ["SAC_"]
+env_allowlist = ["SAC_", "CODEX_HOME"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
