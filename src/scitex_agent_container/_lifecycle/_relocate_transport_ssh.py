@@ -71,7 +71,9 @@ __all__ = [
     "MARK_FILE",
     "MARK_MOVED",
     "build_copy_argv",
+    "build_tree_copy_argv",
     "copy_transcripts",
+    "copy_tree",
     "ensure_dir",
     "list_transcript_dir",
     "measure_transcripts",
@@ -378,6 +380,94 @@ def build_copy_argv(
         + f" && printf '{MARK_DIR}yes\\n'"
     )
     return ["bash", "-c", pipeline]
+
+
+def build_tree_copy_argv(
+    *,
+    source: Shell,
+    source_dir: str,
+    target: Shell,
+    target_dir: str,
+    names: Sequence[str],
+    peers=None,
+) -> list[str]:
+    """The argv that carries WHOLE entries — a directory, or a file in full.
+
+    THE SNAPSHOT DOES NOT APPLY HERE, and that is the distinction between this
+    and :func:`build_copy_argv`. A transcript is an append-only log being written
+    by a process that may still be flushing, so it is carried up to a recorded
+    offset. A spec directory and a ``memory/`` directory are neither append-only
+    nor open: there is no last-newline to cut at, and half of one is not a
+    shorter version of it. They travel whole, by tar.
+
+    tar's original argument still holds for these: ``tar -C <dir> -cf - -- <name>``
+    takes exactly the named entries, recursing into a directory as ONE name, and
+    nothing is re-expanded by a shell on either side. A glob would be re-expanded
+    at copy time, which turns an allowlist into "whatever matched a moment later".
+    """
+    if not names:
+        raise ValueError(
+            "build_tree_copy_argv refuses an empty list — a copy that transfers "
+            "nothing and exits 0 is the failure shape this feature exists to prevent"
+        )
+    bad = [n for n in names if "/" in n or n in ("", ".", "..")]
+    if bad:
+        raise ValueError(
+            f"build_tree_copy_argv takes bare entry names, got {bad!r}. A path component "
+            "here would place the copy outside the directory the allowlist was applied to"
+        )
+    named_secrets = [n for n in names if n in CREDENTIAL_BASENAMES]
+    if named_secrets:
+        raise ValueError(
+            f"build_tree_copy_argv refuses to carry {named_secrets!r}: a credential is "
+            "never copied — the target re-issues its own"
+        )
+
+    produce: list[str] = ["tar", "-C", source_dir, "-cf", "-", "--", *names]
+    if not source.is_local:
+        produce = build_probe_argv(
+            source.host, source.script(shlex.join(produce)), peers
+        )
+    extract = (
+        f"mkdir -p {quote(target_dir)} && tar -C {quote(target_dir)} -xf - && "
+        f"printf '{MARK_DIR}yes\\n'"
+    )
+    consume = build_probe_argv(target.host, target.script(extract), peers)
+    pipeline = f"set -o pipefail; {shlex.join(produce)} | {shlex.join(consume)}"
+    return ["bash", "-c", pipeline]
+
+
+def copy_tree(
+    *,
+    source: Shell,
+    source_dir: str,
+    target: Shell,
+    target_dir: str,
+    names: Sequence[str],
+    exec_fn: Callable[..., dict] | None = None,
+    timeout_s: float = DEFAULT_COPY_TIMEOUT_S,
+    peers=None,
+) -> RemoteRun:
+    """Carry whole entries between two hosts over one ssh. Caller must verify.
+
+    Used for the spec directory and for ``memory/``. Arrival is confirmed by
+    listing and sizing the tree on BOTH hosts (:func:`.._relocate_target_ssh.
+    list_tree`), never by this return value.
+    """
+    argv = build_tree_copy_argv(
+        source=source,
+        source_dir=source_dir,
+        target=target,
+        target_dir=target_dir,
+        names=names,
+        peers=peers,
+    )
+    return run_argv_on_host(
+        argv,
+        exec_fn=exec_fn,
+        timeout_s=timeout_s,
+        what=f"the host, copying {source.host}:{source_dir} -> {target.host}:{target_dir}",
+    )
 
 
 def copy_transcripts(

@@ -18,14 +18,25 @@ FIVE RULES, EACH FROM A WAY THIS GOES WRONG SILENTLY.
 
    STOPPED IS NOT THE SAME INSTANT AS QUIESCENT, which is rule 5.
 
-2. ONLY TRANSCRIPTS TRAVEL — AN ALLOWLIST, NOT A DENYLIST. Just ``*.jsonl`` from
-   the project directory. A denylist is a list of the secrets somebody thought
-   of; the first credential file named something new travels. The one that
-   matters here is ``~/.claude/.credentials.json``, which sits one level ABOVE
-   the projects store and so is already outside the transfer root — the
-   allowlist refuses it a second time, and :data:`CREDENTIAL_BASENAMES` names it
-   so the refusal is greppable and can be asserted by name rather than inferred
-   from a suffix rule.
+2. THE ALLOWLIST IS ``*.jsonl`` AND ``memory/`` — AN ALLOWLIST, NOT A DENYLIST.
+   A denylist is a list of the secrets somebody thought of; the first credential
+   file named something new travels. The one that matters here is
+   ``~/.claude/.credentials.json``, which sits one level ABOVE the projects store
+   and so is already outside the transfer root — the allowlist refuses it a
+   second time, and :data:`CREDENTIAL_BASENAMES` names it so the refusal is
+   greppable and can be asserted by name rather than inferred from a suffix rule.
+
+   ``memory/`` WAS ADDED BECAUSE LEAVING IT BEHIND WAS MEASURED. On 2026-08-11 a
+   completed relocation logged ``REFUSED memory — only conversation transcripts
+   (.jsonl) travel; this is not one`` and landed an agent whose target ``memory/``
+   was EMPTY while nine files and 20,014 bytes stayed on the source — two of them
+   written that same evening from the operator's own corrections. THE TRANSCRIPT
+   IS THE CONVERSATION; MEMORY IS THE RULES DISTILLED FROM IT. Carrying only the
+   first moves an agent that can recall what was said and has lost every rule it
+   wrote for itself.
+
+   It travels WHOLE, by tar, not by the snapshot path: a memory note is not an
+   append-only log being flushed, so there is no last newline to cut at.
 
 3. NOTHING IS OVERWRITTEN AND NOTHING IS DELETED. A relocation target may well
    have been this agent's home before, and what is there is the only copy of
@@ -88,11 +99,13 @@ __all__ = [
     "CODE_TRUNCATED",
     "CODE_UNKNOWN",
     "CREDENTIAL_BASENAMES",
+    "MEMORY_DIRNAME",
     "TRANSCRIPT_SUFFIX",
     "ArrivalVerdict",
     "MoveAside",
     "TranscriptFile",
     "TransportPlan",
+    "is_carried_directory",
     "is_transferable",
     "move_aside_destination",
     "plan_transport",
@@ -101,8 +114,13 @@ __all__ = [
     "verify_arrival",
 ]
 
-#: The ONLY suffix that travels. An allowlist — see rule 2 in the module docstring.
+#: The ONLY suffix that travels as a transcript. See rule 2 in the module docstring.
 TRANSCRIPT_SUFFIX: Final = ".jsonl"
+
+#: The one DIRECTORY on the allowlist. The rules an agent distilled from its
+#: conversations, which a relocation carrying only the conversation leaves behind
+#: — measured 2026-08-11, nine files and 20,014 bytes stranded on the source.
+MEMORY_DIRNAME: Final = "memory"
 
 #: Credential files, named so the exclusion can be asserted BY NAME. These live
 #: at ``~/.claude/.credentials.json``, above the projects store, so they are
@@ -130,6 +148,11 @@ def is_transferable(name: str) -> bool:
     return base.endswith(TRANSCRIPT_SUFFIX) and len(base) > len(TRANSCRIPT_SUFFIX)
 
 
+def is_carried_directory(name: str) -> bool:
+    """True for the one directory on the allowlist. Travels whole, never snapshotted."""
+    return name.rsplit("/", 1)[-1] == MEMORY_DIRNAME
+
+
 def refusal_for(name: str) -> str:
     """Why ``name`` is not travelling, in words a report can print."""
     base = name.rsplit("/", 1)[-1]
@@ -139,7 +162,9 @@ def refusal_for(name: str) -> str:
             "one would leave two hosts holding one identity's secret"
         )
     return (
-        f"only conversation transcripts ({TRANSCRIPT_SUFFIX}) travel; this is not one"
+        f"the allowlist carries conversation transcripts ({TRANSCRIPT_SUFFIX}) and "
+        f"{MEMORY_DIRNAME}/; this is neither. It stays on the source, which is never "
+        "deleted, so it remains there to be inspected or fetched by hand"
     )
 
 
@@ -178,6 +203,9 @@ class TransportPlan:
     code: int
     reason: str
     files: tuple[str, ...] = ()
+    #: Whole directories on the allowlist (``memory/``). Carried by tar, never
+    #: snapshotted — see :func:`select_transferable`.
+    directories: tuple[str, ...] = ()
     refused: tuple[tuple[str, str], ...] = ()
     move_aside: MoveAside | None = None
     hint: str = ""
@@ -207,22 +235,33 @@ class TransportPlan:
 
 def select_transferable(
     names: Sequence[str],
-) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
-    """Split ``names`` into what travels and what is refused, with reasons.
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Split ``names`` into transcripts, directories, and what is refused.
 
-    Returns ``(carried, refused)`` where ``refused`` pairs each name with the
-    sentence explaining it. The refusals are RETURNED rather than dropped so a
-    report can show that a credential was seen and declined — a filter whose
-    output is only the survivors cannot be told from one that never ran.
+    Returns ``(transcripts, directories, refused)``. The two carried kinds are
+    kept APART rather than merged into one list because they are carried by
+    different means and for different reasons: a transcript travels up to a
+    recorded byte offset, a directory travels whole. A caller holding one list
+    would have to re-derive which is which, and the first one to get that wrong
+    would either snapshot a directory or carry a live log unbounded.
+
+    ``refused`` pairs each remaining name with the sentence explaining it. The
+    refusals are RETURNED rather than dropped so a report — and now the
+    provenance record on the target — can show that something was seen and
+    declined. A filter whose output is only the survivors cannot be told from one
+    that never ran.
     """
-    carried: list[str] = []
+    transcripts: list[str] = []
+    directories: list[str] = []
     refused: list[tuple[str, str]] = []
     for name in names:
         if is_transferable(name):
-            carried.append(name)
+            transcripts.append(name)
+        elif is_carried_directory(name):
+            directories.append(name)
         else:
             refused.append((name, refusal_for(name)))
-    return tuple(carried), tuple(refused)
+    return tuple(transcripts), tuple(directories), tuple(refused)
 
 
 def plan_transport(
@@ -299,7 +338,7 @@ def plan_transport(
             ),
         )
 
-    carried, refused = select_transferable(source_files)
+    carried, directories, refused = select_transferable(source_files)
     if not carried:
         return TransportPlan(
             proceed=False,
@@ -307,6 +346,7 @@ def plan_transport(
             reason=(
                 "the source project directory holds no conversation transcript to move"
             ),
+            directories=directories,
             refused=refused,
             hint=(
                 "confirm this is right before continuing — the agent will start on "
@@ -321,6 +361,7 @@ def plan_transport(
             code=CODE_UNKNOWN,
             reason="whether the target already holds a transcript directory was not observed",
             files=carried,
+            directories=directories,
             refused=refused,
             hint=(
                 "check the destination before writing to it. A relocation target may "
@@ -345,13 +386,15 @@ def plan_transport(
             reason="the destination is empty; nothing to preserve",
         )
 
+    carrying = f"{len(carried)} transcript(s)" + (
+        f" and {'/, '.join(directories)}/" if directories else ""
+    )
     return TransportPlan(
         proceed=True,
         code=CODE_READY,
-        reason=(
-            f"{len(carried)} transcript(s) to copy into {target_dir}; source is stopped"
-        ),
+        reason=f"{carrying} to copy into {target_dir}; source is stopped",
         files=carried,
+        directories=directories,
         refused=refused,
         move_aside=move,
     )

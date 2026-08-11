@@ -23,6 +23,7 @@ from scitex_agent_container._lifecycle._relocate_transport import TranscriptFile
 from scitex_agent_container._lifecycle._relocate_transport_ssh import (
     MARK_FILE,
     build_copy_argv,
+    build_tree_copy_argv,
     measure_transcripts,
     parse_measurements,
     snapshot_transcripts,
@@ -210,6 +211,91 @@ def test_a_remote_source_is_read_over_ssh() -> None:
     )
     # Assert
     assert argv[-1].startswith("set -o pipefail; ssh ")
+
+
+# --------------------------------------------------------------------------
+# Whole trees: memory/ and the spec directory
+# --------------------------------------------------------------------------
+
+
+def _tree_argv(names):
+    return build_tree_copy_argv(
+        source=LOCAL,
+        source_dir="/src/projects/-p",
+        target=REMOTE,
+        target_dir="/tgt/projects/-p",
+        names=names,
+    )
+
+
+def test_a_directory_is_carried_by_tar_not_by_a_byte_bound() -> None:
+    # Arrange: a memory note is not an append-only log being flushed, so there
+    # is no last newline to cut at and half of one is not a shorter version of
+    # it. Directories travel whole.
+    # Act
+    pipeline = _tree_argv(["memory"])[-1]
+    # Assert
+    assert "tar -C /src/projects/-p -cf - -- memory" in pipeline
+
+
+def test_the_tree_copy_passes_names_as_arguments_not_a_glob() -> None:
+    # Arrange: tar's original argument, which still holds for this half — a glob
+    # would be re-expanded at copy time and carry whatever matched a moment later.
+    # Act
+    pipeline = _tree_argv(["memory"])[-1]
+    # Assert
+    assert "*" not in pipeline
+
+
+def test_the_tree_copy_uses_pipefail() -> None:
+    # Arrange: without it the pipeline reports only the last stage, so a tar
+    # that failed outright is masked by an ssh that extracted nothing.
+    # Act
+    pipeline = _tree_argv(["memory"])[-1]
+    # Assert
+    assert "set -o pipefail" in pipeline
+
+
+def test_the_tree_copy_creates_the_destination() -> None:
+    # Arrange: the target's projects directory may not exist at all — it is the
+    # agent's own directory on a host it has never run on.
+    # Act
+    pipeline = _tree_argv(["memory"])[-1]
+    # Assert
+    assert "mkdir -p /tgt/projects/-p" in pipeline
+
+
+def test_an_empty_tree_list_is_refused() -> None:
+    # Arrange: same rule as the transcript copy — a transfer of nothing that
+    # exits 0 is the failure shape this feature exists to prevent.
+    empty: list[str] = []
+    # Act
+    call = lambda: _tree_argv(empty)  # noqa: E731
+    # Assert
+    with pytest.raises(ValueError):
+        call()
+
+
+def test_the_tree_copy_refuses_a_credential_by_name() -> None:
+    # Arrange: this function is generic and will carry any named entry, and a
+    # DIRECTORY copy is exactly how one could be smuggled past a per-file check.
+    named = [".credentials.json"]
+    # Act
+    call = lambda: _tree_argv(named)  # noqa: E731
+    # Assert
+    with pytest.raises(ValueError):
+        call()
+
+
+def test_the_tree_copy_refuses_a_path_component() -> None:
+    # Arrange: a "/" would place the copy outside the directory the allowlist
+    # was applied to, quietly widening it to the whole filesystem.
+    escaping = ["../elsewhere"]
+    # Act
+    call = lambda: _tree_argv(escaping)  # noqa: E731
+    # Assert
+    with pytest.raises(ValueError):
+        call()
 
 
 # --------------------------------------------------------------------------

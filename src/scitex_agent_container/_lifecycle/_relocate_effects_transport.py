@@ -36,8 +36,11 @@ from ._relocate_target_ssh import SID_ABSENT, read_session_marker, target_home
 from ._relocate_transcript_home import transcript_home_from_spec
 from ._relocate_transport import plan_transport, verify_arrival
 from ._relocate_transport_paths import derive_target_dir
+from ._relocate_provenance import PROVENANCE_FILENAME, render_provenance
+from ._relocate_target_ssh import list_tree, write_text_file
 from ._relocate_transport_ssh import (
     copy_transcripts,
+    copy_tree,
     ensure_dir,
     list_transcript_dir,
     measure_transcripts,
@@ -244,6 +247,127 @@ class TransportEffects:
         )
         return None
 
+    def _carry_directories(self, source_dir: str, target_dir: str, names) -> StepResult | None:
+        """Carry ``memory/`` and confirm it by listing the tree on BOTH hosts.
+
+        ``None`` when everything arrived. Measured 2026-08-11: a completed
+        relocation left nine memory files and 20,014 bytes on the source because
+        the allowlist was ``*.jsonl`` alone. The transcript is the conversation;
+        memory is the rules distilled from it, and an agent that kept the first
+        and lost the second can recall what was said and has forgotten every rule
+        it wrote for itself.
+
+        Verified by TREE COMPARISON rather than per-name checks, for the reason
+        the spec-directory copy already gives: a per-file check of the names you
+        thought to name says nothing about the file you forgot.
+        """
+        if not names:
+            return None
+        before = {
+            n: list_tree(self.source, f"{source_dir}/{n}", exec_fn=self.exec_fn)
+            for n in names
+        }
+        run = copy_tree(
+            source=self.source,
+            source_dir=source_dir,
+            target=self.target,
+            target_dir=target_dir,
+            names=names,
+            exec_fn=self.exec_fn,
+            peers=self.peers,
+        )
+        self.log.append(
+            f"transport: {', '.join(names)} copy pipeline exit {run.exit_code} — "
+            "EVIDENCE ONLY; arrival is decided by listing on the target"
+        )
+        # EVERY name is verified, not just the first. There is one entry on the
+        # allowlist today; a loop that checked only names[0] would carry a second
+        # one unverified on the day it is added, which is the shape of bug that
+        # put this method here.
+        for name in names:
+            source_tree = before.get(name)
+            target_tree = list_tree(
+                self.target, f"{target_dir}/{name}", exec_fn=self.exec_fn
+            )
+            if source_tree is None or target_tree is None:
+                where = "the source" if source_tree is None else self.to_host
+                return StepResult(
+                    ok=None,
+                    detail=f"{name}/ was copied and could not be listed on {where}",
+                    hint=(
+                        "list it on both hosts and compare. An unverified memory "
+                        "directory is the 2026-08-11 failure: the agent arrives able to "
+                        "recall the conversation and having lost the rules it drew from it"
+                    ),
+                )
+            if target_tree != source_tree:
+                missing = sorted(set(dict(source_tree)) - set(dict(target_tree)))
+                return StepResult(
+                    ok=False,
+                    detail=(
+                        f"{name}/ on {self.to_host} does not match the source: "
+                        f"{len(missing)} file(s) absent {missing[:5]}"
+                    ),
+                    hint=(
+                        "re-run the transport. Nothing was deleted on the source, so the "
+                        "originals are still there to copy by hand if this keeps failing"
+                    ),
+                )
+            total = sum(size or 0 for _, size in target_tree)
+            self.log.append(
+                f"transport: {self.to_host} holds {name}/ — {len(target_tree)} file(s), "
+                f"{total} bytes, tree identical to {self.from_host}"
+            )
+        return None
+
+    def _write_provenance(self, plan, source_dir: str, target_dir: str) -> None:
+        """Tell the arriving agent where it came from. Never fatal.
+
+        THE OPERATOR'S REQUIREMENT, and by his own account the only one that
+        matters here: 「エージェントがどこから来たのかっていうのが分かって、そこを
+        調査することができるならば、全く問題ない」. The merge policy he called
+        枝葉 — a leaf. This is the trunk.
+
+        A failure to write it is LOGGED, not returned. The relocation itself has
+        already succeeded by this point — the transcript is verified on the
+        target — and refusing the phase over a missing note would abort a move
+        that worked, leaving the agent stopped on one host and unstarted on the
+        other. The log says plainly if it did not land.
+        """
+        displaced = ""
+        if plan.move_aside is not None and plan.move_aside.required:
+            displaced = plan.move_aside.destination or ""
+        text = render_provenance(
+            agent=self.agent,
+            from_host=self.from_host,
+            source_dir=source_dir,
+            to_host=self.to_host,
+            target_dir=target_dir,
+            when=self.now(),
+            session=self.session_uuid,
+            transcripts=[(f.name, f.byte_count, f.line_count) for f in self.sent],
+            directories=plan.directories,
+            refused=plan.refused,
+            displaced_to=displaced,
+        )
+        written = write_text_file(
+            self.target,
+            f"{target_dir}/{PROVENANCE_FILENAME}",
+            text,
+            exec_fn=self.exec_fn,
+        )
+        if written is None:
+            self.log.append(
+                f"transport: WARNING the provenance record {PROVENANCE_FILENAME} could "
+                f"not be confirmed on {self.to_host}; the agent will not be able to read "
+                "where it came from"
+            )
+            return
+        self.log.append(
+            f"transport: wrote {target_dir}/{PROVENANCE_FILENAME} ({written} bytes) — "
+            f"names {self.from_host}:{source_dir} and everything NOT carried"
+        )
+
     def transport(self) -> StepResult:
         """Copy the transcript across and CONFIRM it on the target, per file.
 
@@ -338,10 +462,23 @@ class TransportEffects:
                 detail=f"arrival not confirmed ({verdict.code}): {verdict.reason}",
                 hint=verdict.hint,
             )
+
+        refused = self._carry_directories(source_dir, target_dir, plan.directories)
+        if refused is not None:
+            return refused
+
+        # LAST, and never fatal: the agent's own record of where it came from.
+        self._write_provenance(plan, source_dir, target_dir)
+
+        carried = f"{verdict.reason}" + (
+            f"; {', '.join(d + '/' for d in plan.directories)} carried whole"
+            if plan.directories
+            else ""
+        )
         return StepResult(
             ok=True,
             detail=(
-                f"{verdict.reason}; {self.from_host}:{source_dir} -> "
+                f"{carried}; {self.from_host}:{source_dir} -> "
                 f"{self.to_host}:{target_dir}"
             ),
         )

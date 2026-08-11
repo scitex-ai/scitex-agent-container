@@ -203,7 +203,7 @@ def test_every_named_credential_basename_is_refused() -> None:
 def test_a_credential_beside_a_transcript_is_dropped_from_the_selection() -> None:
     # Arrange: the realistic shape — a directory listing containing both.
     # Act
-    carried, _ = select_transferable([".credentials.json", "abc.jsonl"])
+    carried, _, _ = select_transferable([".credentials.json", "abc.jsonl"])
     # Assert
     assert carried == ("abc.jsonl",)
 
@@ -212,7 +212,7 @@ def test_a_refused_credential_is_reported_rather_than_silently_dropped() -> None
     # Arrange: a filter whose output is only the survivors cannot be told from
     # one that never ran.
     # Act
-    _, refused = select_transferable([".credentials.json", "abc.jsonl"])
+    _, _, refused = select_transferable([".credentials.json", "abc.jsonl"])
     # Assert
     assert refused[0][0] == ".credentials.json"
 
@@ -221,7 +221,7 @@ def test_the_credential_refusal_explains_that_the_target_re_issues_its_own() -> 
     # Arrange: the reason matters — someone will eventually ask why their agent
     # lost its login, and the answer must already be in the output.
     # Act
-    _, refused = select_transferable([".credentials.json"])
+    _, _, refused = select_transferable([".credentials.json"])
     # Assert
     assert "re-issues its own" in refused[0][1]
 
@@ -229,9 +229,82 @@ def test_the_credential_refusal_explains_that_the_target_re_issues_its_own() -> 
 def test_a_non_transcript_file_does_not_travel() -> None:
     # Arrange: the allowlist, stated positively.
     # Act
-    carried, _ = select_transferable(["notes.md", "config.json", "x.jsonl"])
+    carried, _, _ = select_transferable(["notes.md", "config.json", "x.jsonl"])
     # Assert
     assert carried == ("x.jsonl",)
+
+
+# --------------------------------------------------------------------------
+# memory/ travels — measured 2026-08-11, when it did not
+# --------------------------------------------------------------------------
+
+
+def test_the_memory_directory_travels() -> None:
+    # Arrange: THE 2026-08-11 defect. A completed relocation logged
+    # "REFUSED memory" and landed an agent whose target memory/ was EMPTY while
+    # nine files and 20,014 bytes stayed on the source.
+    # Act
+    _, directories, _ = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert directories == ("memory",)
+
+
+def test_the_memory_directory_is_no_longer_reported_as_refused() -> None:
+    # Arrange: it used to appear in the refusal list with "only conversation
+    # transcripts travel". A carried entry that still reads as refused would put
+    # a false line in the provenance record on the target.
+    # Act
+    _, _, refused = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert refused == ()
+
+
+def test_memory_is_kept_apart_from_the_transcripts() -> None:
+    # Arrange: they are carried by different means — a transcript up to a
+    # recorded byte offset, a directory whole — so a caller that received one
+    # merged list would have to re-derive which is which, and the first to get
+    # it wrong would snapshot a directory or carry a live log unbounded.
+    # Act
+    transcripts, directories, _ = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert transcripts == ("a.jsonl",) and directories == ("memory",)
+
+
+def test_a_plan_carries_the_memory_directory_alongside_the_transcripts() -> None:
+    # Arrange: the selection is only useful if the PLAN passes it on — the
+    # earlier bug was one layer losing it, not the filter being wrong.
+    # Act
+    plan = _ready_plan(source_files=["a.jsonl", "memory"])
+    # Assert
+    assert plan.directories == ("memory",)
+
+
+def test_the_ready_plan_says_out_loud_that_memory_is_travelling() -> None:
+    # Arrange: the operator reads this line in the dry run. "1 transcript(s)"
+    # alone is what a relocation that silently drops memory also prints.
+    # Act
+    plan = _ready_plan(source_files=["a.jsonl", "memory"])
+    # Assert
+    assert "memory/" in plan.reason
+
+
+def test_a_directory_that_is_not_memory_still_does_not_travel() -> None:
+    # Arrange: an allowlist of one directory, not "directories travel". The
+    # session's own subdirectory is the realistic neighbour.
+    # Act
+    _, directories, refused = select_transferable(["b68520e1-78fb", "memory"])
+    # Assert
+    assert directories == ("memory",) and refused[0][0] == "b68520e1-78fb"
+
+
+def test_the_refusal_says_the_source_still_holds_it() -> None:
+    # Arrange: the operator's ruling — provenance is the point. Something left
+    # behind is only a problem if nobody can find it, and nothing on the source
+    # is ever deleted.
+    # Act
+    _, _, refused = select_transferable(["notes.md"])
+    # Assert
+    assert "never deleted" in refused[0][1]
 
 
 def test_a_bare_suffix_is_not_a_transcript() -> None:
@@ -248,6 +321,16 @@ def test_a_directory_holding_no_transcript_is_a_decided_no() -> None:
     # nothing. The agent will start with no memory, which must be said out loud.
     # Act
     plan = _ready_plan(source_files=[".credentials.json", "notes.md"])
+    # Assert
+    assert plan.code == CODE_NOTHING_TO_CARRY
+
+
+def test_memory_alone_is_still_nothing_to_carry() -> None:
+    # Arrange: memory without a conversation is not a relocation. The agent
+    # would arrive with its rules and no memory of applying them, and that is
+    # the case the operator has to see before it happens, not after.
+    # Act
+    plan = _ready_plan(source_files=["memory"])
     # Assert
     assert plan.code == CODE_NOTHING_TO_CARRY
 
