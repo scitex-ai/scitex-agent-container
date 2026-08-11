@@ -7,19 +7,34 @@ the adapters that list a directory, move bytes between two hosts, and measure th
 result WHERE IT LANDED. The plumbing they run on lives in
 :mod:`_relocate_shell` — one route, one place it can be wrong.
 
-WHY tar-OVER-ssh, AND NOT scp OR rsync. The decisive reason is the allowlist.
-:func:`.._relocate_transport.select_transferable` returns an EXACT set of names,
-and ``tar -C <dir> -cf - -- <name> <name>`` takes exactly those names as
-arguments. Nothing is expanded here and nothing is expanded on the far side, so
-what travels is the set that was decided. A glob like ``*.jsonl`` would be
-re-expanded by a shell at copy time, which turns an allowlist into "whatever
-matched the pattern a moment later" — including anything created in between.
-Two lesser reasons: rsync must exist on BOTH ends and does not on the fleet's
-busybox targets, and scp would need either one connection per file or a remote
-glob, which is the first problem again. tar is one connection, one exact file
-list, and it rides the same ``-J`` jump chain every other sac ssh call uses.
+WHAT TRAVELS IS A SNAPSHOT, AND THE SNAPSHOT IS TAKEN FIRST. Before a byte moves,
+:func:`snapshot_transcripts` records, per file, the offset of the LAST NEWLINE and
+the number of complete lines at that instant. The copy carries exactly that many
+bytes and arrival is checked against exactly those numbers. The source is then
+free to grow underneath the transfer without changing the answer — which is the
+whole point, because on 2026-08-12 it did: the file was 11,717 bytes longer when
+it was read than when it was measured, on an identical line count, and the
+relocation aborted 422 over bytes that were never lost.
 
-A PIPELINE'S EXIT CODE IS EVIDENCE, NEVER PROOF. ``tar | ssh tar`` exiting 0 says
+WHY head -c PER FILE, AND NOT tar, scp OR rsync. tar was the earlier choice and
+its argument still holds for names: an allowlist decided an EXACT set, and a glob
+re-expanded by a shell at copy time would carry whatever matched a moment later.
+What tar cannot do is carry PART of a file, and a whole file is by definition not
+a snapshot. ``head -c <recorded-offset> -- <path>`` is the bounded read stated
+directly, it is present everywhere in this fleet (GNU, busybox and BSD all have
+it, unlike ``truncate``), it moves only the bytes that were promised, and the path
+is built here rather than expanded anywhere, so nothing globs on either side.
+
+THE COST IS ONE SSH PER FILE, AND IT IS PAID KNOWINGLY. tar was one connection for
+the whole set; this is one per transcript, chained under ``&&`` in a single
+host-side ``bash -c`` so the whole thing is still one ``host_exec`` and one exit
+code. Measured before choosing it: the busiest project directory on this fleet
+holds six transcripts, so the connection count is single digits. Truncating on the
+TARGET instead would keep one connection, but it would ship the extra bytes and
+then throw them away, and it would need ``truncate`` or a temp-file rewrite on
+hosts that may have neither.
+
+A PIPELINE'S EXIT CODE IS EVIDENCE, NEVER PROOF. ``head | ssh cat`` exiting 0 says
 two processes exited 0; it says nothing about what is on the disk at the other
 end. So the exit code is returned and reported, and the ANSWER comes from
 :func:`measure_transcripts` run ON THE TARGET — ``wc -c`` and ``wc -l`` executed
@@ -56,12 +71,15 @@ __all__ = [
     "MARK_FILE",
     "MARK_MOVED",
     "build_copy_argv",
+    "build_tree_copy_argv",
     "copy_transcripts",
+    "copy_tree",
     "ensure_dir",
     "list_transcript_dir",
     "measure_transcripts",
     "move_dir_aside",
     "parse_measurements",
+    "snapshot_transcripts",
 ]
 
 MARK_DIR = "TX-DIR="
@@ -138,6 +156,50 @@ def measure_transcripts(
             f"if [ -f {quote(name)} ]; then\n"
             f"  __b=$(wc -c < {quote(name)} 2>/dev/null)\n"
             f"  __l=$(wc -l < {quote(name)} 2>/dev/null)\n"
+            f'  printf \'{MARK_FILE}%s\\t%s\\t%s\\n\' {quote(name)} "$__b" "$__l"\n'
+            f"else\n"
+            f"  printf '{MARK_ABSENT}%s\\n' {quote(name)}\n"
+            f"fi"
+        )
+    return parse_measurements(shell.run("\n".join(parts), exec_fn=exec_fn))
+
+
+def snapshot_transcripts(
+    shell: Shell,
+    directory: str,
+    names: Sequence[str],
+    *,
+    exec_fn: Callable[..., dict] | None = None,
+) -> tuple[TranscriptFile, ...]:
+    """The PREFIX of each file that will travel: whole lines only, measured once.
+
+    Returns the same :class:`TranscriptFile` shape as :func:`measure_transcripts`,
+    but the counts describe the SNAPSHOT rather than the file: ``byte_count`` is
+    the offset of the last newline and ``line_count`` the number of complete lines
+    at the instant this ran. Those two numbers are the contract for everything
+    downstream — the copy is bounded by the first and arrival is checked against
+    both, so a source that grows afterwards does not change the answer.
+
+    The offset is computed as ``head -n <complete-lines> | wc -c``, which is the
+    definition rather than an approximation of it: the bytes of the first L lines
+    ARE the bytes up to and including the last newline. It is POSIX, it needs no
+    ``stat`` spelling, and it gives the same answer on every host in the fleet.
+    Deliberately NOT ``wc -c`` minus a guess: cutting anywhere but a newline hands
+    the target a torn final record, which is malformed JSON inside a file that
+    still parses as JSONL everywhere else.
+
+    A file whose line count could not be taken comes back with ``line_count=None``
+    — NOT MEASURED, which verification treats as UNKNOWN and which
+    :func:`build_copy_argv` refuses to carry.
+    """
+    if not names:
+        return ()
+    parts = [f"cd {quote(directory)} 2>/dev/null || exit 0"]
+    for name in names:
+        parts.append(
+            f"if [ -f {quote(name)} ]; then\n"
+            f"  __l=$(wc -l < {quote(name)} 2>/dev/null)\n"
+            f'  __b=$(head -n "$__l" < {quote(name)} 2>/dev/null | wc -c)\n'
             f'  printf \'{MARK_FILE}%s\\t%s\\t%s\\n\' {quote(name)} "$__b" "$__l"\n'
             f"else\n"
             f"  printf '{MARK_ABSENT}%s\\n' {quote(name)}\n"
@@ -229,33 +291,14 @@ def move_dir_aside(
     return None if answer is None else answer in ("yes", "vacuous")
 
 
-def build_copy_argv(
-    *,
-    source: Shell,
-    source_dir: str,
-    target: Shell,
-    target_dir: str,
-    files: Sequence[str],
-    peers=None,
-) -> list[str]:
-    """The argv the BARE HOST runs to move exactly ``files`` and nothing else.
-
-    A pure function so the command itself can be asserted in a test — the thing
-    most worth pinning is that the file list is passed as ARGUMENTS and that no
-    glob character reaches either shell.
-
-    ``set -o pipefail`` is why this is ``bash -c`` and not ``sh -c``: without it
-    the pipeline reports only the LAST stage's status, so a source-side tar that
-    failed outright would be masked by an ssh that cheerfully extracted nothing.
-    The exit code is still only evidence — arrival is decided by counting on the
-    target — but evidence that lies is worse than none.
-    """
+def _refuse_bad_snapshots(files: Sequence[TranscriptFile]) -> None:
+    """Every reason a named snapshot must not be carried, raised before anything runs."""
     if not files:
         raise ValueError(
             "build_copy_argv refuses an empty file list — a copy that transfers "
             "nothing and exits 0 is the failure shape this feature exists to prevent"
         )
-    bad = [f for f in files if "/" in f or f in ("", ".", "..")]
+    bad = [f.name for f in files if "/" in f.name or f.name in ("", ".", "..")]
     if bad:
         raise ValueError(
             f"build_copy_argv takes bare file names, got {bad!r}. A path component here "
@@ -266,28 +309,165 @@ def build_copy_argv(
     # declines these, but this function is generic — it will carry any named file
     # — and a transport that would copy a credential if asked is one that
     # eventually does.
-    named_secrets = [f for f in files if f in CREDENTIAL_BASENAMES]
+    named_secrets = [f.name for f in files if f.name in CREDENTIAL_BASENAMES]
     if named_secrets:
         raise ValueError(
             f"build_copy_argv refuses to carry {named_secrets!r}: a credential is never "
             "copied — the target re-issues its own. Carrying one leaves two hosts holding "
             "one identity's secret, and the source's copy outliving the source"
         )
+    unbounded = [f.name for f in files if f.byte_count is None or f.byte_count < 0]
+    if unbounded:
+        raise ValueError(
+            f"build_copy_argv refuses to carry {unbounded!r} with no recorded byte "
+            "offset. The snapshot IS the bound: copying 'however much is there now' "
+            "restores the race the offset was introduced to remove, and the resulting "
+            "mismatch would be reported against a source that had already moved"
+        )
 
-    produce: list[str] = ["tar", "-C", source_dir, "-cf", "-", "--", *files]
+
+def build_copy_argv(
+    *,
+    source: Shell,
+    source_dir: str,
+    target: Shell,
+    target_dir: str,
+    files: Sequence[TranscriptFile],
+    peers=None,
+) -> list[str]:
+    """The argv the BARE HOST runs to move exactly these SNAPSHOTS and nothing else.
+
+    ``files`` are snapshots from :func:`snapshot_transcripts`, not bare names:
+    each carries the byte offset that bounds its read. A pure function so the
+    command itself can be asserted in a test — the two things most worth pinning
+    are that no glob character reaches either shell and that every stage is
+    bounded by a number recorded before the copy began.
+
+    ``set -o pipefail`` is why this is ``bash -c`` and not ``sh -c``: without it
+    a pipeline reports only the LAST stage's status, so a source-side read that
+    failed outright would be masked by an ssh that cheerfully wrote nothing. The
+    stages are chained with ``&&`` so the first failure stops the rest. The exit
+    code is still only evidence — arrival is decided by counting on the target —
+    but evidence that lies is worse than none.
+    """
+    _refuse_bad_snapshots(files)
+
+    stages: list[str] = []
+    for snapshot in files:
+        read = [
+            "head",
+            "-c",
+            str(int(snapshot.byte_count or 0)),
+            "--",
+            f"{source_dir.rstrip('/')}/{snapshot.name}",
+        ]
+        produce = (
+            read
+            if source.is_local
+            else build_probe_argv(source.host, source.script(shlex.join(read)), peers)
+        )
+        landing = f"{target_dir.rstrip('/')}/{snapshot.name}"
+        write = (
+            f"mkdir -p {quote(target_dir)} && cat > {quote(landing)} && "
+            f"printf '{MARK_FILE}%s\\n' {quote(snapshot.name)}"
+        )
+        consume = build_probe_argv(target.host, target.script(write), peers)
+        stages.append(f"{shlex.join(produce)} | {shlex.join(consume)}")
+
+    pipeline = (
+        "set -o pipefail; "
+        + " && ".join(stages)
+        + f" && printf '{MARK_DIR}yes\\n'"
+    )
+    return ["bash", "-c", pipeline]
+
+
+def build_tree_copy_argv(
+    *,
+    source: Shell,
+    source_dir: str,
+    target: Shell,
+    target_dir: str,
+    names: Sequence[str],
+    peers=None,
+) -> list[str]:
+    """The argv that carries WHOLE entries — a directory, or a file in full.
+
+    THE SNAPSHOT DOES NOT APPLY HERE, and that is the distinction between this
+    and :func:`build_copy_argv`. A transcript is an append-only log being written
+    by a process that may still be flushing, so it is carried up to a recorded
+    offset. A spec directory and a ``memory/`` directory are neither append-only
+    nor open: there is no last-newline to cut at, and half of one is not a
+    shorter version of it. They travel whole, by tar.
+
+    tar's original argument still holds for these: ``tar -C <dir> -cf - -- <name>``
+    takes exactly the named entries, recursing into a directory as ONE name, and
+    nothing is re-expanded by a shell on either side. A glob would be re-expanded
+    at copy time, which turns an allowlist into "whatever matched a moment later".
+    """
+    if not names:
+        raise ValueError(
+            "build_tree_copy_argv refuses an empty list — a copy that transfers "
+            "nothing and exits 0 is the failure shape this feature exists to prevent"
+        )
+    bad = [n for n in names if "/" in n or n in ("", ".", "..")]
+    if bad:
+        raise ValueError(
+            f"build_tree_copy_argv takes bare entry names, got {bad!r}. A path component "
+            "here would place the copy outside the directory the allowlist was applied to"
+        )
+    named_secrets = [n for n in names if n in CREDENTIAL_BASENAMES]
+    if named_secrets:
+        raise ValueError(
+            f"build_tree_copy_argv refuses to carry {named_secrets!r}: a credential is "
+            "never copied — the target re-issues its own"
+        )
+
+    produce: list[str] = ["tar", "-C", source_dir, "-cf", "-", "--", *names]
     if not source.is_local:
         produce = build_probe_argv(
             source.host, source.script(shlex.join(produce)), peers
         )
-
     extract = (
         f"mkdir -p {quote(target_dir)} && tar -C {quote(target_dir)} -xf - && "
         f"printf '{MARK_DIR}yes\\n'"
     )
     consume = build_probe_argv(target.host, target.script(extract), peers)
-
     pipeline = f"set -o pipefail; {shlex.join(produce)} | {shlex.join(consume)}"
     return ["bash", "-c", pipeline]
+
+
+def copy_tree(
+    *,
+    source: Shell,
+    source_dir: str,
+    target: Shell,
+    target_dir: str,
+    names: Sequence[str],
+    exec_fn: Callable[..., dict] | None = None,
+    timeout_s: float = DEFAULT_COPY_TIMEOUT_S,
+    peers=None,
+) -> RemoteRun:
+    """Carry whole entries between two hosts over one ssh. Caller must verify.
+
+    Used for the spec directory and for ``memory/``. Arrival is confirmed by
+    listing and sizing the tree on BOTH hosts (:func:`.._relocate_target_ssh.
+    list_tree`), never by this return value.
+    """
+    argv = build_tree_copy_argv(
+        source=source,
+        source_dir=source_dir,
+        target=target,
+        target_dir=target_dir,
+        names=names,
+        peers=peers,
+    )
+    return run_argv_on_host(
+        argv,
+        exec_fn=exec_fn,
+        timeout_s=timeout_s,
+        what=f"the host, copying {source.host}:{source_dir} -> {target.host}:{target_dir}",
+    )
 
 
 def copy_transcripts(
@@ -296,16 +476,17 @@ def copy_transcripts(
     source_dir: str,
     target: Shell,
     target_dir: str,
-    files: Sequence[str],
+    files: Sequence[TranscriptFile],
     exec_fn: Callable[..., dict] | None = None,
     timeout_s: float = DEFAULT_COPY_TIMEOUT_S,
     peers=None,
 ) -> RemoteRun:
-    """Stream ``files`` from ``source_dir`` into ``target_dir`` over one ssh.
+    """Stream each snapshot from ``source_dir`` into ``target_dir``, bounded by its offset.
 
     Returns the pipeline's :class:`RemoteRun`. THE CALLER MUST STILL VERIFY: this
-    return value says two processes exited, and the only statement worth making
-    is the one :func:`measure_transcripts` makes afterwards, on the target.
+    return value says some processes exited, and the only statement worth making
+    is the one :func:`measure_transcripts` makes afterwards, on the target,
+    against the snapshot numbers.
     """
     argv = build_copy_argv(
         source=source,

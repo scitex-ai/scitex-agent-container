@@ -55,9 +55,14 @@ ALL_GOOD = TargetFacts(
 
 #: The source scanned and clean. Supplied on every render so the rendering
 #: itself is what is under test — a report that refuses because nobody scanned
-#: the source would exercise the renderer's refusal path in every case.
+#: the source would exercise the renderer's refusal path in every case. The
+#: transcripts and marker are part of "scanned" since the session check reads
+#: them; three transcripts rather than one, because that is the ordinary shape
+#: (every agent measured on 2026-08-12 held between two and five).
 CLEAN_SOURCE = SourceFacts(
-    repos=(RepoWork(path="/proj/x", branch="develop", uncommitted=0, unpushed=0),)
+    repos=(RepoWork(path="/proj/x", branch="develop", uncommitted=0, unpushed=0),),
+    transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000)),
+    session_marker="bbb2",
 )
 
 

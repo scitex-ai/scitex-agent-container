@@ -43,6 +43,8 @@ from __future__ import annotations
 from typing import Final
 
 from ._relocate_preflight_facts import Check, SourceFacts, TargetFacts
+from ._relocate_session_choice import CODE_UNKNOWN as SESSION_UNKNOWN
+from ._relocate_session_choice import choose_session
 
 __all__ = [
     "CHECK_BINDS",
@@ -55,6 +57,7 @@ __all__ = [
     "CHECK_RUNTIME",
     "CHECK_SAC_PRESENT",
     "CHECK_SCHEMA",
+    "CHECK_SESSION",
     "CHECK_SOURCE_WORK",
     "check_binds",
     "check_card_store",
@@ -66,6 +69,7 @@ __all__ = [
     "check_runtime",
     "check_sac_present",
     "check_schema",
+    "check_session_resolvable",
     "check_source_work",
 ]
 
@@ -80,6 +84,7 @@ CHECK_PORTS: Final = "ports_free"
 CHECK_HUB_FROM_TARGET: Final = "hub_reachable_from_target"
 CHECK_SAC_PRESENT: Final = "sac_present_on_target"
 CHECK_SOURCE_WORK: Final = "source_work_committed"
+CHECK_SESSION: Final = "session_resolvable"
 
 
 def _unobserved(name: str, what: str) -> Check:
@@ -321,6 +326,55 @@ def check_sac_present(facts: TargetFacts, to_host: str) -> Check:
             f"absolute path. The evidence: ssh {to_host} 'command -v sac' printed "
             f"nothing while {facts.sac_resolved_path} exists there"
         ),
+    )
+
+
+def check_session_resolvable(source: SourceFacts, agent: str) -> Check:
+    """Can the conversation to resume be NAMED, before anything is stopped?
+
+    This check exists because the answer used to be discovered three phases too
+    late. TARGET_STANDBY refuses without a session id, and TARGET_STANDBY runs
+    after SOURCE_STOP — so an agent whose session could not be identified was
+    taken down, had its transcript copied and verified, and then aborted with the
+    marker unwritten and nothing running anywhere.
+
+    Measured 2026-08-12 on ywata-note-win: ten agents, every one holding between
+    two and five transcripts, every one reporting ``GO — every check passed``, and
+    not one of them able to complete. The guard was ``len(files) == 1``. A check
+    that passes on ten agents that cannot proceed is not a check; the gap is as
+    much the bug as the guard was.
+    """
+    if source.transcripts is None:
+        return Check(
+            name=CHECK_SESSION,
+            ok=None,
+            detail=f"the transcripts for {agent} on the source were not listed",
+            hint=(
+                "list the source's project directory before deciding. Which session "
+                "travels is settled here or it is settled after the agent has been "
+                "stopped, and only one of those is recoverable without an operator"
+            ),
+        )
+    choice = choose_session(
+        agent=agent,
+        carried=[name for name, _ in source.transcripts],
+        marker=source.session_marker,
+        mtimes=dict(source.transcripts),
+    )
+    if choice.session is not None:
+        return Check(
+            name=CHECK_SESSION,
+            ok=True,
+            detail=(
+                f"session {choice.session} would travel, chosen by {choice.chosen_by} "
+                f"from {len(choice.candidates)} candidate(s)"
+            ),
+        )
+    return Check(
+        name=CHECK_SESSION,
+        ok=None if choice.code == SESSION_UNKNOWN else False,
+        detail=f"{choice.reason} ({choice.code})",
+        hint=choice.hint,
     )
 
 

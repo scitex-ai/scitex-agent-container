@@ -48,27 +48,24 @@ from ._relocate_effects_handover import HandoverEffects
 from ._relocate_effects_handshake import HandshakeEffects
 from ._relocate_effects_source import SourceEffects
 from ._relocate_effects_standby import StandbyEffects
+from ._relocate_effects_transport import TransportEffects
 from ._relocate_execute import PhaseEffects, StepResult
 from ._relocate_liveness import observe_running
 from ._relocate_move_aside import move_aside_destination
-from ._relocate_shell import Shell, resolved_path, shell_for
-from ._relocate_transcript_home import transcript_home_from_spec
-from ._relocate_transport import TranscriptFile, plan_transport, verify_arrival
-from ._relocate_transport_paths import derive_target_dir
-from ._relocate_transport_ssh import (
-    copy_transcripts,
-    ensure_dir,
-    list_transcript_dir,
-    measure_transcripts,
-    move_dir_aside,
-)
+from ._relocate_shell import Shell, shell_for
+from ._relocate_transport import TranscriptFile
+from ._relocate_transport_ssh import move_dir_aside
 
 __all__ = ["RelocateAdapters", "adapters_for", "build_effects"]
 
 
 @dataclass
 class RelocateAdapters(
-    SourceEffects, StandbyEffects, HandshakeEffects, HandoverEffects
+    SourceEffects,
+    TransportEffects,
+    StandbyEffects,
+    HandshakeEffects,
+    HandoverEffects,
 ):
     """One relocation's worth of hosts, paths and RECORDED CONFIRMATIONS.
 
@@ -87,6 +84,10 @@ class RelocateAdapters(
     stamp: str
     exec_fn: Callable[..., dict] | None = None
     now: Callable[[], float] = time.time
+    #: Injected for the same reason as ``now``: SOURCE_STOP spends real
+    #: wall-clock time waiting for the transcript to go quiescent, and a test
+    #: that had to spend it too would either be slow or would not be written.
+    sleep: Callable[[float], None] = time.sleep
     peers: object = None
 
     #: The source-side ``spec.yaml`` this agent is defined by. Carried to the
@@ -112,181 +113,11 @@ class RelocateAdapters(
     lease_fence: int | None = None
     log: list[str] = field(default_factory=list)
 
-    # -- transport ---------------------------------------------------------
-
-    def _resolve_dirs(self) -> tuple[str | None, str | None, str]:
-        """Source and target transcript directories, or ``(None, None, why)``.
-
-        The target's directory name is RECOMPUTED from the target's own resolved
-        workdir rather than copied from the source's — see
-        :mod:`_relocate_transport_paths`. A mismatch is normal and is logged, not
-        refused: it is the whole reason the name is derived instead of reused.
-        """
-        home = transcript_home_from_spec(self.spec)
-        if home.path is None:
-            return None, None, f"{home.reason} — {home.hint}"
-
-        body = (
-            self.spec.get("spec")
-            if isinstance(self.spec.get("spec"), dict)
-            else self.spec
-        )
-        workdir = str((body or {}).get("workdir") or "").strip()
-        if not workdir:
-            return (
-                None,
-                None,
-                "the spec declares no workdir, so no project directory can be encoded",
-            )
-
-        src_resolved = resolved_path(self.source, workdir, exec_fn=self.exec_fn)
-        tgt_resolved = resolved_path(self.target, workdir, exec_fn=self.exec_fn)
-        if not src_resolved:
-            return (
-                None,
-                None,
-                f"the SOURCE's resolved workdir for {workdir} was not observed",
-            )
-
-        src = derive_target_dir(
-            target_home=home.path, target_resolved_workdir=src_resolved
-        )
-        tgt = derive_target_dir(
-            target_home=home.path,
-            target_resolved_workdir=tgt_resolved,
-            source_dir_name=src.encoded,
-        )
-        if tgt.path is None:
-            return None, None, f"{tgt.reason} — {tgt.hint}"
-        if tgt.matches_source is False:
-            self.log.append(f"transport: {tgt.reason}")
-        return src.path, tgt.path, tgt.reason
-
-    def transport(self) -> StepResult:
-        """Copy the transcript across and CONFIRM it on the target, per file.
-
-        List the source, let :func:`plan_transport` decide what may travel, move
-        aside anything already at the destination, measure the source, copy, then
-        measure THE TARGET and compare. The measurement after the copy is the
-        only statement this step makes about success.
-        """
-        source_dir, target_dir, why = self._resolve_dirs()
-        if source_dir is None or target_dir is None:
-            return StepResult(
-                ok=None,
-                detail=f"the transcript directories could not be derived: {why}",
-                hint=(
-                    "measure the target's resolved workdir and check the spec's bind for "
-                    "the container home. A transcript under the wrong directory name is "
-                    "present, intact and invisible to the runner"
-                ),
-            )
-        self.source_dir, self.target_dir = source_dir, target_dir
-
-        listing = list_transcript_dir(self.source, source_dir, exec_fn=self.exec_fn)
-        running, _ = observe_running(self.source, self.agent, exec_fn=self.exec_fn)
-        target_listing = list_transcript_dir(
-            self.target, target_dir, exec_fn=self.exec_fn
-        )
-
-        plan = plan_transport(
-            source_running=running,
-            source_files=None if listing is None else list(listing),
-            target_dir_exists=None if target_listing is None else bool(target_listing),
-            target_dir=target_dir,
-            stamp=self.stamp,
-        )
-        for name, reason in plan.refused:
-            self.log.append(f"transport: REFUSED {name} — {reason}")
-        if plan.proceed is not True:
-            return StepResult(
-                ok=False if plan.proceed is False else None,
-                detail=f"transport refused ({plan.code}): {plan.reason}",
-                hint=plan.hint,
-            )
-        self.carried = plan.files
-
-        if plan.move_aside is not None and plan.move_aside.required:
-            moved = move_dir_aside(
-                self.target,
-                target_dir,
-                plan.move_aside.destination or "",
-                exec_fn=self.exec_fn,
-            )
-            if moved is not True:
-                return StepResult(
-                    ok=None if moved is None else False,
-                    detail=(
-                        f"{self.to_host} already holds {target_dir} and it could not be "
-                        f"moved aside to {plan.move_aside.destination}"
-                    ),
-                    hint=(
-                        "move it aside by hand and re-run. Nothing is overwritten and "
-                        "nothing is deleted — what is there may be the only copy of an "
-                        "earlier conversation"
-                    ),
-                )
-            self.log.append(
-                f"transport: moved {self.to_host}:{target_dir} aside to {plan.move_aside.destination}"
-            )
-
-        made = ensure_dir(self.target, target_dir, exec_fn=self.exec_fn)
-        if made is not True:
-            return StepResult(
-                ok=None if made is None else False,
-                detail=f"the destination {target_dir} on {self.to_host} could not be created",
-                hint="check write permission on the target's transcript root, then re-run",
-            )
-
-        self.sent = measure_transcripts(
-            self.source, source_dir, plan.files, exec_fn=self.exec_fn
-        )
-        run = copy_transcripts(
-            source=self.source,
-            source_dir=source_dir,
-            target=self.target,
-            target_dir=target_dir,
-            files=plan.files,
-            exec_fn=self.exec_fn,
-            peers=self.peers,
-        )
-        self.log.append(
-            f"transport: copy pipeline exit {run.exit_code} — EVIDENCE ONLY; arrival is "
-            "decided by counting on the target"
-        )
-        if run.stderr.strip():
-            self.log.append(f"transport: copy stderr {run.stderr.strip()[:300]}")
-        self.landed = measure_transcripts(
-            self.target, target_dir, plan.files, exec_fn=self.exec_fn
-        )
-        verdict = verify_arrival(sent=self.sent, landed=self.landed)
-        self.arrival_confirmed = verdict.arrived
-        for line in verdict.mismatches:
-            self.log.append(f"transport: MISMATCH {line}")
-        for f in self.landed:
-            self.log.append(
-                f"transport: target holds {f.name} {f.byte_count} bytes / {f.line_count} lines"
-            )
-        if verdict.arrived is not True:
-            return StepResult(
-                ok=False if verdict.arrived is False else None,
-                detail=f"arrival not confirmed ({verdict.code}): {verdict.reason}",
-                hint=verdict.hint,
-            )
-        if len(plan.files) == 1:
-            self.session_uuid = plan.files[0].rsplit(".", 1)[0]
-        return StepResult(
-            ok=True,
-            detail=(
-                f"{verdict.reason}; {self.from_host}:{source_dir} -> {self.to_host}:{target_dir}"
-            ),
-        )
-
-    # -- target ------------------------------------------------------------
+    # -- the phases ---------------------------------------------------------
     #
-    # TARGET_STANDBY, HANDSHAKE and HANDOVER live in their own modules
-    # (_relocate_effects_standby / _handshake / _handover) and arrive here as
-    # mixins, exactly as the source-side pair does. Each is one phase's worth of
+    # TRANSPORT, TARGET_STANDBY, HANDSHAKE and HANDOVER live in their own modules
+    # (_relocate_effects_transport / _standby / _handshake / _handover) and arrive
+    # here as mixins, exactly as the source-side pair does. Each is one phase's worth of
     # decisions and each was a named refusal until it was built; keeping them
     # apart means a reader looking for "what does the handover do" finds a file
     # about the handover rather than a method in the middle of the transport.

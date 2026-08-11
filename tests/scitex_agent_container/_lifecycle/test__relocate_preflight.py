@@ -28,6 +28,7 @@ from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_RUNTIME,
     CHECK_SAC_PRESENT,
     CHECK_SCHEMA,
+    CHECK_SESSION,
     CHECK_SOURCE_WORK,
     Check,
     SourceFacts,
@@ -63,11 +64,21 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
     return TargetFacts(**base)  # type: ignore[arg-type]
 
 
-def _clean_source() -> SourceFacts:
-    """A source that was scanned and holds nothing un-saved."""
-    return SourceFacts(
-        repos=(RepoWork(path="/repo", branch="develop", uncommitted=0, unpushed=0),)
+def _clean_source(**overrides: object) -> SourceFacts:
+    """A source that was scanned, holds nothing un-saved, and names its session.
+
+    The transcripts and the marker are part of "fully observed" because the
+    session check reads them. Several transcripts is the ORDINARY shape — every
+    one of the ten agents measured on 2026-08-12 held between two and five — so
+    the healthy fixture holds three rather than the one the old guard required.
+    """
+    base = dict(
+        repos=(RepoWork(path="/repo", branch="develop", uncommitted=0, unpushed=0),),
+        transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000), ("ccc3.jsonl", 2000)),
+        session_marker="aaa1",
     )
+    base.update(overrides)
+    return SourceFacts(**base)  # type: ignore[arg-type]
 
 
 def _run(source_facts: SourceFacts | None = None, **overrides: object):
@@ -126,6 +137,74 @@ def test_an_entirely_unobserved_target_is_unknown_not_ok() -> None:
     verdict = report.ok
     # Assert
     assert verdict is None
+
+
+# ---------------------------------------------------------------------------
+# session_resolvable — asked HERE because the phase that needs it runs late
+# ---------------------------------------------------------------------------
+
+
+def test_several_transcripts_with_a_marker_pass_the_session_check() -> None:
+    # Arrange: THE shape every remaining agent has. Three transcripts is normal,
+    # and the old `len(files) == 1` guard made it fatal.
+    report = _run()
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is True
+
+
+def test_an_agent_whose_session_cannot_be_resolved_fails_preflight() -> None:
+    # Arrange: THE gap. Ten agents returned "GO — every check passed" on
+    # 2026-08-12 and then aborted at TARGET_STANDBY with the agent stopped, the
+    # transcript copied and no marker written. The refusal has to happen while
+    # the agent is still up.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    verdict = report.ok
+    # Assert
+    assert verdict is False
+
+
+def test_that_failure_is_reported_under_the_session_check() -> None:
+    # Arrange: a blocked relocation is only actionable if the report names WHICH
+    # question blocked it.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is False
+
+
+def test_that_failure_names_the_transcripts_it_saw() -> None:
+    # Arrange: the operator resolves this by seeding the marker, which needs the
+    # candidate list in front of them.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert "bbb2.jsonl" in check.detail
+
+
+def test_a_source_whose_transcripts_were_never_listed_is_unknown() -> None:
+    # Arrange: nobody looked. That must not read as "there is one and it is
+    # fine", which is how this class of bug reaches the phase that stops things.
+    report = _run(source_facts=_clean_source(transcripts=None))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is None
+
+
+def test_an_agent_with_no_transcript_at_all_fails_the_session_check() -> None:
+    # Arrange: an observed empty directory. The agent would boot on the target
+    # with no memory — the 2026-08-07 outcome, and it must be said out loud
+    # rather than discovered afterwards.
+    report = _run(source_facts=_clean_source(transcripts=(), session_marker=""))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is False
 
 
 def test_every_check_is_unknown_when_nothing_was_observed() -> None:

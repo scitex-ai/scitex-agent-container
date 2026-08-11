@@ -103,6 +103,18 @@ class SourceFacts:
     #: Every repo the agent works in, with its un-saved counts. ``None`` means
     #: no scan ran; an empty tuple means a scan ran and found no repos.
     repos: tuple[RepoWork, ...] | None = None
+    #: Every ``*.jsonl`` in the source's project directory as ``(name, mtime)``,
+    #: mtime in epoch seconds (``None`` for one that could not be read). The
+    #: TUPLE being ``None`` means nobody looked; an empty tuple means somebody
+    #: looked and the directory holds no transcript, which is a real answer and a
+    #: different one.
+    transcripts: tuple[tuple[str, int | None], ...] | None = None
+    #: The source's own ``runtime/<agent>/session_id`` — what its runtime last
+    #: resumed. ``""`` means LOOKED AND FOUND NOTHING; ``None`` means nobody
+    #: looked. The distinction decides a real case: with several transcripts and
+    #: no marker the newest travels, but an UNREAD marker may name a different
+    #: one, so it must not be treated as absent.
+    session_marker: str | None = None
 
 
 @dataclass(frozen=True)

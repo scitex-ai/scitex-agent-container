@@ -48,6 +48,7 @@ __all__ = [
     "target_home",
     "target_hostname",
     "write_session_marker",
+    "write_text_file",
 ]
 
 MARK_HOME = "TX-HOME="
@@ -215,6 +216,44 @@ def write_session_marker(
     if value is None:
         return None
     return value.strip() or None
+
+
+def write_text_file(
+    shell: Shell,
+    path: str,
+    text: str,
+    *,
+    exec_fn: Callable[..., dict] | None = None,
+) -> int | None:
+    """Write ``text`` to ``path`` on ``shell``; return the byte count IT reports.
+
+    base64 across the wire for the reason the module docstring gives at length:
+    ssh hands ONE string to a remote login shell that re-parses it, and this
+    payload is multi-line prose full of backticks, quotes and colons. base64 is a
+    single word of ``[A-Za-z0-9+/=]`` — there is nothing in it for a shell to
+    interpret, so the text that arrives is the text that left however the prose
+    is later edited.
+
+    The return is a READ-BACK, not the write's exit status: ``wc -c`` on the file
+    the target now holds. ``None`` when the script did not answer, which the
+    caller must treat as NOT MEASURED. A provenance record that cannot be
+    confirmed is one nobody will find when they need it.
+    """
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    body = (
+        f'mkdir -p "$(dirname {quote(path)})" 2>/dev/null\n'
+        f"printf '%s' {quote(encoded)} | base64 -d > {quote(path)} 2>/dev/null\n"
+        f"if [ -f {quote(path)} ]; then\n"
+        f"  printf '{MARK_SID}%s\\n' \"$(wc -c < {quote(path)} 2>/dev/null)\"\n"
+        f"else\n"
+        f"  printf '{MARK_SID}{SID_ABSENT}\\n'\n"
+        f"fi"
+    )
+    value = one_marked(shell.run(body, exec_fn=exec_fn), MARK_SID)
+    if value is None:
+        return None
+    text_value = value.strip()
+    return int(text_value) if text_value.isdigit() else None
 
 
 def start_standby(

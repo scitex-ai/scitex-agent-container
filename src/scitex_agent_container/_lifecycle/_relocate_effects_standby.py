@@ -43,7 +43,7 @@ from ._relocate_target_ssh import (
     write_session_marker,
 )
 from ._relocate_transport import CREDENTIAL_BASENAMES
-from ._relocate_transport_ssh import copy_transcripts, ensure_dir, move_dir_aside
+from ._relocate_transport_ssh import copy_tree, ensure_dir, move_dir_aside
 
 __all__ = ["StandbyEffects"]
 
@@ -208,12 +208,17 @@ class StandbyEffects:
         # The DIRECTORY is the single name handed to tar, so tar recurses and
         # nothing is re-expanded by a shell on either side — the same property
         # the transcript allowlist relies on, applied to one entry.
-        run = copy_transcripts(
+        #
+        # `copy_tree`, NOT `copy_transcripts`: a spec directory has no
+        # last-newline to be snapshotted at, and half of one is not a shorter
+        # version of it. The two copies are different questions and are now two
+        # functions — see the note in _relocate_transport_ssh.
+        run = copy_tree(
             source=self.source,
             source_dir=agents_dir,
             target=self.target,
             target_dir=target_parent,
-            files=(entry,),
+            names=(entry,),
             exec_fn=self.exec_fn,
             peers=self.peers,
         )

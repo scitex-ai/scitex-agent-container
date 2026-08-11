@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""A transport that reports success having moved a torn transcript is the whole bug.
+"""What may travel, and what to do about a destination that is already occupied.
 
-The sharpest test in this file is the TRUNCATION one, and it is built from REAL
-files rather than hand-written numbers: a transcript is written to disk, a short
-copy is made of it, and both are measured with the same counting code. That
-matters because the failure being guarded against is not arithmetic — it is a
-copy that lands, exits 0, and holds fewer lines than it left with. jsonl carries
-no trailer, so the short file parses and resumes and simply forgets the end of
-the conversation.
+The arrival half — whether what landed is what left — moved to
+:mod:`_relocate_transport_verify` and is tested beside it. This file is the
+PLANNING half: the allowlist, the credential refusal, and the move-aside.
 
 The credential test asserts the exclusion BY NAME. The allowlist already refuses
 anything that is not ``.jsonl``, so the assertion is technically redundant — and
@@ -15,7 +11,7 @@ that is the point: it pins the property the operator asked for, so a future
 change that widens the filter has to fail a test that says "credentials" rather
 than quietly starting to carry one.
 
-Real values, real files. Nothing is mocked.
+Real values. Nothing is mocked.
 """
 
 from __future__ import annotations
@@ -26,39 +22,19 @@ from scitex_agent_container._lifecycle._relocate_move_aside import (
     move_aside_destination,
 )
 from scitex_agent_container._lifecycle._relocate_transport import (
-    CODE_ARRIVED,
-    CODE_MISSING_ON_TARGET,
     CODE_NOTHING_TO_CARRY,
     CODE_READY,
     CODE_SOURCE_RUNNING,
-    CODE_TRUNCATED,
     CODE_UNKNOWN,
     CREDENTIAL_BASENAMES,
     ArrivalVerdict,
-    TranscriptFile,
     is_transferable,
     plan_transport,
     select_transferable,
-    verify_arrival,
 )
 
 STAMP = "20260811-204500"
 TARGET_DIR = "/home/agent/.claude/projects/-home-ywatanabe-proj-lead"
-LINES = [
-    '{"type":"user","text":"the conversation that moved it"}',
-    '{"type":"assistant","text":"understood"}',
-    '{"type":"user","text":"continue on the new host"}',
-]
-
-
-def _measure(path) -> TranscriptFile:
-    """Count bytes and lines the way both sides of a real transfer would."""
-    data = path.read_bytes()
-    return TranscriptFile(
-        name=path.name,
-        byte_count=len(data),
-        line_count=len(data.splitlines()),
-    )
 
 
 def _ready_plan(**over):
@@ -227,7 +203,7 @@ def test_every_named_credential_basename_is_refused() -> None:
 def test_a_credential_beside_a_transcript_is_dropped_from_the_selection() -> None:
     # Arrange: the realistic shape — a directory listing containing both.
     # Act
-    carried, _ = select_transferable([".credentials.json", "abc.jsonl"])
+    carried, _, _ = select_transferable([".credentials.json", "abc.jsonl"])
     # Assert
     assert carried == ("abc.jsonl",)
 
@@ -236,7 +212,7 @@ def test_a_refused_credential_is_reported_rather_than_silently_dropped() -> None
     # Arrange: a filter whose output is only the survivors cannot be told from
     # one that never ran.
     # Act
-    _, refused = select_transferable([".credentials.json", "abc.jsonl"])
+    _, _, refused = select_transferable([".credentials.json", "abc.jsonl"])
     # Assert
     assert refused[0][0] == ".credentials.json"
 
@@ -245,7 +221,7 @@ def test_the_credential_refusal_explains_that_the_target_re_issues_its_own() -> 
     # Arrange: the reason matters — someone will eventually ask why their agent
     # lost its login, and the answer must already be in the output.
     # Act
-    _, refused = select_transferable([".credentials.json"])
+    _, _, refused = select_transferable([".credentials.json"])
     # Assert
     assert "re-issues its own" in refused[0][1]
 
@@ -253,9 +229,82 @@ def test_the_credential_refusal_explains_that_the_target_re_issues_its_own() -> 
 def test_a_non_transcript_file_does_not_travel() -> None:
     # Arrange: the allowlist, stated positively.
     # Act
-    carried, _ = select_transferable(["notes.md", "config.json", "x.jsonl"])
+    carried, _, _ = select_transferable(["notes.md", "config.json", "x.jsonl"])
     # Assert
     assert carried == ("x.jsonl",)
+
+
+# --------------------------------------------------------------------------
+# memory/ travels — measured 2026-08-11, when it did not
+# --------------------------------------------------------------------------
+
+
+def test_the_memory_directory_travels() -> None:
+    # Arrange: THE 2026-08-11 defect. A completed relocation logged
+    # "REFUSED memory" and landed an agent whose target memory/ was EMPTY while
+    # nine files and 20,014 bytes stayed on the source.
+    # Act
+    _, directories, _ = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert directories == ("memory",)
+
+
+def test_the_memory_directory_is_no_longer_reported_as_refused() -> None:
+    # Arrange: it used to appear in the refusal list with "only conversation
+    # transcripts travel". A carried entry that still reads as refused would put
+    # a false line in the provenance record on the target.
+    # Act
+    _, _, refused = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert refused == ()
+
+
+def test_memory_is_kept_apart_from_the_transcripts() -> None:
+    # Arrange: they are carried by different means — a transcript up to a
+    # recorded byte offset, a directory whole — so a caller that received one
+    # merged list would have to re-derive which is which, and the first to get
+    # it wrong would snapshot a directory or carry a live log unbounded.
+    # Act
+    transcripts, directories, _ = select_transferable(["a.jsonl", "memory"])
+    # Assert
+    assert transcripts == ("a.jsonl",) and directories == ("memory",)
+
+
+def test_a_plan_carries_the_memory_directory_alongside_the_transcripts() -> None:
+    # Arrange: the selection is only useful if the PLAN passes it on — the
+    # earlier bug was one layer losing it, not the filter being wrong.
+    # Act
+    plan = _ready_plan(source_files=["a.jsonl", "memory"])
+    # Assert
+    assert plan.directories == ("memory",)
+
+
+def test_the_ready_plan_says_out_loud_that_memory_is_travelling() -> None:
+    # Arrange: the operator reads this line in the dry run. "1 transcript(s)"
+    # alone is what a relocation that silently drops memory also prints.
+    # Act
+    plan = _ready_plan(source_files=["a.jsonl", "memory"])
+    # Assert
+    assert "memory/" in plan.reason
+
+
+def test_a_directory_that_is_not_memory_still_does_not_travel() -> None:
+    # Arrange: an allowlist of one directory, not "directories travel". The
+    # session's own subdirectory is the realistic neighbour.
+    # Act
+    _, directories, refused = select_transferable(["b68520e1-78fb", "memory"])
+    # Assert
+    assert directories == ("memory",) and refused[0][0] == "b68520e1-78fb"
+
+
+def test_the_refusal_says_the_source_still_holds_it() -> None:
+    # Arrange: the operator's ruling — provenance is the point. Something left
+    # behind is only a problem if nobody can find it, and nothing on the source
+    # is ever deleted.
+    # Act
+    _, _, refused = select_transferable(["notes.md"])
+    # Assert
+    assert "never deleted" in refused[0][1]
 
 
 def test_a_bare_suffix_is_not_a_transcript() -> None:
@@ -272,6 +321,16 @@ def test_a_directory_holding_no_transcript_is_a_decided_no() -> None:
     # nothing. The agent will start with no memory, which must be said out loud.
     # Act
     plan = _ready_plan(source_files=[".credentials.json", "notes.md"])
+    # Assert
+    assert plan.code == CODE_NOTHING_TO_CARRY
+
+
+def test_memory_alone_is_still_nothing_to_carry() -> None:
+    # Arrange: memory without a conversation is not a relocation. The agent
+    # would arrive with its rules and no memory of applying them, and that is
+    # the case the operator has to see before it happens, not after.
+    # Act
+    plan = _ready_plan(source_files=["memory"])
     # Assert
     assert plan.code == CODE_NOTHING_TO_CARRY
 
@@ -311,160 +370,12 @@ def test_a_missing_target_dir_refuses_rather_than_falling_back_to_the_source_pat
 
 
 # --------------------------------------------------------------------------
-# Arrival is confirmed by content — the truncation case, from real files
+# Arrival
 # --------------------------------------------------------------------------
-
-
-def test_an_identical_copy_is_confirmed(tmp_path) -> None:
-    # Arrange: the positive control for the verification half, built from real
-    # files so the counting code is exercised rather than assumed.
-    src = tmp_path / "sess.jsonl"
-    src.write_text("\n".join(LINES) + "\n", encoding="utf-8")
-    dst = tmp_path / "landed" / "sess.jsonl"
-    dst.parent.mkdir()
-    dst.write_bytes(src.read_bytes())
-    # Act
-    verdict = verify_arrival(sent=[_measure(src)], landed=[_measure(dst)])
-    # Assert
-    assert verdict.arrived is True
-
-
-def test_a_confirmed_arrival_carries_the_success_code(tmp_path) -> None:
-    # Arrange: same fixture, asserting the code callers branch on.
-    src = tmp_path / "sess.jsonl"
-    src.write_text("\n".join(LINES) + "\n", encoding="utf-8")
-    dst = tmp_path / "sess-copy.jsonl"
-    dst.write_bytes(src.read_bytes())
-    landed = TranscriptFile(
-        name="sess.jsonl",
-        byte_count=len(dst.read_bytes()),
-        line_count=len(dst.read_bytes().splitlines()),
-    )
-    # Act
-    verdict = verify_arrival(sent=[_measure(src)], landed=[landed])
-    # Assert
-    assert verdict.code == CODE_ARRIVED
-
-
-def test_a_truncated_copy_is_caught(tmp_path) -> None:
-    # Arrange: THE case. A real transcript, and a real short copy of it — the
-    # shape a partial transfer leaves behind. It parses; nothing else notices.
-    src = tmp_path / "sess.jsonl"
-    src.write_text("\n".join(LINES) + "\n", encoding="utf-8")
-    short = tmp_path / "landed" / "sess.jsonl"
-    short.parent.mkdir()
-    short.write_text(LINES[0] + "\n", encoding="utf-8")
-    # Act
-    verdict = verify_arrival(sent=[_measure(src)], landed=[_measure(short)])
-    # Assert
-    assert verdict.arrived is False
-
-
-def test_a_truncated_copy_names_the_truncation(tmp_path) -> None:
-    # Arrange: distinguishing "arrived short" from "never arrived" is what tells
-    # the operator whether to retry the copy or go and find out why it never ran.
-    src = tmp_path / "sess.jsonl"
-    src.write_text("\n".join(LINES) + "\n", encoding="utf-8")
-    short = tmp_path / "landed" / "sess.jsonl"
-    short.parent.mkdir()
-    short.write_text(LINES[0] + "\n", encoding="utf-8")
-    # Act
-    verdict = verify_arrival(sent=[_measure(src)], landed=[_measure(short)])
-    # Assert
-    assert verdict.code == CODE_TRUNCATED
-
-
-def test_the_truncation_report_names_the_file_and_both_counts(tmp_path) -> None:
-    # Arrange: "the transfer failed" without the numbers means going and diffing
-    # two hosts by hand.
-    src = tmp_path / "sess.jsonl"
-    src.write_text("\n".join(LINES) + "\n", encoding="utf-8")
-    short = tmp_path / "landed" / "sess.jsonl"
-    short.parent.mkdir()
-    short.write_text(LINES[0] + "\n", encoding="utf-8")
-    # Act
-    verdict = verify_arrival(sent=[_measure(src)], landed=[_measure(short)])
-    # Assert
-    assert "sess.jsonl" in verdict.mismatches[0] and "3 lines" in verdict.mismatches[0]
-
-
-def test_a_same_size_copy_with_a_different_line_count_is_caught() -> None:
-    # Arrange: why BOTH counts are compared. A transport that rewrote line
-    # endings can leave the byte count plausible while losing record boundaries.
-    sent = [TranscriptFile("s.jsonl", byte_count=120, line_count=3)]
-    landed = [TranscriptFile("s.jsonl", byte_count=120, line_count=1)]
-    # Act
-    verdict = verify_arrival(sent=sent, landed=landed)
-    # Assert
-    assert verdict.arrived is False
-
-
-def test_a_file_absent_on_the_target_is_its_own_outcome() -> None:
-    # Arrange: the copy did not happen at all, which is a different next move
-    # from a copy that happened badly.
-    sent = [TranscriptFile("s.jsonl", byte_count=10, line_count=1)]
-    # Act
-    verdict = verify_arrival(sent=sent, landed=[])
-    # Assert
-    assert verdict.code == CODE_MISSING_ON_TARGET
-
-
-def test_an_unmeasured_target_file_is_unknown_not_a_pass() -> None:
-    # Arrange: "I could not count it" and "it counted the same" are the two
-    # answers this function exists to keep apart.
-    sent = [TranscriptFile("s.jsonl", byte_count=10, line_count=1)]
-    landed = [TranscriptFile("s.jsonl", byte_count=None, line_count=None)]
-    # Act
-    verdict = verify_arrival(sent=sent, landed=landed)
-    # Assert
-    assert verdict.arrived is None
-
-
-def test_an_unmeasured_source_file_is_unknown_not_a_pass() -> None:
-    # Arrange: the same rule on the other side — without a baseline there is
-    # nothing to compare the target against.
-    sent = [TranscriptFile("s.jsonl")]
-    landed = [TranscriptFile("s.jsonl", byte_count=10, line_count=1)]
-    # Act
-    verdict = verify_arrival(sent=sent, landed=landed)
-    # Assert
-    assert verdict.code == CODE_UNKNOWN
-
-
-def test_an_empty_sent_set_cannot_confirm_anything() -> None:
-    # Arrange: comparing nothing to nothing must not read as a successful
-    # transfer — that is a green light produced by the absence of evidence.
-    # Act
-    verdict = verify_arrival(sent=[], landed=[])
-    # Assert
-    assert verdict.arrived is None
-
-
-def test_an_extra_file_on_the_target_is_not_a_failure() -> None:
-    # Arrange: the destination is the agent's own projects directory and may
-    # legitimately hold other conversations. Refusing here would refuse a
-    # healthy relocation onto a host the agent lived on before.
-    sent = [TranscriptFile("s.jsonl", byte_count=10, line_count=1)]
-    landed = [
-        TranscriptFile("s.jsonl", byte_count=10, line_count=1),
-        TranscriptFile("older.jsonl", byte_count=999, line_count=42),
-    ]
-    # Act
-    verdict = verify_arrival(sent=sent, landed=landed)
-    # Assert
-    assert verdict.arrived is True
-
-
-def test_an_arrival_with_mismatches_is_unrepresentable() -> None:
-    # Arrange: a success may not disagree with its own evidence — the invariant
-    # lives in the type rather than in the discipline of every call site.
-    # Act
-    build = lambda: ArrivalVerdict(  # noqa: E731
-        arrived=True, code=CODE_ARRIVED, reason="x", mismatches=("s.jsonl: short",)
-    )
-    # Assert
-    with pytest.raises(ValueError):
-        build()
+#
+# The arrival half moved to `test__relocate_transport_verify.py` with the module
+# it tests. What stays here is the ONE property that spans both halves: neither
+# outcome type may define __bool__.
 
 
 def test_neither_outcome_defines_a_bool() -> None:

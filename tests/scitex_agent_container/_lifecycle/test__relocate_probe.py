@@ -233,7 +233,9 @@ def test_a_fully_healthy_probe_set_passes_preflight() -> None:
         facts=gathered.facts,
         runtime="apptainer",
         source_facts=SourceFacts(
-            repos=(RepoWork(path="/proj/x", uncommitted=0, unpushed=0),)
+            repos=(RepoWork(path="/proj/x", uncommitted=0, unpushed=0),),
+            transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000)),
+            session_marker="bbb2",
         ),
         from_host="ywata-note-win",
     )

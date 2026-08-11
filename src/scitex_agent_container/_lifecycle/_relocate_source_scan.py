@@ -42,6 +42,7 @@ __all__ = [
     "CommandResult",
     "run_git",
     "scan_repo",
+    "scan_session",
     "scan_source",
 ]
 
@@ -140,3 +141,57 @@ def scan_source(
     function does not try to discover repos on its own.
     """
     return SourceFacts(repos=tuple(scan_repo(p, runner=runner) for p in repo_paths))
+
+
+def scan_session(
+    facts: SourceFacts,
+    *,
+    transcript_dir: str,
+    state_dir: str,
+) -> SourceFacts:
+    """Add the source's transcripts and its runtime session marker to ``facts``.
+
+    Read from the local filesystem for the same reason the repo scan is: the
+    source is where the coordinator runs, and going out to the network to measure
+    the machine the command is on adds ways to fail and no information.
+
+    A DIRECTORY THAT IS NOT THERE IS ``None``, NOT ``()``. The coordinator is
+    usually standing on the source, but it is not guaranteed to be, and a path
+    that does not exist HERE is not evidence that it does not exist THERE.
+    Reporting an empty scan would turn "I am on the wrong machine" into "this
+    agent has no conversation", which is a confident wrong answer about the one
+    thing the relocation exists to carry. A directory that IS there and holds no
+    transcript is ``()`` — that one is a real observation.
+
+    A missing marker file yields ``""`` (looked, absent) and NOT ``None`` (nobody
+    looked): with several transcripts those two lead to different answers, since
+    an unread marker may name a file other than the newest.
+    """
+    from pathlib import Path
+
+    transcripts: tuple[tuple[str, int | None], ...] | None = None
+    directory = Path(transcript_dir) if transcript_dir else None
+    if directory is not None and directory.is_dir():
+        found: list[tuple[str, int | None]] = []
+        for path in sorted(directory.glob("*.jsonl")):
+            try:
+                mtime: int | None = int(path.stat().st_mtime)
+            except OSError:  # stx-allow: fallback (reason: an unreadable mtime must stay UNMEASURED so the choice refuses, never default to 0 and win the "newest" comparison)
+                mtime = None
+            found.append((path.name, mtime))
+        transcripts = tuple(found)
+
+    marker: str | None = None
+    if state_dir:
+        marker_path = Path(state_dir) / "session_id"
+        if marker_path.is_file():
+            try:
+                marker = marker_path.read_text(encoding="utf-8").strip()
+            except OSError:  # stx-allow: fallback (reason: a marker that exists and cannot be read is NOT MEASURED; reading it as absent would silently promote the newest-file rule)
+                marker = None
+        else:
+            marker = ""
+
+    return SourceFacts(
+        repos=facts.repos, transcripts=transcripts, session_marker=marker
+    )
