@@ -211,9 +211,16 @@ export PATH="$TMPDIR/bin:$PATH"
 # is importable — an installed-but-not-registered plugin is precisely the case
 # that bit us, and `import pytest_asyncio` would have said everything was fine.
 # An empty directory keeps it to a fraction of a second and collects nothing.
+#
+# NOT `-q`. THE FIRST VERSION OF THIS CHECK SHIPPED WITH `-q` AND FAILED EVERY
+# JOB IT WAS ADDED TO: `-q` SUPPRESSES THE `plugins:` HEADER, so the grep found
+# nothing, concluded the plugin set was empty, and refused to run the suite —
+# all three matrix legs red in ~35s, on the very PR that introduced it. A guard
+# whose sensor is switched off reports "broken" about a healthy environment,
+# which is worse than no guard. Default verbosity prints the header; keep it.
 _PLUGCHECK="$TMPDIR/plugcheck"
 mkdir -p "$_PLUGCHECK"
-_PLUGINS="$(python -m pytest --collect-only -q -p no:cacheprovider "$_PLUGCHECK" 2>&1 |
+_PLUGINS="$(python -m pytest --collect-only -p no:cacheprovider "$_PLUGCHECK" 2>&1 |
     grep -m1 '^plugins:' || true)"
 echo "preflight ${_PLUGINS:-plugins: <no header emitted>}"
 for _need in asyncio xdist cov timeout; do
