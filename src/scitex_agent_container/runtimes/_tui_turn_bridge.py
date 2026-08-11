@@ -48,9 +48,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
+import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import IO, Any, Callable
 
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
@@ -194,6 +197,64 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         )
 
 
+# ---------------------------------------------------------------------------
+# Lifecycle log
+# ---------------------------------------------------------------------------
+def write_bridge_event(
+    stream: IO[str],
+    event: str,
+    *,
+    agent: str,
+    host: str,
+    port: int,
+    pid: int,
+    now_fn: Callable[[], float] = time.time,
+) -> str:
+    """Write ONE lifecycle line to ``stream``, flush it, and return it.
+
+    WHY THIS EXISTS: ``tui-turn-bridge.log`` was 0 bytes for 16 of the 17
+    agents on the host. The launcher opens it (``open(..., "ab")`` in
+    ``_tui_turn_bridge_lifecycle``) and hands it to the child as BOTH stdout
+    and stderr — but the bridge never wrote a single line of its own, so the
+    file only ever captured an UNHANDLED traceback. When 14 bridges were found
+    dead on 2026-08-11, the cause of not one of those deaths could be
+    recovered: no bind line to prove it ever served, no shutdown line to say
+    whether it exited on a signal or vanished. A log that is empty on the happy
+    path cannot bracket a failure.
+
+    Two lines is the whole contract — one after the bind, one on the way out —
+    so an operator reading the file can always answer "did it serve, and did it
+    leave cleanly?". The flush is load-bearing: the child's stdio is a
+    block-buffered pipe onto a file, so an unflushed bind line would be lost
+    in exactly the crash it is meant to explain.
+    """
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now_fn()))
+    line = (
+        f"{stamp} tui-turn-bridge {event} "
+        f"agent={agent} host={host} port={port} pid={pid}\n"
+    )
+    stream.write(line)
+    stream.flush()
+    return line
+
+
+def _emit(
+    event: str, *, agent: str, host: str, port: int
+) -> None:  # pragma: no cover - thin best-effort wrapper over write_bridge_event, which is unit-tested directly
+    """Best-effort :func:`write_bridge_event` onto the launcher's log fd.
+
+    Swallows deliberately: the log is a DIAGNOSTIC, and a bridge that cannot
+    write its own log line must still serve turns — degrading wake-on-push to
+    restore a log file would trade the incident for a worse one.
+    """
+    try:
+        write_bridge_event(
+            sys.stderr, event, agent=agent, host=host, port=port, pid=os.getpid()
+        )
+    except Exception as exc:  # stx-allow: fallback (reason: the lifecycle log is diagnostic only — an unwritable log fd must never stop the bridge from serving /v1/turn, which is the whole point of the process)
+        log.warning("tui-turn-bridge: could not write %s log line: %s", event, exc)
+
+
 def build_server(
     *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
 ) -> _TurnBridgeServer:
@@ -225,10 +286,17 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
     signal.signal(signal.SIGTERM, _graceful)
     signal.signal(signal.SIGINT, _graceful)
     log.info("tui-turn-bridge: serving %s on %s:%d", agent_name, host, port)
+    # The bind SUCCEEDED — record it in the durable per-agent log. Emitted here
+    # rather than before ``build_server`` so the line is proof the socket is
+    # actually held, not merely that the process started.
+    _emit("bind", agent=agent_name, host=host, port=port)
     try:
         server.serve_forever()
     finally:
         server.server_close()
+        # Brackets the bind line: its ABSENCE next to a bind line is itself the
+        # diagnosis (the process was killed rather than signalled).
+        _emit("shutdown", agent=agent_name, host=host, port=port)
 
 
 # ---------------------------------------------------------------------------
