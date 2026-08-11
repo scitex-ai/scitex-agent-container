@@ -178,6 +178,20 @@ _NAMED_VERBS: frozenset[str] = frozenset(
     {"status", "start", "stop", "restart", "enable", "disable"}
 )
 
+#: How each verb reads at the start of its one-line help. Spelled out
+#: rather than ``verb.capitalize()`` because that produces "Status one of
+#: sac's timer jobs", which is not a sentence.
+_VERB_SUMMARY: dict[str, str] = {
+    "status": "Show the status of",
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart",
+    "enable": "Enable",
+    "disable": "Disable",
+    "install": "Install",
+    "uninstall": "Uninstall",
+}
+
 #: Verbs that act on EVERY job of the kind unless given an optional name,
 #: and mutate the host, so they require ``--yes``.
 _BULK_VERBS: frozenset[str] = frozenset({"install", "uninstall"})
@@ -372,7 +386,7 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
         raise SystemExit(rc)
 
     _bulk.help = (
-        f"{verb.capitalize()} sac's {group} jobs via scitex-dev.\n\n"
+        f"{_VERB_SUMMARY[verb]} sac's {group} jobs via scitex-dev.\n\n"
         "\b\nNAME is the short local name (e.g. `accounts-refresh`); the "
         "canonical form works too. Omit it to act on every job of this kind."
     )
@@ -396,7 +410,7 @@ def _add_named_command(grp, group: str, verb: str) -> None:
         raise SystemExit(_delegate(_kind_of(group), _verb, wanted, yes))
 
     _named.help = (
-        f"{verb.capitalize()} one of sac's {group} jobs via scitex-dev.\n\n"
+        f"{_VERB_SUMMARY[verb]} one of sac's {group} jobs via scitex-dev.\n\n"
         "\b\nNAME is the short local name (e.g. `accounts-refresh`); the "
         "canonical form works too."
     )

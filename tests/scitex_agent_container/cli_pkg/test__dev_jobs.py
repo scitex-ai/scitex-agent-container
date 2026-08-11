@@ -420,6 +420,17 @@ def test_declared_verbs_are_the_verbs_actually_wired() -> None:
     assert wired == expected
 
 
+def test_every_declared_verb_has_a_help_summary() -> None:
+    # Arrange — the summary map is consulted at IMPORT time while the
+    # groups are built, so a verb added without one does not fail its own
+    # command: it raises KeyError and takes the entire `sac` CLI down.
+    declared = {v for verbs in GROUP_VERBS.values() for v in verbs if v != "list"}
+    # Act
+    missing = declared - set(dj._VERB_SUMMARY)
+    # Assert
+    assert missing == set()
+
+
 def test_service_has_the_full_lifecycle() -> None:
     # Arrange — a service is a long-running unit.
     expected = {
