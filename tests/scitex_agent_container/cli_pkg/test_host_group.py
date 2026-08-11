@@ -17,8 +17,10 @@ carries a 3+-word behaviour name (TQ003).
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -182,7 +184,7 @@ def test_host_probe_unknown_peer_json_reports_unreachable(cfg_path: Path):
     # Act
     result = CliRunner().invoke(host_probe, ["ghost", "--json"])
     # Assert
-    assert json.loads(result.output)["reachable"] is False
+    assert json.loads(result.stdout)["reachable"] is False
 
 
 def test_host_probe_unknown_peer_json_exits_with_code_2(cfg_path: Path):
@@ -252,4 +254,82 @@ def test_host_probe_malformed_remote_stdout_yields_null_canonical(
     # Act
     result = CliRunner().invoke(host_probe, ["mba", "--json"])
     # Assert
-    assert json.loads(result.output)["remote_canonical"] is None
+    assert json.loads(result.stdout)["remote_canonical"] is None
+
+
+# ---------------------------------------------------------------------------
+# `--json` payloads belong to STDOUT — the stream a `| jq` consumer reads.
+# ---------------------------------------------------------------------------
+
+
+_RETIRED_ALIAS_WARNING = (
+    "'nas' is a RETIRED host alias — use 'scitex-nas-03'. "
+    "The seeder cannot repair this on its own."
+)
+
+
+@pytest.fixture
+def json_run_with_library_warning(cfg_path: Path):
+    """Run sac's real ``host list --json`` while a library logs a WARNING.
+
+    Reproduces the condition that took ``pytest-matrix`` red across 18 open
+    PRs. ``sac host list --json`` resolves the host registry through
+    ``scitex_dev.hosts``, whose seeder logs a WARNING when it meets a RETIRED
+    host alias — it names the successor and explains why it cannot repair
+    itself. The warning is correctly on STDERR, so a real
+    ``sac host list --json | jq`` was never broken; what broke was every
+    ASSERTION written against ``result.output``. From click 8.2 that
+    attribute stopped proxying stdout and became an independent stream
+    MIXING stdout and stderr in write order, and scitex-logging's console
+    handler re-resolves ``sys.stderr`` on every emit — so it follows click's
+    isolated streams and its ``WARN:`` line interleaves ahead of the payload.
+
+    Everything is real (PA-306, no mocks): a real ``logging`` logger, a real
+    click command, and sac's real ``host list`` callback reached through
+    ``ctx.invoke``. ``cfg_path`` names a file that is never written, so the
+    payload's ``peers`` list is legitimately empty.
+    """
+
+    @click.command("warn-then-list")
+    @click.pass_context
+    def warn_then_list(ctx: click.Context) -> None:
+        logging.getLogger("scitex_dev.hosts._retired").warning(_RETIRED_ALIAS_WARNING)
+        ctx.invoke(host_list, all_interfaces=False, as_json=True)
+
+    return CliRunner().invoke(warn_then_list, [])
+
+
+def test_json_payload_parses_from_stdout_despite_a_library_warning(
+    json_run_with_library_warning,
+):
+    """The ``--json`` payload parses from STDOUT ALONE — what ``| jq`` gets.
+
+    ``result.stdout``, never ``result.output``: an assertion on the merged
+    stream passes while the bug is present, which is worse than no test. It
+    also fails loudly under click < 8.2, where ``mix_stderr=True`` made
+    ``result.stdout`` the merged stream too — that is what the ``click>=8.2``
+    floor in pyproject.toml exists to guarantee.
+    """
+    # Arrange
+    result = json_run_with_library_warning
+    # Act
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["peers"] == []
+
+
+def test_library_warning_reaches_the_merged_cli_runner_output(
+    json_run_with_library_warning,
+):
+    """The warning IS emitted — so the sibling stdout test cannot pass vacuously.
+
+    Its presence in ``result.output`` is also the direct evidence for why
+    that attribute is unusable as a JSON source: click 8.2 interleaves the
+    stderr ``WARN:`` line into it, ahead of the payload.
+    """
+    # Arrange
+    result = json_run_with_library_warning
+    # Act
+    merged = result.output
+    # Assert
+    assert _RETIRED_ALIAS_WARNING in merged
