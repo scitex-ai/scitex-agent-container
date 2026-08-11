@@ -102,6 +102,26 @@ def reset_capability_cache() -> None:
     _VERBS_CACHE = _UNPROBED
 
 
+def _leaf_verbs(command) -> frozenset[str]:
+    """The subcommand names of one ecosystem group.
+
+    ``Group.list_commands(ctx)`` rather than ``Group.commands``: a LAZY
+    group populates the former and leaves the latter empty, and reading
+    the empty dict is how a fully-featured group is mistaken for one with
+    no verbs. Measured — the same probe reported four cron verbs locally
+    and zero in CI, against the same code, purely because the installed
+    scitex-dev builds its tree lazily there.
+    """
+    lister = getattr(command, "list_commands", None)
+    if lister is not None:
+        try:
+            with click.Context(command) as ctx:
+                return frozenset(lister(ctx))
+        except Exception:  # stx-allow: fallback (reason: another package's Group subclass may need a context we cannot build — fall back to the eager dict)
+            pass
+    return frozenset(getattr(command, "commands", {}) or {})
+
+
 def ecosystem_verbs() -> dict[str, frozenset[str]] | None:
     """Return ``{ecosystem subcommand: {verbs}}`` for the INSTALLED scitex-dev.
 
@@ -123,10 +143,7 @@ def ecosystem_verbs() -> dict[str, frozenset[str]] | None:
             """Throwaway root; we only want the tree it gets wired onto."""
 
         group = register_ecosystem_commands(_probe_root)
-        probed = {
-            name: frozenset(getattr(cmd, "commands", {}) or {})
-            for name, cmd in group.commands.items()
-        }
+        probed = {name: _leaf_verbs(cmd) for name, cmd in group.commands.items()}
     except Exception:  # stx-allow: fallback (reason: introspecting another package's private CLI tree must degrade to "cannot tell", never to a refusal)
         probed = None
 
@@ -143,20 +160,34 @@ def resolve(kind: str, verb: str) -> Delegation:
        growing. Chosen the moment they exist, with no sac release.
     2. ``ecosystem <legacy> <verb>`` — today's shipped surface.
     3. unsupported, with the evidence naming both probes.
+
+    THE THIRD STATE IS LOAD-BEARING. If NEITHER candidate group reports a
+    single verb, that is a probe that could not read the tree, not a
+    scitex-dev with no verbs — the shipped surface has had
+    ``list``/``install``/``uninstall`` since 0.16.0, so zero everywhere is
+    not a credible reading. Treating it as absence would refuse commands
+    that work, so it degrades to the same "attempt what has shipped" path
+    as a tree that failed to build at all.
     """
     verbs = ecosystem_verbs()
     legacy = LEGACY_GROUP_FOR_KIND.get(kind)
+    kind_verbs = (verbs or {}).get(kind) or frozenset()
+    legacy_verbs = ((verbs or {}).get(legacy) or frozenset()) if legacy else frozenset()
+    unreadable = verbs is None or not (kind_verbs or legacy_verbs)
 
-    if verbs is None:
+    if unreadable:
         if verb in SHIPPED_VERBS and legacy is not None:
             return Delegation(
                 group=legacy,
                 verb=verb,
                 supported=True,
                 evidence=(
-                    "could not introspect the installed scitex-dev's ecosystem "
-                    f"tree; {verb!r} has shipped on `ecosystem {legacy}` since "
-                    "0.16.0, so it is attempted rather than refused"
+                    "could not read the installed scitex-dev's ecosystem tree "
+                    f"for kind={kind!r} (neither `ecosystem {kind}` nor "
+                    f"`ecosystem {legacy}` reported a single verb); {verb!r} "
+                    "has shipped on `ecosystem "
+                    f"{legacy}` since 0.16.0, so it is attempted rather than "
+                    "refused"
                 ),
             )
         return Delegation(
@@ -164,13 +195,14 @@ def resolve(kind: str, verb: str) -> Delegation:
             verb=verb,
             supported=False,
             evidence=(
-                "could not introspect the installed scitex-dev's ecosystem "
-                f"tree, and {verb!r} is not one of the verbs known to have "
-                f"shipped ({', '.join(sorted(SHIPPED_VERBS))})"
+                f"could not read `ecosystem {kind} {verb}` nor `ecosystem "
+                f"{legacy} {verb}` from the installed scitex-dev's tree, and "
+                f"{verb!r} is not one of the verbs known to have shipped "
+                f"({', '.join(sorted(SHIPPED_VERBS))})"
             ),
         )
 
-    if verb in verbs.get(kind, frozenset()):
+    if verb in kind_verbs:
         return Delegation(
             group=kind,
             verb=verb,
@@ -178,7 +210,7 @@ def resolve(kind: str, verb: str) -> Delegation:
             evidence=f"`scitex-dev ecosystem {kind} {verb}` exists",
         )
 
-    if legacy is not None and verb in verbs.get(legacy, frozenset()):
+    if legacy is not None and verb in legacy_verbs:
         return Delegation(
             group=legacy,
             verb=verb,
@@ -190,8 +222,8 @@ def resolve(kind: str, verb: str) -> Delegation:
             ),
         )
 
-    have_kind = sorted(verbs.get(kind, frozenset()))
-    have_legacy = sorted(verbs.get(legacy, frozenset())) if legacy else []
+    have_kind = sorted(kind_verbs)
+    have_legacy = sorted(legacy_verbs)
     return Delegation(
         group=kind,
         verb=verb,

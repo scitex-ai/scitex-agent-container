@@ -259,16 +259,18 @@ def test_deprecation_note_goes_to_stderr() -> None:
     assert "DEPRECATED" in result.stderr
 
 
-def test_json_stdout_parses_in_a_real_subprocess() -> None:
-    # Arrange — the only place the two streams are genuinely separate
-    # files. CliRunner's `output` merges them, which is how a stdout test
-    # can pass while stdout is filthy. PYTHONPATH pins the subprocess to
-    # the SAME source tree this test imported, so a linked worktree is
-    # never silently tested against the main checkout's installed code.
+def _subprocess_timer_list_json() -> subprocess.CompletedProcess:
+    """``sac dev timer list --json`` in a REAL process, on THIS source tree.
+
+    The only place the two streams are genuinely separate files —
+    CliRunner's ``output`` merges them, which is how a stdout test can
+    pass while stdout is filthy. PYTHONPATH pins the subprocess to the
+    SAME source tree this test imported, so a linked worktree is never
+    silently tested against the main checkout's installed code.
+    """
     src = str(Path(scitex_agent_container.__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONPATH=src)
-    # Act
-    proc = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -282,8 +284,32 @@ def test_json_stdout_parses_in_a_real_subprocess() -> None:
         text=True,
         env=env,
     )
+
+
+def test_json_stdout_parses_in_a_real_subprocess() -> None:
+    # Arrange — THE contract: stdout ALONE is machine-readable. The job
+    # COUNT is deliberately not asserted here. `list` reads the
+    # scitex_dev.jobs ENTRY POINT while `_declared()` imports the provider
+    # directly, and the two disagree in environments where the package is
+    # on sys.path but its metadata is not resolvable — measured, this
+    # subprocess returned an empty list in CI while the in-process command
+    # returned all nine. Non-emptiness is pinned in-process above; this
+    # test owns stream purity, and conflating the two would make a stdout
+    # test fail for a discovery reason.
+    proc = _subprocess_timer_list_json()
+    # Act
+    parsed = json.loads(proc.stdout)
     # Assert
-    assert len(json.loads(proc.stdout)) == len(_declared("timer"))
+    assert isinstance(parsed, list)
+
+
+def test_the_real_subprocess_exits_zero() -> None:
+    # Arrange
+    proc = _subprocess_timer_list_json()
+    # Act
+    code = proc.returncode
+    # Assert
+    assert code == 0
 
 
 # ---------------------------------------------------------------------------

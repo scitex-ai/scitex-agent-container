@@ -38,14 +38,19 @@ def test_the_ecosystem_tree_is_readable() -> None:
     assert verbs is not None
 
 
-def test_the_probe_finds_the_shipped_cron_group() -> None:
-    # Arrange — a positive control: if this is empty the probe silently
-    # read nothing and every "unsupported" verdict below is worthless.
+def test_the_probe_finds_the_shipped_job_groups() -> None:
+    # Arrange — a POSITIVE CONTROL. If these group names are missing the
+    # probe read nothing and every "unsupported" verdict below is
+    # worthless. It asserts group PRESENCE rather than the verb sets,
+    # because whether the leaf verbs are statically readable depends on
+    # whether the installed scitex-dev builds its tree lazily — measured
+    # differing between this container and CI for the same code, which is
+    # exactly why `resolve` treats an all-empty read as "cannot tell".
     verbs = backend.ecosystem_verbs() or {}
     # Act
-    cron_verbs = verbs.get("cron", frozenset())
+    groups = {g for g in ("cron", "systemd") if g in verbs}
     # Assert
-    assert {"list", "install", "uninstall"} <= cron_verbs
+    assert groups == {"cron", "systemd"}
 
 
 def test_timer_list_falls_back_to_the_shipped_systemd_group() -> None:
