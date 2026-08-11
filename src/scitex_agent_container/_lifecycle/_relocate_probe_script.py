@@ -164,6 +164,12 @@ def render_probe_script(questions: RemoteQuestions, *, preamble: str = "") -> st
     missing path that does not exist.
     """
     parts: list[str] = []
+    # Captured BEFORE the preamble, which exists precisely to put things on PATH.
+    # The sac-presence question is about the PATH a bare `ssh host sac …` runs
+    # under, so measuring it after the preamble would answer a different
+    # question in the same words — and answer it "yes" on exactly the hosts
+    # (scitex-compute-03/-04) where the bare form fails.
+    parts.append('SACRELOC_PATH0="$PATH"')
     if preamble.strip():
         parts.append(preamble.strip())
     # No `set -e`: a section that fails must not abort the sections after it.
@@ -233,6 +239,7 @@ def render_probe_script(questions: RemoteQuestions, *, preamble: str = "") -> st
     if hub:
         parts.append(hub.rstrip("\n"))
 
+    parts.append(_SAC_WHERE_SECTION)
     parts.append(_SAC_SECTION)
     parts.append('echo "$M end"')
     return "\n".join(parts) + "\n"
@@ -294,6 +301,38 @@ sacreloc_cred() {{
   if [ -n "$_r" ]; then _p=yes; else _p=no; fi
   echo "$M cred=$1|$_e|$_p"
 }}
+"""
+
+
+# WHERE sac IS, asked twice on purpose. `sac_path` is `command -v sac` under the
+# RAW non-interactive PATH — the one a bare `ssh host sac …` gets. `sac_found`
+# looks harder: the login shell first (which is where a venv PATH comes from),
+# then the locations sac is actually installed in across this fleet.
+#
+# Measured 2026-08-11 on scitex-compute-04: sac_path is empty and sac_found is
+# /home/ywatanabe/.env-sac/bin/sac. Those two lines together say "installed, not
+# reachable the way you are calling it", which is a different fix from "install
+# it" — and a single lookup cannot tell them apart, because both produce the
+# same "No such file or directory".
+#
+# An EMPTY value is a measurement here, not a missing one: `sac_found=` means
+# looked-and-found-nothing. A section that never ran prints no line at all, and
+# the adapter turns that absence into UNKNOWN.
+_SAC_WHERE_SECTION = """
+sacreloc_find_sac() {
+  if [ -n "$SHELL" ] && [ -x "$SHELL" ]; then
+    _p=$("$SHELL" -lc 'command -v sac' 2>/dev/null | tail -1)
+    if [ -n "$_p" ] && [ -x "$_p" ]; then echo "$_p"; return 0; fi
+  fi
+  for _c in "$HOME/.env-sac/bin/sac" "$HOME/.local/bin/sac" \
+            /opt/venv-sac/bin/sac /usr/local/bin/sac /usr/bin/sac; do
+    if [ -x "$_c" ]; then echo "$_c"; return 0; fi
+  done
+  echo ""
+}
+sacreloc_raw=$(PATH="$SACRELOC_PATH0" command -v sac 2>/dev/null)
+echo "$M sac_path=$sacreloc_raw"
+echo "$M sac_found=$(sacreloc_find_sac)"
 """
 
 

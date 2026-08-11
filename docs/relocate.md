@@ -54,7 +54,7 @@ first one, so you do not have to run it N times to find N problems.
 sac agents relocate <name> --to <host> --dry-run
 ```
 
-### The nine checks
+### The eleven checks
 
 | check | what it catches | the 2026-08-07 instance |
 |---|---|---|
@@ -67,9 +67,26 @@ sac agents relocate <name> --to <host> --dry-run
 | `spec_schema_accepted` | target's validator rejects a key | a top-level `provider:` key, same older validator |
 | `ports_free` | port already bound there | reassign in the spec before moving |
 | `hub_reachable_from_target` | hub unreachable **from there** | the nas's services bind `127.0.0.1`, so reaching them from HERE proves nothing about THERE |
+| `sac_present_on_target` | remote `sac` calls will fail | on scitex-compute-04 sac lives at `/home/ywatanabe/.env-sac/bin/sac` and is **not** on the non-interactive ssh PATH, so `ssh host sac …` answers "No such file or directory" while sac is installed and working (2026-08-11) |
+| `source_work_committed` | uncommitted/unpushed work on the host being **left** | a relocation carries the spec and the transcript and nothing else; a half-finished branch stays on a machine nobody is watching |
 
 **Read the credentials row twice.** A presence check passes on an expired file.
 The failure it prevents is silent.
+
+**`sac_present_on_target` is one check answering two questions.** "Not installed"
+and "installed but invisible to ssh" produce the *identical* error and need
+*opposite* fixes — install it, versus put it on the PATH (or set the peer's
+`env_preamble`). The check reports them separately, resolving sac by login shell
+and by absolute path, so nobody is sent to install a second copy of something
+that already works. When it can see that sac is off the PATH but cannot
+establish whether it exists at all, the answer is UNKNOWN, not a guess.
+
+**`source_work_committed` is the only check about the source.** Its facts are
+gathered locally rather than over ssh, and an unscanned repo is UNKNOWN — never
+"clean". A failed `git status --porcelain` prints nothing and so does a clean
+tree; counting lines conflates them, and the conflation clears exactly the repo
+the check exists to protect. A branch with no upstream is likewise unmeasured
+rather than zero-unpushed.
 
 ### Three answers, not two
 
@@ -122,22 +139,78 @@ handoff and each reclaim. A writer presents its fence, and anything below the
 current value is refused. The stale holder is locked out by arithmetic rather
 than by trusting its clock.
 
-### The six phases
+### The seven phases
 
 ```
-PREFLIGHT  ->  TARGET_STANDBY  ->  SOURCE_DRAIN  ->  HANDOVER  ->  SOURCE_STOP  ->  DONE
-                                                     ^^^^^^^^
-                                          the single atomic point
+PREFLIGHT -> TARGET_STANDBY -> HANDSHAKE -> SOURCE_DRAIN -> HANDOVER -> SOURCE_STOP -> DONE
+                                                            ^^^^^^^^
+                                                 the single atomic point
 ```
 
 | phase | what happens |
 |---|---|
-| `PREFLIGHT` | validate the target; touch nothing |
-| `TARGET_STANDBY` | start the target **without** the lease — it runs read-only; verify health |
+| `PREFLIGHT` | validate the target and the source; touch nothing |
+| `TARGET_STANDBY` | start the target **without** the lease — it runs read-only |
+| `HANDSHAKE` | target → source round trip; the source must **observe** the reply |
 | `SOURCE_DRAIN` | source finishes in-flight work, stops accepting new |
 | `HANDOVER` | the lease moves source → target |
 | `SOURCE_STOP` | stop the source, and **verify** it stopped |
-| `DONE` | append the residency record |
+| `DONE` | append the residency record — **which is the host write** |
+
+### Where the host is written: the db, never the spec
+
+Operator, 2026-08-11, after asking whether the spec is a file or a db:
+
+> 設定ファイル、人が書くものはファイル、状態は db
+
+`host` was in the spec for years and it was **never intent**. Where an agent
+actually runs is an *observation*; a human typing `host: nas-03` is recording a
+fact, and a fact hand-written into a git-tracked file that exists in one copy
+per machine will eventually be wrong in at least one of them.
+
+So **a relocation writes nothing to any spec file.** The residency record
+appended at `DONE` *is* the host write. There is deliberately no spec-editing
+phase — an earlier draft had one, with an undo, and removing it also removed the
+only pre-handover step that changed anything durable. That is why `abort` has no
+compensation to perform.
+
+**Migration — seed once, then ignore.** Every spec on disk still carries `host:`
+(106 of 106, measured 2026-08-11).
+
+| the db… | what happens to the spec's `host:` |
+|---|---|
+| has an open residency | **ignored.** Not compared, not merged, not warned about on every read |
+| knows nothing | read **once** to seed the db, and the seeding is recorded (`host_seeded_from_spec`) so the value's provenance survives |
+| knows nothing, no spec host | **UNKNOWN.** Not "local", not the current hostname |
+
+The dry run prints a one-line notice whenever a spec still carries the field,
+saying plainly that it is ignored and which value is authoritative. A field that
+is authoritative on Tuesday and ignored on Wednesday is worse than either, so
+the seeding branch is a migration and not a fallback that keeps running.
+
+### The handshake: A → B is not a handshake
+
+Measured 2026-08-11: **a2a between two live agents delivered nothing**, and
+nobody noticed until a human asked. Every one-way signal was green throughout —
+both processes ran, both sidecars listened, both dispatch calls returned
+accepted. A relocation gated on "the target started" would have handed the lease
+straight into that, and `abort` is refused past the handover.
+
+So the handshake requires four things, and each rules out a way that "green" was
+wrong:
+
+1. the target **accepted** the challenge — otherwise its agent was never asked
+   anything;
+2. a reply was **observed**, on the source side — arrival, not dispatch;
+3. the reply carries **this challenge's nonce** — otherwise a reply left over
+   from an earlier turn passes, and a relocation retried three times will
+   eventually find one;
+4. the reply proves **work** — an answer the loop had to compute, because an
+   echo proves the transport and not the agent.
+
+Anything not observed is UNKNOWN, which refuses. A timeout waiting for a reply
+is "I did not see one in the time I waited", not "the target is broken", and the
+two call for different actions.
 
 Every step is idempotent and journalled, so a crash **resumes** rather than
 restarts. Advancing to the phase you are already in succeeds and appends
@@ -236,10 +309,28 @@ back from the target before declaring the carry done.
 
 ### Honest status
 
-The **decision** logic is built and merged (`_session_carry.plan_session_carry`).
-The cross-host **transport** that executes a `carry=True` plan is not. Until it
-lands, a relocation carries no memory, and this document is the stopgap the
+The **decision** logic is built and merged (`_session_carry.plan_session_carry`),
+and so is the **verification** contract (`_relocate_transcript.carry_transcript`):
+it reads the transcript back from the target and compares digests, and an
+unverifiable copy is `carried=None` rather than a soft yes. What is missing is
+the pair of callables that actually move bytes between two hosts. Until those
+land, a relocation carries no memory, and this document is the stopgap the
 operator asked for.
+
+### If the move goes wrong: the origin record
+
+`DONE` also writes an **origin record** — where the source was, in enough detail
+to go back by hand: the workdir, the state dir, the session uuid, the transcript
+path (with whether it was verified on the target, or UNKNOWN), and every repo
+with its uncommitted and unpushed counts. `recovery_lines()` renders it as
+instructions rather than a field dump, because its reader is by definition
+dealing with a relocation that already went wrong.
+
+Two rules make it worth having. A record naming **no path at all** is refused at
+construction — "it came from ywata-note-win" sends someone to a machine with no
+idea where to look. And a repo that was never scanned is listed under **NOT
+MEASURED**, separately from the clean ones, because a recovery aid that cannot
+tell "clean" from "not looked at" is worse than none.
 
 ---
 
@@ -253,16 +344,46 @@ operator asked for.
 | session-carry decision | **merged** (#891) | whether the transcript follows the agent |
 | residency history | **merged** (#892) | where it lived, and who wrote a row |
 | probe adapter | **merged** (#894) | a failed probe stays UNKNOWN, never a false negative |
-| cross-host transcript transport | **not built** | — |
-| the `relocate` CLI verb | **in progress** | dry-run first |
+| transcript carry + read-back | **merged** | the copy is verified ON the target, by digest |
+| agentic handshake | **in review** | the target proved it can do agent work |
+| host-in-db + one-time seed | **in review** | the spec never holds an observation |
+| origin record | **in review** | a bad move is recoverable by hand |
+| the phase driver | **in review** | the order, the journal, and abort-vs-report |
+| cross-host transcript **transport adapters** | **not built** | — |
+| the executing CLI adapters | **not built** | — |
+
+**What "in review" buys and what it does not.** The pure machinery is complete
+and tested: given effects, the driver runs the phases in order, journals each,
+refuses on any non-yes, and aborts only where an abort is legal. What is *not*
+built is the set of adapters that perform those effects against two real hosts —
+starting the standby, running the challenge, moving the lease, stopping the
+source. Until those land, `--no-dry-run` has nothing to call.
+
+**The lease is recorded, not yet enforced.** `check_write` exists and no writer
+in sac calls it. So a handover moves an authoritative *record* of who may write;
+it does not currently exclude a second writer. Two live instances remain
+possible by copy-and-start, which is what the lease was designed to make
+unrepresentable. That gap is in the enforcement, not the model.
 
 Six pure pieces, 138+ tests, none of which touches a host — that was deliberate,
 so each is testable without a second machine. The two remaining items are the
 ones that act.
 
-**Until the CLI lands, a relocation is a manual procedure**: follow §2 by hand,
-then §3, then §4. The checks in §2 are the ones a hand-move actually needs; they
-are written down here precisely because they were learned the hard way.
+**Until the executing adapters land, a relocation is a manual procedure**:
+follow §2 by hand, then §3, then §4. The checks in §2 are the ones a hand-move
+actually needs; they are written down here precisely because they were learned
+the hard way.
+
+One of them is worth doing by hand before anything else, because it is cheap and
+it invalidates the rest when it fails:
+
+```bash
+ssh <target> 'command -v sac'                 # the PATH remote sac calls get
+ssh <target> 'bash -lc "command -v sac"'      # the login shell's answer
+```
+
+Two different answers mean sac is installed and unreachable the way sac calls
+it — a PATH fix, not an install.
 
 ---
 
@@ -273,9 +394,26 @@ are written down here precisely because they were learned the hard way.
 - **"Defined" and "running" are not distinguished.** The fleet listing collapses
   a spec that exists with a process that is alive, so from inside a container
   `sac agents list` reports the whole fleet — including the agent running the
-  command — as `defined`. Before relocating, confirm what is actually running by
-  another route.
+  command — as `defined`. That is a SPEC fact ("a file exists") sitting in a
+  STATE column called `status`, and it is why the registry reported 0 agents
+  running while 24 were live. The same listing prints `host` as the literal
+  string `'local'` on every row — a placeholder where an observation belongs.
+  Relocate does not build on either: it reads the host from the state db and
+  returns `None` when nothing knows. Before relocating, confirm what is actually
+  running by another route.
   Card: `sac-agents-list-blind-inside-container-reports-whole-fleet-defined-20260808`.
+- **`host` still lives in the spec schema everywhere else.** Relocate no longer
+  reads it, but `validate_placement` still *requires* `spec.host` (or `hosts`),
+  and eleven runtime sites resolve placement from `config.hosts_spec.host` —
+  cross-host dispatch, stop/restart routing, `attach`, cold-start reuse, the
+  priority report, and remote liveness. Moving those to the db is a separate
+  migration; until it lands, `host` is db-authoritative *for relocate* and
+  spec-authoritative for dispatch. That split is deliberate and temporary, and
+  it is the next thing to close.
+- **There is no residency table.** The host is read from `instances.host`, which
+  gives the current stay and no history — so "where does it live now" is
+  answerable and "which host wrote this row in March" is not. Attribution, the
+  larger half of why residency was built, needs the table.
 - **Four sources disagree about which agents exist** (18 / 32 / 159 / 111 as
   measured 2026-08-08). Which is canonical is an open decision.
 - **Host naming is not yet canonical.** Relocate must write the canonical

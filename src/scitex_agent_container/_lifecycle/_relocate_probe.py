@@ -89,6 +89,8 @@ class TargetProbes:
     rejected_spec_keys: Callable[[], tuple[str, ...]] | None = None
     ports_in_use: Callable[[], tuple[int, ...]] | None = None
     hub_reachable_from_target: Callable[[], bool] | None = None
+    sac_on_path: Callable[[], bool] | None = None
+    sac_resolved_path: Callable[[], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,8 @@ _FIELDS: tuple[str, ...] = (
     "rejected_spec_keys",
     "ports_in_use",
     "hub_reachable_from_target",
+    "sac_on_path",
+    "sac_resolved_path",
 )
 
 

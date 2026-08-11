@@ -1,14 +1,14 @@
-"""The eleven callables :class:`.._relocate_probe.TargetProbes` asks for.
+"""The thirteen callables :class:`.._relocate_probe.TargetProbes` asks for.
 
 :mod:`_relocate_probe` is the PORT — pure orchestration that turns any raising
 callable into ``None``. This is the ADAPTER: it reads the agent's spec, asks the
 target once (:mod:`_relocate_probe_ssh` + :mod:`_relocate_probe_script`), and
-hands back eleven closures over that single answer.
+hands back thirteen closures over that single answer.
 
 HOW PER-FACT DEGRADATION SURVIVES BATCHING — the design point of this file.
-One remote call answers all eleven questions, which is the only way this is fast
+One remote call answers all thirteen questions, which is the only way this is fast
 enough to be run casually. The obvious way to do that is also the dangerous one:
-one blob, one status, eleven facts that stand or fall together. Three rules keep
+one blob, one status, thirteen facts that stand or fall together. Three rules keep
 them independent, and they compose:
 
     the SCRIPT   prints each answer on its own marker line the moment it is
@@ -24,8 +24,8 @@ them independent, and they compose:
                  "credentials_valid: UNKNOWN (no credential file exists on the
                  target among: …)" rather than a bare UNKNOWN.
 
-So a run that answers eight of eleven yields eight OBSERVED facts and three
-unknowns, each naming its own cause. A transport failure yields eleven unknowns
+So a run that answers ten of thirteen yields ten OBSERVED facts and three
+unknowns, each naming its own cause. A transport failure yields thirteen unknowns
 sharing one cause. Neither yields a single ``False``.
 
 NEVER ``False`` FOR "I COULD NOT TELL". Every accessor below either returns
@@ -34,7 +34,7 @@ False`` here, and there must never be: it would turn "no route to the host" into
 "the host has no image", and the relocation would then proceed on fiction — the
 exact 2026-08-07 failure this command exists to prevent.
 
-WHAT IS MEASURED VS WHAT IS READ. Ten facts are measured on the target. One —
+WHAT IS MEASURED VS WHAT IS READ. Twelve facts are measured on the target. One —
 ``card_store_url`` — is READ FROM THE SPEC: it is the URL the agent WOULD dial
 after the move, and preflight uses it only to name the endpoint in a failure
 message. It is supplied because a failure that says "card store not reachable"
@@ -222,12 +222,12 @@ def questions_from_spec(
 
 
 class TargetBatch:
-    """One ssh round trip, memoized, read eleven different ways.
+    """One ssh round trip, memoized, read thirteen different ways.
 
     The run happens on first access and NOT in ``__init__``: a caller that
     builds probes but never gathers must not open a connection. The outcome —
-    success or transport failure — is remembered, so eleven accessors cost one
-    ssh, and a target that is down is not dialled eleven times.
+    success or transport failure — is remembered, so thirteen accessors cost one
+    ssh, and a target that is down is not dialled thirteen times.
     """
 
     def __init__(
@@ -280,7 +280,7 @@ class TargetBatch:
             )
         return value
 
-    # -- the eleven facts --------------------------------------------------
+    # -- the thirteen facts --------------------------------------------------
     def reachable(self) -> bool:
         """True when the target ran our script; False only when ssh itself failed."""
         self._ensure()
@@ -437,6 +437,25 @@ class TargetBatch:
             raise FactUnavailable(self._hub_reason or "the hub address is unknown")
         return self._yes_no("hub", "hub")
 
+    def sac_on_path(self) -> bool:
+        """Whether ``command -v sac`` answers under the RAW ssh PATH.
+
+        An empty value is the ANSWER (nothing on PATH), not a missing one — the
+        script prints the line either way. Only a line that never arrived is
+        unknown, which :meth:`_field` raises for.
+        """
+        return bool(self._field("sac_path", "sac-on-PATH").strip())
+
+    def sac_resolved_path(self) -> str:
+        """Where sac actually is, or ``""`` for looked-and-found-nothing.
+
+        The empty string is load-bearing and must NOT be turned into a raise:
+        it is what separates "sac is not installed on this host" from "sac is
+        installed and the ssh PATH cannot see it", and those need opposite
+        fixes. Only an absent line is undetermined.
+        """
+        return self._field("sac_found", "sac-location").strip()
+
 
 def build_target_probes(
     to_host: str,
@@ -448,7 +467,7 @@ def build_target_probes(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     env: dict[str, str] | None = None,
 ) -> tuple[TargetProbes, TargetBatch]:
-    """Bind the eleven accessors of one :class:`TargetBatch` into a probe set.
+    """Bind the thirteen accessors of one :class:`TargetBatch` into a probe set.
 
     Returns the probes and the batch, so a caller that wants the raw readout
     (for diagnostics) does not have to run the probe twice.
@@ -475,5 +494,7 @@ def build_target_probes(
         rejected_spec_keys=batch.rejected_spec_keys,
         ports_in_use=batch.ports_in_use,
         hub_reachable_from_target=batch.hub_reachable_from_target,
+        sac_on_path=batch.sac_on_path,
+        sac_resolved_path=batch.sac_resolved_path,
     )
     return probes, batch
