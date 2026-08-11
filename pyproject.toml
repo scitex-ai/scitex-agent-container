@@ -453,6 +453,48 @@ exclude = [".git"]
 # "." is the rootdir, so rootdir-relative imports (`tests.*`) resolve the same
 # way from any cwd.
 pythonpath = [".", "src"]
+
+# A RUN THAT LOST ITS PLUGINS MUST SAY SO, NOT INVENT 93 FAILURES.
+#
+# 2026-08-11: a wide run in an agent container produced 93 failures that were
+# ALL `async def` tests, each reading "async def functions are not natively
+# supported". The code was fine. The header was the whole story:
+#
+#     plugins: anyio-4.14.2, scitex-dev-0.47.0        <- broken run
+#     plugins: anyio-4.14.2, asyncio-1.4.0, ...       <- same tests, passing
+#
+# pytest-asyncio was simply not installed in that interpreter. Without it every
+# coroutine test is COLLECTED, never awaited, and reported as a failure — so a
+# missing dependency is indistinguishable from a code regression, and two
+# agents spent the evening attributing it to their own changes.
+#
+# The cause was environmental, and that class of cause recurs: the sac base SIF
+# installs `/opt/scitex-agent-container-src[openai]`, NOT `[dev]`, so a fresh
+# container has no pytest and no pytest-asyncio at all (measured 2026-08-11:
+# 19 of 20 agent overlays on scitex-compute-04 had neither). Each agent
+# hand-installs what it needs into its own persistent overlay, so two agents
+# running the same tests legitimately hold different plugin sets. CI has its
+# own path to the same state: .github/ci/run-in-sif.sh falls back
+# `[all,dev]` -> `[dev]` -> `-e .`, and that last leg installs no test plugins
+# while still running the suite.
+#
+# `required_plugins` closes all of it the only way that is trustworthy — the
+# run REFUSES to start. Missing plugin => exit 4 and one line naming it:
+#
+#     ERROR: Missing required plugins: pytest-asyncio
+#
+# instead of a red suite that looks like someone's bug. Measured: fires on a
+# genuinely absent dist (rc=4) and does NOT false-positive on CI's
+# `uv pip install --target` + PYTHONPATH layout (rc=0), which is how CI
+# supplies these plugins today.
+#
+# Both entries are declared in the [dev] extra, which is the documented way to
+# run this suite. pytest-asyncio is the one that fails SILENTLY (wrong answers,
+# not an error); pytest-xdist is listed because CI's own command hard-depends
+# on `-n`, and "Missing required plugins: pytest-xdist" beats pytest's own
+# "unrecognized arguments: -n" for naming what to install.
+required_plugins = ["pytest-asyncio", "pytest-xdist"]
+
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
