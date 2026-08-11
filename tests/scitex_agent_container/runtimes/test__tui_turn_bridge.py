@@ -836,3 +836,114 @@ def test_start_turn_bridge_explicit_host_overrides_the_spec(
     bridge.start_turn_bridge(config, spawn=fake_spawn, host=DEFAULT_A2A_HOST)
     # Assert
     assert recorded["argv"][recorded["argv"].index("--host") + 1] == DEFAULT_A2A_HOST
+
+
+# ---------------------------------------------------------------------------
+# write_bridge_event — the lifecycle log (tui-turn-bridge.log was 0 bytes)
+# ---------------------------------------------------------------------------
+# Measured on the host 2026-08-11: 16 of 17 ``tui-turn-bridge.log`` files were
+# EMPTY. The launcher opens the file and hands it to the child as stdout+stderr,
+# but the bridge wrote nothing of its own, so the log only ever captured an
+# unhandled traceback — and when 14 bridges were found dead, not one death
+# could be explained. These tests pin the two lines that bracket a bridge's
+# life. Real files, real fds; no mocks.
+
+
+def test_write_bridge_event_records_the_event_name(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        line = bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert " bind " in line
+
+
+def test_write_bridge_event_records_the_bound_port(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"port={_PORT}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_records_the_pid(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"pid={_PID}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_records_the_host(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"host={DEFAULT_A2A_HOST}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_flushes_so_a_crash_cannot_swallow_the_line(
+    tmp_path: Path,
+) -> None:
+    # Arrange — read the file through a SEPARATE handle while the writer is
+    # still open: only a real flush makes the bytes visible, which is what
+    # keeps the bind line readable after an abrupt death.
+    log_path = tmp_path / "tui-turn-bridge.log"
+    observed = ""
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+        observed = log_path.read_text(encoding="utf-8")
+    # Assert
+    assert "tui-turn-bridge bind" in observed
+
+
+def test_write_bridge_event_appends_two_lines_for_bind_then_shutdown(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the shutdown line must BRACKET the bind line in the same log.
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+        bridge.write_bridge_event(
+            fh,
+            "shutdown",
+            agent="figrecipe",
+            host=DEFAULT_A2A_HOST,
+            port=_PORT,
+            pid=_PID,
+        )
+    # Assert
+    assert log_path.read_text(encoding="utf-8").count("\n") == 2
+
+
+def test_write_bridge_event_names_the_agent(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "shutdown", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert "agent=figrecipe" in log_path.read_text(encoding="utf-8")
