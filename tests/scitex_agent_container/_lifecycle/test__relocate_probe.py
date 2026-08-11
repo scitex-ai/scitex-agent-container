@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container._lifecycle._relocate_preflight import preflight
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
+from scitex_agent_container._lifecycle._relocate_preflight import SourceFacts, preflight
 from scitex_agent_container._lifecycle._relocate_probe import (
     TargetProbes,
     gather_target_facts,
@@ -221,11 +222,20 @@ def test_a_fully_healthy_probe_set_passes_preflight() -> None:
         rejected_spec_keys=lambda: (),
         ports_in_use=lambda: (),
         hub_reachable_from_target=lambda: True,
+        sac_on_path=lambda: True,
+        sac_resolved_path=lambda: "/usr/local/bin/sac",
     )
     gathered = gather_target_facts(probes)
     # Act
     report = preflight(
-        agent="a", to_host="nas-03", facts=gathered.facts, runtime="apptainer"
+        agent="a",
+        to_host="nas-03",
+        facts=gathered.facts,
+        runtime="apptainer",
+        source_facts=SourceFacts(
+            repos=(RepoWork(path="/proj/x", uncommitted=0, unpushed=0),)
+        ),
+        from_host="ywata-note-win",
     )
     # Assert
     assert report.ok is True

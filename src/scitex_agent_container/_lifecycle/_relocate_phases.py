@@ -9,10 +9,20 @@ where it stopped and re-running continues rather than restarts.
 
     PREFLIGHT       validate the target before touching anything
     TARGET_STANDBY  start the target WITHOUT the lease; it runs read-only
+    HANDSHAKE       target -> source round trip; the source must OBSERVE a reply
     SOURCE_DRAIN    source finishes in-flight work, stops taking new
     HANDOVER        the lease moves source -> target  <- THE atomic point
     SOURCE_STOP     stop the source, VERIFY stopped
-    DONE            append the residency record
+    DONE            append the residency record — WHICH IS the host write
+
+THERE IS NO SPEC-EDITING PHASE, and its absence is a decision rather than an
+omission (operator, 2026-08-11: 「設定ファイル、人が書くものはファイル、状態は
+db」). A relocation writes NOTHING to a spec file. Where an agent actually runs
+is an OBSERVATION, so the host lives in the state db and the residency record
+appended at DONE *is* the write that moves it. A phase that edited spec.yaml
+would have had a relocation modifying a git-tracked, human-authored file on two
+machines whose copies are free to diverge — and it would have put an observation
+back into the document that is supposed to hold only intent.
 
 WHY THE ORDER IS THIS ORDER. Everything before HANDOVER is reversible and
 everything after it is cleanup. Before: the source still holds the lease and the
@@ -21,6 +31,21 @@ target holds the lease and the source is locked out by the bumped fence even
 though its process is still alive, so the only sane direction is forward. A
 crash on either side of that single point leaves exactly ONE writer — which is
 the property the whole sequence exists to produce (see :mod:`_relocate_lease`).
+
+THE ADDED PHASE IS BEFORE HANDOVER, and that placement is the whole reason it is
+safe to add: HANDSHAKE only sends messages and reads replies, so it moves no
+write authority and the reversible-before / forward-after asymmetry is
+unchanged. A new phase placed AFTER the handover would have broken it, because
+:func:`abort` would then be refused for a step that is trivially undoable.
+
+WHY THE HANDSHAKE IS A PHASE AND NOT PART OF TARGET_STANDBY. "The process
+started" and "the agent can do agent work" are different measurements, and
+2026-08-11 showed the gap is real: a2a between two live agents delivered nothing
+and nobody noticed until a human did. A relocation that folded the two together
+would have declared the target ready on the strength of a running process, which
+is the same "started, reported healthy, did nothing" shape the preflight checks
+were written for. Separating them means the journal records WHICH of the two
+failed, and a re-run resumes at the one that did.
 
 That asymmetry is enforced here rather than documented: :func:`abort` REFUSES
 once HANDOVER has happened. An abort at that stage would mean taking the lease
@@ -56,6 +81,7 @@ __all__ = [
     "CODE_UNKNOWN_PHASE",
     "DONE",
     "HANDOVER",
+    "HANDSHAKE",
     "PHASES",
     "PREFLIGHT",
     "PhaseVerdict",
@@ -72,6 +98,7 @@ __all__ = [
 
 PREFLIGHT: Final = "preflight"
 TARGET_STANDBY: Final = "target_standby"
+HANDSHAKE: Final = "handshake"
 SOURCE_DRAIN: Final = "source_drain"
 HANDOVER: Final = "handover"
 SOURCE_STOP: Final = "source_stop"
@@ -82,6 +109,7 @@ DONE: Final = "done"
 PHASES: Final[tuple[str, ...]] = (
     PREFLIGHT,
     TARGET_STANDBY,
+    HANDSHAKE,
     SOURCE_DRAIN,
     HANDOVER,
     SOURCE_STOP,

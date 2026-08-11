@@ -43,6 +43,8 @@ never eleven of either because one section failed.
 
 from __future__ import annotations
 
+import time
+
 import click
 
 from .._lifecycle._relocate_preflight import preflight
@@ -78,6 +80,16 @@ def _dig(body: dict, *path: str) -> object:
 def declared_from_spec(spec: dict) -> dict[str, object]:
     """Pull the spec's own claims out for the DECLARED section.
 
+    ``host`` IS DELIBERATELY NOT HERE. It is an observation, not a declaration
+    (operator, 2026-08-11: 「設定ファイル、人が書くものはファイル、状態は db」), so
+    it comes from the state db and is printed under OBSERVED. Leaving it in this
+    dict would put a machine-owned fact under a heading that reads "from the
+    spec — not verified by this run", which is the same collapse that makes
+    `sac agents list` report a running agent as `defined`. The legacy field
+    still present in every spec on disk is reported by
+    :func:`.._lifecycle._relocate_host_record.legacy_spec_host_notice`, which
+    says out loud that it is ignored.
+
     Reads defensively: a missing key yields ``None``, rendered as ``(unset)``. A
     relocation must be able to report on a half-written spec — refusing to print
     because a field is absent would hide the very thing the operator needs.
@@ -103,12 +115,62 @@ def declared_from_spec(spec: dict) -> dict[str, object]:
     card_store = card_store_url_from_spec(spec) or None
     return {
         "runtime": body.get("runtime"),
-        "host": body.get("host"),
         "image": _dig(body, "apptainer", "image"),
         "a2a port": _dig(body, "a2a", "port"),
         "bind sources": bind_sources,
         "card store": card_store,
     }
+
+
+def _residency_history(name: str):
+    """The agent's stays, read from the STATE DB — the only authority on host.
+
+    THERE IS NO RESIDENCY TABLE YET, and pretending otherwise would be the worse
+    of the two available lies. What exists is ``instances.host``, which
+    ``record_instance_start`` canonicalises and writes when a process starts —
+    an observation, and the right kind of one. So an active instance row becomes
+    a single OPEN stay and that is the whole history.
+
+    The cost is stated rather than hidden: with one row there is no audit trail,
+    so ``host_at(history, t)`` can answer "where does it live now" and cannot
+    answer "which host wrote this row in March". Closing that needs a residency
+    table; until then this returns the shortest history that is TRUE rather than
+    a longer one that is invented.
+
+    No row yields ``()`` — genuinely "the db knows nothing", which is what lets
+    a legacy spec ``host:`` seed it once.
+    """
+    from .._lifecycle._residency import Residency
+    from .._state.state_db_instances import list_active_instances
+
+    rows = [r for r in list_active_instances() if r.get("name") == name]
+    if not rows:
+        return ()
+    row = rows[0]
+    host = (row.get("host") or "").strip()
+    if not host:
+        return ()
+    return (Residency(host=host, from_ts=_epoch(row.get("started_at"))),)
+
+
+def _epoch(started_at: object) -> float:
+    """``instances.started_at`` is an ISO TEXT column; residency wants seconds.
+
+    An unparseable stamp yields ``0.0`` rather than raising. That is safe HERE
+    and only here: the stay is open, so ``current_host`` reads the host and
+    never consults the start time, and a relocation must not be blocked by a
+    malformed timestamp on a row whose host is perfectly legible. It would NOT
+    be safe for the attribution lookup, which is one more reason that needs a
+    real residency table rather than this row.
+    """
+    if not isinstance(started_at, str) or not started_at.strip():
+        return 0.0
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(started_at.strip()).timestamp()
+    except ValueError:  # stx-allow: fallback (reason: an open stay is read for its HOST; a malformed start time must not block a relocation whose host is legible)
+        return 0.0
 
 
 def _required_ports(declared: dict[str, object]) -> tuple[int, ...]:
@@ -175,15 +237,40 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
     spec = yaml.safe_load(spec_path.read_text()) or {}
 
     declared = declared_from_spec(spec)
-    if declared.get("host") == to_host:
+
+    # WHERE IT RUNS NOW comes from the STATE DB, never from the spec. The spec's
+    # `host:` is a legacy field: it is read at most ONCE, to seed a db that knows
+    # nothing, and is ignored from then on. Reading it here instead would make
+    # this command answer "where does it run" from a hand-written file that
+    # exists in one copy per machine — the confusion the 2026-08-11 ruling
+    # removed (「設定ファイル、人が書くものはファイル、状態は db」).
+    from .._lifecycle._relocate_host_record import (
+        legacy_spec_host_notice,
+        resolve_host,
+    )
+
+    body = spec.get("spec") if isinstance(spec.get("spec"), dict) else spec
+    legacy_host = body.get("host") if isinstance(body, dict) else None
+    where = resolve_host(
+        _residency_history(name),
+        legacy_spec_host=legacy_host if isinstance(legacy_host, str) else None,
+        now=time.time(),
+    )
+    notice = legacy_spec_host_notice(
+        spec_host=legacy_host if isinstance(legacy_host, str) else None,
+        db_host=where.host,
+    )
+    if notice:
+        console.print(f"[yellow]note:[/yellow] {notice}", soft_wrap=True)
+    if where.host == to_host:
         console.print(
-            f"[yellow]{name} already declares host {to_host!r} — nothing to relocate.[/yellow]\n"
-            "If it is actually running elsewhere, that disagreement is the thing to fix first."
+            f"[yellow]{name} is already recorded on {to_host!r} — nothing to relocate.[/yellow]\n"
+            f"Source of that answer: {where.reason}"
         )
         raise SystemExit(EXIT_REFUSED)
 
-    # ONE batched ssh round trip answers all eleven facts; each is parsed on its
-    # own marker line, so a section that fails costs only its own fact. See
+    # ONE batched ssh round trip answers all thirteen facts; each is parsed on
+    # its own marker line, so a section that fails costs only its own fact. See
     # `.._lifecycle._relocate_probe_adapter` for how per-fact degradation
     # survives the batching.
     probes, _batch = build_target_probes(
