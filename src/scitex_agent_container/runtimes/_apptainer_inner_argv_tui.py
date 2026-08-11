@@ -22,6 +22,64 @@ if TYPE_CHECKING:
 _CLAUDE_TUI_BIN = "claude"
 
 
+def _candidate_transcript_homes(config: "AgentConfig"):
+    """Every host dir that could back the container ``$HOME``, most specific first.
+
+    A BIND COVERING THE CONTAINER HOME WINS, AND IT USED NOT TO BE CONSULTED AT
+    ALL. This function used to check the overlay upper-home first and the
+    workspace home otherwise, and never looked at the spec's binds — so for an
+    agent whose spec binds the transcript directory (``…/home/.claude/projects``
+    onto ``/home/agent/.claude/projects``, the shape that demonstrably works and
+    the one a relocation requires) it looked in a real, EMPTY overlay directory,
+    found no transcript, and silently omitted ``-c``.
+
+    Measured 2026-08-11 on the ``canary-resume-test`` relocation to
+    scitex-compute-04: the transcript arrived byte- and line-verified, the
+    session marker was seeded, the agent started — and started FRESH, with no
+    memory of the 3.7 MB conversation sitting one directory away. Nothing
+    reported a problem, which is the failure shape this whole area exists to
+    prevent. Asked afterwards for a cron id it had reported nine times in the
+    carried conversation, the agent answered with one it had created that
+    minute.
+
+    The bind/overlay derivation is :func:`.._lifecycle._relocate_transcript_home.
+    transcript_home_from_spec` — reused rather than reimplemented, so the place
+    a relocation WRITES a transcript and the place this gate LOOKS for one
+    cannot drift apart. The workspace home stays as a final candidate for specs
+    that declare neither.
+    """
+    from pathlib import Path
+
+    from .._lifecycle._relocate_transcript_home import transcript_home_from_spec
+    from ._to_home_overlay import resolve_overlay_upper_home
+
+    apptainer = getattr(config, "apptainer", None)
+    spec = {
+        "spec": {
+            "runtime": getattr(config, "runtime", ""),
+            "apptainer": {
+                "binds": list(getattr(apptainer, "binds", []) or []),
+                "overlay": getattr(apptainer, "overlay", "") or "",
+                "raw_args": list(getattr(apptainer, "raw_args", []) or []),
+            },
+        }
+    }
+    homes: list[Path] = []
+    derived = transcript_home_from_spec(spec)
+    if derived.path:
+        homes.append(Path(derived.path))
+    upper = resolve_overlay_upper_home(config)
+    if upper is not None:
+        homes.append(upper)
+    from .tui_session import state_dir_for_config
+
+    homes.append(state_dir_for_config(config) / "home")
+    # De-duplicate, order preserved: the derivation and the overlay resolver
+    # agree for an overlay-only spec, and looking twice would say nothing new.
+    seen: set[str] = set()
+    return [h for h in homes if not (str(h) in seen or seen.add(str(h)))]
+
+
 def _home_has_resumable_conversation(config: "AgentConfig"):
     """Return ``(has_conversation, home_path)`` for the agent's container $HOME.
 
@@ -31,26 +89,24 @@ def _home_has_resumable_conversation(config: "AgentConfig"):
     failure that cost a 240 s misdiagnosis as "login wall"). Continue-mode must
     therefore be gated on a transcript actually existing.
 
-    Resolves the SAME host dir that backs the container ``$HOME`` in
-    :func:`_apptainer_build_argv.build_run_argv` — the overlay upper-home for a
-    relaxed-directory-overlay agent, else the workspace-home bind — and checks
-    for any ``.claude/projects/*/*.jsonl`` transcript. Lazy imports keep this
-    free of an import cycle with ``tui_session`` / ``_to_home_overlay``.
+    Checks each candidate home in turn (see
+    :func:`_candidate_transcript_homes`) for a
+    ``.claude/projects/*/*.jsonl`` transcript and answers for the FIRST that has
+    one. Searching several places can only ADD ``-c`` where it was previously
+    omitted, and only when a transcript was actually found — so it cannot
+    reintroduce the exiting-at-boot failure, which comes from passing ``-c``
+    with nothing to continue.
+
+    The returned home is the one that DECIDED the answer — the directory that
+    holds the transcript when there is one, else the most specific candidate —
+    so the warning logged on a miss names somewhere worth looking.
     """
-    from pathlib import Path
-
-    from ._to_home_overlay import resolve_overlay_upper_home
-
-    upper = resolve_overlay_upper_home(config)
-    if upper is not None and upper.is_dir():
-        home = upper
-    else:
-        from .tui_session import state_dir_for_config
-
-        home = state_dir_for_config(config) / "home"
-    projects = Path(home) / ".claude" / "projects"
-    has = projects.is_dir() and any(projects.glob("*/*.jsonl"))
-    return has, home
+    homes = _candidate_transcript_homes(config)
+    for home in homes:
+        projects = home / ".claude" / "projects"
+        if projects.is_dir() and any(projects.glob("*/*.jsonl")):
+            return True, home
+    return False, (homes[0] if homes else None)
 
 
 def _tui_runner_argv(
