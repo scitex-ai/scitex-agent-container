@@ -8,12 +8,46 @@ journal every transition, so that wherever it stops, the state on disk says
 where it stopped and re-running continues rather than restarts.
 
     PREFLIGHT       validate the target before touching anything
+    SOURCE_DRAIN    source finishes in-flight work, stops taking new
+    SOURCE_STOP     stop the source, VERIFY stopped
+    TRANSPORT       copy the transcript across, VERIFY it on the target
     TARGET_STANDBY  start the target WITHOUT the lease; it runs read-only
     HANDSHAKE       target -> source round trip; the source must OBSERVE a reply
-    SOURCE_DRAIN    source finishes in-flight work, stops taking new
     HANDOVER        the lease moves source -> target  <- THE atomic point
-    SOURCE_STOP     stop the source, VERIFY stopped
     DONE            append the residency record — WHICH IS the host write
+
+THE SOURCE STOPS BEFORE THE TARGET STARTS, AND THAT ORDER IS FORCED BY THE
+TRANSCRIPT rather than chosen for tidiness. Two physical constraints pin it:
+
+    a RUNNING source appends to its .jsonl while it is being read, so the copy
+    ends mid-line. jsonl carries no trailer and no length, so a torn transcript
+    is not detectably torn — it parses, it resumes, and the conversation just
+    stops early. Hence SOURCE_STOP precedes TRANSPORT.
+
+    a target that has already BOOTED owns its own session marker, and seeding
+    over it would discard whatever it did (see `_session_carry`, first-boot-only).
+    Hence TRANSPORT precedes TARGET_STANDBY.
+
+Between them there is exactly one legal slot, and it is this one. An earlier
+draft of this file ordered the target's standby first and the source's stop last,
+which reads safer — the source keeps running until the target has proven itself —
+and cannot carry a transcript at all. That version is what shipped before the
+transport existed; the reorder is the transport's precondition, not a preference.
+
+THE PRICE IS STATED RATHER THAN HIDDEN: from SOURCE_STOP onward the agent is
+DOWN on both hosts until the target comes up, and an abort in that window leaves
+it stopped. That is a real regression against the previous order and it is
+accepted, because the alternative is not "no downtime" but "no downtime and a
+silently truncated memory". The window is recoverable and named: nothing durable
+has been written, the source's own transcript is untouched (it was COPIED, never
+moved), and starting the source again restores the world exactly. `abort`'s
+verdict says so, so nobody has to infer it.
+
+WHERE AN AGENT LIVES IS STILL WRITTEN ONLY AT DONE. The source stopping early
+does NOT transfer residency: a stopped source is still the owner of record until
+the residency row is appended, so at no point do two hosts hold a claim to one
+identity. That is the invariant the reorder had to preserve, and it is preserved
+because stopping a process and owning a record are different things.
 
 THERE IS NO SPEC-EDITING PHASE, and its absence is a decision rather than an
 omission (operator, 2026-08-11: 「設定ファイル、人が書くものはファイル、状態は
@@ -32,11 +66,18 @@ though its process is still alive, so the only sane direction is forward. A
 crash on either side of that single point leaves exactly ONE writer — which is
 the property the whole sequence exists to produce (see :mod:`_relocate_lease`).
 
-THE ADDED PHASE IS BEFORE HANDOVER, and that placement is the whole reason it is
-safe to add: HANDSHAKE only sends messages and reads replies, so it moves no
-write authority and the reversible-before / forward-after asymmetry is
-unchanged. A new phase placed AFTER the handover would have broken it, because
-:func:`abort` would then be refused for a step that is trivially undoable.
+EVERY ADDED PHASE IS BEFORE HANDOVER, and that placement is the whole reason it
+is safe to add: HANDSHAKE only sends messages and reads replies and TRANSPORT
+only copies a file onto a host that is not yet serving, so neither moves write
+authority and the reversible-before / forward-after asymmetry is unchanged. A new
+phase placed AFTER the handover would have broken it, because :func:`abort` would
+then be refused for a step that is trivially undoable.
+
+TRANSPORT IS REVERSIBLE IN THE ONLY SENSE THAT MATTERS: it never modifies the
+source. The transcript is COPIED, and anything already at the destination is
+MOVED ASIDE to `.old/<ts>/` rather than overwritten, so an abort leaves both
+hosts holding everything they held before — the target merely holds an extra
+copy, which the next run overwrites by moving it aside again.
 
 WHY THE HANDSHAKE IS A PHASE AND NOT PART OF TARGET_STANDBY. "The process
 started" and "the agent can do agent work" are different measurements, and
@@ -89,30 +130,34 @@ __all__ = [
     "SOURCE_DRAIN",
     "SOURCE_STOP",
     "TARGET_STANDBY",
+    "TRANSPORT",
     "abort",
     "advance",
     "begin",
     "is_past_no_return",
+    "leaves_source_stopped",
     "resume_from",
 ]
 
 PREFLIGHT: Final = "preflight"
+SOURCE_DRAIN: Final = "source_drain"
+SOURCE_STOP: Final = "source_stop"
+TRANSPORT: Final = "transport"
 TARGET_STANDBY: Final = "target_standby"
 HANDSHAKE: Final = "handshake"
-SOURCE_DRAIN: Final = "source_drain"
 HANDOVER: Final = "handover"
-SOURCE_STOP: Final = "source_stop"
 DONE: Final = "done"
 
 #: The ordered sequence. Index in this tuple IS the ordering relation — there is
 #: no second place where the order is written, so the two cannot disagree.
 PHASES: Final[tuple[str, ...]] = (
     PREFLIGHT,
+    SOURCE_DRAIN,
+    SOURCE_STOP,
+    TRANSPORT,
     TARGET_STANDBY,
     HANDSHAKE,
-    SOURCE_DRAIN,
     HANDOVER,
-    SOURCE_STOP,
     DONE,
 )
 
@@ -229,6 +274,27 @@ def is_past_no_return(relocation: Relocation) -> bool:
     if relocation.phase == ABORTED:
         return False
     return PHASES.index(relocation.phase) >= PHASES.index(HANDOVER)
+
+
+def leaves_source_stopped(relocation: Relocation) -> bool:
+    """True when abandoning HERE leaves the agent DOWN on the source host.
+
+    The cost of ordering SOURCE_STOP before the transport (see the module
+    docstring). It is a predicate rather than a comment because the recovery
+    instruction depends on it: from SOURCE_STOP onward, "nothing was changed" is
+    true of every durable record and false of the thing the operator will
+    actually notice, and an abort that does not mention the stopped agent is a
+    reassurance that sends nobody to restart it.
+
+    ``ABORTED`` reports against the phase the relocation reached before it was
+    abandoned — the journal's last real step — because after an abort the
+    question being asked is precisely "what is still stopped".
+    """
+    phase = relocation.phase
+    if phase == ABORTED:
+        prior = [s.phase for s in relocation.steps if s.phase != ABORTED]
+        phase = prior[-1] if prior else PREFLIGHT
+    return PHASES.index(phase) >= PHASES.index(SOURCE_STOP)
 
 
 def begin(
@@ -359,13 +425,26 @@ def abort(
                 "Finish forward, or relocate back deliberately — do not undo a handover"
             ),
         )
+    # Computed BEFORE the transition, against the phase actually reached: after
+    # the replace() below the phase is ABORTED, and the question "is the agent
+    # still running" is about where it got to, not about the abort.
+    source_down = leaves_source_stopped(relocation)
     stopped = replace(
         relocation,
         phase=ABORTED,
         steps=relocation.steps + (Step(phase=ABORTED, at=now, detail=reason),),
     )
+    note = (
+        (
+            f" {relocation.agent} is STOPPED on {relocation.from_host} and nothing "
+            "restarted it — start it there to return to the pre-relocation state. "
+            "Its own transcript was never moved, only copied, so it resumes intact."
+        )
+        if source_down
+        else ""
+    )
     return stopped, PhaseVerdict(
         allowed=True,
         code=CODE_OK,
-        reason=f"{relocation.agent}: aborted at {relocation.phase} — {reason}",
+        reason=f"{relocation.agent}: aborted at {relocation.phase} — {reason}.{note}",
     )

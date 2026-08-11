@@ -67,6 +67,85 @@ EXIT_REFUSED = 3
 EXIT_UNIMPLEMENTED = 4
 
 
+#: What `--no-dry-run` still cannot do, phase by phase. THIS LIST IS THE REFUSAL
+#: — the message is generated from it, so the two cannot drift apart the way the
+#: previous hard-coded sentence did (it named the transcript transport as the one
+#: missing piece and went stale the moment that phase was built).
+#:
+#: Each entry is (phase, what is BUILT, what is MISSING). The split matters: the
+#: decision layers below are unit-tested and their refusal paths are the whole
+#: point, but a decision cannot move bytes or start a process. The I/O adapters
+#: are what remain, and they are the part that cannot be honestly claimed until
+#: it has been exercised against two real hosts.
+_PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
+    (
+        "source_drain",
+        "—",
+        "no adapter: drain the source and confirm it took no new work",
+    ),
+    (
+        "source_stop",
+        "—",
+        "no adapter: stop the source and VERIFY stopped (the transport's precondition)",
+    ),
+    (
+        "transport",
+        "_relocate_transport (selection, move-aside, byte+line verification) and "
+        "_relocate_transport_paths (target-side project dir)",
+        "no adapter: the ssh/scp round trip that moves the bytes and counts them "
+        "on the far side",
+    ),
+    (
+        "target_standby",
+        "—",
+        "no adapter: start the target without the lease and seed its session marker",
+    ),
+    (
+        "handshake",
+        "_relocate_handshake (nonce + proof-of-work verdict) and _relocate_arrival "
+        "(the message the relocated agent receives)",
+        "no adapter: deliver the brief over a2a and observe the reply ON THE SOURCE",
+    ),
+    ("handover", "_relocate_lease", "no adapter: move the lease and bump the fence"),
+    ("done", "—", "no adapter: append the residency record to the state db"),
+)
+
+
+def _unimplemented_notice() -> list[str]:
+    """Say exactly which phases can and cannot run, rather than naming one.
+
+    An accurate refusal is worth more than a short one here: the operator's next
+    question is always "so what IS missing", and answering it in the refusal is
+    the difference between a blocked afternoon and a scoped piece of work.
+    """
+    lines = [
+        "",
+        "[red]refusing to execute:[/red] the phase driver has no I/O adapters wired, "
+        "so a relocation would journal its way to DONE having moved nothing — the "
+        "most convincing possible imitation of success.",
+        "",
+        "Phase by phase:",
+    ]
+    for phase, built, missing in _PHASE_READINESS:
+        lines.append(f"  [bold]{phase}[/bold]")
+        if built != "—":
+            lines.append(f"    built:   {built}")
+        lines.append(f"    missing: {missing}")
+    lines += [
+        "",
+        "The decision layers refuse correctly and are unit-tested; what is absent "
+        "is the code that talks to two machines. Until an adapter has been "
+        "exercised against real hosts it is not claimed to work — that claim, made "
+        "on 2026-08-07 without the evidence, is why this command exists.",
+        "",
+        "Use --dry-run to check the target. Move the transcript by hand meanwhile, "
+        "and read _relocate_transport_paths before choosing the destination: the "
+        "directory name comes from the TARGET's resolved workdir, and a transcript "
+        "under the source's name is invisible to the target's runner.",
+    ]
+    return lines
+
+
 def _dig(body: dict, *path: str) -> object:
     """Follow ``path`` through nested dicts, yielding ``None`` at any break."""
     cur: object = body
@@ -289,11 +368,8 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         console.print(line, soft_wrap=True)
 
     if not dry_run:
-        console.print(
-            "\n[red]refusing to execute:[/red] the cross-host transcript transport "
-            "is not built, so a relocation would arrive with no memory of the "
-            "conversation that moved it. See docs/relocate.md §5."
-        )
+        for line in _unimplemented_notice():
+            console.print(line, soft_wrap=True)
         raise SystemExit(EXIT_UNIMPLEMENTED)
     if report.ok is not True:
         raise SystemExit(EXIT_REFUSED)
