@@ -107,7 +107,7 @@ _PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
         "_relocate_effects_standby: the spec is carried and byte+line verified on the "
         "target, the session_id marker is seeded from the CARRIED transcript "
         "(first boot only — an existing marker refuses rather than being overwritten) "
-        "and confirmed by read-back, then `sac agents start --session continue` "
+        "and confirmed by read-back, then `sac agents start --resume <carried uuid>` "
         "WITHOUT the lease and a SECOND independent liveness observation on BOTH hosts",
         "—",
     ),

@@ -322,7 +322,9 @@ class StandbyEffects:
 
     def _boot_standby(self) -> StepResult:
         """Start the agent on the target and VERIFY it, without touching the lease."""
-        run = start_standby(self.target, self.agent, exec_fn=self.exec_fn)
+        run = start_standby(
+            self.target, self.agent, self.session_uuid, exec_fn=self.exec_fn
+        )
         self.log.append(
             f"standby: start exit {run.exit_code} — {run.stdout.strip()[:400]}"
         )

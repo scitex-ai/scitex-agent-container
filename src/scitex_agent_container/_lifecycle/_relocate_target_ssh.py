@@ -220,19 +220,28 @@ def write_session_marker(
 def start_standby(
     shell: Shell,
     agent: str,
+    session_uuid: str,
     *,
     exec_fn: Callable[..., dict] | None = None,
     timeout_s: float = START_TIMEOUT_S,
 ):
-    """``sac agents start`` the agent on ``shell``, in CONTINUE mode.
+    """``sac agents start`` the agent on ``shell``, resuming the CARRIED session BY ID.
 
-    ``--session continue`` is passed EXPLICITLY rather than left to the spec's
-    role default, and that is the whole point of the phase: a relocation carried
-    a conversation and verified it by byte and line count, so the boot that
-    follows must resume it. Inheriting a default here would let a spec whose
-    role happens to resolve to ``fresh`` start the agent with no memory — which
-    is the 2026-08-07 outcome, produced by an omission rather than a failure,
-    and indistinguishable from success from the outside.
+    ``--resume <uuid>`` NAMES THE TRANSCRIPT, and that is deliberately stronger
+    than ``--session continue``. Continue means "the latest conversation for this
+    home", which is the right session only as long as the carried one is the only
+    one there. Measured 2026-08-11: an earlier attempt on this canary left a
+    stray newer session on the target, and a continue-mode boot then resumed THAT
+    — the agent came up with a memory, just not the one that was carried, which
+    is a failure no byte count can catch. A relocation knows exactly which
+    transcript it copied and verified; naming it removes the ambiguity entirely.
+
+    It also makes the boot agree with the marker: ``--resume`` implies
+    ``--session resume``, which is the mode whose ``session_id`` seed the
+    standby wrote. Passing it EXPLICITLY rather than leaning on the spec's role
+    default is the other half — a spec whose role resolves to ``fresh`` would
+    otherwise start the agent with no memory at all, the 2026-08-07 outcome
+    produced by an omission rather than a failure.
 
     ``--no-redispatch`` IS LOAD-BEARING AND WAS MEASURED. ``sac agents start``
     routes by the spec's ``host:`` pin
@@ -250,9 +259,15 @@ def start_standby(
     because a start command exiting 0 is the command's opinion and what the
     transport's precondition cares about is the tmux server's.
     """
+    if not session_uuid:
+        raise ValueError(
+            "start_standby needs the carried session id — a standby started without "
+            "one resumes whatever happens to be latest on that host, which is the "
+            "failure a byte count cannot catch"
+        )
     body = (
-        f"sac agents start {quote(agent)} --session continue --no-redispatch "
-        f"--yes --json 2>&1; "
+        f"sac agents start {quote(agent)} --resume {quote(session_uuid)} "
+        f"--no-redispatch --yes --json 2>&1; "
         f"printf '{MARK_BOOT}%s\\n' \"$?\""
     )
     return shell.run(body, exec_fn=exec_fn, timeout_s=timeout_s)
