@@ -552,7 +552,21 @@ def _wait_for_pid_file(state_dir: Path, deadline_s: float = 5.0) -> None:
 @pytest.fixture
 def _runner_subprocess(tmp_path: Path):
     """Spawn the runner as a child process; yield (proc, state_dir); send
-    SIGTERM + wait on teardown so each test focuses on one observation."""
+    SIGTERM + wait on teardown so each test focuses on one observation.
+
+    The child declares ``SAC_SKIP_VENV_DIST_ASSERTION`` deliberately. The
+    runner's boot assertion
+    (``_maintenance._venv_dist_assertion.assert_venv_distributions_unique``)
+    measures the DEVELOPER'S ``/opt/venv-sac``, not anything these three tests
+    assert about — they are about pid/heartbeat mechanics. Leaving it armed
+    means a contributor whose own overlay happens to shadow the image sees
+    "runner never wrote pid/heartbeat" and reads it as a broken REPO, which is
+    the exact env-mistaken-for-repo confusion that assertion exists to end. The
+    gate stays armed everywhere else; its own behaviour is covered directly by
+    ``tests/.../\\_maintenance/test__venv_dist_assertion.py``, including a
+    negative control proving it is armed without this variable.
+    """
+    child_env = {**os.environ, "SAC_SKIP_VENV_DIST_ASSERTION": "1"}
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -567,6 +581,7 @@ def _runner_subprocess(tmp_path: Path):
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=child_env,
     )
     state_dir = tmp_path / "ci-runner"
     _wait_for_pid_file(state_dir)
