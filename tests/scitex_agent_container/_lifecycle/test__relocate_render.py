@@ -258,3 +258,33 @@ def test_render_observed_tolerates_a_report_with_one_check() -> None:
     lines = render_observed(report)
     # Assert
     assert any("PASS" in ln and "fine" in ln for ln in lines)
+
+
+def test_the_executing_header_does_not_claim_nothing_was_touched() -> None:
+    # Arrange: THE lie, measured 2026-08-11 on the canary run. The header was
+    # unconditional, so the first real relocation printed "(nothing was touched)"
+    # above a report of 3.6 MB moved between two hosts.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False)[0]
+    # Assert
+    assert "nothing was touched" not in head
+
+
+def test_the_executing_header_says_both_hosts_change() -> None:
+    # Arrange: the reader needs to know, from the first line, which of the two
+    # modes they are looking at.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False)[0]
+    # Assert
+    assert "EXECUTING" in head
+
+
+def test_the_header_still_defaults_to_the_dry_run_wording() -> None:
+    # Arrange: a caller that forgets the flag must OVER-warn, not under-warn.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report)[0]
+    # Assert
+    assert "DRY RUN" in head

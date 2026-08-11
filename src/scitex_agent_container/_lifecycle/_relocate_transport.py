@@ -53,6 +53,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Sequence
 
+from ._relocate_move_aside import move_aside_destination
+
 __all__ = [
     "CODE_ARRIVED",
     "CODE_MISSING_ON_TARGET",
@@ -68,6 +70,7 @@ __all__ = [
     "TranscriptFile",
     "TransportPlan",
     "is_transferable",
+    "move_aside_destination",
     "plan_transport",
     "refusal_for",
     "select_transferable",
@@ -371,7 +374,7 @@ def plan_transport(
     if target_dir_exists:
         move = MoveAside(
             required=True,
-            destination=f"{target_dir.rstrip('/')}/.old/{stamp}",
+            destination=move_aside_destination(target_dir, stamp),
             reason=(
                 "the target already holds a transcript directory for this agent; it "
                 "is moved aside, never overwritten and never deleted"

@@ -19,7 +19,7 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._relocate_cmd import (
     EXIT_REFUSED,
-    EXIT_UNIMPLEMENTED,
+    EXIT_RETIRED_UNIMPLEMENTED,
     _required_ports,
     declared_from_spec,
     register,
@@ -157,13 +157,35 @@ def test_missing_to_is_a_usage_error_not_a_refusal() -> None:
 
 
 def test_the_exit_codes_are_distinct() -> None:
-    # Arrange: three outcomes a caller must be able to branch on — usage (2),
-    # target not ready (3), not built yet (4). Collapsing any two is how a
-    # script decides "it worked" from a failure.
+    # Arrange: four outcomes a caller must be able to branch on — usage (2),
+    # target not ready (3), a phase refused (5), a phase could not be measured
+    # (6). Collapsing any two is how a script decides "it worked" from a failure.
+    # 4 is retired rather than reused: a script written against its old meaning
+    # ("not built yet") must not silently start reading a new one.
+    from scitex_agent_container.cli_pkg._relocate_run import (
+        EXIT_INCOMPLETE,
+        EXIT_UNMEASURED,
+    )
+
     # Act
-    codes = {2, EXIT_REFUSED, EXIT_UNIMPLEMENTED}
+    codes = {2, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_UNMEASURED}
     # Assert
-    assert len(codes) == 3
+    assert len(codes) == 4
+
+
+def test_the_retired_exit_code_is_not_reused() -> None:
+    # Arrange: 4 meant "the executing path does not exist". It does now, so the
+    # number is retired rather than re-pointed — a script written against the old
+    # meaning must not silently start reading a new one.
+    from scitex_agent_container.cli_pkg._relocate_run import (
+        EXIT_INCOMPLETE,
+        EXIT_UNMEASURED,
+    )
+
+    # Act
+    live = (EXIT_INCOMPLETE, EXIT_UNMEASURED)
+    # Assert
+    assert EXIT_RETIRED_UNIMPLEMENTED not in live
 
 
 def test_register_attaches_the_verb_to_a_group() -> None:
@@ -212,55 +234,69 @@ def test_the_refusal_covers_every_phase() -> None:
     assert covered == tuple(p for p in PHASES if p != PREFLIGHT)
 
 
-def test_the_refusal_names_the_transport_phase_as_built() -> None:
+def test_the_notice_names_the_transport_adapter_as_built() -> None:
     # Arrange: the operator's question is "what is missing", and answering it
-    # requires saying what is NOT. The transport decision layer exists now.
-    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+    # requires saying what is NOT. The ssh adapter exists now.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
 
     # Act
-    text = "\n".join(_unimplemented_notice())
+    text = "\n".join(_readiness_notice())
     # Assert
-    assert "_relocate_transport" in text
+    assert "_relocate_transport_ssh" in text
 
 
-def test_the_refusal_names_the_arrival_brief_as_built() -> None:
-    # Arrange: the other half of this change, so the notice reflects it too.
-    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+def test_the_notice_names_the_arrival_brief_as_built() -> None:
+    # Arrange: the handshake's decision half exists; its delivery does not.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
 
     # Act
-    text = "\n".join(_unimplemented_notice())
+    text = "\n".join(_readiness_notice())
     # Assert
     assert "_relocate_arrival" in text
 
 
-def test_the_refusal_no_longer_blames_the_transcript_transport() -> None:
-    # Arrange: THE stale sentence. It said the cross-host transcript transport
-    # was "not built"; that is now false, and a refusal that misstates its own
-    # cause sends the reader to build something that already exists.
-    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+def test_the_notice_no_longer_claims_the_adapters_are_absent() -> None:
+    # Arrange: THE stale sentence, one generation on. It said the phase driver
+    # had no I/O adapters wired; that is now false for transport, source_stop and
+    # done, and a notice that misstates its own state sends the reader to build
+    # something that already exists.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
 
     # Act
-    text = "\n".join(_unimplemented_notice())
+    text = "\n".join(_readiness_notice())
     # Assert
-    assert "transcript transport is not built" not in text
+    assert "no I/O adapters wired" not in text
 
 
-def test_the_refusal_says_what_is_actually_missing() -> None:
-    # Arrange: the honest cause is the absent I/O adapters, not the decisions.
-    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+def test_the_notice_marks_the_transport_phase_as_running() -> None:
+    # Arrange: the readiness table is the thing that must not overclaim OR
+    # underclaim; transport now has nothing missing.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
 
     # Act
-    text = "\n".join(_unimplemented_notice())
+    missing = {phase: gap for phase, _, gap in _PHASE_READINESS}
     # Assert
-    assert "no I/O adapters wired" in text
+    assert missing["transport"] == "—"
 
 
-def test_the_refusal_warns_about_the_target_side_directory_name() -> None:
-    # Arrange: the operator will move the transcript by hand meanwhile, and the
-    # source-named directory is the trap that makes a hand move look successful.
-    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+def test_the_notice_still_marks_target_standby_as_refusing() -> None:
+    # Arrange: the honest half. Nothing carries a spec to the target or writes
+    # its session marker, so this phase must not read as ready.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
 
     # Act
-    text = "\n".join(_unimplemented_notice())
+    missing = {phase: gap for phase, _, gap in _PHASE_READINESS}
     # Assert
-    assert "invisible to the target's runner" in text
+    assert "no adapter" in missing["target_standby"]
+
+
+def test_the_notice_says_nothing_is_ever_deleted() -> None:
+    # Arrange: the operator's rollback story. A displaced directory goes to
+    # .old/<stamp>/ and a rollback is a human moving it back — never this code
+    # deciding to remove something.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "Nothing is deleted at any point" in text

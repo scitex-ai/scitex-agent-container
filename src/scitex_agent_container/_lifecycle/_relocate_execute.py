@@ -123,6 +123,17 @@ class StepResult:
     ok: bool | None
     detail: str
     hint: str = ""
+    #: Whether the effect actually TRIED. Defaults to True, so every existing
+    #: caller keeps its meaning and a forgetful one over-warns.
+    #:
+    #: It exists because "I tried and could not tell whether it worked" and "I
+    #: never tried" are both ``ok=None`` and imply opposite things about the
+    #: world. Measured on the 2026-08-11 canary run: the unbuilt target_standby
+    #: returned UNKNOWN, :func:`_standby_running` conservatively read that as "a
+    #: standby may be running", and the outcome told the operator to go and stop
+    #: a process that had never been started. A false alarm in a recovery
+    #: instruction is not a safe default — it sends someone to the wrong host.
+    attempted: bool = True
 
     def __post_init__(self) -> None:
         if self.ok not in (True, False, None):
@@ -234,16 +245,23 @@ def _missing_effects(effects: PhaseEffects) -> tuple[str, ...]:
     return tuple(p for p in PHASES if p != PREFLIGHT and effects.for_phase(p) is None)
 
 
-def _standby_running(last_done: str, failing: str, unknown: bool) -> bool:
+def _standby_running(
+    last_done: str, failing: str, unknown: bool, attempted: bool = True
+) -> bool:
     """Whether an abort here leaves a started target behind.
 
     True once TARGET_STANDBY has completed, and also when the standby phase
-    ITSELF returned UNKNOWN: an effect that could not say whether the target
-    came up may well have started it, and reporting "nothing was left running"
-    on that basis is the kind of reassurance that sends nobody to look.
+    ITSELF returned UNKNOWN AFTER TRYING: an effect that could not say whether
+    the target came up may well have started it, and reporting "nothing was left
+    running" on that basis is the kind of reassurance that sends nobody to look.
+
+    An effect that never tried is the other case, and it is not the same one. It
+    also cannot have started anything, so claiming it might have sends an
+    operator to stop a process that does not exist — see
+    :attr:`StepResult.attempted`.
     """
     if failing == TARGET_STANDBY:
-        return unknown
+        return unknown and attempted
     return PHASES.index(last_done) >= PHASES.index(TARGET_STANDBY)
 
 
@@ -310,7 +328,9 @@ def execute(
                 now=now(),
                 reason=f"{phase}: {result.detail}",
             )
-            left_running = _standby_running(current.phase, phase, unknown)
+            left_running = _standby_running(
+                current.phase, phase, unknown, result.attempted
+            )
             # Computed against the pre-abort record, for the same reason the
             # phase machine does it: after the abort the phase is ABORTED, and
             # the question is where it got to.

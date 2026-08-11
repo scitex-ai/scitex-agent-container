@@ -524,3 +524,48 @@ def test_an_incomplete_outcome_must_say_what_to_do_next() -> None:
     # Assert
     with caught:
         build()
+
+
+def test_an_unattempted_standby_is_not_reported_as_left_running() -> None:
+    # Arrange: measured 2026-08-11 on the canary run. The unbuilt target_standby
+    # returned UNKNOWN, the outcome read that as "a standby may be running", and
+    # the recovery instruction sent the operator to stop a process that had never
+    # been started. A false alarm in a recovery instruction is not a safe default.
+    from scitex_agent_container._lifecycle._relocate_execute import _standby_running
+    from scitex_agent_container._lifecycle._relocate_phases import (
+        TARGET_STANDBY,
+        TRANSPORT,
+    )
+
+    # Act
+    left = _standby_running(TRANSPORT, TARGET_STANDBY, unknown=True, attempted=False)
+    # Assert
+    assert left is False
+
+
+def test_an_attempted_standby_that_could_not_be_measured_is_still_reported() -> None:
+    # Arrange: the case the conservative default was written for and which must
+    # NOT be lost — an effect that tried and could not tell may well have started
+    # something, and "nothing was left running" there is the reassurance that
+    # sends nobody to look.
+    from scitex_agent_container._lifecycle._relocate_execute import _standby_running
+    from scitex_agent_container._lifecycle._relocate_phases import (
+        TARGET_STANDBY,
+        TRANSPORT,
+    )
+
+    # Act
+    left = _standby_running(TRANSPORT, TARGET_STANDBY, unknown=True, attempted=True)
+    # Assert
+    assert left is True
+
+
+def test_a_step_result_is_attempted_by_default() -> None:
+    # Arrange: every existing caller keeps its meaning, and a forgetful new one
+    # over-warns rather than under-warns.
+    from scitex_agent_container._lifecycle._relocate_execute import StepResult
+
+    # Act
+    result = StepResult(ok=True, detail="did a thing")
+    # Assert
+    assert result.attempted is True
