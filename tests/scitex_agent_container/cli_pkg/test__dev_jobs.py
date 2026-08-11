@@ -60,6 +60,7 @@ import scitex_agent_container  # noqa: E402
 import scitex_agent_container.cli_pkg._dev_jobs as dj  # noqa: E402
 from scitex_agent_container._jobs import _names  # noqa: E402
 from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
+from scitex_agent_container.cli_pkg import _dev_jobs_backend as _backend  # noqa: E402
 from scitex_agent_container.cli_pkg._dev_jobs import (  # noqa: E402
     DEPRECATED_GROUPS,
     GROUP_KINDS,
@@ -431,16 +432,17 @@ def test_every_declared_verb_has_a_help_summary() -> None:
     assert missing == set()
 
 
-def test_service_has_the_full_lifecycle() -> None:
-    # Arrange — a service is a long-running unit.
+def test_service_has_the_runtime_lifecycle() -> None:
+    # Arrange — a service is a long-running unit. MATCHED to scitex-dev
+    # PR #566's service verb set: no enable/disable, because the shared
+    # layer does not serve them and a verb sac exposes that nothing can
+    # serve is a permanent exit-4.
     expected = {
         "list",
         "status",
         "start",
         "stop",
         "restart",
-        "enable",
-        "disable",
         "install",
         "uninstall",
     }
@@ -448,6 +450,32 @@ def test_service_has_the_full_lifecycle() -> None:
     verbs = _verbs_of("service")
     # Assert
     assert verbs == expected
+
+
+def test_no_verb_is_exposed_that_the_counterpart_will_not_serve() -> None:
+    # Arrange — scitex-dev PR #566's verb sets, transcribed. Divergence
+    # here is a declaration with no live counterpart in the making, so it
+    # is pinned rather than trusted to review.
+    counterpart = {
+        "service": {
+            "list",
+            "status",
+            "start",
+            "stop",
+            "restart",
+            "install",
+            "uninstall",
+        },
+        "timer": {"list", "status", "enable", "disable", "install", "uninstall"},
+        # `exec` is deliberately NOT mirrored: sac declares no cron job,
+        # and its argv is positional (`exec <name> --apply`) rather than
+        # the uniform `--name` every other verb takes.
+        "cron": {"list", "enable", "disable", "install", "uninstall", "exec"},
+    }
+    # Act
+    extra = {g: set(GROUP_VERBS[g]) - counterpart[g] for g in counterpart}
+    # Assert
+    assert extra == {"service": set(), "timer": set(), "cron": set()}
 
 
 def test_timer_has_no_start_verb() -> None:
@@ -528,6 +556,59 @@ def test_install_accepts_the_canonical_name_too() -> None:
     assert [a[2] for a in captured] == ["sac.accounts-refresh"]
 
 
+def test_install_forwards_dry_run_to_the_delegation() -> None:
+    # Arrange — scitex-dev gates mutating job verbs behind --dry-run /
+    # --yes, and that gate is load-bearing. If sac's pass-through drops a
+    # flag, a guarded command silently becomes an unguarded one.
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "--dry-run"])
+    # Assert — (kind, verb, name, yes, dry_run)
+    assert [a[4] for a in captured] == [True]
+
+
+def test_install_forwards_yes_to_the_delegation() -> None:
+    # Arrange
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "-y"])
+    # Assert
+    assert [a[3] for a in captured] == [True]
+
+
+def test_a_named_mutating_verb_offers_dry_run() -> None:
+    # Arrange — `timer disable sac.accounts-refresh` stops the fleet's
+    # SOLE OAuth refresher, so previewing it must be possible from sac's
+    # own CLI rather than only from scitex-dev's.
+    disable = dev_group.commands["timer"].commands["disable"]  # type: ignore[attr-defined]
+    # Act
+    flags = {opt for p in disable.params for opt in p.opts}
+    # Assert
+    assert {"--dry-run", "--yes"} <= flags
+
+
+def test_every_mutating_verb_offers_the_gate_flags() -> None:
+    # Arrange — one missing flag is one command that cannot be previewed.
+    wanted = {"--dry-run", "--yes"}
+    mutating = [
+        (g, v)
+        for g, verbs in GROUP_VERBS.items()
+        for v in verbs
+        if v in _backend.MUTATING_VERBS
+    ]
+    # Act
+    missing = {}
+    for group, verb in mutating:
+        cmd = dev_group.commands[group].commands[verb]  # type: ignore[attr-defined]
+        gap = wanted - {opt for p in cmd.params for opt in p.opts}
+        if gap:
+            missing[f"{group} {verb}"] = sorted(gap)
+    # Assert
+    assert missing == {}
+
+
 def test_an_unknown_job_name_exits_five() -> None:
     # Arrange — a verb that silently does nothing for a typo is how a job
     # quietly stops being scheduled.
@@ -569,7 +650,7 @@ def test_an_unsupported_verb_states_what_it_probed() -> None:
     # Act
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
-    assert "ecosystem timer status" in result.stderr
+    assert "ecosystem dev timer status" in result.stderr
 
 
 def test_an_unsupported_verb_offers_the_manual_command() -> None:

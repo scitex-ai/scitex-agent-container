@@ -198,11 +198,29 @@ _BULK_VERBS: frozenset[str] = frozenset({"install", "uninstall"})
 
 #: ``sac dev <group>`` -> its verbs. Per KIND, deliberately not uniform.
 #:
-#: * ``service`` — a long-running unit: the full lifecycle applies.
+#: MATCHED VERBATIM to scitex-dev's counterpart (PR #566), because the
+#: grammar is only worth anything if the two agree. A verb sac exposed
+#: that the shared layer will never serve is a permanent exit-4 — a
+#: declaration with no live counterpart, which is precisely what
+#: ``_jobs_audit`` exists to eliminate. Two deliberate consequences:
+#:
+#: * ``service`` has NO ``enable``/``disable``. systemd services support
+#:   them and an earlier revision here exposed them, but #566 does not,
+#:   so they would be inert. If #566 adds them, add them back.
+#: * ``cron`` has NO ``exec``, which #566 does have. sac declares no
+#:   ``kind="cron"`` job, and ``exec``'s argv shape is positional
+#:   (``exec <name> --apply``) rather than the uniform ``--name`` every
+#:   other verb takes — measured on scitex-dev 0.43.1. Wiring an
+#:   untestable special case for an empty group is the same disease in
+#:   the other direction; it belongs with the first cron job sac owns.
+#:
+#: The rest is per-kind reasoning:
+#:
+#: * ``service`` — a long-running unit: the runtime lifecycle applies.
 #: * ``timer``   — scheduled, not run by hand. ``enable``/``disable`` is
 #:   the systemd idiom for a timer (``enable --now`` starts it), so
 #:   ``start``/``stop``/``restart`` would be three ways to say the same
-#:   thing with different edge cases. Omitted rather than aliased.
+#:   thing with different edge cases.
 #: * ``cron``    — a crontab line is present or commented out. There is
 #:   no runtime object to start, stop or ask for status, so those verbs
 #:   do not exist here instead of existing and erroring.
@@ -216,8 +234,6 @@ GROUP_VERBS: dict[str, tuple[str, ...]] = {
         "start",
         "stop",
         "restart",
-        "enable",
-        "disable",
         "install",
         "uninstall",
     ),
@@ -284,13 +300,15 @@ def _kind_of(group: str) -> str:
     return "timer" if group == "systemd" else group
 
 
-def _delegate(kind: str, verb: str, name: str | None, yes: bool) -> int:
+def _delegate(
+    kind: str, verb: str, name: str | None, yes: bool, dry_run: bool = False
+) -> int:
     """Resolve + run one ecosystem delegation. THE single mutation seam.
 
-    Tests replace this one callable to capture the ``(kind, verb, name)``
-    tuples a verb delegates with, rather than shelling out to a real
-    ``scitex-dev`` that would rewrite the host's units and crontab. The
-    delegation ARGUMENTS are what those tests are about.
+    Tests replace this one callable to capture the ``(kind, verb, name,
+    yes, dry_run)`` tuples a verb delegates with, rather than shelling out
+    to a real ``scitex-dev`` that would rewrite the host's units and
+    crontab. The delegation ARGUMENTS are what those tests are about.
     """
     delegation = _backend.resolve(kind, verb)
     if not delegation.supported:
@@ -306,7 +324,7 @@ def _delegate(kind: str, verb: str, name: str | None, yes: bool) -> int:
             err=True,
         )
         raise SystemExit(4)
-    return _backend.invoke(delegation, name=name, yes=yes)
+    return _backend.invoke(delegation, name=name, yes=yes, dry_run=dry_run)
 
 
 def _resolve_one(group: str, typed: str) -> str:
@@ -364,13 +382,20 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
     @grp.command(verb)
     @click.argument("name", required=False)
     @click.option(
+        "--dry-run",
+        "dry_run",
+        is_flag=True,
+        default=False,
+        help="Preview only. Forwarded to scitex-dev.",
+    )
+    @click.option(
         "-y",
         "--yes",
         is_flag=True,
         default=False,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _bulk(name, yes, _verb=verb):
+    def _bulk(name, dry_run, yes, _verb=verb):
         _announce_deprecation(group)
         jobs = _jobs_or_degrade(group)
         if name is not None:
@@ -381,7 +406,7 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
             return
         rc = 0
         for j in jobs:
-            code = _delegate(_kind_of(group), _verb, j.name, yes)
+            code = _delegate(_kind_of(group), _verb, j.name, yes, dry_run)
             rc = rc or code
         raise SystemExit(rc)
 
@@ -395,19 +420,30 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
 def _add_named_command(grp, group: str, verb: str) -> None:
     """Attach a lifecycle verb that acts on ONE named job."""
 
+    mutating = verb in _backend.MUTATING_VERBS
+
     @grp.command(verb)
     @click.argument("name")
+    @click.option(
+        "--dry-run",
+        "dry_run",
+        is_flag=True,
+        default=False,
+        hidden=not mutating,
+        help="Preview only. Forwarded to scitex-dev.",
+    )
     @click.option(
         "-y",
         "--yes",
         is_flag=True,
         default=False,
+        hidden=not mutating,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _named(name, yes, _verb=verb):
+    def _named(name, dry_run, yes, _verb=verb):
         _announce_deprecation(group)
         wanted = _resolve_one(group, name)
-        raise SystemExit(_delegate(_kind_of(group), _verb, wanted, yes))
+        raise SystemExit(_delegate(_kind_of(group), _verb, wanted, yes, dry_run))
 
     _named.help = (
         f"{_VERB_SUMMARY[verb]} one of sac's {group} jobs via scitex-dev.\n\n"

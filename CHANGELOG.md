@@ -48,13 +48,24 @@ versioning follows [SemVer](https://semver.org/).
 
 - `cli_pkg/_dev_jobs_backend.py` — the explicit, testable delegation seam
   between `sac dev <kind> <verb>` and scitex-dev. It probes the INSTALLED
-  scitex-dev's real Click tree rather than consulting a hard-coded table, so
-  it picks up `ecosystem service` / `ecosystem timer` the moment those ship,
-  with no sac release; until then it falls back to today's `ecosystem
-  {cron,systemd}`. A verb neither surface serves exits 4 naming what was
-  probed and printing the exact `systemctl --user …` command to run by hand.
-  sac deliberately does NOT call `systemctl` itself — the argument is in the
-  module docstring.
+  scitex-dev's real Click tree rather than consulting a hard-coded table, and
+  resolves to a PATH rather than a name, so it survives the ecosystem moving
+  its job groups. Measured on scitex-dev 0.43.1: the groups already live at
+  `ecosystem dev {cron,systemd}`, while `ecosystem cron` / `ecosystem systemd`
+  are deprecated forwarding `Command` shims whose own help says "Removed in
+  v0.50" — they still run, but targeting them breaks on the next upgrade, and
+  because a shim is not a `Group` it enumerates as zero verbs while working
+  perfectly. Candidate paths are tried `dev <kind>` → `<kind>` → `dev <legacy>`
+  → `<legacy>`, so `ecosystem dev service` / `dev timer` (scitex-dev #566) are
+  picked up the moment they ship, with no sac release. An all-empty read is
+  the third state ("cannot tell"), never "unsupported" — including the live
+  case where `ecosystem dev` exists but its per-kind children do not. A verb
+  no surface serves exits 4 naming every path probed and printing the exact
+  `systemctl --user …` command to run by hand. `--dry-run` / `--yes` are
+  forwarded verbatim, because scitex-dev's gate on mutating verbs is what
+  stops `timer disable sac.accounts-refresh` from stopping the fleet's sole
+  OAuth refresher. sac deliberately does NOT call `systemctl` itself — the
+  argument is in the module docstring.
 
 - `_jobs/_names.py` — the local-vs-canonical job-name grammar, with the
   canonical prefix as a single named constant. That constant is the seam for
