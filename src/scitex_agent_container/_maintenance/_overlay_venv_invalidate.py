@@ -26,8 +26,9 @@ reconciled anything, and the NEXT boot would then find the overlay "fresh" and
 skip the work — a refusal that quietly converts itself into a pass.
 
 WHY THIS NEVER RAISES INTO THE LAUNCH PATH. It is called from
-``build_run_argv``, so an exception here would refuse every start on the host —
-a guard more dangerous than the fault it guards, exactly as
+``_apptainer_runtime.start`` and ``tui_session.start``, so an exception here
+would refuse every start on the host — a guard more dangerous than the fault it
+guards, exactly as
 :func:`..runtimes._entry_point_gate.assert_entry_point_runs` documents. A
 reconcile that cannot run logs loudly and lets the launch proceed; the second
 layer, the BOOT ASSERTION in :mod:`._venv_dist_assertion`, then refuses INSIDE
@@ -404,11 +405,13 @@ def reconcile_overlay_venv_for_launch(
     sif_path: Path | str,
     state_dir: Path | str,
 ) -> InvalidationPlan | None:
-    """``build_run_argv``'s entry point. Observes liveness; NEVER raises.
+    """The launch sites' entry point. Observes liveness; NEVER raises.
 
-    Exists so the launch site stays one call and the never-raise contract lives
-    HERE, next to the reasoning for it, rather than as an anonymous ``try`` in
-    the middle of argv assembly.
+    Called from ``runtimes._apptainer_runtime.start`` and
+    ``runtimes.tui_session.start``, in both cases past the already-running guard
+    and past the dry-run return. Exists so each launch site stays ONE call and
+    the never-raise contract lives HERE, next to the reasoning for it, rather
+    than as an anonymous ``try`` in the middle of a start path.
 
     A reconcile that blows up must not refuse every start on the host — that is
     a guard more dangerous than the fault it guards. It logs loudly instead,
