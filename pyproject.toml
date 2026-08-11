@@ -468,15 +468,26 @@ pythonpath = [".", "src"]
 # missing dependency is indistinguishable from a code regression, and two
 # agents spent the evening attributing it to their own changes.
 #
-# The cause was environmental, and that class of cause recurs: the sac base SIF
-# installs `/opt/scitex-agent-container-src[openai]`, NOT `[dev]`, so a fresh
-# container has no pytest and no pytest-asyncio at all (measured 2026-08-11:
-# 19 of 20 agent overlays on scitex-compute-04 had neither). Each agent
-# hand-installs what it needs into its own persistent overlay, so two agents
-# running the same tests legitimately hold different plugin sets. CI has its
-# own path to the same state: .github/ci/run-in-sif.sh falls back
-# `[all,dev]` -> `[dev]` -> `-e .`, and that last leg installs no test plugins
-# while still running the suite.
+# The cause was environmental, and that class of cause recurs. It began in the
+# image: the sac base SIF installed `/opt/scitex-agent-container-src[openai]`,
+# NOT `[dev]`, so a fresh container had no pytest and no pytest-asyncio at all
+# (measured 2026-08-11: 19 of 20 agent overlays on scitex-compute-04 had
+# neither). Each agent hand-installed what it needed into its own persistent
+# overlay, so two agents running the same tests legitimately held different
+# plugin sets — and different pytest MAJORS.
+#
+# THAT ROOT CAUSE IS FIXED: apptainer-base.def now installs `[all]`, which
+# contains `[dev]`, so a pristine container arrives with pytest 8.4.2,
+# pytest-asyncio, pytest-xdist and pytest-cov and this gate never fires there.
+#
+# The gate is NOT thereby redundant, because the image is only one of the ways
+# an interpreter loses a plugin. CI has its own path to the same state:
+# .github/ci/run-in-sif.sh falls back `[all,dev]` -> `[dev]` -> `-e .`, and
+# that last leg installs no test plugins while still running the suite. So do
+# hand-made venvs, `--target` layouts, sandboxes mutated after a bake, and any
+# older image still on disk. The image fix removes the common case; this line
+# is what makes the remaining cases say so out loud instead of inventing
+# failures.
 #
 # `required_plugins` closes all of it the only way that is trustworthy — the
 # run REFUSES to start. Missing plugin => exit 4 and one line naming it:
