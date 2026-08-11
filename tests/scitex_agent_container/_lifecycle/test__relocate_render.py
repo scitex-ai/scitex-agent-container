@@ -16,9 +16,11 @@ constructing them IS the check that the shapes are right. No mocks.
 
 from __future__ import annotations
 
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
 from scitex_agent_container._lifecycle._relocate_preflight import (
     Check,
     PreflightReport,
+    SourceFacts,
     TargetFacts,
     preflight,
 )
@@ -47,11 +49,27 @@ ALL_GOOD = TargetFacts(
     rejected_spec_keys=(),
     ports_in_use=(),
     hub_reachable_from_target=True,
+    sac_on_path=True,
+    sac_resolved_path="/usr/local/bin/sac",
+)
+
+#: The source scanned and clean. Supplied on every render so the rendering
+#: itself is what is under test — a report that refuses because nobody scanned
+#: the source would exercise the renderer's refusal path in every case.
+CLEAN_SOURCE = SourceFacts(
+    repos=(RepoWork(path="/proj/x", branch="develop", uncommitted=0, unpushed=0),)
 )
 
 
 def _report(facts: TargetFacts, runtime: str = "tui") -> PreflightReport:
-    return preflight(agent=AGENT, to_host=HOST, facts=facts, runtime=runtime)
+    return preflight(
+        agent=AGENT,
+        to_host=HOST,
+        facts=facts,
+        runtime=runtime,
+        source_facts=CLEAN_SOURCE,
+        from_host="ywata-note-win",
+    )
 
 
 def _text(lines: list[str]) -> str:
