@@ -8,6 +8,76 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Changed
 
+- **Every job sac owns is renamed to the ecosystem canonical form
+  `scitex-agent-container-<name>`, and the migration that makes that safe
+  ships with it** (`sac dev migrate-job-names`, `_jobs/_migrate/`). The rename
+  is not cosmetic: scitex-dev derives the unit FILENAME from `JobSpec.name`
+  verbatim, so `sac.worktree-gc` and `scitex-agent-container-worktree-gc` are
+  two unrelated units with independent enablement, state and triggers. Install
+  before uninstall therefore leaves TWO supervisors running the same command —
+  the shape that already put a crontab line and a systemd unit on `sac listen`
+  against different venvs, dormant only because a `pgrep` guard happened to
+  match. A rename is exactly what wakes that up.
+
+  So the migration is ordered by construction — stop → disable → carry
+  drop-ins → displace → daemon-reload → install → logging → verify — with
+  `install` unable to precede `displace` because each step's action indexes
+  into `ACTION_ORDER` and a test asserts the ranks are non-decreasing for every
+  job. Nothing is deleted (displaced units go to `.old/<timestamp>/`), a unit's
+  `<unit>.d/` drop-ins are CARRIED across the rename rather than orphaned under
+  a name the new unit never reads, and `sac-listen.service` is in `NEVER_TOUCH`
+  with the guard running on every plan the planner returns.
+
+  Verification counts BOTH names: "the new unit exists" is not the claim, "ONLY
+  the new unit exists" is, and a surviving old unit fails however healthy the
+  new one looks.
+
+  **`sac.accounts-refresh` deliberately keeps its legacy name.** It is the
+  fleet's sole OAuth refresher against a single-use refresh token (two racing
+  refreshers revoke each other; zero stalls the fleet within hours — measured
+  2026-07-09/10) and the only sac timer actually enabled and active. A spec
+  renamed AHEAD of its unit would make `sac dev timer status accounts-refresh`
+  report the refresher as ABSENT while it refreshes, so the declared name
+  tracks the DEPLOYED unit until an operator-supervised cutover renames both
+  together. `_names` recognises both prefixes for exactly that window;
+  `--include-held` requires `--only`, so a bulk run cannot sweep it up.
+
+### Added
+
+- **A run-selection knob** (`_jobs/_migrate/_selection.py`): `SAC_JOBS_ENABLED`
+  or `~/.scitex/agent-container/jobs-enabled.txt` selects which declared jobs
+  run on THIS host. `JobSpec` has no host axis, so every discovered job was a
+  candidate everywhere while constraints like "`restart-login-expired-agents`
+  and `heal-agent-auth` are mutually exclusive" lived only in docstring prose.
+  UNSTATED is a third state distinct from "nothing selected": arriving
+  machinery must not disarm a host that never opted in, and a host that
+  deliberately selected nothing must not be armed. The knob gates ARMING, never
+  installing — an inert unit file stays inspectable with `systemctl cat`.
+
+- **Predictable logging for sac's jobs**, as a `10-logging.conf` drop-in on
+  scitex-dev's own path convention
+  (`~/.scitex/agent-container/runtime/logs/<kind>-<name>.log`). sac's jobs are
+  not dispatched through `ecosystem cron exec`, so upstream's log sink never
+  installed for them and their output went to the journal under a unit name
+  that changed with every rename. A drop-in rather than a unit edit because
+  scitex-dev REGENERATES the unit on every install; `append:` rather than
+  `file:` so a restart does not truncate the history. A test calls the real
+  upstream resolver, so an upstream convention change fails sac's build instead
+  of silently splitting the log tree in two.
+
+- **A host-capability refusal on the migration verb.** `sac dev` had none —
+  contrary to a widely-repeated assumption, there is no `systemctl` probe
+  anywhere in `_dev_jobs.py` or `_dev_jobs_backend.py`, and `manual_hint` will
+  still print a `systemctl` line on a QNAP. nas-01 (armv7l) and nas-02 have no
+  `systemctl` and mba uses launchd, so `service`/`timer` are unimplementable on
+  three of nine hosts; the migration now exits 3 there rather than running its
+  whole plan, failing every step, and reporting "NO supervisor" for a host that
+  was never going to have one.
+
+- `docs/adr/0022-listen-is-not-a-jobspec.md` — the "`sac listen` must never be
+  federated" argument, moved out of a function docstring into the ADR tree
+  where this project keeps architectural rationale.
+
 - **`sac dev` job groups are now named after the `JobSpec` KIND, not the
   delivery mechanism** — `sac dev {service,timer,cron} <verb>`, the
   ecosystem-wide grammar every SciTeX package adopts (operator decision,

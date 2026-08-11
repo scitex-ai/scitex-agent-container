@@ -30,6 +30,26 @@ The rename therefore does not ride along with a CLI-surface change; it
 ships with the migration verb that enforces stop -> remove -> install and
 makes install-before-uninstall impossible. Flipping this one constant is
 the code half of that change.
+
+WHY TWO PREFIXES ARE LIVE AT ONCE, AND WHY THAT IS THE SAFE SHAPE
+=================================================================
+:data:`JOB_PREFIX` is now the canonical ``scitex-agent-container-``, but
+:data:`LEGACY_JOB_PREFIX` (``sac.``) is still RECOGNISED, because one job
+deliberately keeps its old name until an operator-supervised cutover:
+``sac.accounts-refresh``, the fleet's sole OAuth refresher.
+
+The alternative — rename the SPEC now and cut the UNIT over later — is
+the one shape that must not ship. The live, enabled, actively-refreshing
+unit is ``sac.accounts-refresh.timer``; if the spec said
+``scitex-agent-container-accounts-refresh`` while that unit ran, then
+``sac dev timer status accounts-refresh`` would resolve to a name no unit
+carries and report the refresher as absent — WHILE IT IS RUNNING. A CLI
+that reports the fleet's most critical job as missing when it is healthy
+is worse than a name that does not match a convention yet.
+
+So the declared name tracks the DEPLOYED unit, always. Both prefixes are
+readable until :mod:`._migrate` records that cutover as done, and
+``JOB_PREFIX`` alone is what new names are minted with.
 """
 
 from __future__ import annotations
@@ -38,11 +58,23 @@ from typing import Iterable
 
 #: Canonical-name prefix for every job sac owns.
 #:
-#: Kept as a constant so the ecosystem rename to
-#: ``scitex-agent-container-`` is a one-line change guarded by the
-#: migration verb (see the module docstring), rather than a literal
-#: scattered across the CLI, the provider and the audit.
-JOB_PREFIX = "sac."
+#: The ecosystem-wide form decided 2026-08-11: ``scitex-<pkg>-<name>``,
+#: hyphens only — no ``.`` and no ``_``, because the systemd renderer
+#: derives the unit filename from this verbatim and a dot in a unit name
+#: reads as a systemd template/instance separator to every human who has
+#: ever typed ``systemctl``.
+JOB_PREFIX = "scitex-agent-container-"
+
+#: The pre-2026-08-11 prefix. Still RECOGNISED (never minted) so the one
+#: job awaiting a supervised cutover keeps a name that matches its live
+#: unit — see the module docstring for why that direction is the safe one.
+LEGACY_JOB_PREFIX = "sac."
+
+#: Every prefix a name of ours may carry, longest first so ``local()``
+#: strips the most specific match rather than a prefix of a prefix.
+_PREFIXES: tuple[str, ...] = tuple(
+    sorted((JOB_PREFIX, LEGACY_JOB_PREFIX), key=len, reverse=True)
+)
 
 
 def canonical(name: str) -> str:
@@ -50,21 +82,41 @@ def canonical(name: str) -> str:
 
     Idempotent: an already-canonical name is returned unchanged, so a
     value copied out of ``--json`` output or off a unit filename resolves
-    to itself instead of being prefixed twice.
+    to itself instead of being prefixed twice. A LEGACY-prefixed name is
+    likewise returned unchanged rather than re-prefixed — it names a real
+    deployed unit, and rewriting it here would point every verb at a unit
+    that does not exist.
     """
     if not name:
         raise ValueError("job name must be non-empty")
-    return name if name.startswith(JOB_PREFIX) else JOB_PREFIX + name
+    return name if is_ours(name) else JOB_PREFIX + name
 
 
 def local(name: str) -> str:
     """Return the short name an operator types, for a canonical name."""
-    return name[len(JOB_PREFIX) :] if name.startswith(JOB_PREFIX) else name
+    for prefix in _PREFIXES:
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
 
 
 def is_ours(name: str) -> bool:
-    """True when ``name`` is a job THIS package owns."""
-    return name.startswith(JOB_PREFIX)
+    """True when ``name`` is a job THIS package owns, under either prefix."""
+    return any(name.startswith(p) for p in _PREFIXES)
+
+
+def candidates(typed: str) -> tuple[str, ...]:
+    """Every canonical form ``typed`` could mean, preferred first.
+
+    A local name is ambiguous while two prefixes are live, so resolution
+    tries the canonical form first and the legacy form second. An input
+    that already carries a prefix is unambiguous and yields exactly one.
+    """
+    if not typed:
+        raise ValueError("job name must be non-empty")
+    if is_ours(typed):
+        return (typed,)
+    return tuple(dict.fromkeys((JOB_PREFIX + typed, LEGACY_JOB_PREFIX + typed)))
 
 
 def resolve(typed: str, declared: Iterable[str]) -> str:
@@ -76,13 +128,21 @@ def resolve(typed: str, declared: Iterable[str]) -> str:
     being scheduled.
     """
     names = list(declared)
-    want = canonical(typed)
-    if want in names:
-        return want
+    for want in candidates(typed):
+        if want in names:
+            return want
     raise KeyError(
         f"no job named {typed!r} here; available: "
         + (", ".join(sorted(local(n) for n in names)) or "(none)")
     )
 
 
-__all__ = ["JOB_PREFIX", "canonical", "is_ours", "local", "resolve"]
+__all__ = [
+    "JOB_PREFIX",
+    "LEGACY_JOB_PREFIX",
+    "candidates",
+    "canonical",
+    "is_ours",
+    "local",
+    "resolve",
+]
