@@ -20,6 +20,14 @@ keep showing up in every in-container scan, and (worst) a shadowed
 Outside, apptainer never sees it: apptainer reads ``upper/`` and ``work/`` and
 nothing else under the overlay root. The same reasoning places the stamp file.
 
+THE MOVE ONLY UNHIDES; IT DOES NOT RESTORE. Renaming the upper's slice away
+does not put the image's copy back — it stops MASKING it. So before moving,
+:func:`base_provides_venv` asserts the image actually has a populated venv to
+fall back on. Without that assertion this rail's own repair could leave an
+agent with NO venv at all, which is worse than the shadow it was fixing. The
+probe is expensive (an ``apptainer exec``), so it runs only when a move is
+genuinely on the table.
+
 REFUSING MUST NOT BE SELF-ERASING. On a refusal the stamp is deliberately NOT
 written. Writing it would record the current image as reconciled without having
 reconciled anything, and the NEXT boot would then find the overlay "fresh" and
@@ -65,6 +73,7 @@ __all__ = [
     "STAMP_FILENAME",
     "agent_running_from_state_dir",
     "archive_dir_for",
+    "base_provides_venv",
     "inside_container",
     "observe_overlay",
     "read_stamp",
@@ -253,6 +262,49 @@ def venv_slice(overlay_root: Path | str, venv: str = DEFAULT_VENV) -> Path:
     return Path(overlay_root) / OVERLAY_UPPER_DIRNAME / venv.lstrip("/")
 
 
+def base_provides_venv(sif_path: Path | str, venv: str = DEFAULT_VENV) -> bool | None:
+    """Does the IMAGE's own venv carry installed distributions?
+
+    The precondition for moving anything: the move only stops HIDING the
+    image's copy, it does not restore one. With an empty or unreadable lower
+    layer the agent is left with no venv at all — a worse outcome than the bug,
+    and the one failure this rail could plausibly cause itself.
+
+    ``None`` when the probe could not run or could not be parsed, which the
+    predicate treats as UNKNOWN and therefore as a refusal. Deliberately counts
+    distributions rather than importing anything: the question is whether the
+    lower layer is POPULATED, and a count is cheap, unambiguous, and cannot be
+    satisfied by a namespace-package shell.
+    """
+    from .._drift.versions import _apptainer_exec
+
+    probe = (
+        "import importlib.metadata as m, sys; "
+        "sys.stdout.write(str(len(list(m.distributions()))))"
+    )
+    try:
+        completed = _apptainer_exec(Path(sif_path), [f"{venv}/bin/python", "-c", probe])
+    except Exception as exc:  # stx-allow: fallback (reason: a probe that errors is UNKNOWN, never a verdict — it must refuse the move, not accuse the image)
+        logger.warning("overlay-venv: base probe failed on %s: %s", sif_path, exc)
+        return None
+    if completed is None or completed.returncode != 0:
+        logger.warning(
+            "overlay-venv: base probe did not run on %s (rc=%s)",
+            sif_path,
+            getattr(completed, "returncode", "no-result"),
+        )
+        return None
+    try:
+        return int((completed.stdout or "").strip()) > 0
+    except ValueError:
+        logger.warning(
+            "overlay-venv: base probe on %s returned unparseable output %r",
+            sif_path,
+            completed.stdout,
+        )
+        return None
+
+
 def observe_overlay(
     overlay_root: Path | str,
     sif_path: Path | str,
@@ -260,6 +312,7 @@ def observe_overlay(
     agent_running: bool | None,
     venv: str = DEFAULT_VENV,
     inside_container_fn=None,
+    base_probe=None,
 ) -> OverlayVenvFacts:
     """Gather every fact the predicate needs. Reads only; mutates nothing.
 
@@ -269,6 +322,13 @@ def observe_overlay(
     every reconcile correctly refuses. Without the seam the acting path could
     only ever be exercised on a bare host — i.e. never in CI. The default is the
     real function, so production keeps the real guard.
+
+    ``base_probe`` (``(sif, venv) -> bool | None``) is the second seam, and it
+    is called LAZILY — only when a move is actually on the table. It costs an
+    ``apptainer exec`` into the image, and a launch that is not going to move
+    anything must not pay it. The laziness is decided HERE rather than in the
+    predicate so the predicate stays pure; the predicate's matching rule is that
+    an unconsulted precondition for an action you are not taking is a pass.
     """
     slice_path = venv_slice(overlay_root, venv)
     try:
@@ -276,13 +336,24 @@ def observe_overlay(
     except OSError as exc:  # stx-allow: fallback (reason: an unreadable parent must report UNKNOWN, never 'absent')
         logger.warning("overlay-venv: could not stat %s: %s", slice_path, exc)
         slice_present = None
+
+    identity = sif_identity(sif_path)
+    recorded = read_stamp(overlay_root)
+    move_on_the_table = bool(slice_present) and identity != (recorded or "")
+    base_ok = (
+        (base_probe or base_provides_venv)(sif_path, venv)
+        if move_on_the_table
+        else None
+    )
+
     return OverlayVenvFacts(
-        sif_identity=sif_identity(sif_path),
-        recorded_identity=read_stamp(overlay_root),
+        sif_identity=identity,
+        recorded_identity=recorded,
         venv_slice_present=slice_present,
         inside_container=(inside_container_fn or inside_container)(),
         agent_running=agent_running,
         upper_mounted_here=upper_mounted_here(overlay_root),
+        base_provides_venv=base_ok,
     )
 
 
@@ -334,6 +405,7 @@ def reconcile_overlay_venv(
     venv: str = DEFAULT_VENV,
     now: datetime | None = None,
     inside_container_fn=None,
+    base_probe=None,
 ) -> InvalidationPlan | None:
     """Enforce the contract for one agent. Returns the plan, or ``None``.
 
@@ -368,6 +440,7 @@ def reconcile_overlay_venv(
         agent_running=agent_running,
         venv=venv,
         inside_container_fn=inside_container_fn,
+        base_probe=base_probe,
     )
     plan = plan_invalidation(agent=name, overlay_root=str(root), facts=facts)
 

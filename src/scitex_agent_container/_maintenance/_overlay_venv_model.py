@@ -72,6 +72,7 @@ __all__ = [
     "ACTION_NONE",
     "ACTION_REFUSE",
     "CHECK_AGENT_NOT_RUNNING",
+    "CHECK_BASE_USABLE",
     "CHECK_NOT_INSIDE_CONTAINER",
     "CHECK_OVERLAY_READABLE",
     "CHECK_SIF_IDENTITY",
@@ -90,6 +91,7 @@ CHECK_AGENT_NOT_RUNNING: Final = "agent_not_running"
 CHECK_UPPER_NOT_MOUNTED_HERE: Final = "upper_not_mounted_here"
 CHECK_SIF_IDENTITY: Final = "sif_identity_resolved"
 CHECK_OVERLAY_READABLE: Final = "overlay_readable"
+CHECK_BASE_USABLE: Final = "base_layer_usable"
 
 #: The BOOT ASSERTION's check name (:mod:`._venv_dist_assertion`).
 CHECK_VENV_DISTS_UNIQUE: Final = "venv_distributions_unique"
@@ -175,6 +177,20 @@ class OverlayVenvFacts:
     #: Does this process's mount table show an overlayfs using this upper?
     #: ``None`` = the mount table could not be read.
     upper_mounted_here: bool | None = None
+
+    #: Does the SIF's own ``venv-sac`` carry installed distributions — i.e. is
+    #: there a KNOWN-GOOD LOWER LAYER to fall back on once the upper's slice is
+    #: moved aside? ``None`` = not observed.
+    #:
+    #: This is the precondition the whole mutation rests on, and it was missing
+    #: from the first cut of this rail. Moving the upper's slice aside when the
+    #: lower is empty or unreadable does not restore the image's copy — it
+    #: leaves the agent with NO venv at all, converting a shadowed-but-working
+    #: container into a dead one. Expensive to observe (it needs an
+    #: ``apptainer exec`` into the image), so it is gathered LAZILY: only when a
+    #: move is actually on the table. See :func:`._overlay_venv_predicate.
+    #: _check_base_usable` for why an unconsulted value is still a pass.
+    base_provides_venv: bool | None = None
 
 
 @dataclass(frozen=True)

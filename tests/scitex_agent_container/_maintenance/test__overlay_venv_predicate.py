@@ -31,7 +31,8 @@ from scitex_agent_container._maintenance._overlay_venv_predicate import (
     plan_invalidation,
 )
 
-#: Every question answered, image changed, a venv slice present to move.
+#: Every question answered, image changed, a venv slice present to move, and a
+#: populated lower layer to fall back on once it is moved.
 SAFE = OverlayVenvFacts(
     sif_identity="sac-base-2026-0810-195145.sif:100:7",
     recorded_identity="sac-base-2026-0731-101010.sif:99:6",
@@ -39,6 +40,7 @@ SAFE = OverlayVenvFacts(
     inside_container=False,
     agent_running=False,
     upper_mounted_here=False,
+    base_provides_venv=True,
 )
 
 
@@ -218,6 +220,69 @@ def test_every_reason_is_reported_not_just_the_first() -> None:
     plan = _plan(**override)
     # Assert
     assert len(plan.blocking_reasons()) == 2
+
+
+def test_an_empty_lower_layer_refuses_the_move() -> None:
+    """The move only UNHIDES the image's copy; it does not create one.
+
+    With nothing behind the slice, moving it aside leaves the agent with no venv
+    at all — this rail's own repair turning a shadowed-but-working container
+    into a dead one, which is worse than the bug.
+    """
+    # Arrange
+    override = {"base_provides_venv": False}
+    # Act
+    plan = _plan(**override)
+    # Assert
+    assert plan.action == ACTION_REFUSE
+
+
+def test_an_unprobed_lower_layer_refuses_the_move() -> None:
+    """ "I could not read the image" is not "the image is fine"."""
+    # Arrange
+    override = {"base_provides_venv": None}
+    # Act
+    plan = _plan(**override)
+    # Assert
+    assert plan.action == ACTION_REFUSE
+
+
+def test_the_lower_layer_refusal_says_the_slice_is_the_only_copy() -> None:
+    """The hint has to stop someone 'fixing' it by moving the slice by hand."""
+    # Arrange
+    override = {"base_provides_venv": False}
+    # Act
+    plan = _plan(**override)
+    # Assert
+    assert "only copy" in " ".join(plan.blocking_reasons())
+
+
+def test_a_fresh_overlay_does_not_need_the_lower_layer_probed() -> None:
+    """The probe costs an `apptainer exec`, and it is a precondition for MOVING.
+
+    Not consulting a precondition for an action you are not taking is a pass,
+    not an unknown — otherwise every ordinary boot would refuse and pay for an
+    image probe it had no use for.
+    """
+    # Arrange
+    override = {
+        "recorded_identity": SAFE.sif_identity,
+        "base_provides_venv": None,
+    }
+    # Act
+    plan = _plan(**override)
+    # Assert
+    assert plan.action == ACTION_NONE
+
+
+def test_an_overlay_with_no_slice_does_not_need_the_lower_layer_probed() -> None:
+    """Same rule from the other direction: nothing to move, nothing to check."""
+    # Arrange
+    override = {"venv_slice_present": False, "base_provides_venv": None}
+    # Act
+    plan = _plan(**override)
+    # Assert
+    assert plan.action == ACTION_NONE
 
 
 def test_staleness_is_reported_honestly_even_when_refusing() -> None:

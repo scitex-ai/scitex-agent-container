@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from ._overlay_venv_model import (
     CHECK_AGENT_NOT_RUNNING,
+    CHECK_BASE_USABLE,
     CHECK_NOT_INSIDE_CONTAINER,
     CHECK_OVERLAY_READABLE,
     CHECK_SIF_IDENTITY,
@@ -174,6 +175,60 @@ def _check_overlay_readable(facts: OverlayVenvFacts) -> VenvCheck:
     )
 
 
+def _check_base_usable(facts: OverlayVenvFacts, *, move_proposed: bool) -> VenvCheck:
+    """Is there a KNOWN-GOOD LOWER LAYER behind the slice we are about to move?
+
+    THE PRECONDITION THE WHOLE MUTATION RESTS ON, and it was missing from the
+    first cut of this rail. Moving the upper's ``venv-sac`` aside does not
+    RESTORE the image's copy — it merely stops HIDING it. If the image has
+    nothing there, or the probe cannot read it, the move turns a
+    shadowed-but-working container into one with no venv at all. That is a
+    worse outcome than the bug, and it is the one failure mode this rail could
+    plausibly cause itself.
+
+    Conditional by design: the fact is expensive (an ``apptainer exec`` into the
+    image) and it is a precondition for MOVING, not for looking. When no move is
+    proposed it is not consulted, and not consulting a precondition for an
+    action you are not taking is a pass, not an unknown. The caller is
+    responsible for gathering it exactly when ``move_proposed`` is true.
+    """
+    if not move_proposed:
+        return VenvCheck(
+            name=CHECK_BASE_USABLE,
+            ok=True,
+            detail="no move proposed, so the lower layer is not a precondition",
+        )
+    if facts.base_provides_venv is None:
+        return VenvCheck(
+            name=CHECK_BASE_USABLE,
+            ok=None,
+            detail="could not read the image's own venv",
+            hint=(
+                "probe the SIF before moving anything — "
+                "`apptainer exec <sif> /opt/venv-sac/bin/python -c 'import "
+                "importlib.metadata as m; print(len(list(m.distributions())))'`. "
+                "Moving the upper aside only UNHIDES the image's copy; if the "
+                "image has none, the agent is left with no venv at all"
+            ),
+        )
+    if not facts.base_provides_venv:
+        return VenvCheck(
+            name=CHECK_BASE_USABLE,
+            ok=False,
+            detail="the image's own venv carries no installed distributions",
+            hint=(
+                "do NOT move the overlay's slice aside — right now it is the "
+                "only copy the agent has. Rebuild or repoint the image first "
+                "(`sac image build`), then restart"
+            ),
+        )
+    return VenvCheck(
+        name=CHECK_BASE_USABLE,
+        ok=True,
+        detail="the image provides a populated venv to fall back on",
+    )
+
+
 def plan_invalidation(
     *,
     agent: str,
@@ -193,19 +248,21 @@ def plan_invalidation(
     silent ``False`` here is what a future reader would mistake for "checked,
     and it was fresh".
     """
-    checks = (
-        _check_not_inside_container(facts),
-        _check_agent_not_running(facts),
-        _check_upper_not_mounted_here(facts),
-        _check_sif_identity(facts),
-        _check_overlay_readable(facts),
-    )
     current = facts.sif_identity or ""
     recorded = facts.recorded_identity or ""
     # An UNSTAMPED overlay (recorded == "") is STALE by construction: it is the
     # pre-contract state, which is precisely the state the 2026-08-11 sweep
     # measured, so it must invalidate rather than be adopted as "matches".
     stale = current != recorded
+    move_proposed = stale and bool(facts.venv_slice_present)
+    checks = (
+        _check_not_inside_container(facts),
+        _check_agent_not_running(facts),
+        _check_upper_not_mounted_here(facts),
+        _check_sif_identity(facts),
+        _check_overlay_readable(facts),
+        _check_base_usable(facts, move_proposed=move_proposed),
+    )
     return InvalidationPlan(
         agent=agent,
         overlay_root=overlay_root,

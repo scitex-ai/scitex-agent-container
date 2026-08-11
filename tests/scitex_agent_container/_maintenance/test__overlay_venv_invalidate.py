@@ -57,6 +57,30 @@ def IN_A_CONTAINER() -> bool:
     return True
 
 
+#: How many times the base probe was invoked. A module-level counter rather than
+#: a mock's call log: the laziness of the probe is a REAL property worth pinning
+#: (it costs an `apptainer exec`), and counting is the whole of what we need.
+_base_probe_calls: list[tuple[str, str]] = []
+
+
+def BASE_POPULATED(sif, venv):
+    """Base-probe seam: the image ships a populated venv (the healthy fleet)."""
+    _base_probe_calls.append((str(sif), venv))
+    return True
+
+
+def BASE_EMPTY(sif, venv):
+    """Base-probe seam: the image has NO venv to fall back on."""
+    _base_probe_calls.append((str(sif), venv))
+    return False
+
+
+def BASE_UNREADABLE(sif, venv):
+    """Base-probe seam: the probe could not run — UNKNOWN, never a verdict."""
+    _base_probe_calls.append((str(sif), venv))
+    return None
+
+
 def _sif(tmp_path: Path, target_name: str) -> Path:
     """A real SIF file behind the stable ``sac-base.sif`` symlink the fleet uses."""
     containers = tmp_path / "containers"
@@ -239,7 +263,11 @@ def test_a_stale_overlay_is_invalidated(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_INVALIDATE
@@ -251,7 +279,11 @@ def test_the_stale_slice_leaves_the_upper_layer(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert not (root / "upper" / VENV.lstrip("/")).exists()
@@ -269,6 +301,7 @@ def test_nothing_is_deleted_only_moved(tmp_path) -> None:
         agent_running=False,
         now=FIXED_NOW,
         inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert (
@@ -293,6 +326,7 @@ def test_the_archive_sits_outside_the_upper_layer(tmp_path) -> None:
         agent_running=False,
         now=FIXED_NOW,
         inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert not (root / "upper" / ".old").exists()
@@ -304,7 +338,11 @@ def test_invalidating_records_the_new_image_identity(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert INV.read_stamp(root) == INV.sif_identity(link)
@@ -316,11 +354,19 @@ def test_a_second_start_on_the_same_image_is_a_no_op(tmp_path) -> None:
     root = _overlay(tmp_path)
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_NONE
@@ -332,14 +378,22 @@ def test_a_rebuilt_image_invalidates_again(tmp_path) -> None:
     root = _overlay(tmp_path)
     old = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     INV.reconcile_overlay_venv(
-        _config(root), old, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        old,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     site = root / "upper" / VENV.lstrip("/") / "lib/python3.12/site-packages"
     (site / "scitex_dev-0.39.0.dist-info").mkdir(parents=True)
     # Act
     new = _sif(tmp_path, "sac-base-2026-0811-071500.sif")
     plan = INV.reconcile_overlay_venv(
-        _config(root), new, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        new,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_INVALIDATE
@@ -351,7 +405,11 @@ def test_an_overlay_with_no_venv_slice_is_left_alone(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_NONE
@@ -366,7 +424,11 @@ def test_a_running_agent_is_refused(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=True, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=True,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_REFUSE
@@ -379,7 +441,11 @@ def test_a_refused_overlay_keeps_its_venv_slice(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=True, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=True,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert (root / "upper" / VENV.lstrip("/")).is_dir()
@@ -392,7 +458,11 @@ def test_a_refusal_does_not_advance_the_stamp(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=True, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=True,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert INV.read_stamp(root) == ""
@@ -405,7 +475,11 @@ def test_unmeasured_liveness_is_refused(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=None, inside_container_fn=ON_THE_HOST
+        _config(root),
+        link,
+        agent_running=None,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_REFUSE
@@ -417,7 +491,11 @@ def test_an_unresolvable_image_is_refused(tmp_path) -> None:
     missing = tmp_path / "containers" / "never-built.sif"
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), missing, agent_running=False, inside_container_fn=ON_THE_HOST
+        _config(root),
+        missing,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_REFUSE
@@ -430,7 +508,11 @@ def test_a_declared_container_context_is_refused(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        _config(root), link, agent_running=False, inside_container_fn=IN_A_CONTAINER
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=IN_A_CONTAINER,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan.action == ACTION_REFUSE
@@ -453,6 +535,119 @@ def test_the_real_detector_sees_this_container(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The lower layer must be there BEFORE we move the upper's copy away
+# ---------------------------------------------------------------------------
+def test_an_empty_image_venv_is_refused(tmp_path) -> None:
+    """Moving the slice aside only UNHIDES the image's copy; it makes none."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    # Act
+    plan = INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_EMPTY,
+    )
+    # Assert
+    assert plan.action == ACTION_REFUSE
+
+
+def test_an_empty_image_venv_leaves_the_slice_in_place(tmp_path) -> None:
+    """The slice is the agent's ONLY venv here — moving it would kill it."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    # Act
+    INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_EMPTY,
+    )
+    # Assert
+    assert (root / "upper" / VENV.lstrip("/")).is_dir()
+
+
+def test_an_unreadable_image_venv_is_refused(tmp_path) -> None:
+    """A probe that could not run is UNKNOWN, and UNKNOWN never moves files."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    # Act
+    plan = INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_UNREADABLE,
+    )
+    # Assert
+    assert plan.action == ACTION_REFUSE
+
+
+def test_the_image_is_not_probed_when_nothing_would_move(tmp_path) -> None:
+    """The probe costs an `apptainer exec`; an ordinary boot must not pay it."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
+    )
+    _base_probe_calls.clear()
+    # Act
+    INV.reconcile_overlay_venv(  # second start, same image — already reconciled
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
+    )
+    # Assert
+    assert _base_probe_calls == []
+
+
+def test_the_image_is_probed_when_a_move_is_proposed(tmp_path) -> None:
+    """Negative control for the laziness test above — it must fire when it matters."""
+    # Arrange
+    root = _overlay(tmp_path)
+    link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
+    _base_probe_calls.clear()
+    # Act
+    INV.reconcile_overlay_venv(
+        _config(root),
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
+    )
+    # Assert
+    assert len(_base_probe_calls) == 1
+
+
+def test_the_real_base_probe_reports_unknown_for_a_non_image(tmp_path) -> None:
+    """A file that is not a SIF cannot answer, and must not answer 'fine'.
+
+    Runs the REAL probe (a real `apptainer exec` attempt against a real file
+    that is not an image) rather than a seam — the seam proves the wiring, this
+    proves the probe itself refuses to invent an answer.
+    """
+    # Arrange
+    not_an_image = tmp_path / "definitely-not.sif"
+    not_an_image.write_bytes(b"not a squashfs")
+    # Act
+    answer = INV.base_provides_venv(not_an_image)
+    # Assert
+    assert answer is None
+
+
+# ---------------------------------------------------------------------------
 # Out of scope — the contract simply does not apply
 # ---------------------------------------------------------------------------
 def test_an_agent_with_no_overlay_is_out_of_scope(tmp_path) -> None:
@@ -465,7 +660,11 @@ def test_an_agent_with_no_overlay_is_out_of_scope(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        config, link, agent_running=False, inside_container_fn=ON_THE_HOST
+        config,
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan is None
@@ -480,7 +679,11 @@ def test_a_loopback_image_overlay_is_out_of_scope(tmp_path) -> None:
     link = _sif(tmp_path, "sac-base-2026-0810-195145.sif")
     # Act
     plan = INV.reconcile_overlay_venv(
-        config, link, agent_running=False, inside_container_fn=ON_THE_HOST
+        config,
+        link,
+        agent_running=False,
+        inside_container_fn=ON_THE_HOST,
+        base_probe=BASE_POPULATED,
     )
     # Assert
     assert plan is None
