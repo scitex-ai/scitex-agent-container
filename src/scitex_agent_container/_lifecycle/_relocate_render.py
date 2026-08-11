@@ -66,6 +66,11 @@ _CHECK_FACTS: dict[str, tuple[str, ...]] = {
     "spec_schema_accepted": ("rejected_spec_keys",),
     "ports_free": ("ports_in_use",),
     "hub_reachable_from_target": ("hub_reachable_from_target",),
+    "sac_present_on_target": ("sac_on_path", "sac_resolved_path"),
+    # Gathered locally rather than over ssh, so its failures are keyed by the
+    # check's own name; the tuple is here so the map covers every check and a
+    # reader does not have to wonder whether the omission means something.
+    "source_work_committed": ("source_repos",),
 }
 
 
