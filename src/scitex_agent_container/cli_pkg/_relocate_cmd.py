@@ -187,6 +187,41 @@ def _source_repo_facts(spec_body: dict, from_host: str):
     return scan_source((workdir,))
 
 
+def _source_facts(spec: dict, spec_body: dict, agent: str, from_host: str):
+    """The repo scan PLUS which conversation would travel, both read locally.
+
+    ``session_resolvable`` is a preflight check for one reason: the phase that
+    needs the answer runs after the agent has been stopped. Ten agents on
+    ywata-note-win passed every check on 2026-08-12 and could not complete,
+    because each held more than one transcript and the transport only named a
+    session when there was exactly one. Answering it HERE is what turns that into
+    a refusal while the agent is still up.
+
+    The workdir is resolved against THIS filesystem, which is right precisely
+    because these are the SOURCE's facts and the coordinator is standing on the
+    source. When it is not, the directory is simply not there and
+    :func:`scan_session` reports NOT OBSERVED rather than inventing an empty one.
+    """
+    from pathlib import Path
+
+    from .._lifecycle._relocate_source_scan import scan_session
+    from .._lifecycle._relocate_transcript_home import transcript_home_from_spec
+    from .._lifecycle._relocate_transport_paths import derive_target_dir
+
+    facts = _source_repo_facts(spec_body, from_host)
+    home = transcript_home_from_spec(spec)
+    workdir = str(spec_body.get("workdir") or "").strip()
+    transcript_dir = ""
+    if home.path and workdir:
+        derived = derive_target_dir(
+            target_home=home.path,
+            target_resolved_workdir=str(Path(workdir).resolve()),
+        )
+        transcript_dir = derived.path or ""
+    state_dir = str(Path.home() / ".scitex" / "agent-container" / "runtime" / agent)
+    return scan_session(facts, transcript_dir=transcript_dir, state_dir=state_dir)
+
+
 def _dig(body: dict, *path: str) -> object:
     """Follow ``path`` through nested dicts, yielding ``None`` at any break."""
     cur: object = body
@@ -403,8 +438,8 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         facts=gathered.facts,
         runtime=str(declared.get("runtime") or ""),
         required_ports=_required_ports(declared),
-        source_facts=_source_repo_facts(
-            body if isinstance(body, dict) else {}, where.host or ""
+        source_facts=_source_facts(
+            spec, body if isinstance(body, dict) else {}, name, where.host or ""
         ),
         from_host=where.host or "",
     )

@@ -3,9 +3,10 @@
 :mod:`_relocate_transcript` verifies ONE payload by digest. This is the phase
 around it: what is allowed to travel, what to do about a target that already
 holds something, and how arrival is confirmed for a SET of files where each one
-can fail on its own.
+can fail on its own. The arrival half lives in
+:mod:`_relocate_transport_verify` and is re-exported here.
 
-FOUR RULES, EACH FROM A WAY THIS GOES WRONG SILENTLY.
+FIVE RULES, EACH FROM A WAY THIS GOES WRONG SILENTLY.
 
 1. THE SOURCE MUST BE STOPPED. A running agent appends to its ``.jsonl`` while it
    is being read, so the copy is a prefix ending mid-line. jsonl has no trailer
@@ -14,6 +15,8 @@ FOUR RULES, EACH FROM A WAY THIS GOES WRONG SILENTLY.
    transfer, because no transfer is visible and this is not. An unobserved
    "is it running" is UNKNOWN and refuses just as firmly: the question is
    cheap to ask and the failure is silent.
+
+   STOPPED IS NOT THE SAME INSTANT AS QUIESCENT, which is rule 5.
 
 2. ONLY TRANSCRIPTS TRAVEL — AN ALLOWLIST, NOT A DENYLIST. Just ``*.jsonl`` from
    the project directory. A denylist is a list of the secrets somebody thought
@@ -35,9 +38,19 @@ FOUR RULES, EACH FROM A WAY THIS GOES WRONG SILENTLY.
    exited 0. Bytes AND lines are compared for every file, because the two catch
    different things: bytes catch a truncated write, lines catch the case where a
    transport rewrote line endings and left the size plausible. A file the target
-   does not have at all is its own outcome, distinct from one that arrived short
-   — the first means the copy did not happen, the second means it happened
-   badly, and they call for different next moves.
+   does not have at all is its own outcome, distinct from one that arrived short,
+   which is distinct again from one that arrived LARGER — see
+   :mod:`_relocate_transport_verify`, which owns that half.
+
+5. WHAT TRAVELS IS A SNAPSHOT TAKEN AT ONE INSTANT, CUT AT THE LAST NEWLINE.
+   Before anything moves, each file's byte offset of its last COMPLETE line is
+   recorded; exactly that many bytes are carried; and arrival is checked against
+   THAT RECORDED NUMBER rather than against a fresh reading of a source that may
+   have moved since. That removes the race instead of narrowing it. Cutting at
+   the last newline specifically is what keeps the target's final line whole: an
+   arbitrary offset lands mid-record and produces malformed JSON inside an
+   otherwise valid JSONL file, which is worse than a shorter file. Losing at most
+   one partially-written record is the accepted trade.
 
 AN EXTRA FILE ON THE TARGET IS NOT A FAILURE. The destination is the agent's own
 projects directory and may legitimately hold other conversations. Every file that
@@ -54,6 +67,16 @@ from dataclasses import dataclass
 from typing import Final, Sequence
 
 from ._relocate_move_aside import move_aside_destination
+from ._relocate_transport_verify import (
+    CODE_ARRIVED,
+    CODE_MISSING_ON_TARGET,
+    CODE_TARGET_LARGER,
+    CODE_TRUNCATED,
+    CODE_UNKNOWN,
+    ArrivalVerdict,
+    TranscriptFile,
+    verify_arrival,
+)
 
 __all__ = [
     "CODE_ARRIVED",
@@ -61,6 +84,7 @@ __all__ = [
     "CODE_NOTHING_TO_CARRY",
     "CODE_READY",
     "CODE_SOURCE_RUNNING",
+    "CODE_TARGET_LARGER",
     "CODE_TRUNCATED",
     "CODE_UNKNOWN",
     "CREDENTIAL_BASENAMES",
@@ -96,14 +120,6 @@ CODE_READY: Final = 200
 CODE_NOTHING_TO_CARRY: Final = 204
 #: The source agent is still running; copying now yields a torn transcript.
 CODE_SOURCE_RUNNING: Final = 409
-#: Every file that left arrived with matching bytes and lines.
-CODE_ARRIVED: Final = 200
-#: A file that left is absent on the target. The copy did not happen.
-CODE_MISSING_ON_TARGET: Final = 404
-#: A file arrived with fewer bytes or lines than it left with.
-CODE_TRUNCATED: Final = 422
-#: Something was not observed. Refuses as firmly as a failure, differently.
-CODE_UNKNOWN: Final = 503
 
 
 def is_transferable(name: str) -> bool:
@@ -125,29 +141,6 @@ def refusal_for(name: str) -> str:
     return (
         f"only conversation transcripts ({TRANSCRIPT_SUFFIX}) travel; this is not one"
     )
-
-
-@dataclass(frozen=True)
-class TranscriptFile:
-    """One transcript, as MEASURED on one side of the copy.
-
-    ``byte_count`` and ``line_count`` are ``| None`` for NOT MEASURED, which is
-    deliberately distinct from ``0``. An empty file and a measurement that did
-    not run look identical to a caller that collapses them, and the second must
-    refuse where the first may not.
-    """
-
-    name: str
-    byte_count: int | None = None
-    line_count: int | None = None
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("TranscriptFile.name must be non-empty")
-
-    @property
-    def measured(self) -> bool:
-        return self.byte_count is not None and self.line_count is not None
 
 
 @dataclass(frozen=True)
@@ -210,41 +203,6 @@ class TransportPlan:
             raise ValueError(
                 "TransportPlan: a plan that does not proceed must say what to do next"
             )
-
-
-@dataclass(frozen=True)
-class ArrivalVerdict:
-    """Whether everything that left arrived intact, with the evidence attached.
-
-    ``arrived`` is three-valued, no ``__bool__``. ``mismatches`` carries one line
-    per offending file so a report names WHICH file and BY HOW MUCH, rather than
-    saying the transfer failed and leaving the reader to go and diff two hosts.
-    """
-
-    arrived: bool | None
-    code: int
-    reason: str
-    mismatches: tuple[str, ...] = ()
-    verified: tuple[str, ...] = ()
-    hint: str = ""
-
-    def __post_init__(self) -> None:
-        if self.arrived not in (True, False, None):
-            raise ValueError(
-                f"ArrivalVerdict.arrived must be True/False/None, got {self.arrived!r}"
-            )
-        if not self.reason:
-            raise ValueError("ArrivalVerdict.reason must be non-empty")
-        if self.arrived is True and self.code != CODE_ARRIVED:
-            raise ValueError(
-                f"ArrivalVerdict: arrived=True must carry CODE_ARRIVED, got {self.code}"
-            )
-        if self.arrived is True and self.mismatches:
-            raise ValueError(
-                "ArrivalVerdict: an arrival with mismatches is unrepresentable"
-            )
-        if self.arrived is not True and not self.hint:
-            raise ValueError("ArrivalVerdict: a non-arrival must say what to do next")
 
 
 def select_transferable(
@@ -399,92 +357,8 @@ def plan_transport(
     )
 
 
-def verify_arrival(
-    *,
-    sent: Sequence[TranscriptFile],
-    landed: Sequence[TranscriptFile],
-) -> ArrivalVerdict:
-    """Compare what left with what the TARGET now holds, per file.
-
-    ``sent`` is measured on the source, ``landed`` on the target, each carrying
-    a byte count and a line count. Every file in ``sent`` must appear in
-    ``landed`` with both numbers equal. Files present only in ``landed`` are
-    ignored — the destination is the agent's own projects directory and may hold
-    other conversations, which is not evidence of a bad copy.
-
-    An unmeasured count on either side is UNKNOWN, not a pass. "I could not
-    count it" and "it counted the same" are the two answers this function exists
-    to keep apart.
-    """
-    if not sent:
-        return ArrivalVerdict(
-            arrived=None,
-            code=CODE_UNKNOWN,
-            reason="nothing was recorded as sent, so there is nothing to confirm",
-            hint=(
-                "measure the source files before the copy; without a baseline the "
-                "target's contents cannot be checked against anything"
-            ),
-        )
-
-    by_name = {f.name: f for f in landed}
-    mismatches: list[str] = []
-    verified: list[str] = []
-    unmeasured: list[str] = []
-
-    for src in sent:
-        if not src.measured:
-            unmeasured.append(f"{src.name}: not measured on the source")
-            continue
-        tgt = by_name.get(src.name)
-        if tgt is None:
-            mismatches.append(f"{src.name}: absent on the target")
-            continue
-        if not tgt.measured:
-            unmeasured.append(f"{src.name}: not measured on the target")
-            continue
-        if tgt.byte_count != src.byte_count or tgt.line_count != src.line_count:
-            mismatches.append(
-                f"{src.name}: sent {src.byte_count} bytes / {src.line_count} lines, "
-                f"target holds {tgt.byte_count} bytes / {tgt.line_count} lines"
-            )
-            continue
-        verified.append(src.name)
-
-    if unmeasured:
-        return ArrivalVerdict(
-            arrived=None,
-            code=CODE_UNKNOWN,
-            reason="the copy could not be confirmed: " + "; ".join(unmeasured),
-            mismatches=tuple(mismatches),
-            verified=tuple(verified),
-            hint=(
-                "count bytes and lines on BOTH sides and compare again. A copy that "
-                "cannot be checked has not succeeded — do not hand over the lease on it"
-            ),
-        )
-
-    if mismatches:
-        absent = all("absent on the target" in m for m in mismatches)
-        return ArrivalVerdict(
-            arrived=False,
-            code=CODE_MISSING_ON_TARGET if absent else CODE_TRUNCATED,
-            reason="the target's copy does not match what was sent",
-            mismatches=tuple(mismatches),
-            verified=tuple(verified),
-            hint=(
-                "do NOT continue the relocation. Move the target's partial copy aside "
-                "and re-run the transport; a short transcript resumes without error "
-                "and simply forgets the end of the conversation"
-            ),
-        )
-
-    return ArrivalVerdict(
-        arrived=True,
-        code=CODE_ARRIVED,
-        reason=(
-            f"all {len(verified)} transcript(s) verified on the target by byte and "
-            "line count"
-        ),
-        verified=tuple(verified),
-    )
+# :func:`verify_arrival`, :class:`ArrivalVerdict`, :class:`TranscriptFile` and the
+# arrival codes now live in :mod:`_relocate_transport_verify` and are re-exported
+# above. They are the same public surface; the split is by QUESTION — what may
+# travel, versus did it arrive — because the second half grew a snapshot baseline
+# and a short/larger distinction, and the file has a line budget.

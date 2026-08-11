@@ -18,12 +18,20 @@ reader can tell "this is wrong" from "I could not tell". An unknown folded into
 pass is precisely how the 08-07 move reported healthy: the credential check had
 no answer, and something treated that as fine.
 
-TEN CHECKS ARE ABOUT THE TARGET AND ONE IS ABOUT THE SOURCE. The odd one out —
-``source_work_committed`` — asks whether the machine being LEFT still holds
+TEN CHECKS ARE ABOUT THE TARGET AND TWO ARE ABOUT THE SOURCE. The odd ones out
+are ``source_work_committed`` — whether the machine being LEFT still holds
 uncommitted or unpushed work, because a relocation carries the spec and the
-transcript and nothing else. Its facts come in separately
+transcript and nothing else — and ``session_resolvable``, whether the
+conversation to resume can be NAMED. Their facts come in separately
 (:class:`SourceFacts`), gathered locally rather than over ssh, so a target probe
 can never accidentally fill a field about the source.
+
+``session_resolvable`` IS HERE RATHER THAN IN THE PHASES FOR ONE REASON: the
+phase that needs the answer (TARGET_STANDBY) runs after the agent has been
+stopped. Measured 2026-08-12, ten agents on ywata-note-win passed all eleven
+checks and could not complete, every one of them holding more than one
+transcript. A gate that passes on an agent that cannot proceed is the bug, not
+merely a missing convenience.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ from ._relocate_checks import (
     CHECK_RUNTIME,
     CHECK_SAC_PRESENT,
     CHECK_SCHEMA,
+    CHECK_SESSION,
     CHECK_SOURCE_WORK,
     check_binds,
     check_card_store,
@@ -50,6 +59,7 @@ from ._relocate_checks import (
     check_runtime,
     check_sac_present,
     check_schema,
+    check_session_resolvable,
     check_source_work,
 )
 from ._relocate_preflight_facts import Check, PreflightReport, SourceFacts, TargetFacts
@@ -65,6 +75,7 @@ __all__ = [
     "CHECK_RUNTIME",
     "CHECK_SAC_PRESENT",
     "CHECK_SCHEMA",
+    "CHECK_SESSION",
     "CHECK_SOURCE_WORK",
     "Check",
     "PreflightReport",
@@ -107,5 +118,6 @@ def preflight(
         check_hub_from_target(facts, to_host),
         check_sac_present(facts, to_host),
         check_source_work(source_facts or SourceFacts(), from_host),
+        check_session_resolvable(source_facts or SourceFacts(), agent),
     )
     return PreflightReport(agent=agent, to_host=to_host, checks=checks)
