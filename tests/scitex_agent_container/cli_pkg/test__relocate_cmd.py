@@ -19,7 +19,7 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._relocate_cmd import (
     EXIT_REFUSED,
-    EXIT_UNIMPLEMENTED,
+    EXIT_RETIRED_UNIMPLEMENTED,
     _required_ports,
     declared_from_spec,
     register,
@@ -123,7 +123,19 @@ def test_a_half_written_spec_still_yields_a_report() -> None:
     # Act
     declared = declared_from_spec({"spec": {"runtime": "apptainer"}})
     # Assert
-    assert declared["host"] is None
+    assert declared["image"] is None
+
+
+def test_the_host_is_not_a_declared_field() -> None:
+    # Arrange: where an agent runs is an OBSERVATION (operator, 2026-08-11).
+    # Printing it under "DECLARED (from the spec — not verified by this run)"
+    # is the same collapse that makes `sac agents list` report a running agent
+    # as `defined`, so it comes from the state db and appears under OBSERVED.
+    spec = {"spec": {"host": "ywata-note-win", "runtime": "apptainer"}}
+    # Act
+    declared = declared_from_spec(spec)
+    # Assert
+    assert "host" not in declared
 
 
 def test_a_spec_without_the_outer_key_is_read_directly() -> None:
@@ -145,13 +157,35 @@ def test_missing_to_is_a_usage_error_not_a_refusal() -> None:
 
 
 def test_the_exit_codes_are_distinct() -> None:
-    # Arrange: three outcomes a caller must be able to branch on — usage (2),
-    # target not ready (3), not built yet (4). Collapsing any two is how a
-    # script decides "it worked" from a failure.
+    # Arrange: four outcomes a caller must be able to branch on — usage (2),
+    # target not ready (3), a phase refused (5), a phase could not be measured
+    # (6). Collapsing any two is how a script decides "it worked" from a failure.
+    # 4 is retired rather than reused: a script written against its old meaning
+    # ("not built yet") must not silently start reading a new one.
+    from scitex_agent_container.cli_pkg._relocate_run import (
+        EXIT_INCOMPLETE,
+        EXIT_UNMEASURED,
+    )
+
     # Act
-    codes = {2, EXIT_REFUSED, EXIT_UNIMPLEMENTED}
+    codes = {2, EXIT_REFUSED, EXIT_INCOMPLETE, EXIT_UNMEASURED}
     # Assert
-    assert len(codes) == 3
+    assert len(codes) == 4
+
+
+def test_the_retired_exit_code_is_not_reused() -> None:
+    # Arrange: 4 meant "the executing path does not exist". It does now, so the
+    # number is retired rather than re-pointed — a script written against the old
+    # meaning must not silently start reading a new one.
+    from scitex_agent_container.cli_pkg._relocate_run import (
+        EXIT_INCOMPLETE,
+        EXIT_UNMEASURED,
+    )
+
+    # Act
+    live = (EXIT_INCOMPLETE, EXIT_UNMEASURED)
+    # Assert
+    assert EXIT_RETIRED_UNIMPLEMENTED not in live
 
 
 def test_register_attaches_the_verb_to_a_group() -> None:
@@ -180,3 +214,122 @@ def test_dry_run_is_the_default() -> None:
     default = param.default
     # Assert
     assert default is True
+
+
+# ---------------------------------------------------------------------------
+# the not-yet-built refusal — accurate, and generated rather than hard-coded
+# ---------------------------------------------------------------------------
+
+
+def test_the_refusal_covers_every_phase() -> None:
+    # Arrange: the previous refusal named ONE missing piece and went stale the
+    # moment that piece was built. Generating it from the phase table means it
+    # cannot claim less than the truth — but only if the table is complete.
+    from scitex_agent_container._lifecycle._relocate_phases import PHASES, PREFLIGHT
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    covered = tuple(phase for phase, _, _ in _PHASE_READINESS)
+    # Assert
+    assert covered == tuple(p for p in PHASES if p != PREFLIGHT)
+
+
+def test_the_notice_names_the_transport_adapter_as_built() -> None:
+    # Arrange: the operator's question is "what is missing", and answering it
+    # requires saying what is NOT. The ssh adapter exists now.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "_relocate_transport_ssh" in text
+
+
+def test_the_notice_names_the_handshake_gate_it_runs_the_reply_through() -> None:
+    # Arrange: the handshake now has BOTH halves — a delivery and a gate. The
+    # notice must still name the gate, because "we sent it a message" and "the
+    # answer passed a check" are the two things a reader needs told apart.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "_relocate_handshake" in text
+
+
+def test_the_notice_says_the_reply_is_observed_on_the_source() -> None:
+    # Arrange: the property the whole phase exists for. A notice that said only
+    # "delivers the brief" would describe the A->B leg, which is the one the
+    # 2026-08-11 measurement showed proves nothing.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "ON THE SOURCE" in text
+
+
+def test_the_notice_no_longer_claims_the_adapters_are_absent() -> None:
+    # Arrange: THE stale sentence, one generation on. It said the phase driver
+    # had no I/O adapters wired; that is now false for transport, source_stop and
+    # done, and a notice that misstates its own state sends the reader to build
+    # something that already exists.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "no I/O adapters wired" not in text
+
+
+def test_the_notice_marks_the_transport_phase_as_running() -> None:
+    # Arrange: the readiness table is the thing that must not overclaim OR
+    # underclaim; transport now has nothing missing.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    missing = {phase: gap for phase, _, gap in _PHASE_READINESS}
+    # Assert
+    assert missing["transport"] == "—"
+
+
+def test_the_three_target_side_phases_all_have_adapters_now() -> None:
+    # Arrange: the sentence this file used to assert was "target_standby has no
+    # adapter". It has one, and so do handshake and handover — which is the whole
+    # point of the change, so the test that pinned the refusal becomes the test
+    # that pins its absence. source_drain is deliberately NOT in this set: it
+    # still has no way to tell a RUNNING agent to finish its in-flight work, and
+    # claiming otherwise would be the drift this generated notice exists to stop.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    gaps = {
+        phase: gap
+        for phase, _, gap in _PHASE_READINESS
+        if gap != "—" and phase in ("target_standby", "handshake", "handover")
+    }
+    # Assert
+    assert gaps == {}, f"target-side phases still refusing: {sorted(gaps)}"
+
+
+def test_the_notice_names_the_standby_as_starting_without_the_lease() -> None:
+    # Arrange: a standby that claimed the lease would not be a standby, and the
+    # reversibility of everything before HANDOVER rests on it not doing so.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    built = {phase: text for phase, text, _ in _PHASE_READINESS}
+    # Assert
+    assert "WITHOUT the lease" in built["target_standby"]
+
+
+def test_the_notice_says_nothing_is_ever_deleted() -> None:
+    # Arrange: the operator's rollback story. A displaced directory goes to
+    # .old/<stamp>/ and a rollback is a human moving it back — never this code
+    # deciding to remove something.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "Nothing is deleted at any point" in text

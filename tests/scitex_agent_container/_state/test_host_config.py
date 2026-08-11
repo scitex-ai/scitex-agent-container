@@ -38,7 +38,19 @@ def _parse_probe_json(result, *, expect_exit: int = 0) -> dict:
 
     1. The CLI exit code matches ``expect_exit`` (probe payload is only
        trustworthy when the command ran to completion).
-    2. ``result.output`` parses as a JSON object.
+    2. ``result.stdout`` parses as a JSON object.
+
+    **stdout, not ``result.output``.** Since click 8.2 ``result.output``
+    is not a proxy for stdout — it is an independent stream that mixes
+    stdout and stderr in write order. Any library that logs a WARNING
+    while the command runs (scitex-logging's console handler resolves
+    ``sys.stderr`` per emit, so it follows click's isolated streams)
+    lands in ``.output`` and makes it unparseable, while the payload a
+    real ``sac host probe --json | jq`` consumer receives is untouched.
+    Asserting on ``.stdout`` is both the passing assertion and the
+    faithful one. Pinned by
+    ``test_json_payload_parses_from_stdout_despite_a_library_warning``
+    in ``tests/scitex_agent_container/cli_pkg/test_host_group.py``.
 
     Returns the parsed payload so callers assert on a structured field
     (``payload["remote_canonical"]``) rather than on exact / ordered
@@ -46,14 +58,15 @@ def _parse_probe_json(result, *, expect_exit: int = 0) -> dict:
     """
     assert result.exit_code == expect_exit, (
         f"host probe exit_code={result.exit_code} (expected {expect_exit}); "
-        f"exception={result.exception!r}; output={result.output!r}"
+        f"exception={result.exception!r}; output(stdout+stderr)={result.output!r}"
     )
     try:
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
     except ValueError as exc:  # JSONDecodeError subclasses ValueError
         raise AssertionError(
             f"host probe --json did not emit parseable JSON: {exc}; "
-            f"raw output={result.output!r}"
+            f"raw stdout={result.stdout!r}; "
+            f"stdout+stderr={result.output!r}"
         ) from exc
     assert isinstance(payload, dict), (
         f"host probe --json payload is not an object: {payload!r}"
@@ -290,7 +303,7 @@ def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
     # Act
     result = CliRunner().invoke(host_list, ["--json"])
     # Assert
-    assert json.loads(result.output)["peers"] == []
+    assert json.loads(result.stdout)["peers"] == []
 
 
 def test_host_list_renders_configured_peers(cfg_path: Path):
@@ -309,7 +322,7 @@ peers:
     # Act
     result = CliRunner().invoke(host_list, ["--json"])
     # Assert
-    assert sorted(p["name"] for p in json.loads(result.output)["peers"]) == [
+    assert sorted(p["name"] for p in json.loads(result.stdout)["peers"]) == [
         "mba",
         "spartan",
     ]
@@ -323,7 +336,7 @@ def test_host_validate_passes_for_clean_config(cfg_path: Path):
     # Act
     result = CliRunner().invoke(host_validate, ["--json"])
     # Assert
-    assert json.loads(result.output)["errors"] == []
+    assert json.loads(result.stdout)["errors"] == []
 
 
 def test_host_validate_fails_for_unknown_via(cfg_path: Path):
@@ -341,7 +354,7 @@ peers:
     # Act
     result = CliRunner().invoke(host_validate, ["--json"])
     # Assert
-    assert "does-not-exist" in json.loads(result.output)["errors"][0]
+    assert "does-not-exist" in json.loads(result.stdout)["errors"][0]
 
 
 # ---------------------------------------------------------------------------

@@ -77,6 +77,25 @@ from ._overlay_masking_model import (
     OverlayMaskVerdict,
     ShadowInstall,
 )
+from ._overlay_venv_invalidate import (
+    reconcile_overlay_venv,
+    reconcile_overlay_venv_for_launch,
+    sif_identity,
+)
+from ._overlay_venv_model import (
+    ACTION_INVALIDATE,
+    ACTION_NONE,
+    ACTION_REFUSE,
+    InvalidationPlan,
+    OverlayVenvFacts,
+    VenvCheck,
+)
+from ._overlay_venv_predicate import plan_invalidation
+from ._venv_dist_assertion import (
+    VenvDistributionError,
+    assert_venv_distributions_unique,
+    duplicate_distributions,
+)
 from ._worktree_gc import (
     DEFAULT_CAP,
     DEFAULT_MIN_AGE_HOURS,
@@ -98,8 +117,21 @@ from ._worktree_gc_alarm import (
 from ._worktree_gc_repos import discover_repos, spec_workdirs
 
 __all__ = [
+    "ACTION_INVALIDATE",
+    "ACTION_NONE",
+    "ACTION_REFUSE",
     "DEFAULT_CAP",
     "DEFAULT_MIN_AGE_HOURS",
+    "InvalidationPlan",
+    "OverlayVenvFacts",
+    "VenvCheck",
+    "VenvDistributionError",
+    "assert_venv_distributions_unique",
+    "duplicate_distributions",
+    "plan_invalidation",
+    "reconcile_overlay_venv",
+    "reconcile_overlay_venv_for_launch",
+    "sif_identity",
     "IMPORTS_LIVE",
     "IMPORTS_UNAVAILABLE",
     "OPERATIONAL_RULE",

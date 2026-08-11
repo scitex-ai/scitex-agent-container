@@ -40,6 +40,14 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else. The measurement
+# (51.3% of this repo's CI machine time was spent on commits a newer push had
+# already replaced) and the reason the group is keyed on run_id for non-PR
+# events are argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   ruff:
     # THE NAME IS A DELIBERATE MISNOMER — DO NOT "FIX" IT IN PASSING.

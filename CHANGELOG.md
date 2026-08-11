@@ -6,60 +6,153 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Every job sac owns is renamed to the ecosystem canonical form
+  `scitex-agent-container-<name>`, and the migration that makes that safe
+  ships with it** (`sac dev migrate-job-names`, `_jobs/_migrate/`). The rename
+  is not cosmetic: scitex-dev derives the unit FILENAME from `JobSpec.name`
+  verbatim, so `sac.worktree-gc` and `scitex-agent-container-worktree-gc` are
+  two unrelated units with independent enablement, state and triggers. Install
+  before uninstall therefore leaves TWO supervisors running the same command —
+  the shape that already put a crontab line and a systemd unit on `sac listen`
+  against different venvs, dormant only because a `pgrep` guard happened to
+  match. A rename is exactly what wakes that up.
+
+  So the migration is ordered by construction — stop → disable → carry
+  drop-ins → displace → daemon-reload → install → logging → verify — with
+  `install` unable to precede `displace` because each step's action indexes
+  into `ACTION_ORDER` and a test asserts the ranks are non-decreasing for every
+  job. Nothing is deleted (displaced units go to `.old/<timestamp>/`), a unit's
+  `<unit>.d/` drop-ins are CARRIED across the rename rather than orphaned under
+  a name the new unit never reads, and `sac-listen.service` is in `NEVER_TOUCH`
+  with the guard running on every plan the planner returns.
+
+  Verification counts BOTH names: "the new unit exists" is not the claim, "ONLY
+  the new unit exists" is, and a surviving old unit fails however healthy the
+  new one looks.
+
+  **`sac.accounts-refresh` deliberately keeps its legacy name.** It is the
+  fleet's sole OAuth refresher against a single-use refresh token (two racing
+  refreshers revoke each other; zero stalls the fleet within hours — measured
+  2026-07-09/10) and the only sac timer actually enabled and active. A spec
+  renamed AHEAD of its unit would make `sac dev timer status accounts-refresh`
+  report the refresher as ABSENT while it refreshes, so the declared name
+  tracks the DEPLOYED unit until an operator-supervised cutover renames both
+  together. `_names` recognises both prefixes for exactly that window;
+  `--include-held` requires `--only`, so a bulk run cannot sweep it up.
+
+### Added
+
+- **A run-selection knob** (`_jobs/_migrate/_selection.py`): `SAC_JOBS_ENABLED`
+  or `~/.scitex/agent-container/jobs-enabled.txt` selects which declared jobs
+  run on THIS host. `JobSpec` has no host axis, so every discovered job was a
+  candidate everywhere while constraints like "`restart-login-expired-agents`
+  and `heal-agent-auth` are mutually exclusive" lived only in docstring prose.
+  UNSTATED is a third state distinct from "nothing selected": arriving
+  machinery must not disarm a host that never opted in, and a host that
+  deliberately selected nothing must not be armed. The knob gates ARMING, never
+  installing — an inert unit file stays inspectable with `systemctl cat`.
+
+- **Predictable logging for sac's jobs**, as a `10-logging.conf` drop-in on
+  scitex-dev's own path convention
+  (`~/.scitex/agent-container/runtime/logs/<kind>-<name>.log`). sac's jobs are
+  not dispatched through `ecosystem cron exec`, so upstream's log sink never
+  installed for them and their output went to the journal under a unit name
+  that changed with every rename. A drop-in rather than a unit edit because
+  scitex-dev REGENERATES the unit on every install; `append:` rather than
+  `file:` so a restart does not truncate the history. A test calls the real
+  upstream resolver, so an upstream convention change fails sac's build instead
+  of silently splitting the log tree in two.
+
+- **A host-capability refusal on the migration verb.** `sac dev` had none —
+  contrary to a widely-repeated assumption, there is no `systemctl` probe
+  anywhere in `_dev_jobs.py` or `_dev_jobs_backend.py`, and `manual_hint` will
+  still print a `systemctl` line on a QNAP. nas-01 (armv7l) and nas-02 have no
+  `systemctl` and mba uses launchd, so `service`/`timer` are unimplementable on
+  three of nine hosts; the migration now exits 3 there rather than running its
+  whole plan, failing every step, and reporting "NO supervisor" for a host that
+  was never going to have one.
+
+- `docs/adr/0022-listen-is-not-a-jobspec.md` — the "`sac listen` must never be
+  federated" argument, moved out of a function docstring into the ADR tree
+  where this project keeps architectural rationale.
+
+- **`sac dev` job groups are now named after the `JobSpec` KIND, not the
+  delivery mechanism** — `sac dev {service,timer,cron} <verb>`, the
+  ecosystem-wide grammar every SciTeX package adopts (operator decision,
+  2026-08-11). This is not a rename for tidiness. The old groups (`cron`,
+  `systemd`) were named on one axis while the filter used another, and
+  `_load_sac_jobs` was called with the GROUP NAME — so `sac dev systemd list`
+  asked for `kind="systemd"`, which `JobSpec.validate()` rejects at
+  construction, and every timer sac owns was invisible to its own CLI for
+  weeks behind "No sac systemd-kind jobs." and exit 0. With the group name and
+  the kind collapsed into one axis, that bug has no way to be expressed, and
+  `_jobs_audit` machine-checks the identity (`Form.GROUP_IS_NOT_ITS_KIND`)
+  plus the case where a kind is reachable only through a deprecated alias
+  (`Form.ALIAS_ONLY_KIND`).
+
+  The verb set differs per kind on purpose — a verb that makes no sense for a
+  kind does not exist for it rather than existing and erroring. `service` gets
+  the full lifecycle (`status`/`start`/`stop`/`restart`/`enable`/`disable`);
+  `timer` gets `status`/`enable`/`disable` (`enable --now` is the timer idiom,
+  so `start` would be a second spelling of it); `cron` gets `enable`/`disable`
+  (a crontab line has no runtime object to query).
+
+  `install` / `uninstall` now take an optional job NAME, and every named verb
+  accepts the SHORT local name the operator types (`accounts-refresh`) as well
+  as the canonical id (`sac.accounts-refresh`). An unknown name exits 5 and
+  lists the real ones instead of silently doing nothing.
+
+- **`sac dev systemd` is deprecated with a DATE, not "for the time being".**
+  It keeps working and keeps exactly its historical three verbs, so nothing
+  new gets built on it, and it carries machine-readable `since=2026-08` /
+  `remove_after=2026-10` / replacement metadata that a test enforces: the
+  build goes red once the window closes, which is what stops a temporary alias
+  from becoming permanent API. The notice is printed to **stderr** — a
+  courtesy message on stdout is indistinguishable from data, and that is
+  exactly how a stale-registry `WARN:` on stdout corrupted `sac host list
+  --json` and turned 7 tests red across three unrelated PRs.
+
+### Added
+
+- `cli_pkg/_dev_jobs_backend.py` — the explicit, testable delegation seam
+  between `sac dev <kind> <verb>` and scitex-dev. It probes the INSTALLED
+  scitex-dev's real Click tree rather than consulting a hard-coded table, and
+  resolves to a PATH rather than a name, so it survives the ecosystem moving
+  its job groups. Measured on scitex-dev 0.43.1: the groups already live at
+  `ecosystem dev {cron,systemd}`, while `ecosystem cron` / `ecosystem systemd`
+  are deprecated forwarding `Command` shims whose own help says "Removed in
+  v0.50" — they still run, but targeting them breaks on the next upgrade, and
+  because a shim is not a `Group` it enumerates as zero verbs while working
+  perfectly. Candidate paths are tried `dev <kind>` → `<kind>` → `dev <legacy>`
+  → `<legacy>`, so `ecosystem dev service` / `dev timer` (scitex-dev #566) are
+  picked up the moment they ship, with no sac release. An all-empty read is
+  the third state ("cannot tell"), never "unsupported" — including the live
+  case where `ecosystem dev` exists but its per-kind children do not. A verb
+  no surface serves exits 4 naming every path probed and printing the exact
+  `systemctl --user …` command to run by hand. `--dry-run` / `--yes` are
+  forwarded verbatim, because scitex-dev's gate on mutating verbs is what
+  stops `timer disable sac.accounts-refresh` from stopping the fleet's sole
+  OAuth refresher. sac deliberately does NOT call `systemctl` itself — the
+  argument is in the module docstring.
+
+- `_jobs/_names.py` — the local-vs-canonical job-name grammar, with the
+  canonical prefix as a single named constant. That constant is the seam for
+  the ecosystem-wide rename to `scitex-<pkg>-<name>`, which is deliberately
+  NOT in this change: renaming derives different unit filenames, so it must
+  ship with the migration that enforces stop → remove → install.
+
 ### Fixed
 
-- **`host:` documented a fallback chain that nothing implemented.**
-  `HostsSpec.host` has said "list: priority order; first available host wins
-  (fallback chain)" since v3 shipped. Every site that reduced the list took
-  `host[0]` and never asked whether that host was usable, so a chain degraded
-  exactly as well as a string: not at all. Measured across all six reduction
-  sites — `_lifecycle/_verdict_remote.py`, `cli_pkg/lifecycle/_common.py`,
-  `_start_single.py`, `_host_routing.py`, `_dispatch.py` and `_attach.py` —
-  not one contained a liveness or reachability check.
-
-  On 2026-08-09 specs reverted to a single pinned host, sac ssh-dispatched
-  every lifecycle verb to it, the hop answered `Permission denied (publickey)`,
-  and twelve agents went down. The documented mechanism for degrading instead
-  was sitting inert in the type.
-
-  `cli_pkg/lifecycle/_host_chain.py` is now the ONE place a `spec.host` chain
-  is reduced, and all six sites route through it — including `_attach.py`,
-  whose docstring already promised it agreed with `start` about where an agent
-  lives and would otherwise have opened a session on a different machine than
-  the one the agent was launched on. A list is walked in
-  priority order and the first candidate not positively REJECTED wins: a local
-  entry wins immediately (we are that machine — an ssh hop to self is never
-  rendered), a remote entry wins if the reachability probe does not say no, and
-  a chain in which every candidate was rejected raises rather than silently
-  starting locally on the wrong machine. The refusal names every candidate and
-  its own reason, because "down" and "mistyped" have different fixes.
-
-  **A plain string `host: <name>` is NEVER probed and behaves byte-identically
-  to before.** It has nothing to fall back to, so a probe could only convert a
-  working dispatch into a refusal — a pure regression. Pinned by test, oracle
-  and all.
-
-  Reachability is three-valued (`reachable` / `unreachable` / `unknown`) and
-  the third value is never folded into either pole, which is this codebase's
-  most-shipped bug class. Only EVIDENCE rejects a host: a probe that answered
-  no, or a name that routes nowhere. "I could not check" — no oracle supplied,
-  a probe that could not run, an oracle that raised — rejects nothing and
-  leaves the operator's priority order standing, which is also what makes the
-  no-oracle call sites (listings, preflights) byte-identical to the old
-  `host[0]`.
-
-  The probe is an injected `(host) -> verdict` callable, matching the
-  `peers` / `local_names` seam `classify_dispatch_host` already uses, so the
-  resolver stays pure and no test touches the network. The production oracle is
-  one bounded ssh round-trip rendered by `build_ssh_argv` — the same primitive
-  the dispatch itself uses, so the probe cannot answer about a different route
-  than the one taken — memoized per verb, and only ever built for a LIST.
-
-  Two further consequences of asking the whole chain instead of its head:
-  `_resolve_singleton_skip` now checks liveness on EVERY bound host (asking
-  only the head reported "not live", released the pin, and started a SECOND
-  copy beside one already running down-chain), and the `--resume` preflight no
-  longer calls a placement remote when the chain names this machine.
+- **Two `--json` tests asserted on the wrong stream.** They parsed click's
+  `Result.output`, which merges stdout AND stderr, so they passed only while
+  nothing else wrote to stderr and went red the moment an unrelated
+  third-party jobs provider failed to load and `scitex_dev.jobs` warned about
+  it — correctly, on stderr. Real `sac dev … --json` stdout was clean
+  throughout. Every JSON assertion now reads `Result.stdout`, and one test
+  proves the contract end-to-end in a real subprocess where the two streams
+  are genuinely separate files.
 
 ## [0.24.25] - 2026-08-05
 

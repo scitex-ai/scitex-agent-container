@@ -44,6 +44,10 @@
 set -u
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Shell-local path; exported to the core below as the namespaced
+# SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH. Wrapper and core deploy as a pair,
+# so both halves of that contract are renamed together — a mismatched
+# deploy degrades to "no audit log", never to a hook that fails to gate.
 LOG_PATH="$THIS_DIR/.$(basename "$0").log"
 CORE="$THIS_DIR/heavy_job_demotion_core.py"
 
@@ -248,7 +252,7 @@ if [[ ! -f "$CORE" ]]; then
     echo "warn(enforce_heavy_job_demotion): core missing at $CORE; fail-open (allowing)." >&2
     exit 0
 fi
-printf '%s' "$INPUT" | LOG_PATH="$LOG_PATH" python3 "$CORE"
+printf '%s' "$INPUT" | SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH="$LOG_PATH" python3 "$CORE"
 exit $?
 
 # EOF

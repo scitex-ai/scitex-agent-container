@@ -21,7 +21,15 @@ Every tick it:
   3. writes ``heartbeat.json`` for each agent present in that snapshot via
      :func:`_session_state.write_heartbeat`, stamping ``ts`` with the
      pane-activity epoch (the SAME liveness signal ``is_running`` keys
-     off) and ``state="running"``.
+     off) and ``state="running"``;
+  4. RE-ASSERTS each live agent's host-side ``/v1/turn`` turn bridge
+     (:mod:`._tui_bridge_supervisor`) — respawning it when nothing is bound
+     to the port it should serve. That bridge was spawned once at start and
+     supervised by nothing, so 14 of 15 on the host were dead PIDs while the
+     agents still read healthy and every pushed wake was refused. The tick
+     already enumerates exactly the right agents with a fresh liveness
+     snapshot, so it is the cheapest correct place to hold that promise —
+     no new daemon, no systemd unit.
 
 SCALING (the fleet-comms outage this shape fixes): step 1 used to be a
 per-agent probe — ``TmuxManager.exists`` (1 ``tmux`` spawn) plus
@@ -147,7 +155,11 @@ def list_tui_agents() -> list[dict]:
                 state_dir = state_dir_for_config(cfg)
             except Exception:  # stx-allow: fallback (resolver import/build may fail in a partial install)
                 state_dir = None
-        out.append({"name": name, "state_dir": state_dir})
+        # ``config`` rides along so the tick can supervise this agent's turn
+        # bridge without a SECOND ``load_config`` (we already paid for it
+        # above) — mirroring the record shape ``_sdk_heartbeat_loop`` already
+        # uses to hand its own tick a real config.
+        out.append({"name": name, "state_dir": state_dir, "config": cfg})
 
     try:
         for row in Registry().list_all():
@@ -223,6 +235,7 @@ async def tui_heartbeat_loop(
     write_fn: Any = None,
     tmux_check: Any = None,
     tick_timeout_s: float | None = None,
+    supervise_fn: Any = None,
 ) -> None:
     """Long-running TUI heartbeat-writer task for the listen lifespan.
 
@@ -231,7 +244,9 @@ async def tui_heartbeat_loop(
     :func:`_runners._tmux._tmux_probe.list_sessions_activity` (the ONE
     batched fleet probe); ``write_fn`` →
     :func:`_runners._session_state.write_heartbeat`; ``tmux_check`` →
-    :func:`_tmux_available`.
+    :func:`_tmux_available`; ``supervise_fn`` →
+    :func:`._tui_bridge_supervisor.supervise_bridges` (the turn-bridge
+    re-assertion — it reuses THIS tick's snapshot, so it adds no tmux calls).
 
     ``sessions_fn`` replaced the former per-agent ``session_exists_fn`` /
     ``activity_fn`` pair: those cost 3 ``tmux`` spawns per agent, so the
@@ -270,6 +285,9 @@ async def tui_heartbeat_loop(
         from .._runners._tmux._tmux_probe import list_sessions_activity as sessions_fn
     if write_fn is None:
         from .._runners._session_state import write_heartbeat as write_fn
+    if supervise_fn is None:
+        from ._tui_bridge_supervisor import supervise_bridges as supervise_fn
+    supervise = supervise_fn
 
     # OVERLAP GUARD. ``run_blocking_or`` abandons a tick that blows its
     # timeout, but the underlying THREAD keeps running (it is deliberately
@@ -306,8 +324,27 @@ async def tui_heartbeat_loop(
                     "(refusing to infer 'no sessions' from a failed probe)."
                 )
                 return
-            for agent in list(lister()):
+            agents = list(lister())
+            for agent in agents:
                 _beat_one(agent, snapshot=snapshot, write_fn=write_fn)
+            # RE-ASSERT THE TURN BRIDGE (2026-08-11 incident: 14 of 15
+            # host-side bridges were dead PIDs and nothing ever noticed — a
+            # live agent whose /v1/turn port is unbound silently refuses every
+            # pushed wake). Runs AFTER the beats so the primary duty is never
+            # delayed by a spawn, and reuses THIS tick's snapshot so it costs
+            # no extra tmux calls. Best-effort at the call site too: the
+            # supervisor already converts per-agent failures into verdicts, so
+            # anything escaping here is structural and must not cost the beats
+            # that were just written.
+            try:
+                supervise(agents, snapshot=snapshot)
+            except Exception as exc:  # stx-allow: fallback (reason: bridge supervision is additive to the heartbeat's primary duty — a failure in it must never abort a tick that already wrote fresh liveness data; logged, retried next tick)
+                logger.warning(
+                    "tui_heartbeat_loop: turn-bridge supervision failed this "
+                    "tick (%s); heartbeats were still written, retrying next "
+                    "tick",
+                    exc,
+                )
         finally:
             tick_lock.release()
 

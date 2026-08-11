@@ -167,6 +167,8 @@ def _rotate_among_credentials_files(
     :class:`_creds.NoHealthyAccountError` propagates (agent NOT started).
     Back-compat: a 1-element pool whose one snapshot is healthy resolves
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
+    A pool of TWO OR MORE always narrates the pick, INCLUDING when the
+    winner is the entry already bound — see the guard below.
     """
     from .._creds import POLICY_BURN, pick_healthy_account, resolve_7d_policy
     from ._quota_evidence import pick_with_quota_evidence
@@ -241,8 +243,18 @@ def _rotate_among_credentials_files(
     picked_path = next(p for slug, p in entries if slug == picked)
     claude.credentials_file = str(picked_path)
 
-    if str(picked_path) == prior:
-        return  # 1-element / already-selected pool — no change, no log.
+    # SILENT ONLY WHEN NOTHING WAS CHOSEN. This guard used to read
+    # ``str(picked_path) == prior`` — "the binding did not move, so say
+    # nothing" — which is backwards for a POOL: re-confirming one account
+    # over two REJECTED siblings is the decision the operator most needs to
+    # see, and it is the COMMON case, because churn-minimisation prefers the
+    # currently-bound entry whenever it is still healthy. Measured 2026-08-11
+    # on the live ``scitex-agent-container`` spec (a 3-entry pool): the picker
+    # re-confirmed the bound account every boot, so start/restart narrated the
+    # account NEVER — the pick was correct and 100% invisible. A 1-element
+    # pool genuinely made no choice; that one stays quiet.
+    if len(entries) <= 1 and str(picked_path) == prior:
+        return  # 1-element pool kept its only entry — no choice, no log.
 
     from .._creds import (
         account_5h_usage,
@@ -299,7 +311,15 @@ def _rotate_among_credentials_files(
     from ..cli_pkg._helpers._console import system_msg
 
     system_msg(headline, style="info")
-    system_msg(detail, style="dim")
+    # INFO, not "dim". ``"dim"`` maps to ``scitex_logging.DEBUG``
+    # (``cli_pkg._helpers._console._STYLE_TO_LEVEL``), which is BELOW the
+    # project logger's effective level (measured: 20 / INFO), so everything
+    # carrying the REASON — the active policy, the rationale sentence and the
+    # per-candidate ranking inputs — was dropped at the logger while the
+    # headline alone survived. That is precisely the "reasoned pick is
+    # indistinguishable from a lucky one" defect ``_creds._pick_audit`` was
+    # written to close, so it must not be emitted below the level anyone reads.
+    system_msg(detail, style="info")
 
 
 def _rotate_to_healthy_account(

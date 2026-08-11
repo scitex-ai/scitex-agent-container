@@ -19,20 +19,26 @@ from __future__ import annotations
 
 import pytest
 
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
 from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_BINDS,
     CHECK_CREDENTIALS,
     CHECK_HUB_FROM_TARGET,
     CHECK_PORTS,
     CHECK_RUNTIME,
+    CHECK_SAC_PRESENT,
     CHECK_SCHEMA,
+    CHECK_SESSION,
+    CHECK_SOURCE_WORK,
     Check,
+    SourceFacts,
     TargetFacts,
     preflight,
 )
 
 AGENT = "scitex-agent-container"
 DST = "nas-03"
+SRC = "ywata-note-win"
 RUNTIME = "apptainer"
 PORTS = (19019,)
 
@@ -51,18 +57,39 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
         rejected_spec_keys=(),
         ports_in_use=(),
         hub_reachable_from_target=True,
+        sac_on_path=True,
+        sac_resolved_path="/usr/local/bin/sac",
     )
     base.update(overrides)
     return TargetFacts(**base)  # type: ignore[arg-type]
 
 
-def _run(**overrides: object):
+def _clean_source(**overrides: object) -> SourceFacts:
+    """A source that was scanned, holds nothing un-saved, and names its session.
+
+    The transcripts and the marker are part of "fully observed" because the
+    session check reads them. Several transcripts is the ORDINARY shape — every
+    one of the ten agents measured on 2026-08-12 held between two and five — so
+    the healthy fixture holds three rather than the one the old guard required.
+    """
+    base = dict(
+        repos=(RepoWork(path="/repo", branch="develop", uncommitted=0, unpushed=0),),
+        transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000), ("ccc3.jsonl", 2000)),
+        session_marker="aaa1",
+    )
+    base.update(overrides)
+    return SourceFacts(**base)  # type: ignore[arg-type]
+
+
+def _run(source_facts: SourceFacts | None = None, **overrides: object):
     return preflight(
         agent=AGENT,
         to_host=DST,
         facts=_healthy_facts(**overrides),
         runtime=RUNTIME,
         required_ports=PORTS,
+        source_facts=source_facts if source_facts is not None else _clean_source(),
+        from_host=SRC,
     )
 
 
@@ -110,6 +137,74 @@ def test_an_entirely_unobserved_target_is_unknown_not_ok() -> None:
     verdict = report.ok
     # Assert
     assert verdict is None
+
+
+# ---------------------------------------------------------------------------
+# session_resolvable — asked HERE because the phase that needs it runs late
+# ---------------------------------------------------------------------------
+
+
+def test_several_transcripts_with_a_marker_pass_the_session_check() -> None:
+    # Arrange: THE shape every remaining agent has. Three transcripts is normal,
+    # and the old `len(files) == 1` guard made it fatal.
+    report = _run()
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is True
+
+
+def test_an_agent_whose_session_cannot_be_resolved_fails_preflight() -> None:
+    # Arrange: THE gap. Ten agents returned "GO — every check passed" on
+    # 2026-08-12 and then aborted at TARGET_STANDBY with the agent stopped, the
+    # transcript copied and no marker written. The refusal has to happen while
+    # the agent is still up.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    verdict = report.ok
+    # Assert
+    assert verdict is False
+
+
+def test_that_failure_is_reported_under_the_session_check() -> None:
+    # Arrange: a blocked relocation is only actionable if the report names WHICH
+    # question blocked it.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is False
+
+
+def test_that_failure_names_the_transcripts_it_saw() -> None:
+    # Arrange: the operator resolves this by seeding the marker, which needs the
+    # candidate list in front of them.
+    report = _run(source_facts=_clean_source(session_marker="not-carried"))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert "bbb2.jsonl" in check.detail
+
+
+def test_a_source_whose_transcripts_were_never_listed_is_unknown() -> None:
+    # Arrange: nobody looked. That must not read as "there is one and it is
+    # fine", which is how this class of bug reaches the phase that stops things.
+    report = _run(source_facts=_clean_source(transcripts=None))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is None
+
+
+def test_an_agent_with_no_transcript_at_all_fails_the_session_check() -> None:
+    # Arrange: an observed empty directory. The agent would boot on the target
+    # with no memory — the 2026-08-07 outcome, and it must be said out loud
+    # rather than discovered afterwards.
+    report = _run(source_facts=_clean_source(transcripts=(), session_marker=""))
+    # Act
+    check = _named(report, CHECK_SESSION)
+    # Assert
+    assert check.ok is False
 
 
 def test_every_check_is_unknown_when_nothing_was_observed() -> None:
@@ -354,3 +449,192 @@ def test_an_unobserved_check_still_explains_what_to_run() -> None:
     check = report.unknown[0]
     # Assert
     assert "probe" in check.hint
+
+
+# ---------------------------------------------------------------------------
+# sac_present_on_target — installed and findable are two questions
+#
+# Measured 2026-08-11 on scitex-compute-04: sac lives at
+# /home/ywatanabe/.env-sac/bin/sac and is absent from the non-interactive ssh
+# PATH, so `ssh compute-04 sac …` answers "No such file or directory" — the same
+# words a machine with no sac at all produces, needing the opposite fix.
+# ---------------------------------------------------------------------------
+
+
+def test_sac_on_the_ssh_path_passes() -> None:
+    # Arrange
+    report = _run()
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert check.ok is True
+
+
+def test_sac_installed_but_off_the_ssh_path_fails() -> None:
+    # Arrange: the compute-04 case.
+    report = _run(
+        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
+    )
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert check.ok is False
+
+
+def test_sac_off_the_path_is_reported_as_installed_rather_than_missing() -> None:
+    # Arrange
+    report = _run(
+        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
+    )
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert "IS INSTALLED" in check.detail
+
+
+def test_sac_off_the_path_names_where_it_actually_is() -> None:
+    # Arrange
+    report = _run(
+        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
+    )
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert "/home/ywatanabe/.env-sac/bin/sac" in check.detail
+
+
+def test_sac_off_the_path_tells_the_reader_not_to_install_a_second_copy() -> None:
+    # Arrange: the wrong fix here is to install sac again, which is what a
+    # single "sac not found" message would send the reader off to do.
+    report = _run(
+        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
+    )
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert "do NOT install a second copy" in check.hint
+
+
+def test_sac_absent_everywhere_fails_as_not_installed() -> None:
+    # Arrange: "" means looked and found nothing.
+    report = _run(sac_on_path=False, sac_resolved_path="")
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert "NOT INSTALLED" in check.detail
+
+
+def test_sac_absent_everywhere_asks_for_an_install() -> None:
+    # Arrange
+    report = _run(sac_on_path=False, sac_resolved_path="")
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert "install sac" in check.hint
+
+
+def test_sac_off_the_path_with_no_direct_lookup_is_unknown() -> None:
+    # Arrange: not-on-PATH alone cannot tell the two failures apart, and
+    # guessing either way sends the reader to the wrong fix.
+    report = _run(sac_on_path=False, sac_resolved_path=None)
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert check.ok is None
+
+
+def test_an_unprobed_sac_presence_is_unknown() -> None:
+    # Arrange
+    report = _run(sac_on_path=None, sac_resolved_path=None)
+    # Act
+    check = _named(report, CHECK_SAC_PRESENT)
+    # Assert
+    assert check.ok is None
+
+
+# ---------------------------------------------------------------------------
+# source_work_committed — relocating away from unsaved work strands it
+# ---------------------------------------------------------------------------
+
+
+def test_a_scanned_and_clean_source_passes() -> None:
+    # Arrange
+    report = _run()
+    # Act
+    check = _named(report, CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is True
+
+
+def test_uncommitted_work_on_the_source_fails_the_relocation() -> None:
+    # Arrange
+    source = SourceFacts(
+        repos=(RepoWork(path="/proj/sac", branch="feat/x", uncommitted=7, unpushed=0),)
+    )
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is False
+
+
+def test_the_uncommitted_failure_reports_the_file_count() -> None:
+    # Arrange
+    source = SourceFacts(
+        repos=(RepoWork(path="/proj/sac", branch="feat/x", uncommitted=7, unpushed=0),)
+    )
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert "7 uncommitted file(s)" in check.detail
+
+
+def test_the_uncommitted_failure_reports_the_repo_path() -> None:
+    # Arrange
+    source = SourceFacts(
+        repos=(RepoWork(path="/proj/sac", branch="feat/x", uncommitted=7, unpushed=0),)
+    )
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert "/proj/sac" in check.detail
+
+
+def test_unpushed_commits_on_the_source_fail_too() -> None:
+    # Arrange: a branch pushed nowhere is unreachable from any other machine.
+    source = SourceFacts(
+        repos=(RepoWork(path="/proj/sac", branch="feat/x", uncommitted=0, unpushed=3),)
+    )
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert "3 unpushed commit(s)" in check.detail
+
+
+def test_an_unscanned_repo_is_unknown_rather_than_clean() -> None:
+    # Arrange: a failed `git status` prints nothing, exactly like a clean tree.
+    source = SourceFacts(repos=(RepoWork(path="/proj/sac"),))
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is None
+
+
+def test_a_source_nobody_looked_at_refuses_the_relocation() -> None:
+    # Arrange: the default. A caller that has not looked at the source has not
+    # established the move is safe.
+    report = preflight(
+        agent=AGENT, to_host=DST, facts=_healthy_facts(), runtime=RUNTIME
+    )
+    # Act
+    check = _named(report, CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is None
+
+
+def test_a_source_with_no_repos_at_all_passes_when_it_was_scanned() -> None:
+    # Arrange: an observed "nothing to strand" is different from "nobody asked".
+    source = SourceFacts(repos=())
+    # Act
+    check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is True
