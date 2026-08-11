@@ -47,7 +47,17 @@ import hpc_login_whitelist_policy as policy  # noqa: E402
 
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 KEYWORD_SKIP = {
-    "do", "then", "else", "!", "{", "(", ")", "}", "if", "elif", "while",
+    "do",
+    "then",
+    "else",
+    "!",
+    "{",
+    "(",
+    ")",
+    "}",
+    "if",
+    "elif",
+    "while",
     "until",
 }
 KEYWORD_ALLOW_SEG = {"fi", "done", "esac", "for", "case"}
@@ -65,9 +75,23 @@ WRAPPER_VALUE_FLAGS = {
     "stdbuf": {"-i", "-o", "-e"},
     "timeout": {"-k", "--kill-after", "-s", "--signal"},
     "xargs": {
-        "-a", "-d", "-E", "-e", "-I", "-i", "-L", "-l", "-n", "-P", "-s",
-        "--arg-file", "--delimiter", "--max-args", "--max-procs",
-        "--max-chars", "--replace",
+        "-a",
+        "-d",
+        "-E",
+        "-e",
+        "-I",
+        "-i",
+        "-L",
+        "-l",
+        "-n",
+        "-P",
+        "-s",
+        "--arg-file",
+        "--delimiter",
+        "--max-args",
+        "--max-procs",
+        "--max-chars",
+        "--replace",
     },
 }
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -325,15 +349,17 @@ def _judge_pipeline(s, depth=0):
 
 
 def _log_block(hostname, cls, word, cmd):
-    log_path = os.environ.get("LOG_PATH", "")
+    # Contract with the wrapper: `enforce_hpc_login_node_whitelist.sh` sets
+    # SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH on THIS process only. The two ship
+    # and deploy as a pair, so the name is ours end-to-end. Unset/empty =>
+    # no audit log; the block decision itself is unaffected.
+    log_path = os.environ.get("SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH", "")
     if not log_path:
         return
     try:
         import datetime
 
-        ts = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with open(log_path, "a") as fh:
             fh.write(
                 "[%s] BLOCK hpc-login :: host=%s class=%s word=%s :: %s\n"
@@ -357,8 +383,7 @@ def main() -> int:
             return 0
     except re.error:
         _warn(
-            "invalid regex in $%s=%r; fail-open (allowing)."
-            % (policy.PAT_ENV, pattern)
+            "invalid regex in $%s=%r; fail-open (allowing)." % (policy.PAT_ENV, pattern)
         )
         return 0
 
