@@ -166,6 +166,7 @@ def render_dry_run(
     *,
     declared: dict[str, object] | None = None,
     errors: dict[str, str] | None = None,
+    dry_run: bool = True,
 ) -> list[str]:
     """The whole dry run, in the order a reader needs it.
 
@@ -173,9 +174,22 @@ def render_dry_run(
     claims, then what the host showed, then the verdict — and the verdict is
     repeated as blocking reasons at the end, because the operator asked for a
     dry run that surfaces EVERY problem in one pass rather than one per run.
+
+    ``dry_run`` EXISTS BECAUSE THE HEADER WAS A LIE. The sentence "(nothing was
+    touched)" was unconditional, so the first real relocation printed it above a
+    report of 3.6 MB moved between two hosts — measured 2026-08-11 on the canary
+    run. A report that misstates whether it changed anything is precisely the
+    "looks exactly like success" failure this command exists to prevent, aimed
+    at the reader instead of the machine. It defaults to True so a caller that
+    forgets it over-warns rather than under-warns.
     """
     lines = [
-        f"relocate {report.agent} -> {report.to_host}   DRY RUN (nothing was touched)",
+        f"relocate {report.agent} -> {report.to_host}   "
+        + (
+            "DRY RUN (nothing was touched)"
+            if dry_run
+            else "EXECUTING (this run CHANGES both hosts)"
+        ),
         "",
     ]
     lines += render_declared(declared or {})

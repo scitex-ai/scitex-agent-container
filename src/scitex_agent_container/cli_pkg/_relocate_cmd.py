@@ -62,88 +62,122 @@ __all__ = ["declared_from_spec", "register", "relocate"]
 #: from click's own 2 (usage error) so a caller can tell "you asked wrongly"
 #: from "the target is not ready".
 EXIT_REFUSED = 3
-#: Exit code for the not-yet-built executing path. Distinct again, so a script
-#: cannot mistake "unimplemented" for "the target failed preflight".
-EXIT_UNIMPLEMENTED = 4
+#: RETIRED. It meant "the executing path does not exist"; it does now, and the
+#: outcomes it used to cover are :data:`._relocate_run.EXIT_INCOMPLETE` (a phase
+#: refused, understood) and :data:`._relocate_run.EXIT_UNMEASURED` (a phase could
+#: not be measured). The number is not reused: a script written against the old
+#: meaning must not silently start reading a new one.
+EXIT_RETIRED_UNIMPLEMENTED = 4
 
 
-#: What `--no-dry-run` still cannot do, phase by phase. THIS LIST IS THE REFUSAL
-#: — the message is generated from it, so the two cannot drift apart the way the
-#: previous hard-coded sentence did (it named the transcript transport as the one
-#: missing piece and went stale the moment that phase was built).
+#: What `--no-dry-run` can and cannot do, phase by phase. THE NOTICE IS
+#: GENERATED FROM THIS LIST, so the two cannot drift apart the way the original
+#: hard-coded sentence did — it named the transcript transport as the one missing
+#: piece and went stale the moment that phase was built.
 #:
-#: Each entry is (phase, what is BUILT, what is MISSING). The split matters: the
-#: decision layers below are unit-tested and their refusal paths are the whole
-#: point, but a decision cannot move bytes or start a process. The I/O adapters
-#: are what remain, and they are the part that cannot be honestly claimed until
-#: it has been exercised against two real hosts.
+#: Each entry is (phase, what is BUILT, what is MISSING). A phase with nothing
+#: missing carries ``"—"`` there and RUNS. The split is the honest unit of
+#: progress: a decision layer being unit-tested says nothing about whether bytes
+#: move, and an adapter is not claimed to work until it has been exercised
+#: against two real hosts.
 _PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
     (
         "source_drain",
-        "—",
-        "no adapter: drain the source and confirm it took no new work",
+        "_relocate_liveness (tmux is the same fact the runtime checks) — a STOPPED "
+        "source drains vacuously and that is measured, not assumed",
+        "no adapter for a RUNNING source: telling an agent to finish its in-flight "
+        "work and take no new work, and confirming it did",
     ),
     (
         "source_stop",
+        "_relocate_effects.stop_source: `sac agents stop` on the source, then a "
+        "SECOND independent liveness observation. Idempotent",
         "—",
-        "no adapter: stop the source and VERIFY stopped (the transport's precondition)",
     ),
     (
         "transport",
-        "_relocate_transport (selection, move-aside, byte+line verification) and "
-        "_relocate_transport_paths (target-side project dir)",
-        "no adapter: the ssh/scp round trip that moves the bytes and counts them "
-        "on the far side",
+        "_relocate_transport (selection, move-aside, byte+line verification), "
+        "_relocate_transport_paths (target-side project dir), "
+        "_relocate_transcript_home (the HOST path backing the container's $HOME) "
+        "and _relocate_transport_ssh (tar-over-ssh; counts taken ON the target)",
+        "—",
     ),
     (
         "target_standby",
         "—",
-        "no adapter: start the target without the lease and seed its session marker",
+        "no adapter: carry the spec to the target, write its session_id marker from "
+        "the carried transcript, and start it WITHOUT the lease",
     ),
     (
         "handshake",
         "_relocate_handshake (nonce + proof-of-work verdict) and _relocate_arrival "
-        "(the message the relocated agent receives)",
+        "(the brief, which IS the challenge) — built and evaluated against what was "
+        "actually observed",
         "no adapter: deliver the brief over a2a and observe the reply ON THE SOURCE",
     ),
-    ("handover", "_relocate_lease", "no adapter: move the lease and bump the fence"),
-    ("done", "—", "no adapter: append the residency record to the state db"),
+    (
+        "handover",
+        "_relocate_lease, and its rows now have a home in _state.state_db_relocation",
+        "no adapter: nothing claims a lease at start-up, so there is no holder to "
+        "hand FROM",
+    ),
+    (
+        "done",
+        "_relocate_effects.finish: residency written to _state.state_db_relocation, "
+        "then the source's transcript MOVED ASIDE — both gated on the two "
+        "confirmations being recorded True",
+        "—",
+    ),
 )
 
 
-def _unimplemented_notice() -> list[str]:
-    """Say exactly which phases can and cannot run, rather than naming one.
+def _readiness_notice() -> list[str]:
+    """Say exactly which phases can and cannot run, before running any of them.
 
-    An accurate refusal is worth more than a short one here: the operator's next
-    question is always "so what IS missing", and answering it in the refusal is
-    the difference between a blocked afternoon and a scoped piece of work.
+    Printed as a PREAMBLE now rather than as a refusal: the executing path
+    exists, so the operator's question has changed from "why won't it run" to
+    "how far will it get". Answering that up front is the difference between a
+    surprising stop and an expected one.
     """
-    lines = [
-        "",
-        "[red]refusing to execute:[/red] the phase driver has no I/O adapters wired, "
-        "so a relocation would journal its way to DONE having moved nothing — the "
-        "most convincing possible imitation of success.",
-        "",
-        "Phase by phase:",
-    ]
+    lines = ["", "[bold]PHASE READINESS[/bold]"]
     for phase, built, missing in _PHASE_READINESS:
-        lines.append(f"  [bold]{phase}[/bold]")
+        state = "[green]runs[/green]" if missing == "—" else "[yellow]refuses[/yellow]"
+        lines.append(f"  [bold]{phase}[/bold]  {state}")
         if built != "—":
             lines.append(f"    built:   {built}")
-        lines.append(f"    missing: {missing}")
+        if missing != "—":
+            lines.append(f"    missing: {missing}")
     lines += [
         "",
-        "The decision layers refuse correctly and are unit-tested; what is absent "
-        "is the code that talks to two machines. Until an adapter has been "
-        "exercised against real hosts it is not claimed to work — that claim, made "
-        "on 2026-08-07 without the evidence, is why this command exists.",
-        "",
-        "Use --dry-run to check the target. Move the transcript by hand meanwhile, "
-        "and read _relocate_transport_paths before choosing the destination: the "
-        "directory name comes from the TARGET's resolved workdir, and a transcript "
-        "under the source's name is invisible to the target's runner.",
+        "A phase with no adapter returns UNKNOWN and the relocation STOPS there, in "
+        "a state the journal records; it does not journal its way to DONE having "
+        "moved nothing. Nothing is deleted at any point — anything displaced goes "
+        "to .old/<stamp>/ on the host it was displaced on, so a rollback is you "
+        "moving it back, deliberately.",
     ]
     return lines
+
+
+def _source_repo_facts(spec_body: dict, from_host: str):
+    """Scan the agent's workdir for un-saved work, or report that nobody looked.
+
+    ONLY the workdir, and only when it is a git repo. The alternative — walk and
+    guess at every repo an agent might touch — would produce a check whose PASS
+    means "the repos I happened to think of are clean", which is worse than the
+    UNKNOWN it replaces because it reads as an answer.
+
+    A workdir that is not a repo yields an OBSERVED empty scan: there is nothing
+    to strand, which is a real answer and passes. That is deliberately different
+    from passing no facts at all, which is "nobody looked" and refuses.
+    """
+    from pathlib import Path
+
+    from .._lifecycle._relocate_source_scan import scan_source
+
+    workdir = str(spec_body.get("workdir") or "").strip()
+    if not workdir or not (Path(workdir) / ".git").exists():
+        return scan_source(())
+    return scan_source((workdir,))
 
 
 def _dig(body: dict, *path: str) -> object:
@@ -362,17 +396,45 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         facts=gathered.facts,
         runtime=str(declared.get("runtime") or ""),
         required_ports=_required_ports(declared),
+        source_facts=_source_repo_facts(
+            body if isinstance(body, dict) else {}, where.host or ""
+        ),
+        from_host=where.host or "",
     )
 
-    for line in render_dry_run(report, declared=declared, errors=gathered.errors):
+    for line in render_dry_run(
+        report, declared=declared, errors=gathered.errors, dry_run=dry_run
+    ):
         console.print(line, soft_wrap=True)
 
-    if not dry_run:
-        for line in _unimplemented_notice():
-            console.print(line, soft_wrap=True)
-        raise SystemExit(EXIT_UNIMPLEMENTED)
     if report.ok is not True:
+        # The checks gate the executing path too, and that is the point rather
+        # than a leftover: the dry run is what makes them load-bearing, and a
+        # refusal that becomes advisory the moment there is something to execute
+        # is not a refusal.
         raise SystemExit(EXIT_REFUSED)
+    for line in _readiness_notice():
+        console.print(line, soft_wrap=True)
+    if dry_run:
+        return
+
+    from ._relocate_run import exit_code_for, run_relocation
+
+    if not where.host:
+        console.print(
+            "[red]refusing to execute:[/red] the state db does not know which host "
+            f"{name} runs on, and the spec offered nothing to seed it with. A "
+            "relocation FROM an unknown host cannot stop the right source.",
+            soft_wrap=True,
+        )
+        raise SystemExit(EXIT_REFUSED)
+
+    outcome = run_relocation(
+        name=name, spec=spec, from_host=where.host, to_host=to_host
+    )
+    code = exit_code_for(outcome)
+    if code:
+        raise SystemExit(code)
 
 
 def register(agent_group) -> None:
