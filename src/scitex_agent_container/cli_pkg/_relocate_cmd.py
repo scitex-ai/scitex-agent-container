@@ -104,28 +104,35 @@ _PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "target_standby",
+        "_relocate_effects_standby: the spec is carried and byte+line verified on the "
+        "target, the session_id marker is seeded from the CARRIED transcript "
+        "(first boot only — an existing marker refuses rather than being overwritten) "
+        "and confirmed by read-back, then `sac agents start --resume <carried uuid>` "
+        "WITHOUT the lease and a SECOND independent liveness observation on BOTH hosts",
         "—",
-        "no adapter: carry the spec to the target, write its session_id marker from "
-        "the carried transcript, and start it WITHOUT the lease",
     ),
     (
         "handshake",
-        "_relocate_handshake (nonce + proof-of-work verdict) and _relocate_arrival "
-        "(the brief, which IS the challenge) — built and evaluated against what was "
-        "actually observed",
-        "no adapter: deliver the brief over a2a and observe the reply ON THE SOURCE",
+        "_relocate_effects_handshake: the brief is delivered to the agent's sidecar on "
+        "its own host and the answer is read back out of its transcript by the "
+        "coordinator ON THE SOURCE, then put through _relocate_handshake's gate "
+        "(nonce + a proof-of-work answer measured independently on the target)",
+        "—",
     ),
     (
         "handover",
-        "_relocate_lease, and its rows now have a home in _state.state_db_relocation",
-        "no adapter: nothing claims a lease at start-up, so there is no holder to "
-        "hand FROM",
+        "_relocate_effects_handover: the source's lease is bootstrapped when the store "
+        "holds none (sac still does not claim one at agent start-up — the bootstrap is "
+        "recorded as such), handed to the target, and the row is RE-READ to confirm "
+        "the holder and the fence",
+        "—",
     ),
     (
         "done",
-        "_relocate_effects.finish: residency written to _state.state_db_relocation, "
-        "then the source's transcript MOVED ASIDE — both gated on the two "
-        "confirmations being recorded True",
+        "_relocate_effects.finish: both hosts are observed for exactly ONE live "
+        "instance, then residency is written to _state.state_db_relocation and the "
+        "source's transcript MOVED ASIDE — all gated on the two confirmations being "
+        "recorded True",
         "—",
     ),
 )
@@ -430,7 +437,11 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         raise SystemExit(EXIT_REFUSED)
 
     outcome = run_relocation(
-        name=name, spec=spec, from_host=where.host, to_host=to_host
+        name=name,
+        spec=spec,
+        spec_path=str(spec_path),
+        from_host=where.host,
+        to_host=to_host,
     )
     code = exit_code_for(outcome)
     if code:

@@ -37,10 +37,22 @@ error and rather than a second stay. A relocation that crashed after the write
 and before the journal must be able to re-run without littering the history with
 the evidence of its own retries.
 
+ATTEMPTS ACCUMULATE; THEY DO NOT REPLACE EACH OTHER. The journal was keyed on
+``agent`` alone, so re-running after an abort overwrote the previous attempt's
+row and the evidence of the first try was gone — for the one operation in the
+fleet that moves a human's conversation between machines, and precisely at the
+moment (a retry after a failure) when the previous attempt is what a reader
+wants. The key is now ``(agent, attempt)``, and an attempt is identified by the
+relocation's OWN opening timestamp (``steps[0].at``): a RESUMED journal carries
+the same opening moment and updates its row, while a relocation opened afresh
+gets the next attempt number. There is no flag to pass and no way for a caller
+to get it wrong, because the discriminator is a fact the record already carries.
+
 NOTHING IS EVER DELETED. A closed stay stays closed and stays present; a journal
-row is updated in place at its phase and keeps its steps. The migration fact is
-the point (item #9): after a relocation completes, the record that it happened is
-the only thing that can answer an attribution question later.
+row is updated in place at its phase and keeps its steps; an older schema's table
+is RENAMED aside rather than dropped when the shape changes. The migration fact
+is the point (item #9): after a relocation completes, the record that it happened
+is the only thing that can answer an attribution question later.
 """
 
 from __future__ import annotations
@@ -54,12 +66,19 @@ __all__ = [
     "current_residency",
     "init_relocation_schema",
     "load_journal",
+    "load_journal_attempts",
     "load_lease",
     "read_residency_history",
     "record_residency",
     "save_journal",
     "save_lease",
 ]
+
+#: The table the journal used before attempts accumulated. RENAMED, never
+#: dropped: its rows are the only record of the relocations run under the old
+#: one-row-per-agent key, and this feature's whole discipline is that nothing is
+#: deleted — least of all an audit trail, during the migration that supersedes it.
+JOURNAL_V1_TABLE = "relocation_journal_v1_one_row_per_agent"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_residency (
@@ -76,32 +95,77 @@ CREATE INDEX IF NOT EXISTS idx_agent_residency_agent
 CREATE TABLE IF NOT EXISTS relocation_leases (
     agent      TEXT PRIMARY KEY,
     holder     TEXT NOT NULL,
+    token      TEXT NOT NULL,
     fence      INTEGER NOT NULL,
     expires_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS relocation_journal (
-    agent      TEXT PRIMARY KEY,
+    agent      TEXT NOT NULL,
+    attempt    INTEGER NOT NULL,
     from_host  TEXT NOT NULL,
     to_host    TEXT NOT NULL,
     phase      TEXT NOT NULL,
     steps      TEXT NOT NULL,
-    updated_at REAL NOT NULL
+    started_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (agent, attempt)
 );
 """
 
 
 def init_relocation_schema(db_path: Path | None = None) -> Path:
-    """Create the three tables if missing. Idempotent."""
+    """Create the three tables if missing, migrating older shapes. Idempotent."""
     from .state_db import init_schema, open_db
 
     with open_db(db_path) as conn:
-        conn.executescript(_SCHEMA)
+        _ensure(conn)
     return init_schema(db_path)
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """The column names of ``table``, or an empty set when it does not exist."""
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring older table shapes forward. Runs BEFORE the CREATE IF NOT EXISTS.
+
+    Order matters: on a fresh database every ``PRAGMA table_info`` is empty, so
+    each branch is skipped and the schema below creates the current shape
+    directly. On an existing one the old shape is detected by a MISSING COLUMN —
+    the fact itself, not a version number a migration could forget to bump.
+    """
+    lease_cols = _columns(conn, "relocation_leases")
+    if lease_cols and "token" not in lease_cols:
+        # A lease row with no token cannot be presented (``Lease`` refuses an
+        # empty one, deliberately — an empty token would pass every token
+        # check). The column is added rather than the rows rewritten: inventing
+        # a token for a holder that never received one would forge exactly the
+        # credential the fence exists to make unforgeable.
+        conn.execute(
+            "ALTER TABLE relocation_leases ADD COLUMN token TEXT NOT NULL DEFAULT ''"
+        )
+
+    journal_cols = _columns(conn, "relocation_journal")
+    if journal_cols and "attempt" not in journal_cols:
+        conn.execute(f"ALTER TABLE relocation_journal RENAME TO {JOURNAL_V1_TABLE}")
+        conn.executescript(_SCHEMA)
+        # Every pre-migration row becomes attempt 1. Its opening timestamp was
+        # never stored under the old shape, so ``updated_at`` stands in and is
+        # the honest best available — it is only ever compared against a LIVE
+        # relocation's opening moment, which cannot coincide with it.
+        conn.execute(
+            "INSERT INTO relocation_journal "
+            "(agent, attempt, from_host, to_host, phase, steps, started_at, updated_at) "
+            "SELECT agent, 1, from_host, to_host, phase, steps, updated_at, updated_at "
+            f"FROM {JOURNAL_V1_TABLE}"
+        )
+
+
 def _ensure(conn: sqlite3.Connection) -> None:
+    _migrate(conn)
     conn.executescript(_SCHEMA)
 
 
@@ -213,14 +277,15 @@ def save_lease(lease, *, db_path: Path | None = None) -> None:
     with open_db(db_path) as conn:
         _ensure(conn)
         conn.execute(
-            "INSERT INTO relocation_leases (agent, holder, fence, expires_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO relocation_leases (agent, holder, token, fence, expires_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(agent) DO UPDATE SET holder=excluded.holder, "
-            "fence=excluded.fence, expires_at=excluded.expires_at, "
-            "updated_at=excluded.updated_at",
+            "token=excluded.token, fence=excluded.fence, "
+            "expires_at=excluded.expires_at, updated_at=excluded.updated_at",
             (
                 lease.agent,
                 lease.holder,
+                lease.token,
                 int(lease.fence),
                 float(lease.expires_at),
                 time.time(),
@@ -229,20 +294,38 @@ def save_lease(lease, *, db_path: Path | None = None) -> None:
 
 
 def load_lease(agent: str, *, db_path: Path | None = None):
-    """The stored lease for ``agent``, or ``None`` if nobody has ever held it."""
+    """The stored lease for ``agent``, or ``None`` if nobody has ever held it.
+
+    THE TOKEN IS STORED AND READ BACK, and it has to be: every verb in
+    :mod:`.._lifecycle._relocate_lease` except :func:`claim` requires the caller
+    to PRESENT the token, and :class:`Lease` refuses an empty one because an
+    empty token would satisfy every token check. An earlier version of this
+    function reconstructed the lease without one and could not build a ``Lease``
+    at all — the persistence layer for a decision module that had been carefully
+    kept pure was, in effect, write-only.
+
+    A row from before the token column carries ``''``. It is returned as ``None``
+    — not as a lease — because a holder that cannot present a token cannot prove
+    it holds anything, and treating it as held would leave the agent permanently
+    unrelocatable behind a credential nobody has.
+    """
     from .._lifecycle._relocate_lease import Lease
     from .state_db import open_db
 
     with open_db(db_path) as conn:
         _ensure(conn)
         row = conn.execute(
-            "SELECT holder, fence, expires_at FROM relocation_leases WHERE agent=?",
+            "SELECT holder, token, fence, expires_at FROM relocation_leases WHERE agent=?",
             (agent,),
         ).fetchone()
-    if row is None:
+    if row is None or not (row[1] or "").strip():
         return None
     return Lease(
-        agent=agent, holder=row[0], fence=int(row[1]), expires_at=float(row[2])
+        agent=agent,
+        holder=row[0],
+        token=row[1],
+        fence=int(row[2]),
+        expires_at=float(row[3]),
     )
 
 
@@ -251,70 +334,136 @@ def load_lease(agent: str, *, db_path: Path | None = None):
 # --------------------------------------------------------------------------
 
 
-def save_journal(relocation, *, db_path: Path | None = None) -> None:
-    """Write the relocation's phase and steps, replacing the previous row.
+def save_journal(relocation, *, db_path: Path | None = None) -> int:
+    """Write this ATTEMPT's phase and steps. Returns the attempt number written.
 
-    One row per agent: a relocation is a thing that is happening to an agent, and
-    two in flight at once is a state nobody should be able to represent, let
-    alone resume from. The steps are stored whole (JSON) rather than as rows,
-    because they are only ever read back as a unit and a partially-inserted
-    journal would be worse than none.
+    ONE ROW PER ATTEMPT, not per agent. Which attempt this is comes from the
+    relocation's own opening moment (``steps[0].at``): a record RESUMED from the
+    store carries the timestamp its first run stamped, so it updates the row it
+    already owns; a record from :func:`.._lifecycle._relocate_phases.begin`
+    carries a new one and opens the next attempt. The caller passes nothing and
+    therefore cannot get it wrong, and a retry after an abort no longer erases
+    the attempt whose failure prompted it.
+
+    Two relocations of one agent still cannot be IN FLIGHT at once — the resume
+    path in the CLI loads the latest attempt and refuses a different destination
+    — but the finished ones stay readable, which is the entire point of a
+    journal for an operation that moves a human's conversation between machines.
+
+    The steps are stored whole (JSON) rather than as rows, because they are only
+    ever read back as a unit and a partially-inserted journal would be worse
+    than none.
     """
     from .state_db import open_db
 
     steps = json.dumps(
         [{"phase": s.phase, "at": s.at, "detail": s.detail} for s in relocation.steps]
     )
+    started_at = float(relocation.started_at)
     with open_db(db_path) as conn:
         _ensure(conn)
+        row = conn.execute(
+            "SELECT attempt FROM relocation_journal WHERE agent=? AND started_at=?",
+            (relocation.agent, started_at),
+        ).fetchone()
+        if row is not None:
+            attempt = int(row[0])
+        else:
+            highest = conn.execute(
+                "SELECT MAX(attempt) FROM relocation_journal WHERE agent=?",
+                (relocation.agent,),
+            ).fetchone()
+            attempt = (
+                1 if highest is None or highest[0] is None else int(highest[0]) + 1
+            )
         conn.execute(
-            "INSERT INTO relocation_journal (agent, from_host, to_host, phase, steps, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(agent) DO UPDATE SET from_host=excluded.from_host, "
+            "INSERT INTO relocation_journal "
+            "(agent, attempt, from_host, to_host, phase, steps, started_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(agent, attempt) DO UPDATE SET from_host=excluded.from_host, "
             "to_host=excluded.to_host, phase=excluded.phase, steps=excluded.steps, "
             "updated_at=excluded.updated_at",
             (
                 relocation.agent,
+                attempt,
                 relocation.from_host,
                 relocation.to_host,
                 relocation.phase,
                 steps,
+                started_at,
                 time.time(),
             ),
         )
+    return attempt
 
 
-def load_journal(agent: str, *, db_path: Path | None = None):
-    """The stored relocation for ``agent``, or ``None``.
+def load_journal_attempts(agent: str, *, db_path: Path | None = None):
+    """Every recorded attempt for ``agent``, OLDEST FIRST, as ``(attempt, Relocation)``.
 
-    A stored row whose JSON will not parse returns ``None`` rather than raising:
-    the caller's next move is to open a fresh relocation, and a corrupt journal
-    must not make the agent unrelocatable. Nothing is deleted — the bad row stays
-    for whoever wants to look at it.
+    The audit read. An attempt whose stored JSON will not parse is SKIPPED
+    rather than raising — one corrupt row must not hide the rest of the history,
+    and the row itself is still there for whoever wants to look at it.
     """
-    from .._lifecycle._relocate_phases import Relocation, Step
     from .state_db import open_db
 
     with open_db(db_path) as conn:
         _ensure(conn)
-        row = conn.execute(
-            "SELECT from_host, to_host, phase, steps FROM relocation_journal WHERE agent=?",
+        rows = conn.execute(
+            "SELECT attempt, from_host, to_host, phase, steps FROM relocation_journal "
+            "WHERE agent=? ORDER BY attempt ASC",
             (agent,),
-        ).fetchone()
-    if row is None:
-        return None
+        ).fetchall()
+    out = []
+    for row in rows:
+        relocation = _relocation_from_row(agent, row[1], row[2], row[3], row[4])
+        if relocation is not None:
+            out.append((int(row[0]), relocation))
+    return tuple(out)
+
+
+def _relocation_from_row(agent: str, from_host, to_host, phase, steps_json):
+    """Rebuild one :class:`Relocation`, or ``None`` when the row will not parse."""
+    from .._lifecycle._relocate_phases import Relocation, Step
+
     try:
-        raw = json.loads(row[3])
+        raw = json.loads(steps_json)
         steps = tuple(
             Step(phase=s["phase"], at=float(s["at"]), detail=s.get("detail", ""))
             for s in raw
         )
         return Relocation(
             agent=agent,
-            from_host=row[0],
-            to_host=row[1],
-            phase=row[2],
+            from_host=from_host,
+            to_host=to_host,
+            phase=phase,
             steps=steps,
         )
-    except Exception:  # stx-allow: fallback (reason: an unparseable journal must not make an agent unrelocatable; the row is kept, not deleted, and the caller opens a fresh relocation)
+    except Exception:  # stx-allow: fallback (reason: an unparseable journal row must not make an agent unrelocatable nor hide the other attempts; the row is kept, not deleted, and the caller opens a fresh relocation)
         return None
+
+
+def load_journal(agent: str, *, db_path: Path | None = None):
+    """The LATEST attempt's relocation for ``agent``, or ``None``.
+
+    The resume read, and the reason it is the latest rather than the only one:
+    a re-run continues the attempt that stopped, and the earlier attempts are
+    history — present, readable through :func:`load_journal_attempts`, and never
+    resumed by accident.
+
+    A stored row whose JSON will not parse returns ``None`` rather than raising:
+    the caller's next move is to open a fresh relocation, and a corrupt journal
+    must not make the agent unrelocatable. Nothing is deleted — the bad row stays
+    for whoever wants to look at it.
+    """
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        _ensure(conn)
+        row = conn.execute(
+            "SELECT from_host, to_host, phase, steps FROM relocation_journal "
+            "WHERE agent=? ORDER BY attempt DESC LIMIT 1",
+            (agent,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _relocation_from_row(agent, row[0], row[1], row[2], row[3])

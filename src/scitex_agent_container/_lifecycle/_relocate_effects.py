@@ -40,16 +40,16 @@ THE FOUR CRITERIA, AND WHERE EACH IS ENFORCED RATHER THAN DESCRIBED:
 
 from __future__ import annotations
 
-import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ._relocate_arrival import build_arrival_brief
-from ._relocate_execute import PhaseEffects, StepResult
-from ._relocate_handshake import HandshakeFacts, evaluate_handshake
+from ._relocate_effects_handover import HandoverEffects
+from ._relocate_effects_handshake import HandshakeEffects
 from ._relocate_effects_source import SourceEffects
-from ._relocate_liveness import observe_running, unimplemented
+from ._relocate_effects_standby import StandbyEffects
+from ._relocate_execute import PhaseEffects, StepResult
+from ._relocate_liveness import observe_running
 from ._relocate_move_aside import move_aside_destination
 from ._relocate_shell import Shell, resolved_path, shell_for
 from ._relocate_transcript_home import transcript_home_from_spec
@@ -67,7 +67,9 @@ __all__ = ["RelocateAdapters", "adapters_for", "build_effects"]
 
 
 @dataclass
-class RelocateAdapters(SourceEffects):
+class RelocateAdapters(
+    SourceEffects, StandbyEffects, HandshakeEffects, HandoverEffects
+):
     """One relocation's worth of hosts, paths and RECORDED CONFIRMATIONS.
 
     The confirmations are fields rather than local variables because
@@ -87,6 +89,12 @@ class RelocateAdapters(SourceEffects):
     now: Callable[[], float] = time.time
     peers: object = None
 
+    #: The source-side ``spec.yaml`` this agent is defined by. Carried to the
+    #: target by TARGET_STANDBY — a host cannot start an agent it has no spec
+    #: for, and the parsed dict above is not the file (comments and formatting
+    #: are the operator's, and re-serialising would silently rewrite them).
+    spec_path: str = ""
+
     source_dir: str = ""
     target_dir: str = ""
     carried: tuple[str, ...] = ()
@@ -95,6 +103,13 @@ class RelocateAdapters(SourceEffects):
     arrival_confirmed: bool | None = None
     handshake_confirmed: bool | None = None
     session_uuid: str = ""
+    #: The TARGET's ssh ``$HOME`` — sac's own tree root there, and deliberately
+    #: NOT the transcript home, which follows the container's home instead.
+    target_ssh_home: str = ""
+    target_spec_path: str = ""
+    target_state_dir: str = ""
+    standby_started: bool = False
+    lease_fence: int | None = None
     log: list[str] = field(default_factory=list)
 
     # -- transport ---------------------------------------------------------
@@ -268,75 +283,13 @@ class RelocateAdapters(SourceEffects):
         )
 
     # -- target ------------------------------------------------------------
-
-    def start_target_standby(self) -> StepResult:
-        return unimplemented(
-            "target_standby",
-            (
-                "the target holds no spec for this agent and nothing here carries one; "
-                "no session_id marker is written on the target from the carried "
-                "transcript; and the standby is not started without the lease. The "
-                "transcript IS on the target and content-verified — what is missing is "
-                "the boot, not the memory"
-            ),
-        )()
-
-    def handshake(self) -> StepResult:
-        """Build the arrival brief, then refuse — nothing was delivered.
-
-        Built as far as it can honestly go. The brief IS the challenge, so it is
-        constructed here with a fresh nonce and the gate is run against what was
-        actually observed, which is nothing. THAT IS WHY THIS RETURNS UNKNOWN AND
-        NOT "no reply": a challenge sent to a standby nobody started would time
-        out and report the accepted-but-silent shape, which
-        :func:`evaluate_handshake` correctly treats as the 2026-08-11 failure —
-        and reporting it here would be a false accusation against a target that
-        was never booted.
-        """
-        if not self.session_uuid:
-            return unimplemented(
-                "handshake",
-                "the carried session id is not known (the transport carried none, or "
-                "carried more than one), so the brief cannot state the handle the agent "
-                "needs to verify its own continuity",
-            )()
-        nonce = secrets.token_hex(8)
-        brief = build_arrival_brief(
-            agent=self.agent,
-            from_host=self.from_host,
-            to_host=self.to_host,
-            resume_session_id=self.session_uuid,
-            nonce=nonce,
-            question="run `hostname` on the machine you are on now and report it verbatim",
-        )
-        self.log.append(f"handshake: brief built ({len(brief)} chars), nonce {nonce}")
-        verdict = evaluate_handshake(
-            HandshakeFacts(), nonce=nonce, expected_answer=self.to_host
-        )
-        self.handshake_confirmed = verdict.proven
-        return StepResult(
-            ok=None,
-            attempted=False,
-            detail=(
-                "handshake has no delivery adapter: the brief is built and the gate is "
-                f"wired, and nothing was sent because no standby was started ({verdict.reason})"
-            ),
-            hint=(
-                "start the standby, deliver the brief over a2a, and record what came back "
-                "ON THE SOURCE. Do not mark this proven from a send that returned "
-                "accepted — accepted-but-silent is the exact 2026-08-11 shape"
-            ),
-        )
-
-    def hand_over_lease(self) -> StepResult:
-        return unimplemented(
-            "handover",
-            (
-                "the lease decision module is built and its rows now have a home "
-                "(_state.state_db_relocation.save_lease), but nothing claims a lease on "
-                "the source's behalf at start-up, so there is no holder to hand FROM"
-            ),
-        )()
+    #
+    # TARGET_STANDBY, HANDSHAKE and HANDOVER live in their own modules
+    # (_relocate_effects_standby / _handshake / _handover) and arrive here as
+    # mixins, exactly as the source-side pair does. Each is one phase's worth of
+    # decisions and each was a named refusal until it was built; keeping them
+    # apart means a reader looking for "what does the handover do" finds a file
+    # about the handover rather than a method in the middle of the transport.
 
     # -- done --------------------------------------------------------------
 
@@ -372,6 +325,10 @@ class RelocateAdapters(SourceEffects):
                     "2026-08-07 failure with the source's memory moved out of reach"
                 ),
             )
+
+        owners = self._one_owner_check()
+        if owners is not None:
+            return owners
 
         from .._state.state_db_relocation import record_residency
 
@@ -409,6 +366,58 @@ class RelocateAdapters(SourceEffects):
             ),
         )
 
+    def _one_owner_check(self) -> StepResult | None:
+        """Observe BOTH hosts. ``None`` when exactly one of them is running it.
+
+        The residency row about to be written says where the agent lives, and a
+        record that disagrees with the machines is worse than no record: it is a
+        confident wrong answer that everything downstream will believe. So the
+        two hosts are asked, at the last moment before the write, with the same
+        instrument the runtime itself uses.
+
+        Both directions are refusals. The SOURCE running means something
+        restarted it and there are two live instances under one identity — the
+        state the whole sequence exists to make impossible. The TARGET not
+        running means the agent that was just handed the lease is not there, so
+        recording it as resident would name a host where nothing is listening.
+        """
+        target_up, target_why = observe_running(
+            self.target, self.agent, exec_fn=self.exec_fn
+        )
+        source_up, source_why = observe_running(
+            self.source, self.agent, exec_fn=self.exec_fn
+        )
+        self.log.append(
+            f"done: liveness {self.to_host}={target_up!r} ({target_why}); "
+            f"{self.from_host}={source_up!r} ({source_why})"
+        )
+        if source_up is True:
+            return StepResult(
+                ok=False,
+                detail=(
+                    f"refusing to record residency: {self.agent} is running on BOTH "
+                    f"{self.from_host} and {self.to_host} — {source_why}"
+                ),
+                hint=(
+                    f"stop it on {self.from_host}. The lease already moved, so "
+                    f"{self.from_host} is fenced out of the shared store, but two live "
+                    "loops under one identity is exactly what must not persist"
+                ),
+            )
+        if target_up is not True:
+            return StepResult(
+                ok=None if target_up is None else False,
+                detail=(
+                    f"refusing to record residency: {self.agent} is not confirmed running "
+                    f"on {self.to_host} — {target_why}"
+                ),
+                hint=(
+                    f"start it on {self.to_host} and confirm. The lease has already moved "
+                    "there, so this is the one state to settle forward rather than back"
+                ),
+            )
+        return None
+
 
 def build_effects(adapters: RelocateAdapters) -> PhaseEffects:
     """Bind one :class:`RelocateAdapters` to the driver's phase slots."""
@@ -430,13 +439,22 @@ def adapters_for(
     from_host: str,
     to_host: str,
     local_host: str | None,
+    spec_path: str = "",
     stamp: str | None = None,
     exec_fn: Callable[..., dict] | None = None,
 ) -> RelocateAdapters:
-    """The usual construction: two shells, one timestamp, nothing else decided."""
+    """The usual construction: two shells, one timestamp, nothing else decided.
+
+    ``spec_path`` is the FILE the parsed ``spec`` came from. Both are needed and
+    they are not the same thing: the dict is what this code reasons about, and
+    the file is what the target must end up holding — re-serialising the dict
+    would hand another machine a spec with the operator's comments and layout
+    silently rewritten by a yaml dumper.
+    """
     return RelocateAdapters(
         agent=agent,
         spec=spec,
+        spec_path=spec_path,
         from_host=from_host,
         to_host=to_host,
         source=shell_for(from_host, local_host=local_host),
