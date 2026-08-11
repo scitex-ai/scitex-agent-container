@@ -8,9 +8,14 @@ per-spec conditionality at RUNTIME (OPENAI_* env injection +
 
 Layer contracts pinned here:
 
-* ``apptainer-base.def`` installs sac WITH its ``[openai]`` extra
-  (``/opt/scitex-agent-container-src[openai]``) — the floor stays in
-  pyproject.toml (SSoT).
+* ``apptainer-base.def`` installs sac with the ``[all]`` aggregate
+  (``/opt/scitex-agent-container-src[all]``), which CONTAINS ``[openai]``
+  — the floor stays in pyproject.toml (SSoT). The bracket was widened
+  from ``[openai]`` on 2026-08-11 so the image also ships ``[dev]``'s
+  test tooling; because that makes openai-agents arrive INDIRECTLY, the
+  aggregate's membership is asserted here too. Without that second
+  assert, deleting ``scitex-agent-container[openai]`` from ``all`` would
+  silently stop baking the SDK while this file still passed.
 * ``apptainer-scitex.def`` lists ``openai-agents`` EXPLICITLY in BOTH
   resolver branches (uv + pip fallback), because its sac install is
   ``--force-reinstall --no-deps`` (an extra can never ride that) and
@@ -50,20 +55,54 @@ def scitex_def_text() -> str:
 
 
 # ---------------------------------------------------------------------------
-# base layer — sac's own [openai] extra rides the bundled-source install
+# base layer — the [all] aggregate rides the bundled-source install, and
+# [openai] + [dev] ride the aggregate
 # ---------------------------------------------------------------------------
 
 
-def test_base_def_installs_sac_with_openai_extra(base_def_text: str) -> None:
+def test_base_def_installs_sac_with_all_extra(base_def_text: str) -> None:
     # Arrange
-    needle = "/opt/scitex-agent-container-src[openai]"
+    needle = "/opt/scitex-agent-container-src[all]"
     # Act
     present = needle in base_def_text
     # Assert
     assert present, (
-        "apptainer-base.def must install the bundled sac source WITH the "
-        "[openai] extra (openai-agents for spec.provider: openai agents); "
+        "apptainer-base.def must install the bundled sac source with the "
+        "[all] aggregate — it carries BOTH openai-agents (spec.provider: "
+        "openai agents) and [dev]'s pytest tooling, without which a "
+        "pristine container cannot run the suite; "
         f"expected {needle!r} in the uv pip install block."
+    )
+
+
+def test_all_extra_carries_openai_agents(base_def_text: str) -> None:
+    # Arrange — base installs [all], so the SDK now arrives INDIRECTLY;
+    # dropping it from the aggregate would unbake it silently.
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+    # Act
+    present = "scitex-agent-container[openai]" in pyproject
+    # Assert
+    assert present, (
+        "pyproject's [all] aggregate must keep listing "
+        "scitex-agent-container[openai]: apptainer-base.def reaches "
+        "openai-agents THROUGH [all], so removing it there unbakes the SDK "
+        "from every image while the .def line still looks correct."
+    )
+
+
+def test_all_extra_carries_dev_test_tooling(base_def_text: str) -> None:
+    # Arrange — the reason the bracket was widened: [dev] is where pytest
+    # and its plugins live, and [all] is how they reach the image.
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+    # Act
+    present = "scitex-agent-container[dev]" in pyproject
+    # Assert
+    assert present, (
+        "pyproject's [all] aggregate must keep listing "
+        "scitex-agent-container[dev]: that is the ONLY route by which "
+        "pytest / pytest-asyncio / pytest-xdist reach the base image. "
+        "Drop it and a pristine container answers NO_PYTEST_ON_PATH again, "
+        "and every agent hand-installs a different pytest major."
     )
 
 
