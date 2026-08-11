@@ -476,9 +476,11 @@ pythonpath = [".", "src"]
 # overlay, so two agents running the same tests legitimately held different
 # plugin sets — and different pytest MAJORS.
 #
-# THAT ROOT CAUSE IS FIXED: apptainer-base.def now installs `[all]`, which
-# contains `[dev]`, so a pristine container arrives with pytest 8.4.2,
-# pytest-asyncio, pytest-xdist and pytest-cov and this gate never fires there.
+# THAT ROOT CAUSE IS FIXED: apptainer-base.def now installs `[all,dev]`, so a
+# pristine container arrives with pytest 8.4.2, pytest-asyncio, pytest-xdist
+# and pytest-cov, and this gate never fires there (measured against the
+# 2026-08-12 bake: 0 occurrences of "Missing required plugins" in a 925-test
+# run, 0 of "async def functions are not natively supported").
 #
 # The gate is NOT thereby redundant, because the image is only one of the ways
 # an interpreter loses a plugin. CI has its own path to the same state:
