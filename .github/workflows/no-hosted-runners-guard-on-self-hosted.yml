@@ -3,9 +3,29 @@ name: no-hosted-runners
 # THE GUARD FOR THE RULE THAT HAS NO OTHER GUARD.
 #
 # Operator directive 2026-07-14 (absolute, no exceptions): NO GitHub-hosted
-# runners anywhere in this repo. Every job runs on the self-hosted Spartan
-# pool. If Spartan misbehaves, that is OURS to fix — never fall back to a
-# hosted runner.
+# runners anywhere in this repo. If a self-hosted runner misbehaves, that is
+# OURS to fix — never fall back to a hosted runner.
+#
+# "Every job runs on the self-hosted SPARTAN pool" is what this comment used to
+# say, and it is now wrong twice over. Correcting it, because a stale comment
+# about WHICH pool is the one thing that would send someone re-pointing
+# CI_RUNS_ON back at Spartan while "fixing" something else:
+#
+#   * FACTUALLY: `vars.CI_RUNS_ON` for this repo is
+#     ["self-hosted","Linux","X64","scitex-local-cpu"], which resolves to the
+#     scitex-compute nodes. No job here has run on Spartan since that variable
+#     was narrowed.
+#   * BY RULING: the operator banned Spartan from CI outright on 2026-08-11
+#     (「spartan を CI に使うのは全面禁止です」). The literal default below still
+#     spells `scitex-ci`, a label that EVERY Spartan runner also carries — it is
+#     a fallback for a missing variable, not a target. Do not widen it.
+#
+# NOTE WHAT THIS GUARD DOES AND DOES NOT COVER: it proves no job lands on a
+# GitHub-HOSTED image. It cannot see which self-hosted POOL a job reaches,
+# because that is decided by a repository variable this workflow cannot read at
+# parse time. Enforcing the Spartan ban needs its own mechanism; measured
+# 2026-08-11, 20 of the 22 self-hosted runners visible to this org still carry
+# `spartan-cpu`, and ten other repos still point at it.
 #
 # PR #694 migrated the 11 jobs. It did NOT build the guard. So until this
 # workflow existed, nothing stopped the next PR from quietly landing on
