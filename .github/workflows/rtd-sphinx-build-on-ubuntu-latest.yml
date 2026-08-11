@@ -30,6 +30,12 @@ on:
     branches: [main, develop]
   pull_request:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else. Argued once, in
+# pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   sphinx:
     # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
