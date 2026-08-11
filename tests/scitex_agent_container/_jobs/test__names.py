@@ -24,17 +24,77 @@ def test_a_local_name_becomes_canonical() -> None:
     # Act
     got = _names.canonical(typed)
     # Assert
-    assert got == "sac.accounts-refresh"
+    assert got == "scitex-agent-container-accounts-refresh"
 
 
 def test_canonicalising_is_idempotent() -> None:
-    # Arrange — a name copied out of --json output or a unit filename
-    # must resolve to itself, not to `sac.sac.accounts-refresh`.
+    # Arrange — a name copied out of --json output or a unit filename must
+    # resolve to itself, not to a double prefix.
+    typed = "scitex-agent-container-accounts-refresh"
+    # Act
+    got = _names.canonical(typed)
+    # Assert
+    assert got == "scitex-agent-container-accounts-refresh"
+
+
+def test_a_legacy_name_is_not_re_prefixed() -> None:
+    # Arrange — THE dangerous direction. A legacy name still names a real
+    # deployed unit; rewriting it here would point every verb at a unit
+    # that does not exist, and for the held OAuth refresher that means
+    # reporting the fleet's credential machinery as absent while it runs.
     typed = "sac.accounts-refresh"
     # Act
     got = _names.canonical(typed)
     # Assert
     assert got == "sac.accounts-refresh"
+
+
+def test_a_legacy_name_is_recognised_as_ours() -> None:
+    # Arrange — the ownership filter must not drop the held job, or
+    # `sac dev timer list` stops showing the refresher entirely.
+    typed = "sac.accounts-refresh"
+    # Act
+    got = _names.is_ours(typed)
+    # Assert
+    assert got is True
+
+
+def test_local_strips_the_legacy_prefix_too() -> None:
+    # Arrange
+    typed = "sac.accounts-refresh"
+    # Act
+    got = _names.local(typed)
+    # Assert
+    assert got == "accounts-refresh"
+
+
+def test_a_local_name_offers_the_canonical_form_first() -> None:
+    # Arrange — resolution order decides which of two live prefixes wins
+    # for a bare short name.
+    typed = "worktree-gc"
+    # Act
+    got = _names.candidates(typed)
+    # Assert
+    assert got[0] == "scitex-agent-container-worktree-gc"
+
+
+def test_a_local_name_still_offers_the_legacy_form() -> None:
+    # Arrange — without this the held refresher is unreachable by its
+    # short name, which is the name every runbook uses.
+    typed = "accounts-refresh"
+    # Act
+    got = _names.candidates(typed)
+    # Assert
+    assert "sac.accounts-refresh" in got
+
+
+def test_an_already_prefixed_name_is_unambiguous() -> None:
+    # Arrange — a name that carries a prefix means exactly one thing.
+    typed = "sac.worktree-gc"
+    # Act
+    got = _names.candidates(typed)
+    # Assert
+    assert got == ("sac.worktree-gc",)
 
 
 def test_an_empty_name_is_rejected() -> None:

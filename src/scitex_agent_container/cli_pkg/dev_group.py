@@ -177,6 +177,14 @@ from ._dev_jobs import register_dev_jobs_commands
 
 register_dev_jobs_commands(dev_group)
 
+# The one-time canonical-name cutover. Deliberately NOT a verb inside a
+# kind group: it has no counterpart in scitex-dev's grammar and retires
+# once every host is migrated, so exposing it as a kind verb would
+# advertise a verb the ecosystem does not serve.
+from ._dev_jobs_migrate import register_migrate_command
+
+register_migrate_command(dev_group)
+
 
 @dev_group.command(name="extract-apikey-from-credentials")
 @click.option(
