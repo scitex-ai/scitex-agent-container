@@ -245,14 +245,28 @@ def test_the_notice_names_the_transport_adapter_as_built() -> None:
     assert "_relocate_transport_ssh" in text
 
 
-def test_the_notice_names_the_arrival_brief_as_built() -> None:
-    # Arrange: the handshake's decision half exists; its delivery does not.
+def test_the_notice_names_the_handshake_gate_it_runs_the_reply_through() -> None:
+    # Arrange: the handshake now has BOTH halves — a delivery and a gate. The
+    # notice must still name the gate, because "we sent it a message" and "the
+    # answer passed a check" are the two things a reader needs told apart.
     from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
 
     # Act
     text = "\n".join(_readiness_notice())
     # Assert
-    assert "_relocate_arrival" in text
+    assert "_relocate_handshake" in text
+
+
+def test_the_notice_says_the_reply_is_observed_on_the_source() -> None:
+    # Arrange: the property the whole phase exists for. A notice that said only
+    # "delivers the brief" would describe the A->B leg, which is the one the
+    # 2026-08-11 measurement showed proves nothing.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _readiness_notice
+
+    # Act
+    text = "\n".join(_readiness_notice())
+    # Assert
+    assert "ON THE SOURCE" in text
 
 
 def test_the_notice_no_longer_claims_the_adapters_are_absent() -> None:
@@ -279,15 +293,34 @@ def test_the_notice_marks_the_transport_phase_as_running() -> None:
     assert missing["transport"] == "—"
 
 
-def test_the_notice_still_marks_target_standby_as_refusing() -> None:
-    # Arrange: the honest half. Nothing carries a spec to the target or writes
-    # its session marker, so this phase must not read as ready.
+def test_the_three_target_side_phases_all_have_adapters_now() -> None:
+    # Arrange: the sentence this file used to assert was "target_standby has no
+    # adapter". It has one, and so do handshake and handover — which is the whole
+    # point of the change, so the test that pinned the refusal becomes the test
+    # that pins its absence. source_drain is deliberately NOT in this set: it
+    # still has no way to tell a RUNNING agent to finish its in-flight work, and
+    # claiming otherwise would be the drift this generated notice exists to stop.
     from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
 
     # Act
-    missing = {phase: gap for phase, _, gap in _PHASE_READINESS}
+    gaps = {
+        phase: gap
+        for phase, _, gap in _PHASE_READINESS
+        if gap != "—" and phase in ("target_standby", "handshake", "handover")
+    }
     # Assert
-    assert "no adapter" in missing["target_standby"]
+    assert gaps == {}, f"target-side phases still refusing: {sorted(gaps)}"
+
+
+def test_the_notice_names_the_standby_as_starting_without_the_lease() -> None:
+    # Arrange: a standby that claimed the lease would not be a standby, and the
+    # reversibility of everything before HANDOVER rests on it not doing so.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    built = {phase: text for phase, text, _ in _PHASE_READINESS}
+    # Assert
+    assert "WITHOUT the lease" in built["target_standby"]
 
 
 def test_the_notice_says_nothing_is_ever_deleted() -> None:

@@ -72,7 +72,7 @@ def _local_host() -> str:
 
 
 def run_relocation(
-    *, name: str, spec: dict, from_host: str, to_host: str
+    *, name: str, spec: dict, from_host: str, to_host: str, spec_path: str = ""
 ) -> ExecuteOutcome:
     """Drive the relocation and print each phase as it resolves."""
     stored = load_journal(name)
@@ -105,6 +105,7 @@ def run_relocation(
     adapters = adapters_for(
         agent=name,
         spec=spec,
+        spec_path=spec_path,
         from_host=from_host,
         to_host=to_host,
         local_host=_safe_local(),
