@@ -6,6 +6,73 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`sac dev` job groups are now named after the `JobSpec` KIND, not the
+  delivery mechanism** — `sac dev {service,timer,cron} <verb>`, the
+  ecosystem-wide grammar every SciTeX package adopts (operator decision,
+  2026-08-11). This is not a rename for tidiness. The old groups (`cron`,
+  `systemd`) were named on one axis while the filter used another, and
+  `_load_sac_jobs` was called with the GROUP NAME — so `sac dev systemd list`
+  asked for `kind="systemd"`, which `JobSpec.validate()` rejects at
+  construction, and every timer sac owns was invisible to its own CLI for
+  weeks behind "No sac systemd-kind jobs." and exit 0. With the group name and
+  the kind collapsed into one axis, that bug has no way to be expressed, and
+  `_jobs_audit` machine-checks the identity (`Form.GROUP_IS_NOT_ITS_KIND`)
+  plus the case where a kind is reachable only through a deprecated alias
+  (`Form.ALIAS_ONLY_KIND`).
+
+  The verb set differs per kind on purpose — a verb that makes no sense for a
+  kind does not exist for it rather than existing and erroring. `service` gets
+  the full lifecycle (`status`/`start`/`stop`/`restart`/`enable`/`disable`);
+  `timer` gets `status`/`enable`/`disable` (`enable --now` is the timer idiom,
+  so `start` would be a second spelling of it); `cron` gets `enable`/`disable`
+  (a crontab line has no runtime object to query).
+
+  `install` / `uninstall` now take an optional job NAME, and every named verb
+  accepts the SHORT local name the operator types (`accounts-refresh`) as well
+  as the canonical id (`sac.accounts-refresh`). An unknown name exits 5 and
+  lists the real ones instead of silently doing nothing.
+
+- **`sac dev systemd` is deprecated with a DATE, not "for the time being".**
+  It keeps working and keeps exactly its historical three verbs, so nothing
+  new gets built on it, and it carries machine-readable `since=2026-08` /
+  `remove_after=2026-10` / replacement metadata that a test enforces: the
+  build goes red once the window closes, which is what stops a temporary alias
+  from becoming permanent API. The notice is printed to **stderr** — a
+  courtesy message on stdout is indistinguishable from data, and that is
+  exactly how a stale-registry `WARN:` on stdout corrupted `sac host list
+  --json` and turned 7 tests red across three unrelated PRs.
+
+### Added
+
+- `cli_pkg/_dev_jobs_backend.py` — the explicit, testable delegation seam
+  between `sac dev <kind> <verb>` and scitex-dev. It probes the INSTALLED
+  scitex-dev's real Click tree rather than consulting a hard-coded table, so
+  it picks up `ecosystem service` / `ecosystem timer` the moment those ship,
+  with no sac release; until then it falls back to today's `ecosystem
+  {cron,systemd}`. A verb neither surface serves exits 4 naming what was
+  probed and printing the exact `systemctl --user …` command to run by hand.
+  sac deliberately does NOT call `systemctl` itself — the argument is in the
+  module docstring.
+
+- `_jobs/_names.py` — the local-vs-canonical job-name grammar, with the
+  canonical prefix as a single named constant. That constant is the seam for
+  the ecosystem-wide rename to `scitex-<pkg>-<name>`, which is deliberately
+  NOT in this change: renaming derives different unit filenames, so it must
+  ship with the migration that enforces stop → remove → install.
+
+### Fixed
+
+- **Two `--json` tests asserted on the wrong stream.** They parsed click's
+  `Result.output`, which merges stdout AND stderr, so they passed only while
+  nothing else wrote to stderr and went red the moment an unrelated
+  third-party jobs provider failed to load and `scitex_dev.jobs` warned about
+  it — correctly, on stderr. Real `sac dev … --json` stdout was clean
+  throughout. Every JSON assertion now reads `Result.stdout`, and one test
+  proves the contract end-to-end in a real subprocess where the two streams
+  are genuinely separate files.
+
 ## [0.24.25] - 2026-08-05
 
 ### Fixed

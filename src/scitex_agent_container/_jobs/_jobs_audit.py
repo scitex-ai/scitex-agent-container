@@ -49,6 +49,15 @@ COVERED, deterministically, from the repo tree alone:
   consumer group can ever list, and a consumer group that filters on a
   ``kind`` outside ``ALLOWED_KINDS`` (i.e. one that can never match
   anything, ever).
+* :data:`Form.GROUP_IS_NOT_ITS_KIND` — the ecosystem grammar is
+  ``dev <kind> <verb>``, so a non-deprecated ``sac dev`` group name that
+  is not itself a legal kind, or that filters on anything other than
+  exactly its own name, has re-introduced the two-axis confusion that
+  caused the outage in the first place. This is the form that makes the
+  original bug UNREPRESENTABLE rather than merely fixed.
+* :data:`Form.ALIAS_ONLY_KIND` — a kind reachable only through a
+  DEPRECATED alias. The alias has a removal date, so such a kind has a
+  scheduled loss of its CLI: the disease with a calendar attached.
 
 NOT COVERED — stated plainly, because a checker that silently covers less
 than it appears to is the same disease wearing a lab coat:
@@ -87,6 +96,8 @@ class Form(str, Enum):
     DISCOVERY = "declared-job-unreachable-by-discover_jobs"
     CONSUMER = "declared-kind-has-no-consumer"
     IMPOSSIBLE_KIND = "consumer-filters-on-an-impossible-kind"
+    GROUP_IS_NOT_ITS_KIND = "consumer-group-name-is-not-the-kind-it-filters"
+    ALIAS_ONLY_KIND = "kind-reachable-only-through-a-deprecated-alias"
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,88 @@ def audit_consumers(
     return tuple(findings)
 
 
+def audit_group_naming(
+    *,
+    group_kinds: dict[str, frozenset[str]],
+    allowed_kinds: frozenset[str],
+    deprecated: frozenset[str],
+) -> tuple[Finding, ...]:
+    """Form GROUP_IS_NOT_ITS_KIND / ALIAS_ONLY_KIND: is the grammar intact?
+
+    The ecosystem grammar is ``dev <kind> <verb>`` — the group name IS the
+    ``JobSpec.kind``. Enforcing that identity is what makes the original
+    outage structurally impossible rather than merely fixed: when the two
+    axes are one, there is no group name that can be passed where a kind
+    is expected and quietly mean something else.
+
+    Two checks:
+
+    * a NON-deprecated group whose name is not a legal kind, or which
+      filters on anything other than exactly itself, has re-introduced
+      the second axis;
+    * a kind reachable ONLY through a deprecated alias is a kind that
+      loses its CLI on the alias's removal date — a scheduled deletion of
+      a live capability, which is the disease with a calendar attached.
+
+    ``deprecated`` is the set of alias group names, passed in rather than
+    imported here for the same reason ``group_kinds`` is: this function
+    stays pure and the caller reads the real production values.
+    """
+    findings: list[Finding] = []
+
+    for group in sorted(group_kinds):
+        if group in deprecated:
+            continue
+        if group not in allowed_kinds:
+            findings.append(
+                Finding(
+                    form=Form.GROUP_IS_NOT_ITS_KIND,
+                    subject=f"sac dev {group}",
+                    verdict=Verdict.INERT,
+                    detail=(
+                        f"group name {group!r} is not a JobSpec kind "
+                        f"({sorted(allowed_kinds)}) and is not declared a "
+                        "deprecated alias — the group name and the kind are "
+                        "two axes again, which is the shape that hid every "
+                        "sac timer from its own CLI"
+                    ),
+                )
+            )
+            continue
+        if group_kinds[group] != frozenset({group}):
+            findings.append(
+                Finding(
+                    form=Form.GROUP_IS_NOT_ITS_KIND,
+                    subject=f"sac dev {group}",
+                    verdict=Verdict.INERT,
+                    detail=(
+                        f"group {group!r} filters on "
+                        f"{sorted(group_kinds[group])} rather than exactly "
+                        f"['{group}'] — a kind group must mean its own name"
+                    ),
+                )
+            )
+
+    live_cover: set[str] = set()
+    alias_cover: set[str] = set()
+    for group, kinds in group_kinds.items():
+        (alias_cover if group in deprecated else live_cover).update(kinds)
+    for kind in sorted(alias_cover - live_cover):
+        findings.append(
+            Finding(
+                form=Form.ALIAS_ONLY_KIND,
+                subject=f"kind={kind}",
+                verdict=Verdict.INERT,
+                detail=(
+                    f"kind {kind!r} is reachable only through a deprecated "
+                    f"alias ({sorted(deprecated)}) — it loses its CLI on the "
+                    "alias's removal date"
+                ),
+            )
+        )
+    return tuple(findings)
+
+
 def _declared_jobs() -> list:
     from scitex_agent_container._jobs._jobs_plugin import provide_jobs
 
@@ -276,6 +369,13 @@ def _consumer_group_kinds() -> dict[str, frozenset[str]]:
     from scitex_agent_container.cli_pkg._dev_jobs import GROUP_KINDS
 
     return GROUP_KINDS
+
+
+def _deprecated_groups() -> frozenset[str]:
+    """The alias group names, read from the consumer — same doctrine."""
+    from scitex_agent_container.cli_pkg._dev_jobs import DEPRECATED_GROUPS
+
+    return frozenset(DEPRECATED_GROUPS)
 
 
 def _discovered_sac_names(prefix: str) -> frozenset[str] | None:
@@ -328,6 +428,13 @@ def audit_jobs(*, prefix: str = "sac.") -> InertReport:
                 allowed_kinds=allowed,
             )
         )
+        findings.extend(
+            audit_group_naming(
+                group_kinds=_consumer_group_kinds(),
+                allowed_kinds=allowed,
+                deprecated=_deprecated_groups(),
+            )
+        )
     return InertReport(findings=tuple(findings))
 
 
@@ -338,5 +445,6 @@ __all__ = [
     "Verdict",
     "audit_consumers",
     "audit_discovery",
+    "audit_group_naming",
     "audit_jobs",
 ]

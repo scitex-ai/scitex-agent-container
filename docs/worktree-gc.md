@@ -154,10 +154,14 @@ could not remove anything a daily pass would miss.
 Install (operator-side). sac's own wrapper works again — it used to query
 a dead kind (`jobs_of_kind("systemd")`) and report "No sac systemd-kind
 jobs to install." forever, so this page told you to route around it. Both
-forms below are equivalent; the wrapper just filters `sac.*` for you:
+forms below are equivalent; the wrapper just filters `sac.*` for you.
+
+The group name is now the JobSpec **kind** (`sac dev {service,timer,cron}`)
+— `sac dev systemd` still works but is deprecated since 2026-08 and is
+removed after 2026-10.
 
 ```bash
-sac dev systemd install --yes                 # or, equivalently:
+sac dev timer install worktree-gc --yes       # or, equivalently:
 scitex-dev ecosystem systemd install --name sac.worktree-gc --yes
 systemctl --user daemon-reload
 systemctl --user enable --now sac.worktree-gc.timer
