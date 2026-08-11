@@ -37,8 +37,10 @@ from scitex_agent_container._lifecycle._relocate_phases import (
     HANDOVER,
     HANDSHAKE,
     PHASES,
+    SOURCE_DRAIN,
     SOURCE_STOP,
     TARGET_STANDBY,
+    TRANSPORT,
     Relocation,
     advance,
     begin,
@@ -76,6 +78,7 @@ def _effects(**overrides) -> PhaseEffects:
         drain_source=lambda: _ok("source drained"),
         hand_over_lease=lambda: _ok("lease moved at fence 4"),
         stop_source=lambda: _ok("source stopped and verified"),
+        transport_transcript=lambda: _ok("transcript verified on the target"),
         finish=lambda: _ok("residency and origin recorded"),
     )
     base.update(overrides)
@@ -127,14 +130,87 @@ def test_a_completed_relocation_journals_every_phase_in_order() -> None:
     assert tuple(s.phase for s in outcome.relocation.steps) == PHASES
 
 
-def test_the_first_thing_a_relocation_does_is_start_the_standby() -> None:
+def test_the_first_thing_a_relocation_does_is_drain_the_source() -> None:
     # Arrange: the order is the design, so it is asserted rather than assumed.
-    # Nothing precedes the standby — in particular no spec is edited.
+    # Nothing precedes the drain — in particular no spec is edited. The source
+    # side goes first because the transcript cannot be copied out from under a
+    # running agent, and the target cannot start before the transcript lands.
     effects = _effects()
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
-    assert outcome.log[0].startswith(TARGET_STANDBY)
+    assert outcome.log[0].startswith(SOURCE_DRAIN)
+
+
+def test_the_source_is_stopped_before_the_transcript_is_transported() -> None:
+    # Arrange: THE ordering constraint the transport phase exists under. A live
+    # agent appends mid-read, and the resulting jsonl parses, resumes, and
+    # silently ends the conversation early.
+    effects = _effects()
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert outcome.log.index(
+        next(x for x in outcome.log if x.startswith(SOURCE_STOP))
+    ) < outcome.log.index(next(x for x in outcome.log if x.startswith(TRANSPORT)))
+
+
+def test_the_transcript_is_transported_before_the_target_starts() -> None:
+    # Arrange: the other half. Once the target has booted it owns its own
+    # session marker, and seeding over it would discard whatever it did.
+    effects = _effects()
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert outcome.log.index(
+        next(x for x in outcome.log if x.startswith(TRANSPORT))
+    ) < outcome.log.index(next(x for x in outcome.log if x.startswith(TARGET_STANDBY)))
+
+
+def test_a_transport_failure_aborts_before_the_target_is_ever_started() -> None:
+    # Arrange: a target started on a failed transport is the "healthy agent with
+    # no memory" shape. It must never get that far.
+    effects = _effects(
+        transport_transcript=lambda: _fail("the target's copy is 40 lines short")
+    )
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert outcome.standby_left_running is False
+
+
+def test_a_transport_failure_reports_the_source_as_left_stopped() -> None:
+    # Arrange: the price of the ordering, stated as a field rather than left for
+    # the operator to deduce — at this point the agent is down on both hosts.
+    effects = _effects(
+        transport_transcript=lambda: _fail("the target's copy is 40 lines short")
+    )
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert outcome.source_left_stopped is True
+
+
+def test_a_transport_failure_tells_the_operator_how_to_undo_it() -> None:
+    # Arrange: "nothing was changed" would be true of every durable record and
+    # false of the thing the operator will actually notice.
+    effects = _effects(
+        transport_transcript=lambda: _fail("the target's copy is 40 lines short")
+    )
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert f"is STOPPED on {SRC}" in outcome.hint
+
+
+def test_a_failure_before_the_source_is_stopped_leaves_it_running() -> None:
+    # Arrange: the counterpart — an abort at the drain must NOT tell the
+    # operator to restart an agent that never stopped.
+    effects = _effects(drain_source=lambda: _fail("in-flight work would be lost"))
+    # Act
+    outcome = execute(_fresh(), effects=effects, now=_clock())
+    # Assert
+    assert outcome.source_left_stopped is False
 
 
 def test_the_handshake_runs_before_the_handover() -> None:
@@ -163,12 +239,14 @@ def test_a_completed_relocation_carries_the_completed_code() -> None:
 
 
 def test_a_resumed_relocation_does_not_re_run_the_phases_already_journalled() -> None:
-    # Arrange: a coordinator that died after the handshake re-runs from drain.
+    # Arrange: a coordinator that died after stopping the source re-runs from
+    # the transport, NOT from the beginning — re-draining and re-stopping an
+    # already-stopped agent is wasted work at best.
     effects = _effects()
     # Act
-    outcome = execute(_at(HANDSHAKE), effects=effects, now=_clock())
+    outcome = execute(_at(SOURCE_STOP), effects=effects, now=_clock())
     # Assert
-    assert outcome.log[0].startswith("source_drain")
+    assert outcome.log[0].startswith(TRANSPORT)
 
 
 def test_a_resumed_relocation_still_reaches_done() -> None:
@@ -311,7 +389,7 @@ def test_an_unknown_step_keeps_the_measure_it_hint() -> None:
 
 def test_a_failure_after_the_handover_is_not_aborted() -> None:
     # Arrange: aborting would mean taking the lease back from a live holder.
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
@@ -320,7 +398,7 @@ def test_a_failure_after_the_handover_is_not_aborted() -> None:
 
 def test_a_failure_after_the_handover_carries_the_past_no_return_code() -> None:
     # Arrange
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
@@ -329,7 +407,7 @@ def test_a_failure_after_the_handover_carries_the_past_no_return_code() -> None:
 
 def test_a_failure_after_the_handover_says_it_cannot_be_rolled_back() -> None:
     # Arrange
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
@@ -338,7 +416,7 @@ def test_a_failure_after_the_handover_says_it_cannot_be_rolled_back() -> None:
 
 def test_a_failure_after_the_handover_names_the_host_that_now_holds_the_lease() -> None:
     # Arrange
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
@@ -350,7 +428,7 @@ def test_a_failure_after_the_handover_does_not_warn_about_an_abandoned_standby()
 ):
     # Arrange: past the atomic point the "standby" is the live agent. Calling it
     # something to clean up would invite stopping the only running instance.
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert
@@ -378,7 +456,7 @@ def test_a_failure_at_the_handover_says_the_host_record_is_untouched() -> None:
 
 def test_a_stopped_relocation_past_the_atomic_point_reports_it() -> None:
     # Arrange
-    effects = _effects(stop_source=lambda: _fail("the source is still running"))
+    effects = _effects(finish=lambda: _fail("the residency row could not be written"))
     # Act
     outcome = execute(_fresh(), effects=effects, now=_clock())
     # Assert

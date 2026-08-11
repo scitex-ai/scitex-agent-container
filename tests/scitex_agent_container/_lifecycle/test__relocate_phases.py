@@ -36,7 +36,7 @@ from scitex_agent_container._lifecycle._relocate_phases import (
     PREFLIGHT,
     SOURCE_DRAIN,
     SOURCE_STOP,
-    TARGET_STANDBY,
+    TRANSPORT,
     PhaseVerdict,
     Relocation,
     abort,
@@ -128,7 +128,7 @@ def test_the_next_phase_is_accepted(fresh: Relocation) -> None:
     # Arrange
     rel = fresh
     # Act
-    _, verdict = advance(rel, to_phase=TARGET_STANDBY, now=T0 + 1)
+    _, verdict = advance(rel, to_phase=SOURCE_DRAIN, now=T0 + 1)
     # Assert
     assert verdict.allowed is True
 
@@ -137,7 +137,7 @@ def test_advancing_appends_to_the_journal(fresh: Relocation) -> None:
     # Arrange
     rel = fresh
     # Act
-    moved, _ = advance(rel, to_phase=TARGET_STANDBY, now=T0 + 1, detail="target up")
+    moved, _ = advance(rel, to_phase=SOURCE_DRAIN, now=T0 + 1, detail="source drained")
     # Assert
     assert len(moved.steps) == len(rel.steps) + 1
 
@@ -219,7 +219,7 @@ def test_resume_points_at_the_next_phase(fresh: Relocation) -> None:
     # Act
     nxt = resume_from(rel)
     # Assert
-    assert nxt == TARGET_STANDBY
+    assert nxt == SOURCE_DRAIN
 
 
 def test_resume_after_a_partial_run_points_forward() -> None:
@@ -228,7 +228,7 @@ def test_resume_after_a_partial_run_points_forward() -> None:
     # Act
     nxt = resume_from(rel)
     # Assert
-    assert nxt == HANDOVER
+    assert nxt == SOURCE_STOP
 
 
 def test_a_completed_relocation_has_nothing_to_resume() -> None:
@@ -266,12 +266,23 @@ def test_at_the_handover_the_relocation_is_past_no_return(
 
 
 def test_after_the_handover_the_relocation_stays_past_no_return() -> None:
-    # Arrange
-    rel = _walk_to(SOURCE_STOP)
+    # Arrange: DONE is the only phase past the handover now that the source stop
+    # moved ahead of the transport.
+    rel = _walk_to(DONE)
     # Act
     past = is_past_no_return(rel)
     # Assert
     assert past is True
+
+
+def test_the_transport_is_still_on_the_reversible_side() -> None:
+    # Arrange: the phase was added BEFORE the handover deliberately — it copies
+    # a file onto a host that is not yet serving, so it moves no write authority.
+    rel = _walk_to(TRANSPORT)
+    # Act
+    past = is_past_no_return(rel)
+    # Assert
+    assert past is False
 
 
 # ---------------------------------------------------------------------------
@@ -325,13 +336,36 @@ def test_aborting_at_the_handover_is_refused(handed_over: Relocation) -> None:
     assert verdict.code == CODE_PAST_NO_RETURN
 
 
-def test_aborting_after_the_handover_is_refused() -> None:
-    # Arrange
+def test_aborting_after_the_source_stop_is_still_allowed() -> None:
+    # Arrange: SOURCE_STOP moved AHEAD of the handover so the transport has a
+    # quiesced source to read. It is still on the reversible side — stopping a
+    # process is not transferring ownership, and the residency row is untouched.
     rel = _walk_to(SOURCE_STOP)
     # Act
     _, verdict = abort(rel, now=T0 + 9, reason="changed my mind")
     # Assert
-    assert verdict.code == CODE_PAST_NO_RETURN
+    assert verdict.allowed is True
+
+
+def test_an_abort_after_the_source_stop_says_the_agent_is_down() -> None:
+    # Arrange: the price of that ordering. "Nothing was changed" is true of every
+    # durable record and false of the thing the operator will actually notice, so
+    # the verdict has to name the stopped agent and how to bring it back.
+    rel = _walk_to(SOURCE_STOP)
+    # Act
+    _, verdict = abort(rel, now=T0 + 9, reason="changed my mind")
+    # Assert
+    assert "is STOPPED on" in verdict.reason
+
+
+def test_an_abort_before_the_source_stop_does_not_claim_it_is_down() -> None:
+    # Arrange: the counterpart — telling an operator to restart an agent that
+    # never stopped sends them to do a pointless, disruptive thing.
+    rel = _walk_to(SOURCE_DRAIN)
+    # Act
+    _, verdict = abort(rel, now=T0 + 9, reason="changed my mind")
+    # Assert
+    assert "is STOPPED on" not in verdict.reason
 
 
 def test_aborting_a_completed_relocation_is_refused() -> None:

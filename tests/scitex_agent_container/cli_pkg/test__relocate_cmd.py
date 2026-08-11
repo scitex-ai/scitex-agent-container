@@ -192,3 +192,75 @@ def test_dry_run_is_the_default() -> None:
     default = param.default
     # Assert
     assert default is True
+
+
+# ---------------------------------------------------------------------------
+# the not-yet-built refusal — accurate, and generated rather than hard-coded
+# ---------------------------------------------------------------------------
+
+
+def test_the_refusal_covers_every_phase() -> None:
+    # Arrange: the previous refusal named ONE missing piece and went stale the
+    # moment that piece was built. Generating it from the phase table means it
+    # cannot claim less than the truth — but only if the table is complete.
+    from scitex_agent_container._lifecycle._relocate_phases import PHASES, PREFLIGHT
+    from scitex_agent_container.cli_pkg._relocate_cmd import _PHASE_READINESS
+
+    # Act
+    covered = tuple(phase for phase, _, _ in _PHASE_READINESS)
+    # Assert
+    assert covered == tuple(p for p in PHASES if p != PREFLIGHT)
+
+
+def test_the_refusal_names_the_transport_phase_as_built() -> None:
+    # Arrange: the operator's question is "what is missing", and answering it
+    # requires saying what is NOT. The transport decision layer exists now.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+
+    # Act
+    text = "\n".join(_unimplemented_notice())
+    # Assert
+    assert "_relocate_transport" in text
+
+
+def test_the_refusal_names_the_arrival_brief_as_built() -> None:
+    # Arrange: the other half of this change, so the notice reflects it too.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+
+    # Act
+    text = "\n".join(_unimplemented_notice())
+    # Assert
+    assert "_relocate_arrival" in text
+
+
+def test_the_refusal_no_longer_blames_the_transcript_transport() -> None:
+    # Arrange: THE stale sentence. It said the cross-host transcript transport
+    # was "not built"; that is now false, and a refusal that misstates its own
+    # cause sends the reader to build something that already exists.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+
+    # Act
+    text = "\n".join(_unimplemented_notice())
+    # Assert
+    assert "transcript transport is not built" not in text
+
+
+def test_the_refusal_says_what_is_actually_missing() -> None:
+    # Arrange: the honest cause is the absent I/O adapters, not the decisions.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+
+    # Act
+    text = "\n".join(_unimplemented_notice())
+    # Assert
+    assert "no I/O adapters wired" in text
+
+
+def test_the_refusal_warns_about_the_target_side_directory_name() -> None:
+    # Arrange: the operator will move the transcript by hand meanwhile, and the
+    # source-named directory is the trap that makes a hand move look successful.
+    from scitex_agent_container.cli_pkg._relocate_cmd import _unimplemented_notice
+
+    # Act
+    text = "\n".join(_unimplemented_notice())
+    # Assert
+    assert "invisible to the target's runner" in text

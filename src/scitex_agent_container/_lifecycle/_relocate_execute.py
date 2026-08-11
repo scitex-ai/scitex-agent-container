@@ -9,15 +9,26 @@ that makes the sequence safe:
     BEFORE the handover, a non-yes ABORTS and nothing persistent has changed.
     AT or AFTER it, a non-yes STOPS AND REPORTS — it never rolls back.
 
-THERE IS NOTHING TO ROLL BACK BEFORE THE HANDOVER, and that is a property of the
-phase order rather than luck. No pre-handover phase writes anything durable: the
-target standby is a started process, the handshake is messages. The host is not
-written until DONE, because where an agent runs is an OBSERVATION and the
-residency record IS that write (operator, 2026-08-11: 「設定ファイル、人が書く
-ものはファイル、状態は db」). An earlier draft had a phase that rewrote the
-spec's ``host:`` and therefore needed an undo; removing it removed the only
-reversible-but-durable step, which is why ``abort`` here has no compensation to
-perform and none is offered.
+NO PRE-HANDOVER PHASE WRITES A DURABLE RECORD, and that is a property of the
+phase order rather than luck. The target standby is a started process, the
+handshake is messages, and the transport only ADDS a copy on the target (moving
+anything already there aside, never over it). The host is not written until DONE,
+because where an agent runs is an OBSERVATION and the residency record IS that
+write (operator, 2026-08-11: 「設定ファイル、人が書くものはファイル、状態は db」).
+An earlier draft had a phase that rewrote the spec's ``host:`` and therefore
+needed an undo; removing it removed the only reversible-but-durable step, which
+is why ``abort`` here has no compensation to perform and none is offered.
+
+ONE THING AN ABORT DOES LEAVE CHANGED, AND IT IS SAID OUT LOUD RATHER THAN
+COMPENSATED: from SOURCE_STOP onward the agent is stopped on the source host. The
+transport cannot read a transcript that is being appended to (see
+:mod:`._relocate_phases`), so the stop has to come first, and an abort after it
+leaves the agent down. Nothing here restarts it. Restarting a source during an
+abort is another lifecycle action taken at the moment least is known about the
+state of things, and it would race a re-run that is about to stop it again. The
+outcome's ``hint`` names the stopped agent and the one command that undoes it, so
+the operator decides — which is the same treatment ``standby_left_running``
+already gets, for the same reason.
 
 That asymmetry is not a choice made here; it is enforced by
 :func:`.._relocate_phases.abort`, which refuses at or past HANDOVER. This module
@@ -62,10 +73,12 @@ from ._relocate_phases import (
     SOURCE_DRAIN,
     SOURCE_STOP,
     TARGET_STANDBY,
+    TRANSPORT,
     Relocation,
     abort,
     advance,
     is_past_no_return,
+    leaves_source_stopped,
 )
 
 __all__ = [
@@ -150,15 +163,21 @@ class PhaseEffects:
     drain_source: Callable[[], StepResult] | None = None
     hand_over_lease: Callable[[], StepResult] | None = None
     stop_source: Callable[[], StepResult] | None = None
+    #: Copy the transcript to the target and CONFIRM it there. Required like the
+    #: rest: an omitted transport would journal as done having moved nothing, and
+    #: the agent would boot on the target with no memory — the exact 2026-08-07
+    #: failure, produced by the absence of an effect rather than a bad one.
+    transport_transcript: Callable[[], StepResult] | None = None
     finish: Callable[[], StepResult] | None = None
 
     def for_phase(self, phase: str) -> Callable[[], StepResult] | None:
         return {
+            SOURCE_DRAIN: self.drain_source,
+            SOURCE_STOP: self.stop_source,
+            TRANSPORT: self.transport_transcript,
             TARGET_STANDBY: self.start_target_standby,
             HANDSHAKE: self.handshake,
-            SOURCE_DRAIN: self.drain_source,
             HANDOVER: self.hand_over_lease,
-            SOURCE_STOP: self.stop_source,
             DONE: self.finish,
         }.get(phase)
 
@@ -183,6 +202,11 @@ class ExecuteOutcome:
     #: rather than cleaned up: stopping it would be another remote action taken
     #: at the moment least is known about the state of things.
     standby_left_running: bool = False
+    #: True when the agent is stopped on the SOURCE host and nothing restarted
+    #: it. The machine-readable half of the hint: a caller deciding whether to
+    #: page someone needs "the agent is down" as a field, not as prose it has to
+    #: match on.
+    source_left_stopped: bool = False
     log: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -278,6 +302,7 @@ def execute(
                         f"holds the lease and {current.from_host} is fenced out. Finish "
                         "forward: re-run to resume from this phase"
                     ),
+                    source_left_stopped=leaves_source_stopped(current),
                     log=tuple(log),
                 )
             stopped, verdict = abort(
@@ -286,6 +311,10 @@ def execute(
                 reason=f"{phase}: {result.detail}",
             )
             left_running = _standby_running(current.phase, phase, unknown)
+            # Computed against the pre-abort record, for the same reason the
+            # phase machine does it: after the abort the phase is ABORTED, and
+            # the question is where it got to.
+            source_down = leaves_source_stopped(current)
             return ExecuteOutcome(
                 completed=None if unknown else False,
                 code=CODE_UNKNOWN if unknown else CODE_ABORTED,
@@ -296,6 +325,13 @@ def execute(
                     f"{result.hint} Nothing was handed over; the lease is still with "
                     f"{current.from_host}, and the host in the state db is unchanged."
                     + (
+                        f" {current.agent} is STOPPED on {current.from_host} — start "
+                        "it there to undo this, or leave it down for the re-run. Its "
+                        "transcript was copied, never moved, so it resumes intact."
+                        if source_down
+                        else ""
+                    )
+                    + (
                         f" The standby on {current.to_host} was started and is STILL "
                         "RUNNING — stop it deliberately, or leave it for the re-run."
                         if left_running
@@ -303,6 +339,7 @@ def execute(
                     )
                 ),
                 standby_left_running=left_running,
+                source_left_stopped=source_down,
                 log=tuple(log),
             )
 
