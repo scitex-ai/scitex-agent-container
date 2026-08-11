@@ -123,7 +123,19 @@ def test_a_half_written_spec_still_yields_a_report() -> None:
     # Act
     declared = declared_from_spec({"spec": {"runtime": "apptainer"}})
     # Assert
-    assert declared["host"] is None
+    assert declared["image"] is None
+
+
+def test_the_host_is_not_a_declared_field() -> None:
+    # Arrange: where an agent runs is an OBSERVATION (operator, 2026-08-11).
+    # Printing it under "DECLARED (from the spec — not verified by this run)"
+    # is the same collapse that makes `sac agents list` report a running agent
+    # as `defined`, so it comes from the state db and appears under OBSERVED.
+    spec = {"spec": {"host": "ywata-note-win", "runtime": "apptainer"}}
+    # Act
+    declared = declared_from_spec(spec)
+    # Assert
+    assert "host" not in declared
 
 
 def test_a_spec_without_the_outer_key_is_read_directly() -> None:
