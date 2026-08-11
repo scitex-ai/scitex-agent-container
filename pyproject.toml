@@ -40,7 +40,15 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "click>=8.0",
+    # >=8.2, not >=8.0: the test suite asserts that a ``--json`` command's
+    # payload reaches STDOUT ALONE (``CliRunner`` ``result.stdout``), which
+    # is only a separate stream from 8.2 on. Before 8.2, ``CliRunner``
+    # defaulted to ``mix_stderr=True`` and ``result.stdout`` WAS the merged
+    # stream — so those assertions would silently pass on merged output and
+    # stop pinning anything. ``mix_stderr`` was removed in 8.2, so no single
+    # call spells "stdout only" on both sides of the boundary and a
+    # compatibility shim is not possible; the floor has to move instead.
+    "click>=8.2",
     "pyyaml>=6.0",
     # Round-trip YAML writer used by ``sac host add/remove/set`` so
     # operator-authored comments + key order in config.yaml survive a
