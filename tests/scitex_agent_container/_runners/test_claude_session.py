@@ -537,10 +537,24 @@ def test_heartbeat_loop_subsequent_ticks_refresh_ts(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _wait_for_pid_file(state_dir: Path, deadline_s: float = 5.0) -> None:
+def _wait_for_pid_file(state_dir: Path, deadline_s: float = 30.0) -> None:
     """Block until the runner has produced both pid + heartbeat files, or
     raise ``TimeoutError`` — so the caller can treat readiness as a
-    precondition without paying for an extra assert."""
+    precondition without paying for an extra assert.
+
+    THE BUDGET WAS 5.0s AND IT NEVER HAD THE HEADROOM IT LOOKED LIKE. Measured
+    2026-08-11 on a normally-busy fleet host: the child takes ~3.7s to reach its
+    pid file, i.e. 74% of the old deadline was already spent before anything
+    went wrong. Any co-tenant load — a parallel pytest run, a bake — pushed it
+    over, and the failure surfaced as "runner never wrote pid/heartbeat", which
+    reads as a broken RUNNER rather than a busy BOX.
+
+    That confusion is the same shape this suite's sibling rails exist to end, so
+    the deadline is now 30s. Nothing here asserts a LATENCY — the three tests
+    that use it assert pid identity, exit code and final heartbeat state — so a
+    generous deadline costs nothing on a healthy run (it returns as soon as the
+    files appear) and removes a false negative on a loaded one.
+    """
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         if (state_dir / "pid").is_file() and (state_dir / "heartbeat.json").is_file():
