@@ -20,6 +20,10 @@ from scitex_agent_container._lifecycle._in_sif_http_client import (
     _resolve_bearer,
     host_listen_call,
 )
+from scitex_agent_container._listen._handler_deadline import (
+    AGENT_START_DEADLINE_S,
+    client_timeout_for,
+)
 
 # ---------------------------------------------------------------------------
 # Test doubles — fake urlopen-shaped opener
@@ -280,6 +284,81 @@ def test_no_bearer_header_when_bearer_empty() -> None:
     )
     # Assert
     assert "Authorization" not in captured["headers"]
+
+
+# ---------------------------------------------------------------------------
+# Socket timeout — must OUTLIVE the server's declared deadline (2026-08-11)
+#
+# This client is generic, but ONE of its callers points it at ``POST /agents``
+# (``sac agents spawn-from-here``), the one route in this system that DECLARES
+# an answer-by deadline. The default here was a flat ``30.0`` — EXACTLY
+# ``AGENT_START_DEADLINE_S`` — so on that route the client gave up at the precise
+# moment the handler was still entitled to be working, and destroyed the ``202``
+# "accepted, still in flight" that exists to stop a slow spawn being reported as
+# a dead host. Measured that day on the sibling broker path: a spawn reported as
+# "no response" had been accepted and ran for 5m12s.
+#
+# A shared default has to satisfy the STRICTEST route it is used on. Asserted as
+# an ORDERING against the real derivation, never as a literal number.
+# ---------------------------------------------------------------------------
+
+
+def test_socket_timeout_outlives_the_server_deadline() -> None:
+    # Arrange
+    captured: dict[str, Any] = {}
+
+    def _opener(_req, timeout=None):  # noqa: ARG001
+        captured["timeout"] = timeout
+        return _FakeResponse(200, b"{}")
+
+    # Act
+    host_listen_call(
+        "POST",
+        "/agents",
+        body={"name": "c"},
+        base_url="http://x",
+        bearer="",
+        opener=_opener,
+    )
+    # Assert — STRICTLY greater; the old 30.0 sat exactly on the deadline.
+    assert captured["timeout"] > AGENT_START_DEADLINE_S
+
+
+def test_socket_timeout_equals_the_one_derivation() -> None:
+    # Arrange
+    captured: dict[str, Any] = {}
+
+    def _opener(_req, timeout=None):  # noqa: ARG001
+        captured["timeout"] = timeout
+        return _FakeResponse(200, b"{}")
+
+    # Act
+    host_listen_call(
+        "GET", "/v1/health", base_url="http://x", bearer="", opener=_opener
+    )
+    # Assert
+    assert captured["timeout"] == pytest.approx(client_timeout_for())
+
+
+def test_explicit_timeout_argument_is_honoured() -> None:
+    # Arrange — the derivation is the DEFAULT, not a lock.
+    captured: dict[str, Any] = {}
+
+    def _opener(_req, timeout=None):  # noqa: ARG001
+        captured["timeout"] = timeout
+        return _FakeResponse(200, b"{}")
+
+    # Act
+    host_listen_call(
+        "GET",
+        "/v1/health",
+        base_url="http://x",
+        bearer="",
+        timeout_s=2.5,
+        opener=_opener,
+    )
+    # Assert
+    assert captured["timeout"] == pytest.approx(2.5)
 
 
 # ---------------------------------------------------------------------------

@@ -317,6 +317,27 @@ def test_a_client_timeout_outlives_the_server_deadline() -> None:
     assert client > server
 
 
+def test_a_client_timeout_tracks_a_moved_deadline(short_deadline) -> None:
+    """The derivation must READ the deadline, not a copy taken at import.
+
+    ``client_timeout_for`` used to spell its default
+    ``server_deadline_s=AGENT_START_DEADLINE_S`` in the SIGNATURE, and a default
+    argument is evaluated once, when the module is first imported — so it held
+    the value and stopped tracking the name. The handler does not: it imports
+    ``AGENT_START_DEADLINE_S`` inside the function body and honours a moved
+    deadline on the next call. Move it and the server answers on the new budget
+    while every client still waits on the old one; ``client > server`` inverts
+    in silence, which is exactly the failure this module exists to prevent,
+    arriving through the derivation that was supposed to prevent it.
+    """
+    # Arrange — the fixture has moved the server's declared deadline.
+    moved = short_deadline
+    # Act
+    client = _handler_deadline.client_timeout_for()
+    # Assert
+    assert client == pytest.approx(moved + _handler_deadline.CLIENT_MARGIN_S)
+
+
 def test_a_deadline_never_reports_negative_remaining() -> None:
     """Callers hand this straight to asyncio.wait_for, which rejects negatives."""
     # Arrange
