@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import pytest
 
+from scitex_agent_container._lifecycle._relocate_move_aside import (
+    move_aside_destination,
+)
 from scitex_agent_container._lifecycle._relocate_transport import (
     CODE_ARRIVED,
     CODE_MISSING_ON_TARGET,
@@ -157,7 +160,7 @@ def test_the_move_aside_destination_is_dot_old_under_the_timestamp() -> None:
     # Act
     plan = _ready_plan(target_dir_exists=True)
     # Assert
-    assert plan.move_aside.destination == f"{TARGET_DIR}/.old/{STAMP}"
+    assert plan.move_aside.destination == move_aside_destination(TARGET_DIR, STAMP)
 
 
 def test_a_move_aside_still_lets_the_transport_proceed() -> None:
@@ -475,3 +478,42 @@ def test_neither_outcome_defines_a_bool() -> None:
     defined = "__bool__" in vars(TransportPlan) or "__bool__" in vars(ArrivalVerdict)
     # Assert
     assert defined is False
+
+
+def test_the_move_aside_destination_is_not_inside_the_directory_it_moves() -> None:
+    # Arrange: THE bug, measured 2026-08-11 on the canary run's idempotency pass.
+    # The destination was computed inside the directory being moved, so `mv`
+    # refused with "cannot move a directory into itself" and a clean retry was a
+    # dead end. The string was well-formed, so no pure test could have caught it —
+    # this one is written from the real `mv` that did.
+    plan = plan_transport(
+        source_running=False,
+        source_files=["a.jsonl"],
+        target_dir_exists=True,
+        target_dir=TARGET_DIR,
+        stamp=STAMP,
+    )
+    # Act
+    destination = plan.move_aside.destination
+    # Assert
+    assert not destination.startswith(TARGET_DIR.rstrip("/") + "/")
+
+
+def test_the_move_aside_destination_keeps_the_directory_name() -> None:
+    # Arrange: a restore is "move it back", so the displaced copy has to be
+    # recognisable as the thing it was rather than a bare timestamp.
+    # Act
+    destination = move_aside_destination("/a/b/-home-proj", "S")
+    # Assert
+    assert destination == "/a/b/.old/S/-home-proj"
+
+
+def test_a_path_with_no_parent_cannot_be_moved_aside() -> None:
+    # Arrange: there is nowhere beside it to move it to, and inventing somewhere
+    # would put the only copy of a conversation where nobody would look.
+    call = lambda: move_aside_destination("/", "S")
+    # Act
+    attempt = call
+    # Assert
+    with pytest.raises(ValueError):
+        attempt()
