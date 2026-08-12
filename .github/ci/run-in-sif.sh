@@ -246,17 +246,41 @@ done
 # scitex-agent-container style-stack are naturally isolated per worker — the safe way to
 # parallelise a matplotlib-heavy suite.
 #
-# Worker count: use ALL cores. Each matrix leg now runs on its own dedicated
-# self-hosted node (one runner per node: scitex-agent-container-01/02/03), so there is no
-# co-tenant to yield half the box to — the old nproc//2 cap left 2x the cores
-# idle. nice/ionice (below) handles the "yield to higher-priority work if the
-# node is ever shared" concern instead of statically reserving half the CPUs.
+# Worker count: ALL cores by default, because the justification below USED to
+# hold — "each matrix leg runs on its own dedicated self-hosted node (one runner
+# per node: scitex-agent-container-01/02/03), so there is no co-tenant to yield
+# half the box to". nice/ionice handles an occasional higher-priority neighbour.
+#
+# THAT ASSUMPTION DIES THE MOMENT TWO RUNNERS SHARE A BOX, and that is exactly
+# where CI is going: Spartan CI was retired 2026-08-05 and the suite now runs on
+# scitex-04, one 32-core machine. Three matrix legs on three runners there means
+# 3 x 32 = 96 xdist processes fighting over 32 cores — an uncapped default
+# resting on a premise the world quietly invalidated, the same shape as the
+# "runs here are serialised" claim that once justified an unscoped pkill in
+# exec-in-sif.sh.
+#
+# So the count is now an INPUT, not an inference. Set CI_XDIST_WORKERS (repo
+# Actions Variable -> workflow env) to nproc / legs-per-box when runners are
+# co-tenant. Unset keeps the historical behaviour exactly, so nothing changes
+# for a one-leg-per-node deployment.
+#
+# Measured on scitex-04 (32 cores, full suite, one leg at a time):
+#   WORKERS=32 -> 170s     WORKERS=8 -> 233s
+# A single leg is faster with all cores; three CONCURRENT legs at ~10 each
+# finish the whole matrix in about one leg's time instead of three.
+#
 # Floor 4. pyproject addopts carries `-v`; override to `-q` here — 2460 verbose
 # lines x workers bloats the CI log and adds measurable overhead.
 NPROC="$(nproc 2>/dev/null || echo 4)"
-WORKERS=$NPROC
+WORKERS="${CI_XDIST_WORKERS:-$NPROC}"
+case "$WORKERS" in
+    ''|*[!0-9]*)
+        echo "::warning::CI_XDIST_WORKERS='$WORKERS' is not a positive integer; using nproc=$NPROC"
+        WORKERS=$NPROC
+        ;;
+esac
 [ "$WORKERS" -lt 4 ] && WORKERS=4
-echo "xdist workers=$WORKERS (nproc=$NPROC)"
+echo "xdist workers=$WORKERS (nproc=$NPROC, CI_XDIST_WORKERS=${CI_XDIST_WORKERS:-unset})"
 
 # Warm the matplotlib font cache ONCE, single-process, before xdist forks the
 # workers. This builds $MPLCONFIGDIR/fontlist-*.json a single time so every

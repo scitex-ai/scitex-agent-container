@@ -51,7 +51,21 @@ jobs:
     # Deliberate misnomer, kept byte-identical — see lint.yml for the full
     # reasoning. (Verified: not a protection-pinned required context.)
     name: scitex-dev-quality-audit-on-ubuntu-latest
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — pinned to spartan-cpu on purpose. Measurements: PR #1001.
+    #
+    # 44s median, single-core, and it never enters the CI SIF — the audit-*
+    # verbs are filesystem and AST analysis over the checkout, so nothing here
+    # depends on the host beyond having uv and a Python. It was holding one of
+    # four 32-core machines per run on a pool at 93-94% utilisation, then
+    # queueing 289s median (p90 902s).
+    #
+    # The spartan-cpu runners are nproc=1 — wrong for `tests` (497s there vs
+    # 170s on 32 cores), right for a job like this one.
+    #
+    # PINNED PER WORKFLOW rather than through vars.CI_RUNS_ON so the routing is
+    # visible in a diff and cannot reach `tests` or the release gate, which DO
+    # enter the SIF and still need #992 first.
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

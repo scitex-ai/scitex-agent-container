@@ -40,7 +40,25 @@ jobs:
   sphinx:
     # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: rtd-sphinx-build-on-ubuntu-latest
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — pinned to spartan-cpu on purpose. Measurements: PR #1001.
+    #
+    # 51s median, single-core, and it never enters the CI SIF — checkout + uv +
+    # sphinx-build on the bare runner, no /data/gpfs bind. It was holding one of
+    # four 32-core machines per run on a pool at 93-94% utilisation, then
+    # queueing 289s median (p90 902s). The spartan-cpu runners are nproc=1:
+    # wrong for `tests` (497s there vs 170s on 32 cores), right for this.
+    #
+    # THIS JOB COMMITS, which is why the host matters beyond size. The
+    # default-branch refresh below pushes regenerated HTML, and commit signing
+    # fails 13/13 on compute-04 ("failed to write commit object" — ssh signing
+    # against a key that is not there). The canary probed `git commit` on
+    # spartan-bm153 and it succeeds with signing unset, so this move takes the
+    # refresh OFF the one host where it reliably breaks.
+    #
+    # PINNED PER WORKFLOW rather than through vars.CI_RUNS_ON so the routing is
+    # visible in a diff and cannot reach `tests` or the release gate, which DO
+    # enter the SIF and still need #992 first.
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 20
     permissions:
       contents: write
