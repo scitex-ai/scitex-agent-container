@@ -3,9 +3,24 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Operator directive, 2026-07-14: GitHub-hosted runners are FORBIDDEN.
-# Every job runs on the self-hosted Spartan pool. Mandatory, no exceptions.
-# If the pool is broken, that is OUR problem to fix — escaping back to a
-# hosted runner is not an option.
+# Every job runs on the self-hosted pool. If the pool is broken, that is OUR
+# problem to fix — escaping back to a hosted runner is not an option.
+#
+# AMENDED 2026-08-12. The directive above shipped with the words "mandatory, no
+# exceptions" while cla.yml was ALREADY a deliberate exception, so the rule as
+# written was never true — and a rule that is visibly false in one place stops
+# being believed in the others. The operator amended it on 2026-08-12
+# (「nightly で 3.12, 3.13 を pure github で回せばよいかと」). What is true now:
+#
+#   * Anything a HUMAN WAITS ON — the PR gate, lint, import-smoke, docs — runs
+#     on our pool. That half of the rule is unchanged and absolute.
+#   * A job nobody waits on MAY run on GitHub's hardware when there is an
+#     argument for it, and the argument lives HERE. Two exist today: cla.yml
+#     (security — see below) and the nightly 3.12/3.13 matrix (cost).
+#
+# "No hosted runners, no exceptions" is therefore now spelled "no hosted runners
+# outside this file". The enforcement did not change: an entry still needs a
+# reason of substance, and a stale entry still fails the guard.
 #
 # Enforced by `src/scitex_agent_container/_hosted_runner_guard.py`, which runs
 #   - as a CI job on the SELF-HOSTED pool
@@ -35,6 +50,31 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 allow:
+  - workflow: nightly-python-matrix-on-github-hosted.yml
+    jobs:
+      - test
+      - notify
+    approved_by: operator
+    approved_on: 2026-08-12
+    # 「nightly で 3.12, 3.13 を pure github で回せばよいかと」 — the operator,
+    # amending the 2026-07-14 directive after being shown that four CPU runners
+    # were saturated while three banned Spartan machines sat idle.
+    reason: >-
+      COST, and it only spends hardware we do not own. Our CPU pool is four
+      contended nodes; on 2026-08-11/12 all four were saturated by stacked PRs
+      each fanning out a three-way python matrix of the heaviest job on the
+      queue. The pull-request gate now runs the ENDS of the supported range
+      (3.11 + 3.13) on our pool, and the one version it brackets past (3.12)
+      runs HERE, nightly, on GitHub's hardware — which is free for public repos
+      and slow, a trade that is exactly right when nobody is waiting and exactly
+      wrong for the PR loop a human sits in front of. The security argument that
+      keeps cla.yml hosted does NOT apply in reverse here: this job runs our own
+      code from our own repo, so moving it to the self-hosted pool would be safe
+      — it would simply spend contended hardware to buy nothing. Do not "fix" it
+      by migrating it. If this exception is ever removed, the middle version
+      loses its daily coverage and is then tested only on `develop`/`main`
+      pushes and at release.
+
   - workflow: cla.yml
     jobs:
       - CLAssistant

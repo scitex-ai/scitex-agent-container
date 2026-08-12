@@ -1,0 +1,166 @@
+name: nightly-matrix
+
+# THE ONE VERSION THE PR GATE SKIPS, RUN HERE — ON SOMEONE ELSE'S HARDWARE.
+#
+# MEASURED 2026-08-11/12: all four of our CPU runners saturated, several stacked
+# PRs each fanning out a three-way matrix of the heaviest job on the queue, and
+# a human sitting in front of every one of those PRs. The `tests` gate therefore
+# now runs the ENDS of the supported range (3.11 + 3.13) on a pull request.
+#
+# THIS MATRIX IS THIN ON PURPOSE — one leg, 3.12 — and that is not an oversight
+# to be "completed" later: it is exactly and only the middle version the PR gate
+# brackets past. If a future Python bump widens the supported set, the versions
+# that fall between the ends belong here, and
+# tests/integration/test_ci_python_matrix_shape.py fails until they are.
+#
+# WHY GitHub-HOSTED, WHICH IS A DELIBERATE AMENDMENT TO A STANDING RULE
+# ====================================================================
+# The 2026-07-14 operator directive read "NO GitHub-hosted runners anywhere in
+# this repo, PR tests included, no exceptions". The operator amended it on
+# 2026-08-12 (「nightly で 3.12, 3.13 を pure github で回せばよいかと」): the PR
+# loop stays on our pool, the nightly moves to GitHub's. (He then moved 3.13
+# back onto the PR gate — 「最低と最高」, test the ends — which is why only 3.12
+# is left here.)
+#
+# The argument is a cost/latency split, not a loophole:
+#
+#   * our runners are SCARCE and CONTENDED — four nodes, saturated nightly by
+#     the fleet's own PRs;
+#   * GitHub-hosted runners are FREE for public repositories and SLOW;
+#   * nobody waits on a nightly. Slow is free here, and free is the point.
+#
+# The exception is registered in .github/hosted-runner-allowlist.yaml with its
+# argument attached, where _hosted_runner_guard.py enforces it. Do not "fix"
+# this file by moving it onto the self-hosted pool — that spends contended
+# hardware to buy nothing, and the guard will not stop you, because the entry
+# makes it legal. Read the allowlist entry first.
+#
+# WHY THIS IS NOT THE THING BETWEEN A REGRESSION AND A RELEASE
+# ===========================================================
+# It is the EARLY WARNING, not the gate. The release path
+# (pypi-publish-and-github-release-on-tag.yml) runs the FULL 3.11/3.12/3.13
+# matrix in the release SIF before anything reaches PyPI, and pushes to
+# `develop`/`main` run the full matrix too. So a 3.12-only regression is caught
+# at the merge, again by this nightly, and again at the tag — this workflow
+# exists so that the news arrives in hours instead of at release ceremony.
+#
+# A RED NIGHTLY THAT NOBODY READS IS THE SAME AS NOT TESTING. The `notify` job
+# below opens (or comments on) a GitHub issue on every scheduled failure, so a
+# red night lands in the same place the fleet already looks for work rather than
+# in a runs list nobody opens.
+
+on:
+  schedule:
+    # 17:00 UTC (~02:00 JST). Same slot as the SIF nightly — different hardware,
+    # so they do not compete.
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+  # SELF-TESTING: a pull request that TOUCHES this workflow (or the script it
+  # runs) runs it. Without this, the only way to learn that the nightly broke is
+  # to wait for the night, and the person who broke it is asleep. It costs our
+  # pool nothing — this job is hosted — and it fires on nothing else, so the
+  # 3.11-only PR gate stays 3.11-only for every ordinary PR.
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - .github/workflows/nightly-python-matrix-on-github-hosted.yml
+      - .github/ci/run-on-hosted.sh
+
+# Same expression as every other PR-triggered workflow here (PR #969): PR events
+# group by PR number so a new push cancels the stale run; everything else keys on
+# the unique run id, so a scheduled run is alone in its group and can neither
+# cancel nor be cancelled. The matrix width has no bearing on this — the group is
+# resolved per RUN, not per leg — so the reduced PR matrix does not move any job
+# into a different group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: nightly-py${{ matrix.python-version }}-on-github-hosted
+    # GitHub-HOSTED, on purpose. Allowlisted in
+    # .github/hosted-runner-allowlist.yaml — read the entry before changing it.
+    runs-on: ubuntu-latest
+    # Hosted runners are 4-core and this suite is ~2460 tests; the self-hosted
+    # legs finish in ~11 min on far more cores. 90 minutes is slack, not a
+    # target — a hung leg still has to die well short of GitHub's 6-hour default.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # THE COMPLEMENT OF THE PR GATE, NOT AN INDEPENDENT LIST.
+        # tests/integration/test_ci_python_matrix_shape.py asserts this equals
+        # the full supported set MINUS what the PR gate runs, so adding 3.14 to
+        # the matrix in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml and
+        # forgetting this file turns that test RED instead of silently leaving
+        # a version untested at night.
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          # PINNED for the same reason as everywhere else in this repo: an
+          # unpinned `latest` makes CI a function of wall-clock time.
+          version: "0.11.29"
+          cache-dependency-glob: pyproject.toml
+
+      # tmux is a RUNTIME dependency of the thing under test (sac drives agent
+      # sessions through tmux), not a test convenience. The self-hosted nodes and
+      # the CI SIF both have it; GitHub's image does not guarantee it, and a
+      # missing binary would show up as a wall of unrelated failures.
+      - name: Install tmux (present in the SIF, not guaranteed on the hosted image)
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null || sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+
+      - name: Run the suite on python ${{ matrix.python-version }}
+        run: bash .github/ci/run-on-hosted.sh ${{ matrix.python-version }}
+
+  notify:
+    # A NIGHTLY NOBODY READS IS NOT A TEST. This is where a red night surfaces.
+    name: report-a-red-night
+    needs: test
+    # `failure()` only, and only for the SCHEDULED run: a PR that is editing this
+    # workflow gets its answer on the PR itself, and must not open issues.
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 10
+    steps:
+      - name: Open or update the nightly-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title="[nightly] python matrix failed on the hosted runner"
+          # ONE issue, reopened and commented — not one issue per night. A
+          # nightly that files 30 identical issues in a month teaches everyone
+          # to filter it out, which is the same as not reporting.
+          num="$(gh issue list --repo "$REPO" --state all --limit 20 \
+                   --search "in:title \"$title\"" --json number,title \
+                   --jq "[.[] | select(.title == \"$title\") | .number] | first // empty")"
+          body="The nightly 3.12 matrix failed on ${GITHUB_SHA:-develop}.
+
+          Run: $RUN_URL
+
+          3.12 is NOT on the pull-request gate (which brackets the range with
+          3.11 + 3.13) — so this is the earliest signal that a middle-version
+          regression exists. The release gate runs all three versions and will block a tag
+          on the same fault, later and more expensively."
+          if [ -n "$num" ]; then
+            gh issue reopen "$num" --repo "$REPO" >/dev/null 2>&1 || true
+            gh issue comment "$num" --repo "$REPO" --body "$body"
+            echo "commented on existing issue #$num"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
