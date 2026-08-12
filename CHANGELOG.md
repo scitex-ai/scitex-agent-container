@@ -53,7 +53,67 @@ versioning follows [SemVer](https://semver.org/).
   Token values are never read, logged, or transmitted anywhere in this path —
   presence only, slot NAMES and pool source PATHS at most.
 
+- **`sac image build --reproducible` — the build verb can finally express
+  "build reproducibly", and sac finally calls the round trip it has had access
+  to all along.** scitex-container has shipped the whole apparatus for months
+  (`build_reproducible`, `capture_lock`, `generate_locked_def`,
+  `compare_locks`, the `.verified` / `.unverified` markers, the use-time gate),
+  all publicly exported. sac referenced none of it — an `rg` over `src/` found
+  **zero** hits — and no `.lock` / `.verified` / `.unverified` had ever been
+  written on the fleet host. The round trip had never run.
+
+  It could not run. `build_reproducible()` took no build CONTEXT, and sac's
+  entire contribution to a build is a staged one: a copy of its own source
+  tree beside the `.def` plus a symlink to the prerequisite layer's SIF,
+  because the shipped recipes pull sac in by relative path
+  (`%files scitex-agent-container-src`, `From: ./sac-base.sif`) so the SIF
+  pins the source that shipped the recipe. Those paths exist only inside the
+  staging dir; resolved against the containers dir they do not exist, and
+  apptainer FATALs before running a line of `%post`. (Same mechanism as the
+  long-standing observation that rebuilding a SIF by hand goes wrong while
+  building through the `sac` verb works — a raw `apptainer build` on a shipped
+  recipe fails for exactly this reason. Always use the verb.)
+
+  scitex-container 0.4.0 adds that `cwd`; this release calls it. The new verb
+  captures the version set that actually landed into a `.lock`, emits a
+  version-pinned `.def`, rebuilds from it through the same staged context,
+  compares the two version sets, and marks `.verified` or `.unverified`
+  carrying the drift. A mismatch is a **finding, not a build failure** — the
+  image stays usable with its provenance honestly recorded as unproven.
+  `--skip-verify` captures the lock and pinned recipe without the second
+  build, and says plainly that the result is unmarked.
+
+  "Reproducible" here means **environment identity** (the same version set
+  comes back), the reading the operator chose. Byte-for-byte identical digests
+  are explicitly out of scope.
+
+- **`proxy` is buildable.** `_LAYERS` mapped only `base` and `scitex`, so the
+  shipped `apptainer-proxy.def` was a recipe nothing could build — even though
+  `build_layer_from_source` documents `base`/`scitex`/`proxy` and
+  `resolve_bootstrap_sif` already names `proxy` among the top-of-stack layers.
+  An oversight, not a policy.
+
 ### Changed
+
+- **The base inputs are pinned.** `ubuntu:24.04` is a moving tag — Canonical
+  republishes it for every point release — so `apptainer-base.def` and
+  `apptainer-proxy.def` now bootstrap from the digest of 24.04.4 LTS, the
+  exact base the live fleet image was built from. `yq` and `cargo-binstall`
+  move off `releases/latest/download` to v4.53.3 / v1.21.1, and rustup gains
+  `--default-toolchain 1.97.1`. Every one of those values is what the live
+  image *already carries* (verified in-image), so the pins freeze the current
+  state rather than moving it. `gdu` was already pinned for the same reason.
+
+  `@anthropic-ai/claude-code@latest` is deliberately **left floating**: the
+  recipe documents that float as an explicit operator directive (carry the
+  latest of all ecosystem packages; unlock the `fable[1m]` model). The
+  consequence, stated plainly: a `--reproducible` base build will report
+  `.unverified` whenever claude-code publishes between the two builds. That is
+  the round trip working — the drift was always there, it was just invisible.
+
+  Note the digest pins the STARTING layer only; `%post` still runs `apt-get
+  update`, so apt packages can move. That residual drift is now *detected*
+  (dpkg versions are in the `.lock` and compared) but not yet prevented.
 
 - **Every job sac owns is renamed to the ecosystem canonical form
   `scitex-agent-container-<name>`, and the migration that makes that safe
@@ -191,6 +251,59 @@ versioning follows [SemVer](https://semver.org/).
   ship with the migration that enforces stop → remove → install.
 
 ### Fixed
+
+- **`host:` documented a fallback chain that nothing implemented.**
+  `HostsSpec.host` has said "list: priority order; first available host wins
+  (fallback chain)" since v3 shipped. Every site that reduced the list took
+  `host[0]` and never asked whether that host was usable, so a chain degraded
+  exactly as well as a string: not at all. Measured across all six reduction
+  sites — `_lifecycle/_verdict_remote.py`, `cli_pkg/lifecycle/_common.py`,
+  `_start_single.py`, `_host_routing.py`, `_dispatch.py` and `_attach.py` —
+  not one contained a liveness or reachability check.
+
+  On 2026-08-09 specs reverted to a single pinned host, sac ssh-dispatched
+  every lifecycle verb to it, the hop answered `Permission denied (publickey)`,
+  and twelve agents went down. The documented mechanism for degrading instead
+  was sitting inert in the type.
+
+  `cli_pkg/lifecycle/_host_chain.py` is now the ONE place a `spec.host` chain
+  is reduced, and all six sites route through it — including `_attach.py`,
+  whose docstring already promised it agreed with `start` about where an agent
+  lives and would otherwise have opened a session on a different machine than
+  the one the agent was launched on. A list is walked in
+  priority order and the first candidate not positively REJECTED wins: a local
+  entry wins immediately (we are that machine — an ssh hop to self is never
+  rendered), a remote entry wins if the reachability probe does not say no, and
+  a chain in which every candidate was rejected raises rather than silently
+  starting locally on the wrong machine. The refusal names every candidate and
+  its own reason, because "down" and "mistyped" have different fixes.
+
+  **A plain string `host: <name>` is NEVER probed and behaves byte-identically
+  to before.** It has nothing to fall back to, so a probe could only convert a
+  working dispatch into a refusal — a pure regression. Pinned by test, oracle
+  and all.
+
+  Reachability is three-valued (`reachable` / `unreachable` / `unknown`) and
+  the third value is never folded into either pole, which is this codebase's
+  most-shipped bug class. Only EVIDENCE rejects a host: a probe that answered
+  no, or a name that routes nowhere. "I could not check" — no oracle supplied,
+  a probe that could not run, an oracle that raised — rejects nothing and
+  leaves the operator's priority order standing, which is also what makes the
+  no-oracle call sites (listings, preflights) byte-identical to the old
+  `host[0]`.
+
+  The probe is an injected `(host) -> verdict` callable, matching the
+  `peers` / `local_names` seam `classify_dispatch_host` already uses, so the
+  resolver stays pure and no test touches the network. The production oracle is
+  one bounded ssh round-trip rendered by `build_ssh_argv` — the same primitive
+  the dispatch itself uses, so the probe cannot answer about a different route
+  than the one taken — memoized per verb, and only ever built for a LIST.
+
+  Two further consequences of asking the whole chain instead of its head:
+  `_resolve_singleton_skip` now checks liveness on EVERY bound host (asking
+  only the head reported "not live", released the pin, and started a SECOND
+  copy beside one already running down-chain), and the `--resume` preflight no
+  longer calls a placement remote when the chain names this machine.
 
 - **Two `--json` tests asserted on the wrong stream.** They parsed click's
   `Result.output`, which merges stdout AND stderr, so they passed only while

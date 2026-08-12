@@ -31,7 +31,9 @@ from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_SESSION,
     CHECK_SOURCE_WORK,
     Check,
+    LeaseFacts,
     SourceFacts,
+    SpecSourceDrift,
     TargetFacts,
     preflight,
 )
@@ -59,6 +61,9 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
         hub_reachable_from_target=True,
         sac_on_path=True,
         sac_resolved_path="/usr/local/bin/sac",
+        sac_usable_path="/usr/local/bin/sac",
+        preamble_declared=False,
+        spec_source_drift=SpecSourceDrift(state="current", upstream="origin/main"),
     )
     base.update(overrides)
     return TargetFacts(**base)  # type: ignore[arg-type]
@@ -81,7 +86,23 @@ def _clean_source(**overrides: object) -> SourceFacts:
     return SourceFacts(**base)  # type: ignore[arg-type]
 
 
-def _run(source_facts: SourceFacts | None = None, **overrides: object):
+def _clean_lease(**overrides: object) -> LeaseFacts:
+    """A lease store that was READ and holds nothing for this agent.
+
+    That is a real answer, not an absence of one: sac claims no lease when an
+    agent starts, so the ordinary first relocation finds no row and bootstraps.
+    ``read=True`` is what separates it from "nobody opened the db", which refuses.
+    """
+    base = dict(read=True, lease=None, store="/state/state.db", now=1_786_500_000.0)
+    base.update(overrides)
+    return LeaseFacts(**base)  # type: ignore[arg-type]
+
+
+def _run(
+    source_facts: SourceFacts | None = None,
+    lease_facts: LeaseFacts | None = None,
+    **overrides: object,
+):
     return preflight(
         agent=AGENT,
         to_host=DST,
@@ -90,6 +111,7 @@ def _run(source_facts: SourceFacts | None = None, **overrides: object):
         required_ports=PORTS,
         source_facts=source_facts if source_facts is not None else _clean_source(),
         from_host=SRC,
+        lease_facts=lease_facts if lease_facts is not None else _clean_lease(),
     )
 
 
@@ -452,104 +474,32 @@ def test_an_unobserved_check_still_explains_what_to_run() -> None:
 
 
 # ---------------------------------------------------------------------------
-# sac_present_on_target — installed and findable are two questions
+# sac_present_on_target — WIRED here, decided in _relocate_checks_sac
 #
-# Measured 2026-08-11 on scitex-compute-04: sac lives at
-# /home/ywatanabe/.env-sac/bin/sac and is absent from the non-interactive ssh
-# PATH, so `ssh compute-04 sac …` answers "No such file or directory" — the same
-# words a machine with no sac at all produces, needing the opposite fix.
+# The predicate moved to its own module when the question it answers had to be
+# narrowed (which PATH is the answer about?), and its unit tests moved with it to
+# test__relocate_checks_sac.py. What belongs HERE is that the aggregate still
+# carries it, because a check that stops being run is indistinguishable from one
+# that always passes.
 # ---------------------------------------------------------------------------
 
 
-def test_sac_on_the_ssh_path_passes() -> None:
-    # Arrange
-    report = _run()
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is True
-
-
-def test_sac_installed_but_off_the_ssh_path_fails() -> None:
-    # Arrange: the compute-04 case.
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
+def test_the_sac_presence_check_is_part_of_the_aggregate() -> None:
+    # Arrange: not installed anywhere on the target.
+    report = _run(sac_on_path=False, sac_usable_path="", sac_resolved_path="")
     # Act
     check = _named(report, CHECK_SAC_PRESENT)
     # Assert
     assert check.ok is False
 
 
-def test_sac_off_the_path_is_reported_as_installed_rather_than_missing() -> None:
+def test_a_sac_presence_failure_refuses_the_whole_relocation() -> None:
     # Arrange
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
+    report = _run(sac_on_path=False, sac_usable_path="", sac_resolved_path="")
     # Act
-    check = _named(report, CHECK_SAC_PRESENT)
+    verdict = report.ok
     # Assert
-    assert "IS INSTALLED" in check.detail
-
-
-def test_sac_off_the_path_names_where_it_actually_is() -> None:
-    # Arrange
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "/home/ywatanabe/.env-sac/bin/sac" in check.detail
-
-
-def test_sac_off_the_path_tells_the_reader_not_to_install_a_second_copy() -> None:
-    # Arrange: the wrong fix here is to install sac again, which is what a
-    # single "sac not found" message would send the reader off to do.
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "do NOT install a second copy" in check.hint
-
-
-def test_sac_absent_everywhere_fails_as_not_installed() -> None:
-    # Arrange: "" means looked and found nothing.
-    report = _run(sac_on_path=False, sac_resolved_path="")
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "NOT INSTALLED" in check.detail
-
-
-def test_sac_absent_everywhere_asks_for_an_install() -> None:
-    # Arrange
-    report = _run(sac_on_path=False, sac_resolved_path="")
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "install sac" in check.hint
-
-
-def test_sac_off_the_path_with_no_direct_lookup_is_unknown() -> None:
-    # Arrange: not-on-PATH alone cannot tell the two failures apart, and
-    # guessing either way sends the reader to the wrong fix.
-    report = _run(sac_on_path=False, sac_resolved_path=None)
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is None
-
-
-def test_an_unprobed_sac_presence_is_unknown() -> None:
-    # Arrange
-    report = _run(sac_on_path=None, sac_resolved_path=None)
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is None
+    assert verdict is False
 
 
 # ---------------------------------------------------------------------------

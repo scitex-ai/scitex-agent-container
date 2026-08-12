@@ -241,6 +241,7 @@ def render_probe_script(questions: RemoteQuestions, *, preamble: str = "") -> st
 
     parts.append(_SAC_WHERE_SECTION)
     parts.append(_SAC_SECTION)
+    parts.append(_START_ACCEPT_SECTION)
     parts.append('echo "$M end"')
     return "\n".join(parts) + "\n"
 
@@ -304,10 +305,15 @@ sacreloc_cred() {{
 """
 
 
-# WHERE sac IS, asked twice on purpose. `sac_path` is `command -v sac` under the
-# RAW non-interactive PATH — the one a bare `ssh host sac …` gets. `sac_found`
-# looks harder: the login shell first (which is where a venv PATH comes from),
-# then the locations sac is actually installed in across this fleet.
+# WHERE sac IS, asked three times on purpose. `sac_path` is `command -v sac`
+# under the RAW non-interactive PATH — the one a bare `ssh host sac …` gets.
+# `sac_usable` is the same lookup under the PATH THIS SCRIPT IS RUNNING WITH,
+# i.e. after the peer's env_preamble, which is the PATH every command a
+# relocation sends actually runs under; that is the question the check needs
+# answered, and reading only the raw one failed hosts whose preamble already
+# works (ywata-note-win, measured 2026-08-12). `sac_found` looks harder still:
+# the login shell first (which is where a venv PATH comes from), then the
+# locations sac is actually installed in across this fleet.
 #
 # Measured 2026-08-11 on scitex-compute-04: sac_path is empty and sac_found is
 # /home/ywatanabe/.env-sac/bin/sac. Those two lines together say "installed, not
@@ -333,6 +339,7 @@ sacreloc_find_sac() {
 sacreloc_raw=$(PATH="$SACRELOC_PATH0" command -v sac 2>/dev/null)
 echo "$M sac_path=$sacreloc_raw"
 echo "$M sac_found=$(sacreloc_find_sac)"
+echo "$M sac_usable=$(command -v sac 2>/dev/null)"
 """
 
 
@@ -365,6 +372,50 @@ if command -v "$py" >/dev/null 2>&1; then
   if [ -n "$rt" ]; then echo "$M runtimes=$rt"; fi
   sk=$("$py" -c "$SACRELOC_KEYS_PY" 2>/dev/null)
   if [ -n "$sk" ]; then echo "$M speckeys=$sk"; fi
+fi
+"""
+
+
+# WOULD THE TARGET'S OWN `sac agents start` ACCEPT THIS AGENT? Asked of the
+# target's sac rather than answered here: the drift guard IS the code that
+# refuses the boot, and a second copy of its rule would pass on exactly the day
+# the real one changed. Reuses `$py` from _SAC_SECTION — the interpreter BACKING
+# the target's `sac`, not whatever python3 is first on PATH.
+#
+# BOUNDED, because this one does network I/O: the guard runs a `git fetch` and
+# the batch it lives in has ONE wall-clock budget for every fact, so a section
+# that hung would cost all the others their answers. `timeout` where one exists.
+#
+# The dirty count is EVIDENCE, NOT VERDICT: the guard counts commits and refuses
+# on those alone. It is taken because the remedy the guard prints is `git pull
+# --ff-only`, which aborts on a dirty tree — 25 modified files in the dotfiles
+# checkout backing ywata-note-win's agents dir, measured 2026-08-12.
+_START_ACCEPT_SECTION = """
+SACRELOC_DRIFT_PY=$(cat <<'SACRELOCPY'
+import os
+from scitex_agent_container._drift import check_spec_source_drift
+root = os.environ.get("SCITEX_DIR") or os.path.expanduser("~/.scitex")
+s = check_spec_source_drift(os.path.join(root, "agent-container", "agents"))
+print("%s|%d|%d|%s|%s" % (s.state.value, s.behind, s.ahead, s.repo, s.upstream))
+SACRELOCPY
+)
+sacreloc_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 25 "$@"
+  else
+    "$@"
+  fi
+}
+if command -v "$py" >/dev/null 2>&1; then
+  dr=$(sacreloc_bounded "$py" -c "$SACRELOC_DRIFT_PY" 2>/dev/null | tail -1)
+  if [ -n "$dr" ]; then
+    echo "$M startdrift=$dr"
+    dr_repo=$(printf '%s' "$dr" | cut -d'|' -f4)
+    if [ -n "$dr_repo" ] && command -v git >/dev/null 2>&1; then
+      dr_n=$(sacreloc_bounded git -C "$dr_repo" status --porcelain 2>/dev/null | wc -l)
+      echo "$M startdirty=$(printf '%s' "$dr_n" | tr -d ' ')"
+    fi
+  fi
 fi
 """
 

@@ -54,16 +54,17 @@ session inside Apptainer (local or remote via SSH), observe via
 - [08_templates.md](08_templates.md) — six pattern templates
 - [14_claude-session-state.md](14_claude-session-state.md) — state-dir layout, auth precedence
 - [15_claude-session.md](15_claude-session.md) — SDK runner + `POST /v1/turn` inbound
-- [16_claude-session-migration.md](16_claude-session-migration.md) — historical claude-code→SDK migration
+- [16](16_claude-session-migration.md) — historical claude-code→SDK migration
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent
 - [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
 - [33](33_twin-spawning.md) — context-inheriting twin
+- [34](34_spec-is-a-contract-not-state.md) — spec = contract; state = DB
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
 - [11_remote-deploy.md](11_remote-deploy.md) — SSH deployment, src files, venv
-- [12_wsl-connectivity.md](12_wsl-connectivity.md) — WSL connectivity notes
+- [12](12_wsl-connectivity.md) — WSL connectivity notes
 - [24_image-build.md](24_image-build.md) — apptainer `.sif` build/rebuild, rebuild-to-ship gotcha
 - [25_claude-setup-delivery.md](25_claude-setup-delivery.md) — `to_home`→`$HOME`, overlay, settings hook
 - [26_credentials-rotation.md](26_credentials-rotation.md) — OAuth + auth mechanics
@@ -86,7 +87,7 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
-- [40_periodic-drive-consumer.md](40_periodic-drive-consumer.md)
+- [40b](40_periodic-drive-consumer.md)
 - [41](41_claude-worktree-relocation.md)
 
 ## Environment

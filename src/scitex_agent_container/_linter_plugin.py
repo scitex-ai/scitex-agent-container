@@ -83,11 +83,44 @@ def get_plugin():
     # config object before invoking plugin checkers. Once that lands, SAC003
     # can be re-enabled by re-adding it to the returned dict.
 
+    SAC004 = Rule(
+        id="STX-SAC004",
+        # WARNING, not error, on purpose. The rule fires zero times across
+        # sac's own src/ + tests/ today, but plugin rules load into EVERY
+        # repo linted on a machine where sac is installed, and a fleet
+        # precedent stands: a rule shipped at error severity turned 44
+        # repositories red on day one and was restaged to warning the next
+        # day. A warning still surfaces the next occurrence at review time.
+        severity="warning",
+        category="spec-vs-state",
+        message=(
+            "A spec field that may hold a resolve-at-runtime SENTINEL "
+            "(e.g. ``spec.a2a.port: auto``) is returned or passed on as if "
+            "it were a concrete value. A spec is the CONTRACT for an agent "
+            "that has not started yet — it declares a PROMISE here, not a "
+            "fact, so the caller receives the string ``\"auto\"`` and every "
+            "numeric test on it silently fails (ADR-0022 §3)."
+        ),
+        suggestion=(
+            "Read the STATE that a start actually produced: "
+            "``_state.port_allocator.get_port(name)`` for the a2a port "
+            "(the ``a2a_ports`` claim). If this code legitimately handles "
+            "the sentinel, narrow it in this function first — "
+            "``a2a.is_auto`` / ``a2a.is_disabled`` / ``== 'auto'`` / "
+            "``isinstance(port, int)`` — or suppress with "
+            "``# stx-allow: STX-SAC004``."
+        ),
+    )
+
     return {
-        "rules": [SAC001, SAC002],
+        "rules": [SAC001, SAC002, SAC004],
         "call_rules": {},
         "axes_hints": {},
-        "checkers": [_SacCardChecker, _SacMethodChecker],
+        "checkers": [
+            _SacCardChecker,
+            _SacMethodChecker,
+            _SacSpecSentinelChecker,
+        ],
     }
 
 
@@ -183,6 +216,108 @@ class _SacMethodChecker(ast.NodeVisitor):
                 if issue is not None:
                     self.issues.append(issue)
         self.generic_visit(node)
+
+
+#: Spec attribute paths whose declared value may be a resolve-at-runtime
+#: SENTINEL rather than a value. Each entry is ``(parent_attr, attr)`` and
+#: matches any expression ending ``….<parent>.<attr>`` — ``config.a2a.port``,
+#: ``self.config.a2a.port``, ``cfg.a2a.port`` alike.
+#:
+#: KEEP THIS LIST HONEST: a runtime-resolved spec field that is not listed
+#: here is invisible to the rule. ``a2a.port`` is the only one today —
+#: measured on scitex-compute-04 2026-08-11, 0 of 104 registered fleet
+#: specs declare a concrete port (93 ``auto``, 11 ``null``).
+_SENTINEL_FIELDS: frozenset[tuple[str, str]] = frozenset({("a2a", "port")})
+
+#: Substrings whose presence anywhere in the enclosing function means that
+#: function is already sentinel-AWARE, so its reads are deliberate. Kept
+#: coarse on purpose: a false negative (missing a real bug) is far cheaper
+#: than a false positive on correct code, which is how rules get disabled.
+_SENTINEL_NARROWERS: tuple[str, ...] = (
+    "is_auto",
+    "is_disabled",
+    "auto",
+    "isinstance",
+    "resolve_a2a_port",
+    "resolved_a2a_port",
+    "get_port",
+    "claim_port",
+)
+
+
+def _is_sentinel_field(node: ast.AST) -> bool:
+    """True iff *node* is an attribute read of a listed sentinel field."""
+    if not isinstance(node, ast.Attribute):
+        return False
+    parent = node.value
+    if not isinstance(parent, ast.Attribute):
+        return False
+    return (parent.attr, node.attr) in _SENTINEL_FIELDS
+
+
+class _SacSpecSentinelChecker(ast.NodeVisitor):
+    """SAC004 — a sentinel-bearing spec field used as a concrete value.
+
+    Deliberately NARROW. Only two positions are flagged, because only
+    these two make the sentinel escape into code that cannot see where it
+    came from:
+
+    * ``return <x>.a2a.port`` — the value leaves the function.
+    * ``f(<x>.a2a.port)`` / ``f(port=<x>.a2a.port)`` — it becomes someone
+      else's argument.
+
+    A COMPARISON is never flagged (``assert cfg.a2a.port == 7901``,
+    ``if cfg.a2a.port is None``): asserting or branching on what the
+    contract SAYS is the correct way to read a contract, and those are the
+    only reads sac's own tests perform.
+
+    The enclosing function is exempt when it mentions any
+    :data:`_SENTINEL_NARROWERS` token, so resolvers and sentinel-aware
+    branches are silent without needing an allowlist of file paths — which
+    is exactly the plumbing gap that keeps SAC003 deferred.
+    """
+
+    def __init__(self, source_lines, config):
+        self.source_lines = source_lines
+        self.config = config
+        self.issues: list = []
+        self._narrowing_depth = 0
+
+    # -- scope tracking: a sentinel-aware function silences its whole body
+
+    def _visit_scope(self, node) -> None:
+        aware = any(tok in ast.unparse(node) for tok in _SENTINEL_NARROWERS)
+        self._narrowing_depth += 1 if aware else 0
+        self.generic_visit(node)
+        self._narrowing_depth -= 1 if aware else 0
+
+    visit_FunctionDef = _visit_scope
+    visit_AsyncFunctionDef = _visit_scope
+
+    # -- flow-out positions
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if node.value is not None:
+            self._flag(node.value)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for arg in node.args:
+            self._flag(arg)
+        for kw in node.keywords:
+            self._flag(kw.value)
+        self.generic_visit(node)
+
+    def _flag(self, node: ast.AST) -> None:
+        if self._narrowing_depth or not _is_sentinel_field(node):
+            return
+        rule = _get_rule("STX-SAC004")
+        if rule is None:
+            return
+        src = _source_at(self.source_lines, node.lineno)
+        issue = _make_issue(rule, node.lineno, node.col_offset, src)
+        if issue is not None:
+            self.issues.append(issue)
 
 
 # NOTE: _SacEnvChecker (for STX-SAC003) is intentionally not shipped in

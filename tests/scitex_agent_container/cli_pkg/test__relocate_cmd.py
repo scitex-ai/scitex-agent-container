@@ -17,7 +17,10 @@ from __future__ import annotations
 import click
 from click.testing import CliRunner
 
+from scitex_agent_container._lifecycle._residency import current_host
+from scitex_agent_container._state.state_db_relocation import record_residency
 from scitex_agent_container.cli_pkg._relocate_cmd import (
+    _residency_history,
     EXIT_REFUSED,
     EXIT_RETIRED_UNIMPLEMENTED,
     _required_ports,
@@ -333,3 +336,58 @@ def test_the_notice_says_nothing_is_ever_deleted() -> None:
     text = "\n".join(_readiness_notice())
     # Assert
     assert "Nothing is deleted at any point" in text
+
+
+# ---------------------------------------------------------------------------
+# WHERE IT RUNS NOW — the residency table wins over a never-ended instance row
+#
+# Measured 2026-08-12 on scitex-compute-04: `agent_residency` said
+# canary-resume-test lives on ywata-note-win (written by the relocation that
+# moved it there), while an `instances` row on scitex-compute-04 had never been
+# ended. Reading the instance row first made the command answer with the host
+# the agent had LEFT — and a relocation back was then refused with "already
+# recorded on that host — nothing to relocate".
+#
+# The stopped case makes this the NORMAL path rather than an edge one:
+# source_drain requires the agent stopped, a stopped agent has no active
+# instance row at all, and the next fallback is the spec's legacy `host:` which
+# a relocation never updates.
+# ---------------------------------------------------------------------------
+
+
+def test_the_residency_table_answers_where_the_agent_runs() -> None:
+    # Arrange: a relocation's DONE phase wrote this stay.
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert current_host(history) == "ywata-note-win"
+
+
+def test_a_closed_stay_is_carried_too() -> None:
+    # Arrange: two moves, so the history is more than "where is it now".
+    record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert len(history) == 2
+
+
+def test_the_latest_stay_is_the_open_one() -> None:
+    # Arrange
+    record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert current_host(history) == "ywata-note-win"
+
+
+def test_an_agent_the_table_never_heard_of_yields_no_history() -> None:
+    # Arrange: genuinely "the db knows nothing", which is what lets a legacy
+    # spec host: seed it ONCE. An invented answer here would defeat that.
+    # Act
+    history = _residency_history("never-relocated")
+    # Assert
+    assert history == ()

@@ -19,8 +19,10 @@ from __future__ import annotations
 from scitex_agent_container._lifecycle._relocate_origin import RepoWork
 from scitex_agent_container._lifecycle._relocate_preflight import (
     Check,
+    LeaseFacts,
     PreflightReport,
     SourceFacts,
+    SpecSourceDrift,
     TargetFacts,
     preflight,
 )
@@ -28,6 +30,7 @@ from scitex_agent_container._lifecycle._relocate_render import (
     VERDICT_GO,
     VERDICT_REFUSED,
     VERDICT_UNKNOWN,
+    render_coordinator_env,
     render_declared,
     render_dry_run,
     render_observed,
@@ -51,7 +54,26 @@ ALL_GOOD = TargetFacts(
     hub_reachable_from_target=True,
     sac_on_path=True,
     sac_resolved_path="/usr/local/bin/sac",
+    sac_usable_path="/usr/local/bin/sac",
+    preamble_declared=False,
+    spec_source_drift=SpecSourceDrift(state="current", upstream="origin/main"),
 )
+
+#: The lease store READ and holding no row — a real answer that bootstraps, as
+#: distinct from "nobody opened the db", which refuses. Supplied on every render
+#: for the same reason CLEAN_SOURCE is: the RENDERING is what is under test.
+CLEAN_LEASE = LeaseFacts(
+    read=True, lease=None, store="/state/state.db", now=1_786_500_000.0
+)
+
+#: A coordinator whose own environment is complete, so the dry run renders the
+#: report rather than an explanation of what is missing from this container.
+FULL_ENV = {
+    "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
+    "SAC_LISTEN_BEARER": "x",
+    "SAC_NAME": "scitex-agent-container",
+    "SAC_RELOCATE_HUB_ADDR": "hub.example:7878",
+}
 
 #: The source scanned and clean. Supplied on every render so the rendering
 #: itself is what is under test — a report that refuses because nobody scanned
@@ -74,6 +96,7 @@ def _report(facts: TargetFacts, runtime: str = "tui") -> PreflightReport:
         runtime=runtime,
         source_facts=CLEAN_SOURCE,
         from_host="ywata-note-win",
+        lease_facts=CLEAN_LEASE,
     )
 
 
@@ -93,7 +116,7 @@ def test_declared_section_says_it_is_unverified() -> None:
 def test_declared_and_observed_are_separate_sections() -> None:
     # Arrange: collapsing them is the `agents list` defect this guards against.
     # Act
-    text = _text(render_dry_run(_report(ALL_GOOD), declared={"runtime": "tui"}))
+    text = _text(render_dry_run(_report(ALL_GOOD), declared={"runtime": "tui"}, env=FULL_ENV))
     # Assert
     assert text.index("DECLARED") < text.index("OBSERVED")
 
@@ -203,7 +226,7 @@ def test_every_problem_is_listed_not_just_the_first() -> None:
 def test_multiple_failures_produce_a_blocking_section() -> None:
     # Arrange: the summary at the end is what gets pasted into chat.
     # Act
-    text = _text(render_dry_run(_report(THREE_BROKEN)))
+    text = _text(render_dry_run(_report(THREE_BROKEN), env=FULL_ENV))
     # Assert
     assert "BLOCKING" in text
 
@@ -211,7 +234,7 @@ def test_multiple_failures_produce_a_blocking_section() -> None:
 def test_a_clean_run_has_no_blocking_section() -> None:
     # Arrange: a GO must not print an empty scary heading.
     # Act
-    text = _text(render_dry_run(_report(ALL_GOOD)))
+    text = _text(render_dry_run(_report(ALL_GOOD), env=FULL_ENV))
     # Assert
     assert "BLOCKING" not in text
 
@@ -219,7 +242,7 @@ def test_a_clean_run_has_no_blocking_section() -> None:
 def test_the_header_names_both_agent_and_target() -> None:
     # Arrange: a dry run pasted into chat must be unambiguous on its own.
     # Act
-    head = render_dry_run(_report(ALL_GOOD))[0]
+    head = render_dry_run(_report(ALL_GOOD), env=FULL_ENV)[0]
     # Assert
     assert AGENT in head and HOST in head
 
@@ -227,7 +250,7 @@ def test_the_header_names_both_agent_and_target() -> None:
 def test_the_header_says_nothing_was_touched() -> None:
     # Arrange: the whole point of the verb is that it is safe to run.
     # Act
-    head = render_dry_run(_report(ALL_GOOD))[0]
+    head = render_dry_run(_report(ALL_GOOD), env=FULL_ENV)[0]
     # Assert
     assert "nothing was touched" in head
 
@@ -271,7 +294,7 @@ def test_the_executing_header_does_not_claim_nothing_was_touched() -> None:
     # above a report of 3.6 MB moved between two hosts.
     report = _report(ALL_GOOD)
     # Act
-    head = render_dry_run(report, dry_run=False)[0]
+    head = render_dry_run(report, dry_run=False, env=FULL_ENV)[0]
     # Assert
     assert "nothing was touched" not in head
 
@@ -281,7 +304,7 @@ def test_the_executing_header_says_both_hosts_change() -> None:
     # modes they are looking at.
     report = _report(ALL_GOOD)
     # Act
-    head = render_dry_run(report, dry_run=False)[0]
+    head = render_dry_run(report, dry_run=False, env=FULL_ENV)[0]
     # Assert
     assert "EXECUTING" in head
 
@@ -290,6 +313,101 @@ def test_the_header_still_defaults_to_the_dry_run_wording() -> None:
     # Arrange: a caller that forgets the flag must OVER-warn, not under-warn.
     report = _report(ALL_GOOD)
     # Act
-    head = render_dry_run(report)[0]
+    head = render_dry_run(report, env=FULL_ENV)[0]
     # Assert
     assert "DRY RUN" in head
+
+
+# ---------------------------------------------------------------------------
+# COORDINATOR ENVIRONMENT — nine unknowns that are not about the target at all
+#
+# Measured 2026-08-12: a coordinator container started without these four
+# variables cannot reach the listen daemon, so every target fact comes back
+# unobserved at once. An UNKNOWN refuses exactly as hard as a FAIL, so the
+# report reads as a broken relocation rather than a missing environment.
+# ---------------------------------------------------------------------------
+
+
+def test_a_complete_coordinator_environment_prints_nothing() -> None:
+    # Arrange: four lines saying "fine" on every run train the reader to skip
+    # the section on the run where it matters.
+    env = FULL_ENV
+    # Act
+    lines = render_coordinator_env(env)
+    # Assert
+    assert lines == []
+
+
+def test_a_missing_listen_url_is_named() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "UNSET    SAC_LISTEN_BASE_URL" in text
+
+
+def test_a_missing_variable_says_what_it_costs() -> None:
+    # Arrange: naming the variable without naming the consequence leaves the
+    # reader unable to connect it to the unknowns further down the report.
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "NO target fact can be measured" in text
+
+
+def test_the_section_says_an_unmeasured_check_still_refuses() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_NAME": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "REFUSES exactly as firmly" in text
+
+
+def test_a_set_variable_is_not_listed() -> None:
+    # Arrange: only what is missing, so the section is short enough to read.
+    env = {**FULL_ENV, "SAC_RELOCATE_HUB_ADDR": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "SAC_LISTEN_BASE_URL" not in text
+
+
+def test_the_bearer_value_is_never_printed() -> None:
+    # Arrange: a dry run gets pasted into chat windows. Whether it is SET is the
+    # measurement; the token itself must not travel.
+    env = {**FULL_ENV, "SAC_NAME": "", "SAC_LISTEN_BEARER": "s3cret-token-value"}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "s3cret-token-value" not in text
+
+
+def test_the_dry_run_carries_the_section_when_something_is_missing() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_LISTEN_BEARER": ""}
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert "COORDINATOR ENVIRONMENT" in text
+
+
+def test_the_dry_run_omits_the_section_when_nothing_is_missing() -> None:
+    # Arrange
+    env = FULL_ENV
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert "COORDINATOR ENVIRONMENT" not in text
+
+
+def test_the_section_is_printed_before_the_observations_it_explains() -> None:
+    # Arrange: a reader hitting nine unknowns needs the cause above them, not
+    # after they have already concluded the target is broken.
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert text.index("COORDINATOR ENVIRONMENT") < text.index("OBSERVED")

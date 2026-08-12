@@ -5,7 +5,16 @@
 * **Operator rulings**: 「state.db というものは使ってはいけません」/
   「sqlite 使った瞬間負けだと思った方が良いです」/
   「今 5432 を scitex のために使ってるものはすべて間違い」/
-  「今他のホストと連絡が取れてないっていうのはまぁ正常です。正しいです」
+  「今他のホストと連絡が取れてないっていうのはまぁ正常です。正しいです」/
+  2026-08-11, and called universal
+  (「これはどんな時も従うべき話だと思います」):
+  「スペックというのは今動いてるエージェントの状態を表すのではなくて、未来に
+  動くエージェントの規約」/「その状態に関しては必ずデータベースに入れなきゃ
+  いけないし、その起動されたタイミングのスペックというのは、エージェントの中に
+  焼き込まれないといけない情報です」/「スペックは設計書、実際に動いてる
+  エージェントの状況はデータベース」 — recorded in §3 as a fourth class of
+  fact, and as a sac skill
+  (`_skills/scitex-agent-container/34_spec-is-a-contract-not-state.md`).
 * **Consumers**: scitex-agent-container, scitex-cards, scitex-scholar,
   scitex-writer, scitex-plt (figrecipe), scitex-hub, scitex-ui,
   scitex-app —「いろんなパッケージから使う」
@@ -90,12 +99,29 @@ the *diagnostic* improved, the *cause* did not.
 
 ---
 
-## 3. The cut: three kinds of fact, three homes
+## 3. The cut: four kinds of fact, four homes
 
 Not everything in `state.db` is state. Classifying first is what makes
 both the migration and the sync rules small — **and note that each class
 gets a different conflict rule in §5, so this table is not bookkeeping,
 it is the sync design.**
+
+**The classifying question is about TENSE, not about file format.** A
+spec is written in the future tense: it is **the contract for an agent
+that has not started yet**, and it stays a contract for the whole life of
+the process it launched. It is never a description of a running agent.
+The three consequences, per the operator's 2026-08-11 ruling:
+
+1. **Design document → git.** The spec says what an agent *shall* be.
+2. **What is actually true of a running agent → the database** (per-host
+   PostgreSQL on `:55432`, §2).
+3. **What the contract said AT LAUNCH → burned into the agent as a
+   file**, so the agent can answer "how was I actually born" without
+   asking a store, and without being told a later edit's answer.
+
+Piece 3 is a distinct class of fact, not a copy of piece 1: the git-side
+spec is **live and mutable**, and editing it does not retroactively
+change how a running agent was started.
 
 ### CONFIGURATION → files under Git (never synced by us — git is the sync)
 
@@ -121,6 +147,60 @@ That is what makes them safely syncable (§5).
 `instance_heartbeats`, `channel_events`, `dispatches`,
 `relocation_journal`, `verdict_delivered`. Bulk of the bytes, least
 urgent, and the easiest to sync (pure union).
+
+### LAUNCH SNAPSHOT → a file burned into the agent
+
+The spec **as it stood at the moment of launch**, frozen and carried
+inside the agent. Not synced, not mutable, not authoritative about the
+present — it answers exactly one question, and only the agent asks it:
+*how was I actually born?*
+
+It is needed because neither of the other homes can answer it:
+
+* The **git-side spec is live**. Measured on this container: the bound
+  spec dir is `…/agents/scitex-agent-container/`, the same directory the
+  operator edits, and it holds `.old/20260812T190500Z/` and
+  `.old/20260812T222000Z/` — two rewrites of this agent's own spec in one
+  evening. Reading it answers "what would I be if started NOW".
+* The **database holds the present**, not the terms of a past launch.
+
+Deliberately a file, not a row: it must remain readable by an agent whose
+store is unreachable, and it must be immune to the class of bug in §1
+(an answer that changes with where the reader stands).
+
+### The failure this forbids: reading a promise as a fact
+
+A spec field may legitimately declare a **promise to resolve later**.
+Reading such a field as though it were a value yields a sentinel, and a
+sentinel silently fails every numeric or identity test applied to it.
+
+Measured on scitex-compute-04, 2026-08-11 — `spec.a2a.port` across every
+`agents/*/spec.yaml` (107 files, of which 3 are `_template_*` scaffolds,
+so **104 real agent specs**):
+
+| what the spec declares | agents |
+|---|---|
+| `port: auto` | 93 |
+| `port: null` (sidecar deliberately off) | 11 |
+| **a concrete int** | **0** |
+
+The near-miss, same night: the tui turn-bridge supervisor (PR #973) must
+know which port an agent's bridge should serve. Had it read
+`config.a2a.port`, it would have received the literal string `"auto"`,
+found no number, concluded there was nothing to supervise, and supervised
+**nothing — on every agent in the fleet**, while reporting healthy. It
+reads the port allocator's **claim** instead (`a2a_ports`, which is
+state): `sac agents list scitex-agent-container` answers `19016`, a fact
+that exists only because a start already happened.
+
+`session_id` is the same split and is not yet resolved: what a spec
+declares (`session: continue` / `fresh`) is a promise about how to
+resume; *which conversation actually resumed* is state. Card
+`sac-pin-session-id-at-start-removes-f34-20260812` tracks it.
+
+**The rule, stated so it can be applied without this ADR in hand:** if
+answering a question requires knowing that a start has already happened,
+the spec cannot answer it. Ask the database.
 
 ---
 
@@ -365,3 +445,43 @@ spec path is exercised through the real
 9. **`~/.scitex/agent-container/runtime/state.db` on ywata-note-win is
    untouched**, deliberately: nine remaining relocations read it.
 10. **Six of the eight named consumers are unsurveyed.**
+11. **The launch snapshot (§3) is specified, not implemented.** No file
+    is burned into an agent today. What a container can read is the LIVE
+    spec dir, bind-mounted at `$SCITEX_AGENT_CONTAINER_YAML_DIRS` — so an
+    agent asking "how was I born" currently gets "how you would be born
+    if started now". Design constraints when it is built: written once at
+    start, never rewritten, readable with the store unreachable, and
+    carrying the RESOLVED values (the claimed port, not `auto`) beside
+    the declared ones.
+12. **`session_id` is not pinned at start.** `sac agents list <name>` can
+    report `session_id: null` for an agent with a live session — the
+    promise is recorded, the fact is not. Card
+    `sac-pin-session-id-at-start-removes-f34-20260812`.
+13. **The mechanical check is deliberately narrow, and the general rule
+    is NOT mechanised.** `STX-SAC004` (this package's linter plugin,
+    severity *warning*) fires only when a listed sentinel-bearing spec
+    field is `return`ed or passed as a call argument without the
+    enclosing function narrowing the sentinel; `_SENTINEL_FIELDS` holds
+    exactly one entry (`a2a.port`). Comparisons are not flagged —
+    asserting what a contract says is the correct way to read one.
+    "This code is reading a spec to learn a running agent's state" is not
+    mechanically decidable, and a rule that fired on every `config.`
+    access would be noise; the fleet has a precedent for what happens
+    then (a rule shipped at error severity turned 44 repositories red on
+    day one and was restaged to warning the next day). A new
+    resolve-at-runtime field is invisible to the rule until it is added
+    to that list.
+14. **The spec header is emitted by the GENERATORS only.** Every spec
+    scaffolded by `sac agents create` (minimal + full) and by the
+    contributor renderer now opens with two lines — "this is a design
+    document / a running agent's state lives in the database". The 113
+    specs already on disk are NOT swept by this change, the operator's
+    `_template_*/` dir-templates live outside this repo, and nothing
+    enforces the header's presence: a YAML comment is not schema, and
+    making it one would turn a note for humans into a validator's
+    business. Accepted — its audience is a person with the file open.
+    The three `_template_*/` dir-templates on scitex-compute-04 were
+    given the header by hand (backups under
+    `~/.scitex/agent-container/.old/20260811T235819Z/dir-templates/` with
+    a manifest); the remaining 104 are carded as
+    `sac-sweep-design-doc-header-into-existing-specs-20260812`.
