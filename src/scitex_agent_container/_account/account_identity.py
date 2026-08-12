@@ -37,12 +37,19 @@ from .claude_usage import (
 _PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
 
 
-def _fetch_email_from_api(access_token: str, *, opener=None) -> str | None:
-    """GET the OAuth profile and return ``account.email``, or None on failure.
+def _fetch_identity_from_api(
+    access_token: str, *, opener=None
+) -> tuple[str | None, str | None]:
+    """GET the OAuth profile; return ``(account.email, account.uuid)``.
+
+    The UUID is the STRONGEST identity the endpoint exposes and the only one
+    that survives a display-name or email change, so duplicate detection keys
+    off it in preference to the email. Either element is ``None`` when the
+    response omits it; ``(None, None)`` on any failure.
 
     Best-effort: every failure mode (network error, non-2xx, non-JSON body,
-    unexpected shape) collapses to ``None``. The token is used only to build
-    the ``Authorization`` header here and never leaves the function.
+    unexpected shape) collapses to ``(None, None)``. The token is used only
+    to build the ``Authorization`` header here and never leaves the function.
     """
     req = urllib.request.Request(
         _PROFILE_URL,
@@ -62,17 +69,24 @@ def _fetch_email_from_api(access_token: str, *, opener=None) -> str | None:
             raw = resp.read()
         payload = json.loads(raw)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        return None
+        return None, None
 
     if not isinstance(payload, dict):
-        return None
+        return None, None
     account = payload.get("account")
     if not isinstance(account, dict):
-        return None
+        return None, None
     email = account.get("email")
-    if isinstance(email, str) and email.strip():
-        return email.strip()
-    return None
+    uuid = account.get("uuid")
+    return (
+        email.strip() if isinstance(email, str) and email.strip() else None,
+        uuid.strip() if isinstance(uuid, str) and uuid.strip() else None,
+    )
+
+
+def _fetch_email_from_api(access_token: str, *, opener=None) -> str | None:
+    """``_fetch_identity_from_api`` narrowed to the email (back-compat)."""
+    return _fetch_identity_from_api(access_token, opener=opener)[0]
 
 
 def fetch_account_email(credentials_path: Path, *, opener=None) -> str | None:
@@ -95,10 +109,29 @@ def fetch_account_email(credentials_path: Path, *, opener=None) -> str | None:
     Returns:
         The account email string, or ``None`` on any failure/offline path.
     """
+    return fetch_account_identity(credentials_path, opener=opener)[0]
+
+
+def fetch_account_identity(
+    credentials_path: Path, *, opener=None
+) -> tuple[str | None, str | None]:
+    """Return ``(email, account_uuid)`` for the token in ``credentials_path``.
+
+    The full-identity form of :func:`fetch_account_email`. Callers that need
+    to answer "are these two stored accounts the SAME Anthropic account?"
+    must compare the UUID: two DIFFERENT tokens can authenticate as one
+    account (measured 2026-08-12 — two store directories held distinct
+    tokens whose profiles returned the same ``account.uuid``), so a token
+    fingerprint is NOT an account identity and comparing fingerprints
+    reports "distinct" for a genuine duplicate.
+
+    Same contract as :func:`fetch_account_email`: reads the token internally,
+    never returns it, never raises, ``(None, None)`` on any failure.
+    """
     access_token, _, _, _ = _read_tokens_at(Path(credentials_path))
     if not access_token:
-        return None
-    return _fetch_email_from_api(access_token, opener=opener)
+        return None, None
+    return _fetch_identity_from_api(access_token, opener=opener)
 
 
-__all__ = ["fetch_account_email"]
+__all__ = ["fetch_account_email", "fetch_account_identity"]

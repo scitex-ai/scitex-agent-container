@@ -122,12 +122,12 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
-    # The richer LOUD audit lives in ``_workdir_audit`` so the same code
+    # The richer LOUD audit lives in ``_workdir._audit`` so the same code
     # surface is reused by ``sac agents status --workdir-audit`` and the
     # ``sac agents prune-claude`` CLI. ``audit_workdir_claude`` walks once,
     # collects both byte size + file count, and reports per-subdir bloat
     # sources so the operator sees exactly which directory to prune.
-    from .._workdir_audit import audit_workdir_claude
+    from .._workdir import audit_workdir_claude
 
     audit = audit_workdir_claude(workdir)
     # Fire on EITHER:

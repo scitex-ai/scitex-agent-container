@@ -1,17 +1,17 @@
-"""Concrete :class:`ProviderSession` backed by the ``openai-agents`` SDK.
+"""Concrete :class:`HarnessSession` backed by the ``openai-agents`` SDK.
 
 scitex-todo card ``openai-compat-2`` — the first concrete implementation
-of the openai-compat-1 Protocol (see :mod:`_runners._provider_session`
+of the openai-compat-1 Protocol (see :mod:`_runners._harness_session`
 for the shape rationale). Wires:
 
-* :class:`~._provider_session.ToolSpec` → ``agents.FunctionTool``
+* :class:`~._harness_session.ToolSpec` → ``agents.FunctionTool``
   (:func:`tool_spec_to_function_tool` — a near-direct field mapping, as
   the ToolSpec docstring predicted).
 * ``Runner.run_streamed()`` → an async generator of
-  :class:`~._provider_session.NormalizedEvent`
-  (:func:`normalize_stream_event` + :meth:`OpenAISession.send`).
+  :class:`~._harness_session.NormalizedEvent`
+  (:func:`normalize_stream_event` + :meth:`OpenAIAgentsSession.send`).
 * ``SQLiteSession`` for conversation state (multi-turn memory across
-  :meth:`OpenAISession.send` calls; placement via
+  :meth:`OpenAIAgentsSession.send` calls; placement via
   :func:`runtimes._openai_sdk_common.resolve_state_db_path`).
 * Per-turn spend recording into the ledger of
   :mod:`_account.openai_usage` (spend-based tracking — best-effort,
@@ -19,8 +19,8 @@ for the shape rationale). Wires:
 
 The ``openai-agents`` dependency is OPTIONAL (``pip install
 scitex-agent-container[openai]``). This module imports it LAZILY inside
-:meth:`OpenAISession.start` / :func:`tool_spec_to_function_tool` —
-importing the module (and constructing :class:`OpenAISession`) works on
+:meth:`OpenAIAgentsSession.start` / :func:`tool_spec_to_function_tool` —
+importing the module (and constructing :class:`OpenAIAgentsSession`) works on
 Claude-only deployments; only actually OPENING a session requires the
 SDK. :func:`normalize_stream_event` is deliberately duck-typed on the
 SDK's own ``type`` / ``name`` string discriminators (stable public
@@ -50,11 +50,11 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
-from ._provider_session import Message, NormalizedEvent, RunResult, ToolSpec
+from ._harness_session import Message, NormalizedEvent, RunResult, ToolSpec
 
 __all__ = [
     "OpenAISessionError",
-    "OpenAISession",
+    "OpenAIAgentsSession",
     "tool_spec_to_function_tool",
     "normalize_stream_event",
     "usage_as_dict",
@@ -100,7 +100,7 @@ def _import_agents() -> Any:
 
 
 def tool_spec_to_function_tool(spec: ToolSpec) -> Any:
-    """Convert a provider-agnostic :class:`ToolSpec` into ``agents.FunctionTool``.
+    """Convert a harness-agnostic :class:`ToolSpec` into ``agents.FunctionTool``.
 
     Field mapping: ``name`` → ``name``, ``description`` → ``description``,
     ``parameters`` → ``params_json_schema`` (defaulted to an empty object
@@ -178,7 +178,7 @@ def _reasoning_text(item: Any) -> str:
 def normalize_stream_event(event: Any) -> NormalizedEvent | None:
     """Map one ``openai-agents`` stream event to a :class:`NormalizedEvent`.
 
-    Returns ``None`` for events with no provider-agnostic meaning (raw
+    Returns ``None`` for events with no harness-agnostic meaning (raw
     protocol deltas other than text, assembled-message duplicates,
     unknown future kinds) — callers drop those. Pure and duck-typed on
     the SDK's own ``type`` / ``name`` Literal discriminators, so it
@@ -277,8 +277,8 @@ def _run_result_from_streamed(
 # ---------------------------------------------------------------------------
 
 
-class OpenAISession:
-    """:class:`ProviderSession` implementation over ``openai-agents``.
+class OpenAIAgentsSession:
+    """:class:`HarnessSession` implementation over ``openai-agents``.
 
     Lifecycle mirrors the Protocol (and the production ``ClaudeSDKClient``
     loop it was modelled on): one :meth:`start` (auth + ``Agent`` +
@@ -336,7 +336,7 @@ class OpenAISession:
         self._session: Any = None
         self._started = False
 
-    # -- ProviderSession surface ----------------------------------------
+    # -- HarnessSession surface ----------------------------------------
 
     async def start(self) -> None:
         """Open the session: auth, tool conversion, ``Agent`` + ``SQLiteSession``.
@@ -382,7 +382,7 @@ class OpenAISession:
         instead (per the Protocol docstring both are turn-ending).
         """
         if not self._started:
-            raise OpenAISessionError("OpenAISession.send() called before start().")
+            raise OpenAISessionError("OpenAIAgentsSession.send() called before start().")
         agents = _import_agents()
 
         joined: list[str] = []

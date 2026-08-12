@@ -139,12 +139,31 @@ def test_ghost_active_row_names_the_corpse_signature():
     assert decision.reason == "ghost-active-row"
 
 
-@pytest.mark.parametrize("reason", ["crashed", "reboot-swept"])
+@pytest.mark.parametrize(
+    "reason", ["pid_absent_at_sweep", "crashed", "reboot-swept"]
+)
 def test_unexpected_exit_reason_is_restarted(reason):
-    # Arrange — the reaper wrote 'crashed'; the reboot sweep wrote
-    # 'reboot-swept'. Neither is a human deciding to stop the agent.
+    # Arrange — the reaper writes 'pid_absent_at_sweep' (and wrote 'crashed'
+    # before 2026-08-12); the reboot sweep wrote 'reboot-swept'. None of them
+    # is a human deciding to stop the agent.
     # Act
     decision = _decide(row=_row(ended_at="2026-07-16T00:00:00Z", exit_reason=reason))
+    # Assert
+    assert decision.verdict is Verdict.RESTART
+
+
+def test_legacy_crashed_rows_are_still_recognised_as_corpses():
+    """Rows written before the rename must not become unclassifiable.
+
+    Live databases hold them — eleven on the fleet host the day this landed.
+    Dropping the old spelling would send every one of them down the
+    "an exit_reason this rule does not know" path, which refuses to act, so
+    real corpses would silently stop being recoverable.
+    """
+    # Arrange
+    row = _row(ended_at="2026-07-16T00:00:00Z", exit_reason="crashed")
+    # Act
+    decision = _decide(row=row)
     # Assert
     assert decision.verdict is Verdict.RESTART
 

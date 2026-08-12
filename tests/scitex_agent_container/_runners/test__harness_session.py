@@ -1,7 +1,7 @@
-"""Tests for ``_runners/_provider_session.py`` (openai-compat-1 foundation).
+"""Tests for ``_runners/_harness_session.py`` (openai-compat-1 foundation).
 
 Covers the four dataclasses (``ToolSpec``, ``Message``, ``NormalizedEvent``,
-``RunResult``) and the ``ProviderSession`` Protocol. No mocks — the
+``RunResult``) and the ``HarnessSession`` Protocol. No mocks — the
 Protocol is exercised against a REAL, hand-written implementation
 (``_FakeSession``, mirroring the ``_ScriptedClient`` pattern in
 ``tests/.../test__session_turn.py``), proving the shape is actually
@@ -22,10 +22,10 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator
 
-from scitex_agent_container._runners._provider_session import (
+from scitex_agent_container._runners._harness_session import (
     Message,
     NormalizedEvent,
-    ProviderSession,
+    HarnessSession,
     RunResult,
     ToolSpec,
 )
@@ -235,12 +235,12 @@ def test_normalized_event_terminal_result_kind_carries_run_result():
 
 
 # ---------------------------------------------------------------------------
-# ProviderSession Protocol — exercised against a REAL implementation
+# HarnessSession Protocol — exercised against a REAL implementation
 # ---------------------------------------------------------------------------
 
 
 class _FakeSession:
-    """A real, minimal ``ProviderSession`` implementation for shape-testing.
+    """A real, minimal ``HarnessSession`` implementation for shape-testing.
 
     Mirrors the ``_ScriptedClient`` pattern in
     ``tests/.../_runners/test__session_turn.py`` — a hand-written stand-in,
@@ -268,27 +268,27 @@ class _FakeSession:
         self.closed = True
 
 
-def test_fake_session_satisfies_provider_session_isinstance_check():
+def test_fake_session_satisfies_harness_session_isinstance_check():
     # Arrange
     session = _FakeSession()
     # Act
-    conforms = isinstance(session, ProviderSession)
+    conforms = isinstance(session, HarnessSession)
     # Assert
     assert conforms is True
 
 
-def test_plain_object_does_not_satisfy_provider_session_isinstance_check():
+def test_plain_object_does_not_satisfy_harness_session_isinstance_check():
     # Arrange
     class _NotASession:
         pass
 
     # Act
-    conforms = isinstance(_NotASession(), ProviderSession)
+    conforms = isinstance(_NotASession(), HarnessSession)
     # Assert
     assert conforms is False
 
 
-def test_provider_session_start_sets_started_flag():
+def test_harness_session_start_sets_started_flag():
     # Arrange
     async def _go() -> bool:
         session = _FakeSession()
@@ -301,7 +301,7 @@ def test_provider_session_start_sets_started_flag():
     assert started is True
 
 
-def test_provider_session_close_sets_closed_flag():
+def test_harness_session_close_sets_closed_flag():
     # Arrange
     async def _go() -> bool:
         session = _FakeSession()
@@ -325,7 +325,7 @@ def _drive_one_turn() -> list[NormalizedEvent]:
     return asyncio.run(_go())
 
 
-def test_provider_session_send_yields_text_delta_events_in_order():
+def test_harness_session_send_yields_text_delta_events_in_order():
     # Arrange
     # Act
     events = _drive_one_turn()
@@ -333,7 +333,7 @@ def test_provider_session_send_yields_text_delta_events_in_order():
     assert [e.text for e in events if e.kind == "text_delta"] == ["hel", "lo"]
 
 
-def test_provider_session_send_terminates_with_result_kind():
+def test_harness_session_send_terminates_with_result_kind():
     # Arrange
     # Act
     events = _drive_one_turn()
@@ -341,7 +341,7 @@ def test_provider_session_send_terminates_with_result_kind():
     assert events[-1].kind == "result"
 
 
-def test_provider_session_terminal_event_carries_run_result_text():
+def test_harness_session_terminal_event_carries_run_result_text():
     # Arrange
     # Act
     events = _drive_one_turn()
@@ -349,7 +349,7 @@ def test_provider_session_terminal_event_carries_run_result_text():
     assert events[-1].result.text == "hello"
 
 
-def test_provider_session_terminal_event_carries_session_id():
+def test_harness_session_terminal_event_carries_session_id():
     # Arrange
     # Act
     events = _drive_one_turn()

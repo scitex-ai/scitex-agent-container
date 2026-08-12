@@ -1,65 +1,22 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
-# Timestamp: "2026-08-12 (OP-PRIO-FMT rule 2, tightened)"
+# Timestamp: "2026-08-12 (OP-PRIO-FMT rule 2 — thin adapter over _telegram_rules.py)"
 # File: ~/.claude/hooks/pre-tool-use/enforce_telegram_no_bare_issue.sh
 #
-# OP-PRIO-FMT rule 2 (operator 2026-06-09, TIGHTENED 2026-08-11): a
-# Telegram message MUST NOT carry an issue/PR number the operator
-# cannot read. He reads on a phone: he cannot follow a link, and the
-# number alone tells him nothing about what changed.
+# THIS FILE IS AN ADAPTER, NOT A RULE. The rule — every ``#NNN`` needs a
+# parenthetical description — and the refusal wording both live in the
+# sibling module ``_telegram_rules.py``, because the operator asked for
+# exactly one place (2026-08-12):
 #
-#   2026-08-11 「それだと何が何だか私にとってはわからないので、必ず
-#   中身を私がわかるようにディスクリプティブな説明をつけて欲しい」
-#   ... and the format, in his words: 「ナンバーの後に ( をつけて説明
-#   する、っていうのをルールにしてください」
+#   「mcp も同じですね。同じルールなので、ルールは一つの場所に、
+#     shell 用の hook と mcp のフィルタで同じルールを適用させて
+#     ssot に、が良いかと」
 #
-# WHY THIS WAS REWRITTEN. The 2026-06-09 implementation only blocked a
-# message that reduced ENTIRELY to bare ``#NNN`` tokens. A number
-# embedded in a sentence — the overwhelmingly common case — passed
-# untouched. On 2026-08-11 an agent sent a line containing ``#970`` with
-# no description, it went through, and the operator asked why the rule
-# was not enforced. That is the recurring fleet shape: A GUARD WHOSE
-# TRIGGER CONDITION IS NARROWER THAN ITS STATED RULE READS AS
-# ENFORCEMENT WHILE ENFORCING ALMOST NOTHING.
-#
-# THE RULE NOW ENFORCED. Every ``#NNN`` token anywhere in the message
-# must be immediately followed by a parenthetical description. Both the
-# ASCII ``(`` and the full-width ``（`` are accepted — the operator
-# writes Japanese and a Japanese IME produces the full-width form. A
-# single run of spaces/tabs/ideographic-space between the number and the
-# paren is allowed, and the parenthetical must hold at least one
-# non-space character (``#970 ()`` describes nothing).
-#
-#   #970（グループ判定がスペックを読む）    accept
-#   #970 (group authority reads the spec)   accept
-#   #970 の話ではなく…                      REFUSE
-#   …見つかった #578、これは…                REFUSE
-#
-# THREE DELIBERATE DECISIONS (documented so a reader can disagree with
-# the choice rather than guess whether it was one):
-#
-#   1. URLs ARE NOT REFERENCES. A link is blanked out before scanning,
-#      so ``…/pull/970`` (a path segment, no ``#`` at all) and a real
-#      ``#`` fragment such as ``…/pull/970#issuecomment-123`` or
-#      ``…/page#123`` never trip the rule. The operator cannot follow a
-#      link on his phone either, but a URL is not a token pretending to
-#      be a description — it is self-evidently a link, and rewriting it
-#      is not what he asked for. Blanking preserves offsets (NUL fill)
-#      so the refusal can still quote the right part of the message.
-#
-#   2. A REPEATED REFERENCE INHERITS THE FIRST DESCRIPTION. If ``#970
-#      (…)`` is described once, a later bare ``#970`` in the SAME
-#      message is accepted. The rule exists so the operator can read the
-#      message and know what the number means; once the description is
-#      on the page he is already reading, demanding it again would force
-#      padding like ``#970（同じPR）`` — exactly the unreadable noise the
-#      rule was written to remove. The allowance is strictly
-#      LEFT-TO-RIGHT, because he reads top to bottom: a bare ``#970``
-#      BEFORE its description is still refused.
-#
-#   3. A REPO NAME IS NOT A DESCRIPTION. ``scitex-dev #578`` is refused
-#      exactly like a naked ``#578``; ``owner/repo#578`` likewise. The
-#      repo says where to look, not what happened.
+# So: read the rule, its five documented decisions and the operator
+# quotes that justify them in ``_telegram_rules.py``. Do not add
+# judgement here — a second copy of the rule is the failure being
+# designed against, since a message blocked on one path and allowed on
+# the other is how a bare number reaches him anyway.
 #
 # Fires on: tool_name matches the matcher in settings.local.json (must
 # be the FQ mcp__claude-code-telegrammer__reply name — operator
@@ -69,6 +26,9 @@
 
 set -u
 [[ "${CC_ALLOW_BARE_ISSUE:-}" == "1" ]] && exit 0
+
+_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_RULES="${_HERE}/_telegram_rules.py"
 
 if [[ "${1:-}" == "--self-test" ]]; then
     echo "=== Self-test: $(basename "$0") ==="
@@ -111,6 +71,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
         "調べていて見つかった #578、これはまだ直っていません" 2
     run "trailing          fix #162                               -> block" "$T" "fix #162" 2
     run "leading + prose   #162 figrecipe caption                 -> block" "$T" "#162 figrecipe caption" 2
+    run "no-space CJK      #970の話ではなく                        -> block" "$T" "#970の話ではなく" 2
 
     # --- cross-repo: the repo name is not a description ---------------
     run "cross-repo bare   scitex-dev #578                        -> block" "$T" "scitex-dev #578" 2
@@ -134,6 +95,23 @@ if [[ "${1:-}" == "--self-test" ]]; then
     run "url cannot supply the paren across the blank             -> block" "$T" \
         "#970 https://e.com/x (説明)" 2
 
+    # --- hex colours are not references (decision 4) ------------------
+    run "hex colour 6      #589abc                                -> allow" "$T" "#589abc" 0
+    run "hex colour 3      #fff                                   -> allow" "$T" "#fff" 0
+    run "hex colour prose  use #589abc for the border             -> allow" "$T" \
+        "use #589abc for the border" 0
+    run "hex colour upper  #58ABCD                                -> allow" "$T" "#58ABCD" 0
+    run "html entity       a dash &#8212; here                    -> allow" "$T" \
+        "a dash &#8212; here" 0
+
+    # --- code is data, not prose (decision 5) -------------------------
+    run "inline code span  the token \`#589\` is data              -> allow" "$T" \
+        "the token \`#589\` is data here" 0
+    run "fenced block      \`\`\`\\n#589\\n\`\`\`                        -> allow" "$T" \
+        "$(printf 'see below\n```\n#589\n```')" 0
+    run "code cannot supply the paren across the blank            -> block" "$T" \
+        "$(printf '#970 `x` (説明)')" 2
+
     # --- repeat: first occurrence carries it, later ones inherit ------
     run "repeat described-then-bare                               -> allow" "$T" \
         "#970（グループ判定の修正）を出した。#970 のCIは緑" 0
@@ -154,6 +132,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
 
     # --- not a reference at all ---------------------------------------
     run "markdown heading  '# 970 title'                          -> allow" "$T" "# 970 title" 0
+    run "markdown heading  '## 5 things'                          -> allow" "$T" "## 5 things" 0
     run "prose only        we are looking at issue                -> allow" "$T" "we are looking at issue" 0
     run "non-telegram      Bash tool ignored                      -> allow" "Bash" "#162" 0
     run "empty text                                               -> allow" "$T" "" 0
@@ -174,74 +153,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
     [[ "$fail" == "0" ]] && exit 0 || exit 1
 fi
 
-exec python3 -c '
-import json
-import re
-import sys
+# FAIL-OPEN if the rule module is missing: a hook that cannot find its
+# rule must not block every message the operator is waiting on. The
+# pytest at tests/integration/telegram_hooks/ pins that they ship
+# together, so a missing module is a packaging bug caught in CI, not
+# something to discover here at send time.
+[[ -f "$_RULES" ]] || exit 0
 
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-tool = data.get("tool_name", "")
-if "claude-code-telegrammer__reply" not in tool:
-    sys.exit(0)
-text = (data.get("tool_input", {}) or {}).get("text", "") or ""
-if not isinstance(text, str) or not text:
-    sys.exit(0)   # FAIL-OPEN: an unexpected payload shape is not a violation
-
-# Blank every URL to NULs before scanning. NUL (not space) so a link can
-# never bridge a number to a parenthesis that follows it, and same-length
-# so offsets into the ORIGINAL text stay valid for the excerpt.
-URL = re.compile(r"(?:https?://|ftp://|www\.)\S+", re.IGNORECASE)
-scan = URL.sub(lambda m: "\x00" * len(m.group(0)), text)
-
-REFERENCE = re.compile(r"#(\d+)")
-# ...immediately followed by (optional horizontal space then) an opening
-# paren, ASCII or full-width, holding at least one non-space character.
-DESCRIBED = re.compile(r"[ \t　]*[(（][ \t　]*[^\s)）]")
-
-described = set()
-offender = None
-for match in REFERENCE.finditer(scan):
-    number = match.group(1)
-    if DESCRIBED.match(scan, match.end()):
-        described.add(number)      # this occurrence carries its description
-        continue
-    if number in described:
-        continue                   # described earlier in this same message
-    offender = match
-    break
-
-if offender is None:
-    sys.exit(0)
-
-token = "#" + offender.group(1)
-start = max(0, offender.start() - 24)
-end = min(len(text), offender.end() + 24)
-excerpt = " ".join(text[start:end].split())
-if start > 0:
-    excerpt = "..." + excerpt
-if end < len(text):
-    excerpt = excerpt + "..."
-
-sys.stderr.write(
-    "BLOCKED by enforce_telegram_no_bare_issue.sh: the message contains "
-    f"{token}, which is not followed by a description.\n\n"
-    f"  found: {excerpt}\n\n"
-    "The operator reads on a phone. He cannot follow a link, and a bare "
-    "number tells him nothing about what changed. His rule, 2026-08-11: "
-    "put a parenthesis after the number and explain inside it.\n\n"
-    f"  required:  {token}(what it is)   or   {token}（中身の説明）\n"
-    f"  you wrote: {token}\n"
-    f"  fix it to: {token}（グループ判定がスペック"
-    "を読む問題を修正）\n\n"
-    "Both ( and （ are accepted. A repo name is not a description "
-    "(scitex-dev #578 still needs one). Once a number is described, "
-    "later mentions of that SAME number in this message are fine. URLs "
-    "are exempt.\n\n"
-    "Rare one-off override: set env CC_ALLOW_BARE_ISSUE=1.\n"
-)
-sys.exit(2)
-'
-exit $?
+exec python3 "$_RULES" --hook-json
