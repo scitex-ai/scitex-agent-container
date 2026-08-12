@@ -57,7 +57,6 @@ same contract :mod:`._cct_token_pool` already keeps.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
