@@ -58,9 +58,23 @@ MANAGED_POLICIES = ("always", "on-failure")
 #: operator's intent — never second-guess it, never "helpfully" undo it.
 DELIBERATE_EXIT_REASONS = ("stopped", "deleted")
 
-#: ``exit_reason`` values that mean it DIED without being asked to: the
-#: reaper writes ``crashed``, the host-reboot sweep writes ``reboot-swept``.
-UNEXPECTED_EXIT_REASONS = ("crashed", "reboot-swept")
+#: ``exit_reason`` values that mean it ENDED without being asked to: the
+#: reaper writes ``pid_absent_at_sweep``, the host-reboot sweep writes
+#: ``reboot-swept``.
+#:
+#: ``crashed`` is the reaper's PRE-2026-08-12 spelling and is listed because
+#: databases still hold those rows — dropping it would silently reclassify
+#: every existing corpse as "an exit_reason this rule does not know" and
+#: strand it. Both spellings are the same observation.
+#:
+#: Note what this category actually licenses. ``pid_absent_at_sweep`` says
+#: only that a pid was gone when a sweep looked; it does NOT establish a
+#: crash, and the row's ``ended_at`` is the sweep's clock rather than a time
+#: of death. That is sufficient here — this rule additionally requires no live
+#: tmux session before it acts, so the exit_reason is a corroborating signal
+#: and never the sole one — but it is not sufficient to tell anyone WHY an
+#: agent ended, and nothing downstream should read it that way.
+UNEXPECTED_EXIT_REASONS = ("pid_absent_at_sweep", "crashed", "reboot-swept")
 
 #: ``exit_reason`` values that are sac's own internal bookkeeping rather
 #: than a statement about the agent's fate. Not a corpse to resurrect: a
