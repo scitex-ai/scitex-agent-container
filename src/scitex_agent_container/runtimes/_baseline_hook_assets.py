@@ -55,6 +55,7 @@ report that it cannot send. So:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -281,9 +282,22 @@ def _displace(dst: Path, stamp: str) -> None:
     payload = None if dst.is_symlink() else dst.read_bytes()
     if _already_displaced(attic_root, dst.name, payload):
         return
-    attic = attic_root / stamp
+    # The directory carries the content digest as well as the timestamp. The
+    # stamp alone is per-SECOND, so two DISTINCT versions displaced inside the
+    # same second would land on the same path and the second copy2 would
+    # overwrite the first — silently destroying the older one, which is exactly
+    # what "nothing is deleted" forbids. Caught by
+    # test_a_genuinely_different_prior_version_is_still_kept.
+    digest = _digest(dst, payload)
+    attic = attic_root / f"{stamp}-{digest}"
     attic.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dst, attic / dst.name, follow_symlinks=False)
+
+
+def _digest(dst: Path, payload: "bytes | None") -> str:
+    """Short content digest of ``dst`` — of the link TARGET for a symlink."""
+    raw = os.readlink(dst).encode() if payload is None else payload
+    return hashlib.sha256(raw).hexdigest()[:12]
 
 
 def _deploy_one(src: Path, dst_dir: Path, stamp: str) -> str:
