@@ -1,10 +1,17 @@
-"""Tests for the runner-compliance read behind ``sac ci runners``.
+"""Tests for the runner read behind ``sac ci runners``.
 
-The regression these exist for: a job can be GREEN and still have run on
-banned hardware, because the run was queued before the repo was repointed.
-Status is therefore not the signal — ``runner_name`` is. The ``run_gh``
-injection seam (the same one ``_ci_why`` tests use) stands in for the network.
-AAA, one assertion per test.
+Two regressions these exist for:
+
+1. A job can be GREEN and still have run somewhere nobody expected, because the
+   run was queued before the repo was repointed. Status is not the signal;
+   ``runner_name`` is.
+2. The first version of this module hardcoded ``BANNED_RUNNER_SUBSTRINGS =
+   ("spartan",)``. That host ban was repealed the next day, which would have
+   left a tool failing sanctioned runs. So the DEFAULT must gate nothing, and
+   policy must come from the caller.
+
+The ``run_gh`` injection seam (the same one ``_ci_why`` tests use) stands in for
+the network. AAA, one assertion per test.
 """
 
 from __future__ import annotations
@@ -16,9 +23,8 @@ import pytest
 from scitex_agent_container.cli_pkg._ci_runners import (
     JobRunner,
     RunRunners,
-    ambiguous_labels,
     audit,
-    is_banned,
+    matches_any,
     render_text,
     resolve_all_run_ids,
     run_job_runners,
@@ -49,85 +55,137 @@ def _job(name="j", runner="scitex-01-org-cpu-01", labels=None, conclusion="succe
     }
 
 
-def test_is_banned_matches_a_spartan_runner_name():
+def test_matches_any_is_case_insensitive_on_a_substring():
     # Arrange
-    name = "spartan-cpu-org-01"
+    name = "Spartan-CPU-org-01"
     # Act
-    result = is_banned(name)
+    result = matches_any(name, ["spartan"])
     # Assert
     assert result is True
 
 
-def test_is_banned_is_false_for_a_compliant_runner():
+def test_matches_any_is_false_when_nothing_matches():
     # Arrange
     name = "scitex-03-org-cpu-01"
     # Act
-    result = is_banned(name)
+    result = matches_any(name, ["spartan"])
     # Assert
     assert result is False
 
 
-def test_is_banned_is_false_when_the_runner_is_unassigned():
+def test_matches_any_is_false_for_an_unassigned_runner():
     # Arrange: a queued job has no runner yet
     name = None
     # Act
-    result = is_banned(name)
-    # Assert: absence must not read as a violation
+    result = matches_any(name, ["spartan"])
+    # Assert: absence of a host is not evidence about which host
     assert result is False
 
 
-def test_ambiguous_labels_flags_scitex_ci():
-    # Arrange
-    labels = ["self-hosted", "scitex-ci"]
-    # Act
-    result = ambiguous_labels(labels)
-    # Assert
-    assert result == ["scitex-ci"]
-
-
-def test_ambiguous_labels_is_empty_for_an_unambiguous_selector():
-    # Arrange
-    labels = ["self-hosted", "scitex-org-cpu"]
-    # Act
-    result = ambiguous_labels(labels)
-    # Assert
-    assert result == []
-
-
-def test_a_green_job_on_a_banned_runner_is_a_violation():
-    # Arrange: THE regression — conclusion=success, but it ran on Spartan
+def test_no_policy_gates_nothing_even_on_a_green_job():
+    # Arrange: THE second regression — a bare read must never fail a run
     gh = _jobs_gh([_job(runner="spartan-cpu-org-01", conclusion="success")])
-    # Act
     run = run_job_runners("1", run_gh=gh)
+    # Act
+    denied = run.denied([])
     # Assert
-    assert [j.job for j in run.violations] == ["j"]
+    assert denied == []
 
 
-def test_a_green_job_on_a_compliant_runner_is_not_a_violation():
+def test_a_green_job_on_a_denied_runner_is_reported():
+    # Arrange: THE first regression — conclusion=success, ran somewhere denied
+    gh = _jobs_gh([_job(runner="spartan-cpu-org-01", conclusion="success")])
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    denied = run.denied(["spartan"])
+    # Assert
+    assert [j.job for j in denied] == ["j"]
+
+
+def test_a_job_on_an_allowed_runner_is_not_denied():
     # Arrange
     gh = _jobs_gh([_job()])
-    # Act
     run = run_job_runners("1", run_gh=gh)
+    # Act
+    denied = run.denied(["spartan"])
     # Assert
-    assert run.violations == []
+    assert denied == []
 
 
-def test_an_ambiguous_selector_is_a_warning_not_a_violation():
+def test_expect_flags_a_job_that_ran_outside_the_expectation():
     # Arrange
-    gh = _jobs_gh([_job(labels=["self-hosted", "scitex-ci"])])
-    # Act
+    gh = _jobs_gh([_job(runner="spartan-cpu-org-01")])
     run = run_job_runners("1", run_gh=gh)
+    # Act
+    unexpected = run.unexpected(["org-cpu-0"])
     # Assert
-    assert [j.job for j in run.warnings] == ["j"]
+    assert [j.job for j in unexpected] == ["j"]
+
+
+def test_expect_is_satisfied_when_the_runner_matches():
+    # Arrange
+    gh = _jobs_gh([_job(runner="scitex-02-org-cpu-01")])
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    unexpected = run.unexpected(["org-cpu"])
+    # Assert
+    assert unexpected == []
+
+
+def test_expect_ignores_a_job_that_has_not_run_anywhere_yet():
+    # Arrange: queued job, no runner assigned
+    gh = _jobs_gh([_job(runner=None, conclusion=None)])
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    unexpected = run.unexpected(["org-cpu"])
+    # Assert
+    assert unexpected == []
+
+
+def test_expect_with_no_expectation_flags_nothing():
+    # Arrange
+    gh = _jobs_gh([_job(runner="anything-at-all")])
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    unexpected = run.unexpected([])
+    # Assert
+    assert unexpected == []
+
+
+def test_tally_counts_jobs_per_runner():
+    # Arrange
+    gh = _jobs_gh(
+        [
+            _job(name="a", runner="scitex-01-org-cpu-01"),
+            _job(name="b", runner="scitex-01-org-cpu-01"),
+            _job(name="c", runner="scitex-02-org-cpu-01"),
+        ]
+    )
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    tally = run.tally
+    # Assert
+    assert tally == {"scitex-01-org-cpu-01": 2, "scitex-02-org-cpu-01": 1}
 
 
 def test_the_runner_name_is_reported_verbatim():
     # Arrange
     gh = _jobs_gh([_job(runner="scitex-03-org-cpu-01")])
-    # Act
     run = run_job_runners("1", run_gh=gh)
+    # Act
+    name = run.jobs[0].runner_name
     # Assert
-    assert run.jobs[0].runner_name == "scitex-03-org-cpu-01"
+    assert name == "scitex-03-org-cpu-01"
+
+
+def test_an_unassigned_job_renders_as_unassigned_not_as_blank():
+    # Arrange
+    gh = _jobs_gh([_job(runner=None, conclusion=None)])
+    run = run_job_runners("1", run_gh=gh)
+    # Act
+    where = run.jobs[0].where
+    # Assert
+    assert where == "<unassigned>"
 
 
 def test_unparseable_jobs_payload_raises_rather_than_reading_as_clean():
@@ -135,10 +193,13 @@ def test_unparseable_jobs_payload_raises_rather_than_reading_as_clean():
     def _bad(_argv):
         return "not json"
 
-    # Act / Assert guarded by pytest.raises
+    # Act
+    def call():
+        return run_job_runners("1", run_gh=_bad)
+
+    # Assert
     with pytest.raises(CIWhyError):
-        # Assert
-        run_job_runners("1", run_gh=_bad)
+        call()
 
 
 def test_a_payload_without_jobs_raises_rather_than_reading_as_clean():
@@ -146,14 +207,17 @@ def test_a_payload_without_jobs_raises_rather_than_reading_as_clean():
     def _empty(_argv):
         return json.dumps({})
 
-    # Act / Assert guarded by pytest.raises
+    # Act
+    def call():
+        return run_job_runners("1", run_gh=_empty)
+
+    # Assert
     with pytest.raises(CIWhyError):
-        # Assert
-        run_job_runners("1", run_gh=_empty)
+        call()
 
 
 def test_a_pr_resolves_through_all_checks_including_passing_ones():
-    # Arrange: _ci_why keeps only FAILING runs; compliance must see green ones
+    # Arrange: _ci_why keeps only FAILING runs; this must see the green ones
     def _router(argv):
         if argv[0] == "pr":
             return json.dumps(
@@ -190,7 +254,47 @@ def test_audit_reports_every_run_behind_the_target():
     assert len(runs) == 1
 
 
-def test_render_marks_a_banned_runner_visibly():
+def test_render_shows_the_per_runner_tally():
+    # Arrange
+    run = RunRunners(
+        run_id="1",
+        jobs=[
+            JobRunner(
+                job="a",
+                status="completed",
+                conclusion="success",
+                runner_name="scitex-01-org-cpu-01",
+                runner_group="scitex-local-cpu",
+            )
+        ],
+    )
+    # Act
+    text = render_text(run)
+    # Assert
+    assert "1 job(s) on scitex-01-org-cpu-01" in text
+
+
+def test_render_marks_a_denied_job_but_only_when_a_policy_is_given():
+    # Arrange
+    run = RunRunners(
+        run_id="1",
+        jobs=[
+            JobRunner(
+                job="import-smoke",
+                status="completed",
+                conclusion="success",
+                runner_name="spartan-cpu-org-01",
+                runner_group="spartan-cpu",
+            )
+        ],
+    )
+    # Act
+    text = render_text(run, deny=["spartan"])
+    # Assert
+    assert "FLAG" in text
+
+
+def test_render_does_not_mark_anything_without_a_policy():
     # Arrange
     run = RunRunners(
         run_id="1",
@@ -207,25 +311,4 @@ def test_render_marks_a_banned_runner_visibly():
     # Act
     text = render_text(run)
     # Assert
-    assert "BANNED" in text
-
-
-def test_render_names_the_ambiguous_selector_in_the_warning():
-    # Arrange
-    run = RunRunners(
-        run_id="1",
-        jobs=[
-            JobRunner(
-                job="j",
-                status="completed",
-                conclusion="success",
-                runner_name="scitex-01-org-cpu-01",
-                runner_group="scitex-local-cpu",
-                labels=["scitex-ci"],
-            )
-        ],
-    )
-    # Act
-    text = render_text(run)
-    # Assert
-    assert "scitex-ci" in text
+    assert "FLAG" not in text

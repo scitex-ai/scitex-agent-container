@@ -1,62 +1,64 @@
-"""Which RUNNER executed each job — the compliance read a status word hides.
+"""Which RUNNER executed each job — the fact a status word hides.
 
-A green check is not proof of compliance. Measured 2026-08-11: scitex-dev
-PR #572 showed ``import-smoke  pass  1m9s`` while the jobs API reported
-``runner_name=spartan-cpu-org-01``. The run had been queued BEFORE the repo's
-``CI_RUNS_ON`` was repointed off Spartan, so it executed on exactly the
-hardware the change existed to abandon — and every human-visible signal said
-green. Re-reading the variable would also have said green, because the
-variable HAD been changed; only the job's actual ``runner_name`` disagreed.
+A green check does not tell you where the work ran. Measured 2026-08-11:
+scitex-dev PR #572 showed ``import-smoke  pass  1m9s`` while the jobs API
+reported ``runner_name=spartan-cpu-org-01``. The run had been queued BEFORE the
+repo's ``CI_RUNS_ON`` was repointed, so it executed on a host nobody expected —
+and every human-visible signal said green. Re-reading ``CI_RUNS_ON`` would also
+have said green, because the variable HAD been changed. Only the job's actual
+``runner_name`` disagreed.
 
-So this module reads ``runner_name`` rather than status, for EVERY job of a
-run (not just failing ones — the failing ones were never the risk), and fails
-loud when a banned runner appears.
+So this module reads ``runner_name`` rather than status, for EVERY job of a run
+(not just failing ones — the failing ones were never the risk).
 
-It also reports AMBIGUOUS selectors. ``scitex-ci`` is carried by Spartan
-runners as well as compliant ones, so a workflow selecting it can still land
-on Spartan; that is a trap which happens to be harmless only while no banned
-runner is registered. Reported as a warning, not a violation: the job in hand
-did run somewhere compliant, but the selector gives no guarantee it will next
-time.
+WHY THERE IS NO HARDCODED HOST POLICY HERE, and why there was:
+the first version of this file shipped ``BANNED_RUNNER_SUBSTRINGS = ("spartan",)``
+because a host had been banned from CI outright. That ban was repealed the very
+next day, which would have left a tool exiting non-zero on sanctioned runs — a
+known-false gate, the exact failure mode it exists to catch. A rule that can be
+repealed overnight does not belong baked into a library.
+
+What survives a policy reversal is the QUESTION, not the answer: *where did this
+work actually run?* So the default is to report, and any gate is stated by the
+caller at the call site:
+
+  * ``--deny SUBSTR``   fail if any job ran on a matching runner
+  * ``--expect SUBSTR`` fail if any job ran on a runner that does NOT match
+
+``--expect`` is usually the better one: it asserts what you intended rather than
+enumerating what you fear, so it still catches a host nobody thought to ban.
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
-from ._ci_why import CIWhyError, GhRunner, _repo_args, _RUN_ID_IN_LINK, run_gh
+from ._ci_why import _RUN_ID_IN_LINK, CIWhyError, GhRunner, _repo_args, run_gh
 
 __all__ = [
-    "BANNED_RUNNER_SUBSTRINGS",
-    "AMBIGUOUS_LABELS",
     "JobRunner",
     "RunRunners",
     "audit",
+    "matches_any",
     "render_text",
     "resolve_all_run_ids",
+    "run_job_runners",
 ]
 
-# Substring match on the runner NAME. Names are the durable identity here:
-# a banned host can be relabelled, but it is still the banned host.
-BANNED_RUNNER_SUBSTRINGS = ("spartan",)
 
-# Labels carried by BOTH banned and compliant runners, so selecting one is
-# not a guarantee of anything.
-AMBIGUOUS_LABELS = ("scitex-ci",)
+def matches_any(runner_name: Optional[str], substrings: Sequence[str]) -> bool:
+    """True when ``runner_name`` contains any of ``substrings`` (case-insensitive).
 
-
-def is_banned(runner_name: Optional[str]) -> bool:
-    """True when this runner name identifies banned hardware."""
-    name = (runner_name or "").lower()
-    return any(bad in name for bad in BANNED_RUNNER_SUBSTRINGS)
-
-
-def ambiguous_labels(labels: list[str]) -> list[str]:
-    """The selector labels that can also match banned hardware."""
-    lowered = {str(x).lower() for x in labels or []}
-    return [lab for lab in AMBIGUOUS_LABELS if lab in lowered]
+    An UNASSIGNED runner (a queued job) matches nothing — absence of a host is
+    not evidence about which host, in either direction.
+    """
+    if not runner_name:
+        return False
+    name = runner_name.lower()
+    return any(s.lower() in name for s in substrings if s)
 
 
 @dataclass
@@ -72,12 +74,9 @@ class JobRunner:
     url: Optional[str] = None
 
     @property
-    def banned(self) -> bool:
-        return is_banned(self.runner_name)
-
-    @property
-    def ambiguous(self) -> list[str]:
-        return ambiguous_labels(self.labels)
+    def where(self) -> str:
+        """Human-readable host, honest when the job never got one."""
+        return self.runner_name or "<unassigned>"
 
     def to_dict(self) -> dict:
         return {
@@ -87,8 +86,6 @@ class JobRunner:
             "runner_name": self.runner_name,
             "runner_group": self.runner_group,
             "labels": self.labels,
-            "banned": self.banned,
-            "ambiguous_labels": self.ambiguous,
             "url": self.url,
         }
 
@@ -100,20 +97,33 @@ class RunRunners:
     run_id: str
     jobs: list[JobRunner] = field(default_factory=list)
 
-    @property
-    def violations(self) -> list[JobRunner]:
-        return [j for j in self.jobs if j.banned]
+    def denied(self, substrings: Sequence[str]) -> list[JobRunner]:
+        """Jobs that ran somewhere the caller said they must not."""
+        return [j for j in self.jobs if matches_any(j.runner_name, substrings)]
+
+    def unexpected(self, substrings: Sequence[str]) -> list[JobRunner]:
+        """Jobs that ran somewhere OTHER than where the caller expected.
+
+        A job with no runner yet is not a violation — it has not run anywhere.
+        """
+        if not substrings:
+            return []
+        return [
+            j
+            for j in self.jobs
+            if j.runner_name and not matches_any(j.runner_name, substrings)
+        ]
 
     @property
-    def warnings(self) -> list[JobRunner]:
-        return [j for j in self.jobs if j.ambiguous and not j.banned]
+    def tally(self) -> dict[str, int]:
+        """How many jobs landed on each runner — the distribution, not a verdict."""
+        return dict(Counter(j.where for j in self.jobs))
 
     def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "jobs": [j.to_dict() for j in self.jobs],
-            "violations": [j.job for j in self.violations],
-            "warnings": [j.job for j in self.warnings],
+            "tally": self.tally,
         }
 
 
@@ -155,8 +165,8 @@ def run_job_runners(
 def _pr_all_run_ids(pr: str, *, run_gh: GhRunner, repo: Optional[str]) -> list[str]:
     """EVERY run behind a PR's checks — passing ones included.
 
-    Deliberately not ``_ci_why._pr_failing_run_ids``: a compliance violation
-    is most likely to be hiding behind a check that PASSED.
+    Deliberately not ``_ci_why._pr_failing_run_ids``: a job that ran somewhere
+    unexpected is most likely to be hiding behind a check that PASSED.
     """
     raw = run_gh(["pr", "checks", pr, *_repo_args(repo), "--json", "name,state,link"])
     try:
@@ -197,17 +207,26 @@ def audit(
     return [run_job_runners(rid, run_gh=run_gh, repo=repo) for rid in ids]
 
 
-def render_text(run: RunRunners) -> str:
-    """One line per job; violations and warnings called out explicitly."""
+def render_text(
+    run: RunRunners,
+    *,
+    deny: Sequence[str] = (),
+    expect: Sequence[str] = (),
+) -> str:
+    """One line per job, then the per-runner tally.
+
+    Marks are applied only where the CALLER stated a policy; with no policy this
+    is a plain report of where the work ran.
+    """
+    flagged = {id(j) for j in run.denied(deny)} | {id(j) for j in run.unexpected(expect)}
     lines = []
     for j in run.jobs:
-        mark = "BANNED " if j.banned else "        "
-        where = j.runner_name or "<unassigned>"
+        mark = "FLAG " if id(j) in flagged else "     "
         grp = f" [{j.runner_group}]" if j.runner_group else ""
         concl = j.conclusion or j.status
-        lines.append(f"  {mark}{concl:<12} {where}{grp}  {j.job}")
-        for lab in j.ambiguous:
-            lines.append(
-                f"          warning: selector '{lab}' also matches banned runners"
-            )
+        lines.append(f"  {mark}{concl:<12} {j.where}{grp}  {j.job}")
+    if run.jobs:
+        lines.append("  ---")
+        for host, n in sorted(run.tally.items(), key=lambda kv: (-kv[1], kv[0])):
+            lines.append(f"  {n:>3} job(s) on {host}")
     return "\n".join(lines)
