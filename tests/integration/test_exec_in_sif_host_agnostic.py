@@ -125,7 +125,12 @@ class _Sandbox:
         self.shim = self.ci / "exec-in-sif.sh"
         self.shim.write_text(shim_text)
         self.shim.chmod(0o755)
-        shutil.copy2(_LIB, self.ci / "tmpdir-lib.sh")
+        # Only ``develop`` carries tmpdir-lib.sh, and only its shim sources it.
+        # ``main`` has neither, so this file must run unchanged on both — the
+        # promotion into main is the branch that matters, and a test that only
+        # collects on develop cannot gate it.
+        if _LIB.exists():
+            shutil.copy2(_LIB, self.ci / "tmpdir-lib.sh")
         (self.ci / "inner.sh").write_text("#!/usr/bin/env bash\necho inner ran\n")
 
         # The shim only checks `[ -f "$SIF" ]`; it never opens the image.
