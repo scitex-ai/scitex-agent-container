@@ -33,17 +33,6 @@ HOOK_SCRIPT = HOOK_DIR / "enforce_commit_author_allowlist.sh"
 
 ALLOWLISTED_EMAIL = "ywatanabe@scitex.ai"
 ALLOWLISTED_NAME = "Yusuke Watanabe"
-
-# The AGENT identity (operator-approved 2026-08-12): a SECOND verified email
-# on the same GitHub account (ywatanabe1989), so it clears the CLA gate while
-# making agent-authored commits distinguishable from the operator's own in
-# `git log`. Allowlisted alongside — NOT instead of — the human identity.
-AGENT_EMAIL = "agent@scitex.ai"
-AGENT_NAME = "scitex-agent-container"
-
-# Still NOT allowlisted: the `agent@<host>` shape from the scitex-hpc
-# 2026-07-05 incident maps to no GitHub account. Deliberately one character
-# away from AGENT_EMAIL's domain, so a regex that over-matches is caught.
 NON_ALLOWLISTED_EMAIL = "agent@scitex-hpc"
 
 # Identity/allowlist env vars that would make the hook's resolution
@@ -104,11 +93,6 @@ def run_hook(
 @pytest.fixture
 def good_repo(tmp_path: Path) -> Iterator[Path]:
     yield _make_repo(tmp_path / "good", ALLOWLISTED_EMAIL, ALLOWLISTED_NAME)
-
-
-@pytest.fixture
-def agent_repo(tmp_path: Path) -> Iterator[Path]:
-    yield _make_repo(tmp_path / "agentid", AGENT_EMAIL, AGENT_NAME)
 
 
 @pytest.fixture

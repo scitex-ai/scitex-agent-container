@@ -155,17 +155,6 @@ _register_restart_login_expired(agent_group)
 from ._agents_auth_audit import register as _register_auth_audit  # noqa: E402
 
 _register_auth_audit(agent_group)
-# `cct-audit` — READ-ONLY sweep of the Telegram rail: which specs DECLARE
-# `server:claude-code-telegrammer`, and which of them actually resolve a
-# CCT_BOT_TOKEN_<SLOT>. The two are chosen independently — candidates are
-# derived from the agent NAME, the pool is named by whoever wrote it — and
-# nothing checked they agree, so a mismatch made an agent start perfectly,
-# report healthy, and be MUTE and DEAF on Telegram (outage 2026-08-12). The
-# start-time alarm closes the class going forward; this answers it for the
-# agents already running, without touching one of them.
-from ._agents_cct_audit import register as _register_cct_audit  # noqa: E402
-
-_register_cct_audit(agent_group)
 # `state` — the ONE state shape, returned for every agent, always. Each signal
 # is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
 # instead of by whatever subset each call site happened to hold. It exists
