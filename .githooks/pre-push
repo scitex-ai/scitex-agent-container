@@ -71,13 +71,40 @@ if [ -z "$RUFF" ] && command -v ruff >/dev/null 2>&1; then
   RUFF="$(command -v ruff)"
 fi
 
+# LAST RESORT: let uv fetch ruff on demand. Measured 2026-08-12 — the agent
+# containers ship NO ruff at any of the paths above and none on PATH, so this
+# gate could not run in the very environment most pushes come from. A gate
+# that cannot run has exactly two outcomes, and both are bad: it blocks every
+# push, or it teaches everyone to reach for --no-verify, which disarms the
+# protected-branch guard above at the same time. Resolving ruff through uv
+# keeps the check STRICT (same ruff, same rules) instead of trading strictness
+# for availability. Declared as an array because it is a multi-word command.
+RUFF_ARGV=()
+if [ -n "$RUFF" ]; then
+  RUFF_ARGV=("$RUFF")
+else
+  for uv_bin in "${SAC_PRE_PUSH_UV:-}" "/uvwork/bin/uv" "$HOME/.local/bin/uv"; do
+    if [ -n "$uv_bin" ] && [ -x "$uv_bin" ]; then
+      RUFF_ARGV=("$uv_bin" tool run ruff)
+      RUFF="$uv_bin tool run ruff"
+      break
+    fi
+  done
+  if [ -z "$RUFF" ] && command -v uv >/dev/null 2>&1; then
+    RUFF_ARGV=("$(command -v uv)" tool run ruff)
+    RUFF="uv tool run ruff"
+  fi
+fi
+
 if [ -z "$RUFF" ]; then
   # Loud failure — never silently skip the gate (handoff Q3). If a
   # genuine emergency requires bypass, --no-verify is documented as
   # the explicit override and shows up in the audit log.
   echo "PRE-PUSH BLOCKED: ruff binary not found." >&2
   echo "  Searched: \$SAC_PRE_PUSH_RUFF, .venv/bin/ruff, /opt/venv-agent/bin/ruff," >&2
-  echo "           /opt/venv-sac/bin/ruff, \$HOME/.local/bin/ruff, PATH." >&2
+  echo "           /opt/venv-sac/bin/ruff, \$HOME/.local/bin/ruff, PATH," >&2
+  echo "           and 'uv tool run ruff' (\$SAC_PRE_PUSH_UV, /uvwork/bin/uv," >&2
+  echo "           \$HOME/.local/bin/uv, PATH)." >&2
   echo "  Install ruff via: pip install -e .[dev]" >&2
   echo "  Or point the hook at an existing ruff: export SAC_PRE_PUSH_RUFF=/path/to/ruff" >&2
   echo "  Or bypass once (emergency only): git push --no-verify" >&2
@@ -88,7 +115,7 @@ fi
 # the unused-import slip-through that motivated this hook.
 # --extend-per-file-ignores excludes __init__.py re-export shims (the
 # standard idiom — imports there *are* the public surface, not dead code).
-if ! "$RUFF" check \
+if ! "${RUFF_ARGV[@]}" check \
       --select F401,F811 \
       --extend-per-file-ignores "**/__init__.py:F401" \
       src/ tests/; then
