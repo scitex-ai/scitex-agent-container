@@ -6,6 +6,53 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **An agent that declares the Telegram MCP and resolves no bot-token slot no
+  longer comes up silently mute** (`runtimes/_cct_rail_verdict`,
+  `runtimes/_cct_rail_alarm`, `sac agents cct-audit`; card
+  `sac-cct-rail-loud-when-no-slot-resolves-20260812`). When no
+  `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` removes
+  the MCP server — correct, by operator ruling — but it removes the rail in
+  BOTH directions at the one moment nothing can report it: the agent starts
+  perfectly, reports healthy, and cannot even self-diagnose, because `health`
+  is a tool on the server that just went away. The 2026-08-12 outage was found
+  by the operator noticing silence.
+
+  Nothing checked that the two halves of the mapping agree. Candidates are
+  derived from the AGENT NAME; the pool is named by whoever wrote it. The new
+  `sac agents cct-audit` swept compute-04 and measured **81 specs declaring the
+  channel, 15 resolving a token, 66 not** — and its "did you mean" column (pool
+  slots sharing a word with the agent, reported to a human and NEVER acted on)
+  named four live mismatches, two of which nobody had reported: `neurovista` →
+  `PAPER_NEUROVISTA`, `neurovista-paper-writer` → `PAPER_NEUROVISTA_WRITER` (a
+  WORD-ORDER difference no derivation rule can bridge), `scitex-clew` →
+  `PAPER_SCITEX_CLEW`, `spartan-dev` → `DEV`.
+
+  The verdict is THREE-VALUED. `_secret_pool.read_pool` now reports whether a
+  MISS is conclusive: a read that sourced no secret FILE holds only the
+  launching process env, which can prove a slot present but never absent. That
+  flag is the 2026-08-12 root cause in one bit — the pool was on the host and
+  `sac-listen.service` had no `SAC_SECRETS_ENVRC`, so three consecutive
+  diagnoses said "there is no token on 04" when the truth was "it was not in
+  the LAUNCHING PROCESS". A pool that reads clean but holds no
+  `CCT_BOT_TOKEN_*` at all is likewise UNKNOWN, not 80 confident false alarms.
+
+  It does **not** gate the start: 66 of the 81 inherit the channel request from
+  the spec templates as scaffolding, Telegram is a comms rail rather than a
+  boot dependency, and a stranded agent is more silent, not less. Instead every
+  alarming verdict is RECORDED in sac's event log (subsystem `cct-rail`,
+  three-valued at the source) and a `blocker` is PUSHED at the lead (ADR-0013)
+  — over the LEAD's Telegram, not the broken agent's, so a mute agent shouts
+  with somebody else's voice. The push is gated on evidence somebody meant this
+  agent to have a bot (a declared slot, a near miss, or a rail that used to
+  work here), because paging all 66 would rebuild the ignored alert channel the
+  2026-08-10 prune was written to remove. `cct-audit` lists all of them
+  regardless and exits 1, so a timer or a relocation preflight can gate on it.
+
+  Token values are never read, logged, or transmitted anywhere in this path —
+  presence only, slot NAMES and pool source PATHS at most.
+
 ### Changed
 
 - **Every job sac owns is renamed to the ecosystem canonical form
