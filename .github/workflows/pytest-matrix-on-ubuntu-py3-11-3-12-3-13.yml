@@ -145,6 +145,11 @@ concurrency:
 env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+  # xdist worker count per leg. Unset => all cores, the historical behaviour.
+  # Set it when several matrix legs share ONE machine (they do now: Spartan CI
+  # was retired 2026-08-05 and the suite runs on scitex-04), otherwise three
+  # legs x nproc workers oversubscribe the box by 3x. See run-in-sif.sh.
+  CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
 
 permissions:
   contents: read
