@@ -25,7 +25,12 @@ from pathlib import Path
 import click
 
 from .. import _build_priority
-from . import _image_inventory_cmds, _image_remote_bake, _image_source_build
+from . import (
+    _image_inventory_cmds,
+    _image_remote_bake,
+    _image_repro_build,
+    _image_source_build,
+)
 from ._helpers import HelpRecursiveGroup, console
 from ._helpers._console import logger
 
@@ -34,6 +39,9 @@ from ._helpers._console import logger
 # pattern as ``_load_apptainer``); production code calls through it so
 # tests don't need to patch the cli_pkg._image_source_build module.
 _build_layer_from_source = _image_source_build.build_layer_from_source
+
+# Same seam for the reproducible round-trip path (``--reproducible``).
+_run_reproducible_build = _image_repro_build.run_build
 
 # Same seam pattern for the low-priority self-demotion
 # (incident-local-heavy-build) — tests swap in a recording fake so the
@@ -67,9 +75,17 @@ _CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
 _SCITEX_USER_STATE_ROOT = Path.home() / ".scitex"
 
 # Layer → .def filename mapping.
+#
+# ``proxy`` ships a recipe (containers/apptainer-proxy.def, force-included in
+# the wheel) and the source-build path already treats it as a first-class
+# layer — ``build_layer_from_source`` documents ``base``/``scitex``/``proxy``
+# and ``resolve_bootstrap_sif`` names ``proxy`` among the top-of-stack layers
+# that bootstrap off a registry image rather than a prior SIF. Only this map
+# omitted it, which left sac shipping one recipe nothing could build.
 _LAYERS = {
     "base": "apptainer-base.def",
     "scitex": "apptainer-scitex.def",
+    "proxy": "apptainer-proxy.def",
 }
 _DEFAULT_LAYER = "base"
 
@@ -179,8 +195,31 @@ image_group.add_command(_image_remote_bake.image_bake_remote)
     help="Build at normal priority (skip the default nice-19 + ionice "
     "best-effort-low self-demotion; for dedicated build machines / CI).",
 )
+@click.option(
+    "--reproducible",
+    is_flag=True,
+    default=False,
+    help="Run the reproducible round trip: capture this build's version "
+    "set into a .lock, emit a version-pinned .def, rebuild from it, "
+    "compare the two version sets, and mark .verified/.unverified. "
+    "Costs a SECOND full build.",
+)
+@click.option(
+    "--skip-verify",
+    is_flag=True,
+    default=False,
+    help="With --reproducible: capture the lock + pinned .def but skip the "
+    "verify rebuild. Leaves the build UNMARKED (the use-time gate reads "
+    "that as unverified).",
+)
 def image_build(
-    layer: str, sandbox: bool, dry_run: bool, yes: bool, no_nice: bool
+    layer: str,
+    sandbox: bool,
+    dry_run: bool,
+    yes: bool,
+    no_nice: bool,
+    reproducible: bool,
+    skip_verify: bool,
 ) -> None:
     """Build the :LAYER Apptainer SIF (default: base).
 
@@ -188,12 +227,27 @@ def image_build(
     Builds self-demote to low CPU/IO priority by default so a bake
     can't starve an interactive host; ``--no-nice`` restores full speed.
 
+    ``--reproducible`` additionally PROVES the image can be produced
+    again: it freezes the versions that actually landed, generates a
+    pinned recipe, rebuilds from that recipe, and compares the two
+    version sets. Identical → ``.verified``; drift → ``.unverified``
+    carrying the diff (the image stays usable — a mismatch is a finding,
+    not a build failure). "Reproducible" here means ENVIRONMENT IDENTITY
+    (same version set), not byte-identical digests.
+
     \b
     Examples:
       $ sac image build                # apptainer :base SIF (default; OS + dev tools, ~15-25 min)
       $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
       $ sac image build --sandbox      # writable sandbox dir
+      $ sac image build --reproducible # round trip + .verified marker (~2x build time)
     """
+    flag_error = _image_repro_build.validate_flags(
+        reproducible=reproducible, sandbox=sandbox, skip_verify=skip_verify
+    )
+    if flag_error:
+        click.echo(f"error: {flag_error}", err=True)
+        sys.exit(2)
     out_dir = _ensure_containers_dir()
     # Existing-artefact notice. A SIF rebuild is now ATOMIC (delegated to
     # scitex-container's ``build``): it lands a fresh timestamped SIF and
@@ -279,6 +333,21 @@ def image_build(
     # under load (see _build_priority module docstring).
     for line in _demote_build_priority(skip=no_nice):
         click.echo(line)
+
+    if reproducible:
+        # Builds TWICE: the rough build, then a rebuild from the generated
+        # pinned recipe. Both go through the same staged build context —
+        # the reason scitex-container needed a ``cwd`` before sac could
+        # call this at all.
+        _run_reproducible_build(
+            layer=layer,
+            def_path=def_path,
+            pkg_root=pkg_root,
+            output_dir=out_dir,
+            bootstrap_sif=bootstrap_sif,
+            verify=not skip_verify,
+        )
+        return
 
     try:
         output = _build_layer_from_source(

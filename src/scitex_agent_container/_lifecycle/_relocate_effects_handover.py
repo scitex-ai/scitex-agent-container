@@ -15,13 +15,18 @@ comes back. This bootstraps, records the bootstrap in the journal detail so
 nobody later mistakes it for a lease the source had been holding all along, and
 starts the fence at 0 so the handoff lands at 1.
 
-A LEASE HELD BY A THIRD HOST IS A REFUSAL, NOT A BOOTSTRAP. A live lease naming
-someone other than the source is the exact condition the lease was written to
-detect, and helping past it would defeat the instrument. An EXPIRED one held by
-another host is different and is re-claimed for the source first, so the fence
-advances and the old holder is locked out by arithmetic rather than by trusting
-its clock — the distinction :mod:`_relocate_lease` draws between what a TTL
-decides and what a fence decides.
+A LEASE HELD BY A THIRD HOST THAT IS RUNNING THE AGENT IS A REFUSAL. That is the
+exact condition the lease was written to detect and helping past it would defeat
+the instrument. A row naming another host that is NOT running it is a different
+thing entirely — this fleet writes the lease to the COORDINATOR's own db and the
+coordinator is always the host being LEFT, so such a row is ordinarily the
+record of the move that brought the agent HERE. It is re-claimed for the source,
+the fence advances, and the old holder is locked out by arithmetic; the same is
+done for an EXPIRED one. Which of those applies is decided by
+:mod:`_relocate_lease_readiness`, and by the PREFLIGHT calling the same function
+before anything is stopped — because this phase runs last, and its refusal used
+to arrive with the agent already down (measured 2026-08-11, the canary's return
+leg, exit 5 at this phase).
 
 THE WRITE IS RE-READ. ``save_lease`` returning is the writer's opinion; who
 holds the lease is the row's. This is the one step where a wrong answer means
@@ -41,6 +46,9 @@ import secrets
 
 from ._relocate_execute import StepResult
 from ._relocate_lease import claim, handoff
+from ._relocate_lease_readiness import handoff_readiness
+from ._relocate_liveness import observe_running
+from ._relocate_shell import shell_for
 
 __all__ = ["LEASE_TTL_S", "HandoverEffects"]
 
@@ -125,32 +133,45 @@ class HandoverEffects:
         with the lease so the journal records HOW the source came to hold it —
         a bootstrapped claim and an inherited one are different facts, and a
         reader six months later cannot tell them apart from the fence alone.
+
+        THE RULE IS NOT WRITTEN HERE. It is
+        :func:`._relocate_lease_readiness.handoff_readiness`, and the preflight
+        asks the identical question with the identical function before anything
+        is stopped. That is the point: a gate that could pass while this phase
+        refuses would be a gate that guarantees the agent goes down first.
         """
         from .._state.state_db_relocation import load_lease, save_lease
 
         held = load_lease(self.agent)
-        if held is not None and held.holder == self.from_host:
-            return held, "", None
-
-        if held is not None and not held.is_expired(now):
+        holder_running = self._recorded_holder_running(held, now)
+        ready = handoff_readiness(
+            held,
+            from_holder=self.from_host,
+            now=now,
+            recorded_holder_running=holder_running,
+        )
+        if ready.allowed is not True:
             return (
                 None,
                 "",
                 StepResult(
-                    ok=False,
-                    detail=(
-                        f"the lease for {self.agent} is held by {held.holder!r} at fence "
-                        f"{held.fence}, not by the source {self.from_host!r}"
-                    ),
+                    ok=None if ready.allowed is None else False,
+                    detail=ready.reason,
                     hint=(
-                        "this is the split-brain the lease exists to catch. Find out what "
-                        f"{held.holder!r} is doing with this identity before relocating; "
-                        "do NOT force the handover"
+                        f"look at {ready.holder!r}: is it running {self.agent}? Until "
+                        "somebody does, this is undetermined rather than refused"
+                        if ready.allowed is None
+                        else "this is the split-brain the lease exists to catch, and it is "
+                        "backed by an observation rather than a row. Settle which host "
+                        "owns this identity before re-running; do NOT force the handover"
                     ),
                 ),
             )
+        if held is not None and held.holder == self.from_host:
+            return held, "", None
 
-        was_expired = held is not None
+        was_expired = held is not None and held.is_expired(now)
+        superseded = held is not None and not was_expired
         granted, verdict = claim(
             held,
             agent=self.agent,
@@ -158,6 +179,7 @@ class HandoverEffects:
             token=secrets.token_hex(16),
             now=now,
             ttl_s=LEASE_TTL_S,
+            holder_absent=superseded,
         )
         if verdict.allowed is not True or granted is None:
             return (
@@ -167,13 +189,20 @@ class HandoverEffects:
                     ok=False,
                     detail=(
                         f"the source's lease could not be "
-                        f"{'re-claimed' if was_expired else 'bootstrapped'}: {verdict.reason}"
+                        f"{'re-claimed' if held is not None else 'bootstrapped'}: {verdict.reason}"
                     ),
                     hint="nothing was handed over; read the lease row before re-running",
                 ),
             )
         save_lease(granted)
-        if was_expired:
+        if superseded:
+            note = (
+                f" The row named {held.holder!r} at fence {held.fence} and that host was "
+                f"OBSERVED not running {self.agent}, so the lease was re-claimed for the "
+                f"source at fence {granted.fence} — a record of a past handover, not a "
+                "live writer."
+            )
+        elif was_expired:
             note = (
                 f" An EXPIRED lease held by {held.holder!r} was re-claimed for the source "
                 f"at fence {granted.fence} before the handoff, so that holder is fenced "
@@ -187,3 +216,26 @@ class HandoverEffects:
             )
         self.log.append(f"handover:{note.strip()}")
         return granted, note, None
+
+    def _recorded_holder_running(self, held, now: float) -> bool | None:
+        """Is the agent running on the host the LEASE ROW names? ``None`` = nobody asked.
+
+        Only asked when the answer can change anything — a row naming the source
+        itself, or an expired one, needs no third host observed, and probing one
+        anyway would let an idle machine's ssh failure refuse a fine relocation.
+
+        Uses :func:`._relocate_liveness.observe_running`, the same tmux question
+        the runtime asks and the same one ``finish`` asks of both hosts. A probe
+        that could not answer returns ``None``, which refuses — this is the one
+        place where guessing "not running" would hand the lease away from a live
+        writer.
+        """
+        if held is None or held.holder == self.from_host or held.is_expired(now):
+            return None
+        shell = shell_for(held.holder, local_host=self.local_host or None)
+        running, why = observe_running(shell, self.agent, exec_fn=self.exec_fn)
+        self.log.append(
+            f"handover: the lease row names {held.holder}; {self.agent} there = "
+            f"{running!r} ({why})"
+        )
+        return running

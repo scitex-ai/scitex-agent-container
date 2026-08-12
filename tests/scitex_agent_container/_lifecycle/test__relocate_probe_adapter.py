@@ -26,7 +26,11 @@ from __future__ import annotations
 import pytest
 
 from scitex_agent_container._lifecycle._relocate_origin import RepoWork
-from scitex_agent_container._lifecycle._relocate_preflight import SourceFacts, preflight
+from scitex_agent_container._lifecycle._relocate_preflight import (
+    LeaseFacts,
+    SourceFacts,
+    preflight,
+)
 from scitex_agent_container._lifecycle._relocate_probe import gather_target_facts
 from scitex_agent_container._lifecycle._relocate_probe_adapter import (
     build_target_probes,
@@ -51,8 +55,11 @@ SAC_RELOC ports_checked=0
 SAC_RELOC hub=yes
 SAC_RELOC sac_path=/usr/local/bin/sac
 SAC_RELOC sac_found=/usr/local/bin/sac
+SAC_RELOC sac_usable=/usr/local/bin/sac
 SAC_RELOC runtimes=apptainer,claude-agent-sdk,tui
 SAC_RELOC speckeys=apiVersion,kind,metadata,spec
+SAC_RELOC startdrift=current|0|0|/home/ywatanabe/.dotfiles|origin/main
+SAC_RELOC startdirty=0
 SAC_RELOC end
 """
 
@@ -341,7 +348,11 @@ def test_a_truncated_batch_still_measures_most_of_the_checks(spec) -> None:
     # Act
     unobserved = set(gathered.errors)
     # Assert
-    assert unobserved == {"supported_runtimes", "rejected_spec_keys"}
+    assert unobserved == {
+        "supported_runtimes",
+        "rejected_spec_keys",
+        "spec_source_drift",
+    }
 
 
 def test_an_old_sac_on_the_target_costs_only_its_own_two_facts(spec) -> None:
@@ -477,6 +488,9 @@ def test_a_healthy_target_reaches_preflight_as_a_go(spec) -> None:
             session_marker="bbb2",
         ),
         from_host="ywata-note-win",
+        # The lease is read from the coordinator's own db, not by this batch. A
+        # store that WAS read and holds no row is supplied for the same reason.
+        lease_facts=LeaseFacts(read=True, lease=None, now=1_786_500_000.0),
     )
     # Assert
     assert report.ok is True
