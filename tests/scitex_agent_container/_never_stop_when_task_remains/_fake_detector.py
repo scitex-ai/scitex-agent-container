@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 #: Exactly what a host whose scitex-cards predates ``may-stop`` emits: the
@@ -128,4 +130,166 @@ def missing_detector(env_save_restore, tmp_path: Path) -> None:
     """Point sac at a path that genuinely does not exist."""
     env_save_restore.set(
         "SAC_MAY_STOP_CMD", str(tmp_path / "no-such-binary" / os.sep.join(["gone"]))
+    )
+
+
+# ---------------------------------------------------------------------------
+# The awaiting-operator READ command (`scitex-cards list-tasks ... --json`).
+#
+# Same no-mocks discipline as above: a real executable on disk, spawned by a
+# real subprocess, printing real bytes. Nothing here patches a callable.
+# ---------------------------------------------------------------------------
+
+#: Distinct from ``_TTL_OFF`` below: tests that want to prove the CACHE works
+#: set a real TTL. Everything else disables it so each act reads afresh.
+AWAITING_TTL_ENV = "SAC_AWAITING_CARDS_TTL_S"
+AWAITING_CMD_ENV = "SAC_AWAITING_CARDS_CMD"
+
+#: What a refused read really prints. Captured from the live board on
+#: 2026-08-12, while the operator's own report said the database was
+#: "refusing the read intermittently tonight" — the same run answered rc 0
+#: with 21 rows minutes later.
+REFUSED_READ_STDERR = (
+    "Traceback (most recent call last):\n"
+    '  File "scitex_cards/_db_export.py", line 54, in _record\n'
+    "    raise ExportRefused(\n"
+    "scitex_cards._db_export.ExportRefused: notifications row 'n_5e9e1ec3555f' "
+    "has no record_json payload — this DB predates schema v3's payload columns "
+    "and cannot be back-filled. Exporting stripped records is worse than "
+    "exporting none."
+)
+
+
+def operator_card(
+    card_id: str, *, blocked_days_ago: int, agent: str = "agent-x"
+) -> dict:
+    """One row shaped like a real ``list-tasks --json`` card blocked on a human.
+
+    Carries the three fields the summary is defined on (``status``,
+    ``blocker``, a stamp) plus the ``title`` a real row would have, so a test
+    row is not thinner than the thing it stands for.
+    """
+    stamp = datetime.now(timezone.utc) - timedelta(days=blocked_days_ago)
+    return {
+        "id": card_id,
+        "title": f"[q] {card_id} needs an operator decision",
+        "status": "blocked",
+        "blocker": "operator-decision",
+        "assignee": agent,
+        "scope": f"agent:{agent}",
+        "blocked_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "created_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_activity": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def awaiting_cards(
+    env_save_restore,
+    tmp_path: Path,
+    cards: "list[dict] | None" = None,
+    *,
+    returncode: int = 0,
+    stdout: "str | None" = None,
+    stderr: str = "",
+    name: str = "fake-list-tasks",
+) -> Path:
+    """Install a real read command answering with ``cards``, and point sac at it.
+
+    ``stdout`` overrides the rendered JSON outright (for the unreadable-output
+    cases); ``returncode`` non-zero is how the "database refuses the read"
+    case is reproduced — a real process, a real failing exit code.
+    """
+    body = json.dumps(cards if cards is not None else []) if stdout is None else stdout
+    script = write_detector(
+        tmp_path, returncode=returncode, stdout=body, stderr=stderr, name=name
+    )
+    env_save_restore.set(AWAITING_CMD_ENV, str(script))
+    env_save_restore.set(AWAITING_TTL_ENV, "0")  # read afresh unless a test says else
+    return script
+
+
+#: The env var ``scitex-cards list-tasks`` silently ANDs into its filter.
+SCOPE_ENV = "SCITEX_TODO_SCOPE"
+
+
+def scope_sensitive_board(
+    env_save_restore,
+    tmp_path: Path,
+    cards: "list[dict]",
+    *,
+    name: str = "scope-sensitive-list-tasks",
+) -> Path:
+    """A reader that honours ``$SCITEX_TODO_SCOPE`` exactly as the real one does.
+
+    NOT an invented behaviour — MEASURED on the live board, 2026-08-12::
+
+        baseline                          : 21
+        with SCITEX_TODO_SCOPE=other      : 0
+        same + explicit --scope ''        : 21
+        no env + explicit --scope ''      : 21
+
+    That zero is the whole reason this fixture exists. A new alarm that
+    silently reports nothing is WORSE than no alarm, because it converts
+    "nobody looked" into "we checked and it was clear" — the exact failure
+    family this feature was built to remove, reappearing inside the feature. A
+    test that only ever ran with the variable unset would have passed and
+    shipped it.
+
+    The rule reproduced here: an explicit ``--scope ''`` opts out; no
+    ``--scope`` at all inherits the ambient value; any other explicit scope
+    filters. The last two return the empty board.
+    """
+    body = json.dumps(cards)
+    payload = tmp_path / f"{name}.json"
+    payload.write_text(body)
+    script = tmp_path / name
+    script.write_text(
+        "#!/bin/sh\n"
+        "cat >/dev/null 2>&1 || true\n"
+        "__given=no\n__val=\n__prev=\n"
+        'for __a in "$@"; do\n'
+        '  if [ "$__prev" = "--scope" ]; then __given=yes; __val="$__a"; fi\n'
+        '  __prev="$__a"\n'
+        "done\n"
+        # No --scope at all: the ambient variable applies, as it really does.
+        'if [ "$__given" = no ] && [ -n "$SCITEX_TODO_SCOPE" ]; then\n'
+        "  echo '[]'\n  exit 0\nfi\n"
+        # An explicit NON-empty scope filters; only '' means "ignore it".
+        'if [ "$__given" = yes ] && [ -n "$__val" ]; then\n'
+        "  echo '[]'\n  exit 0\nfi\n"
+        f"cat {shlex.quote(str(payload))}\n"
+        "exit 0\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    env_save_restore.set(AWAITING_CMD_ENV, str(script))
+    env_save_restore.set(AWAITING_TTL_ENV, "0")
+    return script
+
+
+def no_awaiting_cards(env_save_restore, tmp_path: Path) -> Path:
+    """The default board state for tests: nothing is waiting on a human.
+
+    Every test that drives the hook needs this, because without it the real
+    ``scitex-cards`` on PATH would be spawned against the LIVE fleet board —
+    slow, non-deterministic, and a test suite that fails when a database it
+    does not own is down.
+    """
+    return awaiting_cards(env_save_restore, tmp_path, [], name="no-awaiting-cards")
+
+
+def unreadable_board(env_save_restore, tmp_path: Path) -> Path:
+    """The degraded case: the read command fails the way a refused read does.
+
+    Captured shape: ``scitex-cards list-tasks --json`` against a store it will
+    not export exits non-zero with a traceback on stderr and NOTHING on
+    stdout (measured on the live board, 2026-08-12:
+    ``ExportRefused: notifications row ... has no record_json payload``).
+    """
+    return awaiting_cards(
+        env_save_restore,
+        tmp_path,
+        returncode=1,
+        stdout="",
+        stderr=REFUSED_READ_STDERR,
+        name="refusing-board",
     )
