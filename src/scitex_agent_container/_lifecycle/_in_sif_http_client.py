@@ -47,7 +47,21 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["HostListenTransportError", "host_listen_call"]
 
-_DEFAULT_TIMEOUT_S = 30.0
+# DERIVED from the server's declared answer-by deadline, never hand-picked —
+# same rule, same reason, same module as :mod:`._spawn_client`.
+#
+# This client is GENERIC (``/agents/<name>`` GET / DELETE / send / tail), and
+# for those routes a hand-picked number is harmless because the host answers in
+# milliseconds. But one caller uses it for ``POST /agents`` — the ONE route in
+# this system that DECLARES an answer-by deadline (``sac agents
+# spawn-from-here``, see :mod:`..cli_pkg._spawn_from_here`). The old default was
+# a flat ``30.0``, i.e. EXACTLY ``AGENT_START_DEADLINE_S``, so on that route the
+# client gave up at the precise moment the server was still entitled to be
+# working, and destroyed the 202 "accepted, still in flight" that exists to stop
+# a slow spawn being reported as a dead host. A shared default must satisfy the
+# STRICTEST route it is used on; the extra ~10s costs nothing on the fast ones,
+# where it only ever lengthens an already-failing wait.
+from .._listen._handler_deadline import client_timeout_for
 
 
 class HostListenTransportError(RuntimeError):
@@ -87,16 +101,26 @@ def _resolve_base_url(explicit: str | None) -> str:
 def _resolve_bearer(explicit: str | None) -> str | None:
     """Return the listen bearer, or ``None`` if unset.
 
-    An absent bearer is NOT fatal — the listen server may run
-    without auth in dev. Production injects the value via the
-    apptainer runtime; the CLI verb forwards what it received.
-    """
-    if explicit is not None:
-        return explicit or None
-    from .._env import getenv
+    An absent bearer is NOT fatal — the listen server may run without auth in
+    dev. But "absent" must mean genuinely absent, not merely "not in the env":
+    this used to stop at ``SAC_LISTEN_BEARER`` and so sent an UNAUTHENTICATED
+    request whenever the runtime had not injected that variable, even though a
+    valid token was sitting readable on disk. The runtime injects the bearer
+    only for agents whose spec registers the ``server:sac`` channel, so for
+    every other agent this route 401'd while the spawn route (which already had
+    the file fallback) authenticated fine — same container, same token.
 
-    raw = (getenv("LISTEN_BEARER", "") or "").strip()
-    return raw or None
+    Delegates to the canonical resolver so the fallback chain
+    (explicit -> SAC_LISTEN_BEARER -> host token file) is defined ONCE. Its
+    contract is identical to what this function already promised: return the
+    token or ``None``, never raise. Only ``_resolve_bearer`` is shared —
+    ``_resolve_base_url`` deliberately stays local because its fail-loud
+    exception TYPE (``HostListenTransportError``) is part of this module's
+    contract and callers catch it.
+    """
+    from ._listen_client_resolve import _resolve_bearer as _canonical_resolve_bearer
+
+    return _canonical_resolve_bearer(explicit)
 
 
 def _parse_body(raw: bytes) -> Any:
@@ -128,7 +152,7 @@ def host_listen_call(
     body: dict | None = None,
     base_url: str | None = None,
     bearer: str | None = None,
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
     opener: Callable | None = None,
 ) -> tuple[int, Any]:
     """Call the host listen and return ``(http_status, parsed_body)``.
@@ -153,9 +177,14 @@ def host_listen_call(
             wins.
         bearer: Override ``SAC_LISTEN_BEARER``. Tests pass explicit
             values; production passes ``None``.
-        timeout_s: Per-request timeout. Default 30 seconds — enough
-            for the host's verb subprocess (a DELETE SIGTERMs a pid,
-            a GET reads a small JSON, neither should be slow).
+        timeout_s: Per-request timeout. ``None`` (the default) DERIVES
+            it from the server's declared answer-by deadline via
+            ``client_timeout_for()``, resolved at CALL time so it
+            follows the deadline instead of snapshotting it. Most
+            routes here are fast (a DELETE SIGTERMs a pid, a GET reads
+            a small JSON), but ``POST /agents`` is deadline-bounded and
+            a client that does not outlive that deadline manufactures a
+            failure out of a spawn that is merely still running.
         opener: Optional ``urllib.request.urlopen``-shaped callable.
             Default ``urlrequest.urlopen``; tests inject a fake
             opener that returns a urllib-response-shaped object so
@@ -173,6 +202,11 @@ def host_listen_call(
             ``url`` attribute carries the full URL so the outcome
             builder can echo it into stdout.
     """
+    # Resolved at CALL time so the number tracks the server's deadline rather
+    # than snapshotting whatever it happened to be at import.
+    if timeout_s is None:
+        timeout_s = client_timeout_for()
+
     resolved_base = _resolve_base_url(base_url)
     resolved_bearer = _resolve_bearer(bearer)
     rel = path if path.startswith("/") else f"/{path}"

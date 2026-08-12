@@ -1,36 +1,51 @@
-"""Tests for ``sac dev {cron,systemd}`` federated-job commands.
+"""Tests for ``sac dev {service,timer,cron}`` — the kind-named job grammar.
 
-WHY THIS FILE WAS REWRITTEN — it is the fixture that hid the bug.
+WHY THIS FILE KEEPS ITS OWN POSTMORTEM
 
-It used to install a hand-rolled fake ``scitex_dev.jobs`` module into
-``sys.modules``, whose ``_Job`` dataclass defaulted to ``kind="systemd"``.
-No real JobSpec can have that kind: ``ALLOWED_KINDS`` is
-``{service,timer,cron}`` and ``JobSpec.validate()`` raises on anything
+An earlier version installed a hand-rolled fake ``scitex_dev.jobs`` module
+into ``sys.modules`` whose ``_Job`` dataclass defaulted to
+``kind="systemd"``. No real JobSpec can have that kind: ``ALLOWED_KINDS``
+is ``{service,timer,cron}`` and ``JobSpec.validate()`` raises on anything
 else at construction. So the suite asserted, in green, that ``sac dev
 systemd list`` shows ``sac.accounts-refresh`` — while in production that
 command printed "No sac systemd-kind jobs." and exited 0, because the
-group name was being passed straight through as the kind filter and all
-four of sac's real timers are ``kind="timer"``.
+group name was passed straight through as the kind filter and every sac
+timer is ``kind="timer"``.
 
 A fake whose shape no real object can have does not test the production
-path; it tests the fake. That is the same failure as the twin-spawning
-suite (29 green tests over a ``spec.env`` shape v3 validation rejects) and
-it is why these tests now drive the REAL ``scitex_dev.jobs`` with REAL
-``JobSpec`` objects. If the contract is not installed, the file skips —
-it does not invent a stand-in.
+path; it tests the fake. These tests therefore drive the REAL
+``scitex_dev.jobs`` with REAL ``JobSpec`` objects. If the contract is not
+installed, the file skips — it does not invent a stand-in.
 
-No mocks (PA-306). The one seam still injected is ``_ecosystem_delegate``,
-which would otherwise shell out to a real ``scitex-dev`` subprocess and
-mutate the host's crontab/units; the delegation ARGUMENTS are the thing
-under test there, and they are captured, not faked.
+TWO STREAMS, AND THE TRAP BETWEEN THEM
+
+click 8.4's ``Result.output`` is stdout **and stderr merged**;
+``Result.stdout`` is stdout alone. Two tests here used to parse
+``result.output`` as JSON, which is not the contract: it passed only
+while nothing else wrote to stderr, and went red the moment a THIRD-PARTY
+jobs provider failed to load and ``scitex_dev.jobs`` logged a warning —
+correctly, on stderr. The real ``sac dev … --json`` stdout was clean the
+whole time. Every JSON assertion below reads ``result.stdout``, and one
+test proves the contract end-to-end in a REAL SUBPROCESS where the two
+streams are genuinely separate files.
+
+No mocks (PA-306). The one seam injected is ``_dev_jobs._delegate``,
+which would otherwise shell out to a real ``scitex-dev`` and rewrite the
+host's units and crontab; the delegation ARGUMENTS are what those tests
+are about, and they are captured, not faked.
 
 AAA marker comments; one assertion per test.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
 from typing import Iterator
 
 import pytest
@@ -41,8 +56,24 @@ jobs_mod = pytest.importorskip(
     reason="installed scitex-dev predates the scitex_dev.jobs contract",
 )
 
-from scitex_agent_container.cli_pkg._dev_jobs import GROUP_KINDS  # noqa: E402
+import scitex_agent_container  # noqa: E402
+import scitex_agent_container.cli_pkg._dev_jobs as dj  # noqa: E402
+import scitex_agent_container.cli_pkg._dev_jobs_backend as backend  # noqa: E402
+from scitex_agent_container._jobs import _names  # noqa: E402
+from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
+from scitex_agent_container.cli_pkg import _dev_jobs_backend as _backend  # noqa: E402
+from scitex_agent_container.cli_pkg._dev_jobs import (  # noqa: E402
+    DEPRECATED_GROUPS,
+    GROUP_KINDS,
+    GROUP_VERBS,
+    Deprecation,
+)
 from scitex_agent_container.cli_pkg.dev_group import dev_group  # noqa: E402
+
+
+def _declared(kind: str) -> list[str]:
+    """Canonical names of the jobs sac really declares for ``kind``."""
+    return [j.name for j in provide_jobs() if j.kind == kind]
 
 
 @contextmanager
@@ -59,65 +90,128 @@ def _jobs_absent() -> Iterator[None]:
             sys.modules["scitex_dev.jobs"] = saved
 
 
+@contextmanager
+def _captured_delegations() -> Iterator[list[tuple]]:
+    """Capture ``(kind, verb, name, yes)`` instead of shelling scitex-dev."""
+    captured: list[tuple] = []
+    original = dj._delegate
+    dj._delegate = lambda *a, **k: captured.append(a) or 0  # type: ignore[assignment]
+    try:
+        yield captured
+    finally:
+        dj._delegate = original  # type: ignore[assignment]
+
+
 # ---------------------------------------------------------------------------
-# list — against the REAL provider and the REAL taxonomy
+# the grammar: group name IS the kind
 # ---------------------------------------------------------------------------
 
 
-def test_systemd_list_shows_sacs_real_timers() -> None:
-    # Arrange — the regression that matters: sac's four jobs are all
-    # kind="timer", and `ecosystem systemd` selects timer+service. This
-    # command listed NOTHING for weeks while the old fake made it green.
+def test_there_is_a_group_per_jobspec_kind() -> None:
+    # Arrange — the decided grammar: `dev {service,timer,cron} <verb>`.
+    expected = set(jobs_mod.ALLOWED_KINDS)
+    # Act
+    present = {k for k in expected if k in dev_group.commands}
+    # Assert
+    assert present == expected
+
+
+def test_every_kind_group_filters_on_exactly_its_own_name() -> None:
+    # Arrange — the identity that makes the historical bug unrepresentable.
+    kinds = set(jobs_mod.ALLOWED_KINDS)
+    # Act
+    mismatched = {g for g in kinds if GROUP_KINDS[g] != frozenset({g})}
+    # Assert
+    assert mismatched == set()
+
+
+def test_job_groups_are_exactly_the_group_kinds_ssot() -> None:
+    # Arrange — the CLI surface is derived from GROUP_KINDS, so a group can
+    # never exist without a declared kind filter behind it.
+    expected = set(GROUP_KINDS)
+    # Act
+    present = {g for g in expected if g in dev_group.commands}
+    # Assert
+    assert present == expected
+
+
+def test_there_is_no_daemon_group() -> None:
+    # Arrange — `sac dev daemon` was dead in BOTH halves: it filtered
+    # kind="daemon" (never legal, so always zero jobs) AND delegated to
+    # `scitex-dev ecosystem daemon`, which is not an ecosystem subcommand
+    # at all. A long-running job is kind="service".
+    groups = dev_group.commands
+    # Act
+    present = "daemon" in groups
+    # Assert
+    assert present is False
+
+
+# ---------------------------------------------------------------------------
+# list — NON-EMPTY against the real provider. Zero jobs was the bug.
+# ---------------------------------------------------------------------------
+
+
+def test_timer_list_is_not_empty() -> None:
+    # Arrange — the regression that matters. A group that can only ever
+    # return zero jobs is exactly what shipped for weeks, reporting
+    # "No sac systemd-kind jobs." with exit 0.
     runner = CliRunner()
     # Act
-    result = runner.invoke(dev_group, ["systemd", "list"])
+    result = runner.invoke(dev_group, ["timer", "list"])
     # Assert
-    assert "sac.accounts-refresh" in result.output
+    assert "No sac timer jobs." not in result.stdout
 
 
-def test_systemd_list_shows_every_declared_sac_job() -> None:
-    # Arrange — all four, not just the one a pinning test happens to name.
-    from scitex_agent_container._jobs._jobs_plugin import provide_jobs
-
-    expected = [j.name for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]]
+def test_timer_list_shows_every_declared_timer() -> None:
+    # Arrange — all of them, not just the one a pinning test happens to
+    # name. sac declares nine timers today.
+    expected = [_names.local(n) for n in _declared("timer")]
     runner = CliRunner()
     # Act
-    result = runner.invoke(dev_group, ["systemd", "list"])
+    result = runner.invoke(dev_group, ["timer", "list"])
     # Assert
-    assert all(name in result.output for name in expected)
+    assert all(name in result.stdout for name in expected)
 
 
-def test_systemd_list_exit_zero() -> None:
+def test_timer_list_json_lists_every_declared_timer() -> None:
+    # Arrange — the count is the assertion: a filter that matches nothing
+    # also "succeeds".
+    expected = set(_declared("timer"))
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "list", "--json"])
+    # Assert
+    assert {j["name"] for j in json.loads(result.stdout)} == expected
+
+
+def test_timer_list_exit_zero() -> None:
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(dev_group, ["systemd", "list"])
+    result = runner.invoke(dev_group, ["timer", "list"])
     # Assert
     assert result.exit_code == 0
 
 
-def test_systemd_list_filters_out_foreign_jobs() -> None:
-    # Arrange — scitex-dev's own built-in jobs are discoverable too; only
-    # sac.* may show here.
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
-    # Assert
-    import json as _json
-
-    assert all(j["name"].startswith("sac.") for j in _json.loads(result.output))
-
-
-def test_systemd_list_json_reports_the_real_kind() -> None:
+def test_timer_list_json_reports_the_real_kind() -> None:
     # Arrange — the JSON surfaces `kind` precisely so a future taxonomy
     # drift is visible rather than silently filtered to nothing.
     runner = CliRunner()
     # Act
-    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
+    result = runner.invoke(dev_group, ["timer", "list", "--json"])
     # Assert
-    import json as _json
+    assert {j["kind"] for j in json.loads(result.stdout)} == {"timer"}
 
-    assert {j["kind"] for j in _json.loads(result.output)} == {"timer"}
+
+def test_timer_list_filters_out_foreign_jobs() -> None:
+    # Arrange — scitex-dev's and scitex-cards' own jobs are discoverable
+    # too; only sac's may show here.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "list", "--json"])
+    # Assert
+    assert all(_names.is_ours(j["name"]) for j in json.loads(result.stdout))
 
 
 def test_cron_list_is_empty_because_sac_declares_no_cron_jobs() -> None:
@@ -127,75 +221,188 @@ def test_cron_list_is_empty_because_sac_declares_no_cron_jobs() -> None:
     # Act
     result = runner.invoke(dev_group, ["cron", "list"])
     # Assert
-    assert "No sac cron jobs." in result.output
+    assert "No sac cron jobs." in result.stdout
 
 
-# ---------------------------------------------------------------------------
-# the dead group stays dead
-# ---------------------------------------------------------------------------
-
-
-def test_there_is_no_daemon_group() -> None:
-    # Arrange — `sac dev daemon` was dead in BOTH halves: it filtered
-    # kind="daemon" (never legal, so always zero jobs) AND delegated to
-    # `scitex-dev ecosystem daemon`, which is not an ecosystem subcommand
-    # at all. A long-running job is kind="service", via the systemd group.
-    groups = dev_group.commands
+def test_service_list_empty_is_consistent_with_what_sac_declares() -> None:
+    # Arrange — sac declares no kind="service" job today (`sac listen` is
+    # deliberately NOT federated; see _jobs_plugin). So this group's empty
+    # must be a TRUE empty, and the test states which one it is rather
+    # than pinning a hardcoded expectation.
+    declared = _declared("service")
+    runner = CliRunner()
     # Act
-    present = "daemon" in groups
+    result = runner.invoke(dev_group, ["service", "list"])
     # Assert
-    assert present is False
+    assert ("No sac service jobs." in result.stdout) is (declared == [])
 
 
-def test_job_groups_are_exactly_the_group_kinds_ssot() -> None:
-    # Arrange — the CLI surface is derived from GROUP_KINDS, so a group can
-    # never again exist without a declared kind filter behind it.
-    expected = set(GROUP_KINDS)
+# ---------------------------------------------------------------------------
+# stdout hygiene — --json must stay machine-parseable
+# ---------------------------------------------------------------------------
+
+
+def test_json_stdout_carries_no_deprecation_note() -> None:
+    # Arrange — THE stdout-purity case: the deprecated alias prints its
+    # notice on every invocation, including this one.
+    runner = CliRunner()
     # Act
-    present = {g for g in expected if g in dev_group.commands}
+    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
+    # Assert — stdout ALONE parses; the note is not in it.
+    assert isinstance(json.loads(result.stdout), list)
+
+
+def test_deprecation_note_goes_to_stderr() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["systemd", "list", "--json"])
+    # Assert
+    assert "DEPRECATED" in result.stderr
+
+
+def _subprocess_timer_list_json() -> subprocess.CompletedProcess:
+    """``sac dev timer list --json`` in a REAL process, on THIS source tree.
+
+    The only place the two streams are genuinely separate files —
+    CliRunner's ``output`` merges them, which is how a stdout test can
+    pass while stdout is filthy. PYTHONPATH pins the subprocess to the
+    SAME source tree this test imported, so a linked worktree is never
+    silently tested against the main checkout's installed code.
+    """
+    src = str(Path(scitex_agent_container.__file__).resolve().parent.parent)
+    env = dict(os.environ, PYTHONPATH=src)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scitex_agent_container",
+            "dev",
+            "timer",
+            "list",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_json_stdout_parses_in_a_real_subprocess() -> None:
+    # Arrange — THE contract: stdout ALONE is machine-readable. The job
+    # COUNT is deliberately not asserted here. `list` reads the
+    # scitex_dev.jobs ENTRY POINT while `_declared()` imports the provider
+    # directly, and the two disagree in environments where the package is
+    # on sys.path but its metadata is not resolvable — measured, this
+    # subprocess returned an empty list in CI while the in-process command
+    # returned all nine. Non-emptiness is pinned in-process above; this
+    # test owns stream purity, and conflating the two would make a stdout
+    # test fail for a discovery reason.
+    proc = _subprocess_timer_list_json()
+    # Act
+    parsed = json.loads(proc.stdout)
+    # Assert
+    assert isinstance(parsed, list)
+
+
+def test_the_real_subprocess_exits_zero() -> None:
+    # Arrange
+    proc = _subprocess_timer_list_json()
+    # Act
+    code = proc.returncode
+    # Assert
+    assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# deprecation — with an expiry, enforced
+# ---------------------------------------------------------------------------
+
+
+def test_systemd_is_the_only_deprecated_group() -> None:
+    # Arrange
+    expected = {"systemd"}
+    # Act
+    present = set(DEPRECATED_GROUPS)
     # Assert
     assert present == expected
 
 
-# ---------------------------------------------------------------------------
-# degrade — absent case
-# ---------------------------------------------------------------------------
-
-
-def test_list_degrades_with_upgrade_hint_when_jobs_absent() -> None:
-    # Arrange
-    with _jobs_absent():
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["systemd", "list"])
-    # Assert — upgrade hint surfaces (no stack trace).
-    text = (result.output or "") + (getattr(result, "stderr", "") or "")
-    assert "requires scitex-dev>=" in text
-
-
-def test_list_degrade_exit_code_nonzero() -> None:
-    # Arrange
-    with _jobs_absent():
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["systemd", "list"])
-    # Assert — clean non-zero exit, not an unhandled exception.
-    assert result.exit_code == 3 and result.exception.__class__ is SystemExit
-
-
-def test_install_degrades_when_jobs_absent() -> None:
-    # Arrange
-    with _jobs_absent():
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(dev_group, ["systemd", "install", "-y"])
+def test_systemd_deprecation_carries_the_decided_dates() -> None:
+    # Arrange — real values in code, not a vague "for now".
+    dep = DEPRECATED_GROUPS["systemd"]
+    # Act
+    stamped = (dep.since, dep.remove_after)
     # Assert
-    text = (result.output or "") + (getattr(result, "stderr", "") or "")
-    assert "requires scitex-dev>=" in text
+    assert stamped == ("2026-08", "2026-10")
+
+
+def test_the_deprecation_deadline_has_not_passed() -> None:
+    # Arrange — THE ENFORCEMENT. A written date nobody checks is the same
+    # as no date: this test turns the build red once the removal window
+    # closes, so retiring `sac dev systemd` becomes a required action
+    # rather than an intention.
+    today = date.today().strftime("%Y-%m")
+    # Act
+    expired = [g for g, d in DEPRECATED_GROUPS.items() if d.is_expired(today)]
+    # Assert
+    assert not expired, (
+        f"deprecation window closed for {expired} — delete these groups from "
+        "GROUP_KINDS/GROUP_VERBS/DEPRECATED_GROUPS and their docs"
+    )
+
+
+def test_deprecation_rejects_a_vague_date() -> None:
+    # Arrange — "2026" is how "for the time being" gets back in.
+    kwargs = dict(since="2026-08", replacement="x")
+
+    # Act
+    def _build():
+        return Deprecation(remove_after="2026", **kwargs)
+
+    # Assert
+    with pytest.raises(ValueError):
+        _build()
+
+
+def test_deprecation_rejects_a_removal_date_before_it_starts() -> None:
+    # Arrange
+    kwargs = dict(since="2026-10", replacement="x")
+
+    # Act
+    def _build():
+        return Deprecation(remove_after="2026-08", **kwargs)
+
+    # Assert
+    with pytest.raises(ValueError):
+        _build()
+
+
+def test_deprecation_requires_a_replacement() -> None:
+    # Arrange — a deprecation with nothing to move to is a complaint.
+    kwargs = dict(since="2026-08", remove_after="2026-10")
+
+    # Act
+    def _build():
+        return Deprecation(replacement="", **kwargs)
+
+    # Assert
+    with pytest.raises(ValueError):
+        _build()
+
+
+def test_the_alias_gains_no_new_verbs() -> None:
+    # Arrange — the alias keeps EXACTLY its historical surface so nothing
+    # new gets built on something with a removal date.
+    frozen = {"list", "install", "uninstall"}
+    # Act
+    verbs = set(GROUP_VERBS["systemd"])
+    # Assert
+    assert verbs == frozen
 
 
 # ---------------------------------------------------------------------------
-# verb consistency with the scitex-dev ecosystem aggregator
+# verb sets — per kind, and a verb that makes no sense does not exist
 # ---------------------------------------------------------------------------
 
 
@@ -205,58 +412,386 @@ def _verbs_of(group: str) -> set[str]:
     return set(grp.commands)  # type: ignore[attr-defined]
 
 
-def test_cron_verbs_are_list_install_uninstall() -> None:
-    # Arrange
-    group = "cron"
+def test_declared_verbs_are_the_verbs_actually_wired() -> None:
+    # Arrange — GROUP_VERBS is the SSOT; a declared verb that is not wired
+    # is a declaration with no live counterpart.
+    expected = {g: set(v) for g, v in GROUP_VERBS.items()}
     # Act
-    verbs = _verbs_of(group)
+    wired = {g: _verbs_of(g) for g in GROUP_VERBS}
     # Assert
-    assert verbs == {"list", "install", "uninstall"}
+    assert wired == expected
 
 
-def test_systemd_verbs_are_list_install_uninstall() -> None:
-    # Arrange
-    group = "systemd"
+def test_every_declared_verb_has_a_help_summary() -> None:
+    # Arrange — the summary map is consulted at IMPORT time while the
+    # groups are built, so a verb added without one does not fail its own
+    # command: it raises KeyError and takes the entire `sac` CLI down.
+    declared = {v for verbs in GROUP_VERBS.values() for v in verbs if v != "list"}
     # Act
-    verbs = _verbs_of(group)
+    missing = declared - set(dj._VERB_SUMMARY)
     # Assert
-    assert verbs == {"list", "install", "uninstall"}
+    assert missing == set()
 
 
-def test_install_delegates_to_the_matching_ecosystem_group() -> None:
-    # Arrange — capture the (group, verb, name) tuples install delegates
-    # with, rather than shelling out to a real scitex-dev that would
-    # rewrite the host's systemd units.
-    import scitex_agent_container.cli_pkg._dev_jobs as dj
+def test_service_has_the_runtime_lifecycle() -> None:
+    # Arrange — a service is a long-running unit. MATCHED to scitex-dev
+    # PR #566's service verb set: no enable/disable, because the shared
+    # layer does not serve them and a verb sac exposes that nothing can
+    # serve is a permanent exit-4.
+    expected = {
+        "list",
+        "status",
+        "start",
+        "stop",
+        "restart",
+        "install",
+        "uninstall",
+    }
+    # Act
+    verbs = _verbs_of("service")
+    # Assert
+    assert verbs == expected
 
-    captured: list[tuple] = []
-    original = dj._ecosystem_delegate
-    dj._ecosystem_delegate = lambda *a, **k: captured.append(a) or 0  # type: ignore[assignment]
-    try:
-        runner = CliRunner()
-        # Act
-        runner.invoke(dev_group, ["systemd", "install", "-y"])
-    finally:
-        dj._ecosystem_delegate = original  # type: ignore[assignment]
-    # Assert — every delegation targets `ecosystem systemd install`.
-    assert captured and all(a[:2] == ("systemd", "install") for a in captured)
+
+def test_no_verb_is_exposed_that_the_counterpart_will_not_serve() -> None:
+    # Arrange — scitex-dev PR #566's verb sets, transcribed. Divergence
+    # here is a declaration with no live counterpart in the making, so it
+    # is pinned rather than trusted to review.
+    counterpart = {
+        "service": {
+            "list",
+            "status",
+            "start",
+            "stop",
+            "restart",
+            "install",
+            "uninstall",
+        },
+        "timer": {"list", "status", "enable", "disable", "install", "uninstall"},
+        # `exec` is deliberately NOT mirrored: sac declares no cron job,
+        # and its argv is positional (`exec <name> --apply`) rather than
+        # the uniform `--name` every other verb takes.
+        "cron": {"list", "enable", "disable", "install", "uninstall", "exec"},
+    }
+    # Act
+    extra = {g: set(GROUP_VERBS[g]) - counterpart[g] for g in counterpart}
+    # Assert
+    assert extra == {"service": set(), "timer": set(), "cron": set()}
+
+
+def test_timer_has_no_start_verb() -> None:
+    # Arrange — `enable --now` is the systemd idiom for a timer; a second
+    # spelling with different edge cases is worse than none.
+    verbs = _verbs_of("timer")
+    # Act
+    present = "start" in verbs
+    # Assert
+    assert present is False
+
+
+def test_cron_has_no_status_verb() -> None:
+    # Arrange — a crontab line is present or commented out; there is no
+    # runtime object to ask. The verb does not exist rather than existing
+    # and erroring.
+    verbs = _verbs_of("cron")
+    # Act
+    present = "status" in verbs
+    # Assert
+    assert present is False
+
+
+# ---------------------------------------------------------------------------
+# delegation — the KIND is what travels, never the group name
+# ---------------------------------------------------------------------------
 
 
 def test_install_delegates_once_per_declared_timer() -> None:
     # Arrange — the count is the point: a group that silently matched zero
     # jobs delegated zero times and still exited 0.
-    import scitex_agent_container.cli_pkg._dev_jobs as dj
-    from scitex_agent_container._jobs._jobs_plugin import provide_jobs
+    expected = len(_declared("timer"))
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "-y"])
+    # Assert
+    assert len(captured) == expected
 
-    expected = len([j for j in provide_jobs() if j.kind in GROUP_KINDS["systemd"]])
-    captured: list[tuple] = []
-    original = dj._ecosystem_delegate
-    dj._ecosystem_delegate = lambda *a, **k: captured.append(a) or 0  # type: ignore[assignment]
-    try:
+
+def test_install_delegates_with_the_kind_not_the_group_name() -> None:
+    # Arrange — THE historical bug, at the delegation boundary.
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "-y"])
+    # Assert
+    assert captured and all(a[:2] == ("timer", "install") for a in captured)
+
+
+def test_the_alias_delegates_on_a_kind_too_never_on_systemd() -> None:
+    # Arrange — the deprecated group name must not reach the kind axis.
+    with _captured_delegations() as captured:
         runner = CliRunner()
         # Act
         runner.invoke(dev_group, ["systemd", "install", "-y"])
-    finally:
-        dj._ecosystem_delegate = original  # type: ignore[assignment]
     # Assert
-    assert len(captured) == expected
+    assert captured and all(a[0] in jobs_mod.ALLOWED_KINDS for a in captured)
+
+
+def test_install_accepts_the_short_local_name() -> None:
+    # Arrange — the operator types the local name inside sac's own CLI.
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "-y"])
+    # Assert
+    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+
+
+def test_install_accepts_the_canonical_name_too() -> None:
+    # Arrange — a name copied out of --json output or off a unit filename.
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "sac.accounts-refresh", "-y"])
+    # Assert
+    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+
+
+def test_install_forwards_dry_run_to_the_delegation() -> None:
+    # Arrange — scitex-dev gates mutating job verbs behind --dry-run /
+    # --yes, and that gate is load-bearing. If sac's pass-through drops a
+    # flag, a guarded command silently becomes an unguarded one.
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "--dry-run"])
+    # Assert — (kind, verb, name, yes, dry_run)
+    assert [a[4] for a in captured] == [True]
+
+
+def test_install_forwards_yes_to_the_delegation() -> None:
+    # Arrange
+    with _captured_delegations() as captured:
+        runner = CliRunner()
+        # Act
+        runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "-y"])
+    # Assert
+    assert [a[3] for a in captured] == [True]
+
+
+def test_a_named_mutating_verb_offers_dry_run() -> None:
+    # Arrange — `timer disable sac.accounts-refresh` stops the fleet's
+    # SOLE OAuth refresher, so previewing it must be possible from sac's
+    # own CLI rather than only from scitex-dev's.
+    disable = dev_group.commands["timer"].commands["disable"]  # type: ignore[attr-defined]
+    # Act
+    flags = {opt for p in disable.params for opt in p.opts}
+    # Assert
+    assert {"--dry-run", "--yes"} <= flags
+
+
+def test_every_mutating_verb_offers_the_gate_flags() -> None:
+    # Arrange — one missing flag is one command that cannot be previewed.
+    wanted = {"--dry-run", "--yes"}
+    mutating = [
+        (g, v)
+        for g, verbs in GROUP_VERBS.items()
+        for v in verbs
+        if v in _backend.MUTATING_VERBS
+    ]
+    # Act
+    missing = {}
+    for group, verb in mutating:
+        cmd = dev_group.commands[group].commands[verb]  # type: ignore[attr-defined]
+        gap = wanted - {opt for p in cmd.params for opt in p.opts}
+        if gap:
+            missing[f"{group} {verb}"] = sorted(gap)
+    # Assert
+    assert missing == {}
+
+
+def test_an_unknown_job_name_exits_five() -> None:
+    # Arrange — a verb that silently does nothing for a typo is how a job
+    # quietly stops being scheduled.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "install", "no-such-job", "-y"])
+    # Assert
+    assert result.exit_code == 5
+
+
+def test_an_unknown_job_name_lists_the_real_ones() -> None:
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "install", "no-such-job", "-y"])
+    # Assert
+    assert "accounts-refresh" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# a verb whose SUPPORT depends on the installed scitex-dev
+# ---------------------------------------------------------------------------
+# THESE TESTS PINNED A FACT WITH AN EXPIRY DATE, AND IT EXPIRED.
+#
+# They asserted unconditionally that `sac dev timer status` is REFUSED —
+# true only while the installed scitex-dev had no `ecosystem dev timer
+# status` to delegate to. scitex-dev 0.48.0 shipped one; the shared CI SIF
+# picked it up on 2026-08-12, and these three went red on every open PR
+# while sac itself was behaving exactly as designed: it stopped refusing
+# and started DELEGATING. The suite called that a regression. It was a
+# dependency release.
+#
+# Measured, one variable, everything else held equal:
+#     scitex-dev 0.47.0  ->  exit 4, refusal naming the systemctl command
+#     scitex-dev 0.48.0  ->  delegation; no refusal on sac's own stderr
+# (Same click 8.4.2, same sac commit, same test files.)
+#
+# THE FIX IS NOT A SKIP. Skipping when the backend serves the verb would
+# silently stop testing the REFUSAL path — which still runs against every
+# scitex-dev that lacks the verb, is the half a future change is most
+# likely to break, and would then break unwatched. A skipped test reports
+# the same green as a passing one.
+#
+# So each test asks sac's OWN probe — `_dev_jobs_backend.resolve()`, the
+# very call sac's refusal path uses to decide — and asserts the branch that
+# probe selected: refuse when the backend cannot serve the verb, delegate
+# when it can. Both behaviours stay covered under both worlds, and no
+# scitex-dev release can expire this again.
+
+
+def _timer_status_support() -> backend.Delegation:
+    """What sac's OWN probe concludes about `dev timer status` right now.
+
+    Deliberately the production call rather than a re-implementation: a
+    parallel capability check in the tests could drift from the one the
+    refusal path actually consults, and then the suite would be green
+    about a decision the product never makes. The cache is reset first so
+    the answer describes this interpreter's installed scitex-dev and not a
+    verdict some earlier test cached.
+    """
+    backend.reset_capability_cache()
+    return backend.resolve("timer", "status")
+
+
+def test_the_probe_states_its_evidence_either_way() -> None:
+    # Arrange — every assertion below branches on this probe, so a probe
+    # that answered without evidence would make all of them unreadable.
+    delegation = _timer_status_support()
+    # Act
+    evidence = delegation.evidence
+    # Assert
+    assert evidence, (
+        "sac's capability probe reached a verdict without saying how. The "
+        "tests below report 'refused' or 'delegated' on its say-so; an "
+        "unexplained verdict makes their failures undiagnosable."
+    )
+
+
+def test_the_exit_code_follows_what_the_probe_decided() -> None:
+    # Arrange — exit 4 means "the backend cannot serve this verb". It is
+    # correct exactly when the probe says the backend cannot.
+    delegation = _timer_status_support()
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
+    # Assert
+    assert (result.exit_code == 4) is (not delegation.supported), (
+        f"sac exited {result.exit_code} for `dev timer status`, but its own "
+        f"probe says supported={delegation.supported} ({delegation.evidence}). "
+        "Exit 4 is the refusal code: it must appear when the backend cannot "
+        "serve the verb and must NOT appear when it can, where sac should "
+        "delegate instead."
+    )
+
+
+def test_a_refusal_states_what_it_probed() -> None:
+    # Arrange — a refusal with no evidence is a claim. When the backend DOES
+    # serve the verb there is no refusal, so the evidence must not appear.
+    delegation = _timer_status_support()
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
+    # Assert
+    assert ("ecosystem dev timer status" in result.stderr) is (
+        not delegation.supported
+    ), (
+        f"probe says supported={delegation.supported}, but sac's stderr "
+        f"{'omits' if not delegation.supported else 'still carries'} the "
+        "probed-paths evidence. A refusal must name what it probed; a "
+        "delegation must not print a refusal it did not make.\n"
+        f"stderr: {result.stderr!r}"
+    )
+
+
+def test_a_refusal_offers_the_manual_command() -> None:
+    # Arrange — reporting a command is not running it; sac still does not
+    # own systemctl. Only meaningful while sac is the one refusing.
+    delegation = _timer_status_support()
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
+    # Assert
+    assert (
+        "systemctl --user status sac.accounts-refresh.timer" in result.stderr
+    ) is (not delegation.supported), (
+        f"probe says supported={delegation.supported}. When sac refuses it "
+        "must hand the operator the manual command; when it delegates it "
+        "must not, because the verb is being served rather than declined.\n"
+        f"stderr: {result.stderr!r}"
+    )
+
+
+def test_an_unsupported_verb_writes_nothing_to_stdout() -> None:
+    # Arrange — same stdout-purity rule as --json.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
+    # Assert
+    assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# degrade — scitex-dev too old
+# ---------------------------------------------------------------------------
+
+
+def test_list_degrades_with_upgrade_hint_when_jobs_absent() -> None:
+    # Arrange
+    with _jobs_absent():
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["timer", "list"])
+    # Assert — upgrade hint surfaces (no stack trace), on stderr.
+    assert "requires scitex-dev>=" in result.stderr
+
+
+def test_list_degrade_exit_code_is_three() -> None:
+    # Arrange
+    with _jobs_absent():
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["timer", "list"])
+    # Assert — clean non-zero exit, not an unhandled exception.
+    assert result.exit_code == 3 and result.exception.__class__ is SystemExit
+
+
+def test_degrade_writes_nothing_to_stdout() -> None:
+    # Arrange — an upgrade hint on stdout would corrupt a --json consumer
+    # exactly like a WARN does.
+    with _jobs_absent():
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["timer", "list", "--json"])
+    # Assert
+    assert result.stdout == ""
+
+
+def test_install_degrades_when_jobs_absent() -> None:
+    # Arrange
+    with _jobs_absent():
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(dev_group, ["timer", "install", "-y"])
+    # Assert
+    assert "requires scitex-dev>=" in result.stderr

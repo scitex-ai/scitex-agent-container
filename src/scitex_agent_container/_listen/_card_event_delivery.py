@@ -74,9 +74,13 @@ CARD_EVENT_KINDS = frozenset(
     }
 )
 
-# Env knobs (same names the rest of the sac client surface reads).
+# Env knobs read directly here. The BEARER is deliberately absent from this
+# list: it is resolved by the canonical `_listen_client_resolve._resolve_bearer`
+# (see `_resolve_bearer` below), which accepts BOTH the `SAC_` and
+# `SCITEX_AGENT_CONTAINER_` prefixes and then the on-disk token file. A local
+# `ENV_BEARER = "SAC_LISTEN_BEARER"` constant lived here and was the reason this
+# module saw only one of the two spellings.
 ENV_BASE_URL = "SAC_LISTEN_BASE_URL"
-ENV_BEARER = "SAC_LISTEN_BEARER"
 ENV_DISABLED = "SAC_CARD_EVENT_DELIVERY_DISABLED"
 
 DEFAULT_BASE_URL = "http://127.0.0.1:7878"
@@ -174,23 +178,30 @@ def _resolve_base_url() -> str:
 def _resolve_bearer() -> str | None:
     """Bearer for the local ``sac listen`` ``/v1/notify`` call.
 
-    ``SAC_LISTEN_BEARER`` env first (what every other sac client reads);
-    fall back to the host token file written by ``sac listen`` at startup.
-    ``None`` only when neither is present — the POST then goes
-    unauthenticated and the daemon answers 401, which surfaces loudly in
-    the per-target log line rather than silently dropping."""
-    env_bearer = os.environ.get(ENV_BEARER, "").strip()
-    if env_bearer:
-        return env_bearer
-    # stx-allow: fallback (reason: token-file read is best-effort; a
-    # missing/unreadable token degrades to an unauthenticated POST that
-    # fails LOUD with 401, never a silent drop.)
-    try:
-        from .tokens import default_token_path, read_token
+    Resolution: ``SAC_LISTEN_BEARER`` / ``SCITEX_AGENT_CONTAINER_LISTEN_BEARER``
+    env, then the host token file written by ``sac listen`` at startup. ``None``
+    only when neither is present — the POST then goes unauthenticated and the
+    daemon answers 401, which surfaces loudly in the per-target log line rather
+    than silently dropping.
 
-        return read_token(default_token_path())
-    except Exception:  # stx-allow: fallback (reason: see inline comment)
-        return None
+    THE PREFIX MATTERS, and this used to get it wrong. The old body read
+    ``os.environ.get("SAC_LISTEN_BEARER")`` directly — that spelling ONLY,
+    while its own docstring claimed that was "what every other sac client
+    reads". It is not: every other client goes through :func:`_env.getenv`,
+    which accepts BOTH the ``SAC_`` and ``SCITEX_AGENT_CONTAINER_`` prefixes.
+    So a deployment that set only the long form authenticated everywhere except
+    here, and card-event delivery alone 401'd — a divergence that looked
+    deliberate because the comment asserted parity.
+
+    Delegates to the canonical resolver so the chain is defined ONCE. The
+    canonical takes an explicit-override argument; this surface has never had
+    one, so ``None`` is passed and the signature is unchanged for callers.
+    """
+    from .._lifecycle._listen_client_resolve import (
+        _resolve_bearer as _canonical_resolve_bearer,
+    )
+
+    return _canonical_resolve_bearer(None)
 
 
 def _post_notify(

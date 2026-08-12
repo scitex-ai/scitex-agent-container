@@ -29,8 +29,6 @@ production collaborators:
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import json
 from pathlib import Path
@@ -44,6 +42,7 @@ from scitex_agent_container.cli_pkg.status_cmds import (
     health,
     status,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real-collaborator fixtures (registry + spec.yaml on disk)
@@ -84,28 +83,30 @@ def _write_spec(parent: Path, name: str, *, body: str | None = None) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml(body
-        if body is not None
-        else (
-            "apiVersion: scitex-agent-container/v3\n"
-            "kind: Agent\n"
-            "metadata: {}\n"
-            "spec:\n"
-            "  runtime: apptainer\n"
-            "  host: ${HOSTNAME}\n"
-            "  workdir: /home/agent/work\n"
-            "  apptainer:\n"
-            "    image: /x.sif\n"
-            "    binds: []\n"
-            "  claude:\n"
-            "    model: sonnet\n"
-            "  health:\n"
-            "    enabled: true\n"
-            "    interval: 60\n"
-            "  restart:\n"
-            "    policy: on-failure\n"
-            "    max_retries: 3\n"
-        ))
+        explicitize_yaml(
+            body
+            if body is not None
+            else (
+                "apiVersion: scitex-agent-container/v3\n"
+                "kind: Agent\n"
+                "metadata: {}\n"
+                "spec:\n"
+                "  runtime: apptainer\n"
+                "  host: ${HOSTNAME}\n"
+                "  workdir: /home/agent/work\n"
+                "  apptainer:\n"
+                "    image: /x.sif\n"
+                "    binds: []\n"
+                "  claude:\n"
+                "    model: sonnet\n"
+                "  health:\n"
+                "    enabled: true\n"
+                "    interval: 60\n"
+                "  restart:\n"
+                "    policy: on-failure\n"
+                "    max_retries: 3\n"
+            )
+        )
     )
     return spec
 
@@ -374,7 +375,10 @@ def test_status_fleet_json_returns_agents_list(tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["--json"])
-    data = json.loads(result.output)
+    # ``result.output`` folds stderr in (click 8.4 dropped mix_stderr), so an
+    # ambient WARN logged during config load lands AHEAD of the payload and
+    # json.loads dies at char 0. Parse the payload stream only.
+    data = json.loads(result.stdout)
     # Assert -- key exists and value is a list (possibly populated by
     # disk-defined agents discovered under ~/.scitex/agent-container).
     assert isinstance(data.get("agents"), list)
@@ -387,7 +391,8 @@ def test_status_fleet_json_includes_registered_agent(tmp_path, tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["--json"])
-    data = json.loads(result.output)
+    # See the note above: parse stdout, not the stderr-folded ``output``.
+    data = json.loads(result.stdout)
     names = [row["name"] for row in data["agents"]]
     # Assert
     assert "fleet-agent" in names

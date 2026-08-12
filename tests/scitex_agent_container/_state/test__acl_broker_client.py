@@ -22,6 +22,7 @@ import pytest
 
 from scitex_agent_container._state._acl_broker_client import (
     AclBrokerError,
+    _resolve_bearer,
     broker_acl_decision,
 )
 
@@ -214,8 +215,15 @@ def test_bearer_attached_as_authorization_header(listen_env) -> None:
     assert captured["headers"].get("authorization") == "Bearer tok-abc"
 
 
-def test_no_authorization_header_when_bearer_unset(listen_env) -> None:
-    # Arrange
+def test_no_authorization_header_when_bearer_unset(listen_env, home_redirect) -> None:
+    # Arrange — no bearer in the env AND (via home_redirect) none on disk.
+    # `home_redirect` is load-bearing here, not cosmetic: this test asserted
+    # "no bearer available" while only clearing the ENV, which held solely
+    # because the old resolver could not read the token file at all. Once the
+    # client gained the fallback, the unredirected HOME let it find the
+    # OPERATOR'S REAL host token — the assertion failed and printed that token
+    # into the test output. The fixture now makes "no token available" true
+    # instead of accidental.
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener, captured = _opener_returning(b"{}")
     # Act
@@ -299,3 +307,75 @@ def test_empty_sender_raises_loudly(listen_env) -> None:
     # Assert
     with pytest.raises(AclBrokerError, match="non-empty"):
         broker_acl_decision("unblock", sender="", target="b")
+
+
+# ---------------------------------------------------------------------------
+# The bearer must be findable ON DISK, not just in the env
+#
+# This module's `_resolve_bearer` stopped at SAC_LISTEN_BEARER while the spawn /
+# restart / card-event clients also read the host token file at
+# ~/.scitex/agent-container/tokens/listen-<host>.token. The runtime injects that
+# env var ONLY for agents whose spec registers the `server:sac` channel, so for
+# every other agent this route brokered ACL decisions UNAUTHENTICATED and the
+# listen answered 401 — same container, same readable token, different copy of
+# the resolver.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def home_redirect(tmp_path):
+    """Point HOME at a clean tmp dir so the token-file fallback is isolated.
+
+    Without this the resolver reads the operator's REAL
+    ``~/.scitex/agent-container/tokens/...`` and the test result depends on the
+    machine it runs on.
+    """
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
+
+
+def _write_host_token_file(home, token: str) -> None:
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    path = default_token_path(home=home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+
+
+def test_bearer_falls_back_to_the_host_token_file(listen_env, home_redirect) -> None:
+    """The regression: an on-disk token was invisible to this client."""
+    # Arrange — env cleared by listen_env; a real token file on disk.
+    _write_host_token_file(home_redirect, "file-tok-acl")
+    # Act
+    resolved = _resolve_bearer(None)
+    # Assert
+    assert resolved == "file-tok-acl"
+
+
+def test_env_bearer_still_wins_over_the_token_file(listen_env, home_redirect) -> None:
+    # Arrange — both sources present; the env must win.
+    _write_host_token_file(home_redirect, "file-tok")
+    listen_env("LISTEN_BEARER", "env-tok")
+    # Act
+    resolved = _resolve_bearer(None)
+    # Assert
+    assert resolved == "env-tok"
+
+
+def test_an_empty_explicit_bearer_stays_unauthenticated(
+    listen_env, home_redirect
+) -> None:
+    """``""`` is the deliberate opt-out — it must NOT reach for the file."""
+    # Arrange
+    _write_host_token_file(home_redirect, "file-tok")
+    # Act
+    resolved = _resolve_bearer("")
+    # Assert
+    assert resolved is None

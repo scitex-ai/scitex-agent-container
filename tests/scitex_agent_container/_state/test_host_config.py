@@ -38,7 +38,19 @@ def _parse_probe_json(result, *, expect_exit: int = 0) -> dict:
 
     1. The CLI exit code matches ``expect_exit`` (probe payload is only
        trustworthy when the command ran to completion).
-    2. ``result.output`` parses as a JSON object.
+    2. ``result.stdout`` parses as a JSON object.
+
+    **stdout, not ``result.output``.** Since click 8.2 ``result.output``
+    is not a proxy for stdout — it is an independent stream that mixes
+    stdout and stderr in write order. Any library that logs a WARNING
+    while the command runs (scitex-logging's console handler resolves
+    ``sys.stderr`` per emit, so it follows click's isolated streams)
+    lands in ``.output`` and makes it unparseable, while the payload a
+    real ``sac host probe --json | jq`` consumer receives is untouched.
+    Asserting on ``.stdout`` is both the passing assertion and the
+    faithful one. Pinned by
+    ``test_json_payload_parses_from_stdout_despite_a_library_warning``
+    in ``tests/scitex_agent_container/cli_pkg/test_host_group.py``.
 
     Returns the parsed payload so callers assert on a structured field
     (``payload["remote_canonical"]``) rather than on exact / ordered
@@ -46,14 +58,15 @@ def _parse_probe_json(result, *, expect_exit: int = 0) -> dict:
     """
     assert result.exit_code == expect_exit, (
         f"host probe exit_code={result.exit_code} (expected {expect_exit}); "
-        f"exception={result.exception!r}; output={result.output!r}"
+        f"exception={result.exception!r}; output(stdout+stderr)={result.output!r}"
     )
     try:
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
     except ValueError as exc:  # JSONDecodeError subclasses ValueError
         raise AssertionError(
             f"host probe --json did not emit parseable JSON: {exc}; "
-            f"raw output={result.output!r}"
+            f"raw stdout={result.stdout!r}; "
+            f"stdout+stderr={result.output!r}"
         ) from exc
     assert isinstance(payload, dict), (
         f"host probe --json payload is not an object: {payload!r}"
@@ -67,6 +80,24 @@ def cfg_path(tmp_path: Path, env_save_restore) -> Path:
     p = tmp_path / "config.yaml"
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(p))
     return p
+
+
+@pytest.fixture
+def empty_registry(tmp_path: Path, env_save_restore) -> Path:
+    """A real, EMPTY scitex-dev host registry at $SCITEX_DIR/dev/hosts.yaml.
+
+    ``sac host list`` reports config peers UNION the registry's routable
+    hosts, so a test that asserts on the ``peers`` list has to pin BOTH
+    sources. Leaving the registry ambient makes the assertion depend on
+    the operator's real hosts.yaml — on scitex-compute-04 that is five
+    extra rows, so the test's outcome was a property of the machine, not
+    of the code.
+    """
+    hosts_dir = tmp_path / "registry" / "dev"
+    hosts_dir.mkdir(parents=True)
+    (hosts_dir / "hosts.yaml").write_text("hosts: {}\n")
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "registry"))
+    return hosts_dir / "hosts.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -283,17 +314,25 @@ peers:
 # ---------------------------------------------------------------------------
 
 
-def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
+def test_host_list_returns_empty_peers_with_no_config_and_no_registry(
+    cfg_path: Path, empty_registry: Path
+):
+    """Peers is empty only when NEITHER route source offers anything.
+
+    The registry half is pinned explicitly: with a populated registry
+    this list is correctly non-empty, which is the whole point of the
+    change — a host with no config.yaml can still reach its peers.
+    """
     # Arrange
     from scitex_agent_container.cli_pkg.host_group import host_list
 
     # Act
     result = CliRunner().invoke(host_list, ["--json"])
     # Assert
-    assert json.loads(result.output)["peers"] == []
+    assert json.loads(result.stdout)["peers"] == []
 
 
-def test_host_list_renders_configured_peers(cfg_path: Path):
+def test_host_list_renders_configured_peers(cfg_path: Path, empty_registry: Path):
     # Arrange
     cfg_path.write_text(
         """
@@ -309,7 +348,7 @@ peers:
     # Act
     result = CliRunner().invoke(host_list, ["--json"])
     # Assert
-    assert sorted(p["name"] for p in json.loads(result.output)["peers"]) == [
+    assert sorted(p["name"] for p in json.loads(result.stdout)["peers"]) == [
         "mba",
         "spartan",
     ]
@@ -323,7 +362,7 @@ def test_host_validate_passes_for_clean_config(cfg_path: Path):
     # Act
     result = CliRunner().invoke(host_validate, ["--json"])
     # Assert
-    assert json.loads(result.output)["errors"] == []
+    assert json.loads(result.stdout)["errors"] == []
 
 
 def test_host_validate_fails_for_unknown_via(cfg_path: Path):
@@ -341,7 +380,7 @@ peers:
     # Act
     result = CliRunner().invoke(host_validate, ["--json"])
     # Assert
-    assert "does-not-exist" in json.loads(result.output)["errors"][0]
+    assert "does-not-exist" in json.loads(result.stdout)["errors"][0]
 
 
 # ---------------------------------------------------------------------------

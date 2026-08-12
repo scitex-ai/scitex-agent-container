@@ -289,6 +289,28 @@ class TuiSessionRuntime(
             write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
+        # OVERLAY VENV INVALIDATION CONTRACT — parity with the SDK runtime (see
+        # ``_apptainer_runtime.start`` for the full why-here). Past the
+        # duplicate-session guard above, so no container of this agent holds the
+        # overlay mounted; past the dry-run return, so ``--dry-run`` mutates
+        # nothing; and BEFORE the entry-point probe below, so that probe
+        # measures the RECONCILED union rather than the stale one.
+        # The SIF is read OUT OF THE LAUNCH ARGV rather than re-resolved. Same
+        # reasoning as ``_entry_point_gate.probe_argv_from_launch``: a second
+        # resolution is free to drift from the one that actually launches, and
+        # reconciling against a DIFFERENT image than the container mounts would
+        # stamp the overlay with an identity it never ran on — which then reads
+        # as reconciled forever. Deriving it makes divergence impossible.
+        from .._maintenance._overlay_venv_invalidate import (
+            reconcile_overlay_venv_for_launch,
+        )
+
+        launch_sif = next((a for a in argv if str(a).endswith(".sif")), None)
+        if launch_sif is not None:
+            reconcile_overlay_venv_for_launch(
+                config, launch_sif, state_dir_for_config(config)
+            )
+
         # The console script must RUN in the union we are about to launch, not
         # merely import in the image. Called after argv exists (so the probe
         # inherits the real overlay) and after the dry-run return (so

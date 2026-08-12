@@ -43,11 +43,34 @@ on:
     - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else (the nightly cron
+# included — a scheduled run keys on its own run_id and is alone in its group).
+# Argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   install-check:
     # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: import-smoke-on-ubuntu-py3-12
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — pinned to spartan-cpu on purpose. Measurements: PR #1001.
+    #
+    # 47s median, single-core, and it never enters the CI SIF. That is the
+    # POINT of this job: it installs from source on the BARE runner precisely to
+    # check that the package imports without the SIF's baked environment, so
+    # routing it to a SIF-capable host would not help it and pinning it here
+    # costs it nothing.
+    #
+    # It was holding one of four 32-core machines per run on a pool at 93-94%
+    # utilisation, then queueing 289s median (p90 902s). The spartan-cpu runners
+    # are nproc=1 — wrong for `tests` (497s there vs 170s on 32 cores), right
+    # for this.
+    #
+    # PINNED PER WORKFLOW rather than through vars.CI_RUNS_ON so the routing is
+    # visible in a diff and cannot reach `tests` or the release gate, which DO
+    # enter the SIF and still need #992 first.
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
