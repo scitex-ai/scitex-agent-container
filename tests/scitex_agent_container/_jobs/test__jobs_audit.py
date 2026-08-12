@@ -31,9 +31,13 @@ from scitex_agent_container._jobs._jobs_audit import (  # noqa: E402
     Verdict,
     audit_consumers,
     audit_discovery,
+    audit_group_naming,
     audit_jobs,
 )
-from scitex_agent_container.cli_pkg._dev_jobs import GROUP_KINDS  # noqa: E402
+from scitex_agent_container.cli_pkg._dev_jobs import (  # noqa: E402
+    DEPRECATED_GROUPS,
+    GROUP_KINDS,
+)
 
 # The mapping the CLI ACTUALLY used before this was fixed: ``_load_sac_jobs``
 # was called with the GROUP NAME, so each group filtered on a kind literally
@@ -163,6 +167,102 @@ def test_consumer_group_kinds_are_all_legal_kinds() -> None:
         covered |= kinds
     # Assert
     assert covered <= jobs_mod.ALLOWED_KINDS
+
+
+# ---------------------------------------------------------------------------
+# Form GROUP_IS_NOT_ITS_KIND — the grammar itself, machine-checked
+# ---------------------------------------------------------------------------
+
+
+def test_no_live_group_name_is_anything_other_than_its_kind() -> None:
+    # Arrange — the ecosystem grammar is `dev <kind> <verb>`. Enforcing
+    # the identity is what makes the original outage unrepresentable
+    # rather than merely fixed.
+    # Act
+    report = audit_jobs()
+    # Assert
+    assert not [f for f in report.inert if f.form is Form.GROUP_IS_NOT_ITS_KIND], (
+        report.render()
+    )
+
+
+def test_detector_fires_when_a_group_is_named_after_a_mechanism() -> None:
+    # Arrange — the pre-decision shape: `systemd` is a delivery
+    # mechanism, not a kind, and it was NOT declared a deprecated alias.
+    # Act
+    findings = audit_group_naming(
+        group_kinds={"cron": frozenset({"cron"}), "systemd": frozenset({"timer"})},
+        allowed_kinds=frozenset(jobs_mod.ALLOWED_KINDS),
+        deprecated=frozenset(),
+    )
+    # Assert
+    assert [f.subject for f in findings] == ["sac dev systemd"]
+
+
+def test_detector_fires_when_a_kind_group_filters_on_another_kind() -> None:
+    # Arrange — a group that means its own name is the entire invariant;
+    # `timer` listing services would silently widen the filter.
+    # Act
+    findings = audit_group_naming(
+        group_kinds={"timer": frozenset({"timer", "service"})},
+        allowed_kinds=frozenset(jobs_mod.ALLOWED_KINDS),
+        deprecated=frozenset(),
+    )
+    # Assert
+    assert findings[0].form is Form.GROUP_IS_NOT_ITS_KIND
+
+
+def test_a_declared_alias_is_exempt_from_the_naming_rule() -> None:
+    # Arrange — the alias exists precisely to break the rule for
+    # compatibility, and it carries a removal date for it.
+    # Act
+    findings = audit_group_naming(
+        group_kinds={
+            "timer": frozenset({"timer"}),
+            "service": frozenset({"service"}),
+            "systemd": frozenset({"timer", "service"}),
+        },
+        allowed_kinds=frozenset(jobs_mod.ALLOWED_KINDS),
+        deprecated=frozenset({"systemd"}),
+    )
+    # Assert
+    assert findings == ()
+
+
+def test_a_kind_reachable_only_through_an_alias_reads_inert() -> None:
+    # Arrange — such a kind has a SCHEDULED loss of its CLI: the alias's
+    # removal date deletes the only way to reach it.
+    # Act
+    findings = audit_group_naming(
+        group_kinds={
+            "timer": frozenset({"timer"}),
+            "systemd": frozenset({"timer", "service"}),
+        },
+        allowed_kinds=frozenset(jobs_mod.ALLOWED_KINDS),
+        deprecated=frozenset({"systemd"}),
+    )
+    # Assert
+    assert [f.subject for f in findings] == ["kind=service"]
+
+
+def test_no_real_kind_is_reachable_only_through_the_alias() -> None:
+    # Arrange — against the REAL production mapping.
+    # Act
+    report = audit_jobs()
+    # Assert
+    assert not [f for f in report.inert if f.form is Form.ALIAS_ONLY_KIND], (
+        report.render()
+    )
+
+
+def test_every_deprecated_group_is_a_real_group() -> None:
+    # Arrange — a deprecation notice for a group that does not exist is
+    # itself a declaration with no live counterpart.
+    declared = set(DEPRECATED_GROUPS)
+    # Act
+    orphans = declared - set(GROUP_KINDS)
+    # Assert
+    assert orphans == set()
 
 
 # ---------------------------------------------------------------------------

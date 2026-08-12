@@ -50,6 +50,7 @@ from ._verdict import (
     Signal,
     decide,
 )
+from ._verdict_refusal import refusal_signal
 from ._verdict_remote import _remote_peer_for_config, remote_process_signal
 from ._verdict_screen import screen_signal, started_at_for
 from ._verdict_state import HEARTBEAT_STALE_S, heartbeat_signal, registry_signal
@@ -306,6 +307,7 @@ def resolve_verdict(
     heartbeat: Callable[[str], Signal] | None = None,
     registry: Callable[[str], Signal] | None = None,
     screen: Callable[[str], Signal] | None = None,
+    refusal: Callable[[str, Any], Signal] | None = None,
 ) -> LivenessVerdict:
     """Gather every signal we can, then fold them with :func:`._verdict.decide`.
 
@@ -357,5 +359,17 @@ def resolve_verdict(
         signals.append(screen(name))
     elif kind == "tui":
         signals.append(screen_signal(name, started_at=started_at_for(name)))
+
+    # REFUSAL — the CAN-IT-ACT sensor. Every signal above answers "is it
+    # PRESENT?"; a quota-dead or credential-dead agent scores perfectly on all
+    # of them and cannot execute a single turn (scitex-cards, 2026-08-10: 32
+    # minutes of "You've hit your weekly limit" behind a HEALTHY row). This
+    # reads the agent's OWN transcript for a refused last turn. Runtime-agnostic
+    # — the SDK runtimes hit the same provider walls — and never raises, so a
+    # health command can never be taken down by an unreadable file.
+    if refusal is not None:
+        signals.append(refusal(name, config))
+    elif config is not None:
+        signals.append(refusal_signal(name, config=config))
 
     return decide(name, signals)

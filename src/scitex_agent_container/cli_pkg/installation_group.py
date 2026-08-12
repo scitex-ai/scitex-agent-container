@@ -16,6 +16,7 @@ from pathlib import Path
 
 import click
 
+from . import _installation_check
 from ._helpers import console
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,13 @@ def _cron_line() -> str:
 
 @click.group("installation")
 def install_group() -> None:
-    """Bootstrap and install helpers for a new fleet host."""
+    """Bootstrap and install helpers for a new fleet host.
+
+    \b
+    Create an install:  boot, setup-cron
+    Verify one:         check  (read-only — dead/shadowed editable
+                        pointers, orphaned or duplicated dist-info)
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +384,9 @@ install_group.add_command(
         epilog=install_post_merge_cron.epilog,
     )
 )
+
+# The read-only half of the noun: `boot` and `setup-cron` CREATE an
+# install, `check` asks whether an existing one still describes reality.
+# Attached by its own module's register(), mirroring how `worktree_group`
+# collects `_worktree_gc`.
+_installation_check.register(install_group)

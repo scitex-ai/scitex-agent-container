@@ -19,13 +19,22 @@ import json
 import logging
 from typing import Any
 
+from .._listen._inbox_fault import FAULT_NOT_RUNNING
 from ._channel_send_errors import (
     SendError,
     delivery_error,
     error_result,
     lookup_error_result,
     no_subscriber_error,
+    not_running_error,
+    unknown_target_error,
     unreachable_error,
+)
+from ._channel_target_lookup import (
+    fault_of,
+    is_registered,
+    names_of,
+    rows_from_agents_body,
 )
 from .channel import _recent
 
@@ -213,8 +222,48 @@ def register_tools(
                     "(delivered_subscriber_count=0) — NOT DELIVERED",
                     target,
                 )
+                # A 0-subscriber count has THREE causes needing DIFFERENT
+                # actions, and the count alone tells them apart in none:
+                #
+                #   registered agent, adapter detached -> WAIT (it replays)
+                #   registered agent, NOT RUNNING      -> DO NOT WAIT; there
+                #                                         is no session left
+                #                                         to reconnect
+                #   name never registered (a typo)     -> FIX THE NAME
+                #
+                # The third was split out after the `sac-04` incident; the
+                # second after 2026-08-12, when 9 of 15 registered rows on this
+                # host were STOPPED agents whose senders were being told, in
+                # bold, to wait for a reconnect with no process to happen in.
+                # See ``._channel_target_lookup``.
+                #
+                # Only ask the registry on this failure path, so the happy
+                # path pays nothing for the distinction.
+                rows = await _registered_rows()
+                if not is_registered(target, rows):
+                    raise unknown_target_error(target, names_of(rows))
+                if fault_of(target, rows) == FAULT_NOT_RUNNING:
+                    raise not_running_error(target)
                 raise no_subscriber_error(target)
         return res
+
+    async def _registered_rows() -> list[dict[str, Any]]:
+        """Registry rows, from the same ``/agents`` view a2a_peers uses.
+
+        Rows rather than names, so this ONE fetch answers both questions the
+        failure path asks — is the name real, and is the agent running.
+        ``[]`` when the registry cannot be read; the caller must treat that as
+        "could not determine", never as "no agents exist".
+        """
+        try:
+            res = await _get("/agents")
+        except Exception:  # noqa: BLE001 - registry unreadable is not a send failure
+            return []
+        return rows_from_agents_body(res.get("body"))
+
+    async def _registered_names() -> list[str]:
+        """Registered agent names — for callers outside the send failure path."""
+        return names_of(await _registered_rows())
 
     def _find(msg_id: str) -> dict[str, Any] | None:
         for ev in reversed(_recent):

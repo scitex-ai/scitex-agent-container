@@ -238,6 +238,32 @@ def test_no_authorization_header_when_bearer_unset(listen_env) -> None:
     assert "authorization" not in captured["headers"]
 
 
+def test_bearer_falls_back_to_the_host_token_file(listen_env, tmp_path) -> None:
+    """The env-absent-but-file-present case, which was NOT covered here.
+
+    Coverage gap found while swapping this module onto the canonical resolver:
+    the suite asserted the header IS attached from the env, and that NO header
+    appears when nothing is available — but never that an on-disk token is
+    picked up. That middle case is the whole reason the file fallback exists
+    (the runtime injects SAC_LISTEN_BEARER only for specs registering
+    `server:sac`), and two other clients were found missing it entirely today.
+    Without this test the delegation could have silently dropped the fallback
+    and every existing assertion would still have passed.
+    """
+    # Arrange — no bearer env; a real token file under the redirected HOME.
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    path = default_token_path(home=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("file-tok-restart", encoding="utf-8")
+    opener, captured = _opener_returning(b'{"name":"peer","returncode":0}')
+    # Act
+    request_restart("peer", opener=opener)
+    # Assert
+    assert captured["headers"].get("authorization") == "Bearer file-tok-restart"
+
+
 def test_success_returns_parsed_response_dict(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")
@@ -284,9 +310,7 @@ def test_acl_403_deny_raises_with_status_403(listen_env) -> None:
 def test_acl_403_deny_preserves_server_reason_in_body(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")
-    deny_body = json.dumps(
-        {"error": "ACL deny", "reason": "lineage ACL deny"}
-    ).encode()
+    deny_body = json.dumps({"error": "ACL deny", "reason": "lineage ACL deny"}).encode()
     opener = _opener_raising(
         urlerror.HTTPError(
             "http://host:9100/agents/peer/restart",

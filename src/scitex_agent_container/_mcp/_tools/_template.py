@@ -21,6 +21,9 @@ from typing import Any
 # canonical chunk-A variable surface (project, branch_kind, branch_short,
 # a2a_port, startup_command).
 _CONTRIBUTOR_TEMPLATE = """\
+# THIS IS A DESIGN DOCUMENT — the contract for an agent not yet started.
+# The state of a RUNNING agent lives in the database, never in this file.
+
 apiVersion: scitex-agent-container/v3
 kind: Agent
 metadata:

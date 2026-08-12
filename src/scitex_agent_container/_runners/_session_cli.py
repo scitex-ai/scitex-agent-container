@@ -162,6 +162,21 @@ def main(argv: list[str] | None = None) -> int:
     from .claude_session import run
 
     args = _parse_argv(argv)
+
+    # BOOT ASSERTION — the second layer of the overlay-venv invalidation
+    # contract. The host-side rail tried to REPAIR the overlay before this
+    # container started; this refuses to RUN if the union it produced is still
+    # incoherent. First thing inside the SIF, before any SDK work, so the
+    # operator sees a named duplicate instead of a ModuleNotFoundError from
+    # deep inside pytest that reads as a broken repository.
+    #
+    # It enumerates importlib.metadata.distributions(), NOT entry_points() —
+    # entry_points() dedupes by normalised name and therefore CANNOT see this
+    # bug. See _maintenance/_venv_dist_assertion for the measurement.
+    from .._maintenance._venv_dist_assertion import assert_venv_distributions_unique
+
+    assert_venv_distributions_unique(args.name)
+
     return asyncio.run(
         run(
             args.name,
