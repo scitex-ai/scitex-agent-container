@@ -740,17 +740,12 @@ async def test_consume_sse_skips_malformed_json_frames(
 
 
 @pytest.mark.asyncio
-async def test_consume_sse_retries_after_connection_error():
-    """Bind a loopback socket then immediately close to force refused
-    connection. The consumer must log + retry rather than crash."""
-    # Arrange — find a closed port by binding and closing.
-    import socket
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    refused_port = s.getsockname()[1]
-    s.close()
-    url = f"http://127.0.0.1:{refused_port}/agents/x/inbox/stream"
+async def test_consume_sse_retries_after_connection_error(dead_port):
+    """A port bound but never listened on forces a refused connection. The
+    consumer must log + retry rather than crash."""
+    # Arrange — the port is HELD for the whole test, so nothing can move in
+    # behind us and turn this "refused" endpoint into a live one.
+    url = dead_port.url("/agents/x/inbox/stream")
     received: list[dict[str, Any]] = []
 
     async def on_event(ev: dict[str, Any]) -> None:
@@ -1221,19 +1216,13 @@ async def test_push_channel_event_skips_auto_ack_without_send_config(fake_listen
 
 
 @pytest.mark.asyncio
-async def test_auto_ack_failure_is_best_effort_does_not_raise():
+async def test_auto_ack_failure_is_best_effort_does_not_raise(dead_port):
     """A failed auto-ack POST must be swallowed-with-a-loud-log, never
     re-raised: it can neither block injection nor kill the SSE consumer.
     Point the adapter at a refused port to force the failure."""
-    # Arrange — a closed loopback port (bind then close) refuses connect.
-    import socket
-
+    # Arrange — a HELD, never-listened loopback port refuses connect.
     from scitex_agent_container._mcp.channel import _push_channel_event
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    refused_port = s.getsockname()[1]
-    s.close()
     session = _CapturingSession()
     event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
     # Act — must complete without raising despite the ack POST failing.
@@ -1241,7 +1230,7 @@ async def test_auto_ack_failure_is_best_effort_does_not_raise():
         session,
         event,
         agent_name="alice",
-        listen_url=f"http://127.0.0.1:{refused_port}",
+        listen_url=dead_port.url(""),
         bearer=None,
     )
     # Assert — injection still succeeded (the failure was contained).
@@ -1527,19 +1516,16 @@ async def test_push_without_turn_url_falls_back_to_notification(fake_listen):
 
 
 @pytest.mark.asyncio
-async def test_wake_failure_propagates_to_caller():
+async def test_wake_failure_propagates_to_caller(dead_port):
     """WI-2 fail-loud: when the wake POST cannot reach the runner (refused
     connection), ``_push_channel_event`` must RAISE rather than silently
     pretend the message was delivered."""
-    # Arrange — a closed loopback port refuses connect.
-    import socket
-
+    # Arrange — a HELD, never-listened loopback port refuses connect. Holding
+    # it matters here: if anything bound the port the wake would SUCCEED and
+    # this fail-loud test would assert the opposite of what it means to.
     from scitex_agent_container._mcp.channel import _push_channel_event
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    refused_port = s.getsockname()[1]
-    s.close()
+    refused_port = dead_port()
     session = _CapturingSession()
     event = {"from_agent": "bob", "content": "hi", "msg_id": "m1"}
 

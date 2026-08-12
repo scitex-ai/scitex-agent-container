@@ -42,10 +42,14 @@ def _filter_interfaces(ifaces: list, include_virtual: bool) -> list:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
-    """Local host + peers configured under config.yaml's ``peers:`` block.
+    """Local host + every peer sac can reach.
 
     The first row is always the local host (the machine running
-    ``sac``); peers under ``config.yaml``'s ``peers:`` block follow.
+    ``sac``). The ``peers`` block that follows is the exact set of names
+    ``sac host probe`` / ``sac host exec`` / ``sac --on`` accept:
+    ``config.yaml``'s ``peers:`` entries UNION the scitex-dev registry's
+    hosts that declare an ``ssh_alias``, config winning on a collision.
+    Each row is tagged with the source its route came from.
     Virtual / container-managed interfaces (docker, br-*, veth, ...)
     are hidden by default — pass ``--all-interfaces`` to include them.
 
@@ -56,6 +60,7 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
       $ sac host list --all-interfaces   # include docker0, br-*, etc.
     """
     from .._state._host_ssh import resolve_peer_scitex_root
+    from .._state._peer_resolve import peers_with_registry, registry_peer_names
     from .._state.host_registry import registry_hosts
 
     cfg = load()
@@ -67,21 +72,33 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
         "aliases": cfg.host.aliases,
         "interfaces": _filter_interfaces(host_interfaces(), all_interfaces),
     }
+    # Every name ``sac host probe/exec`` and ``sac --on`` will accept —
+    # config.yaml peers UNION the registry's routable hosts. Listing only
+    # the config half is what made this command print six registry rows
+    # above an empty ``peers:`` and left "which hosts are reachable?"
+    # unanswerable on any box without a config.yaml.
+    all_peers = peers_with_registry(cfg.peers)
+    from_registry = registry_peer_names(cfg.peers)
     peers = []
-    for name, peer in sorted(cfg.peers.items()):
+    for name, peer in sorted(all_peers.items()):
         peers.append(
             {
                 "name": name,
                 "scope": "peer",
                 "ssh": peer.ssh,
                 "via": list(peer.via),
+                # Which of the two sources supplied this route. Without it
+                # the operator cannot tell a hand-configured peer (whose
+                # via/env_preamble they own) from a registry row sac filled
+                # in for them.
+                "source": "registry" if name in from_registry else "config",
                 # Where a remote sac WILL write its state — resolved through
                 # the scitex-dev registry (SSOT), inheriting through ``via:``
                 # for glob compute nodes. None = home-relative default on the
                 # peer (the registry root is ``~/.scitex``, or the host is
                 # unregistered). Surfaced so the operator can SEE the answer
                 # rather than discover it from a misplaced 1.4GB SIF.
-                "scitex_root": resolve_peer_scitex_root(name, cfg.peers),
+                "scitex_root": resolve_peer_scitex_root(name, all_peers),
             }
         )
     registry = [
@@ -122,10 +139,11 @@ def host_list(ctx: click.Context, all_interfaces: bool, as_json: bool) -> None:
         console.print(f"  {iface['iface']:<11} {iface['family']:<6} {iface['addr']}")
     # Peers.
     if peers:
-        console.print("[bold]peers[/bold]")
+        console.print("[bold]peers[/bold] [dim](every name probe/exec/--on accepts)[/dim]")
         for r in peers:
             via = f"  via={','.join(r['via'])}" if r["via"] else ""
-            console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}")
+            origin = "  [dim](registry)[/dim]" if r["source"] == "registry" else ""
+            console.print(f"  {r['name']:<11} ssh={r['ssh']}{via}{origin}")
             if r["scitex_root"]:
                 console.print(
                     f"              scitex_root={r['scitex_root']} [dim](registry)[/dim]"

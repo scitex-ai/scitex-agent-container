@@ -18,9 +18,10 @@ A REAL detached tmux session (skipped when tmux is unavailable). No mocks.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
-import time
+import uuid
 
 import pytest
 
@@ -32,12 +33,42 @@ def tmux_session():
     """A REAL detached tmux session running a long-lived process."""
     if shutil.which("tmux") is None:
         pytest.skip("tmux not available")
-    name = f"sac-test-panepid-{int(time.time() * 1000)}"
-    subprocess.run(
+    # UNIQUE PER PROCESS, NOT PER MILLISECOND. A session name is a key on a
+    # HOST-GLOBAL tmux server, and `new-session` on a name that already
+    # exists exits 1 with `duplicate session: <name>` — measured, tmux 3.4.
+    #
+    # The old name was `int(time.time() * 1000)`, which is not a unique
+    # source at that resolution at all: 20000 draws in a tight loop collapse
+    # into FOUR distinct milliseconds. Everything that can draw it at the
+    # same instant then collides, and plenty can — this fixture serves TWO
+    # tests that xdist's `--dist load` may hand to two worker PROCESSES at
+    # once, and the three matrix legs are co-tenant on one node sharing
+    # /tmp/tmux-<uid>/default (apptainer mounts the host /tmp; `sac`'s CI
+    # exec wrapper takes no --contain).
+    #
+    # That is the shape develop hit on 2026-08-12 (run 31593095548): ONE of
+    # the two setups errored, its sibling using this same fixture passed in
+    # the same run, and 15552 other tests were green — a momentary clash,
+    # not a broken environment. pid + uuid4 is what every sibling real-tmux
+    # test here already uses, and it cannot clash across processes or hosts.
+    name = f"sac-test-panepid-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    proc = subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "sleep 300"],
-        check=True,
         capture_output=True,
+        text=True,
     )
+    if proc.returncode != 0:
+        # NOT `check=True`. CalledProcessError's message is only "Command
+        # ... returned non-zero exit status 1." — tmux's actual reason lives
+        # on the unprinted `.stderr` attribute, so `check=True` here fed CI
+        # an exit status and destroyed the one line that says WHY. The
+        # develop failure above could not be diagnosed from its own log for
+        # exactly this reason. Fail loudly, quoting tmux.
+        pytest.fail(
+            f"tmux could not create the test session (rc={proc.returncode}). "
+            f"tmux stderr: {proc.stderr.strip() or '<empty>'} | "
+            f"stdout: {proc.stdout.strip() or '<empty>'}"
+        )
     try:
         yield name
     finally:

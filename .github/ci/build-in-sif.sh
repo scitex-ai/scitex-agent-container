@@ -39,7 +39,11 @@ export LC_ALL=C.UTF-8 LANG=C.UTF-8
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path build "$V")"
 export TMPDIR
-rm -rf "$TMPDIR"
+# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
+# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
+# name here would delete nothing, fail nothing, and leave the rest of the script
+# addressing paths off the filesystem root. `:?` aborts instead.
+rm -rf "${TMPDIR:?build scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
 # The compute-node $HOME is RO inside the container — point every cache the

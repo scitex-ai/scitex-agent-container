@@ -794,21 +794,17 @@ async def test_a2a_send_delivery_error_status_returns_loud_error(
 
 
 @pytest.mark.asyncio
-async def test_a2a_send_agent_stopped_connection_refused_returns_loud_error():
+async def test_a2a_send_agent_stopped_connection_refused_returns_loud_error(dead_port):
     """Target agent down / listen unreachable (refused connection) → loud
     'agent unreachable' error rather than a hang or silent success."""
-    # Arrange — register tools pointing at a closed loopback port.
-    import socket
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    refused_port = s.getsockname()[1]
-    s.close()
+    # Arrange — register tools pointing at a HELD, never-listened loopback
+    # port. Held, so nothing can bind it and turn "unreachable" into a
+    # success while the test is running.
     rec = _ToolRecorder()
     register_tools(
         rec,
         agent_name="alice",
-        listen_url=f"http://127.0.0.1:{refused_port}",
+        listen_url=dead_port.url(""),
         bearer=None,
     )
     # Act

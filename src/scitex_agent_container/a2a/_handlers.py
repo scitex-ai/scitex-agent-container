@@ -215,8 +215,8 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
 
     Same sync wire contract as :func:`handle_claude_session`
     (``(name, text) -> str``), backed by
-    :class:`scitex_agent_container._runners.openai_session.OpenAISession`
-    (the concrete ``ProviderSession`` — see openai-compat-2). Unlike the
+    :class:`scitex_agent_container._runners.openai_session.OpenAIAgentsSession`
+    (the concrete ``HarnessSession`` — see openai-compat-2). Unlike the
     Claude handler this one is STATEFUL: the session persists turns in
     the agent's ``SQLiteSession`` db (see
     ``runtimes._openai_sdk_common.resolve_state_db_path``), so repeated
@@ -243,9 +243,9 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
             "(`pip install scitex-agent-container[openai]`)."
         ) from exc
 
-    from scitex_agent_container._runners._provider_session import Message
+    from scitex_agent_container._runners._harness_session import Message
     from scitex_agent_container._runners.openai_session import (
-        OpenAISession,
+        OpenAIAgentsSession,
         OpenAISessionError,
     )
     from scitex_agent_container.runtimes._openai_sdk_common import (
@@ -256,7 +256,7 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
     model = _sac_env("A2A_OPENAI_MODEL") or None
 
     async def _drive() -> str:
-        session = OpenAISession(agent_name, model=model, instructions=system)
+        session = OpenAIAgentsSession(agent_name, model=model, instructions=system)
         await session.start()
         try:
             reply = ""
