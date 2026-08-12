@@ -88,6 +88,45 @@ def list_sessions_activity(
 
     Never raises.
     """
+    return list_sessions_activity_detailed(
+        timeout_s=timeout_s, socket_name=socket_name
+    )[0]
+
+
+def list_sessions_activity_detailed(
+    *, timeout_s: float = BATCH_PROBE_TIMEOUT_S, socket_name: str | None = None
+) -> tuple[dict[str, int] | None, bool | None]:
+    """:func:`list_sessions_activity`, plus WHETHER A SERVER IS THERE AT ALL.
+
+    Returns ``(sessions, server_present)``:
+
+      * ``({...}, True)``  — a server answered and these are its sessions.
+      * ``({}, True)``     — a server answered and it holds NO sessions.
+      * ``({}, False)``    — there is NO tmux server on this socket.
+      * ``(None, None)``   — the probe failed. Both facts are UNKNOWN.
+
+    THE TWO EMPTIES ARE NOT THE SAME EVENT, and collapsing them is a real
+    hazard rather than a nicety. ``list_sessions_activity`` returns ``{}`` for
+    both, which is right for its own question ("which sessions are live?") and
+    wrong for anyone asking WHY the answer is empty:
+
+      * ``({}, True)``  — the server is fine and every agent died. This is the
+        2026-06 OAuth rotation: 33 agents killed, tmux untouched. The fleet
+        reconciler MUST recover them; that incident is why it exists.
+      * ``({}, False)`` — the server itself went away and took every pane with
+        it. This is 2026-08-11: eleven agents in a two-second window. Mass
+        restarts here land on a host that just lost its tmux server (``tmux
+        new-session`` spawns a fresh one), so they succeed, and repeat on every
+        pass.
+
+    Those two demand OPPOSITE responses, and the information to tell them apart
+    was already in hand — ``rc != 0`` plus a no-server marker versus ``rc == 0``
+    with no rows — and was being discarded at this boundary. This function stops
+    discarding it; :func:`list_sessions_activity` keeps its exact contract by
+    dropping the second element.
+
+    Never raises.
+    """
     argv = ["tmux"]
     if socket_name:
         argv += ["-L", socket_name]
@@ -97,14 +136,14 @@ def list_sessions_activity(
             argv, capture_output=True, text=True, timeout=timeout_s
         )
     except (OSError, subprocess.SubprocessError):  # stx-allow: fallback (a wedged/missing tmux is UNKNOWN liveness, never "all agents dead" — the caller preserves the previous data)
-        return None
+        return None, None
     if result.returncode != 0:
         # Distinguish "no tmux server" (a definitive, EMPTY fleet) from any
         # other failure (UNKNOWN). Reading a wedged probe as an empty fleet
         # is exactly the bug this contract prevents.
         if _is_no_server(result.stderr or ""):
-            return {}
-        return None
+            return {}, False
+        return None, None
     out: dict[str, int] = {}
     for line in (result.stdout or "").splitlines():
         name, sep, raw = line.partition("\t")
@@ -114,7 +153,7 @@ def list_sessions_activity(
             out[name] = int(raw.strip())
         except ValueError:  # stx-allow: fallback (one unparseable activity stamp contributes nothing — the other sessions still beat)
             continue
-    return out
+    return out, True
 
 
 def _display_field(session_name: str, fmt: str) -> str | None:

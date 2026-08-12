@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from typing import Any
 
 import pytest
@@ -145,12 +144,10 @@ def _body(result) -> dict[str, Any]:
     return json.loads(result.content[0].text)
 
 
-def _refused_port() -> int:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = int(s.getsockname()[1])
-    s.close()
-    return port
+# A refusing port comes from the shared ``dead_port`` fixture
+# (tests/scitex_agent_container/_helpers/ports.py, wired in tests/conftest.py):
+# bound WITHOUT listening so a connect is refused, and HELD so nothing else can
+# bind it mid-test. The helper that used to live here released the port first.
 
 
 # ---------------------------------------------------------------------------
@@ -202,11 +199,12 @@ async def test_absent_subscriber_count_is_not_an_mcp_error(listen):
 
 
 @pytest.mark.asyncio
-async def test_unreachable_listen_is_an_mcp_error():
+async def test_unreachable_listen_is_an_mcp_error(dead_port):
     """Connection refused is a demonstrable non-delivery — also a caller-
     visible failure, not a quietly-swallowed one."""
-    # Arrange — nothing is listening on this port.
-    url = f"http://127.0.0.1:{_refused_port()}"
+    # Arrange — nothing is listening on this port, and it is HELD so nothing
+    # can start.
+    url = dead_port.url("")
     # Act
     result = await _call(url, "a2a_send", {"target": "bob", "content": "hi"})
     # Assert
@@ -312,9 +310,9 @@ async def test_no_subscriber_error_does_not_prescribe_a_restart(listen):
 
 
 @pytest.mark.asyncio
-async def test_unreachable_error_carries_machine_readable_code():
+async def test_unreachable_error_carries_machine_readable_code(dead_port):
     # Arrange
-    url = f"http://127.0.0.1:{_refused_port()}"
+    url = dead_port.url("")
     # Act
     result = await _call(url, "a2a_send", {"target": "bob", "content": "hi"})
     # Assert

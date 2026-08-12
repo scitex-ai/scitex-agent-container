@@ -1,4 +1,4 @@
-"""Tests for :mod:`scitex_agent_container._workdir_audit`.
+"""Tests for :mod:`scitex_agent_container._workdir._audit`.
 
 Real I/O against tmp fixture trees. No mocks. AAA markers + one assert
 per test (PA-307 STX-TQ002/TQ007). The audit is a pure function over
@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._workdir_audit import (
+import scitex_agent_container
+from scitex_agent_container._workdir._audit import (
     WorkdirClaudeAudit,
     _measure_top_level,
     audit_workdir_claude,
@@ -557,14 +558,14 @@ def test_audit_does_not_follow_symlinks(tmp_path: Path) -> None:
 _AUDIT_WARN_DRIVER = """\
 import logging, sys
 logging.basicConfig(level=logging.WARNING, format='%(message)s', stream=sys.stderr)
-from scitex_agent_container._workdir_audit import audit_workdir_claude
+from scitex_agent_container._workdir._audit import audit_workdir_claude
 audit_workdir_claude(sys.argv[1])
 """
 
 
 _AUDIT_FILES_DRIVER = """\
 import json, sys
-from scitex_agent_container._workdir_audit import audit_workdir_claude, to_dict
+from scitex_agent_container._workdir._audit import audit_workdir_claude, to_dict
 print(json.dumps(to_dict(audit_workdir_claude(sys.argv[1]))))
 """
 
@@ -572,7 +573,18 @@ print(json.dumps(to_dict(audit_workdir_claude(sys.argv[1]))))
 # The child process needs the in-worktree src/ on PYTHONPATH so the
 # constrained-PATH child still imports OUR scitex_agent_container, not
 # whatever's installed in the system venv.
-_TESTS_SRC_ROOT = str((Path(__file__).resolve().parents[2] / "src"))
+#
+# Anchored on the PACKAGE THIS PROCESS IMPORTED, not on a parent-count from
+# __file__. The old form was `parents[2] / "src"`, correct only while this
+# file sat directly in tests/scitex_agent_container/; moving it one level
+# down into _workdir/ (the PS-108b regrouping) silently pointed PYTHONPATH
+# at tests/ instead of src/, and the child then imported nothing and
+# printed nothing — five tests died on `JSONDecodeError: Expecting value`,
+# naming neither the path nor the cause. Deriving the path from
+# `scitex_agent_container.__file__` states the actual requirement — the
+# child must import the SAME package the parent did — and cannot drift
+# when a test file moves.
+_TESTS_SRC_ROOT = str(Path(scitex_agent_container.__file__).resolve().parents[1])
 
 
 def _write_real_shim(path: Path, body: str) -> None:
@@ -704,7 +716,7 @@ def test_audit_still_returns_valid_result_with_empty_path(
 def test_gdu_json_parser_sums_asize_recursively():
     """Recursive sum across a synthetic gdu JSON tree mirroring the
     real schema: outer wrapper, root folder list, files with asize."""
-    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+    from scitex_agent_container._workdir._audit import _sum_asize_from_gdu_json
 
     # Arrange — directory at root has two child files (3 + 5 = 8 apparent).
     blob = (
@@ -722,7 +734,7 @@ def test_gdu_json_parser_sums_asize_recursively():
 def test_gdu_json_parser_descends_into_subfolders():
     """A sub-folder is itself a list of [folder-meta, ...children];
     the recursion must descend into it and sum nested files."""
-    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+    from scitex_agent_container._workdir._audit import _sum_asize_from_gdu_json
 
     # Arrange — root contains one top-level file + one nested subfolder
     blob = (
@@ -740,7 +752,7 @@ def test_gdu_json_parser_descends_into_subfolders():
 
 def test_gdu_json_parser_returns_none_on_invalid_json():
     """Malformed JSON returns None so the caller can degrade."""
-    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+    from scitex_agent_container._workdir._audit import _sum_asize_from_gdu_json
 
     # Arrange
     blob = "this is not json"
@@ -752,7 +764,7 @@ def test_gdu_json_parser_returns_none_on_invalid_json():
 
 def test_gdu_json_parser_returns_none_on_unexpected_shape():
     """Wrong top-level shape (not a length-4+ list) returns None."""
-    from scitex_agent_container._workdir_audit import _sum_asize_from_gdu_json
+    from scitex_agent_container._workdir._audit import _sum_asize_from_gdu_json
 
     # Arrange — looks like JSON but doesn't match gdu's schema.
     blob = '{"unexpected": "shape"}'
@@ -772,7 +784,7 @@ def test_gdu_json_parser_returns_none_on_unexpected_shape():
 
 def test_gdu_subtree_walker_counts_files_with_asize():
     """Each dict-node with ``asize`` counts as one file with its bytes."""
-    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+    from scitex_agent_container._workdir._audit import _sum_gdu_subtree
 
     # Arrange — directory node containing two file children.
     node = [
@@ -788,7 +800,7 @@ def test_gdu_subtree_walker_counts_files_with_asize():
 
 def test_gdu_subtree_walker_skips_notreg_files():
     """Symlinks/devices (``notreg=true``) contribute neither bytes nor count."""
-    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+    from scitex_agent_container._workdir._audit import _sum_gdu_subtree
 
     # Arrange — one real file + one symlink-marked entry.
     node = [
@@ -804,7 +816,7 @@ def test_gdu_subtree_walker_skips_notreg_files():
 
 def test_gdu_subtree_walker_prunes_excluded_directories():
     """Predicate returning False for a dir basename skips the whole subtree."""
-    from scitex_agent_container._workdir_audit import _sum_gdu_subtree
+    from scitex_agent_container._workdir._audit import _sum_gdu_subtree
 
     # Arrange — root has a "keep" subdir and a "skip" subdir; predicate
     # rejects "skip" so only the "keep" file contributes.
@@ -829,7 +841,7 @@ def test_gdu_subtree_walker_prunes_excluded_directories():
 
 def test_gdu_navigation_finds_nested_directory():
     """Path-component navigation descends through nested gdu list-nodes."""
-    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+    from scitex_agent_container._workdir._audit import _navigate_gdu_path
 
     # Arrange — root/hooks/pre-tool-use/.pending exists nested 3 deep.
     node = [
@@ -853,7 +865,7 @@ def test_gdu_navigation_finds_nested_directory():
 
 def test_gdu_navigation_returns_none_for_missing_path():
     """Unknown path component returns ``None`` so callers can fall back."""
-    from scitex_agent_container._workdir_audit import _navigate_gdu_path
+    from scitex_agent_container._workdir._audit import _navigate_gdu_path
 
     # Arrange
     node = [{"name": "/r"}, [{"name": "exists"}, {"name": "f", "asize": 1}]]
