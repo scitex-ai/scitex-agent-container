@@ -55,6 +55,10 @@ spec:
       max: 300
       multiplier: 2
     prune_on_stop: false
+  # DELIBERATELY the deprecated `provider:` spelling of `harness:`. The
+  # fleet's existing specs are written this way, so one checked-in fixture
+  # keeps loading through the alias — if the back-compat path ever breaks,
+  # a real smoke fixture goes red rather than only a unit test.
   provider: anthropic
   workdir:
   python-venv: ''

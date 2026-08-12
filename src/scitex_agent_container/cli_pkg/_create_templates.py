@@ -28,7 +28,7 @@ kind: Agent
 
 spec:
   runtime: apptainer
-  provider: anthropic
+  harness: anthropic
   # Placement: the RESOLVED hostname of the machine this agent runs on
   # (filled with the creating host at render time; `host: local` is
   # banned). Edit to a `sac host list` peer name to pin it elsewhere,
@@ -198,7 +198,7 @@ metadata:
 
 spec:
   runtime: tui
-  provider: anthropic
+  harness: anthropic
   # RESOLVED placement (creating host at render time; `local` is banned).
   host: {host}
 

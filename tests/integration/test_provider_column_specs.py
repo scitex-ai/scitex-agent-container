@@ -7,7 +7,7 @@ turns are out (no keys in CI), so the parity is pinned at the three
 seams that make the columns interchangeable, each on REAL objects:
 
 1. **Spec → config**: two real YAML specs differing ONLY in
-   ``spec.provider`` load through the one ``load_config`` path.
+   ``spec.harness`` load through the one ``load_config`` path.
 2. **Config → entrypoint env** (``build_run_argv`` — the full apptainer
    argv): the OpenAI column carries the OPENAI_* injection and ZERO
    Anthropic wiring; the Claude column carries its unchanged Anthropic
@@ -46,7 +46,7 @@ metadata:
     project: t
     sac-builtin: "off"
 spec:
-{provider_line}  runtime: claude-agent-sdk
+{harness_line}  runtime: claude-agent-sdk
   host: ${{HOSTNAME}}
   workdir: /tmp/column-wd
   apptainer:
@@ -90,7 +90,7 @@ def _sandbox_env(tmp_path: Path) -> Iterator[Path]:
                 os.environ[k] = v
 
 
-def _load_column(tmp_path: Path, name: str, provider_line: str):
+def _load_column(tmp_path: Path, name: str, harness_line: str):
     spec_dir = tmp_path / "agents" / name
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_dir / "spec.yaml"
@@ -100,7 +100,7 @@ def _load_column(tmp_path: Path, name: str, provider_line: str):
 
     # Red-start ruling 2026-07-21: every field explicit (template wins).
     spec.write_text(
-        explicitize_yaml(_SPEC_TEMPLATE.format(provider_line=provider_line)),
+        explicitize_yaml(_SPEC_TEMPLATE.format(harness_line=harness_line)),
         encoding="utf-8",
     )
     return load_config(str(spec))
@@ -111,7 +111,7 @@ def _claude_column(tmp_path: Path):
 
 
 def _openai_column(tmp_path: Path):
-    return _load_column(tmp_path, "openai-col", "  provider: openai\n")
+    return _load_column(tmp_path, "openai-col", "  harness: openai\n")
 
 
 def _argv_env(argv: list[str]) -> dict[str, str]:
@@ -155,7 +155,7 @@ def test_claude_column_spec_loads_as_anthropic_family(
     # Arrange
     cfg = _claude_column(_sandbox_env)
     # Act
-    family = cfg.provider
+    family = cfg.harness
     # Assert
     assert family == "anthropic"
 
@@ -164,7 +164,7 @@ def test_openai_column_spec_loads_as_openai_family(_sandbox_env: Path) -> None:
     # Arrange
     cfg = _openai_column(_sandbox_env)
     # Act
-    family = cfg.provider
+    family = cfg.harness
     # Assert
     assert family == "openai"
 

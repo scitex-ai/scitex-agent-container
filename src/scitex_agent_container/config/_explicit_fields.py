@@ -83,6 +83,7 @@ from ._acl_types import (
     OutboundCommsSpec,
 )
 from ._apptainer_spec import ApptainerSpec
+from ._harness_types import HARNESS_KEY, LEGACY_HARNESS_KEY
 from ._proxy_types import ProxySpec
 from ._types import (
     A2ASpec,
@@ -110,6 +111,12 @@ class RequiredField:
     type_str: str  # human-readable expected type
     default_repr: str  # the CURRENT default, as shown in the hint
     paste_value: Any  # value emitted in the paste-ready YAML block
+    # A DEPRECATED spelling that also satisfies this requirement. The
+    # red-start ruling bans a migration PHASE, not a renamed key: a spec
+    # that already declares the axis under its old name has written the
+    # field, so demanding the new spelling too would be a second
+    # declaration of one thing. ``""`` = no alias (the normal case).
+    legacy_path: str = ""
 
 
 def _default_of(field: dataclasses.Field) -> Any:
@@ -165,7 +172,17 @@ def _top_level_fields() -> list[RequiredField]:
     """Hand-authored top-level ``spec.*`` scalars (no 1:1 dataclass)."""
     return [
         RequiredField("runtime", "str", "'tui'", "tui"),
-        RequiredField("provider", "str", "'anthropic'", "anthropic"),
+        # The harness axis. ``spec.provider`` is its deprecated alias and
+        # satisfies the requirement, so the ~100 specs written before the
+        # rename keep loading; the paste-ready hint emits the canonical
+        # spelling so anything scaffolded from here is already migrated.
+        RequiredField(
+            HARNESS_KEY,
+            "str",
+            "'anthropic'",
+            "anthropic",
+            legacy_path=LEGACY_HARNESS_KEY,
+        ),
         RequiredField(
             "workdir",
             "str | None",

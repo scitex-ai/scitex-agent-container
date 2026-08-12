@@ -30,7 +30,7 @@ including when the candidate list contains exactly one account.
 ### Claude Code harness with Codex subscriptions
 
 SAC uses the nested `spec.claude.provider` backend axis for this mode. Do not
-set the top-level `spec.provider: openai`: that selects the OpenAI Agents SDK
+set the top-level `spec.harness: openai`: that selects the OpenAI Agents SDK
 and replaces the Claude Code harness.
 
 Start the scitex-genai gateway with its account homes and a local gateway key:

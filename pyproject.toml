@@ -124,7 +124,7 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 openai = [
-    # openai-compat-2: the `openai` agent-SDK family (spec.provider:
+    # openai-compat-2: the `openai` harness (spec.harness:
     # openai). Backs `_runners/openai_session.py` (OpenAIAgentsSession — the
     # concrete HarnessSession over Runner.run_streamed + SQLiteSession)
     # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:

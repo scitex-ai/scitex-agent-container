@@ -150,12 +150,12 @@ def resolve_successor_credential(config: AgentConfig) -> tuple[Path | None, str]
     the same error tears down a running agent it then cannot restart).
     """
     from ..runtimes._apptainer_provider import (
-        openai_provider_active,
+        openai_harness_active,
         provider_active,
     )
 
     # API-key backends have no OAuth credential to probe.
-    if provider_active(config) or openai_provider_active(config):
+    if provider_active(config) or openai_harness_active(config):
         return None, ""
 
     claude_spec = getattr(config, "claude", None)

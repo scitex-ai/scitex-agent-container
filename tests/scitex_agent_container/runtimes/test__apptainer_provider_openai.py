@@ -1,6 +1,6 @@
-"""Tests for the OpenAI SDK-family columns of ``runtimes._apptainer_provider``.
+"""Tests for the OpenAI harness columns of ``runtimes._apptainer_provider``.
 
-openai-compat-3: when the TOP-LEVEL ``spec.provider`` axis (or the
+openai-compat-3: when the TOP-LEVEL ``spec.harness`` axis (or the
 ``SAC_PROVIDER`` ops-only override) resolves to ``openai``, the runtime
 injects the OPENAI_* env columns instead of any Anthropic wiring —
 ``SAC_OPENAI_API_KEY`` + ``OPENAI_API_KEY`` dual injection (key resolved
@@ -31,8 +31,8 @@ from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
 from scitex_agent_container.runtimes._apptainer_provider import (
     ProviderEnvError,
     openai_env_flags,
-    openai_provider_active,
-    resolve_agent_provider,
+    openai_harness_active,
+    resolve_agent_harness,
 )
 
 _OPENAI_ENV_KEYS = (
@@ -68,7 +68,7 @@ def _openai_config(name: str = "oai", **claude_kw) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime="apptainer",
-        provider="openai",
+        harness="openai",
         workdir="/tmp/oai-wd",
         claude=ClaudeSpec(**claude_kw),
     )
@@ -90,33 +90,33 @@ def _env_dict(flags: list[str]) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Family resolution — spec.provider + the SAC_PROVIDER ops-only override
+# Harness resolution — spec.harness + the SAC_PROVIDER ops-only override
 # ---------------------------------------------------------------------------
 
 
-def test_openai_provider_active_true_for_openai_spec(clean_openai_env):
+def test_openai_harness_active_true_for_openai_spec(clean_openai_env):
     # Arrange
     cfg = _openai_config()
     # Act
-    active = openai_provider_active(cfg)
+    active = openai_harness_active(cfg)
     # Assert
     assert active is True
 
 
-def test_openai_provider_active_false_for_default_spec(clean_openai_env):
+def test_openai_harness_active_false_for_default_spec(clean_openai_env):
     # Arrange
     cfg = _anthropic_config()
     # Act
-    active = openai_provider_active(cfg)
+    active = openai_harness_active(cfg)
     # Assert
     assert active is False
 
 
-def test_resolve_agent_provider_defaults_to_anthropic(clean_openai_env):
+def test_resolve_agent_harness_defaults_to_anthropic(clean_openai_env):
     # Arrange
     cfg = _anthropic_config()
     # Act
-    family = resolve_agent_provider(cfg)
+    family = resolve_agent_harness(cfg)
     # Assert
     assert family == "anthropic"
 
@@ -126,7 +126,7 @@ def test_sac_provider_env_flips_default_spec_to_openai(clean_openai_env):
     clean_openai_env.set("SAC_PROVIDER", "openai")
     cfg = _anthropic_config()
     # Act
-    active = openai_provider_active(cfg)
+    active = openai_harness_active(cfg)
     # Assert
     assert active is True
 
@@ -136,7 +136,7 @@ def test_sac_provider_env_flips_openai_spec_back_to_anthropic(clean_openai_env):
     clean_openai_env.set("SAC_PROVIDER", "anthropic")
     cfg = _openai_config()
     # Act
-    active = openai_provider_active(cfg)
+    active = openai_harness_active(cfg)
     # Assert
     assert active is False
 
@@ -149,7 +149,7 @@ def test_unknown_sac_provider_value_raises_provider_env_error(clean_openai_env):
     ctx = pytest.raises(ProviderEnvError)
     # Assert
     with ctx:
-        resolve_agent_provider(cfg)
+        resolve_agent_harness(cfg)
 
 
 # ---------------------------------------------------------------------------

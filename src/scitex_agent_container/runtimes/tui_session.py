@@ -261,9 +261,13 @@ class TuiSessionRuntime(
             self._mux.stop(name)
         self.materialize_workspace(config)
 
-        from .._lifecycle._runtime_select import warn_if_legacy_apptainer_runtime
+        from .._lifecycle._runtime_select import (
+            warn_if_legacy_apptainer_runtime,
+            warn_if_legacy_harness_key,
+        )
 
         warn_if_legacy_apptainer_runtime(config)
+        warn_if_legacy_harness_key(config)
 
         # Render the ``apptainer exec ... claude`` argv via the injection
         # seam (default :meth:`_default_argv` resolves the SIF + calls
