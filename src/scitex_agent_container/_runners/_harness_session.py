@@ -1,7 +1,9 @@
-"""Provider-agnostic session Protocol + normalized event/message shapes.
+"""Harness-agnostic session Protocol + normalized event/message shapes.
 
 Foundation for the ``openai`` agent SDK family (scitex-todo card
-``openai-compat-1``, "Land ProviderConfig + ProviderSession Protocol").
+``openai-compat-1``, "Land ProviderConfig + ProviderSession Protocol" —
+that card title is quoted verbatim; the Protocol it landed is the one
+renamed to :class:`HarnessSession` here).
 This module defines the SHAPES a future ``openai-agents``-backed session
 (openai-compat-2) will produce and consume, so that both the existing
 ``claude-agent-sdk`` path and the future OpenAI path can eventually be
@@ -11,8 +13,8 @@ Landed foundation-only: nothing in the live runner (``_runners/
 claude_session.py`` → ``_session_conversation.py`` → ``_session_turn.py``)
 imports or calls anything in this module yet. It is pure, additive,
 unused-by-default code — behaviourally a no-op for existing Claude
-agents. openai-compat-2 will add a concrete ``OpenAISession`` class that
-satisfies :class:`ProviderSession`, wrapping ``openai-agents``'
+agents. openai-compat-2 will add a concrete ``OpenAIAgentsSession`` class that
+satisfies :class:`HarnessSession`, wrapping ``openai-agents``'
 ``Runner.run_streamed()``. A concrete Claude-side implementation MAY be
 added later as a retrofit of ``_drive_turn`` (see "Composition with
 RuntimeBase" below) — that retrofit is explicitly NOT part of this phase,
@@ -38,7 +40,7 @@ this mirrors that, needing no second method on the Protocol).
 
 Composition with RuntimeBase
 -----------------------------
-:class:`ProviderSession` is deliberately NOT a subtype of, or a
+:class:`HarnessSession` is deliberately NOT a subtype of, or a
 replacement for, :class:`runtimes.base.RuntimeBase`. They operate at
 different layers of the stack:
 
@@ -46,17 +48,25 @@ different layers of the stack:
   PROCESS lifecycle — ``start`` / ``stop`` / ``is_running`` / ``logs`` for
   one whole agent's container, driven from the HOST/CLI side
   (``sac agents start <name>``).
-* ``ProviderSession`` is CONVERSATION lifecycle — one provider SDK
+* ``HarnessSession`` is CONVERSATION lifecycle — one agent SDK
   connection's turn-taking, driven INSIDE the running container by the
   runner (today: ``_session_conversation.py`` opening one
   ``ClaudeSDKClient`` and calling ``_drive_turn`` per inbound message).
 
+The name is HARNESS, not PROVIDER, because the axis this Protocol
+selects on is WHICH AGENT PROGRAM RUNS THE LOOP — its implementations
+are ``ClaudeCodeSession`` / ``CodexSession`` / :class:`OpenAIAgentsSession`
+/ ``PiSession`` / ``OpenHandsSession``, which are agent programs, not
+inference providers. "Which model thinks" is a separate axis
+(``inference``); conflating the two is what the old ``ProviderSession``
+name did.
+
 They compose VERTICALLY, not by inheritance: a future runner selects a
-``ProviderSession`` implementation based on ``AgentConfig.provider``
+``HarnessSession`` implementation based on ``AgentConfig.provider``
 (``config._provider_types.AgentProvider`` — see the naming-collision
 note there against the unrelated ``ClaudeSpec.provider``) and drives it
 from inside the process that ``RuntimeBase.start()`` launched. Reusing
-``ProviderSession`` for both providers (rather than only using it as an
+``HarnessSession`` for both harnesses (rather than only using it as an
 OpenAI-side implementation detail) is what keeps ``openai-compat-2``
 from having to reinvent the turn-loop contract.
 """
@@ -71,7 +81,7 @@ __all__ = [
     "Message",
     "NormalizedEvent",
     "RunResult",
-    "ProviderSession",
+    "HarnessSession",
 ]
 
 # Chat-message role vocabulary — the intersection both SDKs accept
@@ -95,7 +105,7 @@ EventKind = Literal[
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """A tool definition, provider-agnostic.
+    """A tool definition, harness-agnostic.
 
     Maps onto ``claude-agent-sdk``'s MCP tool registration
     (``create_sdk_mcp_server`` / ``SdkMcpTool``: name, description, a JSON
@@ -120,7 +130,7 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class Message:
-    """One chat-history entry, provider-agnostic.
+    """One chat-history entry, harness-agnostic.
 
     ``tool_call_id`` is set only on ``role="tool"`` messages (the result
     being fed back for a specific prior tool call); ``name`` is set only
@@ -153,11 +163,11 @@ class RunResult:
 
 @dataclass(frozen=True)
 class NormalizedEvent:
-    """One provider-agnostic event in a session's turn stream.
+    """One harness-agnostic event in a session's turn stream.
 
     ``kind`` discriminates which fields are meaningful (see
     :data:`EventKind`); unused fields keep their default. ``raw`` is an
-    escape hatch — the provider-native object, kept for debugging /
+    escape hatch — the harness-native object, kept for debugging /
     forward-compat — and is NEVER required for correct handling of a
     known ``kind``.
     """
@@ -173,17 +183,17 @@ class NormalizedEvent:
 
 
 @runtime_checkable
-class ProviderSession(Protocol):
-    """Provider-agnostic conversational session.
+class HarnessSession(Protocol):
+    """Harness-agnostic conversational session.
 
-    Wraps a single provider SDK's client/session object with a uniform
+    Wraps a single agent SDK's client/session object with a uniform
     surface: one :meth:`start`, N :meth:`send` turns (each an async
     stream of :class:`NormalizedEvent`, terminating in a ``kind="result"``
     event carrying a :class:`RunResult`), then :meth:`close`. Mirrors the
     ``ClaudeSDKClient`` open → ``query``/``receive_response`` (repeated
     per turn) → close lifecycle already in production use (see
     ``_runners/_session_conversation.py`` / ``_session_turn.py``), so a
-    future runner can drive EITHER provider through the same loop shape.
+    future runner can drive EITHER harness through the same loop shape.
 
     Concrete implementations are NOT required in this phase (foundation
     only — see the module docstring). openai-compat-2 lands the first
@@ -192,7 +202,7 @@ class ProviderSession(Protocol):
     """
 
     async def start(self) -> None:
-        """Open the underlying provider connection (auth + client init)."""
+        """Open the underlying harness connection (auth + client init)."""
         ...
 
     def send(self, message: Message) -> AsyncIterator[NormalizedEvent]:
@@ -207,5 +217,5 @@ class ProviderSession(Protocol):
         ...
 
     async def close(self) -> None:
-        """Tear down the underlying provider connection."""
+        """Tear down the underlying harness connection."""
         ...
