@@ -49,6 +49,14 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 
+# The remote shell text lives in its own module (see _relocate_probe_shell);
+# this one assembles it for a given set of questions and reads the answers back.
+# Aliased to the leading-underscore names the renderer already used, so the
+# extraction did not ripple through every call site.
+#
+# TCP_TIMEOUT_S is deliberately NOT imported: it is consumed by the helper text
+# itself, which now lives over there, and importing a constant this module no
+# longer interpolates is the unused import ruff caught.
 from ._relocate_probe_shell import (
     HELPERS as _HELPERS,
 )
@@ -60,9 +68,6 @@ from ._relocate_probe_shell import (
 )
 from ._relocate_probe_shell import (
     START_ACCEPT_SECTION as _START_ACCEPT_SECTION,
-)
-from ._relocate_probe_shell import (
-    TCP_TIMEOUT_S as _TCP_TIMEOUT_S,
 )
 from ._relocate_probe_shell import (
     groups_section as _groups_section,

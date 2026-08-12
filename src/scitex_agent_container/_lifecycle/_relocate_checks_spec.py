@@ -202,7 +202,7 @@ def check_target_groups(
                 f"({', '.join(declared_groups)}) was not observed"
             ),
             hint=(
-                f"ask the target's own sac to resolve them before relocating. If it "
+                "ask the target's own sac to resolve them before relocating. If it "
                 "cannot — an older listen daemon resolves every caller to [] no matter "
                 "what spec.yaml declares — the agent arrives holding its groups on paper "
                 "and is refused 403 by every group-gated call it makes"
