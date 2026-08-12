@@ -65,6 +65,9 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ._hook_exec_bit import HOOK_MODE as _HOOK_MODE
+from ._hook_exec_bit import is_executable as _is_executable
+
 logger = logging.getLogger(__name__)
 
 # Root of the deployed hook tree, relative to the agent's $HOME.
@@ -99,9 +102,9 @@ _DEPLOYABLE_SUFFIXES = frozenset({".sh", ".py"})
 # Displaced copies of replaced files land here (never deleted).
 _DISPLACED_DIRNAME = ".old"
 
-# Mode for a deployed hook: readable + executable by owner/group/other,
-# writable by owner. Claude Code execs these directly.
-_HOOK_MODE = 0o755
+# The deployed-hook mode and the exec-bit predicate are owned by
+# :mod:`._hook_exec_bit` (imported above) — that module is the single place
+# that reasons about why a hook needs the bit at all.
 
 _BASH_SYNTAX_TIMEOUT_S = 10.0
 
@@ -306,11 +309,39 @@ def _deploy_one(src: Path, dst_dir: Path, stamp: str) -> str:
     Atomic: writes a sibling temp file, sets the mode on it, then renames it
     over the destination. The destination is never observed partially written,
     and an aborted write leaves the running hook in place.
+
+    CONTENT IS NOT THE WHOLE STATE. ``settings.json`` arms these hooks by bare
+    path, with no interpreter prefix::
+
+        "command": "$HOME/.claude/hooks/pre-tool-use/enforce_telegram_no_bare_issue.sh"
+
+    so a hook without the execute bit cannot run AT ALL — and its bytes are
+    perfect, so every content comparison calls it current. That is the same
+    inert-hook failure this module exists to close, arriving by a second route:
+    the first was the copy nobody updated, this is the copy nobody could
+    execute. Measured in the dotfiles baseline the same day: the live
+    ``~/.claude`` copy was 100755 while the ``_shared/to_home/`` SOURCE it is
+    materialised from was 100644.
+
+    So "already correct" requires BOTH the bytes and the bit. A byte-identical
+    file that merely lost its mode is repaired with a chmod — no rewrite, no
+    displacement, because nothing is being replaced.
     """
     dst = dst_dir / src.name
     payload = src.read_bytes()
     if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == payload:
-        return "unchanged"
+        if _is_executable(dst):
+            return "unchanged"
+        os.chmod(dst, _HOOK_MODE)
+        logger.warning(
+            "baseline hook assets: %s had correct content but was NOT "
+            "executable (%s arms it by bare path, so it could not run at "
+            "all) — mode repaired to %o.",
+            dst,
+            "settings.json",
+            _HOOK_MODE,
+        )
+        return "deployed"
     if not _bash_syntax_ok(src):
         return "failed"
     tmp = dst_dir / f".{src.name}.sac-deploy-{os.getpid()}"

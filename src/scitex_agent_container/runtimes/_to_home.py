@@ -65,6 +65,7 @@ from ._baseline_hook_assets import deploy_baseline_hook_assets
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._github_token import ensure_github_token
+from ._hook_exec_bit import ensure_armed_hooks_executable
 from ._hook_origin_manifest import write_hook_manifest
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
@@ -345,6 +346,15 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
     settings_provenance = deploy_settings_cascade(dest, settings_layer_dirs(config))
+    # ...then make sure every hook we JUST ARMED can actually run. settings.json
+    # arms most hooks by BARE PATH, which Claude Code execs directly, so a file
+    # without the execute bit is dead — with perfect bytes, at exactly the armed
+    # path, invisible to any content check and to `git diff`. Measured in the
+    # dotfiles baseline feeding this cascade: 18 of 43 bare-path-armed hooks are
+    # tracked 100644, so a fresh clone or rebuilt container arms 18 dead guards.
+    # Runs AFTER the cascade because the deployed settings.json is what says
+    # which paths are armed. See :mod:`._hook_exec_bit`.
+    ensure_armed_hooks_executable(dest)
     # ...then record WHICH layer armed each hook, to runtime (not to the home
     # we just wrote). The deployed settings.json is the flattened result, so it
     # cannot answer "where is this hook coming from?" — the origin only exists
