@@ -202,7 +202,7 @@ dev = [
     #     masked violation in its own `project-structure: 1 error(s)`
     #     tally. A skip rule that suppresses the REPORT but not the STATUS
     #     cannot do the one job it exists for. That is a scitex-dev
-    #     defect, not a sac one, and it is filed upstream.
+    #     defect, not a sac one: scitex-ai/scitex-dev#590.
     #     (The other audit-cli warnings seen on 0.48.0 — §4b CliHelp, §13
     #     `skills` nesting — are NOT new and NOT the cause: 0.47.0 reports
     #     the same two and exits 0. §10w is an import-budget measurement
