@@ -104,6 +104,8 @@ SOURCE_RESOLVER = "resolver"  # the gatherer itself failed. Observes nothing, ev
 SOURCE_SCREEN = (
     "screen"  # the rendered CONTENT of the tui pane. Reads WORKING, not presence.
 )
+# the agent's OWN turn record — the only artefact written BY the failure itself.
+SOURCE_TRANSCRIPT = "transcript"
 
 # Signal INSTRUMENTS — what PHYSICALLY made the observation.
 INSTRUMENT_LISTEN_BROKER = "listen_broker"
@@ -112,6 +114,7 @@ INSTRUMENT_PID_NAMESPACE = "pid_namespace"
 INSTRUMENT_AGENT_SELF = "agent_self"
 INSTRUMENT_NO_OBSERVATION = "no_observation"
 INSTRUMENT_TUI_SCREEN = "tui_screen"
+INSTRUMENT_TURN_REFUSAL = "turn_refusal"
 
 
 @dataclass(frozen=True)
@@ -234,6 +237,43 @@ INSTRUMENT_INDEPENDENCE: dict[str, InstrumentSpec] = {
             "which degrade to UNKNOWN, never a false WEDGE"
         ),
     ),
+    INSTRUMENT_TURN_REFUSAL: InstrumentSpec(
+        reads=(
+            "the LAST assistant turn in the agent's own Claude Code transcript — "
+            "whether the provider REFUSED it. Claude Code stamps a refused turn "
+            "``isApiErrorMessage: true`` with ``model: '<synthetic>'`` and zero "
+            "token usage: no turn ran. That record is written BY the failure, by "
+            "the agent, at the moment it could not act — so unlike every other "
+            "sensor here it is not a proxy for the fault, it IS the fault's own "
+            "receipt. It answers 'can this agent execute a turn?', which no "
+            "pid, session, port or heartbeat sensor asks.\n"
+            "Measured 2026-08-10 on scitex-compute-04, the three refusals this "
+            "reads, all captured verbatim in the fixture: \"You've hit your "
+            "weekly limit · resets 11pm (UTC)\" (quota), \"Not logged in · "
+            "Please run /login\" and a 401 \"OAuth access token has expired\" "
+            "(credentials). Every sac surface called that agent HEALTHY "
+            "throughout, and the operator diagnosed it by reading the pane."
+        ),
+        # Never ALIVE: a last turn that SUCCEEDED proves the agent could act
+        # THEN, not that it can act now — the same restraint the screen
+        # instrument practises with a clean pane. Never DEAD: an agent refusing
+        # turns is emphatically PRESENT, and DEAD would arm a destruction
+        # against a living process whose only fault is an exhausted quota (which
+        # a restart does not fix — it would destroy context for nothing). It
+        # emits exactly WEDGED (present but unable to act) or UNKNOWN. Because
+        # DEAD is absent, ``may_convict`` is False and it can never arm a
+        # destroy.
+        verdicts=frozenset({WEDGED, UNKNOWN}),
+        blind_when=(
+            "no transcript can be located for this agent (its container $HOME is "
+            "not on this host, the spec-derived candidate homes are a PROMISE "
+            "about where a transcript would go rather than a fact about where "
+            "this incarnation wrote one, or the agent has not written a turn "
+            "yet), the file is unreadable, or its last turn is older than the "
+            "freshness window — all of which degrade to UNKNOWN, never to a "
+            "false 'able to act'"
+        ),
+    ),
 }
 
 INSTRUMENTS = frozenset(INSTRUMENT_INDEPENDENCE)
@@ -322,3 +362,33 @@ class Signal:
             "detail": self.detail,
             "instrument": self.instrument,
         }
+
+
+def delivery_alive_wins(signals: "tuple[Signal, ...]") -> bool:
+    """Does a ``delivery`` ALIVE settle this fold outright? (rule 1 of decide)
+
+    A delivery ALIVE is normally supreme — above even WEDGED — because the
+    broker OBSERVED the agent's inbox adapter attached, and a broker-reachable
+    agent was taken to be demonstrably working. That premise held for the
+    founding auth-death incident, whose agent was NOT reachable.
+
+    IT DOES NOT HOLD FOR A REFUSED TURN, and the 2026-08-10 ``scitex-cards``
+    incident is the counter-example: the operator's messages REACHED that agent
+    — that is how they got refused, one "You've hit your weekly limit" per
+    message — for 32 minutes, while every surface reported HEALTHY.
+
+    Delivery observes that a message can ARRIVE. It does not observe that a turn
+    can EXECUTE. So when :data:`INSTRUMENT_TURN_REFUSAL` reports WEDGED — the
+    agent's OWN transcript recording that its most recent turn did not run — the
+    delivery shortcut is withdrawn and the fold falls through to the WEDGED
+    rule. Deliberately narrow: ONLY that instrument suppresses it, because only
+    that one reads the agent's testimony about its own turns; a screen WEDGE
+    (a rendered banner, which may be history) still loses to delivery exactly as
+    before.
+    """
+    for sig in signals:
+        if sig.verdict == WEDGED and sig.instrument == INSTRUMENT_TURN_REFUSAL:
+            return False
+    return any(
+        sig.verdict == ALIVE and sig.source == SOURCE_DELIVERY for sig in signals
+    )
