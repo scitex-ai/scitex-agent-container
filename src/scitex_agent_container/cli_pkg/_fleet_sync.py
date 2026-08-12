@@ -37,13 +37,11 @@ from pathlib import Path
 from typing import Any
 
 import click
-
 from rich.console import Console
 
 from .._state.host_config import Config, build_ssh_argv, load
 from .._state.spec_manifest import build_manifest, diff_manifests
 from ._helpers import console
-
 
 _DEFAULT_AGENTS_DIR = "~/.scitex/agent-container/agents"
 
@@ -149,7 +147,8 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
     The shared ``_helpers.console`` is a plain ``Console()`` — i.e. stdout —
     so this deliberately uses the module's ``_err_console`` instead. The
     docstring above has promised stderr since the command landed; until
-    #1006 the code wrote to stdout regardless.
+    PR #1024 the code wrote to stdout regardless, which meant
+    ``sac fleet sync > out`` silently swallowed the whole conflict report.
     """
     fleet = diff["fleet"]
     unreachable = diff.get("unreachable", [])
@@ -199,7 +198,9 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
         style="bold",
     )
     _err_console.print("Operator action (sac will NEVER do this for you):")
-    _err_console.print("  1. Pick the authoritative copy per agent — sac has no opinion.")
+    _err_console.print(
+        "  1. Pick the authoritative copy per agent — sac has no opinion."
+    )
     _err_console.print("  2. Rsync that tree to the diverged hosts manually.")
     _err_console.print("  3. Re-run `sac fleet sync` until it exits 0.")
     _err_console.print("=" * 72)
