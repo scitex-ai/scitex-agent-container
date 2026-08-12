@@ -58,6 +58,19 @@ uv pip install --python "$PY" -e ".[all,dev]" ||
     uv pip install --python "$PY" -e "."
 uv pip install --python "$PY" tzdata || true
 
+# THE VENV'S bin/ MUST BE ON PATH, because several tests exec the `sac` CONSOLE
+# SCRIPT as a subprocess (the shell-completion install tests, the SDK channel
+# sidecar resolver). Without this the first hosted run reported SIX failures out
+# of 14991 — all of them this one cause, and all of them reading like real bugs:
+#
+#   SacBinaryNotFoundError: Cannot resolve the `sac` console script: not on PATH
+#   ...test_install_writes_bash_cache_file - assert False where False = is_file()
+#
+# run-in-sif.sh has the same requirement and solves it by hand-writing shims,
+# because `pip install --target` does not materialise entry points at all. A
+# venv install DOES create them — they just have to be reachable.
+export PATH="$PWD/.venv-$V/bin:$PATH"
+
 # ASSERT THE PLUGIN SET BEFORE TRUSTING A SINGLE PASS/FAIL COUNT.
 # NOT `-q`: quiet suppresses the `plugins:` header this reads, and the first
 # version of this check shipped that way and failed every job it was added to.
