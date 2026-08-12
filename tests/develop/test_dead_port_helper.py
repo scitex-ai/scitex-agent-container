@@ -1,5 +1,33 @@
 """The dead-port helper must be FALSIFIABLE, so every claim it makes is a test.
 
+WHY THIS FILE LIVES IN ``tests/develop/`` AND NOT BESIDE THE HELPER
+==================================================================
+It tests ``tests/scitex_agent_container/_helpers/ports.py``, so the obvious
+home is next to it. That home is wrong, and the auditor is right to say so.
+
+``tests/<pkg>/`` is the MIRROR TREE: every ``test_X.py`` there must
+correspond to ``src/<pkg>/.../X.py``. **PS-204 §2 (orphan-test-file)** fires
+on any that does not, and this test has no src counterpart *by design* — the
+thing under test is test-support code that must never ship. Putting it in the
+mirror tree reddened both matrix legs (PR #1026, run 31607851531): audit-all
+exit 1, 1 unmasked error, green on the base commit.
+
+The helper itself stays exactly where it is. It is not a ``test_*.py``, so
+PS-204 never looks at it, and **PS-207 is documented as "src-aware so it
+never flags fixture trees that legitimately have no source counterpart"** —
+i.e. a `_helpers/` directory of support modules with no `src/` mirror is a
+BLESSED shape, which is why `loopback_server.py` and `ssh_exec_shim.py` have
+sat there unflagged. Only the *test* had to move, and relocating is the
+remedy PS-204 itself is built to suggest (its detail is "enriched" precisely
+to name a relocate target), not a dodge around the rule.
+
+``tests/develop/`` is where this repo keeps gates about its own tooling and
+conventions — ``test_audit.py``, ``test_git_hooks.py``,
+``test_pytest_plugin_gate.py``, ``test_skills_quality.py``. A gate pinning
+the contract of shared test infrastructure is exactly that genre, and the
+directory is outside PS-204's scope. Do not move this back.
+
+
 A test-support module that nothing tests is an assertion, not a guarantee —
 and the bug this one fixes (CI 2026-08-12, develop ``d21cb5f6``, py3.11 leg
 only) is precisely a helper that *claimed* "nothing is listening on this port"

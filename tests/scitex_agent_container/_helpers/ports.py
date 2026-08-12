@@ -42,7 +42,10 @@ timing:
 * **It holds the port.** While the socket lives nothing else can bind that
   port, and the kernel will not hand it out to another ``bind(port 0)``.
 
-Measured on this platform (see ``test_ports_helper.py``, which asserts every
+Measured on this platform (see ``tests/develop/test_dead_port_helper.py``,
+which lives outside the mirror tree because PS-204 reserves ``tests/<pkg>/``
+for tests that mirror a ``src/`` module and this one has no src counterpart
+by design, and which asserts every
 one of these rather than trusting the paragraph above): connect ->
 ``ECONNREFUSED`` (errno 111); curl -> exit 7; a second ``bind()`` -> errno 98
 ``EADDRINUSE``, and still ``EADDRINUSE`` when the newcomer sets
@@ -65,8 +68,9 @@ on. The un-close must therefore be at least as obviously intentional, or the
 next reader will "tidy up the leaked socket" and restore the flake. That is
 why the not-closing is stated at every level here: in this docstring, in a
 comment at the ``bind()`` itself, and — the part that actually bites — in
-``test_ports.py::test_helper_socket_is_still_open_after_handing_out_port``,
-which fails if someone adds the close back.
+``tests/develop/test_dead_port_helper.py::
+test_helper_socket_is_still_open_after_handing_out_port``, which fails if
+someone adds the close back.
 
 **Promoting this to scitex-dev.** The same defect exists at
 ``scitex-dev tests/scitex_dev/_cli/gui/test__lifecycle.py::free_port``, whose
@@ -133,7 +137,7 @@ def bind_without_listen(host: str = _LOOPBACK) -> socket.socket:
     #   * open                     ->  the port cannot be stolen (what fixes the flake)
     # Closing here restores the 2026-08-12 py3.11 flake exactly. Ownership
     # passes to the caller; hold_dead_port / the dead_port fixture close it at
-    # teardown. Pinned by test_ports.py::
+    # teardown. Pinned by tests/develop/test_dead_port_helper.py::
     #   test_helper_socket_is_still_open_after_handing_out_port
     return sock
 
