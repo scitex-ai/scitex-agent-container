@@ -311,6 +311,20 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
+# Claude Code hook RULES sac declares about its own surfaces. sac owns the
+# rule (they are sac's images being protected) and ships the refusal
+# script; scitex-dev discovers this provider and applies the rows
+# centrally, exactly as it does for jobs / system_deps / gate — the leaf
+# never installs anything itself, and scitex-dev never hardcodes anything
+# about apptainer.
+#
+# The provider imports scitex_dev.hooks LAZILY, so this entry point ships
+# and stays inert on a scitex-dev that predates the hooks contract instead
+# of breaking import-time metadata (same idiom + same reason as the
+# scitex_dev.jobs provider above).
+[project.entry-points."scitex_dev.hooks"]
+scitex-agent-container = "scitex_agent_container._claude_hooks_plugin:provide_hooks"
+
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
 Repository = "https://github.com/ywatanabe1989/scitex-agent-container.git"
