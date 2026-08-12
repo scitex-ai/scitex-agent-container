@@ -96,6 +96,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
 - [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env` — host fs/git/gh
 - [23_telegram-integration.md](23_telegram-integration.md) — Telegram bridge; `telegram_*` MCP tools, lead-only auth
+- [23_telegram-rail-verdict.md](23_telegram-rail-verdict.md) — is the rail UP/DOWN/unobserved; `sac agents cct-audit`
 
 ## 30-second start
 
