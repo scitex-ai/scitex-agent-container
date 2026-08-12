@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._never_stop_when_task_remains._loop_guard import (
@@ -27,14 +28,33 @@ from scitex_agent_container.cli_pkg.never_stop_when_task_remains_cmds import (
 )
 
 from .._never_stop_when_task_remains._fake_detector import (
+    SCOPE_ENV,
+    awaiting_cards,
     clear_identity,
     detector_env,
     isolate_runtime,
     missing_detector,
+    no_awaiting_cards,
+    operator_card,
     runnable_verdict,
+    scope_sensitive_board,
     stale_cards_detector,
+    unreadable_board,
     write_detector,
 )
+
+
+@pytest.fixture(autouse=True)
+def _board_holds_no_operator_questions(env_save_restore, tmp_path: Path):
+    """The DEFAULT board state for every test here: nothing awaits a human.
+
+    Autouse because the hook now reads that queue on every stop, and without a
+    real local reader installed the REAL ``scitex-cards`` on PATH would be
+    spawned against the LIVE fleet board — slow, non-deterministic, and a
+    suite that goes red when a database it does not own is down. Tests that
+    care about the queue install their own reader, which wins.
+    """
+    no_awaiting_cards(env_save_restore, tmp_path)
 
 _REASON = "Do NOT stop — take card-1 next: run the failing test and fix it."
 _HOOK_JSON = json.dumps({"decision": "block", "reason": _REASON})
@@ -478,3 +498,237 @@ def test_stdout_is_pure_json_when_blocking(env_save_restore, tmp_path: Path):
     _, out = _run("agent-x")
     # Assert
     assert json.loads(out)["decision"] == "block"
+
+
+# ---------------------------------------------------------------------------
+# THE AWAITING-OPERATOR REPORT
+#
+# The failure: a `status=blocked` card sends no nudge AND is excluded from the
+# runnable-items count, so it is counted by nothing and stops existing. An
+# agent reporting "board clear" is telling the truth about the only number it
+# can see. Measured 2026-08-11: 21 such cards on this agent's board, 24 on
+# scitex-dev's, oldest three weeks old — discovered by two agents
+# independently, within minutes, after weeks of nobody looking.
+#
+# REPORT, NEVER GATE. Those cards are correctly waiting. A gate here would
+# make the hook unstoppable, and the first thing anyone does with an
+# unstoppable hook is bypass it.
+# ---------------------------------------------------------------------------
+
+
+def _board_clear_with_operator_queue(
+    env_save_restore, tmp_path: Path, *, count: int = 21, oldest_days: int = 24
+) -> None:
+    """The exact reported state: nothing runnable, a long operator queue."""
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    awaiting_cards(
+        env_save_restore,
+        tmp_path,
+        [
+            operator_card(f"q-{n}", blocked_days_ago=oldest_days - n)
+            for n in range(count)
+        ],
+        name="board-with-queue",
+    )
+
+
+def test_a_board_clear_agent_is_told_the_operator_queue_exists(
+    env_save_restore, tmp_path: Path
+):
+    """THE test that matters. Before this line existed the hook emitted NOTHING
+    at all here (see ``test_allowed_stop_writes_no_stdout``), which is how 21
+    unanswered questions stayed invisible for three weeks."""
+    # Arrange
+    _board_clear_with_operator_queue(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "21 card(s) awaiting the operator" in _decision(out).get(
+        "systemMessage", ""
+    )
+
+
+def test_the_report_names_the_age_of_the_oldest(env_save_restore, tmp_path: Path):
+    """A count alone reads as steady state; "oldest 24 days" reads as a
+    problem — which is the fact that does the work."""
+    # Arrange
+    _board_clear_with_operator_queue(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "oldest 24 days" in _decision(out).get("systemMessage", "")
+
+
+def test_the_report_never_blocks_the_stop(env_save_restore, tmp_path: Path):
+    """A card blocked on the operator is CORRECTLY waiting. Gating on it would
+    be strictly worse than the status quo."""
+    # Arrange
+    _board_clear_with_operator_queue(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert _decision(out).get("decision") is None
+
+
+def test_the_report_rides_alongside_a_block_without_touching_the_reason(
+    env_save_restore, tmp_path: Path
+):
+    """Their ``reason`` is the agent's next instruction and is forwarded
+    verbatim; the report is ours and goes in ``systemMessage``."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
+    )
+    awaiting_cards(
+        env_save_restore,
+        tmp_path,
+        [operator_card("q-1", blocked_days_ago=30)],
+        name="queue-while-blocked",
+    )
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert _decision(out)["reason"] == _REASON
+
+
+def test_the_report_reaches_the_agent_even_while_blocked(
+    env_save_restore, tmp_path: Path
+):
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
+    )
+    awaiting_cards(
+        env_save_restore,
+        tmp_path,
+        [operator_card("q-1", blocked_days_ago=30)],
+        name="queue-while-blocked",
+    )
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "1 card(s) awaiting the operator" in _decision(out).get("systemMessage", "")
+
+
+def test_the_report_does_not_feed_the_loop_guard(env_save_restore, tmp_path: Path):
+    """The guard digests the BLOCK TEXT to detect "no progress". An age in days
+    moves every day, so if it leaked into ``reason`` the guard could never
+    trip and a wedged agent would loop forever. It must still trip."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(
+        env_save_restore, write_detector(tmp_path, returncode=2, stdout=_HOOK_JSON)
+    )
+    awaiting_cards(
+        env_save_restore,
+        tmp_path,
+        [operator_card("q-1", blocked_days_ago=30)],
+        name="queue-during-loop",
+    )
+    # Act
+    _, out = _block_repeatedly(MAX_CONSECUTIVE_BLOCKS + 1)
+    # Assert
+    assert "ALARM" in _decision(out).get("systemMessage", "")
+
+
+def test_a_clean_operator_queue_prints_nothing(env_save_restore, tmp_path: Path):
+    """stdout IS the protocol. With nothing runnable and nothing waiting, the
+    hook must stay exactly as silent as it was before this feature."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert out.strip() == ""
+
+
+def test_an_ambient_scope_cannot_silence_the_report_end_to_end(
+    env_save_restore, tmp_path: Path
+):
+    """A fix for an invisible queue must not itself be invisible.
+
+    ``list-tasks`` silently ANDs ``$SCITEX_TODO_SCOPE`` into its filter —
+    measured on the live board 2026-08-12, the same query answered 21 rows
+    unset and 0 rows with it set. A hook that quietly reported zero would
+    convert "nobody looked" into "we checked and it was clear", which is worse
+    than the silence it replaced.
+    """
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    scope_sensitive_board(
+        env_save_restore,
+        tmp_path,
+        [operator_card(f"q-{n}", blocked_days_ago=24 - n) for n in range(21)],
+    )
+    env_save_restore.set(SCOPE_ENV, "agent:somebody-else")
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "21 card(s) awaiting the operator" in _decision(out).get(
+        "systemMessage", ""
+    )
+
+
+# ---------------------------------------------------------------------------
+# the degraded case — the database refusing the read, as it did that night
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_board_still_allows_the_stop(env_save_restore, tmp_path: Path):
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    unreadable_board(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert _decision(out).get("decision") is None
+
+
+def test_an_unreadable_board_prints_no_error(env_save_restore, tmp_path: Path):
+    """Fail open and SILENT. A hook that breaks the stop path breaks
+    everything, and a report is not worth one byte of stdout it cannot back
+    up."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    unreadable_board(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert out.strip() == ""
+
+
+def test_an_unreadable_board_leaks_no_traceback_to_the_agent(
+    env_save_restore, tmp_path: Path
+):
+    """The refusal prints a traceback naming internal store modules. None of
+    it may reach the agent — the same rule that keeps click's usage text out
+    of the block reason."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    detector_env(env_save_restore, write_detector(tmp_path, returncode=0))
+    unreadable_board(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "ExportRefused" not in out and "Traceback" not in out
+
+
+def test_an_unreadable_board_does_not_suppress_the_fail_open_alarm(
+    env_save_restore, tmp_path: Path
+):
+    """Two independent failures must both still be reported."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    missing_detector(env_save_restore, tmp_path)
+    unreadable_board(env_save_restore, tmp_path)
+    # Act
+    _, out = _run("agent-x")
+    # Assert
+    assert "FAIL-OPEN" in _decision(out).get("systemMessage", "")

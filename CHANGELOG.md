@@ -53,6 +53,125 @@ versioning follows [SemVer](https://semver.org/).
   Token values are never read, logged, or transmitted anywhere in this path —
   presence only, slot NAMES and pool source PATHS at most.
 
+- **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
+  `inbox_subscribers: 0` has always been confounded — it means a detached
+  inbox adapter *or* an agent that is not running at all — and
+  `_listen/_reachability.py` has warned about that in its own docstring since
+  it was written. Every consumer since has had to *remember* the warning, on
+  the surface an agent consults right before handing over work, and the record
+  says they do not: 2026-07-14, three agents read a wall of zeros as a deaf
+  fleet and escalated a P0 that did not exist (every agent in their lists was
+  simply stopped); 2026-08-12, a peer read the same zeros as evidence that
+  "reach decays with uptime".
+
+  Measured on the fleet host that morning: **15 registry rows, 9 reporting
+  `unreachable`, and all 9 had no tmux session, no `sac mcp channel` process,
+  and an `instances` row stamped `ended_at=2026-08-11T17:54:26Z`,
+  `exit_reason=crashed`.** Not one of them was deaf. They were dead, and their
+  registry rows had outlived them — still advertising a pid, a port and a
+  `turn_url`, with no field anywhere saying otherwise.
+
+  So the zero is now paired with the one instrument that is independent of the
+  broker's own bookkeeping — the host's tmux table — and the result is NAMED on
+  every `GET /agents` row, on `GET /agents/<name>/status`, and in
+  `sac agents health`:
+
+  - `fault: "deaf_inbox"` — a live session observed AND 0 subscribers. The
+    state that was previously unnameable, and the one worth alarming on: green
+    at every surface, work routed to it, work evaporates.
+  - `fault: "not_running"` — the row outlived the process. Not a delivery
+    fault at all; there is nothing to deliver *to*.
+  - `fault: null` — healthy, or a reading nobody could take.
+
+  Only a POSITIVE observation convicts: a snapshot we could not take (a wedged
+  tmux, or the container-blindness trap where an empty result is a namespace
+  boundary rather than an empty fleet) yields no fault, and an agent whose spec
+  does not declare the `tui` runtime is never convicted on a missing tmux
+  session it was never going to have. The overlay is a REPORT and is wired to
+  nothing destructive — least of all `deaf_inbox`, whose subject is by
+  definition a healthy session a restart would destroy.
+
+- **The Stop hook now REPORTS the queue that was waiting on a human, because
+  that queue had stopped existing** (`_never_stop_when_task_remains/
+  _awaiting_operator.py`). A card with `status=blocked` sends no nudge —
+  deliberately, so blocked work stops nagging — and is also excluded from the
+  runnable-items count this hook prints. Those two facts together mean nothing
+  surfaces it and nothing counts it, so an agent reporting "board clear" is
+  telling the truth about the only number it can see.
+
+  Measured 2026-08-11 on two boards, discovered independently by two agents
+  within minutes: `scitex-agent-container` 38 blocked / 21 `operator-decision`;
+  `scitex-dev` 69 blocked / 24 `operator-decision`, oldest 2026-07-19. Three
+  weeks of questions naming the operator as the gate, unasked — and the
+  operator had asked one of those agents that same night whether it had
+  anything for him and got one item back.
+
+  The general shape, which outlives this fix: **a queue excluded from the
+  alarm is a queue nobody is waiting on.**
+
+  It REPORTS, it does not gate. A card blocked on the operator is correctly
+  waiting and must not stop an agent from stopping; a gate would make this
+  hook unstoppable, and the first thing anyone does with an unstoppable hook
+  is bypass it. The line therefore rides on `systemMessage`, the one field a
+  Stop hook can emit while still ALLOWING the stop — which is also the only
+  channel that reaches the "board clear" agent, since there is no block
+  `reason` on that path. The block `reason` is left byte-identical: it is
+  scitex-cards' text, and it feeds the loop-guard signature, where an age in
+  days would be exactly the every-turn-moving value that stops the guard ever
+  tripping.
+
+  The AGE is the part that does the work: `⏸ 21 card(s) awaiting the operator
+  (oldest 47 days) — surface or reclassify`. A count alone reads as steady
+  state.
+
+  `blocker=agent-wait` is deliberately excluded — an agent waiting on another
+  agent is a different failure with a different owner, and counting it here
+  would misattribute the gate and dilute the number.
+
+  **The report NAMES THE STORE IT READ**, redacted, with the store UUID:
+
+      ⏸ 21 card(s) awaiting the operator (oldest 47 days) — surface or reclassify
+         read from postgresql://scitex_cards@127.0.0.1:55432/scitex_cards (uuid 1d55dd6e)
+
+  This fleet currently has four stores — two Postgres clones, an abandoned
+  SQLite inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the
+  previous morning while readers kept attaching), and a YAML file that
+  `scitex-cards done` resolved to while `$SCITEX_CARDS_DB` named Postgres. A
+  count with no named source is unfalsifiable: it looks identical whether it
+  came from the live board or from a corpse. The identity comes from
+  `scitex-cards resolve-store` — the target the package actually opened — not
+  from `$SCITEX_CARDS_DB`, which is only a claim, and the gap between those two
+  is exactly how a reader ends up quoting an abandoned store. The UUID is
+  carried because a URL alone cannot separate two clones of the same database.
+  Any password in the target is redacted before it is printed or cached.
+
+  The store probe runs only when there IS something to report, so a clean board
+  still costs one subprocess; both are inside the same TTL cache. A zero is the
+  one answer that prints nothing, so the cache file records `count` and `store`
+  even then — the audit trail the line cannot carry.
+
+  **The query states its scope instead of inheriting it**, because building
+  this turned up the same defect inside the fix. `list-tasks` silently ANDs
+  `$SCITEX_TODO_SCOPE` into its filter, and measured on the live board:
+  baseline 21 rows, with `SCITEX_TODO_SCOPE` set 0 rows, with an explicit
+  `--scope ''` 21 rows again. An alarm that an ambient environment variable can
+  quietly turn to zero is WORSE than no alarm — it converts "nobody looked"
+  into "we checked and it was clear". The tests therefore run the ambient-scope
+  case explicitly, against a reader that reproduces the measured behaviour,
+  with a control proving that reader really is silenced without the fix; a
+  suite that only ever ran with the variable unset would have gone green and
+  shipped it.
+
+  Cheap and silent by construction, because this runs on every stop attempt: a
+  hard subprocess timeout, a 15-minute TTL cache under the runtime tree, and a
+  NEGATIVE cache so a database that is down is paid once per TTL rather than
+  once per stop. Every failure — missing reader, refused read, timeout,
+  unwritable cache — returns the empty string and prints nothing, so the hook
+  degrades to exactly its previous behaviour. (The live board really was
+  refusing reads intermittently while this was written: `ExportRefused:
+  notifications row ... has no record_json payload`, minutes before the same
+  query answered with 21 rows.)
+
 - **`sac image build --reproducible` — the build verb can finally express
   "build reproducibly", and sac finally calls the round trip it has had access
   to all along.** scitex-container has shipped the whole apparatus for months
@@ -92,6 +211,31 @@ versioning follows [SemVer](https://semver.org/).
   `build_layer_from_source` documents `base`/`scitex`/`proxy` and
   `resolve_bootstrap_sif` already names `proxy` among the top-of-stack layers.
   An oversight, not a policy.
+
+### Fixed
+
+- **`a2a_send` no longer tells a sender to wait for a reconnect that has no
+  process to happen in.** A 0-subscriber send raised `no_subscriber_error`,
+  whose remedy says — correctly, for a live agent with a detached adapter —
+  "NOT LOST … do NOT re-send … it replays on their next connect". For a
+  *stopped* agent that advice is inverted: no session exists to reconnect, so
+  the row sits in `channel_events` until someone deliberately starts the agent,
+  and the sender waits forever behind reassuring text. This is the same shape
+  as the `sac-04` incident (a name that was never registered, queued all day
+  behind the same "it's queued" advice) one layer over — and on 2026-08-12 it
+  applied to 9 of the 15 registered agents on the host.
+
+  The send path now reads the `fault` the listen route publishes and raises a
+  distinct `target_not_running` failure with the opposite remedy. It still does
+  **not** tell the caller to start the target: whether a stopped agent should be
+  running is an operator decision, not a side effect of someone wanting to
+  message it.
+
+- **`sac agents health` no longer asserts a process state it never observed.**
+  The unreachable branch ended with "The process is up; its inbox adapter is
+  not attached" — a claim about the process the command had not made and could
+  not make. It was wrong for 9 of 15 agents on the host. It now reports which
+  zero it is, and when the cause is unconfirmed it says so instead of guessing.
 
 ### Changed
 

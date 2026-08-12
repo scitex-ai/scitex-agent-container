@@ -86,18 +86,55 @@ def print_liveness(console: Any, liveness: dict) -> None:
         )
 
 
-def print_inbox(console: Any, name: str, subscribers: int, reachable: str) -> None:
-    """Render the inbox-reachability observation (moved verbatim from
-    ``status_cmds.health`` — the 512-line per-file cap)."""
+def print_inbox(
+    console: Any,
+    name: str,
+    subscribers: int,
+    reachable: str,
+    fault: str | None = None,
+) -> None:
+    """Render the inbox-reachability observation, and WHICH zero it is.
+
+    The unreachable branch used to end with "The process is up; its inbox
+    adapter is not attached" — a claim about the process that this command had
+    not observed and could not make. For a STOPPED agent it was simply false,
+    and it came bundled with advice ("messages are … replayed when its channel
+    adapter reconnects") that only holds for a live one. Measured 2026-08-12:
+    9 of the 15 registered agents on this host were stopped, so that sentence
+    was wrong more often than it was right.
+
+    ``fault`` is the listen daemon's observation of which case this is (see
+    ``_listen._inbox_fault``). When it is absent — an older daemon, or a
+    reading nobody could take — the text says what was actually seen and stops
+    there, rather than re-asserting the old guess.
+    """
+    from .._listen._inbox_fault import FAULT_DEAF_INBOX, FAULT_NOT_RUNNING
     from .._listen._reachability import UNKNOWN, UNREACHABLE
 
-    if reachable == UNREACHABLE:
+    if reachable == UNREACHABLE and fault == FAULT_NOT_RUNNING:
         console.print(
-            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers. "
-            f"a2a_send to '{name}' will reach nobody (messages are queued and "
-            f"replayed when its channel adapter reconnects). The process is "
-            f"up; its inbox adapter is not attached. Do NOT force-restart on "
-            f"this alone.[/yellow]"
+            f"[red]inbox: NOT REACHABLE — and '{name}' IS NOT RUNNING. No live "
+            f"session was observed for it, so its registry row has outlived "
+            f"its process. Messages are queued durably, but NOTHING WILL "
+            f"DRAIN THAT QUEUE until the agent is started — there is no "
+            f"adapter left to reconnect. Do not wait for a reply.[/red]"
+        )
+    elif reachable == UNREACHABLE and fault == FAULT_DEAF_INBOX:
+        console.print(
+            f"[yellow]inbox: NOT REACHABLE — RUNNING BUT DEAF. A live session "
+            f"was observed for '{name}' AND it has 0 subscribers, so a2a_send "
+            f"reaches nobody while the agent is up. Messages are queued and "
+            f"replayed when its channel adapter reconnects. Do NOT "
+            f"force-restart: the session is healthy.[/yellow]"
+        )
+    elif reachable == UNREACHABLE:
+        console.print(
+            f"[yellow]inbox: NOT REACHABLE — 0 live subscribers, cause "
+            f"UNCONFIRMED. a2a_send to '{name}' will reach nobody. This is "
+            f"EITHER a detached inbox adapter on a live agent (messages "
+            f"replay on reconnect) OR an agent that is not running at all "
+            f"(nothing will reconnect) — this reading cannot tell them apart. "
+            f"Do NOT force-restart on it.[/yellow]"
         )
     elif reachable == UNKNOWN:
         console.print(
