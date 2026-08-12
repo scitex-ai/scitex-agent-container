@@ -53,14 +53,6 @@ different layers of the stack:
   runner (today: ``_session_conversation.py`` opening one
   ``ClaudeSDKClient`` and calling ``_drive_turn`` per inbound message).
 
-The name is HARNESS, not PROVIDER, because the axis this Protocol
-selects on is WHICH AGENT PROGRAM RUNS THE LOOP — its implementations
-are ``ClaudeCodeSession`` / ``CodexSession`` / :class:`OpenAIAgentsSession`
-/ ``PiSession`` / ``OpenHandsSession``, which are agent programs, not
-inference providers. "Which model thinks" is a separate axis
-(``inference``); conflating the two is what the old ``ProviderSession``
-name did.
-
 They compose VERTICALLY, not by inheritance: a future runner selects a
 ``HarnessSession`` implementation based on ``AgentConfig.provider``
 (``config._provider_types.AgentProvider`` — see the naming-collision
@@ -69,6 +61,18 @@ from inside the process that ``RuntimeBase.start()`` launched. Reusing
 ``HarnessSession`` for both harnesses (rather than only using it as an
 OpenAI-side implementation detail) is what keeps ``openai-compat-2``
 from having to reinvent the turn-loop contract.
+
+Why HARNESS and not PROVIDER
+-----------------------------
+The axis this Protocol selects on is WHICH AGENT PROGRAM RUNS THE LOOP:
+its implementations are ``ClaudeCodeSession`` / ``CodexSession`` /
+``OpenAIAgentsSession`` / ``PiSession`` / ``OpenHandsSession``, which are
+agent PROGRAMS, not inference providers. "Which model thinks" is a
+separate axis (``inference``) — e.g. ``ClaudeSpec.provider`` above, which
+points the SAME harness at an Anthropic-compatible backend. The former
+name ``ProviderSession`` named the wrong axis, and ``OpenAISession`` was
+the sharper case: it wraps the ``openai-agents`` SDK, not an OpenAI model
+provider.
 """
 
 from __future__ import annotations
