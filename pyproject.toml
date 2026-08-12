@@ -157,47 +157,74 @@ dev = [
     # 0.17.12. Also: tests/results/ accepted as a known tests subdir
     # (PS-302).
     #
-    # <0.48 CEILING — 2026-08-12, and it is a DEADLINE, not a preference.
-    # scitex-dev 0.48.0 took develop red on all three matrix legs with five
-    # failures that no sac commit caused. Measured by A/B on ONE commit
-    # (00f7f96, same click 8.4.2, same interpreter): 69/69 green with
-    # 0.47.0 installed, 4 failed with only scitex-dev swapped to 0.48.0.
-    # Three independent incompatibilities, none of them cosmetic:
+    # <0.48 CEILING — REINSTATED 2026-08-12 by the run that tried to lift
+    # it. PR #1014 removed this line and put 0.48.0 through CI for the
+    # first time; the numbers are recorded here rather than the verdict
+    # alone, because the next person to reach for the lift deserves the
+    # measurement and not a bare "no".
     #
-    #  1. 0.48.0 SHIPPED the per-kind job surface sac had been probing for
-    #     (`ecosystem dev {service,timer} <verb>`), and its name argument is
-    #     MIXED: install/uninstall take `--name X`, while
-    #     status/enable/disable/start/stop/restart/exec take a POSITIONAL
-    #     NAME. `_dev_jobs_backend.build_argv` emits `--name` unconditionally,
-    #     so nine sac commands now die on `Error: No such option '--name'`
-    #     (exit 2) instead of running. That is a REAL sac bug, not a test
-    #     artifact — it is why the three test__dev_jobs cases fail, and it
-    #     needs an introspection-driven fix, not a version bump.
-    #  2. 0.48.0 changed where `scitex_dev.hosts._retired` emits its WARNING,
-    #     so it no longer reaches click's isolated stderr under CliRunner
-    #     (test_library_warning_reaches_the_merged_cli_runner_output).
-    #  3. 0.48.0 ADDED rule PS-226 `job-name-not-hyphenated`, which does not
-    #     exist anywhere in 0.47.0 (verified: 0 occurrences in the 0.47.0
-    #     wheel, 6 files in 0.48.0, implemented in
-    #     `_cli/audit/_project/_check_job_naming.py`). It is the single
-    #     unmasked error behind `test_audit_all_clean`, and it fires on
-    #     `JobSpec(name="sac.accounts-refresh")`.
+    # A/B ON ONE COMMIT (a12ea769), same tree, same `.scitex/dev` config:
+    #   0.47.0  `ecosystem audit-all` exit 0;  suite green (develop runs
+    #           31572345560 / 31570905419 on the same code)
+    #   0.48.0  `ecosystem audit-all` exit 1;  3 failed / 15415 passed
+    #           (pytest-matrix-on-ubuntu-py3.11, run 31575290345)
     #
-    # THE RENAME PS-226 ASKS FOR IS DELIBERATELY NOT DONE HERE, and the
-    # ceiling exists so that decision stays ours rather than the clock's.
-    # `systemd_unit_name` derives the unit filename from the job name
-    # VERBATIM, so renaming does NOT adopt the live `sac.accounts-refresh.timer`
-    # — it INSTALLS A SECOND UNIT beside it. That job is the fleet's sole
-    # OAuth refresher against a SINGLE-USE refresh token, and two racing
-    # refreshers revoke each other fleet-wide. It is therefore a supervised
-    # UNIT MIGRATION (stop-old -> remove-old -> install-new -> verify-exactly-one),
-    # which already has its migration verb and recorded rename in
-    # `src/scitex_agent_container/_jobs/_migrate/_renames.py` and its
-    # reasoning in `_jobs/_names.py`. A red audit rule is survivable; a
-    # revoked fleet credential is not.
+    # THE THREE LIFT CONDITIONS, AND WHERE THEY ACTUALLY STAND:
     #
-    # LIFT THIS CEILING by doing the adaptation (1) and (2) and running the
-    # migration for (3) — not by widening the specifier.
+    #  1. MIXED NAME SHAPE — ADAPTED IN PRODUCTION, STALE IN ONE TEST.
+    #     `_dev_jobs_capability.name_style_for` now READS the installed
+    #     CLI (0.48.0 splits install/uninstall `--name X` from
+    #     status/enable/disable/start/stop/restart/exec POSITIONAL NAME)
+    #     and `build_argv` follows it, so the nine broken sac commands are
+    #     fixed. But `test_the_pass_through_forwards_dry_run` still
+    #     asserts the literal pre-0.48 argv with `--name`, so it reds
+    #     under 0.48.0 while the code it guards is CORRECT. The gate it
+    #     protects (`--dry-run` survives the pass-through) has to be
+    #     asserted without pinning the name shape: `build_argv(...,
+    #     leaf=...)` was added for exactly that and no test uses it yet.
+    #
+    #  2. WARNING ROUTING — NOT ADAPTED AT ALL.
+    #     0.48.0 changed where `scitex_dev.hosts._retired` emits its
+    #     WARNING. Under CliRunner it now reaches the REAL stderr (pytest
+    #     files it under "Captured stderr setup") instead of click's
+    #     isolated stream, so
+    #     `test_library_warning_reaches_the_merged_cli_runner_output`
+    #     finds nothing in `result.output`. Untouched since the ceiling
+    #     went up.
+    #
+    #  3. PS-226 — THE DECLARED SKIP DOES NOT CLEAR THE EXIT CODE.
+    #     The finding that matters most, because #1009 was meant to have
+    #     settled it. `.scitex/dev/config.yaml` declares the PS-226
+    #     deferral and 0.48.0 HONOURS it in the report:
+    #         MASKED INVENTORY: 1 violation(s) masked by 1 declared rule
+    #         summary: 0 unmasked error(s) ..., 1 masked by skip-rules
+    #     and audit-all STILL EXITS 1, because audit-project keeps the
+    #     masked violation in its own `project-structure: 1 error(s)`
+    #     tally. A skip rule that suppresses the REPORT but not the STATUS
+    #     cannot do the one job it exists for. That is a scitex-dev
+    #     defect, not a sac one: scitex-ai/scitex-dev#590.
+    #     (The other audit-cli warnings seen on 0.48.0 — §4b CliHelp, §13
+    #     `skills` nesting — are NOT new and NOT the cause: 0.47.0 reports
+    #     the same two and exits 0. §10w is an import-budget measurement
+    #     the runner's slow I/O made unreadable; it claims no verdict.)
+    #
+    # THE RENAME PS-226 ASKS FOR IS STILL DELIBERATELY NOT DONE.
+    # `systemd_unit_name` derives the unit filename from `JobSpec.name`
+    # VERBATIM, so renaming does NOT adopt the live
+    # `sac.accounts-refresh.timer` — it INSTALLS A SECOND UNIT beside it.
+    # That job is the fleet's sole OAuth refresher against a SINGLE-USE
+    # refresh token, and two racing refreshers revoke each other
+    # fleet-wide. It is a supervised UNIT MIGRATION (stop-old ->
+    # remove-old -> install-new -> verify-exactly-one) whose verb and
+    # recorded rename live in `_jobs/_migrate/_renames.py` and whose
+    # reasoning lives in `_jobs/_names.py`. A red audit rule is
+    # survivable; a revoked fleet credential is not.
+    #
+    # LIFT THIS CEILING by finishing (1)'s test, doing (2), and taking
+    # either an upstream fix or the supervised migration for (3) — never
+    # by widening the specifier. A specifier stretched until the red goes
+    # away is a gate configured so it cannot fail, which is worse than no
+    # gate, because the config still lists it and everyone believes it.
     "scitex-dev>=0.31.1,<0.48",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
@@ -286,7 +313,14 @@ scitex-agent-container = "scitex_agent_container._jobs._jobs_plugin:provide_jobs
 # — this key replaces them, it does not extend them, and dropping one would
 # silently start demanding @stx.session of every module under it.
 [tool.scitex-linter]
-library_dirs = ["src", "tests", "apps", "config", "docs", ".github/ci"]
+# ".github", not ".github/ci": the linter's is_script() tests `lib_dir in
+# path.parts`, so an entry with a separator in it is never a single path
+# COMPONENT and can never match. ".github/ci" sat here as a silent no-op —
+# it looked configured and exempted nothing, which is the same shape of bug
+# as a hooksPath pointing at a directory that does not exist. Nothing under
+# .github is a SciTeX session script, so the component-level entry is also
+# the honest one.
+library_dirs = ["src", "tests", "apps", "config", "docs", ".github"]
 
 # sac's SYSTEM (apt) dependency declarations, aggregated by
 # scitex_dev.system_deps.discover_system_deps. sac registered NOTHING here
@@ -296,6 +330,27 @@ library_dirs = ["src", "tests", "apps", "config", "docs", ".github/ci"]
 # reason field on each dep is the part that carries the value.
 [project.entry-points."scitex_dev.system_deps"]
 scitex-agent-container = "scitex_agent_container._system_deps:provide"
+
+# sac's LEAF declaration of multi-host sync semantics, aggregated by
+# scitex_dev.store.discover_store_plugins. scitex-dev owns the replication
+# PRIMITIVE (oplog, HLC, per-origin cursors, field-level merge); each leaf
+# declares what ITS rows mean when two hosts merge them. sac is a leaf here,
+# not privileged.
+#
+# The declaration is the deliverable because sac's existing cross-host path
+# is unsafe in a way that is invisible: state_db_export.import_state does
+# INSERT OR IGNORE, so a row that CONTRADICTS the local one and a
+# byte-identical duplicate both return rowcount 0. The success value is also
+# the didn't-happen value, and two hosts can disagree forever with every call
+# reporting success.
+#
+# The classification each schema encodes: an agent's pid/heartbeat is
+# PER-HOST truth (two hosts describe two different processes and each is
+# right about itself — merging them is the bug), the comms directory and the
+# ACL tables are FLEET truth (disagreement is a real conflict), and lineage
+# is append-only HISTORY (a merge must never lose a branch).
+[project.entry-points."scitex_dev.store.plugins"]
+scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 
 # C10 — sac's consumer on scitex-todo's shared card-event bus. When
 # scitex-todo's board emits a card-event (commented / created /
@@ -310,6 +365,20 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 # contract: no import of scitex_todo.
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
+
+# Claude Code hook RULES sac declares about its own surfaces. sac owns the
+# rule (they are sac's images being protected) and ships the refusal
+# script; scitex-dev discovers this provider and applies the rows
+# centrally, exactly as it does for jobs / system_deps / gate — the leaf
+# never installs anything itself, and scitex-dev never hardcodes anything
+# about apptainer.
+#
+# The provider imports scitex_dev.hooks LAZILY, so this entry point ships
+# and stays inert on a scitex-dev that predates the hooks contract instead
+# of breaking import-time metadata (same idiom + same reason as the
+# scitex_dev.jobs provider above).
+[project.entry-points."scitex_dev.hooks"]
+scitex-agent-container = "scitex_agent_container._claude_hooks_plugin:provide_hooks"
 
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"

@@ -77,7 +77,21 @@ export GIT_CONFIG_VALUE_1=false
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path ci "$V")"
 export TMPDIR
-rm -rf "$TMPDIR"
+# `${TMPDIR:?}` AND NOT `$TMPDIR`, at every `rm -rf` of this path.
+#
+# The name is produced by a function in ANOTHER file, so "it is always non-empty"
+# is a property of tmpdir-lib.sh, not of this line — one refactor away from being
+# false, and nothing here would notice.
+#
+# `rm -rf ""` IS NOT THE SAFE NO-OP IT LOOKS LIKE. Measured on GNU coreutils 9.4:
+# `-f` treats the empty operand as a nonexistent file, so it exits 0 SILENTLY —
+# `set -euo pipefail` does not catch it, and the script CONTINUES with TMPDIR="".
+# Every later use is then a path off the filesystem root: `"$TMPDIR/site"` is
+# `/site`, and the sibling sweep's `! -path "$TMPDIR"` self-exclusion stops
+# matching anything. The empty value is dangerous because it is silent.
+#
+# `:?` makes the shell abort right here, naming the variable, before the deletion.
+rm -rf "${TMPDIR:?ci scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
 # REMOVE OUR OWN SCRATCH ON THE WAY OUT. The `rm -rf` above only ever deletes a
@@ -94,7 +108,10 @@ mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 #
 # The trap preserves the script's exit status (bash re-raises it after the
 # handler), so a failing test suite still fails.
-trap 'rm -rf "$TMPDIR"' EXIT
+#
+# Same `:?` guard as above, and it matters MORE here: a trap body is evaluated at
+# EXIT, so it reads whatever TMPDIR holds then — not what it held at line 80.
+trap 'rm -rf "${TMPDIR:?exiting with an empty scratch path — refusing to rm -rf it}"' EXIT
 
 # ...and sweep SIBLINGS left behind by jobs that never reached the trap — a
 # cancelled workflow, a SIGKILL, an OOM, or any run that predates this change.
@@ -271,16 +288,111 @@ done
 #
 # Floor 4. pyproject addopts carries `-v`; override to `-q` here — 2460 verbose
 # lines x workers bloats the CI log and adds measurable overhead.
+#
+# ASK THE KERNEL WHAT THIS PROCESS MAY RUN ON — DO NOT ASK `nproc`.
+#
+# `nproc` was the obvious source and it is wrong on the Spartan runners.
+# Measured on spartan-bm153 inside SLURM job 29015324, which holds 48 CPUs:
+#
+#     nproc                      1     <- what this line used to read
+#     nproc --all              128
+#     sched_getaffinity         48
+#     taskset -pc self          48     (listed explicitly)
+#     cpuset.cpus.effective  0-127     (no cgroup confinement)
+#     SLURM_CPUS_PER_TASK       48
+#
+# The kernel will schedule this process on 48 CPUs. Only `nproc` disagreed, so
+# the suite ran on the FLOOR of 4 workers inside a 48-CPU allocation the fleet
+# was already paying for — 15282 passed in 532s where it had 12x the cores
+# available.
+#
+# CAUSE, MEASURED RATHER THAN MATCHED. coreutils `nproc` honours
+# OMP_NUM_THREADS / OMP_THREAD_LIMIT AHEAD of the affinity mask. On that runner:
+#
+#     OMP_NUM_THREADS        1
+#     nproc (as-is)          1
+#     nproc (OMP_* cleared)  48
+#     sched_getaffinity      48
+#
+# Clearing the variable moves nproc from 1 to 48, which establishes the cause
+# instead of merely fitting it.
+#
+# DO NOT "FIX" THIS BY UNSETTING OMP_NUM_THREADS. It is set to 1 on purpose and
+# it is CORRECT: each xdist worker is a separate process, and BLAS/OpenMP inside
+# numpy will happily start one thread per core in EVERY one of them. 48 workers
+# x 48 OMP threads is 2304 threads on 48 CPUs. OMP_NUM_THREADS=1 with 48
+# PROCESSES is exactly the right shape — one thread per core, no oversubscription.
+# The bug was never the variable; it was reading a THREAD-BUDGET knob as a
+# CPU-COUNT fact.
+#
+# `Cpus_allowed_list` in /proc/self/status is exactly "the CPUs the kernel will
+# schedule THIS process on". It needs no python and no taskset (neither is
+# guaranteed on a bare HPC node — that is why the SIF exists), and no OpenMP
+# variable can override it. Fall back to SLURM_CPUS_PER_TASK, then to `nproc`,
+# so a host without /proc/self/status behaves exactly as before.
+#
+# The echo prints EVERY source, not just the winner. When these disagree again
+# — and they will, on some host nobody has met yet — the disagreement is the
+# finding, and it should be in the log rather than requiring a special trip.
+_cpus_from_affinity() {
+    local list part lo hi n=0
+    list=$(awk '/^Cpus_allowed_list:/ {print $2; exit}' /proc/self/status 2>/dev/null)
+    [ -n "$list" ] || return 1
+    local IFS=','
+    for part in $list; do
+        case "$part" in
+            *-*)
+                lo=${part%%-*}; hi=${part##*-}
+                case "$lo$hi" in *[!0-9]*) return 1 ;; esac
+                n=$(( n + hi - lo + 1 ))
+                ;;
+            *)
+                case "$part" in *[!0-9]*) return 1 ;; esac
+                n=$(( n + 1 ))
+                ;;
+        esac
+    done
+    [ "$n" -gt 0 ] || return 1
+    printf '%s\n' "$n"
+}
+
 NPROC="$(nproc 2>/dev/null || echo 4)"
-WORKERS="${CI_XDIST_WORKERS:-$NPROC}"
+# THE TWO CHANGES COMPOSE; THEY ARE NOT ALTERNATIVES.
+#
+#   CI_XDIST_WORKERS (#881)                     the OVERRIDE — outermost
+#   affinity -> SLURM_CPUS_PER_TASK -> nproc    the DEFAULT — what it is
+#                                               when nobody sets the override
+#   floor of 4                                  last
+#
+# #881 fixed who *can* set the number. This fixes what it *is* when nobody
+# does. An override with a broken default is still broken for everyone who
+# does not set it; a good default with no override is inflexible.
+
+# DEFAULT: what this process may actually run on.
+AFFINITY="$(_cpus_from_affinity || true)"
+DETECTED="${AFFINITY:-${SLURM_CPUS_PER_TASK:-}}"
+case "$DETECTED" in
+    ''|*[!0-9]*) DETECTED="$NPROC" ;;
+esac
+
+# OVERRIDE: an explicit CI_XDIST_WORKERS beats any detection, including a
+# correct one — that is the point of #881 (co-tenant legs on one box).
+WORKERS="${CI_XDIST_WORKERS:-$DETECTED}"
 case "$WORKERS" in
     ''|*[!0-9]*)
-        echo "::warning::CI_XDIST_WORKERS='$WORKERS' is not a positive integer; using nproc=$NPROC"
-        WORKERS=$NPROC
+        # Falls back to DETECTED rather than raw nproc: a malformed override
+        # should degrade to the best number we can measure, not to the one
+        # that reported 1 inside a 48-CPU allocation.
+        echo "::warning::CI_XDIST_WORKERS='$WORKERS' is not a positive integer; using detected=$DETECTED"
+        WORKERS=$DETECTED
         ;;
 esac
+
 [ "$WORKERS" -lt 4 ] && WORKERS=4
-echo "xdist workers=$WORKERS (nproc=$NPROC, CI_XDIST_WORKERS=${CI_XDIST_WORKERS:-unset})"
+
+# EVERY source, not the winner. When these disagree on a host nobody has met
+# yet, the disagreement is already in the log instead of costing a probe run.
+echo "xdist workers=$WORKERS (affinity=${AFFINITY:-<unreadable>} nproc=$NPROC SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-<unset>} CI_XDIST_WORKERS=${CI_XDIST_WORKERS:-unset})"
 
 # Warm the matplotlib font cache ONCE, single-process, before xdist forks the
 # workers. This builds $MPLCONFIGDIR/fontlist-*.json a single time so every
