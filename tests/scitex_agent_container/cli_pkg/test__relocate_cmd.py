@@ -33,17 +33,37 @@ from scitex_agent_container.cli_pkg._relocate_cmd import (
 #: ``spec.apptainer``, NOT at the top of ``spec``. A fixture that put them at
 #: the top would let a wrong-level lookup pass its own test.
 FULL_SPEC = {
+    "metadata": {"labels": {"groups": ["developer"]}},
     "spec": {
         "runtime": "tui",
         "host": "ywata-note-win",
+        "workdir": "/home/ywatanabe/proj/thing",
         "a2a": {"port": 19013},  # stx-allow: STX-NL001
         "apptainer": {
             "image": "sac-base.sif",
             "binds": ["/mnt/c:/mnt/c", "/home/ywatanabe/proj"],
             "env": {"SCITEX_CARDS_DB": "postgresql://localhost:5432/cards"},
         },
-    }
+    },
 }
+
+
+def test_declared_reads_the_workdir() -> None:
+    # Arrange: spec.workdir is the container's --pwd and the only checkout key
+    # there is; preflight now asks whether it exists on the TARGET.
+    # Act
+    declared = declared_from_spec(FULL_SPEC)
+    # Assert
+    assert declared["workdir"] == "/home/ywatanabe/proj/thing"
+
+
+def test_declared_reads_the_groups_from_metadata_labels() -> None:
+    # Arrange: NOT spec.lineage.group, which is the isolation bucket wearing a
+    # confusingly similar name.
+    # Act
+    declared = declared_from_spec(FULL_SPEC)
+    # Assert
+    assert declared["groups"] == ("developer",)
 
 
 def test_declared_reads_the_runtime() -> None:
