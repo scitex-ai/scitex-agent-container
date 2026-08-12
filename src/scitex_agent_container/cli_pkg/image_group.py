@@ -26,7 +26,9 @@ import click
 
 from .. import _build_priority
 from . import (
+    _image_chain_build,
     _image_inventory_cmds,
+    _image_layers,
     _image_remote_bake,
     _image_repro_build,
     _image_source_build,
@@ -74,20 +76,19 @@ _CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
 # own surface; the aggregator never hard-codes package names).
 _SCITEX_USER_STATE_ROOT = Path.home() / ".scitex"
 
-# Layer → .def filename mapping.
+# THE CHAIN — defined ONCE, in _image_layers, and read from there by every
+# site that needs it (this module, _image_source_build's bootstrap resolver,
+# _remote_bake_core's layer set + artifact regex, and — via `sac image layers`
+# — containers/spartan-sif-bake.sh). It used to be spelled independently in
+# four places, which is four chances to update three of them; three-of-four is
+# worse than none, because the two that agree look like confirmation.
 #
-# ``proxy`` ships a recipe (containers/apptainer-proxy.def, force-included in
-# the wheel) and the source-build path already treats it as a first-class
-# layer — ``build_layer_from_source`` documents ``base``/``scitex``/``proxy``
-# and ``resolve_bootstrap_sif`` names ``proxy`` among the top-of-stack layers
-# that bootstrap off a registry image rather than a prior SIF. Only this map
-# omitted it, which left sac shipping one recipe nothing could build.
-_LAYERS = {
-    "base": "apptainer-base.def",
-    "scitex": "apptainer-scitex.def",
-    "proxy": "apptainer-proxy.def",
-}
-_DEFAULT_LAYER = "base"
+# Re-exported under the historical name so external callers and the seams
+# tests already reach for keep working. The VALUE type changed with the
+# four-stage split: it maps name → Layer (recipe, parent, published artifact,
+# legacy alias), not name → .def filename.
+_LAYERS = _image_layers.LAYERS
+_DEFAULT_LAYER = _image_layers.DEFAULT_LAYER
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +144,21 @@ def _ensure_containers_dir() -> Path:
     return _CONTAINERS_DIR
 
 
+def _resolve_layer(layer: str) -> _image_layers.Layer:
+    """Layer name or alias → the Layer, as a click.UsageError on a typo.
+
+    The valid-set wording comes from _image_layers so the CLI and the Python
+    API cannot disagree about what exists.
+    """
+    try:
+        return _image_layers.resolve(layer)
+    except _image_layers.UnknownLayer as exc:
+        raise click.UsageError(str(exc.args[0])) from None
+
+
 def _resolve_def_name(layer: str) -> str:
     """Layer name → bare .def stem (no extension), as scitex-container expects."""
-    if layer not in _LAYERS:
-        raise click.UsageError(
-            f"Unknown layer '{layer}'. Choose from: {', '.join(_LAYERS)}"
-        )
-    return _LAYERS[layer].removesuffix(".def")
+    return _resolve_layer(layer).def_name.removesuffix(".def")
 
 
 @click.group(name="image", cls=HelpRecursiveGroup)
@@ -173,7 +182,18 @@ image_group.add_command(_image_remote_bake.image_bake_remote)
 # build
 # ---------------------------------------------------------------------------
 @image_group.command("build")
-@click.argument("layer", type=click.Choice(list(_LAYERS)), default=_DEFAULT_LAYER)
+@click.argument(
+    "layer",
+    type=click.Choice(list(_image_layers.ACCEPTED_NAMES)),
+    default=_DEFAULT_LAYER,
+)
+@click.option(
+    "--chain",
+    is_flag=True,
+    default=False,
+    help="Build every stage LAYER depends on, in order, then LAYER itself. "
+    "Without it, only LAYER builds and its parent must already exist.",
+)
 @click.option(
     "--sandbox",
     is_flag=True,
@@ -214,6 +234,7 @@ image_group.add_command(_image_remote_bake.image_bake_remote)
 )
 def image_build(
     layer: str,
+    chain: bool,
     sandbox: bool,
     dry_run: bool,
     yes: bool,
@@ -221,7 +242,12 @@ def image_build(
     reproducible: bool,
     skip_verify: bool,
 ) -> None:
-    """Build the :LAYER Apptainer SIF (default: base).
+    """Build ONE stage of the Apptainer chain (default: 03-base).
+
+    The chain is 01-system-deps → 02-python-pkgs → 03-base → 04-scitex,
+    plus ``proxy`` which sits off it. Each stage bootstraps from the SIF
+    below it, so building one requires its parent to exist; ``--chain``
+    builds the whole prefix in order instead.
 
     Sac is apptainer-only since the 2026-05-13 docker/podman ripout.
     Builds self-demote to low CPU/IO priority by default so a bake
@@ -235,12 +261,18 @@ def image_build(
     not a build failure). "Reproducible" here means ENVIRONMENT IDENTITY
     (same version set), not byte-identical digests.
 
+    ``base`` and ``scitex`` remain valid names for ``03-base`` and
+    ``04-scitex``, and each of those stages also publishes its pre-split
+    filename as a symlink, so existing specs and scripts keep working.
+
     \b
     Examples:
-      $ sac image build                # apptainer :base SIF (default; OS + dev tools, ~15-25 min)
-      $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
-      $ sac image build --sandbox      # writable sandbox dir
-      $ sac image build --reproducible # round trip + .verified marker (~2x build time)
+      $ sac image build                      # 03-base (default)
+      $ sac image build 04-scitex --chain -y # the whole chain, in order
+      $ sac image build 01-system-deps -y    # just the OS/toolchain stage
+      $ sac image build base -y              # legacy alias for 03-base
+      $ sac image build --sandbox            # writable sandbox dir
+      $ sac image build --reproducible       # round trip + .verified marker
     """
     flag_error = _image_repro_build.validate_flags(
         reproducible=reproducible, sandbox=sandbox, skip_verify=skip_verify
@@ -248,71 +280,53 @@ def image_build(
     if flag_error:
         click.echo(f"error: {flag_error}", err=True)
         sys.exit(2)
-    out_dir = _ensure_containers_dir()
-    # Existing-artefact notice. A SIF rebuild is now ATOMIC (delegated to
-    # scitex-container's ``build``): it lands a fresh timestamped SIF and
-    # swaps the stable ``sac-<layer>.sif`` boot symlink all-at-once, so on
-    # success the live image is replaced but on failure the prior one is
-    # left intact (no in-place clobber). A sandbox rebuild is still in
-    # place. ``existing`` is the stable inner boot symlink for SIFs;
-    # ``.stat()`` follows it to the live timestamped target.
-    artifact_dir = out_dir / f"sac-{layer}"
-    existing = artifact_dir / (
-        f"sac-{layer}.sandbox" if sandbox else f"sac-{layer}.sif"
-    )
-    if existing.exists():
-        import datetime as _dt
-
-        size_mb = existing.stat().st_size / (1024 * 1024) if existing.is_file() else 0
-        mtime = _dt.datetime.fromtimestamp(existing.stat().st_mtime).isoformat(
-            timespec="seconds"
-        )
-        kind = "sandbox dir" if sandbox else "SIF"
-        verb = "overwritten" if sandbox else "replaced (atomic swap)"
+    target = _resolve_layer(layer)
+    # ``--chain`` with either of these is a request we cannot honour honestly.
+    # --reproducible round-trips ONE image (it builds it twice and compares
+    # version sets); chaining it means eight builds and a verdict per stage
+    # that the marker layout has nowhere to put. --sandbox produces a
+    # directory, and the next stage's ``From: ./<parent>.sif`` wants a SIF, so
+    # a chained sandbox build would die on stage two with a confusing message.
+    # Refuse up front rather than half-doing it.
+    if chain and reproducible:
         click.echo(
-            f"⚠  Existing {kind} at {existing} "
-            f"({size_mb:.0f} MB, built {mtime}) will be {verb}.",
+            "error: --chain and --reproducible are mutually exclusive; the "
+            "round trip verifies ONE image. Build the chain first, then "
+            "re-run the top stage with --reproducible.",
             err=True,
         )
+        sys.exit(2)
+    if chain and sandbox:
+        click.echo(
+            "error: --chain and --sandbox are mutually exclusive; a sandbox is "
+            "a directory and the next stage bootstraps from a .sif.",
+            err=True,
+        )
+        sys.exit(2)
+
+    stages = _image_layers.chain_for(target.name) if chain else (target,)
+    out_dir = _ensure_containers_dir()
+    for stage in stages:
+        notice = _image_chain_build.existing_artifact_notice(
+            out_dir, stage, sandbox=sandbox
+        )
+        if notice:
+            click.echo(notice, err=True)
 
     if dry_run:
-        click.echo(f"[dry-run] would build apptainer layer={layer} sandbox={sandbox}")
+        for stage in stages:
+            click.echo(
+                f"[dry-run] would build apptainer layer={stage.name} "
+                f"sandbox={sandbox}"
+            )
         return
 
     if not yes:
         click.echo(
-            f"Refusing to build (layer={layer}) without --yes/-y.",
+            f"Refusing to build (layer={target.name}) without --yes/-y.",
             err=True,
         )
         sys.exit(2)
-    def_path = _RECIPES_DIR / _LAYERS[layer]
-    if not def_path.is_file():
-        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
-        sys.exit(1)
-
-    # Source-bundled build: the shipped .def files install sac from
-    # /opt/scitex-agent-container-src, which gets there via a %files
-    # copy of a sibling directory next to the .def at build time. The
-    # staging helper (cli_pkg/_image_source_build.py) creates that
-    # sibling copy under <out>/sac-<layer>/build-context/, then delegates
-    # to scitex-container 0.3.0's atomic ``build`` with ``cwd`` set to
-    # that staging dir so the .def's relative %files + ``From: ./sac-
-    # base.sif`` resolve. ``build`` lands a timestamped SIF and swaps the
-    # stable ``sac-<layer>.sif`` boot symlink all-at-once — a failed
-    # build leaves the prior image intact (atomic, rollback-safe). The
-    # non-build verbs (sandbox, update, freeze, list, status, snapshot)
-    # also delegate to the scitex-container backend.
-    pkg_root = _RECIPES_DIR.parent
-
-    # Layered .defs (currently: ``scitex``) bootstrap off a prior layer's
-    # SIF (``From: ./sac-base.sif``). Resolve the prerequisite here — the
-    # helper FAILS LOUD when it is missing so apptainer never FATAL's on a
-    # half-staged context (the 2026-06-07 cohort-A rebuild stall).
-    try:
-        bootstrap_sif = _image_source_build.resolve_bootstrap_sif(layer, out_dir)
-    except _image_source_build.BootstrapSifMissing as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(1)
 
     # incident-local-heavy-build closure #3 (remote-first): when this
     # host is already busy (loadavg above LOAD_ADVISORY_FACTOR x cores),
@@ -330,9 +344,63 @@ def image_build(
     # %post apt/pip → mksquashfs, which all inherit this process's
     # priority) runs at low CPU/IO priority by default. Best-effort-low
     # IO, not idle class — idle starved/killed a real mksquashfs stage
-    # under load (see _build_priority module docstring).
+    # under load (see _build_priority module docstring). Done ONCE for the
+    # whole chain: demotion is process-wide and one-way.
     for line in _demote_build_priority(skip=no_nice):
         click.echo(line)
+
+    for stage in stages:
+        _build_one_stage(
+            stage,
+            out_dir=out_dir,
+            sandbox=sandbox,
+            reproducible=reproducible,
+            skip_verify=skip_verify,
+        )
+
+
+def _build_one_stage(
+    stage: _image_layers.Layer,
+    *,
+    out_dir: Path,
+    sandbox: bool,
+    reproducible: bool,
+    skip_verify: bool,
+) -> None:
+    """Build a single stage. Exits non-zero on any failure — never partial.
+
+    Kept in THIS module (rather than in _image_chain_build with the other
+    helpers) because it calls through ``_build_layer_from_source`` and
+    ``_run_reproducible_build``, the module-level seams tests reassign. Moving
+    the call sites would silently disarm those swaps.
+    """
+    # Source-bundled build: the shipped .def files install sac from
+    # /opt/scitex-agent-container-src, which gets there via a %files
+    # copy of a sibling directory next to the .def at build time. The
+    # staging helper (cli_pkg/_image_build_context.py) creates that
+    # sibling copy under <out>/<image>/build-context/, then delegates
+    # to scitex-container 0.3.0's atomic ``build`` with ``cwd`` set to
+    # that staging dir so the .def's relative %files + ``From:
+    # ./<parent>.sif`` resolve. ``build`` lands a timestamped SIF and swaps
+    # the stable ``<image>.sif`` boot symlink all-at-once — a failed
+    # build leaves the prior image intact (atomic, rollback-safe). The
+    # non-build verbs (sandbox, update, freeze, list, status, snapshot)
+    # also delegate to the scitex-container backend.
+    def_path = _RECIPES_DIR / stage.def_name
+    if not def_path.is_file():
+        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
+        sys.exit(1)
+    pkg_root = _RECIPES_DIR.parent
+
+    # A layered .def bootstraps off its parent stage's SIF. Resolve the
+    # prerequisite here — the helper FAILS LOUD when it is missing so
+    # apptainer never FATAL's on a half-staged context (the 2026-06-07
+    # cohort-A rebuild stall).
+    try:
+        bootstrap_sif = _image_source_build.resolve_bootstrap_sif(stage.name, out_dir)
+    except _image_source_build.BootstrapSifMissing as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
 
     if reproducible:
         # Builds TWICE: the rough build, then a rebuild from the generated
@@ -340,7 +408,7 @@ def image_build(
         # the reason scitex-container needed a ``cwd`` before sac could
         # call this at all.
         _run_reproducible_build(
-            layer=layer,
+            layer=stage.name,
             def_path=def_path,
             pkg_root=pkg_root,
             output_dir=out_dir,
@@ -351,18 +419,27 @@ def image_build(
 
     try:
         output = _build_layer_from_source(
-            layer=layer,
+            layer=stage.name,
             def_path=def_path,
             pkg_root=pkg_root,
             output_dir=out_dir,
             sandbox=sandbox,
-            force=True,  # -y already gated above
+            force=True,  # -y already gated by the caller
             bootstrap_sif=bootstrap_sif,
         )
     except (FileNotFoundError, RuntimeError) as exc:
         click.echo(f"error: apptainer build failed: {exc}", err=True)
         sys.exit(1)
     console.print(f"[green]built[/green] {output}")
+
+    # Publish the pre-split filename beside the new artifact. Agent specs hold
+    # the ABSOLUTE path of the old name, so this is what makes the rename a
+    # rename rather than an outage. SIF builds only — a sandbox is a directory
+    # and nothing boots one by path.
+    if not sandbox:
+        alias = _image_chain_build.publish_compat_aliases(out_dir, stage)
+        if alias:
+            console.print(f"[green]alias[/green]  {alias} -> {stage.image}.sif")
 
 
 # ---------------------------------------------------------------------------
