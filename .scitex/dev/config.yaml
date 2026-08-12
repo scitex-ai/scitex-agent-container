@@ -58,6 +58,24 @@ audit:
   #
   # The supervised path already exists: `_jobs/_migrate/_renames.py`.
   # This entry comes off in the same change that runs the migration.
+  #
+  # *** READ THIS BEFORE DELETING ANY UNIT. ***
+  # "verify-exactly-one" means EXACTLY ONE UNIT FOR THIS ONE JOB — old
+  # gone, new present. It does NOT mean "one accounts job on the host".
+  # There are TWO accounts jobs and BOTH MUST EXIST:
+  #
+  #   sac.accounts-refresh                        rotates the credential,
+  #                                               every 2h, on the host
+  #                                               holding refresh material
+  #   scitex-agent-container-accounts-keepalive   distributes the
+  #                                               ACCESS-ONLY copy,
+  #                                               every 15min
+  #
+  # They are DIFFERENT JOBS doing different work, not a rename pair and
+  # not duplicates of each other. Anyone who reads this rule as "collapse
+  # the accounts jobs to one" would remove a job the fleet depends on —
+  # which is a larger outage than the naming defect being deferred here.
+  # The only thing PS-226 asks for is the SHAPE OF ONE JobSpec NAME.
   skip-rules:
     - rule: PS-226
       reason: >-
@@ -70,8 +88,15 @@ audit:
         authentication down. The migration must be ordered stop-old ->
         remove-old -> install-new -> verify-exactly-one and run
         supervised; the path exists in `_jobs/_migrate/_renames.py`.
-        Tracked in card `sac-accounts-refresh-unit-migration`; this entry
-        is removed by the change that performs the migration.
+        "verify-exactly-one" means exactly one unit FOR THIS ONE JOB, NOT
+        one accounts job on the host: `sac.accounts-refresh` (rotates the
+        credential, every 2h) and
+        `scitex-agent-container-accounts-keepalive` (distributes the
+        access-only copy, every 15min) are DIFFERENT JOBS that must BOTH
+        continue to exist — they are not a rename pair and must never be
+        collapsed into one. PS-226 asks only for the SHAPE OF ONE JobSpec
+        NAME. Tracked in card `sac-accounts-refresh-unit-migration`; this
+        entry is removed by the change that performs the migration.
 
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
