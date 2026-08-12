@@ -87,6 +87,15 @@ class RemoteQuestions:
     image: str = ""
     #: Bind SOURCE paths (the left half of ``src:dst:mode``).
     bind_sources: tuple[str, ...] = ()
+    #: Directories the agent must RUN IN — today just ``spec.workdir``, which
+    #: apptainer receives as ``--pwd``. Tested with ``-d`` rather than ``-e``: a
+    #: FILE where the workdir should be is not a workdir, and apptainer's failure
+    #: for that case is as opaque as for an absent one.
+    workdirs: tuple[str, ...] = ()
+    #: ``metadata.labels`` as JSON, for the target's own resolver to read. Sent
+    #: as one quoted argument so a label with a space or a quote in it cannot
+    #: reshape the remote command.
+    group_labels_json: str = ""
     #: Card store endpoint AS THE AGENT WOULD DIAL IT FROM THE TARGET. A
     #: loopback host is correct here and is deliberately probed: after the move
     #: the agent runs ON the target, so ``127.0.0.1:5432`` means the TARGET's
@@ -135,6 +144,7 @@ class RemoteReadout:
     complete: bool = False
     fields: dict[str, str] = field(default_factory=dict)
     missing_binds: tuple[str, ...] = ()
+    missing_workdirs: tuple[str, ...] = ()
     credentials: tuple[CredentialLine, ...] = ()
     ports_in_use: tuple[int, ...] = ()
 
@@ -197,6 +207,15 @@ def render_probe_script(questions: RemoteQuestions, *, preamble: str = "") -> st
             f'echo "$M binds_checked={len(questions.bind_sources)}"'
         )
 
+    if questions.workdirs:
+        listed = " ".join(_q(w) for w in questions.workdirs)
+        parts.append(
+            f"for w in {listed}; do\n"
+            '  if [ -d "$w" ]; then :; else echo "$M workdir_missing=$w"; fi\n'
+            "done\n"
+            f'echo "$M workdirs_checked={len(questions.workdirs)}"'
+        )
+
     card = _tcp_section(
         "cardstore", questions.card_store_host, questions.card_store_port
     )
@@ -241,8 +260,40 @@ def render_probe_script(questions: RemoteQuestions, *, preamble: str = "") -> st
 
     parts.append(_SAC_WHERE_SECTION)
     parts.append(_SAC_SECTION)
+    if questions.group_labels_json:
+        parts.append(_groups_section(questions.group_labels_json))
     parts.append('echo "$M end"')
     return "\n".join(parts) + "\n"
+
+
+# Ask the TARGET's own sac what groups it makes of this spec's labels. It runs
+# after _SAC_SECTION on purpose, reusing the `$py` that section resolved from the
+# `sac` console script's shebang — the interpreter that BACKS the installation,
+# not whatever python3 leads the PATH.
+#
+# A pure label read (`all_named_groups`), deliberately: resolving through the
+# state db would ask whether the target already knows this agent, and it does not
+# — it has never hosted it. The question that matters is whether the target's sac
+# can read group labels AT ALL. Measured 2026-08-11: three hosts answer [] for
+# every agent regardless of spec.yaml, and nine relocation probes were refused
+# 403 by exactly that.
+#
+# An old sac lacking the symbol prints NOTHING, the marker never arrives, and the
+# fact stays honestly unknown rather than becoming an empty set that reads as a
+# verdict.
+def _groups_section(labels_json: str) -> str:
+    return f"""
+SACRELOC_GROUPS_PY=$(cat <<'SACRELOCPY'
+import json, sys
+from scitex_agent_container.config._group_resolver import all_named_groups
+print(",".join(sorted(all_named_groups(json.loads(sys.argv[1])))))
+SACRELOCPY
+)
+if command -v "$py" >/dev/null 2>&1; then
+  gr=$("$py" -c "$SACRELOC_GROUPS_PY" {_q(labels_json)} 2>/dev/null)
+  if [ $? -eq 0 ]; then echo "$M groups=$gr"; fi
+fi
+"""
 
 
 # The remote helpers, kept out of the renderer so the shell is readable as
@@ -406,6 +457,7 @@ def parse_probe_output(stdout: str) -> RemoteReadout:
     """
     fields: dict[str, str] = {}
     missing_binds: list[str] = []
+    missing_workdirs: list[str] = []
     credentials: list[CredentialLine] = []
     ports: list[int] = []
     started = False
@@ -427,6 +479,8 @@ def parse_probe_output(stdout: str) -> RemoteReadout:
             continue
         if key == "bind_missing":
             missing_binds.append(value)
+        elif key == "workdir_missing":
+            missing_workdirs.append(value)
         elif key == "cred":
             parsed = _parse_cred(value)
             if parsed is not None:
@@ -444,6 +498,7 @@ def parse_probe_output(stdout: str) -> RemoteReadout:
         complete=complete,
         fields=fields,
         missing_binds=tuple(missing_binds),
+        missing_workdirs=tuple(missing_workdirs),
         credentials=tuple(credentials),
         ports_in_use=tuple(ports),
     )

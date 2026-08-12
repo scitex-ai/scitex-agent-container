@@ -81,6 +81,8 @@ class TargetProbes:
     reachable: Callable[[], bool] | None = None
     image_present: Callable[[], bool] | None = None
     missing_bind_sources: Callable[[], tuple[str, ...]] | None = None
+    missing_workdir_paths: Callable[[], tuple[str, ...]] | None = None
+    target_resolved_groups: Callable[[], tuple[str, ...]] | None = None
     card_store_url: Callable[[], str] | None = None
     card_store_reachable: Callable[[], bool] | None = None
     credential_expires_in_s: Callable[[], float] | None = None
@@ -114,6 +116,8 @@ _FIELDS: tuple[str, ...] = (
     "reachable",
     "image_present",
     "missing_bind_sources",
+    "missing_workdir_paths",
+    "target_resolved_groups",
     "card_store_url",
     "card_store_reachable",
     "credential_expires_in_s",

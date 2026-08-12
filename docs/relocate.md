@@ -54,21 +54,36 @@ first one, so you do not have to run it N times to find N problems.
 sac agents relocate <name> --to <host> --dry-run
 ```
 
-### The eleven checks
+Several names preflight together and print a combined summary, so the shape of a
+queued batch is visible before anything is touched:
 
-| check | what it catches | the 2026-08-07 instance |
+```bash
+sac agents relocate scitex-dev scitex-hpc scitex-db --to scitex-compute-04
+```
+
+That form is read-only by construction. `--no-dry-run` takes exactly one name:
+the journal that makes a relocation resumable is per-agent, and a batch
+interrupted halfway would leave several agents half-moved across two hosts.
+
+### The fifteen checks
+
+| check | what it catches | the instance |
 |---|---|---|
 | `target_reachable` | host does not answer | — nothing else in the report means anything until this passes |
 | `image_present` | SIF absent on the target | a missing image fails at boot, **after** the lease has moved |
 | `binds_exist_on_target` | bind source paths absent there | the spec bound `/mnt/c`, a Windows drive that does not exist on the nas |
-| `card_store_reachable` | agent cannot reach its board | `SCITEX_CARDS_DB` is port 5432 here, 5442 there |
+| `workdir_exists_on_target` | `spec.workdir` absent there | it becomes apptainer's `--pwd`; there is no `spec.repo`, the workdir **is** the checkout |
+| `card_store_dsn_correct` | the DSN itself is wrong | `5432` is wrong on every host with no exceptions, and a port-less DSN means the same thing to libpq |
+| `card_store_reachable` | agent cannot reach its board | the fleet's endpoint is `55432`; an agent that cannot reach its board runs and records nothing |
 | `credentials_valid` | **validity, not presence** | the nas had a file expired 2026-05-23 with an empty `refreshToken`, and sac loaded it *in preference to* the good one — every turn 401'd while `sac agents health` still said healthy |
 | `runtime_supported` | target's sac rejects the runtime | nas's sac 0.21.9 rejects `tui` |
 | `spec_schema_accepted` | target's validator rejects a key | a top-level `provider:` key, same older validator |
 | `ports_free` | port already bound there | reassign in the spec before moving |
+| `groups_resolvable_on_target` | the target's sac cannot read this spec's group labels | three hosts resolve `[]` for every agent regardless of `spec.yaml`; nine relocation probes were refused 403 by exactly that on 2026-08-11 |
 | `hub_reachable_from_target` | hub unreachable **from there** | the nas's services bind `127.0.0.1`, so reaching them from HERE proves nothing about THERE |
 | `sac_present_on_target` | remote `sac` calls will fail | on scitex-compute-04 sac lives at `/home/ywatanabe/.env-sac/bin/sac` and is **not** on the non-interactive ssh PATH, so `ssh host sac …` answers "No such file or directory" while sac is installed and working (2026-08-11) |
 | `source_work_committed` | uncommitted/unpushed work on the host being **left** | a relocation carries the spec and the transcript and nothing else; a half-finished branch stays on a machine nobody is watching |
+| `session_resolvable` | which conversation would travel cannot be named | asked HERE because the phase that needs the answer runs *after* the agent has been stopped; ten agents passed every other check on 2026-08-12 and could not complete |
 
 **Read the credentials row twice.** A presence check passes on an expired file.
 The failure it prevents is silent.
@@ -80,6 +95,36 @@ and "installed but invisible to ssh" produce the *identical* error and need
 and by absolute path, so nobody is sent to install a second copy of something
 that already works. When it can see that sac is off the PATH but cannot
 establish whether it exists at all, the answer is UNKNOWN, not a guess.
+
+**A missing bind is never one problem.** Fifteen fleet specs bind paths that do
+not exist on scitex-compute-04, and every one of those specs is *correct for the
+machine it currently pins*. Nine are Spartan agents binding shared cluster storage
+a workstation cannot provide at all; six are laptop agents binding a dataset and a
+local checkout that exist on exactly one machine because that machine made them.
+Printed as "path not found" they look identical, so the check classifies each path
+and splits the hint by what you have to do about it:
+
+- **provision on the target** — host infrastructure (`/data`, `/mnt`, `/gpfs`, …).
+  If the filesystem does not exist there at all, this spec belongs on a host that
+  has it; re-pointing the bind produces a *different agent*, not a relocated one.
+- **must travel with the agent** — anything under or beside the agent's own
+  workdir, and any `dataset` directory. A relocation carries the spec and the
+  transcript and nothing else, so this data does not follow by itself.
+- **provision there, never copy** — credential paths (`.ssh`, `.config/gh`,
+  `accounts/*/.credentials.json`, `.pgpass`). Key material must not travel
+  between hosts, so the hint says so instead of "move it with the agent".
+
+Where the path's shape cannot settle it, the answer is `unclassified` and the
+hint states both possibilities. A confident wrong category sends you to provision
+a directory that should have travelled.
+
+**`groups_resolvable_on_target` distinguishes "refused" from "no".** A target that
+resolves a non-empty group set and omits one this spec declares has *answered*,
+and that is a FAIL. A target that resolves nothing has not — that is the shape of
+a daemon too old to read spec labels, and reporting it as a failure sends you to
+edit a spec that is already correct. Likewise a 403 from the **local** listen
+daemon brokering the probe is about this container's authorization, not about the
+target; the report says so in those words and leaves every target fact UNKNOWN.
 
 **`source_work_committed` is the only check about the source.** Its facts are
 gathered locally rather than over ssh, and an unscanned repo is UNKNOWN — never
@@ -106,6 +151,29 @@ probe raises -> None    preflight reports UNKNOWN, refuses, names the check.
 
 An unobserved fact folded into "pass" is precisely how the 08-07 move reported
 healthy.
+
+Whether an unknown *refuses* is relocation's policy, not a property of the
+three-valued answer — a dashboard may paint the same unknown amber and carry on,
+and be right to. It lives as one named constant
+(`UNKNOWN_BLOCKS_RELOCATION`) at the aggregation site rather than as an `if`
+inside fifteen checks, so it can be read, and by a different consumer replaced,
+in one place.
+
+### Every problem in one pass, ordered by what to do about it
+
+No check is skipped because an earlier one failed. All fifteen run, always, and
+the refusal is one block rather than a sentence about the first thing that broke.
+
+Two things make a complete list readable:
+
+- **Root causes are stated once.** An unreachable target turns eleven checks
+  UNKNOWN, and every one of them carries the *same* probe-error text — so
+  identical reasons are recognised as one cause, printed once, with the blocked
+  checks named under it. They still block; they are just not eleven tasks.
+- **The rest are ordered by action**, not by check index: what the target must be
+  provisioned with, what must travel with the agent, what is a spec correction,
+  what still has to be measured. Each entry names *what* is wrong concretely,
+  *where* it was checked, and *what would fix it*.
 
 ### Do not skip the unknowns
 

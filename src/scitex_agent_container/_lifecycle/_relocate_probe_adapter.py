@@ -63,6 +63,15 @@ from ._relocate_probe_ssh import (
     peer_preamble,
     run_probe_script,
 )
+from ._relocate_spec_reads import (
+    apptainer_section,
+    bind_sources_from_spec,
+    card_store_url_from_spec,
+    credential_paths_from_spec,
+    declared_groups_from_spec,
+    group_labels_from_spec,
+    workdirs_from_spec,
+)
 
 __all__ = [
     "FactUnavailable",
@@ -87,39 +96,6 @@ class FactUnavailable(RuntimeError):
     """
 
 
-def _body(spec: dict) -> dict:
-    inner = spec.get("spec")
-    return inner if isinstance(inner, dict) else spec
-
-
-def _apptainer(spec: dict) -> dict:
-    app = _body(spec).get("apptainer")
-    return app if isinstance(app, dict) else {}
-
-
-def card_store_url_from_spec(spec: dict) -> str:
-    """The ``SCITEX_CARDS_DB`` the agent would use, wherever the spec hides it.
-
-    Two places, both real: ``apptainer.env`` and the ``--env KEY=VALUE`` pairs in
-    ``apptainer.raw_args``. This repo's own spec uses the second and leaves the
-    first an empty mapping, so a reader of ``env`` alone concludes the agent has
-    no card store — and then the store check has nothing to check while looking
-    like it passed.
-    """
-    app = _apptainer(spec)
-    env = app.get("env")
-    if isinstance(env, dict):
-        value = env.get("SCITEX_CARDS_DB")
-        if isinstance(value, str) and value:
-            return value
-    raw = app.get("raw_args")
-    if isinstance(raw, list):
-        for item in raw:
-            if isinstance(item, str) and item.startswith("SCITEX_CARDS_DB="):
-                return item.split("=", 1)[1]
-    return ""
-
-
 def _endpoint(url: str) -> tuple[str, int]:
     """``postgresql://user@host:5432/db`` -> ``("host", 5432)``; ``("", 0)`` if unusable."""
     if not url:
@@ -131,29 +107,6 @@ def _endpoint(url: str) -> tuple[str, int]:
     except ValueError:
         return ("", 0)
     return (host, port) if host and port else ("", 0)
-
-
-def _credential_paths(spec: dict) -> tuple[str, ...]:
-    claude = _body(spec).get("claude")
-    if not isinstance(claude, dict):
-        return ()
-    paths: list[str] = []
-    single = claude.get("credentials_file")
-    if isinstance(single, str) and single.strip():
-        paths.append(single.strip())
-    listed = claude.get("credentials_files")
-    if isinstance(listed, list):
-        paths += [p.strip() for p in listed if isinstance(p, str) and p.strip()]
-    return tuple(dict.fromkeys(paths))
-
-
-def _bind_sources(spec: dict) -> tuple[str, ...]:
-    binds = _apptainer(spec).get("binds")
-    if not isinstance(binds, list):
-        return ()
-    return tuple(
-        b.split(":", 1)[0] for b in binds if isinstance(b, str) and b.split(":", 1)[0]
-    )
 
 
 def hub_address(env: dict[str, str] | None = None) -> tuple[str, int, str]:
@@ -206,15 +159,27 @@ def questions_from_spec(
     env: dict[str, str] | None = None,
 ) -> RemoteQuestions:
     """Turn the agent's spec into the set of questions to ask its future host."""
+    import json
+
     store_host, store_port = _endpoint(card_store_url_from_spec(spec))
     hub_host, hub_port, _ = hub_address(env)
-    image = _apptainer(spec).get("image")
+    image = apptainer_section(spec).get("image")
+    # Asked only when the spec actually claims a group. An empty labels blob
+    # would make the target answer "no groups", which is a real-looking verdict
+    # about a question nobody asked.
+    labels_json = (
+        json.dumps(group_labels_from_spec(spec))
+        if declared_groups_from_spec(spec)
+        else ""
+    )
     return RemoteQuestions(
         image=image if isinstance(image, str) else "",
-        bind_sources=_bind_sources(spec),
+        bind_sources=bind_sources_from_spec(spec),
+        workdirs=workdirs_from_spec(spec),
+        group_labels_json=labels_json,
         card_store_host=store_host,
         card_store_port=store_port,
-        credential_paths=_credential_paths(spec),
+        credential_paths=credential_paths_from_spec(spec),
         required_ports=tuple(required_ports),
         hub_host=hub_host,
         hub_port=hub_port,
@@ -325,6 +290,45 @@ class TargetBatch:
                 "sources; a partial sweep cannot distinguish 'present' from 'not reached'"
             )
         return self.readout().missing_binds
+
+    def missing_workdir_paths(self) -> tuple[str, ...]:
+        wanted = self.questions.workdirs
+        if not wanted:
+            # The spec declares no workdir, so no workdir can be missing.
+            # Observed by construction, not by defaulting.
+            return ()
+        checked = self._field("workdirs_checked", "workdir-check")
+        if checked != str(len(wanted)):
+            raise FactUnavailable(
+                f"the target reported checking {checked!r} of {len(wanted)} workdir(s); "
+                "a partial sweep cannot distinguish 'present' from 'not reached'"
+            )
+        return self.readout().missing_workdirs
+
+    def target_resolved_groups(self) -> tuple[str, ...]:
+        """What the TARGET's own sac makes of this spec's group labels.
+
+        An EMPTY value is a measurement, not a missing one: it is what a daemon
+        too old to read spec labels answers for every agent, and the check treats
+        it as undetermined for that reason — but it must reach the check as an
+        observed empty tuple, because "answered nothing" and "was never asked"
+        need different sentences. Only an absent line is unknown here.
+        """
+        if not self.questions.group_labels_json:
+            raise FactUnavailable(
+                "this spec declares no groups under metadata.labels, so nothing was "
+                "asked of the target about them"
+            )
+        value = self.readout().fields.get("groups")
+        if value is None:
+            raise FactUnavailable(
+                "the target's sac did not resolve group labels — it is not importable "
+                "there, or is too old to carry config._group_resolver.all_named_groups. "
+                "An agent moved onto such a host holds its groups on paper and is "
+                f"refused 403 by every group-gated call. Check with: ssh {self.host} "
+                "'sac --version'"
+            )
+        return tuple(v for v in value.split(",") if v)
 
     def card_store_url(self) -> str:
         url = card_store_url_from_spec(self.spec)
@@ -486,6 +490,8 @@ def build_target_probes(
         reachable=batch.reachable,
         image_present=batch.image_present,
         missing_bind_sources=batch.missing_bind_sources,
+        missing_workdir_paths=batch.missing_workdir_paths,
+        target_resolved_groups=batch.target_resolved_groups,
         card_store_url=batch.card_store_url,
         card_store_reachable=batch.card_store_reachable,
         credential_expires_in_s=batch.credential_expires_in_s,

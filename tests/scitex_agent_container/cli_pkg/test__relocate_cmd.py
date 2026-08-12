@@ -43,6 +43,32 @@ FULL_SPEC = {
 }
 
 
+def test_a_batch_is_refused_when_it_would_actually_move_agents() -> None:
+    # Arrange: preflighting nine queued agents together is the point of taking
+    # several names, and it is safe because it touches nothing. EXECUTING several
+    # from one invocation is not: the journal that makes a relocation resumable
+    # is per-agent, so one interruption leaves several agents half-moved. The
+    # refusal must happen before anything is read, so this reaches no host.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        relocate, ["agent-a", "agent-b", "--to", "somewhere", "--no-dry-run"]
+    )
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_that_refusal_explains_why_a_batch_cannot_execute() -> None:
+    # Arrange: a bare "refusing" leaves the reader guessing whether it is a bug.
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        relocate, ["agent-a", "agent-b", "--to", "somewhere", "--no-dry-run"]
+    )
+    # Assert
+    assert "half-moved" in result.output
+
+
 def test_declared_reads_the_runtime() -> None:
     # Arrange: runtime is the field whose mismatch stopped the 08-07 move
     # (the nas's sac 0.21.9 rejected 'tui').

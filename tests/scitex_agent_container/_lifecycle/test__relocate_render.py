@@ -41,7 +41,11 @@ ALL_GOOD = TargetFacts(
     reachable=True,
     image_present=True,
     missing_bind_sources=(),
-    card_store_url="postgresql://localhost:5442/cards",
+    missing_workdir_paths=(),
+    target_resolved_groups=("developer",),
+    # 55432 — the fleet's port. 5432 is refused outright by the DSN check, so a
+    # fixture naming it would make "ALL_GOOD" mean "one guaranteed failure".
+    card_store_url="postgresql://localhost:55432/cards",
     card_store_reachable=True,
     credential_expires_in_s=3600.0,
     credential_refresh_token_present=True,

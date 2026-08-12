@@ -29,6 +29,7 @@ decides how to paint them, and tests can assert on exact lines.
 
 from __future__ import annotations
 
+from ._relocate_plan import Plan, build_plan, why_for_check
 from ._relocate_preflight import PreflightReport
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "render_declared",
     "render_dry_run",
     "render_observed",
+    "render_plan",
     "verdict_line",
 ]
 
@@ -47,48 +49,15 @@ VERDICT_UNKNOWN = "REFUSED (undetermined)"
 
 _LABEL = {True: "PASS", False: "FAIL", None: "UNKNOWN"}
 
-#: Which FACTS feed each CHECK. ``gather_target_facts`` keys its failures by
-#: fact name, and four checks are named differently from the fact behind them
-#: (``credentials_valid`` is fed by ``credential_expires_in_s``, and so on).
-#: Without this map those four print a bare UNKNOWN while the reason for it sits
-#: unused in the errors dict — measured 2026-08-09 against a busybox NAS, where
-#: four of five unknowns lost their explanation on the way to the screen.
-_CHECK_FACTS: dict[str, tuple[str, ...]] = {
-    "target_reachable": ("reachable",),
-    "image_present": ("image_present",),
-    "binds_exist_on_target": ("missing_bind_sources",),
-    "card_store_reachable": ("card_store_reachable", "card_store_url"),
-    "credentials_valid": (
-        "credential_expires_in_s",
-        "credential_refresh_token_present",
-    ),
-    "runtime_supported": ("supported_runtimes",),
-    "spec_schema_accepted": ("rejected_spec_keys",),
-    "ports_free": ("ports_in_use",),
-    "hub_reachable_from_target": ("hub_reachable_from_target",),
-    "sac_present_on_target": ("sac_on_path", "sac_resolved_path"),
-    # Gathered locally rather than over ssh, so its failures are keyed by the
-    # check's own name; the tuple is here so the map covers every check and a
-    # reader does not have to wonder whether the omission means something.
-    "source_work_committed": ("source_repos",),
-}
-
-
 def _why(check_name: str, errors: dict[str, str]) -> str:
-    """The probe failure behind ``check_name``, by its own key or its facts'.
+    """The probe failure behind ``check_name``. See :func:`._relocate_plan.why_for_check`.
 
-    The check's own name wins, so a caller that already keyed by check name
-    keeps working; the fact names are the fallback that makes the adapter's
-    reasons reach the reader.
+    The check-to-fact map lives with the plan rather than here, because the plan
+    needs it to recognise several unknowns as ONE root cause. Two copies of that
+    map would eventually disagree, and the symptom would be a reason printed
+    inline while the same reason failed to group.
     """
-    direct = errors.get(check_name)
-    if direct:
-        return direct
-    for fact in _CHECK_FACTS.get(check_name, ()):
-        reason = errors.get(fact)
-        if reason:
-            return reason
-    return ""
+    return why_for_check(check_name, errors)
 
 
 def render_declared(declared: dict[str, object]) -> list[str]:
@@ -161,12 +130,48 @@ def verdict_line(report: PreflightReport) -> str:
     )
 
 
+def render_plan(plan: Plan) -> list[str]:
+    """The work list: root causes once, then items grouped by what to DO.
+
+    Replaces a flat "BLOCKING" dump ordered by check index. Two things changed
+    and both were asked for: several unknowns sharing one probe failure are
+    stated ONCE with the affected checks named, and the rest are bucketed by
+    action so the reader can work top-down instead of re-sorting the list in his
+    head.
+
+    Every entry carries its vantage point. "the workdir does not exist" is a
+    different sentence depending on which host was asked, and a fix without a
+    host attached is a fix somebody applies on the wrong machine.
+    """
+    if plan.empty:
+        return []
+    lines = ["BLOCKING — every problem this run found, in the order to work them:"]
+    for cause in plan.causes:
+        lines.append("")
+        lines.append(f"  ONE ROOT CAUSE — {cause.summary}")
+        lines.append(f"    blocked: {', '.join(cause.checks)}")
+        lines.append(
+            "    these are not separate problems; fix this one and re-run to learn "
+            "what the rest actually say"
+        )
+    for action, items in plan.by_action():
+        lines.append("")
+        lines.append(f"  [{action.upper()}]")
+        for item in items:
+            lines.append(f"    {item.verdict:<8} {item.check} (on {item.where})")
+            lines.append(f"      what: {item.what}")
+            lines.append(f"      fix:  {item.fix}")
+    return lines
+
+
 def render_dry_run(
     report: PreflightReport,
     *,
     declared: dict[str, object] | None = None,
     errors: dict[str, str] | None = None,
     dry_run: bool = True,
+    workdir: str = "",
+    from_host: str = "",
 ) -> list[str]:
     """The whole dry run, in the order a reader needs it.
 
@@ -197,13 +202,8 @@ def render_dry_run(
     lines += render_observed(report, errors)
     lines.append("")
     lines.append(verdict_line(report))
-    blocking = report.failed + report.unknown
-    if blocking:
+    plan = build_plan(report, errors=errors, workdir=workdir, from_host=from_host)
+    if not plan.empty:
         lines.append("")
-        lines.append("BLOCKING — fix or measure each of these, then re-run:")
-        # Names and details only. The hints are already printed inline above,
-        # and repeating nine identical "run the probe that supplies this fact"
-        # paragraphs turns the summary — the part that gets pasted into chat —
-        # into the least readable thing on screen.
-        lines += [f"  - {_LABEL[c.ok]:<8} {c.name}: {c.detail}" for c in blocking]
+        lines += render_plan(plan)
     return lines
