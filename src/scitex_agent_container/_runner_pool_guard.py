@@ -72,6 +72,29 @@ Entry points
 * ``python -m scitex_agent_container._runner_pool_guard [REPO_ROOT]``
   — exit 0 clean, exit 1 on any violation.
 * :func:`check_repo` — pure function; returns violations, raises nothing.
+
+Promoting this upstream (the pin is a fleet convention, not a sac quirk)
+=======================================================================
+Measured 2026-08-12: five sibling repos — scitex-cards, scitex-todo,
+scitex-plt, scitex-scholar, scitex-ssh — carry the same literal
+``spartan-cpu`` pin and are armed to freeze on their next push. sac lands
+first as the proof; the rule belongs in scitex-dev's project auditor after
+that, so this module is written to move rather than to stay:
+
+* every check is a PURE function of a ``repo: Path`` — no import-time state,
+  no sac-specific knowledge beyond three module constants
+  (``_ALLOWLIST_RELPATH``, the ``SAC-CI0xx`` codes, the message text);
+* :func:`pool_labels` and :func:`reads_a_variable` are the whole rule and are
+  independently callable;
+* the ``runs-on`` parsing is already duplicated upstream as
+  ``scitex_dev._cli.audit._project._runs_on_parsing.resolve_destination`` —
+  a promoted version should call THAT and drop the import below.
+
+What a promotion must NOT do is relax the seam into "must read
+``vars.CI_RUNS_ON``": scitex-dev's own PS-224 reports a BARE
+``${{ vars.X }}`` as an error, so the only spelling both rules bless is the
+fleet idiom WITH its literal fallback. Requiring the variable and requiring
+it to be readable are two rules, and each is load-bearing.
 """
 
 from __future__ import annotations
