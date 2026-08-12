@@ -50,6 +50,37 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 allow:
+  - workflow: pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
+    jobs:
+      # ONLY the alarm. The `test` job stays on our pool — it is the PR gate a
+      # human waits on, and the half of the directive that is absolute.
+      - notify
+    # NOT RATIFIED BY THE OPERATOR. Recorded honestly rather than stamped
+    # `approved_by: operator` like its neighbours: this entry was written by an
+    # agent on 2026-08-12 alongside the alarm it covers, and no human has ruled
+    # on it yet. The guard does not machine-check this field, which is exactly
+    # why it must not be used to manufacture consent. Ratify or reject it in
+    # review; if rejected, the alarm moves to the self-hosted pool and loses the
+    # fate-independence argued for below.
+    approved_by: UNRATIFIED — proposed by an agent, awaiting operator sign-off
+    approved_on: null
+    proposed_on: 2026-08-12
+    reason: >-
+      FATE-INDEPENDENCE — a different argument from the two below, and the
+      reason this is not merely a cost trade. Every failure the `notify` job
+      exists to announce is a failure OF the self-hosted pool: a wedged runner,
+      a saturated queue, a broken ci-cpu.sif, a shim that dies before a single
+      test runs. Putting that alarm on the same pool means the outages it most
+      needs to report are precisely the ones that prevent it reporting. This is
+      not hypothetical: measured 2026-08-12, this exact workflow failed its
+      nightly cron on seven consecutive nights (Aug 5-11) on `main`, every leg,
+      zero tests executed, dying at `mkdir: cannot create directory '/data'` —
+      and told nobody, because it had no alarm at all. Nobody waits on this job,
+      it runs for seconds, it holds no slot a PR could use, and it publishes to
+      the GitHub issues API rather than touching our infrastructure. If this
+      exception is removed, the alarm must still not run on the pool it watches
+      — solve it another way rather than migrating it here.
+
   - workflow: nightly-python-matrix-on-github-hosted.yml
     jobs:
       - test
