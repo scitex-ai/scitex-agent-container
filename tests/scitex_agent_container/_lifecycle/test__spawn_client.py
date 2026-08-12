@@ -683,17 +683,13 @@ def test_real_loopback_401_carries_status_401(listen_env) -> None:
     assert status == 401
 
 
-def test_real_connection_failure_surfaces_unreachable(listen_env) -> None:
-    # Arrange — bind a loopback socket, grab its port, then close it so
-    # the port is (almost certainly) refused: a GENUINE transport failure,
-    # which MUST read as 'cannot reach' (unlike the 401 above).
-    import socket
-
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.bind(("127.0.0.1", 0))
-    _h, dead_port = probe.getsockname()
-    probe.close()
-    listen_env("LISTEN_BASE_URL", f"http://127.0.0.1:{dead_port}")
+def test_real_connection_failure_surfaces_unreachable(listen_env, dead_port) -> None:
+    # Arrange — a loopback port bound but never listened on, and HELD for the
+    # test: the connect is refused, which is a GENUINE transport failure and
+    # MUST read as 'cannot reach' (unlike the 401 above). "Almost certainly
+    # refused" was the old shape — the port was released before this ran, so
+    # anything binding it turned this into a live endpoint.
+    listen_env("LISTEN_BASE_URL", dead_port.url(""))
     message = ""
     # Act — default opener; the connection is refused.
     try:

@@ -28,12 +28,17 @@
 # CI. This hook is the fail-loud backstop that catches it at commit/push
 # time, in-place.
 #
-# The CLA maps AUTHOR -> GitHub account by email. The container's ONLY
-# intended author is the allowlisted `ywatanabe@scitex.ai`; ANY deviation
-# (`agent@<host>`, a synthesized `user@hostname`, a stray override) is the
-# bug. So the default allowlist is intentionally tight; extend it for the
-# rare non-default-but-allowlisted identity (LLEmacs / a bot) via the env
-# var below rather than loosening the default.
+# The CLA maps AUTHOR -> GitHub account by email, then checks that account
+# against `.github/workflows/cla.yml`'s `allowlist: bot*,ywatanabe1989`. So
+# what matters is whether the email is VERIFIED on `ywatanabe1989` -- not the
+# local-part. Two are: `ywatanabe@scitex.ai` (the operator's own, human work)
+# and `agent@scitex.ai` (the AGENT identity; operator-approved + verified on
+# the same account, 2026-08-12). Both pass CLAssistant and differ only in who
+# `git log` says did the work. ANY OTHER author (`agent@<host>`, a synthesized
+# `user@hostname`, a stray override) maps to no allowlisted account and is the
+# bug this hook exists to catch, so the default stays tight at those two;
+# extend it for the rare non-default-but-allowlisted identity (LLEmacs / a
+# bot) via the env var below rather than loosening the default.
 #
 # Policy:
 #   - `git commit`, effective author NOT allowlisted             -> BLOCK
@@ -43,7 +48,8 @@
 #   - non-git / non-Bash / not-in-a-repo                         -> allow
 #
 # Allowlist (case-insensitive email match):
-#   - built-in exact:  ywatanabe@scitex.ai   (= GitHub ywatanabe1989)
+#   - built-in exact:  ywatanabe@scitex.ai   (= GitHub ywatanabe1989, human)
+#   - built-in exact:  agent@scitex.ai       (= GitHub ywatanabe1989, agents)
 #   - built-in glob:   *[bot]@users.noreply.github.com   (bot* authors)
 #   - env extension:   CC_CLA_ALLOWED_EMAILS="a@x,b@y"   (comma/space list)
 #
@@ -81,13 +87,20 @@ if [[ "${1:-}" == "--self-test" ]]; then
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
 
-    good_repo="$tmpdir/good"     # config author = allowlisted
+    good_repo="$tmpdir/good"     # config author = allowlisted (human)
+    agent_repo="$tmpdir/agent"   # config author = allowlisted (agent)
     bad_repo="$tmpdir/bad"       # config author = NOT allowlisted
     (
         mkdir -p "$good_repo" && cd "$good_repo" || exit
         git init -q -b feature/x
         git config user.email "ywatanabe@scitex.ai"
         git config user.name "Yusuke Watanabe"
+        git commit --allow-empty -q -m seed
+
+        mkdir -p "$agent_repo" && cd "$agent_repo" || exit
+        git init -q -b feature/x
+        git config user.email "agent@scitex.ai"
+        git config user.name "scitex-agent-container"
         git commit --allow-empty -q -m seed
 
         mkdir -p "$bad_repo" && cd "$bad_repo" || exit
@@ -120,6 +133,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
     # --- commit: allowlisted config author -> ALLOW ---
     run "commit good-config author" "git commit -m x" "$good_repo" 0
     run "commit good, -C form" "git -C $good_repo commit -m x" "$tmpdir" 0
+
+    # --- the AGENT identity is allowlisted too (2026-08-12) ---
+    run "commit agent-identity author" "git commit -m x" "$agent_repo" 0
+    run "push agent-identity commit" "git push origin feature/x" "$agent_repo" 0
+    run "agent identity is case-insensitive" \
+        "git -c user.email=Agent@SciTeX.ai commit -m x" "$bad_repo" 0
 
     # --- commit: non-allowlisted config author -> BLOCK ---
     run "commit bad-config author" "git commit -m x" "$bad_repo" 2
@@ -320,7 +339,7 @@ if sh("git", "-C", repo, "rev-parse", "--git-dir")[0] != 0:
     sys.exit(0)
 
 # Allowlist (case-insensitive).
-ALLOWED_EXACT = {"ywatanabe@scitex.ai"}
+ALLOWED_EXACT = {"ywatanabe@scitex.ai", "agent@scitex.ai"}
 ALLOWED_GLOBS = ["*[[]bot[]]@users.noreply.github.com"]
 for e in re.split(r"[,\s]+", os.environ.get("CC_CLA_ALLOWED_EMAILS", "")):
     e = e.strip().lower()
@@ -428,8 +447,8 @@ if bad_src.startswith("GIT_AUTHOR_EMAIL env") or bad_src.startswith("inline GIT_
     fix = (
         "A GIT_AUTHOR_EMAIL is set to a NON-allowlisted value (it beats\n"
         "  git config). Re-point it, then re-create the commit:\n"
-        "    export GIT_AUTHOR_EMAIL=ywatanabe@scitex.ai\n"
-        "    export GIT_AUTHOR_NAME='Yusuke Watanabe'\n"
+        "    export GIT_AUTHOR_EMAIL=agent@scitex.ai\n"
+        "    export GIT_AUTHOR_NAME=\"${SAC_NAME:-agent}\"\n"
         "    git -C %s commit --amend --reset-author --no-edit" % repo
     )
 elif "pushed commit author" in bad_src:
@@ -437,8 +456,8 @@ elif "pushed commit author" in bad_src:
         "One or more commits you are pushing are authored by a\n"
         "  non-allowlisted identity. Fix identity, then rewrite them\n"
         "  (topic branch only -- never a shared branch):\n"
-        "    git -C %s config user.email ywatanabe@scitex.ai\n"
-        "    git -C %s config user.name  'Yusuke Watanabe'\n"
+        "    git -C %s config user.email agent@scitex.ai\n"
+        "    git -C %s config user.name  \"${SAC_NAME:-agent}\"\n"
         "    # last commit:\n"
         "    git -C %s commit --amend --reset-author --no-edit\n"
         "    # or a range: git -C %s rebase --exec \\\n"
@@ -446,9 +465,9 @@ elif "pushed commit author" in bad_src:
     )
 else:
     fix = (
-        "Set the CLA-allowlisted identity, then re-create the commit:\n"
-        "    git -C %s config user.email ywatanabe@scitex.ai\n"
-        "    git -C %s config user.name  'Yusuke Watanabe'\n"
+        "Set the CLA-allowlisted AGENT identity, then re-create the commit:\n"
+        "    git -C %s config user.email agent@scitex.ai\n"
+        "    git -C %s config user.name  \"${SAC_NAME:-agent}\"\n"
         "    git -C %s commit --amend --reset-author --no-edit   # if already committed"
         % (repo, repo, repo)
     )
@@ -462,7 +481,8 @@ msg = (
     ">>> GitHub account.\n"
     "\n"
     "The required 'CLAssistant' check maps each commit author to a GitHub\n"
-    "account via an allowlist (bot*, ywatanabe1989 -> ywatanabe@scitex.ai). An\n"
+    "account via an allowlist (bot*, ywatanabe1989 -> agent@scitex.ai for\n"
+    "agents / ywatanabe@scitex.ai for the operator's own commits). An\n"
     "author that maps to no allowlisted account makes CLAssistant FAIL and\n"
     "BLOCK THE MERGE -- and it only surfaces AFTER CI has already gone green.\n"
     "Because force-push is hook-blocked, the sole remedy then is re-creating\n"

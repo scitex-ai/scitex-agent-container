@@ -54,7 +54,22 @@ jobs:
   install-check:
     # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)
     name: import-smoke-on-ubuntu-py3-12
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
+    #
+    # 47s median, single-core, and it never enters the CI SIF. That is the
+    # POINT of this job: it installs from source on the BARE runner precisely to
+    # check that the package imports without the SIF's baked environment, so
+    # routing it to a SIF-capable host would not help it and sending it to a
+    # small machine costs it nothing.
+    #
+    # It was holding one of four 32-core machines per run on a pool at 93-94%
+    # utilisation, then queueing 289s median (p90 902s). #1006 routed it away
+    # for that reason, and that intent is UNCHANGED — only the SEAM changed,
+    # from a literal label list to a repo variable, so a dead pool is a
+    # settings change rather than a code change. Unset LIGHT_RUNS_ON and this
+    # lane rides the main pool; it never reads a value `tests` or the release
+    # gate would inherit.
+    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

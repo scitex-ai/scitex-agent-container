@@ -14,13 +14,14 @@ hunts for missing keys.
 from __future__ import annotations
 
 _MINIMAL_TEMPLATE = """\
-# {name} — fresh v3 spec scaffolded by ``sac agents create``.
+# THIS IS A DESIGN DOCUMENT — the contract for an agent not yet started.
+# The state of a RUNNING agent lives in the database, never in this file.
 #
+# {name} — fresh v3 spec scaffolded by ``sac agents create``.
 # EVERY field is written explicitly (red-start ruling 2026-07-21: an
 # omitted field is a load ERROR whose hint lists the whole missing set
-# with paste-ready defaults). The values below are those defaults except
-# the handful this template curates (runtime / model / health / restart).
-# See ``examples/agents/full-agent/spec.yaml`` for the annotated tour.
+# with paste-ready defaults); the values are those defaults except the
+# handful curated here. See ``examples/agents/full-agent/spec.yaml``.
 
 apiVersion: scitex-agent-container/v3
 kind: Agent
@@ -160,6 +161,9 @@ spec:
 
 
 _FULL_TEMPLATE = """\
+# THIS IS A DESIGN DOCUMENT — the contract for an agent not yet started.
+# The state of a RUNNING agent lives in the database, never in this file.
+#
 # {name} — fresh v3 DEVELOPER spec scaffolded by ``sac agents create --template full``.
 #
 # This is the PROVEN developer shape the fleet's live dev agents use

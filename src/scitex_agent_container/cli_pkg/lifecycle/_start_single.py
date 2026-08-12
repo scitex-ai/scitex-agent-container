@@ -289,13 +289,14 @@ def run_single_targets(
                         current_host = resolve_hostname()
                     except RuntimeError:  # stx-allow: fallback (reason: hostname resolution failure — treat as local for the preflight)
                         current_host = ""
-                    spec_host = config.hosts_spec.host
-                    target_host = (
-                        (spec_host[0] if spec_host else None)
-                        if isinstance(spec_host, list)
-                        else (spec_host or None)
+                    from ._host_chain import is_remote_placement
+
+                    # A CHAIN that names this machine anywhere can degrade to
+                    # a local start, so pre-flighting it as remote would
+                    # validate the resume id against the wrong machine.
+                    is_remote = is_remote_placement(
+                        config.hosts_spec.host, current_host
                     )
-                    is_remote = bool(target_host) and target_host != current_host
                     preflight_resume_id(
                         config,
                         resume_id,

@@ -30,7 +30,16 @@ cd "$(git rev-parse --show-toplevel)"
 #
 # git feeds pre-push one line per ref on stdin:
 #   <local ref> <local sha1> <remote ref> <remote sha1>
+#
+# READ IT ONCE, INTO A VARIABLE. stdin is a stream: whoever consumes it
+# first consumes it for everyone. The branch guard below and the card
+# record at the bottom of this file both need these refs, and before
+# ADR-0024 the guard's `while read` swallowed them. Capturing up front is
+# what lets a second consumer exist at all.
+PUSHED_REFS="$(cat)"
+
 while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -n "${remote_ref:-}" ] || continue
   case "${remote_ref##refs/heads/}" in
     main|master)
       echo "PRE-PUSH BLOCKED: refusing to push directly to '${remote_ref##refs/heads/}'." >&2
@@ -39,7 +48,7 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
       exit 1
       ;;
   esac
-done
+done <<< "$PUSHED_REFS"
 
 # Locate ruff. Search order matches the venvs the SciTeX harness
 # typically installs into; falls back to whatever ruff is on PATH.
@@ -62,13 +71,40 @@ if [ -z "$RUFF" ] && command -v ruff >/dev/null 2>&1; then
   RUFF="$(command -v ruff)"
 fi
 
+# LAST RESORT: let uv fetch ruff on demand. Measured 2026-08-12 — the agent
+# containers ship NO ruff at any of the paths above and none on PATH, so this
+# gate could not run in the very environment most pushes come from. A gate
+# that cannot run has exactly two outcomes, and both are bad: it blocks every
+# push, or it teaches everyone to reach for --no-verify, which disarms the
+# protected-branch guard above at the same time. Resolving ruff through uv
+# keeps the check STRICT (same ruff, same rules) instead of trading strictness
+# for availability. Declared as an array because it is a multi-word command.
+RUFF_ARGV=()
+if [ -n "$RUFF" ]; then
+  RUFF_ARGV=("$RUFF")
+else
+  for uv_bin in "${SAC_PRE_PUSH_UV:-}" "/uvwork/bin/uv" "$HOME/.local/bin/uv"; do
+    if [ -n "$uv_bin" ] && [ -x "$uv_bin" ]; then
+      RUFF_ARGV=("$uv_bin" tool run ruff)
+      RUFF="$uv_bin tool run ruff"
+      break
+    fi
+  done
+  if [ -z "$RUFF" ] && command -v uv >/dev/null 2>&1; then
+    RUFF_ARGV=("$(command -v uv)" tool run ruff)
+    RUFF="uv tool run ruff"
+  fi
+fi
+
 if [ -z "$RUFF" ]; then
   # Loud failure — never silently skip the gate (handoff Q3). If a
   # genuine emergency requires bypass, --no-verify is documented as
   # the explicit override and shows up in the audit log.
   echo "PRE-PUSH BLOCKED: ruff binary not found." >&2
   echo "  Searched: \$SAC_PRE_PUSH_RUFF, .venv/bin/ruff, /opt/venv-agent/bin/ruff," >&2
-  echo "           /opt/venv-sac/bin/ruff, \$HOME/.local/bin/ruff, PATH." >&2
+  echo "           /opt/venv-sac/bin/ruff, \$HOME/.local/bin/ruff, PATH," >&2
+  echo "           and 'uv tool run ruff' (\$SAC_PRE_PUSH_UV, /uvwork/bin/uv," >&2
+  echo "           \$HOME/.local/bin/uv, PATH)." >&2
   echo "  Install ruff via: pip install -e .[dev]" >&2
   echo "  Or point the hook at an existing ruff: export SAC_PRE_PUSH_RUFF=/path/to/ruff" >&2
   echo "  Or bypass once (emergency only): git push --no-verify" >&2
@@ -79,7 +115,7 @@ fi
 # the unused-import slip-through that motivated this hook.
 # --extend-per-file-ignores excludes __init__.py re-export shims (the
 # standard idiom — imports there *are* the public surface, not dead code).
-if ! "$RUFF" check \
+if ! "${RUFF_ARGV[@]}" check \
       --select F401,F811 \
       --extend-per-file-ignores "**/__init__.py:F401" \
       src/ tests/; then
@@ -89,4 +125,58 @@ if ! "$RUFF" check \
   echo "  $RUFF check --select F401,F811 --extend-per-file-ignores '**/__init__.py:F401' --fix src/ tests/" >&2
   echo "Or skip the hook (only when truly needed) with --no-verify." >&2
   exit 1
+fi
+
+# --- Register the push on its card (ADR-0024, the rail's first leg) ---------
+#
+# The operator's requirement, verbatim (2026-08-12): 「プッシュに連動して、
+# 必ずフックでカードにその情報を書かないといけない」— a push must register
+# itself on a card, and it must be a HOOK that does it.
+#
+# This card is the rail's ROUTING TABLE, which is the part worth
+# understanding: it records WHO pushed, so when CI's verdict comes back
+# the runner delivers it to that agent instead of inferring an owner from
+# the repo name. That inference is genuinely ambiguous here — two agent
+# specs declare `project: scitex-agent-container`, and sac's own
+# resolve_owner() takes the one that sorts first, which is the one with
+# zero inbox subscribers since 2026-08-10.
+#
+# LAST, and deliberately so: everything above can still block the push, and
+# a card claiming a push that ruff then rejected is a lie on the board.
+#
+# NEVER BLOCKS. A card-store hiccup must not cost an engineer their push,
+# and it need not: the CI half creates the card when it finds none, so the
+# worst case here is a verdict routed by spec instead of by recorded fact.
+# The failure is still printed — silence is what this whole rail exists to
+# remove — it just does not change the exit status.
+RAIL="$(git rev-parse --show-toplevel)/.github/ci/ci_card_rail.py"
+RAIL_PY=""
+for candidate in \
+    "${SAC_RAIL_PYTHON:-}" \
+    "/opt/venv-sac/bin/python3" \
+    ".venv/bin/python" \
+; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    RAIL_PY="$candidate"
+    break
+  fi
+done
+if [ -z "$RAIL_PY" ] && command -v python3 >/dev/null 2>&1; then
+  RAIL_PY="$(command -v python3)"
+fi
+
+if [ -n "$RAIL_PY" ] && [ -f "$RAIL" ]; then
+  REPO_SLUG="$(git remote get-url origin 2>/dev/null | sed -e 's#\.git$##' -e 's#^.*[:/]\([^/]*/[^/]*\)$#\1#')"
+  while read -r local_ref local_sha _remote_ref _remote_sha; do
+    case "$local_ref" in refs/heads/*) : ;; *) continue ;; esac
+    # All-zero local sha is git's sentinel for a branch DELETION.
+    case "$local_sha" in 0000000000000000000000000000000000000000) continue ;; esac
+    [ -n "$local_sha" ] || continue
+    "$RAIL_PY" "$RAIL" push \
+      --repo "${REPO_SLUG:-scitex-ai/scitex-agent-container}" \
+      --branch "${local_ref#refs/heads/}" \
+      --sha "$local_sha" \
+      --subject "$(git log -1 --format='%s' "$local_sha" 2>/dev/null)" \
+      || echo "PRE-PUSH: card record failed (push continues)." >&2
+  done <<< "$PUSHED_REFS"
 fi

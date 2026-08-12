@@ -19,6 +19,7 @@ import subprocess
 import pytest
 
 from .conftest import (
+    AGENT_EMAIL,
     ALLOWLISTED_EMAIL,
     HOOK_SCRIPT,
     NON_ALLOWLISTED_EMAIL,
@@ -134,8 +135,60 @@ def test_commit_block_message_gives_config_fix(commit_bad_result):
     res = commit_bad_result
     # Act
     stderr = res.stderr
+    # Assert — the remediation must point at the AGENT identity. The hook
+    # only ever runs inside an agent container, so telling it to author as
+    # the operator would undo the 2026-08-12 identity split it now enforces.
+    assert f"config user.email {AGENT_EMAIL}" in stderr
+
+
+# --- the agent identity is allowlisted alongside the human one -------
+
+
+def test_commit_agent_identity_is_allowed(agent_repo):
+    # Arrange
+    cmd = "git commit -m x"
+    # Act
+    res = run_hook(cmd, agent_repo)
     # Assert
-    assert "config user.email ywatanabe@scitex.ai" in stderr
+    assert res.returncode == 0, res.stderr
+
+
+def test_push_agent_identity_commit_is_allowed(agent_repo):
+    # Arrange
+    cmd = "git push origin feature/x"
+    # Act
+    res = run_hook(cmd, agent_repo)
+    # Assert
+    assert res.returncode == 0, res.stderr
+
+
+def test_agent_identity_match_is_case_insensitive(bad_repo):
+    # Arrange
+    cmd = "git -c user.email=Agent@SciTeX.ai commit -m x"
+    # Act
+    res = run_hook(cmd, bad_repo)
+    # Assert
+    assert res.returncode == 0, res.stderr
+
+
+def test_human_identity_still_allowed_alongside_agent(good_repo):
+    # Arrange — the agent identity is ADDITIVE; the operator's own commits
+    # must keep passing the same gate.
+    cmd = f"git -c user.email={ALLOWLISTED_EMAIL} commit -m x"
+    # Act
+    res = run_hook(cmd, good_repo)
+    # Assert
+    assert res.returncode == 0, res.stderr
+
+
+def test_agent_at_hostname_shape_is_still_blocked(bad_repo):
+    # Arrange — the incident shape (agent@<host>) must NOT be swept in by
+    # allowlisting agent@scitex.ai.
+    cmd = f"git -c user.email={NON_ALLOWLISTED_EMAIL} commit -m x"
+    # Act
+    res = run_hook(cmd, bad_repo)
+    # Assert
+    assert res.returncode == 2
 
 
 def test_commit_blocked_when_targeted_via_git_dash_c(bad_repo, tmp_path):

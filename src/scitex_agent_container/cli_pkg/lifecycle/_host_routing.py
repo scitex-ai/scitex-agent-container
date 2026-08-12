@@ -9,7 +9,10 @@ two existing dispatchers into one coherent routing story:
 
 * ``start`` routes by ``spec.host`` (``_dispatch.try_dispatch`` — the
   instances row does not exist yet at start time). This module contributes
-  the CHAIN-AWARE classification + the fail-loud unknown-host error.
+  the CHAIN-AWARE classification + the fail-loud unknown-host error. The chain
+  walk itself lives in :mod:`._host_chain` (one resolver, one reachability
+  seam); this module adapts it to the lifecycle verbs' shapes and owns the
+  operator-facing messages.
 * ``stop`` / ``restart`` route primarily by the agent's active
   ``state.db.instances`` row (``_dispatch.try_dispatch_remote``). This module
   fills the gap when NO row exists on the caller's state.db — e.g. the agent
@@ -37,10 +40,17 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING
 
-from ._common import _local_host_names, classify_dispatch_host
+from ._common import _local_host_names
+from ._host_chain import (
+    UNROUTABLE,
+    format_unroutable_chain_error,
+    resolve_host_chain,
+    ssh_reachability_oracle,
+)
 
 if TYPE_CHECKING:
     from ..._state.host_config import PeerSpec
+    from ._host_chain import HostChainRoute, ReachabilityOracle
 
 
 class UnknownSpecHostError(RuntimeError):
@@ -98,32 +108,155 @@ def classify_spec_host_route(
     peers: Mapping[str, "PeerSpec"],
     *,
     local_names: Collection[str] = (),
+    reachability: "ReachabilityOracle | None" = None,
 ) -> tuple[str, str | None]:
     """Chain-aware wrapper over :func:`_common.classify_dispatch_host`.
 
-    ``spec.host`` may be a single hostname or a FALLBACK CHAIN (list). The
-    head of the chain drives the routing decision exactly as before, with
-    one refinement: a chain whose head is unknown but whose TAIL contains a
-    spelling of THIS machine classifies ``local`` — the documented
-    fallback-hosts semantics (``_singleton_skip_reason`` accepts the current
-    host anywhere in the chain), which a head-only fail-loud would break.
+    Thin adapter over :func:`._host_chain.resolve_host_chain` (the one place a
+    ``spec.host`` chain is reduced), preserving this function's historic
+    ``(kind, peer)`` shape: ``("local", None)`` / ``("remote", peer)`` /
+    ``("unknown", None)``. An :data:`._host_chain.UNROUTABLE` route maps onto
+    the legacy ``"unknown"`` kind, so existing callers keep failing loud on
+    exactly the cases they already did.
 
-    Returns the same ``(kind, peer)`` shape as ``classify_dispatch_host``:
-    ``("local", None)`` / ``("remote", peer)`` / ``("unknown", None)``.
+    ``spec.host`` may be a single hostname or a FALLBACK CHAIN (list). A plain
+    string routes exactly as before and is never probed. A list is walked in
+    priority order and the first candidate not positively rejected wins — so a
+    chain whose head is unreachable now degrades to the next entry, and a
+    chain whose tail names THIS machine still classifies ``local``.
+
+    ``reachability`` is the injected ``(host) -> verdict`` oracle; without one
+    every remote candidate is :data:`._host_chain.UNKNOWN` and the head wins,
+    which is byte-for-byte the historical reduction.
+
+    Callers that need to SEE the rejected candidates (to render the fail-loud
+    message) want :func:`resolve_spec_host_route` instead.
     """
-    if isinstance(spec_host, list):
-        chain = [h for h in spec_host if h]
-    else:
-        chain = [spec_host] if spec_host else []
-    head = chain[0] if chain else None
-    kind, peer = classify_dispatch_host(
-        head, current_host, peers, local_names=local_names
+    route = resolve_host_chain(
+        spec_host,
+        current_host,
+        peers,
+        local_names=local_names,
+        reachability=reachability,
     )
-    if kind == "unknown" and any(
-        h == current_host or h in local_names for h in chain[1:]
-    ):
-        return ("local", None)
-    return (kind, peer)
+    return route_to_legacy_kind(route)
+
+
+def route_to_legacy_kind(route: "HostChainRoute") -> tuple[str, str | None]:
+    """Collapse a :class:`._host_chain.HostChainRoute` to ``(kind, peer)``.
+
+    ``UNROUTABLE`` becomes ``"unknown"``: to a caller that only asked "can I
+    ssh somewhere?", a chain in which every host was rejected and a name that
+    resolves nowhere are the same answer — do not dispatch, fail loud.
+    """
+    if route.kind == UNROUTABLE:
+        return ("unknown", None)
+    return (route.kind, route.peer)
+
+
+def resolve_spec_host_route(
+    spec_host: str | list[str] | None,
+    current_host: str,
+    peers: Mapping[str, "PeerSpec"],
+    *,
+    local_names: Collection[str] = (),
+    reachability: "ReachabilityOracle | None" = None,
+) -> "HostChainRoute":
+    """Full chain resolution, candidates and all — see :func:`._host_chain`.
+
+    The richer sibling of :func:`classify_spec_host_route`, for the callers
+    that must explain a refusal rather than merely make one.
+    """
+    return resolve_host_chain(
+        spec_host,
+        current_host,
+        peers,
+        local_names=local_names,
+        reachability=reachability,
+    )
+
+
+def format_route_error(
+    name: str,
+    spec_host: str | list[str] | None,
+    route: "HostChainRoute",
+    peers: Mapping[str, "PeerSpec"],
+    *,
+    verb: str,
+    current_host: str = "",
+) -> str:
+    """Pick the right unroutable message for ``spec_host``'s shape.
+
+    A plain string gets :func:`format_unknown_host_error` VERBATIM — one bad
+    name, one explanation, unchanged from before chains existed. Anything else
+    gets :func:`._host_chain.format_unroutable_chain_error`, which must account
+    for every entry because the operator cannot otherwise tell which of them is
+    a typo and which is merely down.
+
+    The "is this a chain?" test is ``isinstance(spec_host, str)`` — the SAME
+    one :func:`._host_chain.resolve_host_chain` uses to decide whether to
+    probe. Two different tests here would eventually disagree about some
+    sequence type and explain a refusal the resolver never made.
+    """
+    if isinstance(spec_host, str):
+        return format_unknown_host_error(name, spec_host, peers, verb=verb)
+    return format_unroutable_chain_error(
+        name, route, peers, verb=verb, current_host=current_host
+    )
+
+
+def resolve_start_dispatch_peer(
+    name: str,
+    spec_host: str | list[str] | None,
+    current_host: str,
+    peers: Mapping[str, "PeerSpec"],
+    *,
+    local_names: Collection[str] = (),
+    reachability: "ReachabilityOracle | None" = None,
+) -> str | None:
+    """Peer that ``sac agents start`` should dispatch ``name`` to, or None.
+
+    The start-side twin of :func:`resolve_spec_host_peer` — same decision, but
+    driven by an ALREADY-LOADED spec (start has the config in hand; stop and
+    restart only have a name). Extracted here rather than left inline in
+    ``_dispatch.try_dispatch`` so all four "reduce a placement to a route, and
+    explain a refusal" behaviours live in one module.
+
+    ``None`` means run locally: an empty ``host:``, a pin that spells this
+    machine, or a chain that degraded to this machine. A peer name means ssh.
+
+    A LIST ``spec.host`` gets a real ssh reachability probe (built here when
+    the caller passes none, since this function is on the side of the seam
+    that already authorizes an ssh hop); a plain STRING is never probed.
+
+    Raises:
+        UnknownSpecHostError: nothing in ``spec_host`` is usable — a name that
+            resolves nowhere, or a chain whose every candidate was rejected.
+            Message body from :func:`format_route_error`; a ``RuntimeError``
+            subclass, so callers catching ``RuntimeError`` are unaffected.
+    """
+    if reachability is None and isinstance(spec_host, list):
+        reachability = ssh_reachability_oracle(peers)
+    route = resolve_spec_host_route(
+        spec_host,
+        current_host,
+        peers,
+        local_names=local_names,
+        reachability=reachability,
+    )
+    if route.kind == UNROUTABLE:
+        raise UnknownSpecHostError(
+            format_route_error(
+                name,
+                spec_host,
+                route,
+                peers,
+                verb="start",
+                current_host=current_host,
+            )
+        )
+    kind, peer = route_to_legacy_kind(route)
+    return peer if kind == "remote" else None
 
 
 def has_active_row(name: str) -> bool:
@@ -151,6 +284,7 @@ def resolve_spec_host_peer(
     verb: str,
     current_host: str | None = None,
     local_names: Collection[str] | None = None,
+    reachability: "ReachabilityOracle | None" = None,
 ) -> str | None:
     """Resolve ``name``'s SPEC ``host:`` pin to a remote peer, or None for local.
 
@@ -158,13 +292,22 @@ def resolve_spec_host_peer(
         * ``None`` — proceed with the unchanged local path. Fires when the
           spec cannot be resolved/loaded (the local verb owns those error
           messages), when ``spec.host`` is empty, or when it spells THIS
-          machine.
-        * ``<peer>`` — ``spec.host`` names a registered peer distinct from
-          this machine; the caller dispatches ``verb`` there over ssh.
+          machine — including when a fallback CHAIN degrades to this machine
+          because everything ahead of it was rejected.
+        * ``<peer>`` — the first candidate in ``spec.host`` that was not
+          positively rejected names a registered peer distinct from this
+          machine; the caller dispatches ``verb`` there over ssh.
+
+    ``reachability`` is the injected chain-probe oracle. When ``spec.host`` is
+    a LIST and no oracle is passed, one real ssh prober is built here — this
+    function already loads config and is about to authorize an ssh hop, so it
+    is not a pure resolver and probing is in character. A plain STRING never
+    builds or consults an oracle (see :func:`._host_chain.resolve_host_chain`).
 
     Raises:
-        UnknownSpecHostError: ``spec.host`` names neither this machine nor
-            a registered peer (see :func:`format_unknown_host_error`).
+        UnknownSpecHostError: nothing in ``spec.host`` is usable — a name that
+            resolves nowhere, or a chain whose every candidate was rejected
+            (see :func:`format_route_error`).
     """
     # stx-allow: fallback (reason: an unresolvable/unloadable spec must fall
     # through to the local verb's own established error surface — the
@@ -186,14 +329,27 @@ def resolve_spec_host_peer(
     if local_names is None:
         local_names = _local_host_names(current_host)
     spec_host = config.hosts_spec.host
-    kind, peer = classify_spec_host_route(
-        spec_host, current_host, peers, local_names=local_names
+    if reachability is None and isinstance(spec_host, list):
+        reachability = ssh_reachability_oracle(peers)
+    route = resolve_spec_host_route(
+        spec_host,
+        current_host,
+        peers,
+        local_names=local_names,
+        reachability=reachability,
     )
-    if kind == "unknown":
-        head = spec_host[0] if isinstance(spec_host, list) else spec_host
+    if route.kind == UNROUTABLE:
         raise UnknownSpecHostError(
-            format_unknown_host_error(name, str(head), peers, verb=verb)
+            format_route_error(
+                name,
+                spec_host,
+                route,
+                peers,
+                verb=verb,
+                current_host=current_host or "",
+            )
         )
+    kind, peer = route_to_legacy_kind(route)
     if kind != "remote" or peer is None:
         return None
     return peer
@@ -204,6 +360,7 @@ def spec_host_fallback_peer(
     peers: Mapping[str, "PeerSpec"],
     *,
     verb: str,
+    reachability: "ReachabilityOracle | None" = None,
 ) -> str | None:
     """Peer to route ``verb`` to when ``name`` has NO active instances row.
 
@@ -215,14 +372,20 @@ def spec_host_fallback_peer(
     """
     if has_active_row(name):
         return None
-    return resolve_spec_host_peer(name, peers, verb=verb)
+    return resolve_spec_host_peer(
+        name, peers, verb=verb, reachability=reachability
+    )
 
 
 __all__ = [
     "UnknownSpecHostError",
     "classify_spec_host_route",
+    "format_route_error",
     "format_unknown_host_error",
     "has_active_row",
     "resolve_spec_host_peer",
+    "resolve_spec_host_route",
+    "resolve_start_dispatch_peer",
+    "route_to_legacy_kind",
     "spec_host_fallback_peer",
 ]

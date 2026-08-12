@@ -23,7 +23,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._apptainer_argv_guard import validate_flag_argv
 from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 from ._apptainer_quota_cache import (
     QUOTA_CACHE_CONTAINER_PATH,
@@ -332,68 +331,21 @@ def build_run_argv(
     spec_raw_args = [str(a) for a in (getattr(_ap_raw, "raw_args", None) or [])]
     argv += spec_raw_args
 
-    # Relaxed + directory-overlay + explicit ``--home`` shadows the
-    # to_home tree. ``deploy_to_home_overlay`` materialises the tree
-    # into ``<overlay>/upper/<container_home>/``, but a raw-arg
-    # ``--home /home/agent`` makes apptainer mount a FRESH tmpfs at
-    # that path (verified via `mount`: ``tmpfs on /home/agent``),
-    # which shadows the overlay's upper-home — so $HOME/.mcp.json,
-    # $HOME/CLAUDE.md, $HOME/.claude/ are all silently absent in the
-    # container. The SDK runner's ``merge_home_mcp_servers`` then
-    # reads an empty ``$HOME/.mcp.json`` and a per-agent MCP (e.g. an
-    # agent's own telegrammer bot) never reaches the SDK.
-    #
-    # Fix: bind the materialised upper-home OVER the container HOME,
-    # appended AFTER raw_args so it wins over the ``--home`` tmpfs
-    # (apptainer applies user binds after home setup). No-op for
-    # non-relaxed / non-directory-overlay specs (resolver returns
-    # None) and when the upper-home wasn't materialised.
-    # resolve_container_home / resolve_overlay_upper_home already imported at
-    # the top of this function; reuse the up-front resolution.
-    upper_home = _upper_home
-    if upper_home is not None and upper_home.is_dir():
-        container_home = resolve_container_home(config)
-        argv += ["--bind", f"{upper_home}:{container_home}"]
+    # Every flag contributor has now run. The ordering-sensitive tail
+    # passes — duplicate-``--env`` collapse, the banned-port refusal, the
+    # overlay-upper-home bind, the secret lift, the last-wins credentials
+    # bind and the malformed-flag guard — live in _apptainer_argv_finalize,
+    # which documents why each one has to see the COMPLETE flag region.
+    # resolve_overlay_upper_home was already resolved up-front; reuse it.
+    from ._apptainer_argv_finalize import finalize_flag_argv
 
-    # SECURITY (P1 credential fix): lift secret-shaped ``--env KEY=VALUE``
-    # pairs out of the WORLD-READABLE argv (it becomes a tmux ``bash -c``
-    # pane cmd; /proc/<pid>/cmdline leaks it to any local process) into a
-    # per-agent 0600 ``--env-file``. AFTER every ``--env`` source
-    # (auth/provider/listen/spec.env/raw_args) so any secret is caught, but
-    # BEFORE the creds bind below so that bind stays LAST (its last-wins
-    # shadowing invariant). apptainer still delivers every value; see
-    # _apptainer_secret_env.
-    from ._apptainer_secret_env import redact_secret_env_to_file
-
-    argv = redact_secret_env_to_file(argv, state_dir=state_dir)
-
-    # Designated credentials file (spec.claude.credentials_file) — bound
-    # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
-    # binds (after the overlay-upper-home bind) so the relaxed ``--home``
-    # tmpfs / upper-home bind cannot shadow it; last bind to a path wins.
-    # apptainer FILE binds need the in-container destination to pre-exist,
-    # so first ensure an empty placeholder at the host path backing the
-    # container $HOME (overlay upper-home when relaxed-directory-overlay,
-    # else the workspace-home bind). Without it a fresh overlay agent FATALs
-    # at boot: "destination doesn't exist in container". The placeholder
-    # goes in the bind DESTINATION backing, never to_home (whose
-    # credential-leak guard refuses .credentials.json). No-op w/o a creds bind.
-    from ._apptainer_auth import credentials_file_bind, ensure_credentials_bind_target
-
-    creds_bind = credentials_file_bind(config)
-    ensure_credentials_bind_target(
+    argv = finalize_flag_argv(
+        argv,
         config,
+        state_dir=state_dir,
         home_host=home_host,
-        overlay_upper_home=upper_home,
-        bind_flags=creds_bind,
-    )
-    argv += creds_bind
-
-    # Root-cause guard for the stray ``--fakeroot`` file in the project root
-    # (see _apptainer_argv_guard): a value-taking flag missing its value.
-    # raw_args + name let the message attribute the fault and name the spec.
-    validate_flag_argv(
-        argv, raw_args=spec_raw_args, agent=getattr(config, "name", None)
+        upper_home=_upper_home,
+        spec_raw_args=spec_raw_args,
     )
 
     argv.append(str(sif_path))
@@ -420,7 +372,7 @@ def build_run_argv(
     if tui:
         ch = resolve_container_home(config).rstrip("/")
         has_mcp = (home_host / ".mcp.json").is_file() or (
-            upper_home is not None and (upper_home / ".mcp.json").is_file()
+            _upper_home is not None and (_upper_home / ".mcp.json").is_file()
         )
         if has_mcp:
             tui_mcp_config = f"{ch}/.mcp.json"
@@ -445,7 +397,7 @@ def build_run_argv(
         # settings.json at materialize time).
         for _rel in (".claude/settings.json", ".claude/settings.local.json"):
             if (home_host / _rel).is_file() or (
-                upper_home is not None and (upper_home / _rel).is_file()
+                _upper_home is not None and (_upper_home / _rel).is_file()
             ):
                 tui_settings = f"{ch}/{_rel}"
                 break
