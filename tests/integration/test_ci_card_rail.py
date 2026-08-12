@@ -398,6 +398,7 @@ def test_a_green_verdict_does_not_claim_mergeability(rail) -> None:
         conclusion="success",
         leg="pytest-matrix",
         run_url="https://example.test/1",
+        card_id="ci-sac-abcdef123456",
     )
     # Act
     text = rail.verdict_text(**kwargs)
@@ -414,6 +415,7 @@ def test_a_green_verdict_names_what_it_did_not_see(rail) -> None:
         conclusion="success",
         leg="pytest-matrix",
         run_url="https://example.test/1",
+        card_id="ci-sac-abcdef123456",
     )
     # Act
     text = rail.verdict_text(**kwargs)
@@ -569,6 +571,7 @@ def test_verdict_text_states_the_conclusion(rail, conclusion: str) -> None:
         conclusion=conclusion,
         leg="pytest-matrix",
         run_url=run_url,
+        card_id="ci-sac-abcdef123456",
     )
     # Assert
     assert conclusion.upper() in text
@@ -585,6 +588,7 @@ def test_verdict_text_links_the_run(rail) -> None:
         conclusion="failure",
         leg="pytest-matrix",
         run_url=run_url,
+        card_id="ci-sac-abcdef123456",
     )
     # Assert
     assert run_url in text
@@ -602,6 +606,7 @@ def test_a_red_verdict_names_what_broke(rail) -> None:
         conclusion="failure",
         leg="pytest-matrix",
         run_url="https://example.test/1",
+        card_id="ci-sac-abcdef123456",
         detail=detail,
     )
     # Assert

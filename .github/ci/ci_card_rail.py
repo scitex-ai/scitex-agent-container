@@ -63,6 +63,10 @@ from ci_rail_cards import (  # noqa: E402 — sibling module, path fixed up abov
     upsert_card,
 )
 from ci_rail_failure import summarize_failures  # noqa: E402 — sibling module
+from ci_rail_message import (  # noqa: E402 — sibling module
+    sibling_workflow_names,
+    verdict_text,
+)
 from ci_rail_listen import (  # noqa: E402 — sibling module, path fixed up above
     TOKEN_DIR,
     fleet_agents,
@@ -173,57 +177,6 @@ def resolve_recipient(
     return (str(name) if name else None), "spec"
 
 
-def verdict_text(
-    *,
-    repo: str,
-    branch: str,
-    sha: str,
-    conclusion: str,
-    leg: str,
-    run_url: str,
-    detail: str = "",
-) -> str:
-    """The message a woken human reads.
-
-    ``detail`` names what broke. It is not decoration: a notification
-    that arrives and says only "Red" has solved half the problem, and
-    half is measurable here — seven consecutive red nights on this fleet
-    reached nobody, and the fix for that is not merely arriving, it is
-    arriving with the failing test named.
-
-    Deliberately NO attribution. The rail reports the verdict and quotes
-    the log; it does not say WHY, because it cannot know, and a rail that
-    guesses causes teaches people to distrust the ones it gets right.
-    """
-    head = f"CI {conclusion.upper()} — {repo_basename(repo)} `{branch}` ({sha[:8]})"
-    if leg:
-        head += f" [{leg}]"
-    # THE GREEN MESSAGE MUST NOT CLAIM MERGEABILITY. This rail sees ONE
-    # workflow -- the pytest gate -- because `needs:` cannot reach across
-    # workflow files. lint, quality-audit, import-smoke and the
-    # hosted-runner guard all report separately and are invisible here.
-    #
-    # This said "Green. Self-merge if you own it." That was a verdict
-    # computed over the checks that happen to be in view, presented as a
-    # verdict over the checks that should have run -- the same shape as
-    # reading a queued check as green, which is the bug this whole rail
-    # exists to answer. Reproducing it inside the fix would be the worst
-    # possible place for it. So: state the scope, and let the reader own
-    # the merge decision.
-    tail = (
-        "The pytest gate is green for this commit. It is NOT a merge signal: "
-        "lint, quality, import-smoke and the runner guard report separately "
-        "and this rail cannot see them."
-        if conclusion == "success"
-        else "Red. Fix and push; this rail re-fires on your next push."
-    )
-    parts = [f"{head}.", tail]
-    if detail.strip():
-        parts.append(detail.strip())
-    parts.append(f"Run: {run_url}")
-    parts.append(f"Card: {card_id_for(repo, sha)}")
-    return "\n".join(parts)
-
 
 def record_verdict(
     *,
@@ -235,6 +188,7 @@ def record_verdict(
     run_url: str,
     token: str,
     run_id: str = "",
+    workflow: str = "",
 ) -> int:
     """Write the verdict onto the card, then deliver it. Returns an exit code."""
     pkg = cards()
@@ -276,6 +230,10 @@ def record_verdict(
         leg=leg,
         run_url=run_url,
         detail=detail,
+        card_id=card_id,
+        # Derived from the checkout at verdict time, so a workflow added
+        # later cannot silently drop out of the disclaimer.
+        unobserved=sibling_workflow_names(workflow),
     )
     upsert_card(
         pkg,
@@ -307,11 +265,48 @@ def record_verdict(
         last_activity=now_stamp(),
     )
     pkg.comment_task(task_id=card_id, text=body, by="ci")
-    print(
-        f"card {card_id}: recorded {conclusion} "
-        f"(status={STATUS_FOR_CONCLUSION[conclusion]})",
-        flush=True,
-    )
+    # READ BACK THE FIELD, NOT THE CARD'S EXISTENCE. A presence check
+    # passes straight through the failure this guards against.
+    #
+    # The shared board takes its mutex as an flock on a file INSIDE each
+    # container, while the cards live in one shared postgres. Two agents
+    # each lock their own copy, both succeed instantly, and both do
+    # read-whole-store -> mutate -> write-whole-store. Last writer wins
+    # and silently reverts the other -- measured on the live store, where
+    # a `complete_task` that RETURNED done was later found blocked,
+    # undone by writes to entirely unrelated cards. The store's own
+    # shrink guard compares the set of IDS, so it sees a card VANISH but
+    # never a card REGRESS, and the confirmed loss passed it cleanly.
+    #
+    # That failure is this rail's thesis turned against it: a verdict
+    # written and silently reverted is INDISTINGUISHABLE from a verdict
+    # never written -- the card exists, looks like ours, and says the
+    # wrong thing. So verify the VALUE, rewrite once, and if the store
+    # still disagrees, fail loudly rather than notify anyone about a
+    # record that has already evaporated.
+    expected = STATUS_FOR_CONCLUSION[conclusion]
+    stored = (get_card(pkg, card_id) or {}).get("status")
+    if stored != expected:
+        _warn(
+            f"card {card_id}: wrote status={expected!r} but the store reads "
+            f"{stored!r} — a concurrent writer clobbered it. Rewriting once."
+        )
+        upsert_card(
+            pkg,
+            card_id,
+            title=card_title(repo, branch, sha, conclusion),
+            status=expected,
+            blocker=BLOCKER_CLEARED,
+            last_activity=now_stamp(),
+        )
+        stored = (get_card(pkg, card_id) or {}).get("status")
+        if stored != expected:
+            return _die(
+                f"card {card_id}: status reads {stored!r} after writing "
+                f"{expected!r} twice. The verdict is NOT durably recorded, so "
+                "this fails rather than announcing a record that does not exist."
+            )
+    print(f"card {card_id}: recorded {conclusion} (status={expected}, read back)")
 
     reach, subs = reachability_of(agents, recipient)
     print(
@@ -403,6 +398,7 @@ def _cmd_verdict(args: argparse.Namespace) -> int:
             run_url=args.run_url or "",
             token=token,
             run_id=args.run_id or "",
+            workflow=args.workflow or "",
         )
     except ImportError as exc:
         return _die(f"scitex_cards is not importable on this runner: {exc}")
@@ -434,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     verdict.add_argument("--leg", default="")
     verdict.add_argument("--run-url", dest="run_url", default="")
     verdict.add_argument("--run-id", dest="run_id", default="")
+    # The workflow this rail OBSERVES; every other workflow in the
+    # checkout becomes the "cannot see" list on a green verdict.
+    verdict.add_argument("--workflow", default="")
     verdict.set_defaults(func=_cmd_verdict)
     return parser
 

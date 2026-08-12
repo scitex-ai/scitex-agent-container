@@ -65,12 +65,40 @@ def _token() -> str | None:
     return None
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Drop the Authorization header when a redirect crosses hosts.
+
+    THE JOB-LOG ENDPOINT IS A REDIRECT, and that is what makes this
+    necessary rather than fussy. ``/actions/jobs/{id}/logs`` answers 302
+    with a Location on Azure blob storage, where the log actually lives.
+    urllib follows redirects by default and, by default, REPLAYS every
+    header -- including ``Authorization: Bearer <github token>``. Azure
+    has no idea what a GitHub token is and rejects the request:
+
+        HTTP Error 401: Server failed to authenticate the request.
+
+    So the header that authenticates the first hop breaks the second.
+    The blob URL carries its own signature in the query string and needs
+    no header at all. Measured against a real failed run -- from the API
+    shape alone this looks like it should work, and it does not.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            for header in ("Authorization", "authorization"):
+                new.headers.pop(header, None)
+                new.unredirected_hdrs.pop(header, None)
+        return new
+
+
 def _api(path: str, token: str, *, raw: bool = False, timeout: float = 20.0):
     req = urllib.request.Request(f"{GITHUB_API}{path}")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    opener = urllib.request.build_opener(_StripAuthOnRedirect)
+    with opener.open(req, timeout=timeout) as resp:  # noqa: S310
         payload = resp.read()
         if resp.info().get("Content-Encoding") == "gzip":
             payload = gzip.decompress(payload)

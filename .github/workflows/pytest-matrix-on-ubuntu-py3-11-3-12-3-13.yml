@@ -366,4 +366,5 @@ jobs:
               --conclusion "$TEST_RESULT" \
               --leg "pytest-matrix" \
               --run-id "${{ github.run_id }}" \
+              --workflow "${{ github.workflow }}" \
               --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
