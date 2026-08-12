@@ -307,7 +307,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # ---- 4c. gdu — dundee/gdu (pinned), NOT Ubuntu's gnu-disk-usage --
     # Ubuntu 24.04's apt `gdu` is the ambiguous "gnu-disk-usage" build
     # (no `-o-` machine-readable JSON). sac's .claude size-audit
-    # (F-CS8, _workdir_audit.py) hard-depends on dundee/gdu's
+    # (F-CS8, _workdir/_audit.py) hard-depends on dundee/gdu's
     # `gdu -o- <path>` JSON contract — different binary, same name.
     # Pull a PINNED static release tarball from the dundee/gdu GitHub
     # releases page so the .claude audit's JSON parser stays stable

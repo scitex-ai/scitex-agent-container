@@ -28,10 +28,13 @@ from ._alarm import (
     record_self_recovered,
 )
 from ._budget import DEFAULT_PASS_CAP, Budget, history_path, read_history, save_history
+from ._perform import perform, resolve_pending
+from ._report import AgentReport
 from ._rule import MANAGED_POLICIES, Verdict, decide
 
 __all__ = [
     "AgentReport",
+    "perform",
     "PassOutcome",
     "fleet_agents_dir",
     "fleet_spec_paths",
@@ -41,26 +44,6 @@ __all__ = [
 #: Same override the sibling fleet-wide verb (``sac agents refresh-acl``)
 #: honours, so both point at one registry in tests and on odd install roots.
 _AGENTS_DIR_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
-
-
-@dataclass(frozen=True)
-class AgentReport:
-    """One agent's line in the report. ``detail`` is ALWAYS printed."""
-
-    name: str
-    verdict: Verdict
-    reason: str
-    detail: str
-    policy: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "verdict": self.verdict.value,
-            "reason": self.reason,
-            "detail": self.detail,
-            "policy": self.policy,
-        }
 
 
 @dataclass(frozen=True)
@@ -89,8 +72,14 @@ class PassOutcome:
         look" is not clean, and a pass that could not see the fleet — or
         could not read its own memory of what it already restarted — must
         not exit 0 and let a cron log it as a healthy tick.
+
+        FLEET_BLACKOUT joins them, and belongs in this group rather than the
+        next one for the same reason: the pass DID look and could not tell N
+        independent deaths from one event that killed them together. That is
+        an unresolved reading, not a tidy "something is down" — and it is the
+        state that most needs a human, so it must never exit 0.
         """
-        if self.of(Verdict.UNKNOWN, Verdict.BUDGET_UNKNOWN):
+        if self.of(Verdict.UNKNOWN, Verdict.BUDGET_UNKNOWN, Verdict.FLEET_BLACKOUT):
             return 2
         if self.of(
             Verdict.FAILED,
@@ -178,6 +167,32 @@ def _batched_snapshot_fn(
     return _cached
 
 
+def _server_present(snapshot_fn: Callable[..., dict | None] | None) -> bool | None:
+    """Is there a tmux SERVER on this host at all? ``None`` when we cannot say.
+
+    Separate from the session snapshot because it answers a different question,
+    and because the two empties mean opposite things: a live server holding no
+    sessions is "every agent died" (recover them — the 33-agent OAuth rotation
+    is why this job exists), while no server at all is "one thing killed them
+    together" (refuse — see :mod:`._blackout`).
+
+    An INJECTED ``snapshot_fn`` yields ``None``, deliberately. A test's fake
+    speaks for which sessions exist; it says nothing about whether a tmux
+    server does, and reading a substituted session list as evidence about the
+    server would be inventing a fact nobody supplied. ``None`` never trips the
+    breaker, so every existing pass-level test keeps its current behaviour.
+    """
+    if snapshot_fn is not None:
+        return None
+    from .._runners._tmux._tmux_probe import list_sessions_activity_detailed
+
+    # stx-allow: fallback (reason: a probe that raises observed nothing — UNKNOWN, which authorises no refusal and no restart)
+    try:
+        return list_sessions_activity_detailed()[1]
+    except Exception:
+        return None
+
+
 def _real_restart(name: str) -> bool:
     """Restart ONE local agent. ``is not False`` per the CLI's own rule.
 
@@ -238,97 +253,6 @@ def _spec_report(spec: Path, exc: Exception) -> AgentReport:
     )
 
 
-#: Which rate-limit stood in the way — and, crucially, whether it means
-#: "wait" or "a human must look". Only :attr:`Verdict.OVER_BUDGET` is
-#: carded (see :mod:`._alarm`), and the difference is not cosmetic:
-#:
-#: * ``debounce`` (COOLING-DOWN) is the NORMAL state of a healthy recovery.
-#:   The debounce is 30min and the timer ticks every 5, so a perfectly good
-#:   restart is inside its own debounce for the next five ticks. Carding
-#:   that would mint a board card for every successful heal — training the
-#:   operator to ignore the board, which is how the fleet died unnoticed in
-#:   the first place.
-#: * ``over-budget`` means we have already bounced it twice in an hour AND
-#:   waited out two debounces, and it is STILL down. Restarting is not
-#:   fixing this: that is a real, human-shaped problem, so it is carded.
-#: * ``pass-cap`` (CAPPED) is our own throttle, not the agent's fault. The
-#:   next tick picks it up 5 minutes later.
-_BUDGET_VERDICTS = {
-    "debounce": Verdict.COOLING_DOWN,
-    "over-budget": Verdict.OVER_BUDGET,
-    "pass-cap": Verdict.CAPPED,
-}
-
-#: Verdicts that mean we ATTEMPTED a restart, so the history must be
-#: persisted before we touch the next agent. FAILED counts: a restart that
-#: raised still consumed a real attempt, and forgetting it would let the
-#: next tick retry immediately.
-_SPENT = (Verdict.RESTARTED, Verdict.FAILED)
-
-
-def _perform(
-    name: str,
-    decision,
-    *,
-    budget: Budget | None,
-    apply: bool,
-    now: float,
-    restart_fn: Callable[[str], bool],
-    budget_detail: str = "",
-) -> AgentReport:
-    """Turn the rule's RESTART authorisation into what we actually did."""
-    if budget is None:
-        # We could not read our OWN restart memory, so the debounce and the
-        # hourly cap cannot be enforced. Restarting anyway would not be
-        # "trying harder" — with no memory, EVERY corpse is restartable on
-        # EVERY 5-minute tick, forever. That is the restart loop the limits
-        # exist to prevent, and it is strictly worse than a down agent.
-        return AgentReport(
-            name,
-            Verdict.BUDGET_UNKNOWN,
-            "budget-unreadable",
-            f"{decision.detail}; NOT restarted: {budget_detail}",
-        )
-    check = budget.check(name, now)
-    if not check.allowed:
-        return AgentReport(
-            name,
-            _BUDGET_VERDICTS[check.reason],
-            check.reason,
-            f"{decision.detail}; NOT restarted: {check.detail}",
-        )
-
-    if not apply:
-        return AgentReport(
-            name,
-            Verdict.WOULD_RESTART,
-            decision.reason,
-            f"{decision.detail} — would restart (dry-run: nothing was done; "
-            f"re-run with --apply to actually restart)",
-        )
-
-    # stx-allow: fallback (reason: one agent's restart raising must never abort the sweep — the rest of the fleet is still down and still needs recovering; the failure is carded and reported)
-    try:
-        ok = restart_fn(name)
-    except Exception as exc:
-        budget.record(name, now)  # a restart we ATTEMPTED still spends budget
-        return AgentReport(
-            name,
-            Verdict.FAILED,
-            "restart-raised",
-            f"{decision.detail}; restart FAILED: {exc}",
-        )
-    budget.record(name, now)
-    if ok:
-        return AgentReport(name, Verdict.RESTARTED, decision.reason, decision.detail)
-    return AgentReport(
-        name,
-        Verdict.FAILED,
-        "restart-returned-false",
-        f"{decision.detail}; restart ran but reported FAILURE — the agent is "
-        f"still down",
-    )
-
 
 def reconcile_pass(
     *,
@@ -384,6 +308,11 @@ def reconcile_pass(
     read = read_history(history_file)
     budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
     reports: list[AgentReport] = []
+    # RESTART authorisations, held until the whole fleet has been decided. A
+    # corpse is only interpretable next to its neighbours: N corpses with no
+    # live session anywhere is ONE event, not N deaths, and a loop that
+    # restarts as it goes can never see that. See :mod:`._blackout`.
+    pending: list[tuple[str, Any, str]] = []
 
     for spec in fleet_spec_paths(specs_dir):
         # stx-allow: fallback (reason: a single malformed/foreign spec.yaml must NOT abort the rest of the fleet sweep — it is reported as UNKNOWN and the sweep continues, mirroring `sac agents refresh-acl`)
@@ -417,36 +346,30 @@ def reconcile_pass(
                 )
             )
             continue
-        report = _perform(
-            name,
-            decision,
+        pending.append((name, decision, policy))
+
+    # The fleet is decided; now act on it as a whole.
+    #
+    # Read the snapshot through the SAME rescue the per-agent path uses rather
+    # than calling `snapshot()` raw: `_observed_snapshot` is what turns an
+    # empty reading taken from inside a container — where the host's tmux is in
+    # another mount namespace — into ``None`` instead of "the fleet is empty".
+    # Calling the probe directly here would reintroduce exactly the
+    # blind-reads-as-absent confusion this breaker exists to catch, one level
+    # up from where it was fixed.
+    reports.extend(
+        resolve_pending(
+            pending,
+            server_present=_server_present(snapshot_fn),
             budget=budget,
             apply=apply,
             now=now,
             restart_fn=restart_fn,
             budget_detail=read.detail,
+            history_file=history_file,
+            stream=stream,
         )
-        reports.append(report)
-        # PERSIST THE MOMENT WE SPEND BUDGET, never only at the end. The
-        # scheduled form runs under a systemd timeout, and a pass killed
-        # mid-sweep with its history still in RAM would forget the agents it
-        # had just bounced — so the next tick would bounce them again,
-        # debounce and hourly cap silently disarmed. That is the restart
-        # LOOP these limits exist to prevent, re-introduced by the very
-        # timeout meant to contain the pass. One small atomic write per
-        # restart (<=`limit` per pass) buys immunity to it.
-        if apply and budget is not None and report.verdict in _SPENT:
-            # stx-allow: fallback (reason: if we can no longer RECORD restarts we must stop PERFORMING them — a restart we cannot remember is an unbounded one. Spending the pass cap halts further restarts safely; the loud print + non-zero exit carry the failure.)
-            try:
-                save_history(history_file, budget.history, now=now)
-            except OSError as exc:
-                budget.spent = budget.pass_cap  # authorise no further restarts
-                print(
-                    f"[fleet-reconcile] CANNOT RECORD restarts to "
-                    f"{history_file} ({exc}) — halting this pass's restarts. "
-                    f"An unrecordable restart is an unbounded one.",
-                    file=stream,
-                )
+    )
 
     if apply and budget is not None:
         # stx-allow: fallback (reason: the end-of-pass prune is housekeeping; its failure is already reported by the per-restart guard above and must not crash a pass that has already done its work)

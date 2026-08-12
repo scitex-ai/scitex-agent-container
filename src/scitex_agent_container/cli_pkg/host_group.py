@@ -17,7 +17,9 @@ import subprocess
 
 import click
 
+from .._state._peer_resolve import peers_with_registry
 from .._state.host_config import (
+    Config,
     build_ssh_argv,
     load,
     ssh_control_options_str,
@@ -63,6 +65,26 @@ def host_group() -> None:
 # probe / ssh-opts / peer CRUD).
 register_list_command(host_group)
 register_validate_command(host_group)
+
+
+def _unknown_peer_error(peer: str, cfg: Config) -> str:
+    """The message for a peer neither config.yaml nor the registry knows.
+
+    Names BOTH sources, because "not defined in config.yaml" was actively
+    misleading once the registry became a route source: on a host with no
+    config.yaml at all it pointed the operator at a file that does not
+    exist and never mentioned the registry that lists the host they asked
+    for. Ends with the one command that enumerates every name that WOULD
+    have worked.
+    """
+    where = str(cfg.source_path) if cfg.source_path else "config.yaml"
+    return (
+        f"error: peer '{peer}' is not defined in {where} and is not a "
+        f"routable host in the scitex-dev registry (a registry host is "
+        f"routable when it declares an ssh_alias).\n"
+        f"Add it under peers: in config.yaml or to the registry, then "
+        f"re-run. See: sac host list"
+    )
 
 
 def split_on_flag(argv: list[str]) -> tuple[str | None, list[str]]:
@@ -114,18 +136,15 @@ def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
     ``remote=True``.
     """
     cfg = load()
-    if peer not in cfg.peers:
-        click.echo(
-            f"error: --on peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in config.yaml, then re-run.",
-            err=True,
-        )
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        click.echo(_unknown_peer_error(peer, cfg), err=True)
         return 2
     from ._on_start_propagate import is_agents_start_argv, propagate_remote_start
 
     if is_agents_start_argv(argv):
         return propagate_remote_start(peer, argv, ssh_argv0=ssh_argv0)
-    ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], cfg.peers)
+    ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], peers)
     proc = subprocess.run(ssh_argv)
     return proc.returncode
 
@@ -147,24 +166,23 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
       $ sac host exec spartan -- agent list --json
       $ sac host exec bm198 -- sac db export --since 2026-05-01
 
-    PEER must be defined under config.yaml's ``peers:`` block. The peer's
-    ``via:`` chain renders into ssh's ``-J`` flag automatically; sac
-    never opens a port. Stdio is inherited so streaming output works.
+    PEER may be a ``peers:`` entry in config.yaml or any host in the
+    scitex-dev registry that declares an ``ssh_alias``; config.yaml wins
+    when both define it. The peer's ``via:`` chain renders into ssh's
+    ``-J`` flag automatically; sac never opens a port. Stdio is inherited
+    so streaming output works.
     """
     cfg = load()
-    if peer not in cfg.peers:
-        click.echo(
-            f"error: peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in config.yaml, then re-run.",
-            err=True,
-        )
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        click.echo(_unknown_peer_error(peer, cfg), err=True)
         raise SystemExit(2)
     if not argv:
         click.echo(
             "error: no command supplied. Try: sac host exec PEER -- <cmd>", err=True
         )
         raise SystemExit(2)
-    ssh_argv = build_ssh_argv(peer, list(argv), cfg.peers)
+    ssh_argv = build_ssh_argv(peer, list(argv), peers)
     proc = subprocess.run(ssh_argv)
     raise SystemExit(proc.returncode)
 
@@ -190,8 +208,9 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     import time
 
     cfg = load()
-    if peer not in cfg.peers:
-        msg = f"peer '{peer}' is not defined in config.yaml"
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        msg = _unknown_peer_error(peer, cfg)
         if _json_flag(ctx, as_json):
             click.echo(json.dumps({"peer": peer, "reachable": False, "error": msg}))
         else:
@@ -202,7 +221,7 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     ssh_argv = build_ssh_argv(
         peer,
         remote_argv,
-        cfg.peers,
+        peers,
         extra_opts=["-o", f"ConnectTimeout={timeout}"],
     )
     started = time.monotonic()

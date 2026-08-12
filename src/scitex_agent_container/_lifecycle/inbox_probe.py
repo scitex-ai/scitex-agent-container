@@ -62,7 +62,7 @@ import urllib.request
 
 from .._listen._reachability import REACHABLE, UNKNOWN, UNREACHABLE
 
-__all__ = ["DEFAULT_LISTEN_URL", "probe_inbox_reachability"]
+__all__ = ["DEFAULT_LISTEN_URL", "probe_inbox_reachability", "probe_inbox_status"]
 
 DEFAULT_LISTEN_URL = "http://127.0.0.1:7878"
 
@@ -92,6 +92,42 @@ def probe_inbox_reachability(
 
     Never raises: every failure path degrades to ``(None, UNKNOWN)``.
     """
+    count, reachable, _fault = probe_inbox_status(
+        name, listen_url=listen_url, bearer=bearer, timeout_s=timeout_s
+    )
+    return count, reachable
+
+
+def probe_inbox_status(
+    name: str,
+    *,
+    listen_url: str | None = None,
+    bearer: str | None = None,
+    timeout_s: float = _TIMEOUT_S,
+) -> tuple[int | None, str, str | None]:
+    """:func:`probe_inbox_reachability`, plus the FAULT that disambiguates it.
+
+    Returns ``(inbox_subscribers, inbox_reachable, fault)``.
+
+    The third element is the whole point of this function, and the answer to
+    the confound this module's docstring spends forty lines warning about. The
+    listen daemon now pairs the subscriber count with the host's tmux table and
+    publishes which of the two causes it observed (see
+    ``_listen._inbox_fault``):
+
+    * ``deaf_inbox``  — ALIVE and unreachable. Case (a): genuinely deaf.
+    * ``not_running`` — the registry row outlived the process. Case (b).
+    * ``None``        — no fault, or a listen too old to publish one, or a
+      reading nobody could take. Never a verdict.
+
+    So a caller no longer has to *remember* that a zero is ambiguous — the zero
+    now arrives with its cause attached. Note this changes nothing about rule
+    2: the fault is still reported and nothing else. It must not feed a
+    restart, least of all ``deaf_inbox``, whose subject is by definition a
+    LIVE session that a restart would destroy.
+
+    Never raises: every failure path degrades to ``(None, UNKNOWN, None)``.
+    """
     base = (listen_url or _listen_base_url()).rstrip("/")
     token = bearer if bearer is not None else os.environ.get("SAC_LISTEN_BEARER")
     req = urllib.request.Request(f"{base}/agents/{name}/status", method="GET")
@@ -107,15 +143,20 @@ def probe_inbox_reachability(
         ValueError,
         OSError,
     ):  # stx-allow: fallback (reason: an unobservable listen must yield UNKNOWN — never a false 'unreachable' verdict against a healthy agent)
-        return None, UNKNOWN
+        return None, UNKNOWN, None
 
     if not isinstance(body, dict):
-        return None, UNKNOWN
+        return None, UNKNOWN, None
+
+    fault = body.get("fault")
+    if not isinstance(fault, str) or not fault:
+        # Absent (a listen predating the fault overlay) or blank. No verdict.
+        fault = None
 
     count = body.get("inbox_subscribers")
     if not isinstance(count, int) or isinstance(count, bool):
         # Field absent (an older listen that predates the observation) or
         # not an int. We did not observe a zero — we observed nothing.
-        return None, UNKNOWN
+        return None, UNKNOWN, fault
 
-    return count, (REACHABLE if count >= 1 else UNREACHABLE)
+    return count, (REACHABLE if count >= 1 else UNREACHABLE), fault

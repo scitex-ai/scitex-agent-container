@@ -13,7 +13,7 @@ import os
 import shutil
 from pathlib import Path
 
-from scitex_agent_container._walk_exclusions import (
+from scitex_agent_container._workdir._walk_exclusions import (
     copytree_ignore,
     is_excluded_walk_dir,
     prune_walk_dirnames,
