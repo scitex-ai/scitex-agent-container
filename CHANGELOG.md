@@ -6,7 +6,193 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `#NNN` rule now lives in ONE place, and stops firing on hex colours
+  and code.** The rule was correct and the wording was good, but it existed
+  only as a shell hook, and it refused six things it should never have
+  refused. Measured against the shipped hook before this change:
+  `#589abc` BLOCKED, `use #589abc for the border` BLOCKED, `#123456`
+  BLOCKED, `` the token `#589` is data `` BLOCKED, a fenced block holding
+  `#589` BLOCKED, and `a dash &#8212; here` BLOCKED. A gate that fires on a
+  hex colour gets switched off by the first person it inconveniences, and
+  then the real rule is gone too.
+
+  The predicate and its refusal text moved into
+  `_baseline_assets/telegram_hooks/_telegram_rules.py`, which is now the
+  single source of truth, per the operator 2026-08-12: 「mcp も同じですね。
+  同じルールなので、ルールは一つの場所に、shell 用の hook と mcp のフィルタで
+  同じルールを適用させて ssot に、が良いかと」. Two thin adapters call it —
+  `enforce_telegram_no_bare_issue.sh` (Claude Code hook JSON → rc 0/2) and
+  `python3 _telegram_rules.py --text-stdin` (raw text → one JSON line), the
+  language-agnostic contract the TypeScript MCP server calls. Neither
+  composes its own wording: the refusal text IS the fix instruction the
+  operator reads on his phone, and two paths that format their own drift.
+  That is not a hypothetical — a rule enforced on one path and absent on the
+  other is exactly how a bare `scitex-dev #589` reached him on 2026-08-11.
+
+  Two decisions were added to the author's original three, in the same
+  documented form so a reader can disagree with the choice rather than guess
+  whether it was one. (4) A `#` glued to ASCII letters is a colour, not a
+  reference — deliberately ASCII-only rather than `\w`, because Python's
+  `\w` matches CJK and would also swallow `#970の話`, a REAL bare reference
+  written without a space. (5) Code is data, not prose: a number inside a
+  fence or an inline code span is being shown, not cited, and is blanked
+  with the same NUL fill as URLs so it still cannot bridge a number to a
+  parenthesis outside it.
+
+  `tests/integration/telegram_hooks/test_telegram_rule_ssot.py` drives BOTH
+  adapters over one shared table and asserts they return the same verdict
+  and the same wording. That they call the same function is an
+  implementation detail, and an implementation detail is not the property.
+
+  Two adapters agreeing is necessary but not sufficient: that suite stays
+  green whatever they agree ON, including a wrong answer. So the predicate
+  is also tested directly, at the mirrored path
+  `tests/scitex_agent_container/_baseline_assets/telegram_hooks/test__telegram_rules.py`
+  — the decided accept/reject table asserted against the one function that
+  decides it, plus the API the adapters consume (the `Verdict` shape, the
+  `as_dict` payload the MCP binding serialises, and the `ESCAPE_ENV` name
+  both honour). A shared predicate with no direct unit tests is exactly the
+  thing that drifts.
+
+- **`sac agents reconcile` refuses a MASS restart: N corpses with no tmux
+  server at all is ONE event, not N agents dying.** The reconcile timer is
+  currently disabled and has never run; this is what has to land before it is
+  safe to arm.
+
+  `_runners/_tmux/_tmux_probe.py` treats tmux's "no server running" as a
+  CONFIRMED-empty fleet — it returns `{}`, a real observation, not `None` — and
+  `_verdict_tmux._observed_snapshot` rescues that only `if not snapshot and
+  in_sif_fn()`, i.e. only inside a container. This job runs under
+  `systemd --user` on the HOST, where `in_sif()` is `False`, so `{}` passed
+  straight through as "every session is genuinely absent".
+
+  Correct when a tmux server is normally absent. Catastrophically wrong when
+  the server dying IS the failure mode — which is what happened on 2026-08-11,
+  when the host's tmux server went away and took eleven agents with it inside a
+  two-second window. Every one of them reads as an independent corpse whose
+  spec asks to be kept running.
+
+  The existing budget does not cover this and is not the thing that fails: it
+  throttles per agent (30-min debounce, 2/agent/hour) and per pass (10), and
+  neither is fleet-wide. **10 restarts/pass x 12 passes/hour = up to 120
+  container starts an hour** on a host that just had a resource event, with 90
+  of 113 specs opted in. It does not even fail fast — `tmux new-session` spawns
+  a server, so `sac agents start` SUCCEEDS into a host that just lost one.
+
+  A pass that would restart more than one agent while **no tmux server exists**
+  now withholds every restart, spends no budget, and exits 2 (new verdict
+  `FLEET-BLACKOUT`, grouped with `UNKNOWN`/`BUDGET-UNKNOWN` because the pass
+  looked and could not resolve what it saw).
+
+  The predicate is SERVER-ABSENT, not zero-sessions, and that distinction is
+  the design. Both incidents show an empty session list and demand opposite
+  responses: a live server holding no sessions means the AGENTS died — the
+  2026-06 OAuth rotation killed 33 with tmux untouched, and recovering exactly
+  that is why this job exists — while no server at all means one thing killed
+  them together. An earlier draft keyed on zero sessions and would have blocked
+  the first; `test_whole_dead_fleet_is_recovered` caught it on the first run.
+  The fact separating them was already in the probe's hands (`rc != 0` plus a
+  no-server marker versus `rc == 0` with no rows) and was being discarded at
+  the boundary; `list_sessions_activity_detailed` now carries it, and
+  `list_sessions_activity` keeps its exact contract.
+
+  A single corpse is still restarted even with the server gone — refusing there
+  would strand a one-agent host, and one restart is a blast radius the
+  per-agent budget already bounds.
+
+- **The fleet-reconcile job description no longer promises a give-up it does
+  not implement.** It claimed an unrecoverable agent is "RECORDED as degraded
+  instead of bounced endlessly". The recording is implemented; the giving-up is
+  not. The hourly cap is a ROLLING window, so steady state for an agent that
+  can never recover is 2 restarts/hour forever (~48 container starts/day) —
+  which `_budget.py` argues deliberately, since a permanent give-up would
+  strand an agent that crashed three times last March. The behaviour is right
+  and the sentence was wrong; it now says "bounded RATE, not eventual
+  give-up". A promise nobody keeps is worse than no promise.
+### Changed
+
+- **`exit_reason='crashed'` is now `'pid_absent_at_sweep'` — the value names
+  the check that ran, not a fate it never established.** The GC sweep does not
+  witness anything die. It runs `os.kill(pid, 0)` at an arbitrary later moment
+  and writes a row for every pid that is no longer there, which supports
+  exactly one claim: *this pid was not present when we looked.* It wrote that
+  as `crashed`, and paired it with `ended_at=now()`, which reads as a time of
+  death nothing measured.
+
+  Both were believed. Measured 2026-08-12: eleven agents on the fleet host
+  carried `ended_at=2026-08-11T17:54:26Z, exit_reason='crashed'`, and **three
+  separate readers** took the identical second across eleven rows as proof of
+  a simultaneous kill — then reasoned about what could kill eleven processes
+  at once. Nothing did. They had died **10h46m earlier**, across a two-second
+  window when the host's tmux server went away, and `17:54:26Z` was
+  `now_iso()` evaluated *once* before the loop and stamped on every row the
+  sweep reaped. An identical timestamp across N rows is the expected output of
+  one sweep; it is not evidence about the agents.
+
+  Saying *at sweep* in the value is the load-bearing half: it warns that the
+  `ended_at` beside it is the moment we looked, not the moment it ended.
+
+  Backward compatible in both directions. `crashed` is still accepted on read
+  — live databases hold those rows, they mean exactly what the new name says,
+  and dropping the old spelling would send every existing corpse down
+  `_reconcile/_rule.py`'s "an exit_reason this rule does not know" path, which
+  refuses to act, silently making real corpses unrecoverable. `db clean --json`
+  emits **both** keys carrying the same count, so a consumer reading `crashed`
+  does not start seeing a zero — which would be precisely the "success value
+  that is also the didn't-check value" this change exists to stop producing.
+
+  The general rule, which outlives this field: **a field whose name asserts
+  more than its check performed will be believed at its name.** Nobody audits
+  the query behind a value that already sounds like an answer.
+
 ### Added
+
+- **An agent that declares the Telegram MCP and resolves no bot-token slot no
+  longer comes up silently mute** (`runtimes/_cct_rail_verdict`,
+  `runtimes/_cct_rail_alarm`, `sac agents cct-audit`; card
+  `sac-cct-rail-loud-when-no-slot-resolves-20260812`). When no
+  `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` removes
+  the MCP server — correct, by operator ruling — but it removes the rail in
+  BOTH directions at the one moment nothing can report it: the agent starts
+  perfectly, reports healthy, and cannot even self-diagnose, because `health`
+  is a tool on the server that just went away. The 2026-08-12 outage was found
+  by the operator noticing silence.
+
+  Nothing checked that the two halves of the mapping agree. Candidates are
+  derived from the AGENT NAME; the pool is named by whoever wrote it. The new
+  `sac agents cct-audit` swept compute-04 and measured **81 specs declaring the
+  channel, 15 resolving a token, 66 not** — and its "did you mean" column (pool
+  slots sharing a word with the agent, reported to a human and NEVER acted on)
+  named four live mismatches, two of which nobody had reported: `neurovista` →
+  `PAPER_NEUROVISTA`, `neurovista-paper-writer` → `PAPER_NEUROVISTA_WRITER` (a
+  WORD-ORDER difference no derivation rule can bridge), `scitex-clew` →
+  `PAPER_SCITEX_CLEW`, `spartan-dev` → `DEV`.
+
+  The verdict is THREE-VALUED. `_secret_pool.read_pool` now reports whether a
+  MISS is conclusive: a read that sourced no secret FILE holds only the
+  launching process env, which can prove a slot present but never absent. That
+  flag is the 2026-08-12 root cause in one bit — the pool was on the host and
+  `sac-listen.service` had no `SAC_SECRETS_ENVRC`, so three consecutive
+  diagnoses said "there is no token on 04" when the truth was "it was not in
+  the LAUNCHING PROCESS". A pool that reads clean but holds no
+  `CCT_BOT_TOKEN_*` at all is likewise UNKNOWN, not 80 confident false alarms.
+
+  It does **not** gate the start: 66 of the 81 inherit the channel request from
+  the spec templates as scaffolding, Telegram is a comms rail rather than a
+  boot dependency, and a stranded agent is more silent, not less. Instead every
+  alarming verdict is RECORDED in sac's event log (subsystem `cct-rail`,
+  three-valued at the source) and a `blocker` is PUSHED at the lead (ADR-0013)
+  — over the LEAD's Telegram, not the broken agent's, so a mute agent shouts
+  with somebody else's voice. The push is gated on evidence somebody meant this
+  agent to have a bot (a declared slot, a near miss, or a rail that used to
+  work here), because paging all 66 would rebuild the ignored alert channel the
+  2026-08-10 prune was written to remove. `cct-audit` lists all of them
+  regardless and exits 1, so a timer or a relocation preflight can gate on it.
+
+  Token values are never read, logged, or transmitted anywhere in this path —
+  presence only, slot NAMES and pool source PATHS at most.
 
 - **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
   `inbox_subscribers: 0` has always been confounded — it means a detached

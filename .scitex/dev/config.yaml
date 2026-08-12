@@ -38,6 +38,148 @@ audit:
           a security regression, not a compliance win. Kept hosted until an
           ephemeral/isolated runner exists for untrusted-trigger workflows.
 
+    # PS-224, second entry — the ADR-0024 CI feedback rail's `verdict` job.
+    #
+    # THE FINDING IS LITERALLY TRUE AND ITS HAZARD IS EMPIRICALLY FALSE, and
+    # the gap between those two is the whole reason this entry exists rather
+    # than a re-point.
+    #
+    # What PS-224 asserts: `sac-control-plane` is not in the destination
+    # registry. Correct. scitex-dev's registry — the packaged seed in
+    # `scitex_dev/hosts/_seed.py`, which is the FLOOR PS-224 validates
+    # against when a host has no `~/.scitex/dev/hosts.yaml` (runners do not)
+    # — carries exactly two label sets, both spartan's. Verified present in
+    # 0.47.0 (what CI runs) AND in 0.48.0 (current PyPI).
+    #
+    # What PS-224 INFERS from that, and why it does not hold here: "a
+    # SELF-HOSTED label no runner advertises queues indefinitely (never
+    # fails, never runs)". Measured against the live org runner list on
+    # 2026-08-12, `sac-control-plane` IS advertised, by exactly one runner:
+    #
+    #   scitex-04-org-cpu-01  online
+    #     self-hosted, Linux, X64, scitex-org-cpu, sac-control-plane
+    #
+    # and the job it gates DISPATCHED AND SUCCEEDED — run 31572329783, job
+    # `ci-verdict-to-pushing-agent` (94039063012), conclusion `success`,
+    # which is how the red this entry fixes was reported in the first place.
+    # So the registry is BEHIND REALITY, not ahead of a mistake. It knows
+    # none of scitex-01..04: `scitex-org-cpu` is missing too, and every
+    # workflow naming that pool passes PS-224 only because it reaches it
+    # through a `vars.CI_RUNS_ON` expression whose literal FALLBACK
+    # (`scitex-ci`) is what the rule statically sees. This job names its
+    # label directly, so it is the one place the lag is visible. Hiding it
+    # behind the same expression would silence the rule while changing
+    # nothing real — that is a string trick, not a fix, and is not done here.
+    #
+    # THE EXEMPTION'S OWN PRECONDITION IS SATISFIED EXACTLY. PS-224 admits a
+    # per-job exemption when "this job genuinely cannot run on any registered
+    # machine", and that is the literal situation: no registered machine
+    # carries `sac-control-plane`, and spartan — the only registered
+    # destination — is the WRONG machine on purpose. The rail writes to
+    # `127.0.0.1:7878` (`sac listen`, bound to loopback by policy) and
+    # `127.0.0.1:55432` (the card postgres). On any other box both resolve to
+    # a different daemon and a different database, so the job would report
+    # `success` while writing the verdict where nobody reads it. Loopback
+    # locality to the control plane is the job's correctness condition, not a
+    # preference; see the block comment above `verdict:` in the workflow.
+    #
+    # THIS IS A DEFERRAL, NOT A WAIVER. The real fix is in scitex-dev:
+    # register scitex-01..04 and their labels in the packaged seed, which
+    # closes this AND the wider `scitex-org-cpu` blind spot. Filed as
+    # scitex-ai/scitex-dev#588 with the live runner table. It cannot green
+    # this branch today — it needs a scitex-dev release and a CI SIF rebuild
+    # before sac's audit would see it. This entry comes off in the change
+    # that adopts that release.
+    #
+    # NOTE THE AVAILABILITY COST THIS ENTRY NOW MASKS. One runner advertises
+    # this label, so the rail is exactly as available as scitex-04, and a
+    # down machine stops verdicts SILENTLY (a queued job reports nothing, and
+    # this pool's p90 queue is ~902 s, so "still queued" looks normal). That
+    # trade is argued in the workflow comment and accepted there; PS-224 was
+    # the only thing that would have shouted about it, so re-verify the label
+    # is live — `gh api orgs/scitex-ai/actions/runners` — rather than trusting
+    # this comment, whenever the rail goes quiet.
+      - path: .github/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml::verdict
+        line: 0
+        reason: >-
+          Registry lag, not a mis-routed job, and deferred rather than waived.
+          `sac-control-plane` is advertised by exactly one LIVE runner
+          (scitex-04-org-cpu-01, online 2026-08-12) and the job dispatched and
+          succeeded there — run 31572329783 job `ci-verdict-to-pushing-agent`
+          — so PS-224's "queues indefinitely" hazard does not apply. What is
+          true is that scitex-dev's packaged seed (`hosts/_seed.py`, the floor
+          PS-224 validates against on runners, which have no
+          `~/.scitex/dev/hosts.yaml`) knows only spartan in both 0.47.0 and
+          0.48.0 — it knows none of scitex-01..04, `scitex-org-cpu` included.
+          The job cannot be re-pointed: it writes to `sac listen` on
+          127.0.0.1:7878 and the card postgres on 127.0.0.1:55432, so on any
+          other machine it would report success while writing the verdict to a
+          different daemon and a different database that nobody reads —
+          loopback locality to the control plane is its correctness condition.
+          Real fix is registering scitex-01..04 in scitex-dev's seed, filed as
+          scitex-ai/scitex-dev#588; this entry is removed by the change that
+          adopts that release.
+
+  # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
+  #
+  # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
+  # `JobSpec(name="sac.accounts-refresh")` is genuinely not hyphen-
+  # separated, and the rule exists for a real reason:
+  # `jobs/_systemd.py::systemd_unit_name` derives the unit FILENAME from
+  # the job name verbatim, with no sanitisation.
+  #
+  # What is deferred is the REMEDY, because the obvious one is more
+  # dangerous than the defect. Renaming does not re-label the running
+  # unit; it makes sac install a SECOND unit beside the live hand-written
+  # one. That unit is the fleet's SOLE OAuth refresher, and it refreshes a
+  # SINGLE-USE token — two refreshers racing revoke each other, taking
+  # every agent's authentication down with them. So the rename is a
+  # supervised systemd unit migration (stop-old -> remove-old ->
+  # install-new -> verify-exactly-one), never a drive-by edit, and
+  # never at an hour when nobody is watching.
+  #
+  # The supervised path already exists: `_jobs/_migrate/_renames.py`.
+  # This entry comes off in the same change that runs the migration.
+  #
+  # *** READ THIS BEFORE DELETING ANY UNIT. ***
+  # "verify-exactly-one" means EXACTLY ONE UNIT FOR THIS ONE JOB — old
+  # gone, new present. It does NOT mean "one accounts job on the host".
+  # There are TWO accounts jobs and BOTH MUST EXIST:
+  #
+  #   sac.accounts-refresh                        rotates the credential,
+  #                                               every 2h, on the host
+  #                                               holding refresh material
+  #   scitex-agent-container-accounts-keepalive   distributes the
+  #                                               ACCESS-ONLY copy,
+  #                                               every 15min
+  #
+  # They are DIFFERENT JOBS doing different work, not a rename pair and
+  # not duplicates of each other. Anyone who reads this rule as "collapse
+  # the accounts jobs to one" would remove a job the fleet depends on —
+  # which is a larger outage than the naming defect being deferred here.
+  # The only thing PS-226 asks for is the SHAPE OF ONE JobSpec NAME.
+  skip-rules:
+    - rule: PS-226
+      reason: >-
+        Correct finding, deferred to the supervised job-name migration —
+        not waived. `systemd_unit_name` uses `JobSpec.name` verbatim, so
+        renaming `sac.accounts-refresh` installs a SECOND unit beside the
+        live one instead of adopting it. That job is the fleet's sole
+        OAuth refresher against a SINGLE-USE refresh token, where two
+        racing refreshers revoke each other and take fleet-wide
+        authentication down. The migration must be ordered stop-old ->
+        remove-old -> install-new -> verify-exactly-one and run
+        supervised; the path exists in `_jobs/_migrate/_renames.py`.
+        "verify-exactly-one" means exactly one unit FOR THIS ONE JOB, NOT
+        one accounts job on the host: `sac.accounts-refresh` (rotates the
+        credential, every 2h) and
+        `scitex-agent-container-accounts-keepalive` (distributes the
+        access-only copy, every 15min) are DIFFERENT JOBS that must BOTH
+        continue to exist — they are not a rename pair and must never be
+        collapsed into one. PS-226 asks only for the SHAPE OF ONE JobSpec
+        NAME. Tracked in card `sac-accounts-refresh-unit-migration`; this
+        entry is removed by the change that performs the migration.
+
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
   #   - config/      declarative YAML schema + templates the CLI

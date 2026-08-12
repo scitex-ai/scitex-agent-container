@@ -185,10 +185,26 @@ def redact(target: str) -> str:
 def _store_identity() -> str:
     """What the package says it resolved to, redacted. ``""`` if it will not say.
 
-    The ``store_uuid`` is carried because it is THE thing that separates two
-    clones of the same database: a URL alone cannot tell
-    ``127.0.0.1:55432/scitex_cards`` on this host from the identical string on
-    another, and "two Postgres clones" is the fleet's current state.
+    A URL alone cannot tell ``127.0.0.1:55432/scitex_cards`` on this host from
+    the identical string on another, and "two clones" is the fleet's current
+    state — so the store's own identity is carried alongside it.
+
+    But ``store_uuid`` ALONE does not separate two clones, and this function
+    used to claim it did. **A uuid stored inside a database is copied by a fork
+    of that database**, so it names the LINEAGE ("which store am I a copy
+    of?"), never the instance. Measured 2026-08-11: two endpoints — ``:55432``
+    and a tunnel at ``127.0.0.1:5442`` — both answered ``store_uuid``
+    ``1d55dd6e-3d2a-4c24-a429-a78835ab988f`` while holding 404 and 146 cards
+    the other lacked. Every operation on both succeeded.
+
+    The half a fork cannot forge comes from the ENGINE, not the rows —
+    ``pg_control_system().system_identifier`` on Postgres, its sqlite analogue
+    on a file store. So identity is the PAIR. When the store reports only the
+    uuid, this says so in the rendered line rather than presenting a
+    lineage id as though it identified this instance: a reader who is told
+    ``uuid 1d55dd6e`` and nothing else will reasonably assume two agents
+    printing it are on the same store, which is exactly the inference that was
+    false on 2026-08-11.
     """
     try:
         proc = subprocess.run(
@@ -219,8 +235,15 @@ def _store_identity() -> str:
     if not resolved:
         return ""
     uuid = str(data.get("store_uuid") or "").strip()
+    system = str(data.get("system_identifier") or "").strip()
     identity = redact(resolved)
-    return f"{identity} (uuid {uuid[:8]})" if uuid else identity
+    if not uuid:
+        return identity
+    if system:
+        return f"{identity} (uuid {uuid[:8]} sys {system[:8]})"
+    # Lineage id with no engine half: it cannot rule out a fork, and saying
+    # so costs three words. Silence here reads as certainty.
+    return f"{identity} (uuid {uuid[:8]}, lineage only — fork undetectable)"
 
 
 def cache_path(agent: str) -> Path:

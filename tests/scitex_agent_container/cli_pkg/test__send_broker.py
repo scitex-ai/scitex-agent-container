@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import http.server
 import json
-import socket
 import socketserver
 import threading
 import time
@@ -60,13 +59,11 @@ from scitex_agent_container.cli_pkg._send_broker import (
 _LOCAL_HOST = "test-host"
 
 
-def _closed_port() -> int:
-    """Return a port number that nothing is listening on."""
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
+# "A port nothing is listening on" comes from the shared ``dead_port`` fixture
+# (tests/scitex_agent_container/_helpers/ports.py, wired in tests/conftest.py):
+# bound WITHOUT listening, so a connect is refused, and HELD, so no other test
+# or xdist worker can bind it mid-test. The helper that used to live here
+# released the port before the probe ran — see that module for the flake.
 
 
 def _status_body(**over) -> bytes:
@@ -261,12 +258,12 @@ def test_startup_failed_is_carried_as_a_hint_only(fake_host_listen):
 
 
 def test_unreachable_broker_raises_rather_than_reporting_stopped(
-    env_save_restore, tmp_path
+    env_save_restore, tmp_path, dead_port
 ):
     # Arrange — in a SIF, but the host listen is down.
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", f"http://127.0.0.1:{_closed_port()}"
+        "SAC_LISTEN_BASE_URL", dead_port.url("")
     )
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
@@ -384,13 +381,13 @@ def test_dispatch_targets_the_port_the_host_reported(
 
 
 def test_unreachable_broker_never_reports_the_peer_stopped(
-    env_save_restore, tmp_path, fresh_lead_creds_path
+    env_save_restore, tmp_path, fresh_lead_creds_path, dead_port
 ):
     # Arrange — in a SIF; the host listen is down, so we cannot check.
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set("SAC_HOST", _LOCAL_HOST)
     env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", f"http://127.0.0.1:{_closed_port()}"
+        "SAC_LISTEN_BASE_URL", dead_port.url("")
     )
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
@@ -405,13 +402,13 @@ def test_unreachable_broker_never_reports_the_peer_stopped(
 
 
 def test_unreachable_broker_names_the_broker_as_the_failure(
-    env_save_restore, tmp_path, fresh_lead_creds_path
+    env_save_restore, tmp_path, fresh_lead_creds_path, dead_port
 ):
     # Arrange
     env_save_restore.set("APPTAINER_CONTAINER", "/path/to/test.sif")
     env_save_restore.set("SAC_HOST", _LOCAL_HOST)
     env_save_restore.set(
-        "SAC_LISTEN_BASE_URL", f"http://127.0.0.1:{_closed_port()}"
+        "SAC_LISTEN_BASE_URL", dead_port.url("")
     )
     env_save_restore.set(
         "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "state.db")
@@ -425,7 +422,7 @@ def test_unreachable_broker_names_the_broker_as_the_failure(
 
 
 def test_unbound_turn_port_still_reports_the_agent_running(
-    fake_host_listen, fresh_lead_creds_path
+    fake_host_listen, fresh_lead_creds_path, dead_port
 ):
     # Arrange — the live-fleet norm: the host holds a port claim but nothing
     # listens on it (41 of 47 agents, measured 2026-07-14). Those agents are
@@ -433,7 +430,7 @@ def test_unbound_turn_port_still_reports_the_agent_running(
     fake_host_listen.enqueue(
         200,
         _status_body(
-            a2a_port=_closed_port(),
+            a2a_port=dead_port(),
             turn_url=f"http://{_LOCAL_HOST}:1/v1/turn",
         ),
     )
@@ -446,13 +443,13 @@ def test_unbound_turn_port_still_reports_the_agent_running(
 
 
 def test_unbound_turn_port_does_not_fabricate_a_dead_pid(
-    fake_host_listen, fresh_lead_creds_path
+    fake_host_listen, fresh_lead_creds_path, dead_port
 ):
     # Arrange
     fake_host_listen.enqueue(
         200,
         _status_body(
-            a2a_port=_closed_port(),
+            a2a_port=dead_port(),
             turn_url=f"http://{_LOCAL_HOST}:1/v1/turn",
         ),
     )
@@ -466,13 +463,13 @@ def test_unbound_turn_port_does_not_fabricate_a_dead_pid(
 
 
 def test_unbound_turn_port_does_not_fabricate_a_failed_boot(
-    fake_host_listen, fresh_lead_creds_path
+    fake_host_listen, fresh_lead_creds_path, dead_port
 ):
     # Arrange
     fake_host_listen.enqueue(
         200,
         _status_body(
-            a2a_port=_closed_port(),
+            a2a_port=dead_port(),
             turn_url=f"http://{_LOCAL_HOST}:1/v1/turn",
         ),
     )
@@ -485,13 +482,13 @@ def test_unbound_turn_port_does_not_fabricate_a_failed_boot(
 
 
 def test_unbound_turn_port_error_does_not_claim_the_agent_crashed(
-    fake_host_listen, fresh_lead_creds_path
+    fake_host_listen, fresh_lead_creds_path, dead_port
 ):
     # Arrange
     fake_host_listen.enqueue(
         200,
         _status_body(
-            a2a_port=_closed_port(),
+            a2a_port=dead_port(),
             turn_url=f"http://{_LOCAL_HOST}:1/v1/turn",
         ),
     )

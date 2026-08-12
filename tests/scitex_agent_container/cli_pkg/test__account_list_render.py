@@ -361,14 +361,21 @@ def _table_row(**overrides) -> AccountRow:
 
 
 def test_render_stored_table_has_column_headers():
-    """The 2026-07-11 contract: exactly Account | Status | Last Update."""
+    """Account | Status | Identity | Usage as of.
+
+    ``Identity`` joined the table after INCIDENT 2026-08-12, when a
+    credential sitting in the wrong account's directory made sac report one
+    Anthropic account as two. ``Last Update`` became ``Usage as of``: the old
+    header named no particular fact while sitting beside the credential TTL,
+    so a fresh-looking age there was read as vouching for the percentage.
+    """
     # Arrange — one row.
     rows = [_table_row()]
     now = datetime(2026, 5, 31, 12, 14, 0, tzinfo=timezone.utc)
     # Act
     out = render_stored_table_to_str(rows, now=now)
     # Assert — every column header is present.
-    for col in ("Account", "Status", "Last Update"):
+    for col in ("Account", "Status", "Identity", "Usage as of"):
         assert col in out, f"missing column header: {col!r}\n---\n{out}"
 
 
@@ -585,14 +592,19 @@ def _build_last_update_header_inputs() -> tuple[list[AccountRow], datetime]:
     return rows, now
 
 
-def test_render_stored_table_header_includes_last_update():
-    """The renamed ``Last Update`` header is present in the table."""
+def test_render_stored_table_header_names_the_usage_snapshot():
+    """The header must name WHICH fact it timestamps, not just "Last Update".
+
+    INCIDENT 2026-08-12: an ambiguous header one cell away from the
+    credential's ``VALID +7h06m`` let a fresh-looking age be read as
+    vouching for the usage percentage beside it.
+    """
     # Arrange
     rows, now = _build_last_update_header_inputs()
     # Act
     out = render_stored_table_to_str(rows, now=now)
     # Assert
-    assert "Last Update" in out
+    assert "Usage as of" in out
 
 
 def test_render_stored_table_header_omits_legacy_as_of():
@@ -882,8 +894,8 @@ def test_cli_list_human_renders_table_columns(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list"])
-    # Assert — the 2026-07-11 three-column contract from the rich table.
-    for col in ("Account", "Status", "Last Update"):
+    # Assert — the rich table's column contract, end to end through the CLI.
+    for col in ("Account", "Status", "Identity", "Usage as of"):
         assert col in result.output, f"missing column {col!r}:\n{result.output}"
 
 
