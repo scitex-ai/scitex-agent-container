@@ -248,6 +248,132 @@ def test_clearing_a_field_means_the_empty_string(rail_cards) -> None:
     assert sentinel == expected
 
 
+class _FakeStore:
+    """A minimal card store: enough to drive superseding, no postgres."""
+
+    def __init__(self, tasks: list[dict]) -> None:
+        self.tasks = {t["id"]: t for t in tasks}
+        self.comments: list[str] = []
+
+    def list_tasks(self, scope: str = "", **_kw) -> list[dict]:
+        return [t for t in self.tasks.values() if t.get("scope") == scope]
+
+    def update_task(self, task_id: str, **fields) -> dict:
+        self.tasks[task_id].update(fields)
+        return self.tasks[task_id]
+
+    def comment_task(self, task_id: str, text: str, by: str = "") -> None:
+        self.comments.append(f"{task_id}:{text}")
+
+
+def _pending(card_id: str, scope: str) -> dict:
+    return {"id": card_id, "scope": scope, "status": "blocked", "blocker": "compute"}
+
+
+def test_superseding_closes_the_stale_pending_card(rail_cards) -> None:
+    """A branch that advances orphans its older card.
+
+    The older run is killed by `cancel-in-progress`, and a cancelled run
+    is deliberately not a verdict -- so no event can ever settle that
+    card. Closing it `done` would assert a green nobody measured.
+    """
+    # Arrange
+    scope = rail_cards.card_scope("o/sac", "feat/x")
+    old_id = rail_cards.card_id_for("o/sac", "a" * 40)
+    store = _FakeStore([_pending(old_id, scope)])
+    # Act
+    rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    # Assert
+    assert store.tasks[old_id]["status"] == "cancelled"
+
+
+def test_superseding_clears_the_stale_gate(rail_cards) -> None:
+    # Arrange
+    scope = rail_cards.card_scope("o/sac", "feat/x")
+    old_id = rail_cards.card_id_for("o/sac", "a" * 40)
+    store = _FakeStore([_pending(old_id, scope)])
+    # Act
+    rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    # Assert
+    assert store.tasks[old_id]["blocker"] == rail_cards.BLOCKER_CLEARED
+
+
+def test_superseding_never_closes_the_current_card(rail_cards) -> None:
+    """The commit that just landed is the one card still owed a verdict."""
+    # Arrange
+    scope = rail_cards.card_scope("o/sac", "feat/x")
+    current_id = rail_cards.card_id_for("o/sac", "b" * 40)
+    store = _FakeStore([_pending(current_id, scope)])
+    # Act
+    closed = rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    # Assert
+    assert closed == []
+
+
+def test_superseding_leaves_settled_cards_alone(rail_cards) -> None:
+    """A card that already got its verdict is history, not debris."""
+    # Arrange
+    scope = rail_cards.card_scope("o/sac", "feat/x")
+    old_id = rail_cards.card_id_for("o/sac", "a" * 40)
+    settled = {"id": old_id, "scope": scope, "status": "failed"}
+    store = _FakeStore([settled])
+    # Act
+    rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    # Assert
+    assert store.tasks[old_id]["status"] == "failed"
+
+
+def test_superseding_is_scoped_to_one_branch(rail_cards) -> None:
+    """A push to one branch says nothing about another branch's runs."""
+    # Arrange
+    other_id = rail_cards.card_id_for("o/sac", "c" * 40)
+    other = _pending(other_id, rail_cards.card_scope("o/sac", "feat/other"))
+    store = _FakeStore([other])
+    # Act
+    rail_cards.supersede_older(store, repo="o/sac", branch="feat/x", sha="b" * 40)
+    # Assert
+    assert store.tasks[other_id]["status"] == "blocked"
+
+
+def test_a_green_verdict_does_not_claim_mergeability(rail) -> None:
+    """This rail sees ONE workflow; `needs:` cannot cross workflow files.
+
+    Saying "self-merge" from the pytest gate alone is a verdict over the
+    checks that happen to be in view, dressed as a verdict over the
+    checks that should have run -- the same shape as reading a queued
+    check as green, which is the bug this rail exists to answer.
+    """
+    # Arrange
+    kwargs = dict(
+        repo="scitex-ai/sac",
+        branch="feat/x",
+        sha="abcdef1234567890",
+        conclusion="success",
+        leg="pytest-matrix",
+        run_url="https://example.test/1",
+    )
+    # Act
+    text = rail.verdict_text(**kwargs)
+    # Assert
+    assert "self-merge" not in text.lower()
+
+
+def test_a_green_verdict_names_what_it_did_not_see(rail) -> None:
+    # Arrange
+    kwargs = dict(
+        repo="scitex-ai/sac",
+        branch="feat/x",
+        sha="abcdef1234567890",
+        conclusion="success",
+        leg="pytest-matrix",
+        run_url="https://example.test/1",
+    )
+    # Act
+    text = rail.verdict_text(**kwargs)
+    # Assert
+    assert "report separately" in text
+
+
 def test_title_leads_with_the_verdict(rail_cards) -> None:
     """The one word a reader woken at 4am needs, first."""
     # Arrange

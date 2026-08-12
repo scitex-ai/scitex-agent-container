@@ -197,8 +197,22 @@ def verdict_text(
     head = f"CI {conclusion.upper()} — {repo_basename(repo)} `{branch}` ({sha[:8]})"
     if leg:
         head += f" [{leg}]"
+    # THE GREEN MESSAGE MUST NOT CLAIM MERGEABILITY. This rail sees ONE
+    # workflow -- the pytest gate -- because `needs:` cannot reach across
+    # workflow files. lint, quality-audit, import-smoke and the
+    # hosted-runner guard all report separately and are invisible here.
+    #
+    # This said "Green. Self-merge if you own it." That was a verdict
+    # computed over the checks that happen to be in view, presented as a
+    # verdict over the checks that should have run -- the same shape as
+    # reading a queued check as green, which is the bug this whole rail
+    # exists to answer. Reproducing it inside the fix would be the worst
+    # possible place for it. So: state the scope, and let the reader own
+    # the merge decision.
     tail = (
-        "Green. Self-merge if you own it — do NOT poll `gh pr checks`."
+        "The pytest gate is green for this commit. It is NOT a merge signal: "
+        "lint, quality, import-smoke and the runner guard report separately "
+        "and this rail cannot see them."
         if conclusion == "success"
         else "Red. Fix and push; this rail re-fires on your next push."
     )

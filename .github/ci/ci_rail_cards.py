@@ -97,6 +97,63 @@ def card_id_for(repo: str, sha: str) -> str:
     return f"ci-{repo_basename(repo)}-{sha[:12]}"
 
 
+def card_scope(repo: str, branch: str) -> str:
+    """The queryable key for "all CI cards on this branch".
+
+    Exists so :func:`supersede_older` can ask the store a question
+    instead of parsing card titles. A branch is the unit that advances,
+    so it is the unit superseding is scoped to.
+    """
+    return f"ci:{repo_basename(repo)}:{branch}"
+
+
+def supersede_older(pkg: Any, *, repo: str, branch: str, sha: str) -> list[str]:
+    """Close pending cards on this branch left behind by an older commit.
+
+    THE ORPHAN THIS FIXES. A card is opened per pushed SHA and settled by
+    that SHA's verdict. When the branch advances -- a follow-up commit, a
+    force-push, a rebase -- the older run is cancelled by
+    `cancel-in-progress`, and a cancelled run is deliberately NOT a
+    verdict. So the older card could never settle by any event: closing
+    it `done` would assert a green nobody measured, and leaving it parks
+    a card forever on a gate that will never open. On a busy branch that
+    is MOST cards, and the rail would bury its own signal under its own
+    debris.
+
+    `cancelled` is the honest terminal state: the question was withdrawn,
+    not answered. The superseding SHA is named so the trail is walkable.
+
+    Best-effort by contract -- it runs inside the push hook, where
+    nothing may block a push. Returns the ids it closed.
+    """
+    closed: list[str] = []
+    keep = card_id_for(repo, sha)
+    for task in pkg.list_tasks(scope=card_scope(repo, branch)):
+        task_id = str(task.get("id") or "")
+        if task_id == keep or not task_id.startswith("ci-"):
+            continue
+        if task.get("status") != PENDING_STATUS:
+            continue
+        pkg.update_task(
+            task_id=task_id,
+            status="cancelled",
+            blocker=BLOCKER_CLEARED,
+            note=(
+                f"Superseded by {sha[:8]} on {branch} at {now_stamp()}. Its gate "
+                "run was cancelled by cancel-in-progress, and a cancelled run is "
+                "not a verdict — so no event could ever settle this card."
+            ),
+            last_activity=now_stamp(),
+        )
+        pkg.comment_task(
+            task_id=task_id,
+            text=f"Superseded by `{sha[:8]}`. Closing: no verdict is owed for this sha.",
+            by="ci",
+        )
+        closed.append(task_id)
+    return closed
+
+
 def card_title(repo: str, branch: str, sha: str, verdict: str = "") -> str:
     """A title legible on a phone at 4am, which is where this lands.
 
@@ -212,6 +269,7 @@ def record_push(
     fields: dict[str, Any] = {
         "status": PENDING_STATUS,
         "blocker": PENDING_BLOCKER,
+        "scope": card_scope(repo, branch),
         "kind": "task",
         "repo": repo_basename(repo),
         "project": repo_basename(repo),
@@ -227,6 +285,15 @@ def record_push(
     if subject.strip():
         line += f" — {subject.strip().splitlines()[0][:120]}"
     pkg.comment_task(task_id=card_id, text=line, by=agent or "ci")
+
+    # The branch has just advanced, so this is the moment older pending
+    # cards on it became unanswerable. Doing it HERE rather than at
+    # verdict time means the board is correct immediately, and stays
+    # correct even when the superseded run's verdict job never runs at
+    # all -- which is the usual case, since cancel-in-progress kills it.
+    superseded = supersede_older(pkg, repo=repo, branch=branch, sha=sha)
+    if superseded:
+        print(f"ci_card_rail: superseded {', '.join(superseded)}")
     return card
 
 
