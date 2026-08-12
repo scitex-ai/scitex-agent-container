@@ -50,17 +50,24 @@ Nothing caught it until CLAssistant, after CI.
 
 | kind          | value                                     | maps to           |
 | ------------- | ----------------------------------------- | ----------------- |
-| built-in exact | `ywatanabe@scitex.ai`                    | GitHub `ywatanabe1989` |
+| built-in exact | `agent@scitex.ai`                        | GitHub `ywatanabe1989` (agent-authored) |
+| built-in exact | `ywatanabe@scitex.ai`                    | GitHub `ywatanabe1989` (operator's own) |
 | built-in glob  | `*[bot]@users.noreply.github.com`        | `bot*` authors    |
 | env extension  | `CC_CLA_ALLOWED_EMAILS="a@x,b@y"`         | LLEmacs / others  |
 
-The default is intentionally tight: the container's ONLY intended author
-is `ywatanabe@scitex.ai`, so ANY deviation (`agent@<host>`, a synthesized
-`user@hostname`, a stray override) is the bug the hook exists to catch.
-For a rare non-default-but-allowlisted identity, extend via
-`CC_CLA_ALLOWED_EMAILS` rather than loosening the default. Operator-
-supervised bypass: `CC_ALLOW_CLA_AUTHOR=1` or an inline
-`# hook-bypass: cla-author` marker.
+`cla.yml` allowlists **GitHub accounts** (`bot*,ywatanabe1989`), and
+CLAssistant reaches an account from a commit by its author email. Both
+addresses above are verified emails on `ywatanabe1989`, so both pass; they
+differ only in who `git log` credits. Since 2026-08-12 (operator-approved)
+agent-authored commits use `agent@scitex.ai`, so agent work is
+distinguishable from the operator's own without either failing the gate.
+
+The default stays intentionally tight at those two: ANY other author
+(`agent@<host>`, a synthesized `user@hostname`, a stray override) maps to
+no allowlisted account and is the bug the hook exists to catch. For a rare
+non-default-but-allowlisted identity, extend via `CC_CLA_ALLOWED_EMAILS`
+rather than loosening the default. Operator-supervised bypass:
+`CC_ALLOW_CLA_AUTHOR=1` or an inline `# hook-bypass: cla-author` marker.
 
 ## How to deploy fleet-wide
 
