@@ -1,0 +1,243 @@
+# scitex-agent-container:02-python-pkgs — Apptainer recipe (canonical SSoT).
+#
+# STAGE 2 OF 4 (01-system-deps → **02-python-pkgs** → 03-base → 04-scitex).
+#
+# Creates /opt/venv-sac and installs the HEAVY SCIENTIFIC STACK, pinned. This
+# is the single most expensive artifact in the chain and the one that changes
+# least often; everything above inherits it and never reinstalls it.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY THE HEAVY STACK IS *BELOW* BASE — read this before "fixing" the order.
+#
+# Anyone seeing a ~7.5 GB sac-03-base.sif will assume it is an accident. It is
+# not. This is the operator's ordering, chosen against measurement, and the
+# alternative is worse. The numbers, all measured 2026-08-12 on live images:
+#
+#   * THE PRIZE. The heavy stack is 6137 MB of the scitex venv's 10013 MB
+#     (61%): nvidia 2723, tensorflow 1733, torch 1038, jaxlib 336, scipy 77,
+#     cv2 72, pandas 38, sklearn 32, numpy 30, matplotlib 24, jax 13,
+#     torchvision 12, torchaudio 9. torch+nvidia alone is 3761 MB.
+#
+#   * WHERE IT LIVES TODAY. 5830 of those 6137 MB exist ONLY in the scitex
+#     layer. sac-base.sif's venv is 1326 MB and carries NO torch, NO nvidia,
+#     NO tensorflow, NO jaxlib. Base has never carried them.
+#
+#   * WHO PAYS. Across 114 agent specs: 157 references to the base image vs
+#     78 to the scitex image. Base is the more-booted image by ~2:1, and
+#     putting the heavy stack below it grows base 1.66 GB → ~7.5 GB (4.5x).
+#     That cost is real and it lands on the majority.
+#
+#   * WHY WE PAY IT ANYWAY. Both layers churn, and at almost the same rate.
+#     Over the true history (2665 commits back to 2026-04-07 — a shallow
+#     159-commit clone inverts this answer and must not be trusted):
+#     apptainer-base.def 44 changes, apptainer-scitex.def 41. Base is NOT
+#     static. But reading all 44 base subjects: they are scitex-cards floors,
+#     claude-agent-sdk / claude-code bumps, apt additions, uv, pre-commit,
+#     rtk, gdu — AGENT TOOLING. Essentially none touch the scientific stack.
+#     Two independently-churning things stacked in either order pay for each
+#     other's changes, so the question is only which bill is smaller:
+#
+#       heavy BELOW base (this file): each of those 44 base changes
+#         re-mksquashfs's a ~7.5 GB tree instead of a 1.6 GB one. The heavy
+#         artifact is INHERITED and never reinstalled.
+#       heavy ABOVE base (the old shape): sac-base.sif stays 1.66 GB, but
+#         each of those 44 base changes forces a full REINSTALL of ~6 GB of
+#         wheels downstream.
+#
+#     Re-compressing is far cheaper than re-resolving and re-downloading
+#     6 GB. The operator's instinct is right; the price is image SIZE, not
+#     build TIME, and that is the trade being made deliberately here.
+#
+#   * WHAT WOULD BE BETTER AND IS NOT AVAILABLE. A build TREE (shared 01/02,
+#     then a thin head for agents and a heavy head for scitex) would keep
+#     both image sizes and the whole win. apptainer cannot express it:
+#     ``Bootstrap: localimage`` takes exactly ONE parent, so there is no
+#     multi-parent merge. The nearest mechanism, a multi-stage def
+#     (``Stage:`` + ``%files from``), COPIES ~6 GB between stages rather than
+#     sharing it. If that ever changes, this stage is the one that moves —
+#     stages 01 and 02 are shared under either topology.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# THIS FILE IS THE SSoT FOR HEAVY VERSIONS. Bump it DELIBERATELY, like the
+# ubuntu digest pin in stage 01 — not as a side effect of some other change.
+#
+# NO ``%files`` HERE (see stage 01's header for the nesting incident).
+#
+# Build:
+#   sac image build 02-python-pkgs -y        # needs sac-01-system-deps.sif
+#   sac image build 04-scitex --chain -y     # 01 → 02 → 03 → 04
+
+Bootstrap: localimage
+From: ./sac-01-system-deps.sif
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ---- 1. The venv every later stage installs into --------------------
+    # Dedicated venv avoids Ubuntu 24.04 PEP-668 collisions with
+    # apt-installed python3-wheel etc. Created HERE, once, at the bottom of
+    # the python chain; stages 03 and 04 inherit it and add to it.
+    #
+    # uv is on PATH from stage 01 (/usr/local/bin/uv, world-readable);
+    # apptainer's %post starts with a minimal PATH so extend it explicitly.
+    python3 -m venv /opt/venv-sac
+    export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+
+    # ---- 2. The heavy scientific stack — EXACT PINS ---------------------
+    # EXACT (``==``), not floors, and that is the whole point of this stage.
+    # A floor would let the resolver take whatever is newest on bake day, and
+    # then every stage above would inherit a version nobody chose. These
+    # numbers are the version set the live sac-scitex.sif was built with
+    # (read from its reproducible .lock, sac-scitex-2026-0811-161021.lock),
+    # so adopting them changes NOTHING about what the fleet runs today — it
+    # only stops it moving by accident.
+    #
+    # EVERY PIN CLEARS ITS ACTIVE FLOOR WITH HEADROOM (measured against the
+    # live venv's requirement metadata, active requirements only — extras-
+    # gated bounds like psycopg's docs extra demanding sphinx>=9.1 constrain
+    # nothing here and were excluded):
+    #
+    #   numpy         2.5.2   >=2.1     (jax)
+    #   scipy         1.18.0  >=1.15    (jax)
+    #   pandas        3.0.5   >=2.2     (xarray)
+    #   matplotlib    3.11.1  >=3.8     (mne)
+    #   scikit-learn  1.7.2   >=1.6     (umap-learn)
+    #   sympy         1.14.0  >=1.13.3  (torch)
+    #   statsmodels   0.14.6  >=0.14.1  (pingouin)
+    #
+    # THE ONE FRAGILE PAIR: torchvision pins ``torch==2.13.0`` EXACTLY. torch
+    # and torchvision move together — a torch bump REQUIRES a matched
+    # torchvision bump, and the assert at the end of this section fails the
+    # build loudly if they ever drift apart.
+    #
+    # Downstream consequence, so nobody re-adds it: stages 03 and 04 must NOT
+    # use a blanket ``uv pip install -U``. uv's ``-U`` re-resolves the WHOLE
+    # resolution, transitive dependencies included, so a single ``-U`` up
+    # there silently upgrades every pin below and zeroes this stage's entire
+    # saving. Those stages use ``--upgrade-package <name>`` (uv's scoped
+    # form) to move exactly the packages they own. See the comments there.
+    uv pip install --no-cache --python /opt/venv-sac/bin/python \
+        "numpy==2.5.2" \
+        "scipy==1.18.0" \
+        "pandas==3.0.5" \
+        "matplotlib==3.11.1" \
+        "scikit-learn==1.7.2" \
+        "sympy==1.14.0" \
+        "statsmodels==0.14.6" \
+        "pyarrow==25.0.1" \
+        "h5py==3.16.0" \
+        "numba==0.66.0" \
+        "networkx==3.6.1" \
+        "pillow==12.3.0" \
+        "xarray==2026.7.0" \
+        "opencv-python-headless==5.0.0.93" \
+        "torch==2.13.0" \
+        "torchvision==0.28.0" \
+        "torchaudio==2.11.0" \
+        "tensorflow==2.20.0" \
+        "keras==3.15.1" \
+        "jax==0.11.0" \
+        "jaxlib==0.11.0"
+
+    # ---- 3. FAIL-LOUD gate — the stack is present AND importable --------
+    # A pip resolve exiting 0 is not proof the stack works: a wheel can
+    # install and still fail to import (the libglib2.0-0 silent-fallback
+    # class of bug). Import each heavy package and print its version into
+    # the build log. Any ImportError is unhandled → non-zero exit → dead
+    # build, which is the point.
+    #
+    # The torch/torchvision pair check is explicit rather than left to the
+    # resolver: the resolver is what enforces it TODAY, and this assert is
+    # what tells the next person WHY the build died when they bump one half.
+    cat > /tmp/sac-assert-heavy-stack.py <<'EOF'
+"""Stage-02 gate: the pinned heavy stack is installed and importable."""
+
+import importlib
+import importlib.metadata as md
+import sys
+
+# (import name, distribution name)
+PROBES = [
+    ("numpy", "numpy"),
+    ("scipy", "scipy"),
+    ("pandas", "pandas"),
+    ("matplotlib", "matplotlib"),
+    ("sklearn", "scikit-learn"),
+    ("sympy", "sympy"),
+    ("statsmodels", "statsmodels"),
+    ("pyarrow", "pyarrow"),
+    ("h5py", "h5py"),
+    ("numba", "numba"),
+    ("networkx", "networkx"),
+    ("PIL", "pillow"),
+    ("xarray", "xarray"),
+    ("cv2", "opencv-python-headless"),
+    ("torch", "torch"),
+    ("torchvision", "torchvision"),
+    ("torchaudio", "torchaudio"),
+    ("tensorflow", "tensorflow"),
+    ("keras", "keras"),
+    ("jax", "jax"),
+    ("jaxlib", "jaxlib"),
+]
+
+failures = []
+for module_name, dist_name in PROBES:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:  # noqa: BLE001 — every failure mode is fatal here
+        failures.append(f"{dist_name}: import {module_name} failed: {exc!r}")
+        continue
+    try:
+        print(f"  {dist_name:26s} {md.version(dist_name)}")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"{dist_name}: installed but has no dist metadata: {exc!r}")
+
+# torchvision pins torch EXACTLY. If a bump ever moves one without the
+# other, say so HERE rather than letting a downstream layer discover it.
+try:
+    torch_v = md.version("torch")
+    tv_requires = md.requires("torchvision") or []
+    pinned = [r for r in tv_requires if r.split(";")[0].strip().startswith("torch==")]
+    if pinned:
+        want = pinned[0].split("==")[1].split(";")[0].strip()
+        if want != torch_v:
+            failures.append(
+                f"torchvision requires torch=={want} but torch=={torch_v} is "
+                "installed — the matched pair drifted; bump BOTH pins together."
+            )
+except Exception as exc:  # noqa: BLE001
+    failures.append(f"could not verify the torch/torchvision pair: {exc!r}")
+
+if failures:
+    print("", file=sys.stderr)
+    for line in failures:
+        print(f"  - {line}", file=sys.stderr)
+    sys.exit(1)
+
+print("OK: pinned heavy scientific stack installed and importable.")
+EOF
+    /opt/venv-sac/bin/python /tmp/sac-assert-heavy-stack.py \
+        || { echo "FATAL: the pinned heavy stack did not install cleanly (see above). Fix the pins; do NOT weaken this gate." >&2; exit 1; }
+
+%environment
+    # The venv goes on PATH HERE — stage 01 deliberately leaves it off since
+    # the venv does not exist until this stage. apptainer sources each
+    # layer's %environment in order, so the composed PATH matches the old
+    # two-layer image exactly.
+    export PATH=/opt/venv-sac/bin:$PATH
+    export VIRTUAL_ENV=/opt/venv-sac
+
+%labels
+    org.scitex.layer python-pkgs
+    org.scitex.stage 02
+    org.scitex.runtime apptainer
+    org.scitex.from scitex-agent-container:01-system-deps
+    org.scitex.contains "numpy scipy pandas matplotlib scikit-learn sympy statsmodels pyarrow h5py numba networkx pillow xarray opencv-python-headless torch torchvision torchaudio tensorflow keras jax jaxlib"
+
+%help
+    scitex-agent-container 02-python-pkgs stage.
+    /opt/venv-sac plus the EXACTLY PINNED heavy scientific stack — the SSoT
+    for those versions. Bump the pins deliberately. Layer
+    apptainer-03-base.def on top.

@@ -8,12 +8,20 @@
 # Cold-start budget: < 100 ms (the runner itself imports
 # httpx + starlette + uvicorn + pyyaml — nothing else).
 #
-# Build (preferred — go through scitex-container for versioning/sandbox):
-#   scitex-container build scitex-agent-container-proxy
+# OFF THE STAGED CHAIN, DELIBERATELY. The four-stage chain
+# (01-system-deps → 02-python-pkgs → 03-base → 04-scitex) exists to share
+# expensive artifacts; this recipe wants the OPPOSITE — it bootstraps straight
+# from the ubuntu digest so it inherits none of that weight. Anything
+# chain-shaped (``--chain``, a parent map, a bootstrap resolver) skips it by
+# design; it is still ours and still built by the same CLI.
 #
-# Build (raw apptainer):
-#   apptainer build sac-proxy.sif containers/apptainer-proxy.def
-#   apptainer build --sandbox proxy/ containers/apptainer-proxy.def
+# Build — ALWAYS through the CLI (it stages the build context):
+#   sac image build proxy -y
+#   sac image build proxy --sandbox -y
+#
+# A RAW ``apptainer build`` OF THIS FILE IS REFUSED (PR #1018): a pre-tool-use
+# hook keys on the ``org.scitex.layer`` label below and exits 2, naming the
+# replacement command.
 #
 # Smoke test:
 #   apptainer exec sac-proxy.sif python3 -c "import httpx, starlette, uvicorn, yaml; print('ok')"
@@ -24,13 +32,14 @@
 #      runtime to the bare HTTP forwarder shrinks the attack surface
 #      (no claude CLI, no SSH, no git, no shells out to arbitrary
 #      tools).
-#   2. Startup cost — sac-base.sif is ~3 GB (rust toolchain + claude
-#      SDK + node + cargo binstall'd tools). The proxy needs none of
-#      that; a ~150 MB SIF starts noticeably faster on cold-cache
+#   2. Startup cost — the base image is multi-GB (rust toolchain + claude
+#      SDK + node + cargo binstall'd tools, and since the four-stage split
+#      the pinned heavy scientific stack as well). The proxy needs none of
+#      that; a ~400 MB SIF starts noticeably faster on cold-cache
 #      worker hosts.
 
 Bootstrap: docker
-# PINNED BY DIGEST — same reasoning as apptainer-base.def: ``ubuntu:24.04``
+# PINNED BY DIGEST — same reasoning as apptainer-01-system-deps.def: ``ubuntu:24.04``
 # is a moving tag, so two builds a month apart start from different bytes.
 # Kept in lockstep with the base recipe's digest (24.04.4 LTS) so the two
 # top-of-stack layers share one floor.
@@ -39,7 +48,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
 %files
     # Bundle the package's OWN source tree so the in-SIF sac is the
     # source tree that shipped this .def — never a `git+...@main`
-    # snapshot. See apptainer-base.def %files note for the staging
+    # snapshot. See apptainer-03-base.def's %files note for the staging
     # contract (cli_pkg/image_group.py sets up the build context).
     scitex-agent-container-src /opt/scitex-agent-container-src
 
@@ -76,7 +85,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     python3 -m pip install --no-cache-dir --break-system-packages \
         /opt/scitex-agent-container-src
 
-    # Convenience symlink — same rationale as apptainer-base.def: many
+    # Convenience symlink — same rationale as apptainer-01-system-deps.def: many
     # tools hard-code `python` rather than `python3`.
     ln -sf /usr/bin/python3 /usr/local/bin/python
 
