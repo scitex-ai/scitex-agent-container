@@ -161,6 +161,30 @@ class TestStaleCopyConverges:
         # Assert
         assert len(list(attic.glob(f"*/{PROBE_HOOK}"))) == 1
 
+    def test_repeatedly_restored_stale_copy_does_not_grow_the_attic(self, stale_home):
+        # Arrange — reproduces the real steady state: the to_home walk re-copies
+        # the operator's stale dotfiles version on EVERY start, so this module
+        # replaces the same bytes again every start.
+        dst = hooks_dir(stale_home) / PROBE_HOOK
+        attic = hooks_dir(stale_home) / ".old"
+        # Act — five "starts", each preceded by the walk restoring the stale copy.
+        for _ in range(5):
+            dst.write_bytes(STALE_BYTES)
+            deploy_baseline_hook_assets(stale_home)
+        # Assert — identical content is archived once, not once per start.
+        assert len(list(attic.glob(f"*/{PROBE_HOOK}"))) == 1
+
+    def test_a_genuinely_different_prior_version_is_still_kept(self, stale_home):
+        # Arrange
+        dst = hooks_dir(stale_home) / PROBE_HOOK
+        attic = hooks_dir(stale_home) / ".old"
+        deploy_baseline_hook_assets(stale_home)
+        # Act — a DIFFERENT hand-edit appears, then is replaced in turn.
+        dst.write_bytes(b"#!/bin/bash\n# a different local edit\nexit 0\n")
+        deploy_baseline_hook_assets(stale_home)
+        # Assert — dedupe must not cost a distinct version.
+        assert len(list(attic.glob(f"*/{PROBE_HOOK}"))) == 2
+
 
 class TestDeployedHookActuallyRuns:
     """Landing the bytes is only half the claim — the hook must still fire."""

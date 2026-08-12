@@ -238,16 +238,50 @@ def _bash_syntax_ok(src: Path) -> bool:
     return False
 
 
+def _already_displaced(attic_root: Path, name: str, payload: "bytes | None") -> bool:
+    """True iff an identical copy of ``name`` is already in the attic.
+
+    Bounds the attic, and it is not a theoretical concern: the ``to_home`` walk
+    re-copies the operator's dotfiles version on EVERY start, so this module
+    sees the same stale bytes and replaces them again on every start. Without
+    this check each restart would deposit another identical copy, and a
+    long-lived agent would grow an unbounded ``.old/`` tree — a slow disk leak
+    inside the hooks directory, which is the last place one should be hidden.
+
+    Distinct versions are still all preserved; only exact duplicates are
+    skipped. ``payload`` is ``None`` for a symlink, which is compared by target.
+    """
+    if not attic_root.is_dir():
+        return False
+    for prior in attic_root.glob(f"*/{name}"):
+        try:
+            if payload is None:
+                if prior.is_symlink() and os.readlink(prior) == os.readlink(
+                    attic_root.parent / name
+                ):
+                    return True
+            elif not prior.is_symlink() and prior.read_bytes() == payload:
+                return True
+        except OSError:  # stx-allow: fallback (an unreadable prior copy just means "not a match")
+            continue
+    return False
+
+
 def _displace(dst: Path, stamp: str) -> None:
     """Move ``dst`` aside to ``<hooks_dir>/.old/<stamp>/`` before replacement.
 
     Nothing this module replaces is deleted. A symlink is recorded by copying
     the LINK (not its content) — the target is a host file that still exists,
-    so there is nothing to preserve but the pointer.
+    so there is nothing to preserve but the pointer. An exact duplicate of a
+    copy already in the attic is skipped; see :func:`_already_displaced`.
     """
     if not (dst.exists() or dst.is_symlink()):
         return
-    attic = dst.parent / _DISPLACED_DIRNAME / stamp
+    attic_root = dst.parent / _DISPLACED_DIRNAME
+    payload = None if dst.is_symlink() else dst.read_bytes()
+    if _already_displaced(attic_root, dst.name, payload):
+        return
+    attic = attic_root / stamp
     attic.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dst, attic / dst.name, follow_symlinks=False)
 
