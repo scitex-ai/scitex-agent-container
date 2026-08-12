@@ -320,8 +320,8 @@ def status(
             # silently trip SDK auto-discovery. Expose the per-agent
             # audit so operators can spot bloat without spelunking via
             # `find <workdir>/.claude/ -type f | wc -l`.
-            from .._workdir_audit import audit_workdir_claude
-            from .._workdir_audit import to_dict as _audit_to_dict
+            from .._workdir import audit_workdir_claude
+            from .._workdir import to_dict as _audit_to_dict
 
             workdir = info.get("expanded_workdir") or info.get("workdir") or ""
             # stx-allow: fallback (reason: workdir audit walks a real fs
@@ -454,9 +454,13 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     # ``healthy`` is deliberately NOT derived from this: 0 subscribers means
     # a detached inbox adapter, not a dead agent, and anything that
     # auto-restarts on it would destroy a healthy session. Observation only.
-    from .._lifecycle.inbox_probe import probe_inbox_reachability
+    # ``fault`` is what makes the zero READABLE. Without it, "0 subscribers"
+    # is the same string for a live agent whose adapter detached and for one
+    # that has not existed since Tuesday — measured 2026-08-12, 9 of 15 rows
+    # on this host were the latter and were read as the former.
+    from .._lifecycle.inbox_probe import probe_inbox_status
 
-    subscribers, reachable = probe_inbox_reachability(name)
+    subscribers, reachable, inbox_fault = probe_inbox_status(name)
 
     # The ternary verdict (ALIVE/DEAD/UNKNOWN) + its EVIDENCE, published
     # alongside the ``healthy`` bool rather than replacing it — a bool cannot
@@ -480,6 +484,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "message": message,
                     "inbox_subscribers": subscribers,
                     "inbox_reachable": reachable,
+                    "fault": inbox_fault,
                     "liveness": liveness,
                     "overlay_masking": overlay_masking,
                 },
@@ -497,7 +502,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     print_liveness(console, liveness)
     print_overlay_masking(console, overlay_masking)
-    print_inbox(console, name, subscribers, reachable)
+    print_inbox(console, name, subscribers, reachable, inbox_fault)
 
     if not is_healthy:
         sys.exit(1)

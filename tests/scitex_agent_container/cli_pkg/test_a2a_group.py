@@ -263,9 +263,12 @@ def test_doctor_malformed_json_exits_one(tmp_path: Path, card_server: Any) -> No
     assert res.exit_code == 1
 
 
-def test_doctor_connection_refused_exits_one(tmp_path: Path) -> None:
-    # Arrange: a free port that nothing is listening on
-    closed_port = _free_port()
+def test_doctor_connection_refused_exits_one(tmp_path: Path, dead_port) -> None:
+    # Arrange: a port bound but never listened on, and HELD for the test, so
+    # the connect is refused and stays refused. (`_free_port` above is the
+    # OTHER need — a port a real card server is about to bind — and must not
+    # be used here: it releases the port before the CLI ever probes it.)
+    closed_port = dead_port()
     name = "ag-down"
     spec = _write_spec(tmp_path, name, port=closed_port)
     # Act: short timeout so the test stays fast

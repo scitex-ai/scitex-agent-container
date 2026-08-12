@@ -4,7 +4,7 @@ Closes the banner-to-action loop for the F-CS8 (workdir-claude bloat →
 silent SDK MCP-spawn failure) class of incidents.
 
 Background. ``runtimes/claude_session._warn_if_heavy_workdir_claude``
-already runs :func:`scitex_agent_container._workdir_audit.audit_workdir_claude`
+already runs :func:`scitex_agent_container._workdir.audit_workdir_claude`
 on every start and surfaces a LOUD banner listing ``bloat_sources``
 (per-subdir entries above the per-bucket file-count threshold) plus a
 copy-paste-able ``mv ...`` recipe. The operator gap is the copy-paste:
@@ -39,7 +39,7 @@ from pathlib import Path
 
 import click
 
-from .._workdir_audit import audit_workdir_claude
+from .._workdir import audit_workdir_claude
 
 # ---------------------------------------------------------------------------
 # Workdir resolution

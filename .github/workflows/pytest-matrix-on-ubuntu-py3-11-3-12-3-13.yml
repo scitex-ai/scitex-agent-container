@@ -145,10 +145,21 @@ concurrency:
 env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+  # xdist worker count per leg. Unset => all cores, the historical behaviour.
+  # Set it when several matrix legs share ONE machine (they do now: Spartan CI
+  # was retired 2026-08-05 and the suite runs on scitex-04), otherwise three
+  # legs x nproc workers oversubscribe the box by 3x. See run-in-sif.sh.
+  CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
 
 permissions:
   contents: read
   id-token: write
+  # `actions: read` lets the verdict job read the FAILED JOBS' logs so a red
+  # notification can name the failing test instead of saying only "Red".
+  # A workflow that withholds a permission its own job needs is one of the
+  # inert-but-configured shapes this fleet keeps rediscovering, so it is
+  # declared here rather than assumed from the default token.
+  actions: read
 
 jobs:
   test:
@@ -263,3 +274,102 @@ jobs:
       - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
         if: always()
         run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
+
+  # THE CI FEEDBACK RAIL (ADR-0024). The operator asked for this mechanism by
+  # name on 2026-08-12: 「GitHub から信号が帰ってきたときに、フックでカードに
+  # 書き込む、それがエージェントに通知が行く」— when GitHub's signal comes
+  # back, write it to the card, and that reaches the agent. This job is that
+  # return path. `pre-push` already registered the commit on a card; this
+  # writes the verdict onto the SAME card and delivers it to whoever pushed.
+  #
+  # WHY NOT A WEBHOOK. `sac listen` binds 127.0.0.1 only, and that is policy,
+  # not accident — so there is no public route for GitHub to POST to. A
+  # self-hosted runner, however, long-polls OUTWARD to GitHub and then
+  # executes ON OUR HARDWARE, where loopback is reachable and the bearer is a
+  # local file. The GitHub -> host path already exists and is already trusted.
+  # That is nearer the operator's 「フック」 than the two existing pollers: it
+  # fires ON the event rather than noticing it up to 300 s later, and it drops
+  # the `gh`-auth dependency that made both of them fail closed. Neither has
+  # ever delivered a verdict on this host — the `verdict_delivered` table has
+  # never even been created.
+  #
+  # `runs-on: sac-control-plane` IS THE LOAD-BEARING LINE, and it is the one
+  # thing ADR-0024 got wrong. That ADR reasoned "the self-hosted runners
+  # execute on this host", but `vars.CI_RUNS_ON` is `scitex-org-cpu`, which is
+  # FOUR runners on FOUR DIFFERENT MACHINES (scitex-01..04). Only
+  # scitex-04-org-cpu-01 sits on the box that runs `sac listen` and the card
+  # store. So the premise holds for 25% of jobs, and on the other 75% both
+  # `127.0.0.1:7878` and `127.0.0.1:55432` resolve to a DIFFERENT machine's
+  # daemon and a DIFFERENT postgres — writing the verdict somewhere nobody
+  # reads and delivering it to nobody, with nothing raising an error. Pinning
+  # the job to a label carried by exactly that one machine is what makes the
+  # rail's own premise true instead of assumed. The label was added to that
+  # runner and to no other; no other workflow names it, so it widens nothing.
+  #
+  # THE COST, STATED HONESTLY, IN TWO PARTS. This is a deliberate trade, not
+  # a side effect of solving the loopback problem.
+  #
+  # 1. LATENCY. A separate job pays a queue admission (measured median ~706 s
+  #    on this pool, p90 ~2325 s). ADR-0024's cheaper in-job placement was
+  #    only available under the false premise above.
+  # 2. AVAILABILITY. Pinning makes THE RAIL EXACTLY AS AVAILABLE AS THIS ONE
+  #    HOST. Exactly one runner advertises `sac-control-plane` (verified
+  #    online at merge time, not merely written here). If that machine is
+  #    down, verdicts stop -- and they stop SILENTLY, because a queued job
+  #    reports nothing and "still queued after 15 minutes" is normal here
+  #    (p90 ~902 s). A job pinned to a label nobody carries is
+  #    indistinguishable from a saturated pool, which is why the label must
+  #    be verified as ADVERTISED BY A LIVE RUNNER, never merely as named in
+  #    YAML. `verdict_delivered` reconciliation is the intended backstop and
+  #    does not exist yet.
+  #
+  # Correct-and-late beats fast-and-delivered-to-nobody, so the trade is
+  # taken; revisit if a control-plane-local runner joins the gate pool, or
+  # if a second machine is ever given the control plane.
+  verdict:
+    name: ci-verdict-to-pushing-agent
+    needs: [test]
+    # `always()` so RED reports AT ALL — a rail that only fires on green is
+    # not a feedback rail, it is a congratulations service. The script skips
+    # `cancelled` itself (a superseded push is not a verdict about the code).
+    if: always()
+    runs-on: [self-hosted, Linux, X64, sac-control-plane]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # $SCITEX_CARDS_DB IS PASSED EXPLICITLY, and that is load-bearing too. A
+      # `run:` step gets a NON-INTERACTIVE shell which sources no profile, so
+      # an unset DSN does not fail — it silently resolves to a local
+      # `cards.db` FILE that no board reads. Worse, this host answers on BOTH
+      # :5442 and :55432 with the same `store_uuid` but different row counts
+      # (3496 vs 3793) — two divergent databases wearing one identity, so the
+      # field meant to detect a split cannot detect this one. The script
+      # re-checks the resolved backend and refuses to write rather than
+      # guessing. `vars.SCITEX_CARDS_DB` overrides without a workflow edit.
+      #
+      # uv BY ABSOLUTE PATH: the runner service's PATH is the system default
+      # and does NOT include ~/.local/bin, so a bare `uv` is not found here
+      # even though it is on the operator's interactive PATH.
+      - name: Write the CI verdict to the card and notify the pushing agent
+        env:
+          SCITEX_CARDS_DB: ${{ vars.SCITEX_CARDS_DB || 'postgresql://scitex_cards@127.0.0.1:55432/scitex_cards' }}
+          TEST_RESULT: ${{ needs.test.result }}
+          # Reads the FAILED JOBS' logs so a red verdict names the failing
+          # test. Deliberately the per-JOB log endpoint: this job is itself
+          # running, so the whole-RUN log archive is still empty and would
+          # grep exactly like a clean one.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+          "$UV" run --quiet --with scitex-cards \
+            python .github/ci/ci_card_rail.py verdict \
+              --repo "${{ github.repository }}" \
+              --branch "${{ github.head_ref || github.ref_name }}" \
+              --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+              --conclusion "$TEST_RESULT" \
+              --leg "pytest-matrix" \
+              --run-id "${{ github.run_id }}" \
+              --workflow "${{ github.workflow }}" \
+              --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
