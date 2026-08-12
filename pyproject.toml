@@ -156,7 +156,49 @@ dev = [
     # audit-all` and reds the `test_audit_all_clean` gate; fixed by
     # 0.17.12. Also: tests/results/ accepted as a known tests subdir
     # (PS-302).
-    "scitex-dev>=0.31.1",
+    #
+    # <0.48 CEILING — 2026-08-12, and it is a DEADLINE, not a preference.
+    # scitex-dev 0.48.0 took develop red on all three matrix legs with five
+    # failures that no sac commit caused. Measured by A/B on ONE commit
+    # (00f7f96, same click 8.4.2, same interpreter): 69/69 green with
+    # 0.47.0 installed, 4 failed with only scitex-dev swapped to 0.48.0.
+    # Three independent incompatibilities, none of them cosmetic:
+    #
+    #  1. 0.48.0 SHIPPED the per-kind job surface sac had been probing for
+    #     (`ecosystem dev {service,timer} <verb>`), and its name argument is
+    #     MIXED: install/uninstall take `--name X`, while
+    #     status/enable/disable/start/stop/restart/exec take a POSITIONAL
+    #     NAME. `_dev_jobs_backend.build_argv` emits `--name` unconditionally,
+    #     so nine sac commands now die on `Error: No such option '--name'`
+    #     (exit 2) instead of running. That is a REAL sac bug, not a test
+    #     artifact — it is why the three test__dev_jobs cases fail, and it
+    #     needs an introspection-driven fix, not a version bump.
+    #  2. 0.48.0 changed where `scitex_dev.hosts._retired` emits its WARNING,
+    #     so it no longer reaches click's isolated stderr under CliRunner
+    #     (test_library_warning_reaches_the_merged_cli_runner_output).
+    #  3. 0.48.0 ADDED rule PS-226 `job-name-not-hyphenated`, which does not
+    #     exist anywhere in 0.47.0 (verified: 0 occurrences in the 0.47.0
+    #     wheel, 6 files in 0.48.0, implemented in
+    #     `_cli/audit/_project/_check_job_naming.py`). It is the single
+    #     unmasked error behind `test_audit_all_clean`, and it fires on
+    #     `JobSpec(name="sac.accounts-refresh")`.
+    #
+    # THE RENAME PS-226 ASKS FOR IS DELIBERATELY NOT DONE HERE, and the
+    # ceiling exists so that decision stays ours rather than the clock's.
+    # `systemd_unit_name` derives the unit filename from the job name
+    # VERBATIM, so renaming does NOT adopt the live `sac.accounts-refresh.timer`
+    # — it INSTALLS A SECOND UNIT beside it. That job is the fleet's sole
+    # OAuth refresher against a SINGLE-USE refresh token, and two racing
+    # refreshers revoke each other fleet-wide. It is therefore a supervised
+    # UNIT MIGRATION (stop-old -> remove-old -> install-new -> verify-exactly-one),
+    # which already has its migration verb and recorded rename in
+    # `src/scitex_agent_container/_jobs/_migrate/_renames.py` and its
+    # reasoning in `_jobs/_names.py`. A red audit rule is survivable; a
+    # revoked fleet credential is not.
+    #
+    # LIFT THIS CEILING by doing the adaptation (1) and (2) and running the
+    # migration for (3) — not by widening the specifier.
+    "scitex-dev>=0.31.1,<0.48",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
