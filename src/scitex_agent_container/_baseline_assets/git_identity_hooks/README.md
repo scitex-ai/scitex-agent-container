@@ -106,10 +106,27 @@ copy here is the source of truth; propagate it exactly like
 
 ## Provisioning side (defense in depth)
 
-This hook is the fail-loud backstop. The upstream pin still belongs to
-direnv: `~/proj/.envrc` exports `SAC_GIT_AUTHOR_EMAIL=ywatanabe@scitex.ai`
-(+ name/committer), and `runtimes/_apptainer_inner_argv.py`
-(`_GIT_ENV_ALIAS_STEPS`) mirrors `SAC_GIT_*` → `GIT_*`. If a host is
-found where that pin does not land (as reproduced above), fix the direnv
-allow / `.envrc` sourcing on that host so `GIT_AUTHOR_EMAIL` is set at
-launch — the hook then never has to fire.
+This hook is the fail-loud backstop. The upstream pin is TWO layers, both
+scoped to the agent (an agent's `$HOME` is `/home/agent`, inside its own
+apptainer overlay, so neither can reach the operator's `~/.gitconfig`):
+
+1. **The per-agent spec** — `<agents_dir>/<name>/spec.yaml` carries
+   `apptainer.raw_args: ["--env", "GIT_AUTHOR_EMAIL=agent@scitex.ai", ...]`
+   plus the agent's own id as `GIT_AUTHOR_NAME`. Env beats git config, so
+   this is what actually decides authorship.
+2. **The shared to_home baseline** — `<agents_dir>/_shared/to_home/.gitconfig`,
+   materialized into every agent's `$HOME/.gitconfig` on each start by
+   `runtimes/_to_home.py`. The fallback for when layer 1 does not land; its
+   job is to make that failure land on an allowlisted identity rather than a
+   synthesized `user@hostname`.
+
+If a host is found where the author is wrong, read layer 1 first — it wins.
+
+> **Not direnv.** This section used to name `~/proj/.envrc` exporting
+> `SAC_GIT_AUTHOR_EMAIL` as the pin. Measured on compute-04 2026-08-12:
+> that file does not exist and the variable is empty, so the
+> `_GIT_ENV_ALIAS_STEPS` mirror in `runtimes/_apptainer_inner_argv.py`
+> contributes nothing on this fleet. The mirror is values-agnostic and
+> still works if a host ever sets `SAC_GIT_*` — but documentation asserting
+> a mechanism that contributes nothing sends the next reader to fix the
+> wrong layer, so it is recorded here as inert rather than as the source.
