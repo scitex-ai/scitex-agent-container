@@ -89,6 +89,12 @@ class RelocateAdapters(
     #: that had to spend it too would either be slow or would not be written.
     sleep: Callable[[float], None] = time.sleep
     peers: object = None
+    #: The coordinator's own fleet name, kept because the two Shells above are
+    #: not always enough: a lease row can name a THIRD host, and reaching it
+    #: needs the same "am I already standing on this machine" answer
+    #: :func:`shell_for` was given for the source and the target. Decided once by
+    #: the caller from an observation, never re-discovered here.
+    local_host: str = ""
 
     #: The source-side ``spec.yaml`` this agent is defined by. Carried to the
     #: target by TARGET_STANDBY — a host cannot start an agent it has no spec
@@ -292,4 +298,5 @@ def adapters_for(
         target=shell_for(to_host, local_host=local_host),
         stamp=stamp or time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
         exec_fn=exec_fn,
+        local_host=local_host or "",
     )
