@@ -8,6 +8,54 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **The `#NNN` rule now lives in ONE place, and stops firing on hex colours
+  and code.** The rule was correct and the wording was good, but it existed
+  only as a shell hook, and it refused six things it should never have
+  refused. Measured against the shipped hook before this change:
+  `#589abc` BLOCKED, `use #589abc for the border` BLOCKED, `#123456`
+  BLOCKED, `` the token `#589` is data `` BLOCKED, a fenced block holding
+  `#589` BLOCKED, and `a dash &#8212; here` BLOCKED. A gate that fires on a
+  hex colour gets switched off by the first person it inconveniences, and
+  then the real rule is gone too.
+
+  The predicate and its refusal text moved into
+  `_baseline_assets/telegram_hooks/_telegram_rules.py`, which is now the
+  single source of truth, per the operator 2026-08-12: 「mcp も同じですね。
+  同じルールなので、ルールは一つの場所に、shell 用の hook と mcp のフィルタで
+  同じルールを適用させて ssot に、が良いかと」. Two thin adapters call it —
+  `enforce_telegram_no_bare_issue.sh` (Claude Code hook JSON → rc 0/2) and
+  `python3 _telegram_rules.py --text-stdin` (raw text → one JSON line), the
+  language-agnostic contract the TypeScript MCP server calls. Neither
+  composes its own wording: the refusal text IS the fix instruction the
+  operator reads on his phone, and two paths that format their own drift.
+  That is not a hypothetical — a rule enforced on one path and absent on the
+  other is exactly how a bare `scitex-dev #589` reached him on 2026-08-11.
+
+  Two decisions were added to the author's original three, in the same
+  documented form so a reader can disagree with the choice rather than guess
+  whether it was one. (4) A `#` glued to ASCII letters is a colour, not a
+  reference — deliberately ASCII-only rather than `\w`, because Python's
+  `\w` matches CJK and would also swallow `#970の話`, a REAL bare reference
+  written without a space. (5) Code is data, not prose: a number inside a
+  fence or an inline code span is being shown, not cited, and is blanked
+  with the same NUL fill as URLs so it still cannot bridge a number to a
+  parenthesis outside it.
+
+  `tests/integration/telegram_hooks/test_telegram_rule_ssot.py` drives BOTH
+  adapters over one shared table and asserts they return the same verdict
+  and the same wording. That they call the same function is an
+  implementation detail, and an implementation detail is not the property.
+
+  Two adapters agreeing is necessary but not sufficient: that suite stays
+  green whatever they agree ON, including a wrong answer. So the predicate
+  is also tested directly, at the mirrored path
+  `tests/scitex_agent_container/_baseline_assets/telegram_hooks/test__telegram_rules.py`
+  — the decided accept/reject table asserted against the one function that
+  decides it, plus the API the adapters consume (the `Verdict` shape, the
+  `as_dict` payload the MCP binding serialises, and the `ESCAPE_ENV` name
+  both honour). A shared predicate with no direct unit tests is exactly the
+  thing that drifts.
+
 - **`sac agents reconcile` refuses a MASS restart: N corpses with no tmux
   server at all is ONE event, not N agents dying.** The reconcile timer is
   currently disabled and has never run; this is what has to land before it is
