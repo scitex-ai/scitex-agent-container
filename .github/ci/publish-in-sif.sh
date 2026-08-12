@@ -56,7 +56,11 @@ ls -l dist
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
 TMPDIR="$(ci_tmpdir_path publish "$V")"
 export TMPDIR
-rm -rf "$TMPDIR"
+# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
+# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
+# name here would delete nothing, fail nothing, and leave the rest of the script
+# addressing paths off the filesystem root. `:?` aborts instead.
+rm -rf "${TMPDIR:?publish scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 export UV_CACHE_DIR="$TMPDIR/uv-cache"
 export XDG_CACHE_HOME="$TMPDIR"
