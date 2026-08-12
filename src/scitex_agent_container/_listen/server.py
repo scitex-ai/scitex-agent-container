@@ -172,6 +172,14 @@ async def agent_status(request: Request) -> JSONResponse:
     # running session_id + a live pid say nothing about whether this agent's
     # inbox adapter is attached; only the broker does. See ``_reachability``.
     body = await _annotate_status_reachability(request, body)
+    # …and the CAUSE behind a zero. A stopped agent's registry row outlives its
+    # process, so this route answered HTTP 200 with a full body — port, turn_url,
+    # ``inbox_reachable: unreachable`` — for an agent that had not existed for
+    # two days, with no field anywhere saying so. Measured 2026-08-12: 9 of 15
+    # rows on this host looked exactly like that. See ``_inbox_fault``.
+    from ._inbox_fault import annotate_status_fault
+
+    body = annotate_status_fault(body)
     return JSONResponse(body)
 
 
