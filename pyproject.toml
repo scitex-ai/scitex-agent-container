@@ -318,12 +318,18 @@ scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:de
 # never installs anything itself, and scitex-dev never hardcodes anything
 # about apptainer.
 #
-# The provider imports scitex_dev.hooks LAZILY, so this entry point ships
-# and stays inert on a scitex-dev that predates the hooks contract instead
-# of breaking import-time metadata (same idiom + same reason as the
-# scitex_dev.jobs provider above).
+# The provider returns MAPPINGS keyed by HookRule's field names rather than
+# HookRule instances, and imports nothing from scitex_dev. That is not a
+# style choice: scitex_dev.hooks is not in any released scitex-dev, this
+# package pins scitex-dev<0.48, and the PS-140 cross-package gate
+# hard-imports every peer module it finds in our source -- so referencing
+# it (even lazily, inside a function) turns CI red rather than degrading.
+# Declaring data keeps the row enumerable with no release-ordering
+# coupling; the aggregator builds HookRule(**row) and keeps its
+# validate-at-construction guarantee. See _hook_rules.py for the full
+# reasoning and the tracked gap.
 [project.entry-points."scitex_dev.hooks"]
-scitex-agent-container = "scitex_agent_container._claude_hooks_plugin:provide_hooks"
+scitex-agent-container = "scitex_agent_container._hook_rules:provide"
 
 [project.urls]
 Homepage = "https://github.com/ywatanabe1989/scitex-agent-container"
