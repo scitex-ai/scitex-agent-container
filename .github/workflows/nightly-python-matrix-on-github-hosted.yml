@@ -2,7 +2,7 @@ name: nightly-matrix
 
 # THE ONE VERSION THE PR GATE SKIPS, RUN HERE — ON SOMEONE ELSE'S HARDWARE.
 #
-# MEASURED 2026-08-11/12: all four of our CPU runners saturated, several stacked
+# MEASURED 2026-08-11/12: every one of our CPU runners saturated, several stacked
 # PRs each fanning out a three-way matrix of the heaviest job on the queue, and
 # a human sitting in front of every one of those PRs. The `tests` gate therefore
 # now runs the ENDS of the supported range (3.11 + 3.13) on a pull request.
@@ -24,10 +24,16 @@ name: nightly-matrix
 #
 # The argument is a cost/latency split, not a loophole:
 #
-#   * our runners are SCARCE and CONTENDED — four nodes, saturated nightly by
-#     the fleet's own PRs;
+#   * our runners are CONTENDED — every slot one of them spends on a version
+#     nobody is waiting for is a slot a PR is queued behind;
 #   * GitHub-hosted runners are FREE for public repositories and SLOW;
 #   * nobody waits on a nightly. Slow is free here, and free is the point.
+#
+# THE SIZE OF OUR POOL IS NOT THE ARGUMENT, and this file deliberately does not
+# quote a number: capacity is being changed this week (the spartan nodes are
+# being re-admitted to CI once scitex-dev #575-#578 land, which would take the
+# pool from four to seven). Even on the larger pool the trade holds — a nightly
+# has no waiting human, so it should not consume a slot that a PR could use.
 #
 # The exception is registered in .github/hosted-runner-allowlist.yaml with its
 # argument attached, where _hosted_runner_guard.py enforces it. Do not "fix"

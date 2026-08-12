@@ -60,10 +60,14 @@ allow:
     # amending the 2026-07-14 directive after being shown that four CPU runners
     # were saturated while three banned Spartan machines sat idle.
     reason: >-
-      COST, and it only spends hardware we do not own. Our CPU pool is four
-      contended nodes; on 2026-08-11/12 all four were saturated by stacked PRs
-      each fanning out a three-way python matrix of the heaviest job on the
-      queue. The pull-request gate now runs the ENDS of the supported range
+      COST, and it only spends hardware we do not own. Our CPU pool is
+      contended — on 2026-08-11/12 every node was saturated by stacked PRs each
+      fanning out a three-way python matrix of the heaviest job on the queue —
+      and it is being resized this week (the spartan nodes are being re-admitted
+      once scitex-dev #575-#578 land), so the argument here is deliberately
+      about WHO IS WAITING rather than about how many machines we have: a
+      nightly has no waiting human and should not hold a slot a PR could use.
+      The pull-request gate now runs the ENDS of the supported range
       (3.11 + 3.13) on our pool, and the one version it brackets past (3.12)
       runs HERE, nightly, on GitHub's hardware — which is free for public repos
       and slow, a trade that is exactly right when nobody is waiting and exactly

@@ -23,25 +23,39 @@ name: tests
 # pypi-publish-and-github-release-on-tag.yml. Not "an equivalent setup" —
 # the same bytes. Green PR => green release, by construction.
 #
-# RUNNER RULE, AS AMENDED 2026-08-12 (read this before "fixing" anything below).
+# WHERE THIS RUNS, AND WHY — WRITTEN AS A PRINCIPLE, NOT AS AN ABSOLUTE.
 #
-# The 2026-07-14 rule was "NO GitHub-hosted runners anywhere in this repo, PR
-# tests included, no exceptions". That sentence was already false in one place
-# (cla.yml, a deliberate SECURITY carve-out — see
-# .github/hosted-runner-allowlist.yaml), and the operator amended it on
-# 2026-08-12 to make a second, deliberate exception. What is true now:
+# This header used to read "Operator rule (2026-07-14, absolute, no exceptions):
+# NO GitHub-hosted runners anywhere in this repo, PR tests included." That
+# sentence was FALSE ON THE DAY IT WAS WRITTEN — cla.yml has always been a
+# deliberate security carve-out — and it went on being quoted as an absolute
+# into six other workflow files. An absolute with live exceptions does not get
+# obeyed; it gets discovered, disbelieved, and worked around. So this states the
+# PRINCIPLE and points at the mechanism, rather than asserting a rule that the
+# next operator decision will falsify again:
 #
-#   * THIS gate — and every other check a human waits on — runs on OUR pool,
-#     via `vars.CI_RUNS_ON`. There is still deliberately NO `ubuntu-latest`
-#     escape hatch below; adding one HERE is the bug, not the fix. If our pool
+#   * ANYTHING A HUMAN WAITS ON RUNS ON HARDWARE WE CONTROL — this gate, lint,
+#     import-smoke, docs. That is why there is deliberately no `ubuntu-latest`
+#     escape hatch below: adding one HERE is the bug, not the fix. If our pool
 #     misbehaves, that is OURS to fix.
-#   * The NIGHTLY 3.12 matrix runs on GitHub-HOSTED runners, on purpose
-#     (nightly-python-matrix-on-github-hosted.yml). Nobody waits on a nightly,
-#     hosted runners are free for public repos, and our four CPU nodes are
-#     contended — so the nightly buys coverage with someone else's hardware.
-#   * Every exception lives in .github/hosted-runner-allowlist.yaml WITH its
-#     argument attached, and is machine-enforced by _hosted_runner_guard.py.
-#     "No hosted runners" is now shorthand for "none outside that allowlist".
+#   * A JOB NOBODY WAITS ON MAY RUN ON GITHUB'S HARDWARE when there is a written
+#     argument for it. Today that is cla.yml (security) and the 3.12 nightly
+#     (cost — hosted runners are free for public repos and slow, which is the
+#     right trade when no human is blocked). Both live in
+#     .github/hosted-runner-allowlist.yaml WITH the argument attached, and
+#     _hosted_runner_guard.py fails CI on an exception that is undocumented or
+#     stale. "No hosted runners" is shorthand for "none outside that file".
+#
+# WHICH MACHINES "OUR POOL" MEANS IS NOT SETTLED, AND THIS FILE DOES NOT SAY.
+# It resolves `vars.CI_RUNS_ON` — a repository Variable — precisely so the pool
+# can change without editing workflows. It is changing right now: the spartan
+# nodes were banned from CI, and the operator moved on 2026-08-12 to re-admit
+# them (four org runners + three spartan ≈ 75% more capacity), gated on
+# scitex-dev #575-#578 — the four PRs that stop tests asserting facts about the
+# machine they run on. Until those land, the SAME code goes green on spartan and
+# red on an org runner, which would make this gate's verdict depend on which
+# runner picked the job up. Do not add spartan labels here to "help"; the switch
+# is flipped in the Variable, once those PRs land.
 #
 # THE THREE PATHS HAVE DIFFERENT AUDIENCES, WHICH IS WHY THE SAME SUITE RUNS
 # THREE SHAPES:
