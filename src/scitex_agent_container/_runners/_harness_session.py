@@ -54,10 +54,10 @@ different layers of the stack:
   ``ClaudeSDKClient`` and calling ``_drive_turn`` per inbound message).
 
 They compose VERTICALLY, not by inheritance: a future runner selects a
-``HarnessSession`` implementation based on ``AgentConfig.provider``
-(``config._provider_types.AgentProvider`` — see the naming-collision
-note there against the unrelated ``ClaudeSpec.provider``) and drives it
-from inside the process that ``RuntimeBase.start()`` launched. Reusing
+``HarnessSession`` implementation based on ``AgentConfig.harness``
+(``config._harness_types`` — the spec key is ``spec.harness``, NOT the
+unrelated ``ClaudeSpec.provider``) and drives it from inside the process
+that ``RuntimeBase.start()`` launched. Reusing
 ``HarnessSession`` for both harnesses (rather than only using it as an
 OpenAI-side implementation detail) is what keeps ``openai-compat-2``
 from having to reinvent the turn-loop contract.

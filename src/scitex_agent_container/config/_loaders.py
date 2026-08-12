@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from ._explicit_validation import validate as _validate_explicit_fields
+from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -426,10 +427,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
-        # Agent SDK family (top-level; NOT spec.claude.provider — see the
-        # naming-collision note in config._provider_types.AgentProvider).
-        # Default mirrors the dataclass default; openai-compat-1 foundation.
-        provider=str(spec.get("provider") or "anthropic"),
+        # HARNESS — which agent SDK runs the session. NOT
+        # spec.claude.provider (the inference backend). ``spec.harness``
+        # is canonical; ``spec.provider`` is the deprecated alias, and a
+        # STATED disagreement between the two raises rather than picking
+        # one silently (config._harness_types).
+        harness=resolve_spec_harness(spec),
+        harness_key_is_legacy=uses_legacy_harness_key(spec),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.

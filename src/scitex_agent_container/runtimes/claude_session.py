@@ -314,9 +314,13 @@ class ClaudeSessionRuntime(RuntimeBase):
         # Operator directive 12870 (lead a2a b58dd5d3): emit the legacy
         # ``runtime: apptainer`` deprecation HERE (real start path), not
         # in ``_get_runtime`` (status / list / discovery walks).
-        from .._lifecycle._runtime_select import warn_if_legacy_apptainer_runtime
+        from .._lifecycle._runtime_select import (
+            warn_if_legacy_apptainer_runtime,
+            warn_if_legacy_harness_key,
+        )
 
         warn_if_legacy_apptainer_runtime(config)
+        warn_if_legacy_harness_key(config)
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:

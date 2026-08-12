@@ -94,6 +94,38 @@ def warn_if_legacy_apptainer_runtime(config: AgentConfig) -> None:
     )
 
 
+def warn_if_legacy_harness_key(config: AgentConfig) -> None:
+    """Emit the deprecation log when the spec reached the harness axis
+    through ``spec.provider`` instead of ``spec.harness``.
+
+    Placed on the START path for the same reason as
+    :func:`warn_if_legacy_apptainer_runtime` (lead a2a
+    ``f468a6d2e11443598103ed1672e2e40b``): every status / list /
+    discovery walk loads every definition on the host, so warning at
+    LOAD time would print one line per spec on commands that asked no
+    question about spec style, and would contaminate CliRunner-captured
+    ``--json`` output. Warn when the key is actually USED to start
+    something.
+
+    NEVER raises — the deprecation is informational, and failing to log
+    it must not block a start.
+    """
+    if not getattr(config, "harness_key_is_legacy", False):
+        return
+    log.warning(
+        "spec.provider is DEPRECATED — the field selects the agent "
+        "HARNESS (which agent SDK runs the session), not an inference "
+        "provider, and is now spelled `harness:`. Still honoured, and "
+        "resolving to harness=%r. Rename the key in %r's spec to "
+        "`harness: %s` to silence this warning. (Unrelated to "
+        "spec.claude.provider, which stays `provider` — it really does "
+        "select an inference backend.)",
+        getattr(config, "harness", ""),
+        getattr(config, "name", "<unknown>"),
+        getattr(config, "harness", ""),
+    )
+
+
 def _fallback_workdir(name: str) -> str:
     """Return the workdir path used when the agent's YAML can't be loaded.
 

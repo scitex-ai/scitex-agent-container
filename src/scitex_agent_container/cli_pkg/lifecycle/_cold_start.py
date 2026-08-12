@@ -45,7 +45,7 @@ metadata:
     project: {label}
 spec:
   runtime: tui
-  provider: anthropic
+  harness: anthropic
   host: {host}
   workdir: {workdir}
   python-venv: ""

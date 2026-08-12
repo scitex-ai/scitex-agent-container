@@ -7,7 +7,7 @@ Five built-ins:
   official ``claude-agent-sdk`` (structured streaming, no ``--print``).
   **Recommended** for new agents — survives ``--print`` deprecation.
 * :func:`handle_openai_session` — drives an OpenAI model via the
-  ``openai-agents`` SDK (``spec.provider: openai`` family; optional
+  ``openai-agents`` SDK (``spec.harness: openai``; optional
   ``[openai]`` extra). Stateful: turns share the agent's
   ``SQLiteSession`` conversation state.
 * :func:`handle_claude_cli` — *(legacy)* runs ``claude --print`` with

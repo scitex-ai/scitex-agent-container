@@ -22,6 +22,7 @@ import pytest
 from scitex_agent_container._lifecycle._runtime_select import (
     _get_runtime,
     warn_if_legacy_apptainer_runtime,
+    warn_if_legacy_harness_key,
 )
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
@@ -160,6 +161,85 @@ def test_warn_if_legacy_apptainer_runtime_silent_for_claude_agent_sdk(
         if r.levelno == logging.WARNING and "deprecated" in r.getMessage()
     ]
     assert deprecation_warnings == []
+
+
+# ---------------------------------------------------------------------------
+# Legacy spec.provider key — the harness axis' deprecated spelling.
+# Placed on the START path for the same reason as the runtime deprecation
+# above: a load-time warning would fire once per spec on every list walk.
+# ---------------------------------------------------------------------------
+
+
+def test_warn_if_legacy_harness_key_fires_for_a_legacy_spec(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(
+        name="alpha", harness="anthropic", harness_key_is_legacy=True
+    )
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_harness_key(config)
+    # Assert
+    deprecations = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "DEPRECATED" in r.getMessage()
+    ]
+    assert len(deprecations) >= 1
+
+
+def test_warn_if_legacy_harness_key_names_the_old_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(
+        name="alpha", harness="anthropic", harness_key_is_legacy=True
+    )
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_harness_key(config)
+    # Assert
+    messages = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    )
+    assert "spec.provider" in messages
+
+
+def test_warn_if_legacy_harness_key_names_the_agent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(
+        name="my-research-agent", harness="anthropic", harness_key_is_legacy=True
+    )
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_harness_key(config)
+    # Assert
+    messages = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    )
+    assert "my-research-agent" in messages
+
+
+def test_warn_if_legacy_harness_key_silent_for_the_canonical_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Arrange
+    config = SimpleNamespace(
+        name="alpha", harness="anthropic", harness_key_is_legacy=False
+    )
+    caplog.set_level(logging.WARNING)
+    # Act
+    warn_if_legacy_harness_key(config)
+    # Assert
+    deprecations = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "DEPRECATED" in r.getMessage()
+    ]
+    assert deprecations == []
 
 
 # ---------------------------------------------------------------------------

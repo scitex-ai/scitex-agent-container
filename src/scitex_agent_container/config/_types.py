@@ -13,7 +13,8 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 # ApptainerSpec extracted to a sibling module (per-file line cap);
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
-from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
+from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
+from ._provider_types import ProviderSpec
 
 
 @dataclass
@@ -375,13 +376,12 @@ class AgentConfig:
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
     runtime: str = "tui"
-    # Agent SDK family selector (top-level, sibling of ``runtime`` — NOT
-    # the same field as ``claude.provider`` below; see the naming-collision
-    # note in ``config._provider_types.AgentProvider``). Default
-    # "anthropic" = claude-agent-sdk, the only implemented family today.
-    # "openai" validates (openai-compat-1 foundation) but has no runner
-    # until openai-compat-2 lands — this field is inert until then.
-    provider: AgentProvider = DEFAULT_AGENT_PROVIDER
+    # HARNESS: which agent SDK runs the session ("anthropic" = the
+    # claude-agent-sdk | "openai"). Carries ``spec.harness`` or its
+    # DEPRECATED alias ``spec.provider`` — see ``config._harness_types``.
+    harness: AgentHarness = DEFAULT_AGENT_HARNESS
+    # Provenance, NOT a spec field: reached only through the alias.
+    harness_key_is_legacy: bool = False
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

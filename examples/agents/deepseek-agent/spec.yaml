@@ -99,7 +99,7 @@ spec:
     prune_on_stop: false
 
   # Explicit-fields ruling (2026-07-21): every spec field is written; values below are the defaults.
-  provider: anthropic
+  harness: anthropic
   python-venv: ''
   startup_commands: []
   startup_prompts: []

@@ -1,4 +1,4 @@
-"""OpenAI SDK session executor — drives ``openai-agents`` (spec.provider: openai).
+"""OpenAI SDK session executor — drives ``openai-agents`` (spec.harness: openai).
 
 Sibling of :class:`ClaudeSessionExecutor` for the OpenAI agent-SDK
 family (scitex-todo card ``openai-compat-2``). Same wire surface (sync

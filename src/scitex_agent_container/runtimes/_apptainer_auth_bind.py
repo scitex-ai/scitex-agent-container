@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import AgentConfig
-from ._apptainer_provider import openai_provider_active, provider_active
+from ._apptainer_provider import openai_harness_active, provider_active
 
 
 class CredentialExpiredError(RuntimeError):
@@ -154,7 +154,7 @@ def credentials_file_bind(
     by name on every open and so DOES reflect atomic-replace refreshes
     without a restart.
     """
-    if provider_active(config) or openai_provider_active(config):
+    if provider_active(config) or openai_harness_active(config):
         return []
     claude_spec = getattr(config, "claude", None)
     designated = str(getattr(claude_spec, "credentials_file", "") or "").strip()

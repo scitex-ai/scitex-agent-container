@@ -246,15 +246,15 @@ def test_validate_raw_accepts_runtime_apptainer_for_backcompat():
 
 
 # ---------------------------------------------------------------------------
-# spec.provider — agent SDK family selector (openai-compat-1 foundation).
-# Distinct from spec.claude.provider (vendor backend override, tested in
-# test__validation_provider.py) — see the naming-collision note in
-# config._provider_types.AgentProvider.
+# spec.harness — which agent SDK runs the session, plus its DEPRECATED
+# alias spec.provider. Distinct from spec.claude.provider (vendor backend
+# override, tested in test__validation_provider.py); the full migration
+# contract lives in test__harness_types.py.
 # ---------------------------------------------------------------------------
 
 
-def test_validate_raw_absent_provider_adds_no_value_error():
-    # Arrange — the VALUE check stays a no-op when spec.provider is absent
+def test_validate_raw_absent_harness_adds_no_value_error():
+    # Arrange — the VALUE check stays a no-op when the key is absent
     # (the red-start ruling flags the MISSING field separately; the
     # "must be one of" value diagnostic must not fire on absence).
     raw = {
@@ -265,10 +265,10 @@ def test_validate_raw_absent_provider_adds_no_value_error():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.provider must be one of" in e]
+    assert not [e for e in errors if "must be one of" in e and "harness" in e]
 
 
-def test_validate_raw_absent_provider_is_flagged_missing():
+def test_validate_raw_absent_harness_is_flagged_missing():
     # Arrange — red-start ruling 2026-07-21: every field explicit.
     raw = {
         "apiVersion": "scitex-agent-container/v3",
@@ -278,7 +278,20 @@ def test_validate_raw_absent_provider_is_flagged_missing():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.provider" in e]
+    assert [e for e in errors if "spec.harness" in e]
+
+
+def test_validate_raw_legacy_provider_key_satisfies_the_missing_check():
+    # Arrange — a spec written before the rename HAS declared the field.
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "anthropic"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.harness —" in e]
 
 
 def test_validate_raw_accepts_provider_anthropic():
@@ -782,12 +795,26 @@ def test_host_local_passes_validation():
     assert not [e for e in errors if "host" in e.lower()]
 
 
-def test_complete_spec_with_explicit_provider_openai_has_no_errors():
-    # Arrange — a fully-valid spec that ALSO opts into the (not-yet-
-    # runnable) openai SDK family must still validate clean.
+def test_complete_spec_with_explicit_harness_openai_has_no_errors():
+    # Arrange — a fully-valid spec that ALSO opts into the openai
+    # harness must still validate clean.
     import copy
 
     raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"]["harness"] = "openai"
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert errors == []
+
+
+def test_complete_spec_reaching_openai_through_the_legacy_key_has_no_errors():
+    # Arrange — the deprecated alias, written INSTEAD of the canonical
+    # key (writing both with different values is the conflict case).
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"].pop("harness", None)
     raw["spec"]["provider"] = "openai"
     # Act
     errors = validate_raw(raw, path="<test>")
