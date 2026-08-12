@@ -40,20 +40,24 @@ _SECRET = "zz-secret-value-must-never-be-echoed"
 
 @pytest.fixture
 def fleet(tmp_path: Path) -> Iterator[Path]:
-    """A real redirected ``$SCITEX_DIR`` with an empty agents dir."""
-    saved_dir = os.environ.get("SCITEX_DIR")
+    """A real, empty spec tree passed to the verb via ``--agents-dir``.
+
+    Deliberately NOT a redirected ``$SCITEX_DIR``. Intercepting the state root
+    made the suite depend on an env var that several layers resolve (and that
+    another test could clobber mid-run); passing the directory explicitly is
+    the same statement with none of the coupling. Only the POOL still travels
+    by env, because that is genuinely what the production code reads.
+    """
     saved_pool = os.environ.get(_SECRETS_VAR)
-    agents = tmp_path / "scitex" / "agent-container" / "agents"
+    agents = tmp_path / "agents"
     agents.mkdir(parents=True)
-    os.environ["SCITEX_DIR"] = str(tmp_path / "scitex")
     try:
         yield agents
     finally:
-        for var, val in ((("SCITEX_DIR"), saved_dir), (_SECRETS_VAR, saved_pool)):
-            if val is None:
-                os.environ.pop(var, None)
-            else:
-                os.environ[var] = val
+        if saved_pool is None:
+            os.environ.pop(_SECRETS_VAR, None)
+        else:
+            os.environ[_SECRETS_VAR] = saved_pool
 
 
 def _write_spec(agents: Path, name: str, *, channel: bool, env: dict | None = None):
@@ -94,8 +98,8 @@ def _pool(tmp_path: Path, body: str) -> None:
     os.environ[_SECRETS_VAR] = str(path)
 
 
-def _run(*args: str):
-    return CliRunner().invoke(cct_audit, list(args))
+def _run(agents: Path, *args: str):
+    return CliRunner().invoke(cct_audit, ["--agents-dir", str(agents), *args])
 
 
 def _payload(result) -> dict:
@@ -111,7 +115,7 @@ def test_an_empty_fleet_is_clean(fleet: Path, tmp_path: Path) -> None:
     # Arrange
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_UNUSED=zz\n")
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert result.exit_code == 0
 
@@ -121,7 +125,7 @@ def test_an_agent_with_a_resolving_slot_is_up(fleet: Path, tmp_path: Path) -> No
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_HASBOT=" + _SECRET + "\n")
     _write_spec(fleet, "zz-hasbot", channel=True)
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"][0]["state"] == "up"
 
@@ -136,7 +140,7 @@ def test_a_declared_slot_that_does_not_exist_is_down(
         fleet, "zz-typo", channel=True, env={"CCT_BOT_TOKEN_SLOT": "ZZ_MISSING"}
     )
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"][0]["state"] == "down"
 
@@ -147,7 +151,7 @@ def test_a_mute_agent_makes_the_sweep_fail(fleet: Path, tmp_path: Path) -> None:
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_OTHER=" + _SECRET + "\n")
     _write_spec(fleet, "zz-mute", channel=True)
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert result.exit_code == 1
 
@@ -160,7 +164,7 @@ def test_an_agent_that_never_asked_for_a_rail_is_omitted(
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_UNUSED=zz\n")
     _write_spec(fleet, "zz-norail", channel=False)
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"] == []
 
@@ -170,7 +174,7 @@ def test_an_unrequested_rail_is_listed_under_all(fleet: Path, tmp_path: Path) ->
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_UNUSED=zz\n")
     _write_spec(fleet, "zz-norail", channel=False)
     # Act
-    result = _run("--json", "--all")
+    result = _run(fleet, "--json", "--all")
     # Assert
     assert _payload(result)["agents"][0]["state"] == "not-requested"
 
@@ -188,7 +192,7 @@ def test_an_unloadable_spec_becomes_an_unknown_row(fleet: Path, tmp_path: Path) 
     (fleet / "zz-broken").mkdir(parents=True)
     (fleet / "zz-broken" / "spec.yaml").write_text("{{{ not yaml", encoding="utf-8")
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"][0]["state"] == "unknown"
 
@@ -199,7 +203,7 @@ def test_an_unloadable_spec_is_named(fleet: Path, tmp_path: Path) -> None:
     (fleet / "zz-broken").mkdir(parents=True)
     (fleet / "zz-broken" / "spec.yaml").write_text("{{{ not yaml", encoding="utf-8")
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"][0]["agent"] == "zz-broken"
 
@@ -217,7 +221,7 @@ def test_an_inconclusive_pool_makes_every_row_unknown(
     os.environ[_SECRETS_VAR] = str(tmp_path / "absent.src")
     _write_spec(fleet, "zz-blind", channel=True)
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _payload(result)["agents"][0]["state"] == "unknown"
 
@@ -227,7 +231,7 @@ def test_the_report_names_the_pool_source(fleet: Path, tmp_path: Path) -> None:
     # say where it looked.
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_UNUSED=zz\n")
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert "zz-pool.src" in _payload(result)["pool_source"]
 
@@ -237,7 +241,7 @@ def test_the_report_never_carries_a_token_value(fleet: Path, tmp_path: Path) -> 
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_HASBOT=" + _SECRET + "\n")
     _write_spec(fleet, "zz-hasbot", channel=True)
     # Act
-    result = _run("--json")
+    result = _run(fleet, "--json")
     # Assert
     assert _SECRET not in result.output
 
@@ -269,6 +273,6 @@ def test_the_table_rendering_never_carries_a_token_value(
     _pool(tmp_path, "export CCT_BOT_TOKEN_ZZ_HASBOT=" + _SECRET + "\n")
     _write_spec(fleet, "zz-hasbot", channel=True)
     # Act
-    result = _run()
+    result = _run(fleet)
     # Assert
     assert _SECRET not in result.output

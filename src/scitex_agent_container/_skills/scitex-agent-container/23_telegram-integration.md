@@ -73,11 +73,10 @@ deterministically — per-agent identity never depends on `.envrc` goodwill
 2. `spec.apptainer.env: CCT_BOT_TOKEN_SLOT: <SLOT>` — explicit override
    for names that don't map mechanically (e.g. `SAC`). Only that slot is
    tried; a typo fails loud instead of binding another project's bot.
-3. Mechanical candidates derived from the AGENT NAME only: its upper-snake
-   form, plus the same with a leading `scitex-` stripped (`scitex-todo` →
-   `TODO`). The WORKDIR is deliberately NOT consulted — it was, until
-   2026-07-17, and that is what let a second agent in a repo take the
-   first one's bot (a directory names a PROJECT, never an agent).
+3. Mechanical candidates from the AGENT NAME only: upper-snake, plus the
+   same with a leading `scitex-` stripped (`scitex-todo` → `TODO`). The
+   WORKDIR is NOT consulted — it was until 2026-07-17, which let a second
+   agent in a repo take the first one's bot.
 
 The token lands in `$HOME/.env` (`chmod 0600`, apptainer `--env-file`) —
 never on `--env` argv (visible in `/proc/<pid>/cmdline`) and never in a
@@ -86,62 +85,15 @@ materialized file (`.mcp.json` keeps `${CCT_BOT_TOKEN}` /
 to the workdir basename when no layer set it. Log lines carry only slot
 NAMES, paths, and the agent name — token VALUES are never logged.
 
-Channel requested but no slot resolves ⇒ a scitex-logging ERROR names the
-pool source, every tried slot, and the three fixes; the start proceeds
-(Telegram is a comms rail, not a boot dependency) but the absence is loud.
+Channel requested but no slot resolves ⇒ a scitex-logging WARNING names the
+pool source, every tried slot and the fixes; the start proceeds (Telegram is a
+comms rail, not a boot dependency) but the absence is loud. What happens NEXT —
+the three-valued rail verdict, the alarm that reaches the operator over the
+LEAD's Telegram rather than the broken agent's, and `sac agents cct-audit` —
+is its own leaf: **23_telegram-rail-verdict.md**.
 
-## The rail verdict — three values, and an alarm that is not on Telegram
-
-When no token resolves, `prune_tokenless_telegrammer_mcp` REMOVES the MCP
-server — correct, by operator ruling, but it removes the rail in BOTH
-directions at the one moment nothing can report it. The agent starts
-perfectly, reports healthy, and is MUTE and DEAF; it cannot even
-self-diagnose, because `health` is a tool on the server that just went away.
-That is how the 2026-08-12 outage was found: the operator noticed silence.
-
-Nothing checks the two sides of the mapping agree. Candidates come from the
-AGENT NAME; the pool is named by whoever wrote it. Live mismatches include
-`scitex-agent-container`→`SAC`, `scitex-cards`→`TODO`, `neurovista`→
-`PAPER_NEUROVISTA` and `neurovista-paper-writer`→`PAPER_NEUROVISTA_WRITER` —
-the last a WORD-ORDER difference, which is why "derive harder" is not the
-answer and sac never guesses.
-
-`runtimes/_cct_rail_verdict.assess_cct_rail` answers with THREE values:
-
-| verdict | meaning |
-|---|---|
-| `up` | a token is present (pool slot, or already folded into `$HOME/.env`) |
-| `down` | the rail is requested, nothing resolves, and the pool read was CONCLUSIVE |
-| `unknown` | sac could NOT tell — the pool read was inconclusive, or `.env` exists and could not be read |
-
-`unknown` is never rendered as fine. `_secret_pool.PoolRead.trusted` is what
-separates it from `down`: a read that sourced no secret FILE holds only the
-launching process env, which can prove a slot present but never absent. That
-is the 2026-08-12 root cause in one flag — the pool was on the host and
-`sac-listen.service` had no `SAC_SECRETS_ENVRC`, so three consecutive
-diagnoses said "there is no token on 04" when the truth was "it was not in the
-launching process".
-
-`runtimes/_cct_rail_alarm.check_cct_rail_at_start` (called from
-`_lifecycle/_start.py` AFTER `runtime.start` materialised `$HOME/.env`) records
-the verdict in sac's event log under subsystem `cct-rail` and pushes a
-`blocker` at the LEAD (ADR-0013). **It never gates the start** — 89 fleet specs
-inherit the channel request from the templates, Telegram is not a boot
-dependency, and a stranded agent is more silent, not less. The push rides the
-LEAD's Telegram, not the broken agent's: a mute agent shouts with somebody
-else's voice. Deduped to one page per agent per outage; recovery re-arms it.
-
-`sac agents cct-audit [--json] [--all]` sweeps every spec on the host, read-only
-— the same verdict for agents already running, since the start-time alarm only
-fires on a restart nobody knows to perform. It exits 1 on any `down`/`unknown`,
-so a timer or a relocation preflight can gate on it. **Run it where agents are
-STARTED from**: the pool resolves from the launching environment, so an
-operator shell, a systemd unit, an ssh and a container each see a different
-pool, and the report names which one it read.
-
-The fix is one line in the agent's spec, under `spec.apptainer.env`:
-`CCT_BOT_TOKEN_SLOT: <SLOT>` (precedence #2 — and the only route that survives
-a relocation, since `.envrc`-folded `$HOME/.env` does not travel).
+Fix: one line under `spec.apptainer.env` — `CCT_BOT_TOKEN_SLOT: <SLOT>`
+(precedence #2, the only route that survives a relocation).
 
 ## Failure surface + diagnostics (bug #41 hardening, 2026-06-07)
 
@@ -159,8 +111,8 @@ HARD-FAILS the start when the wiring provably won't succeed.
 | `to_home/.mcp.json` entry malformed (`env` not a dict) | Runner-side WARN log | Fix the entry's `env` to be an object |
 | Operator pre-set `CLAUDE_CODE_TELEGRAMMER_TURN_URL` | Runner-side INFO log: "pre-set by operator … not overridden" | Verify the pre-set URL actually points at THIS agent's /v1/turn |
 | Wake URL successfully wired | Runner-side INFO log: "telegrammer wake wired" | Nothing — verify by tailing runner stderr |
-| Channel requested, no `CCT_BOT_TOKEN_<SLOT>` resolves | MCP entry REMOVED (agent mute + deaf); `cct-rail` event `subject-degraded` + a `blocker` push at the lead; `sac agents cct-audit` says DOWN | Add `CCT_BOT_TOKEN_SLOT: <SLOT>` under spec.apptainer.env, or drop the channel |
-| Same, but sac could not READ the pool | `cct-rail` event `subject-unknown`; `cct-audit` says UNKNOWN, never DOWN | Fix the vantage point (`SAC_SECRETS_ENVRC` on the LAUNCHING process), then re-run |
+| No `CCT_BOT_TOKEN_<SLOT>` resolves | MCP entry REMOVED (mute + deaf); `cct-rail` `subject-degraded` + lead `blocker`; `cct-audit` DOWN | `CCT_BOT_TOKEN_SLOT: <SLOT>` under spec.apptainer.env, or drop the channel |
+| Same, but sac could not READ the pool | `cct-rail` `subject-unknown`; `cct-audit` UNKNOWN, never DOWN | Fix the vantage point (`SAC_SECRETS_ENVRC` on the LAUNCHING process) |
 
 ## How to verify on a running agent
 

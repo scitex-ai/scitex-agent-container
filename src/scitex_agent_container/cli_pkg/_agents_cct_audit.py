@@ -65,17 +65,26 @@ _STYLE = {
 }
 
 
-def _spec_paths():
-    """Every ``<agents_root>/<name>/spec.yaml`` on this host, sorted by name."""
-    from .._state.state_paths import agents_root
+def _spec_paths(agents_dir: str | None = None):
+    """Every ``<agents_dir>/<name>/spec.yaml``, sorted by name.
 
-    root = agents_root()
+    ``agents_dir`` defaults to this host's ``agents_root()``. It is an explicit
+    parameter rather than an env lookup so the caller states WHICH spec tree it
+    means — useful for auditing a peer's synced tree, and it keeps the tests
+    from having to intercept ``$SCITEX_DIR`` to say the same thing.
+    """
+    if agents_dir:
+        root = Path(agents_dir).expanduser()
+    else:
+        from .._state.state_paths import agents_root
+
+        root = agents_root()
     if not root.is_dir():
         return []
     return [p for p in sorted(root.glob("*/spec.yaml")) if p.is_file()]
 
 
-def _rows(include_unrequested: bool) -> list[dict]:
+def _rows(include_unrequested: bool, agents_dir: str | None = None) -> list[dict]:
     """Assess every spec against ONE pool read.
 
     The pool is read once and injected into every assessment: forking a bash
@@ -87,7 +96,7 @@ def _rows(include_unrequested: bool) -> list[dict]:
 
     pool = read_pool()
     rows: list[dict] = []
-    for path in _spec_paths():
+    for path in _spec_paths(agents_dir):
         name = path.parent.name
         # stx-allow: fallback (reason: one unloadable spec must not abort a fleet-wide audit; it is reported as its OWN unknown row rather than dropped, because a spec sac cannot read is exactly the kind of thing this sweep exists to surface)
         try:
@@ -170,9 +179,23 @@ def _render_table(rows: list[dict]) -> None:
     is_flag=True,
     help="Also list agents whose spec never requests the telegrammer channel.",
 )
+@click.option(
+    "--agents-dir",
+    "agents_dir",
+    default=None,
+    help=(
+        "Audit this spec tree instead of this host's agents root — e.g. a "
+        "peer's synced specs. Note the POOL is still read from HERE."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def cct_audit(ctx: click.Context, include_unrequested: bool, as_json: bool) -> None:
+def cct_audit(
+    ctx: click.Context,
+    include_unrequested: bool,
+    agents_dir: str | None,
+    as_json: bool,
+) -> None:
     """Audit every spec's Telegram rail: declared vs actually resolved.
 
     \b
@@ -201,7 +224,7 @@ def cct_audit(ctx: click.Context, include_unrequested: bool, as_json: bool) -> N
     Read-only. Starts nothing, restarts nothing, and never reads a token value.
     Exits 1 if any agent is DOWN or UNKNOWN.
     """
-    rows = _rows(include_unrequested)
+    rows = _rows(include_unrequested, agents_dir)
     down = [r for r in rows if r["state"] == RAIL_DOWN]
     unknown = [r for r in rows if r["state"] == RAIL_UNKNOWN]
     pool_label = _pool_source_label()
