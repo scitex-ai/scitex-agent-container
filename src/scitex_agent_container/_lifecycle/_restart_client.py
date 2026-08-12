@@ -100,35 +100,36 @@ def _resolve_base_url(explicit: str | None) -> str:
 def _resolve_bearer(explicit: str | None) -> str | None:
     """Return the listen-server bearer token, or ``None`` if unset.
 
-    Identical resolution to :func:`._spawn_client._resolve_bearer`:
-    explicit arg → ``SAC_LISTEN_BEARER`` env → the on-disk host token
-    file. An absent bearer is NOT fatal (the listen may run with bearer
-    auth disabled); the server enforces its own auth contract.
+    Resolution: explicit arg → ``SAC_LISTEN_BEARER`` /
+    ``SCITEX_AGENT_CONTAINER_LISTEN_BEARER`` env → the on-disk host token file.
+    An absent bearer is NOT fatal (the listen may run with bearer auth
+    disabled); the server enforces its own auth contract.
+
+    Delegates rather than re-implementing. The old local body was VERIFIED
+    behaviourally identical to the canonical before this change — this is a
+    pure dedup, not a fix. It is worth doing anyway because the copies that
+    were NOT identical each cost a live defect: a missing resolver (#907), an
+    unreachable token file (#908), an invisible env prefix (#909). Every one of
+    those copies was also identical to the canonical on the day it was written.
+    A duplicate is not wrong when created; it goes wrong later, silently.
     """
-    if explicit is not None:
-        return explicit or None
-    from .._env import getenv
+    from ._listen_client_resolve import _resolve_bearer as _canonical_resolve_bearer
 
-    tok = (getenv("LISTEN_BEARER", "") or "").strip()
-    if tok:
-        return tok
-    from .._listen.tokens import default_token_path, read_token
-
-    return read_token(default_token_path())
+    return _canonical_resolve_bearer(explicit)
 
 
 def _resolve_caller(explicit: str | None) -> str | None:
     """Return the requesting agent's identity, or ``None`` for admin.
 
-    Reuses the spawn caller rule: read ``SAC_NAME`` from the container
-    env (via :func:`._spawn_gate.resolve_spawn_caller`). An empty string
-    normalises to ``None`` (administrative / operator path).
+    Reads ``SAC_NAME`` from the container env; an empty string normalises to
+    ``None`` (administrative / operator path). Delegates to the canonical
+    resolver — the local body was verified identical first. See
+    :func:`_resolve_bearer` above for why an identical copy is still worth
+    removing.
     """
-    if explicit is not None:
-        return explicit or None
-    from ._spawn_gate import resolve_spawn_caller
+    from ._listen_client_resolve import _resolve_caller as _canonical_resolve_caller
 
-    return resolve_spawn_caller()
+    return _canonical_resolve_caller(explicit)
 
 
 def _parse_body(raw: bytes) -> Any:

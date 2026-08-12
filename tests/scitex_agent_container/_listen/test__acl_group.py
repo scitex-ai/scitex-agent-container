@@ -43,7 +43,10 @@ from scitex_agent_container._state.state_db_nodes import (
     record_comms_policy,
     record_lineage,
 )
-from scitex_agent_container.config._group_resolver import group_from_labels
+from scitex_agent_container.config._group_resolver import (
+    all_named_groups,
+    group_from_labels,
+)
 
 
 def _seed_child_from_labels(
@@ -55,15 +58,23 @@ def _seed_child_from_labels(
 ) -> None:
     """Seed a non-root agent EXACTLY as ``agent_start`` would.
 
-    Walks the real production path — ``metadata.labels`` → ``group_from_labels``
-    → ``node_comms_policy.group_name`` — rather than hand-writing the resolved
-    group into the DB. That is what makes these tests able to catch a gap in
-    the RESOLVER (a role that derives no group) and not just in the gate.
+    Walks the real production path — ``metadata.labels`` → the resolvers →
+    ``node_comms_policy`` — rather than hand-writing a resolved group into
+    the DB. That is what makes these tests able to catch a gap in the
+    RESOLVER (a role that derives no group) and not just in the gate.
+
+    BOTH projections are written, exactly like ``persist_acl_policy``:
+    ``group_name`` (PRIMARY, the mesh bucket) and ``group_names`` (the FULL
+    set the authority gates read). Seeding only the primary is what this
+    helper used to do, and it is precisely the reduction that hid the
+    2026-08-10 defect — a helper that no longer mirrors production stops
+    being able to catch a production bug.
     """
     record_lineage(child=name, parent="root-parent", db_path=db_path)
     record_comms_policy(
         name=name,
         group_name=group_from_labels(labels),
+        group_names=all_named_groups(labels),
         may_spawn=may_spawn,
         db_path=db_path,
     )
@@ -293,6 +304,83 @@ def test_non_developer_child_still_denied_spawn(db_path: Path) -> None:
     record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
     # Act
     decision, _reason = check_spawn(caller="worker-a", db_path=db_path)
+    # Assert
+    assert decision == "deny"
+
+
+# ---------------------------------------------------------------------------
+# check_spawn — MULTI-GROUP labels, seeded from real spec labels through the
+# real resolvers (incident 2026-08-10, grant).
+#
+# grant's spec authors five groups and `developer` is NOT the first. Every
+# gate resolved only the first element, so the same listen server answered
+# `a2a_peers` with all five and `check_spawn` with "is in none of the
+# developer, research, or privileged groups". Authority hung on YAML list
+# ORDER. These go through `_seed_child_from_labels`, so a future reduction
+# anywhere in labels -> resolver -> DB -> gate fails here, not in production.
+# ---------------------------------------------------------------------------
+
+GRANT_LABELS = {
+    "role": "project-maintainer",
+    "groups": ["generalist", "privileged", "developer", "researcher", "active"],
+}
+
+
+def test_child_with_developer_late_in_its_groups_may_spawn(db_path: Path) -> None:
+    """THE reported bug, end-to-end from grant's real spec labels."""
+    # Arrange
+    _seed_child_from_labels("grant", GRANT_LABELS, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="grant", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_child_with_developer_late_in_its_groups_may_manage_peers(
+    db_path: Path,
+) -> None:
+    """The same membership question on the MANAGE gate (tail / stop /
+    restart), which read the identical reduced group."""
+    # Arrange
+    _seed_child_from_labels("grant", GRANT_LABELS, db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller="grant", target="unrelated-peer", db_path=db_path
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_child_with_researcher_late_in_its_groups_may_spawn(db_path: Path) -> None:
+    # Arrange
+    labels = {"role": "worker", "groups": ["generalist", "researcher"]}
+    _seed_child_from_labels("nv", labels, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="nv", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_child_with_privileged_late_in_its_groups_may_spawn(db_path: Path) -> None:
+    # Arrange
+    labels = {"role": "worker", "groups": ["generalist", "privileged"]}
+    _seed_child_from_labels("dotfiles", labels, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="dotfiles", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_multi_group_child_with_no_authorising_group_is_still_denied(
+    db_path: Path,
+) -> None:
+    """The gate must still SHUT — a set-valued read that stopped denying
+    would be a worse bug than the one it fixes."""
+    # Arrange
+    labels = {"role": "worker", "groups": ["generalist", "active", "analysts"]}
+    _seed_child_from_labels("worker-b", labels, db_path=db_path)
+    # Act
+    decision, _reason = check_spawn(caller="worker-b", db_path=db_path)
     # Assert
     assert decision == "deny"
 

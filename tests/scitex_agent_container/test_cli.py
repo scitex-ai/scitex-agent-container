@@ -168,7 +168,12 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "list", "--json"])
         # Assert
-        data = json.loads(result.output)
+        # ``result.output`` folds stderr in (click 8.4 dropped mix_stderr).
+        # This command walks the AMBIENT fleet, so a spec whose account has
+        # no saved snapshot logs a WARN during config load -- ahead of the
+        # payload -- and json.loads dies at char 0. Intermittently, because
+        # it depends on what is on disk. Parse the payload stream only.
+        data = json.loads(result.stdout)
         assert isinstance(data, dict) and "agents" in data
 
     def test_removed_ps_command_exits_nonzero(self):
@@ -434,21 +439,27 @@ class TestCLI:
 # ----------------------------------------------------------------------------
 
 
-# How long the fake peer hangs. The probe budget is ~1s, so a healthy run is
-# cut at the BUDGET and a regressed one runs to this. Deliberately far above
-# the budget: the test's margin comes from the GAP between those two outcomes,
-# not from a tight bound, so a loaded machine cannot walk a healthy run across
-# it. See test_hanging_remote_probe_respects_timeout_budget.
-_HANG_S = 30.0
-
-
 class _HangingRuntime:
-    """Fake runtime that simulates a hung probe (todo#254 regression)."""
+    """Fake runtime that simulates a hung probe (todo#254 regression).
+
+    ``release`` is set by the caller once the measurement window closes. The
+    probe still blocks far past the 1s budget while it is being timed -- that
+    is the point -- but a worker thread cannot outlive the test that started
+    it. ``pool.shutdown(wait=False)`` deliberately does not join these
+    threads, so an unconditional ``sleep(10)`` leaves them running inside the
+    xdist worker long after the test returned.
+    """
+
+    def __init__(self, release=None):
+        self._release = release
 
     def is_running(self, cfg):
         import time
 
-        time.sleep(_HANG_S)  # far longer than the probe timeout
+        if self._release is not None:
+            self._release.wait(10)  # longer than the probe timeout
+        else:
+            time.sleep(10)
         return True
 
 
@@ -502,8 +513,24 @@ class TestListJsonTimeoutBudget:
     status="unknown" + liveness_unknown=True in the output row.
     """
 
+    # ``host`` is REQUIRED since the explicit-placement directive
+    # (2026-06-23). Without it ``load_config`` raises, ``_agent_list`` swallows
+    # that into ``cfg = None``, the agent never enters ``probe_targets``, and
+    # the fake probe below IS NEVER CALLED — while the row still reads
+    # status="unknown" for that unrelated reason. All three hanging-probe
+    # tests then passed while guarding nothing (measured 2026-08-07: 0 probe
+    # invocations). ``_run_fast_probe`` already carried ``host``; this fixture
+    # was missed. The ``calls`` counter below is the positive control that
+    # makes a repeat of that silent voiding FAIL instead of going green.
+    _SPEC = """apiVersion: scitex-agent-container/v3
+kind: Agent
+spec:
+  runtime: apptainer
+  host: ${HOSTNAME}
+"""
+
     @staticmethod
-    def _run_hanging_probe(tmp_path):
+    def _run_probe(tmp_path, probe_factory, release=None):
         import time
 
         from scitex_agent_container.cli_pkg import _helpers
@@ -512,37 +539,21 @@ class TestListJsonTimeoutBudget:
         rd = tmp_path / "test-remote"
         rd.mkdir()
         remote_cfg_path = rd / "test-remote.yaml"
-        # v3-realign: spec.remote removed; the agent-list-data probe still
-        # treats agents without a runtime PID as "remote-ish" (liveness
-        # unknown) — that's what this test exercises, so a minimal v3
-        # spec without spec.remote is sufficient.
-        remote_cfg_path.write_text(
-            explicitize_yaml("""apiVersion: scitex-agent-container/v3
-kind: Agent
-spec:
-  runtime: apptainer
-  host: ${HOSTNAME}
-""")
-        )
+        remote_cfg_path.write_text(explicitize_yaml(TestListJsonTimeoutBudget._SPEC))
         ld = tmp_path / "test-local"
         ld.mkdir()
         local_cfg_path = ld / "test-local.yaml"
-        local_cfg_path.write_text(
-            explicitize_yaml("""apiVersion: scitex-agent-container/v3
-kind: Agent
-spec:
-  runtime: apptainer
-  host: ${HOSTNAME}
-""")
-        )
+        local_cfg_path.write_text(explicitize_yaml(TestListJsonTimeoutBudget._SPEC))
+
+        calls = []
+
+        def _counting_probe(cfg):
+            calls.append(cfg)
+            return probe_factory(cfg)
 
         # PA-306: hand-rolled fake injection with explicit restore.
         saved_probe = getattr(_helpers, "probe_local_detail", None)
-        _helpers.probe_local_detail = lambda cfg: _LocalProbe(
-            running=_HangingRuntime().is_running(cfg),
-            runtime="HangingRuntime",
-            error=None,
-        )
+        _helpers.probe_local_detail = _counting_probe
         try:
             t0 = time.monotonic()
             rows = _helpers.get_agent_list_data(
@@ -551,35 +562,84 @@ spec:
             )
             elapsed = time.monotonic() - t0
         finally:
+            # Measurement window is closed: let any probe thread the pool
+            # abandoned return NOW rather than sleep out its full hang.
+            if release is not None:
+                release.set()
             if saved_probe is None:
                 if hasattr(_helpers, "probe_local_detail"):
                     delattr(_helpers, "probe_local_detail")
             else:
                 _helpers.probe_local_detail = saved_probe
-        return elapsed, rows
+        return elapsed, rows, len(calls)
 
-    def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
-        """A hanging remote probe must not exceed the per-probe timeout."""
+    @classmethod
+    def _run_hanging_probe(cls, tmp_path):
+        import threading
+
+        release = threading.Event()
+        runtime = _HangingRuntime(release)
+        return cls._run_probe(
+            tmp_path,
+            lambda cfg: _LocalProbe(
+                running=runtime.is_running(cfg),
+                runtime="HangingRuntime",
+                error=None,
+            ),
+            release=release,
+        )
+
+    @classmethod
+    def _run_instant_probe(cls, tmp_path):
+        """Baseline arm: identical call, only the hang removed."""
+        return cls._run_probe(
+            tmp_path,
+            lambda cfg: _LocalProbe(running=True, runtime="InstantRuntime", error=None),
+        )
+
+    def test_hanging_probe_actually_reaches_the_probe_path(self, tmp_path):
+        """Positive control for the whole hanging-probe suite.
+
+        The other tests are only meaningful if the fake probe RUNS. A spec
+        that fails validation silently skips it and every assertion below
+        still passes, so assert the invocation directly.
+        """
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        elapsed, _rows = probe(tmp_path)
-        # Assert — the bound belongs to the HANG, not to a constant picked
-        # against the budget. Healthy: cut at the ~1s budget. Regressed:
-        # runs the full _HANG_S. A third of the hang sits far from both, so
-        # the assertion separates the two OUTCOMES rather than measuring how
-        # busy the machine is.
-        #
-        # The previous form asserted `elapsed < 3.0` — 3x a 1s budget — and
-        # that is the assertion that reddened develop under 32-way xdist:
-        # observed 3.78s, i.e. scheduling delay alone crossed it while the
-        # timeout was working perfectly. Tightening or nudging that constant
-        # only moves the coin-flip; widening the GAP between healthy and
-        # regressed is what removes it.
-        assert elapsed < _HANG_S / 3, (
-            f"get_agent_list_data blocked for {elapsed:.1f}s against a 1s "
-            f"probe timeout and a {_HANG_S:.0f}s hang — the budget is not "
-            "cutting the wait short; todo#254 regression re-introduced"
+        _elapsed, _rows, calls = probe(tmp_path)
+        # Assert
+        assert calls > 0, (
+            "the hanging probe was never invoked — get_agent_list_data "
+            "skipped the probe path (likely load_config rejected the "
+            "fixture spec), so the todo#254 timeout guards are VACUOUS"
+        )
+
+    def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
+        """A hanging remote probe must not exceed the per-probe timeout."""
+        # Arrange: baseline arm measures the same call WITHOUT the hang, so
+        # the assertion charges the budget only for the hang. Asserting raw
+        # wall clock instead made this flaky — the non-probe work (config
+        # load, auth states, row build) reached 8.4s on a loaded CI runner
+        # and was charged to the 1s probe timeout, failing and passing on
+        # the SAME commit (1ebfb71f, 2026-08-06).
+        base_dir = tmp_path / "base"
+        base_dir.mkdir()
+        hang_dir = tmp_path / "hang"
+        hang_dir.mkdir()
+        baseline, _rows, _base_calls = self._run_instant_probe(base_dir)
+        # Act
+        elapsed, _rows, _calls = self._run_hanging_probe(hang_dir)
+        # Assert
+        # (that both arms reached the probe path is asserted separately by
+        # test_hanging_probe_actually_reaches_the_probe_path — the positive
+        # control that makes this comparison meaningful.)
+        overshoot = elapsed - baseline
+        # The 10s hang must cost no more than its 1s budget (+ pool overhead).
+        assert overshoot < 2.5, (
+            f"a hung probe added {overshoot:.1f}s over the {baseline:.1f}s "
+            f"baseline despite a 1s probe timeout — todo#254 regression "
+            f"re-introduced"
         )
 
     def test_hanging_remote_probe_marks_status_unknown(self, tmp_path):
@@ -587,7 +647,7 @@ spec:
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        _elapsed, rows = probe(tmp_path)
+        _elapsed, rows, _calls = probe(tmp_path)
         # Assert
         remote_row = next(r for r in rows if r["name"] == "test-remote")
         assert remote_row["status"] == "unknown"
@@ -597,7 +657,7 @@ spec:
         # Arrange
         probe = self._run_hanging_probe
         # Act
-        _elapsed, rows = probe(tmp_path)
+        _elapsed, rows, _calls = probe(tmp_path)
         # Assert
         remote_row = next(r for r in rows if r["name"] == "test-remote")
         assert remote_row.get("liveness_unknown") is True

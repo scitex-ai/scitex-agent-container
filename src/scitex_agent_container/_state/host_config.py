@@ -291,11 +291,45 @@ class PeersMap(dict):
             return default
 
 
+# Parsed-config cache, keyed on the file's IDENTITY rather than its path, so a
+# rewritten config.yaml is never served stale.
+#
+# WHY IT EXISTS — measured 2026-08-09 on the live host. `GET /agents` calls
+# `resolve_a2a_host()` once per row (_listen/_registry_endpoints.py:111-113),
+# and that called this function, which re-read and re-parsed config.yaml from
+# disk EVERY time. Counting `yaml.safe_load` by caller on ONE warm request:
+#
+#     23  host_config.load        <- 23 identical parses of ONE global file
+#     17  _load_spec_dict         <- per-agent specs, no duplication
+#      1  load_self_peer
+#
+# 56% of the parse calls in the request were this file, re-read for rows that
+# cannot differ in it. Nothing about config.yaml varies per agent.
+#
+# Keyed on (resolved path, st_mtime_ns, st_size): mtime alone can miss a
+# same-nanosecond rewrite on coarse clocks, and size catches the common
+# edit-in-place case that mtime granularity could hide. A `stat` per call is
+# ~microseconds against a parse of ~25ms.
+_PARSED_CACHE: dict[tuple[str, int, int], "Config"] = {}
+
+
 def load(path: Path | None = None) -> Config:
-    """Read config.yaml; missing file or empty file yields defaults."""
+    """Read config.yaml; missing file or empty file yields defaults.
+
+    Parsed results are cached per (path, mtime, size) — see `_PARSED_CACHE`.
+    """
     p = Path(path) if path else _default_config_path()
     if not p.is_file():
         return Config(source_path=p)
+    try:
+        _st = p.stat()
+        _key: tuple[str, int, int] | None = (str(p), _st.st_mtime_ns, _st.st_size)
+    except OSError:  # stx-allow: fallback (reason: stat failure must not break config loading — degrade to an uncached parse)
+        _key = None
+    if _key is not None:
+        _hit = _PARSED_CACHE.get(_key)
+        if _hit is not None:
+            return _hit
     raw = yaml.safe_load(p.read_text()) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"config.yaml must be a mapping at top level: {p}")
@@ -325,7 +359,17 @@ def load(path: Path | None = None) -> Config:
 
     lead = _parse_lead(raw.get("lead"), source_path=p)
 
-    return Config(host=host, peers=peers, lead=lead, source_path=p)
+    cfg = Config(host=host, peers=peers, lead=lead, source_path=p)
+    if _key is not None:
+        # Bounded: one entry per (path, mtime, size) actually parsed. In
+        # practice one live entry plus a short tail of superseded ones after an
+        # edit; clearing wholesale on a miss would defeat multi-path callers
+        # (tests pass explicit paths), so trim oldest-first instead.
+        if len(_PARSED_CACHE) >= 32:
+            for _stale in list(_PARSED_CACHE)[:16]:
+                _PARSED_CACHE.pop(_stale, None)
+        _PARSED_CACHE[_key] = cfg
+    return cfg
 
 
 def _parse_env_preamble(name: str, raw) -> tuple[str, ...]:

@@ -18,6 +18,7 @@ card responsibility that stays in ``server.py``.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from starlette.requests import Request
@@ -29,6 +30,7 @@ from .._state.state_db_channel import (
     mark_delivered,
     persist_event,
 )
+from ..a2a._delivery_report import report_zero_delivery
 from ..a2a._inbox_bus import (
     KEEPALIVE,
     keepalive_interval_s,
@@ -45,6 +47,8 @@ from ._node_channel_forwarders import _forward_to_remote
 from ._nodes import Broker, NodeRegistry
 
 __all__ = ["_forward_to_remote", "node_message_send", "node_inbox_stream"]
+
+log = logging.getLogger(__name__)
 
 
 async def node_message_send(request: Request) -> Response:
@@ -198,7 +202,13 @@ async def node_message_send(request: Request) -> Response:
             )
             row_id = persist_event(target=name, event=notif)
             notif["_row_id"] = row_id
-            await broker.publish(name, notif)
+            report_zero_delivery(
+                log,
+                target=name,
+                what="ACL-deny notification",
+                delivered=await broker.publish(name, notif),
+                row_id=row_id,
+            )
 
             # sac-comms item D (lead a2a c42b3e3c, merged with
             # lead-sac-acl-blocked-attempt-notification). REPLACES
@@ -226,7 +236,13 @@ async def node_message_send(request: Request) -> Response:
                     )
                     synth_row_id = persist_event(target=name, event=synth)
                     synth["_row_id"] = synth_row_id
-                    await broker.publish(name, synth)
+                    report_zero_delivery(
+                        log,
+                        target=name,
+                        what="grant-command notification",
+                        delivered=await broker.publish(name, synth),
+                        row_id=synth_row_id,
+                    )
 
             # Task #27 — ACL approve-prompt flow (post-amendment).
             # On a CROSS-GROUP deny (the only deny reason the
@@ -250,7 +266,13 @@ async def node_message_send(request: Request) -> Response:
                     prompt = _mint_approval_prompt(target=name, sender=sender_id)
                     prompt_row_id = persist_event(target=name, event=prompt)
                     prompt["_row_id"] = prompt_row_id
-                    await broker.publish(name, prompt)
+                    report_zero_delivery(
+                        log,
+                        target=name,
+                        what="approval prompt",
+                        delivered=await broker.publish(name, prompt),
+                        row_id=prompt_row_id,
+                    )
         return deny_response(reason or "ACL deny")
 
     # ADR-0013 Phase 1: typed event ``kind`` (``done`` / ``blocker`` /

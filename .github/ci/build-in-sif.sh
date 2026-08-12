@@ -29,10 +29,21 @@ test -x "$PY" || {
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
 # Writable scratch (the runner's TMPDIR=~/.cache/tmp is a host path that does
-# NOT resolve inside the container). Node-local /tmp is writable + ephemeral.
-TMPDIR="/tmp/build-scitex_agent_container-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-$V"
+# NOT resolve inside the container). Node-local /tmp is writable.
+#
+# It was NOT "ephemeral", whatever this comment used to say: nothing removed
+# this directory, so every release leaked one. Smaller and rarer than
+# run-in-sif.sh's, therefore slower to notice — not less of a leak. Lifecycle
+# (naming, end-of-job removal, startup prune) now lives in tmpdir-lib.sh.
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+TMPDIR="$(ci_tmpdir_path build "$V")"
 export TMPDIR
-rm -rf "$TMPDIR"
+# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
+# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
+# name here would delete nothing, fail nothing, and leave the rest of the script
+# addressing paths off the filesystem root. `:?` aborts instead.
+rm -rf "${TMPDIR:?build scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
 # The compute-node $HOME is RO inside the container — point every cache the

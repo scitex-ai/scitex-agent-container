@@ -134,6 +134,21 @@ def _run_child(
     is dispatched through ``run_blocking``, which consumes ``timeout_s`` as its
     OWN watchdog deadline. Same name would silently hand the child's deadline
     to the watchdog and leave the child unbounded.
+
+    ``errors="replace"`` — A DIAGNOSTIC TOOL MUST NOT DIE ON DIAGNOSTIC OUTPUT.
+    Bare ``text=True`` decodes STRICTLY, so a single byte the codec dislikes
+    raises ``UnicodeDecodeError`` out of ``communicate()`` and the caller gets
+    an error INSTEAD of the output it asked for. That is not an exotic input:
+    it is any log carrying ANSI colour written in a non-UTF-8 locale, any
+    binary-ish artefact, and — the common one — any run whose output was
+    TRUNCATED mid multibyte character, which is precisely what a timeout kill
+    or a drain ceiling produces. So the failure lands hardest on the runs
+    someone is trying to debug. Reported by the operator 2026-08-11 after
+    tailing a log through ``host_exec_local`` returned HTTP 500 rather than the
+    log. ``encoding`` is pinned to UTF-8 in the same breath so the result does
+    not depend on the daemon's ambient locale (``text=True`` alone follows
+    ``locale.getencoding()``, which differs between the systemd unit and an
+    operator shell — the same bytes would decode two ways).
     """
     with subprocess.Popen(
         argv,
@@ -143,6 +158,8 @@ def _run_child(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         start_new_session=True,
     ) as proc:
         try:

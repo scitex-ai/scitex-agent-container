@@ -366,7 +366,7 @@ def _message2(probe: HealthProbe, authed: HealthProbe | None) -> str:
     )
 
 
-def test_message_calls_the_fault_route_specific_when_authed_answers() -> None:
+def test_message_rules_out_daemon_wide_when_authed_answers() -> None:
     # Arrange — authenticated work IS being served, in the same seconds.
     #
     # This asserted on "the fault is specific to" and my own mutation control
@@ -374,6 +374,14 @@ def test_message_calls_the_fault_route_specific_when_authed_answers() -> None:
     # test passed with the authed probe ignored entirely. It could not have
     # disagreed. "not daemon-wide" is the claim only this arm is entitled to
     # make, because only this arm measured a daemon serving authed work.
+    #
+    # 2026-08-11 — that last sentence was RIGHT and the message did not obey
+    # it. The message went on to assert "THEREFORE the fault is specific to
+    # <route>", which this arm is NOT entitled to: two fast control routes
+    # rule OUT a daemon-wide fault, but cannot separate a wedged route from
+    # one still working past the timeout. Measured that day: a spawn reported
+    # as "no response within 30s" had been accepted and ran for 5m12s. The
+    # test was more careful than the code; the code now matches the test.
     # Act
     message = _message2(_SERVING, _authed())
     # Assert
@@ -393,6 +401,60 @@ def test_message_refuses_a_restart_when_authed_answers() -> None:
 def test_message_warns_the_route_can_answer_then_degrade() -> None:
     # Arrange — measured intermittency: the same route succeeded earlier the
     # same night, so one later success is not proof of a fix.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "does not mean it was fixed" in message
+
+
+def test_message_refuses_to_call_the_route_faulty_when_authed_answers() -> None:
+    # Arrange — the regression this arm exists to prevent. Ruling OUT a
+    # daemon-wide fault is not ruling IN a route-specific one, and the old
+    # message made exactly that leap in capitals ("THEREFORE the fault is
+    # specific to <route>"). A reader acted on it within two minutes and
+    # filed a P1 against the wrong component.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "fault is specific to" not in message
+
+
+def test_message_says_the_cause_is_not_established_when_authed_answers() -> None:
+    # Arrange — the positive half of the arm above. Refusing the wrong claim
+    # is only useful if the message also states, in the reader's own terms,
+    # that the cause remains open.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "NOT ESTABLISHED" in message
+
+
+def test_message_names_agent_state_as_the_discriminator() -> None:
+    # Arrange — a timeout on the transport says nothing about whether the
+    # WORK happened. The only thing that does is the agent's own state, so
+    # the message must send the reader there rather than leaving them with
+    # an HTTP result they will over-read.
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "sac agents list neurovista" in message
+
+
+def test_message_names_startup_failed_as_a_state_worth_reading() -> None:
+    # Arrange — naming the command is not enough; the reader must know what
+    # they are looking FOR. "startup_failed" is the state that distinguishes
+    # "the spawn ran and lost" from "the spawn never began".
+    # Act
+    message = _message2(_SERVING, _authed())
+    # Assert
+    assert "startup_failed" in message
+
+
+def test_message_does_not_read_a_later_success_as_a_fix() -> None:
+    # Arrange — measured intermittency has TWO readings: a genuine fault, or
+    # an operation whose duration straddles the timeout. One later success
+    # discriminates neither, and the message must say so rather than implying
+    # the route "degrades".
     # Act
     message = _message2(_SERVING, _authed())
     # Assert

@@ -162,6 +162,26 @@ def load_self_peer(path: Path, *, self_identity: str | None = None) -> dict | No
     except OSError as exc:
         log.warning("self-peer: cannot read %s: %s", path, exc)
         return None
+    # Reject before parsing. ``is_self_peer_spec`` requires a non-empty
+    # ``listen_url`` key, and a YAML mapping cannot carry that key unless those
+    # characters appear in the source text — so a file without the substring can
+    # never be a self-peer, and parsing it is pure waste.
+    #
+    # This is the whole cost of the scan, not a micro-optimisation. Measured
+    # 2026-08-09 in the live container: ``discover_self_peers`` took 3.7-4.8s on
+    # EVERY call (not a cold start) and returned ONE peer, because it fully
+    # ``yaml.safe_load``-ed ~114 agent specs per search root to decide they were
+    # not self-peers. That single call dominated ``GET /agents`` (2.4-29.2s),
+    # which is what surfaces to other agents as "cannot start/restart an agent"
+    # once their client timeout is shorter than the tail.
+    #
+    # Verified against the real corpus before relying on it: 106 spec.yaml files
+    # under ~/.scitex/agent-container/agents/, ZERO containing ``listen_url``.
+    # A cache was the obvious alternative and is worse — it needs per-file mtime
+    # invalidation and can go stale, whereas declining to parse what you would
+    # discard cannot.
+    if "listen_url" not in text:
+        return None
     try:
         blob = yaml.safe_load(text)
     except yaml.YAMLError as exc:

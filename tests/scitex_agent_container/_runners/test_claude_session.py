@@ -537,10 +537,24 @@ def test_heartbeat_loop_subsequent_ticks_refresh_ts(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _wait_for_pid_file(state_dir: Path, deadline_s: float = 5.0) -> None:
+def _wait_for_pid_file(state_dir: Path, deadline_s: float = 30.0) -> None:
     """Block until the runner has produced both pid + heartbeat files, or
     raise ``TimeoutError`` — so the caller can treat readiness as a
-    precondition without paying for an extra assert."""
+    precondition without paying for an extra assert.
+
+    THE BUDGET WAS 5.0s AND IT NEVER HAD THE HEADROOM IT LOOKED LIKE. Measured
+    2026-08-11 on a normally-busy fleet host: the child takes ~3.7s to reach its
+    pid file, i.e. 74% of the old deadline was already spent before anything
+    went wrong. Any co-tenant load — a parallel pytest run, a bake — pushed it
+    over, and the failure surfaced as "runner never wrote pid/heartbeat", which
+    reads as a broken RUNNER rather than a busy BOX.
+
+    That confusion is the same shape this suite's sibling rails exist to end, so
+    the deadline is now 30s. Nothing here asserts a LATENCY — the three tests
+    that use it assert pid identity, exit code and final heartbeat state — so a
+    generous deadline costs nothing on a healthy run (it returns as soon as the
+    files appear) and removes a false negative on a loaded one.
+    """
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         if (state_dir / "pid").is_file() and (state_dir / "heartbeat.json").is_file():
@@ -552,7 +566,21 @@ def _wait_for_pid_file(state_dir: Path, deadline_s: float = 5.0) -> None:
 @pytest.fixture
 def _runner_subprocess(tmp_path: Path):
     """Spawn the runner as a child process; yield (proc, state_dir); send
-    SIGTERM + wait on teardown so each test focuses on one observation."""
+    SIGTERM + wait on teardown so each test focuses on one observation.
+
+    The child declares ``SAC_SKIP_VENV_DIST_ASSERTION`` deliberately. The
+    runner's boot assertion
+    (``_maintenance._venv_dist_assertion.assert_venv_distributions_unique``)
+    measures the DEVELOPER'S ``/opt/venv-sac``, not anything these three tests
+    assert about — they are about pid/heartbeat mechanics. Leaving it armed
+    means a contributor whose own overlay happens to shadow the image sees
+    "runner never wrote pid/heartbeat" and reads it as a broken REPO, which is
+    the exact env-mistaken-for-repo confusion that assertion exists to end. The
+    gate stays armed everywhere else; its own behaviour is covered directly by
+    ``tests/.../\\_maintenance/test__venv_dist_assertion.py``, including a
+    negative control proving it is armed without this variable.
+    """
+    child_env = {**os.environ, "SAC_SKIP_VENV_DIST_ASSERTION": "1"}
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -567,6 +595,7 @@ def _runner_subprocess(tmp_path: Path):
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=child_env,
     )
     state_dir = tmp_path / "ci-runner"
     _wait_for_pid_file(state_dir)

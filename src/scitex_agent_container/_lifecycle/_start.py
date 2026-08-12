@@ -17,8 +17,12 @@ from ..config import AgentConfig, load_config, resolve_config
 from ._a2a_port import resolve_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
-from ._instances import make_restart_callback as _make_restart_callback
+
+# Re-exported from _start_failure_diag for back-compat: this helper lived here
+# before the 512-line-cap split.
+from ._identity_drift import check_board_identity_at_launch
 from ._instances import record_local_instance as _record_local_instance
+from ._layers_preflight import check_to_home_layers_at_launch
 from ._runtime_select import _get_runtime
 from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
@@ -26,9 +30,6 @@ from ._spawn_gate import enforce_spawn_gate, persist_acl_policy
 # Re-exported from _start_announce for back-compat: this helper lived here
 # before the 512-line-cap split.
 from ._start_announce import _announce_start_verdict  # noqa: F401
-
-# Re-exported from _start_failure_diag for back-compat: this helper lived here
-# before the 512-line-cap split.
 from ._start_failure_diag import _format_boot_stderr_section  # noqa: F401
 from ._start_outcome import NOOP_ALREADY_RUNNING
 
@@ -43,7 +44,7 @@ from ._start_preflight import (  # noqa: F401
     _rotate_to_healthy_account,
     _verify_real_liveness,
 )
-from .health import health_monitor
+from ._start_supervision import start_background_supervision
 
 
 def agent_start(
@@ -95,10 +96,11 @@ def agent_start(
             though ``-y`` was explicitly passed at the CLI. Ignored on
             the non-SIF (direct) path — it has no interactive gate of
             its own to satisfy.
-        strict_drift: Escalate a drifted spec-source git repo from a
-            loud warning to a hard block (raise before launch). ``None``
-            (default) reads ``SAC_STRICT_DRIFT`` / ``--strict-drift`` is
-            not set; ``True`` forces strict, ``False`` forces lenient.
+        strict_drift: Whether a STALE spec source blocks the launch.
+            ``None`` (default) resolves to STRICT unless
+            ``SAC_ALLOW_STALE_SPEC`` / ``SAC_STRICT_DRIFT=0`` says
+            otherwise; ``True`` forces strict, ``False`` forces lenient
+            (what ``--allow-stale-spec`` passes).
         runtime_factory: Injectable real callable that builds an SDK
             runtime from an :class:`AgentConfig`. Default is the real
             :func:`_get_runtime`.
@@ -146,16 +148,26 @@ def agent_start(
     ):
         return True
 
-    # Launch-time LOCAL spec-source drift check. Verifies the git repo
-    # backing this spec.yaml (on these hosts ``~/.scitex/agent-container/
-    # agents`` symlinks into ``~/.dotfiles``) is current with its remote.
-    # Stale (BEHIND) → may run an old spec; unpushed (AHEAD/DIVERGED) →
-    # won't propagate. Default = LOUD WARNING, never a block (hosts like
-    # spartan legitimately carry local commits). ``--strict-drift`` /
-    # ``SAC_STRICT_DRIFT=1`` escalate to a hard block. Always best-effort:
-    # a non-git source / unreachable remote / any error warns-and-continues
-    # — the check never crashes a launch (resilience is the contract).
+    # TWO SPEC-SANITY GATES, refuse-by-default, each with its OWN named
+    # override (operator ruling 2026-08-10 — never a blanket --force).
+    # (1) spec source BEHIND/DIVERGED = a possibly STALE spec; escape hatch
+    # ``--allow-stale-spec``. AHEAD / non-git / unreachable still start.
+    # (2) undeclared ``to_home_layers``; escape hatch
+    # ``--allow-undeclared-layers``, and the refusal itself is still gated
+    # on the fleet migration (``_layers_preflight.ENFORCE_BY_DEFAULT``).
+    # (2) is called HERE, once, not in the resolver a start invokes twice.
     _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
+    check_to_home_layers_at_launch(config)
+
+    # Launch-time BOARD IDENTITY check, same contract as the drift check
+    # above: LOUD WARNING, never a block, never crashes a launch. An agent
+    # whose name and SCITEX_TODO_AGENT_ID disagree is one process with two
+    # identities — peers address it by one, it owns cards and polls its
+    # inbox as the other — and every symptom is SILENT, because a card
+    # query for the wrong spelling returns a well-formed empty list rather
+    # than an error. Measured 2026-08-09: that hid a P1 from the agent
+    # that owned it for over an hour. See :mod:`._identity_drift`.
+    check_board_identity_at_launch(config)
 
     # CREDS-PHASE1 — auto-rotate ``spec.claude.account`` to a healthy
     # stored account when the pinned one's snapshot is EXPIRED/ABSENT.
@@ -468,28 +480,28 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Restart callback re-records the row (a restart = a NEW pid) AND pins
-    # the state.db it writes to -- see ``_instances.make_restart_callback``.
-    if config.health.enabled:
-        thread = thread_factory(
-            target=health_monitor,
-            args=(
-                config.name,
-                config,
-                registry,
-                _make_restart_callback(runtime_factory),
-            ),
-            daemon=True,
-        )
-        thread.start()
+    # TELEGRAM-RAIL VERDICT (card sac-cct-rail-loud-when-no-slot-resolves-
+    # 20260812). Runs HERE, after ``runtime.start`` materialised the agent's
+    # ``$HOME/.env`` — that file is precedence #1 of the token resolution, so
+    # reading it earlier would report an agent as token-less that in fact has
+    # one. A spec that declares the telegrammer MCP but resolves NO slot has
+    # its MCP server removed (correctly, by operator ruling) and the agent
+    # then starts perfectly, reports healthy, and is MUTE and DEAF on Telegram
+    # with no signal anywhere. It does NOT gate the start; the alarm is
+    # three-valued and rides the LEAD's rail, not the broken one. Full
+    # argument in :mod:`..runtimes._cct_rail_alarm`.
+    from ..runtimes._cct_rail_alarm import check_cct_rail_at_start
 
-    # ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks
-    # a ``priority_list``; otherwise polls the hub every 60 s and steps
-    # aside (snapshot push + SIGTERM) when a higher-priority host is
-    # healthy. Daemon thread, dies with the process.
-    try:
-        _h.start_failback_poller(config)
-    except Exception:
-        traceback.print_exc()
+    check_cct_rail_at_start(config)
+
+    # Daemon supervisors for an agent that is now up — health monitor +
+    # priority-failback poller. See :mod:`._start_supervision`.
+    start_background_supervision(
+        config,
+        registry=registry,
+        runtime_factory=runtime_factory,
+        handover=_h,
+        thread_factory=thread_factory,
+    )
 
     return True

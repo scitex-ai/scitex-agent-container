@@ -468,6 +468,20 @@ class AgentConfig:
     # Default: ``./to_home`` next to ``spec.yaml`` (auto-discovered
     # when this field is empty).
     to_home: str = "./to_home"
+    # spec.to_home_layers — which to_home CASCADE layers this agent inherits,
+    # named explicitly so the spec states what will be merged into it instead
+    # of leaving it to be discovered on disk. Valid names are the cascade's own
+    # (``user-shared``, ``project-shared``, ``per-agent``); order is fixed by
+    # precedence, not by how they are listed here.
+    #
+    # ``None`` (key absent) means "inherit whatever is on disk" — today's
+    # implicit behaviour, kept so this field can land without changing a single
+    # existing agent. It is NOT the end state: measured 2026-08-09, ALL 102
+    # registered specs are in exactly this position, so refusing an undeclared
+    # spec today would strip every hook from every agent at once. The migration
+    # declares them first, and enforcement comes after that. Until then an
+    # absent value is warned about, never refused.
+    to_home_layers: "list[str] | None" = None
 
     def __post_init__(self) -> None:
         if not self.screen_name:

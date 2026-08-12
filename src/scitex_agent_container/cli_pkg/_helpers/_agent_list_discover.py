@@ -323,6 +323,7 @@ def _probe_remote_statuses(
     not run is not evidence a remote agent died, but neither is it evidence it
     is running, so it must not render as a comforting green.
     """
+    import time as _time
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as _FuturesTimeout
 
@@ -335,13 +336,23 @@ def _probe_remote_statuses(
         future_to_name = {
             pool.submit(probe, c["name"], c["host"]): c["name"] for c in candidates
         }
+        # ONE shared wall-clock budget for the batch. future.result(timeout=T)
+        # in submission order restarts the deadline PER FUTURE, so n stalled
+        # probes cost about ceil(n/workers)*T even though the pool is parallel
+        # -- precisely the serialization the docstring above promises cannot
+        # happen. The local pass in _agent_list.get_agent_list_data was fixed
+        # for todo#254 and its comment already claims "same defect, same fix, as
+        # _probe_remote_statuses"; the fix never landed here. A comment is not a
+        # fix, and only the test caught the difference.
+        _deadline = _time.monotonic() + probe_timeout_s
         for future in list(future_to_name):
             name = future_to_name[future]
+            _remaining = max(0.0, _deadline - _time.monotonic())
             # stx-allow: fallback (a per-probe timeout/exception is "unknown" —
             # hidden from the default view + counted in the footer; a probe that
             # could not run must not masquerade as a running remote row)
             try:
-                statuses[name] = future.result(timeout=probe_timeout_s)
+                statuses[name] = future.result(timeout=_remaining)
             except _FuturesTimeout:  # stx-allow: fallback (reason: see inline comment)
                 statuses[name] = "unknown"
                 future.cancel()

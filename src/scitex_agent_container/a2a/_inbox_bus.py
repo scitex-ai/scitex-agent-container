@@ -18,10 +18,23 @@ The bus is intentionally in-process and in-memory:
 * One bounded ``asyncio.Queue`` per (agent, subscriber). Bounded so a
   slow consumer can't grow the queue without limit; oldest pending
   message drops when the cap is hit.
-* No persistence — peers that POST while no subscriber is connected
-  do not have their messages buffered. The receiving agent's Claude
-  session is the authoritative consumer; replays land on disk via
-  ``session.jsonl``, not via the bus.
+* No persistence IN THE BUS — a peer that POSTs while no subscriber is
+  connected gets nothing buffered *here*.
+
+  READ THAT NARROWLY. It is a statement about THIS MODULE, not about the
+  A2A rail, and taking it as the latter is a mistake this docstring has
+  already caused (2026-08-08: I told the operator "a2a does not persist",
+  and it does). ``_server.py`` calls ``persist_event`` to write the event
+  into ``state.db``'s ``channel_events`` BEFORE it calls ``publish`` here,
+  precisely so a bus-only drop cannot lose it — and the row id it returns
+  is the SSE ``id:``, which a reconnecting client replays from via
+  ``Last-Event-ID``. So the RAIL is durable and replayable; the BUS is the
+  live fan-out in front of it.
+
+  Verify that by reading ``_server.py`` and querying ``channel_events``,
+  not by trusting this paragraph. Documents can lie; the implementation
+  and a measurement cannot (operator, 2026-08-08: 「ドキュメントは嘘を
+  つけるので、実装と実測を常にエビデンスにしてください」).
 
 The broker has no auth — the routes that publish / subscribe enforce
 the same bearer-auth shape as the rest of sac listen.

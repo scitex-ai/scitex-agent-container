@@ -224,3 +224,41 @@ def test_register_template_tools_invokes_mcp_tool_decorator() -> None:
     register_template_tools(mcp)
     # Assert
     assert registered == [template_render_contributor_spec]
+
+
+def test_rendered_contributor_spec_opens_with_the_design_document_line(
+    dry_run_result: dict,
+) -> None:
+    # Arrange — operator ruling 2026-08-11 (ADR-0022 §3): a spec is the
+    # contract for an agent not yet started; a running agent's state lives
+    # in the database. The header says so where a reader will see it.
+    expected = (
+        "# THIS IS A DESIGN DOCUMENT — the contract for an agent not yet started."
+    )
+    # Act
+    first_line = dry_run_result["yaml"].splitlines()[0]
+    # Assert
+    assert first_line == expected
+
+
+def test_rendered_contributor_spec_sends_state_to_the_database(
+    dry_run_result: dict,
+) -> None:
+    # Arrange
+    expected = (
+        "# The state of a RUNNING agent lives in the database, never in this file."
+    )
+    # Act
+    second_line = dry_run_result["yaml"].splitlines()[1]
+    # Assert
+    assert second_line == expected
+
+
+def test_contributor_header_is_a_comment_and_does_not_change_the_spec(
+    dry_run_result: dict,
+) -> None:
+    # Arrange
+    # Act
+    doc = yaml.safe_load(dry_run_result["yaml"])
+    # Assert
+    assert doc["apiVersion"] == "scitex-agent-container/v3"
