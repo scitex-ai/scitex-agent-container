@@ -60,6 +60,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
 - [33](33_twin-spawning.md) — context-inheriting twin
 - [34](34_spec-is-a-contract-not-state.md) — spec = contract; state = DB
+- [35](35_a-zero-must-be-a-measured-zero.md) — a `0` from an instrument may mean "did not check"
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API
