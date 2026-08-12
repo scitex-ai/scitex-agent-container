@@ -65,6 +65,38 @@ name: auto-merge-to-develop
 #
 # NOTE: `jq` is NOT assumed to exist on the bare node either — every filter below
 # goes through `gh --jq` (gh embeds its own jq). Do not introduce a bare `jq`.
+#
+# *** A HOLD MUST BE A MECHANISM, NOT AN INTENTION. ***
+# On 2026-08-12 a PR that an agent had DELIBERATELY HELD — it relaxed a guard the
+# operator had escalated — was merged anyway, with no review and no comment. The
+# hold was real; it just lived in one agent's head. Nothing in the repository knew
+# a hold had been declared, so nothing in the repository could honour it. An
+# intention that no mechanism reads is not a hold, it is a hope.
+# This sweep therefore REFUSES to merge any PR carrying a HOLD MARKER:
+#   * a `hold` / `do-not-merge` LABEL (see HOLD_LABELS below) — one click in the
+#     GitHub UI, which is the whole point: the person most likely to need this is
+#     the operator, and he must not have to edit YAML to stop a robot; or
+#   * DRAFT status — already honoured before this change, but SILENTLY, which is
+#     half a mechanism. It is now announced like any other hold.
+# The refusal is ANNOUNCED (`::warning::`, naming the PR and the marker) on EVERY
+# tick, not once. A silent skip reproduces the original bug in a new place: the
+# hold works, nobody can tell that it worked, and the next reader assumes it did
+# not. A held PR spends NO merge budget, so holding one PR never delays another,
+# and REMOVING the marker lets it merge on the next tick with no other action.
+# The markers are checked BEFORE CI state, so a held PR is reported as held even
+# while it is red — "why didn't this merge" has one answer, not two.
+#
+# *** AN AUTOMATED MERGE MUST SAY THAT IT IS AUTOMATED. ***
+# Every agent, every workflow and the operator all act through the SAME GitHub
+# account, so `merged_by` carries NO information: it cannot distinguish "a watcher
+# merged this the moment CI went green" from "a person read this diff and decided
+# to merge it". Distinct per-agent identities would fix that at the source — that
+# is a credentials decision, it belongs to the operator, and it is deliberately
+# NOT made here. What this workflow can do without touching a single credential is
+# leave a trace that does not depend on identity at all: it POSTS A COMMENT NAMING
+# ITSELF AND ITS REASONS *BEFORE* it merges. If that comment cannot be posted the
+# merge does NOT happen — an untraceable automated merge is precisely the defect
+# the comment exists to close — and the PR waits for the next tick instead.
 on:
   schedule:
     # Every ~15 min, deliberately OFF the top of the hour: GitHub queues all
@@ -151,6 +183,18 @@ jobs:
           # instead of by a human babysitting a loop. Raising this above 1 means
           # merging onto a base whose CI has not run yet. Don't.
           MAX_MERGES: "1"
+          # HOLD MARKERS (space-separated, matched case-insensitively against the
+          # PR's labels). Any one of these on a PR means "a human wants to look at
+          # this first" and the sweep will not merge it. Keep them SHORT and
+          # OBVIOUS: this list is a UI, and its user is a person clicking a label
+          # in a hurry because a robot is about to merge something it should not.
+          # Draft status is a hold too, and is handled alongside these.
+          HOLD_LABELS: "hold do-not-merge"
+          # An invisible signature on the attribution comment, so a retried tick
+          # can recognise its own earlier comment instead of stacking another.
+          # Changing this string orphans every comment already posted — the old
+          # ones stay valid as a record, they just stop being recognised.
+          ATTRIB_MARKER: "<!-- auto-merge-to-develop:attribution -->"
           # Space-separated; every entry must accept a bare workflow_dispatch.
           POST_MERGE_GATES: >-
             pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
@@ -176,6 +220,9 @@ jobs:
           # PRs targeting main are therefore LISTED LOUDLY (so they cannot rot
           # unseen the way the last 8 days did) and NOT merged.
           merges=0
+          # PRs that were green and unheld but could not be given an attribution
+          # comment. Counted, not swallowed: it turns the run red at the end.
+          attrib_failures=0
 
           # ---------------------------------------------------------------
           # GATE: develop must be SETTLED and GREEN before anything lands.
@@ -264,8 +311,44 @@ jobs:
             fi
             [ "$base" = "develop" ] || { echo "skip #$pr (base=$base, not develop)"; continue; }
 
+            # -------------------------------------------------------------
+            # HOLD MARKERS — the one thing in this repo that can stop a merge.
+            # -------------------------------------------------------------
+            # Checked BEFORE CI state and BEFORE the merge budget, so a held PR
+            # is reported as held whatever its checks say, and holding one PR
+            # never costs another PR its turn. See the header for the incident.
+            hold=""
+
+            # Draft was already honoured; it was just never SAID. An unreadable
+            # isDraft still counts as draft — fail-safe toward not merging.
             draft=$(gh pr view "$pr" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null || echo true)
-            [ "$draft" = "true" ] && { echo "skip #$pr (draft)"; continue; }
+            [ "$draft" = "true" ] && hold="draft"
+
+            # Labels are lower-cased on both sides: GitHub preserves the case a
+            # label was created with, and a hold spelled `Hold` must not sail
+            # through because of a capital letter.
+            pr_labels=$(gh pr view "$pr" --repo "$REPO" --json labels \
+                          --jq '[.labels[].name | ascii_downcase] | join(" ")' 2>/dev/null || echo "__UNREADABLE__")
+            if [ "$pr_labels" = "__UNREADABLE__" ]; then
+              # "I could not read the labels" is NOT "there are no labels" — the
+              # same three-states-not-two rule the develop gate above follows.
+              # An unreadable hold is treated AS a hold.
+              echo "::warning::#$pr HELD — could not read its labels, so a hold marker cannot be ruled out. Refusing to merge this tick (fail-safe); it will be re-read on the next one."
+              continue
+            fi
+            for want in $HOLD_LABELS; do
+              case " $pr_labels " in
+                *" $want "*) hold="${hold:+$hold + }label:$want" ;;
+              esac
+            done
+
+            if [ -n "$hold" ]; then
+              # LOUD, and loud EVERY TICK. This annotation is the only evidence
+              # that the hold is doing anything; a quiet `continue` here is the
+              # original bug wearing a different hat.
+              echo "::warning::#$pr is HELD ($hold) — auto-merge refuses to merge it. This is not a one-off skip: it will be refused on every tick until the marker is removed, and it costs no merge budget. Remove the label (or mark the PR ready for review) and it merges normally on the next tick, with no other intervention."
+              continue
+            fi
 
             pending=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup --jq '
               [ .statusCheckRollup[]
@@ -311,20 +394,76 @@ jobs:
             esac
 
             if [ "$DRY_RUN" = "true" ]; then
-              echo "DRY RUN: would merge #$pr -> develop (mergeStateStatus=$merge_state)"
+              echo "DRY RUN: would post the automation-attribution comment on #$pr and merge it -> develop (mergeStateStatus=$merge_state)"
               merges=$((merges + 1))
               continue
             fi
 
+            # -------------------------------------------------------------
+            # ATTRIBUTION FIRST, THEN THE MERGE.
+            # -------------------------------------------------------------
+            # `merged_by` cannot answer "was this a human?" in a fleet that
+            # shares one GitHub account, so the answer is written where it does
+            # not depend on identity: a comment on the PR itself, posted BEFORE
+            # the merge. Before, not after, so that a merge can never exist
+            # without its explanation — if the comment fails, nothing merges.
+            run_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/${GITHUB_RUN_ID:-unknown}"
+            attribution=$(printf '%s\n' \
+              "$ATTRIB_MARKER" \
+              "**Merged by automation. No human read this diff.**" \
+              "" \
+              "\`auto-merge-to-develop\` (\`.github/workflows/auto-merge-to-develop.yaml\` in this repo) is merging this pull request now — before you look for a reviewer, there wasn't one." \
+              "" \
+              "Why it merged:" \
+              "" \
+              "- base branch is \`develop\` (the only base this sweep touches);" \
+              "- no hold marker: not a draft, and none of the labels \`$HOLD_LABELS\`;" \
+              "- every non-advisory check on the PR head is green (codecov and readthedocs are advisory and ignored);" \
+              "- \`develop\`'s own head was settled and green when the sweep ran, so this lands on a base that was known good;" \
+              "- \`mergeStateStatus\` = \`$merge_state\`." \
+              "" \
+              "This comment exists because the merging IDENTITY cannot tell you any of that. Every agent, workflow and human in this fleet acts through the same GitHub account, so \`merged_by\` on this PR is the same name whether a watcher merged it on a green check or a person merged it after reading it. If you are reading this months later: it was the watcher." \
+              "" \
+              "To stop an automated merge, add a \`hold\` (or \`do-not-merge\`) label, or convert the PR to a draft. The sweep refuses a held PR on every tick and says so in its log; removing the marker lets it merge again." \
+              "" \
+              "Sweep run: $run_url")
+
+            # A merge REFUSED by branch policy leaves the attribution comment
+            # already posted, and the next tick would post another. The trace
+            # must be present, not repeated — so look for the invisible marker
+            # this workflow signs its comments with and post at most one.
+            # (An unreadable comment list falls through to posting: a duplicate
+            # comment is a nuisance, a missing one is the bug.)
+            prior=$(gh pr view "$pr" --repo "$REPO" --json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+            case "$prior" in
+              *"$ATTRIB_MARKER"*)
+                echo "#$pr already carries this automation's attribution comment from an earlier tick — merging without posting a second one." ;;
+              *)
+                if ! gh pr comment "$pr" --repo "$REPO" --body "$attribution"; then
+                  echo "::error::#$pr — could NOT post the pre-merge attribution comment, so it was NOT merged. An automated merge that cannot say it was automated is the exact defect this comment exists to close; merging anyway would trade a small delay for an untraceable merge. The PR stays open and the next tick retries."
+                  attrib_failures=$((attrib_failures + 1))
+                  continue
+                fi ;;
+            esac
+
             if gh pr merge "$pr" --repo "$REPO" --merge --admin --delete-branch; then
-              echo "MERGED #$pr -> develop"
+              echo "MERGED #$pr -> develop (attribution comment posted first)"
               merges=$((merges + 1))
             else
-              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose."
+              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose. NOTE: its attribution comment was already posted; the next tick will post another when it retries."
             fi
           done
 
           echo "sweep complete: $merges merge(s) this run"
+
+          # Collected so BOTH failure kinds get reported before the run exits;
+          # an early `exit 1` here would hide the post-merge dispatch result,
+          # which is the more dangerous of the two.
+          rc=0
+          if [ "$attrib_failures" -gt 0 ]; then
+            echo "::error::$attrib_failures green PR(s) were NOT merged because their attribution comment could not be posted. This run is red ON PURPOSE: a drain stalled on attribution must be visible, not silent — that is the whole lesson of this workflow's header."
+            rc=1
+          fi
 
           # github.token pushes fire no workflows — dispatch the gates once per tick.
           if [ "$merges" -gt 0 ]; then
@@ -342,8 +481,11 @@ jobs:
               done
               if [ "$dispatch_failures" -gt 0 ]; then
                 echo "::error::$dispatch_failures post-merge gate dispatch(es) failed. The merge itself LANDED; this run is red ON PURPOSE so an un-CI'd develop head cannot pass unnoticed."
-                exit 1
+                rc=1
+              else
+                echo "post-merge gates dispatched on develop"
               fi
-              echo "post-merge gates dispatched on develop"
             fi
           fi
+
+          exit "$rc"
