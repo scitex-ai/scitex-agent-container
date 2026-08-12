@@ -107,6 +107,10 @@ class Verdict(str, Enum):
     COOLING_DOWN = "COOLING-DOWN"  # inside the debounce → wait, do not card
     CAPPED = "CAPPED"  # this pass's global cap spent; next pass retries
     BUDGET_UNKNOWN = "BUDGET-UNKNOWN"  # we cannot read our OWN memory → refuse
+    # A corpse we refuse to touch because it is not ALONE: this pass saw
+    # multiple corpses and not one live session anywhere, which is the host's
+    # tmux server dying rather than N agents dying. See :mod:`._blackout`.
+    FLEET_BLACKOUT = "FLEET-BLACKOUT"
 
     # Not a thing a pass DID — a thing it could not do. An agent whose pane
     # would not capture, or that is registered with no live session at all,
