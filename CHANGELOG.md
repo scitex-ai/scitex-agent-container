@@ -45,6 +45,28 @@ versioning follows [SemVer](https://semver.org/).
   agent is a different failure with a different owner, and counting it here
   would misattribute the gate and dilute the number.
 
+  **The report NAMES THE STORE IT READ**, redacted, with the store UUID:
+
+      ⏸ 21 card(s) awaiting the operator (oldest 47 days) — surface or reclassify
+         read from postgresql://scitex_cards@127.0.0.1:55432/scitex_cards (uuid 1d55dd6e)
+
+  This fleet currently has four stores — two Postgres clones, an abandoned
+  SQLite inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the
+  previous morning while readers kept attaching), and a YAML file that
+  `scitex-cards done` resolved to while `$SCITEX_CARDS_DB` named Postgres. A
+  count with no named source is unfalsifiable: it looks identical whether it
+  came from the live board or from a corpse. The identity comes from
+  `scitex-cards resolve-store` — the target the package actually opened — not
+  from `$SCITEX_CARDS_DB`, which is only a claim, and the gap between those two
+  is exactly how a reader ends up quoting an abandoned store. The UUID is
+  carried because a URL alone cannot separate two clones of the same database.
+  Any password in the target is redacted before it is printed or cached.
+
+  The store probe runs only when there IS something to report, so a clean board
+  still costs one subprocess; both are inside the same TTL cache. A zero is the
+  one answer that prints nothing, so the cache file records `count` and `store`
+  even then — the audit trail the line cannot carry.
+
   **The query states its scope instead of inheriting it**, because building
   this turned up the same defect inside the fix. `list-tasks` silently ANDs
   `$SCITEX_TODO_SCOPE` into its filter, and measured on the live board:

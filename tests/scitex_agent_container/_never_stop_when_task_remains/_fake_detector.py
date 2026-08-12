@@ -144,6 +144,48 @@ def missing_detector(env_save_restore, tmp_path: Path) -> None:
 #: set a real TTL. Everything else disables it so each act reads afresh.
 AWAITING_TTL_ENV = "SAC_AWAITING_CARDS_TTL_S"
 AWAITING_CMD_ENV = "SAC_AWAITING_CARDS_CMD"
+AWAITING_STORE_ENV = "SAC_AWAITING_STORE_CMD"
+
+#: The shape `scitex-cards resolve-store --json` really answers with, captured
+#: from the live host 2026-08-12. The store identity is NOT the env var: this
+#: fleet has four stores, and a reader that trusts `$SCITEX_CARDS_DB` rather
+#: than the resolver is how one ends up quoting an abandoned one.
+LIVE_STORE_JSON = json.dumps(
+    {
+        "resolved": "postgresql://scitex_cards@127.0.0.1:55432/scitex_cards",
+        "db_env": "postgresql://scitex_cards@127.0.0.1:55432/scitex_cards",
+        "user_store": "/home/agent/.scitex/cards/cards.db",
+        "backend": "postgresql",
+        "store_uuid": "1d55dd6e-3d2a-4c24-a429-a78835ab988f",
+    }
+)
+
+#: The ABANDONED sidecar, measured the same night: 365 rows, 149 unseen, a
+#: zero-byte WAL, and no write since the previous morning while readers kept
+#: attaching. Opened constantly, written never.
+DEAD_SIDECAR_JSON = json.dumps(
+    {
+        "resolved": "/home/agent/.scitex/cards/runtime/todo.db",
+        "backend": "sqlite",
+        "store_uuid": "deadbeef-0000-0000-0000-000000000000",
+    }
+)
+
+
+def store_identity_cmd(
+    env_save_restore,
+    tmp_path: Path,
+    payload: str = LIVE_STORE_JSON,
+    *,
+    returncode: int = 0,
+    name: str = "fake-resolve-store",
+) -> Path:
+    """Install a real store-identity command answering with ``payload``."""
+    script = write_detector(
+        tmp_path, returncode=returncode, stdout=payload, name=name
+    )
+    env_save_restore.set(AWAITING_STORE_ENV, str(script))
+    return script
 
 #: What a refused read really prints. Captured from the live board on
 #: 2026-08-12, while the operator's own report said the database was
@@ -204,7 +246,11 @@ def awaiting_cards(
         tmp_path, returncode=returncode, stdout=body, stderr=stderr, name=name
     )
     env_save_restore.set(AWAITING_CMD_ENV, str(script))
-    env_save_restore.set(AWAITING_TTL_ENV, "0")  # read afresh unless a test says else
+    env_save_restore.set(AWAITING_TTL_ENV, "0")
+    # Keep the store probe offline too — without it the REAL
+    # `scitex-cards resolve-store` is spawned against the live fleet store.
+    if not os.environ.get(AWAITING_STORE_ENV):
+        store_identity_cmd(env_save_restore, tmp_path)  # read afresh unless a test says else
     return script
 
 
@@ -263,6 +309,10 @@ def scope_sensitive_board(
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     env_save_restore.set(AWAITING_CMD_ENV, str(script))
     env_save_restore.set(AWAITING_TTL_ENV, "0")
+    # Keep the store probe offline too — without it the REAL
+    # `scitex-cards resolve-store` is spawned against the live fleet store.
+    if not os.environ.get(AWAITING_STORE_ENV):
+        store_identity_cmd(env_save_restore, tmp_path)
     return script
 
 

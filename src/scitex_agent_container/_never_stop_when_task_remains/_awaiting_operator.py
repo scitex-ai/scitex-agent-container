@@ -98,6 +98,19 @@ BLOCKED_STATUS = "blocked"
 CMD_ENV = "SAC_AWAITING_CARDS_CMD"
 _DEFAULT_CMD = "scitex-cards list-tasks"
 
+#: The store-identity command. A READER THAT DOES NOT NAME ITS SOURCE WILL BE
+#: WRONG AGAIN the next time a store moves, and this fleet currently has four:
+#: two Postgres clones, an abandoned SQLite inbox sidecar still being opened
+#: constantly and written never, and a YAML file that `scitex-cards done`
+#: resolved to while ``$SCITEX_CARDS_DB`` named Postgres.
+#:
+#: We ask the PACKAGE what it resolved to rather than reading
+#: ``$SCITEX_CARDS_DB`` ourselves. The env var is a CLAIM; the resolver
+#: reports the target actually opened, and the gap between those two is
+#: exactly how a reader ends up confidently quoting a corpse.
+STORE_CMD_ENV = "SAC_AWAITING_STORE_CMD"
+_DEFAULT_STORE_CMD = "scitex-cards resolve-store"
+
 #: How long a reading stays good, in seconds. ``0`` disables the cache.
 TTL_ENV = "SAC_AWAITING_CARDS_TTL_S"
 _DEFAULT_TTL_S = 900.0
@@ -142,6 +155,72 @@ def query_argv(agent: str) -> list[str]:
         OPERATOR_BLOCKER,
         "--json",
     ]
+
+
+def store_argv() -> list[str]:
+    """Build the store-identity command."""
+    base = (os.environ.get(STORE_CMD_ENV) or "").strip() or _DEFAULT_STORE_CMD
+    return [*shlex.split(base), "--json"]
+
+
+def redact(target: str) -> str:
+    """Strip any password from a store URL. NEVER print a credential.
+
+    A store target may carry userinfo (``postgresql://user:secret@host/db``).
+    The identity we want is scheme, user, host, port and database — never the
+    secret. Non-URL targets (a file path) are identities in themselves and
+    pass through unchanged.
+    """
+    if "://" not in target:
+        return target
+    scheme, _, rest = target.partition("://")
+    netloc, slash, path = rest.partition("/")
+    if "@" in netloc:
+        userinfo, _, hostport = netloc.rpartition("@")
+        user, colon, _secret = userinfo.partition(":")
+        netloc = f"{user}:***@{hostport}" if colon else f"{user}@{hostport}"
+    return f"{scheme}://{netloc}{slash}{path}"
+
+
+def _store_identity() -> str:
+    """What the package says it resolved to, redacted. ``""`` if it will not say.
+
+    The ``store_uuid`` is carried because it is THE thing that separates two
+    clones of the same database: a URL alone cannot tell
+    ``127.0.0.1:55432/scitex_cards`` on this host from the identical string on
+    another, and "two Postgres clones" is the fleet's current state.
+    """
+    try:
+        proc = subprocess.run(
+            store_argv(),
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_S,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):  # stx-allow: fallback (reason: an unnameable store degrades to an unnamed report, never to a broken stop)
+        return ""
+    if proc.returncode != 0:
+        return ""
+    start = (proc.stdout or "").find("{")
+    if start < 0:
+        return ""
+    try:
+        data, _ = json.JSONDecoder().raw_decode(proc.stdout[start:])
+    except json.JSONDecodeError:  # stx-allow: fallback (reason: unparseable identity is no identity; say nothing rather than guess)
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    resolved = str(data.get("resolved") or "").strip()
+    if not resolved:
+        return ""
+    uuid = str(data.get("store_uuid") or "").strip()
+    identity = redact(resolved)
+    return f"{identity} (uuid {uuid[:8]})" if uuid else identity
 
 
 def cache_path(agent: str) -> Path:
@@ -227,11 +306,15 @@ def summarize(rows: list, now: "datetime | None" = None) -> "tuple[int, int | No
     return len(waiting), max(ages) if ages else None
 
 
-def render(count: int, oldest_days: "int | None") -> str:
+def render(count: int, oldest_days: "int | None", store: str = "") -> str:
     """The one line. Empty when there is nothing to report.
 
     The AGE is the part that does the work. A count alone reads as steady
     state; "oldest 24 days" reads as a problem — which is what it is.
+
+    The STORE is the part that keeps the number honest. A count with no named
+    source is unfalsifiable: it looks identical whether it came from the live
+    board or from a database nothing has written to since yesterday morning.
     """
     if count <= 0:
         return ""
@@ -243,11 +326,16 @@ def render(count: int, oldest_days: "int | None") -> str:
         age = " (oldest 1 day)"
     else:
         age = f" (oldest {oldest_days} days)"
-    return f"⏸ {count} card(s) awaiting the operator{age} — surface or reclassify"
+    line = f"⏸ {count} card(s) awaiting the operator{age} — surface or reclassify"
+    return f"{line}\n   read from {store}" if store else line
 
 
-def _read_board(agent: str) -> str:
-    """Run the read command and render its answer. Silent on every failure."""
+def _read_board(agent: str) -> "tuple[str, int, str]":
+    """Read the board. Returns ``(line, count, store)``; silent on any failure.
+
+    The store is resolved ONLY when there is something to say, so a clean
+    board costs one subprocess rather than two.
+    """
     argv = query_argv(agent)
     try:
         proc = subprocess.run(
@@ -265,13 +353,15 @@ def _read_board(agent: str) -> str:
         OSError,
         subprocess.SubprocessError,
     ):  # stx-allow: fallback (reason: a missing/hanging/crashing reader must degrade to today's behaviour, silently)
-        return ""
+        return "", 0, ""
     if proc.returncode != 0:
-        return ""
+        return "", 0, ""
     rows = _rows_from(proc.stdout or "")
     if rows is None:
-        return ""
-    return render(*summarize(rows))
+        return "", 0, ""
+    count, oldest = summarize(rows)
+    store = _store_identity() if count > 0 else ""
+    return render(count, oldest, store), count, store
 
 
 def _read_cache(path: Path) -> "tuple[float, str] | None":
@@ -290,13 +380,20 @@ def _read_cache(path: Path) -> "tuple[float, str] | None":
         return None
 
 
-def _write_cache(path: Path, epoch: float, line: str) -> None:
+def _write_cache(
+    path: Path, epoch: float, line: str, count: int = 0, store: str = ""
+) -> None:
     """Persist the reading — INCLUDING an empty one.
 
     Caching the empty answer is not an optimisation, it is the fail-open
     budget: an unreadable board would otherwise pay the full timeout on every
     single stop attempt, which is how a hook earns a latency reputation and
     gets switched off.
+
+    ``count`` and ``store`` are recorded even when the rendered line is empty.
+    A ZERO IS THE ONE ANSWER THAT PRINTS NOTHING, and a zero read from an
+    abandoned store looks exactly like a clean board — so the file keeps the
+    audit trail the line cannot: what was counted, and where it was read from.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -307,6 +404,8 @@ def _write_cache(path: Path, epoch: float, line: str) -> None:
                     "checked_at": time.strftime(
                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch)
                     ),
+                    "count": count,
+                    "store": store,
                     "line": line,
                 },
                 indent=2,
@@ -336,8 +435,8 @@ def notice(agent: str) -> str:
             cached = _read_cache(path)
             if cached is not None and 0 <= now - cached[0] < ttl:
                 return cached[1]
-        line = _read_board(agent)
-        _write_cache(path, now, line)
+        line, count, store = _read_board(agent)
+        _write_cache(path, now, line, count, store)
         return line
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see the docstring above)
         return ""
@@ -347,10 +446,13 @@ __all__ = [
     "BLOCKED_STATUS",
     "CMD_ENV",
     "OPERATOR_BLOCKER",
+    "STORE_CMD_ENV",
     "TTL_ENV",
     "cache_path",
     "notice",
     "query_argv",
+    "redact",
     "render",
+    "store_argv",
     "summarize",
 ]

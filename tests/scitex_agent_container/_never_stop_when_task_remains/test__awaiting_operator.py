@@ -24,16 +24,20 @@ from scitex_agent_container._never_stop_when_task_remains._awaiting_operator imp
     cache_path,
     notice,
     query_argv,
+    redact,
     render,
     summarize,
 )
 
 from ._fake_detector import (
+    DEAD_SIDECAR_JSON,
+    LIVE_STORE_JSON,
     SCOPE_ENV,
     awaiting_cards,
     isolate_runtime,
     operator_card,
     scope_sensitive_board,
+    store_identity_cmd,
     unreadable_board,
 )
 
@@ -261,6 +265,143 @@ def test_a_real_reader_produces_the_line(env_save_restore, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A READER THAT DOES NOT NAME ITS SOURCE WILL BE WRONG AGAIN
+#
+# This fleet has FOUR stores: two Postgres clones, an abandoned SQLite inbox
+# sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the previous
+# morning while readers kept attaching — opened constantly, written never), and
+# a YAML file that `scitex-cards done` resolved to while $SCITEX_CARDS_DB named
+# Postgres. A count with no named source is unfalsifiable: it looks identical
+# whether it came from the live board or from a corpse.
+# ---------------------------------------------------------------------------
+
+
+def test_the_line_names_the_store_it_read(env_save_restore, tmp_path):
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, LIVE_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "read from postgresql://scitex_cards@127.0.0.1:55432/scitex_cards" in line
+
+
+def test_a_different_store_produces_a_different_line(env_save_restore, tmp_path):
+    """THE CONTROL. A hardcoded store string would pass the test above and
+    fail here — which is the only reason that test means anything.
+
+    This is the abandoned sidecar: same query, same count, different source.
+    """
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, DEAD_SIDECAR_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "read from /home/agent/.scitex/cards/runtime/todo.db" in line
+
+
+def test_the_line_carries_the_store_uuid(env_save_restore, tmp_path):
+    """A URL alone cannot separate two clones of the same database, and this
+    fleet is running two."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, LIVE_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "uuid 1d55dd6e" in line
+
+
+def test_a_store_password_is_never_printed():
+    """Never print, log, or write a credential — the identity is scheme, user,
+    host, port and database, never the secret."""
+    # Arrange
+    target = "postgresql://scitex_cards:hunter2@127.0.0.1:55432/scitex_cards"
+    # Act
+    shown = redact(target)
+    # Assert
+    assert "hunter2" not in shown
+
+
+def test_a_redacted_url_still_names_the_database():
+    """Redaction must not destroy the identity it exists to publish."""
+    # Arrange
+    target = "postgresql://scitex_cards:hunter2@127.0.0.1:55432/scitex_cards"
+    # Act
+    shown = redact(target)
+    # Assert
+    assert shown == "postgresql://scitex_cards:***@127.0.0.1:55432/scitex_cards"
+
+
+def test_a_file_store_passes_through_redaction_unchanged():
+    # Arrange
+    target = "/home/agent/.scitex/cards/runtime/todo.db"
+    # Act
+    shown = redact(target)
+    # Assert
+    assert shown == target
+
+
+def test_an_unnameable_store_still_reports_the_count(env_save_restore, tmp_path):
+    """Failing to name the store must cost the NAME, never the number."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, "", returncode=1)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert line.startswith("⏸ 1 card(s) awaiting the operator")
+
+
+def test_the_cache_records_what_was_counted_and_from_where(
+    env_save_restore, tmp_path
+):
+    """A ZERO IS THE ONE ANSWER THAT PRINTS NOTHING, and a zero read from an
+    abandoned store looks exactly like a clean board. The file keeps the audit
+    trail the line cannot."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, LIVE_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    notice("agent-x")
+    recorded = json.loads(cache_path("agent-x").read_text())
+    # Assert
+    assert (recorded["count"], "127.0.0.1:55432" in recorded["store"]) == (1, True)
+
+
+def test_a_clean_board_is_not_charged_for_the_store_probe(
+    env_save_restore, tmp_path
+):
+    """Resolving the store costs a second subprocess (0.71s measured), so it
+    runs only when there is something to say."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, LIVE_STORE_JSON)
+    awaiting_cards(env_save_restore, tmp_path, [])
+    # Act
+    notice("agent-x")
+    recorded = json.loads(cache_path("agent-x").read_text())
+    # Assert
+    assert (recorded["count"], recorded["store"]) == (0, "")
+
+
+# ---------------------------------------------------------------------------
 # AN AMBIENT ENV VAR MUST NOT BE ABLE TO SILENCE THE ALARM
 #
 # `list-tasks` silently ANDs $SCITEX_TODO_SCOPE into its filter. Measured on
@@ -410,11 +551,14 @@ def test_a_second_stop_within_the_ttl_does_not_respawn_the_reader(
         "scitex-cards",
         stdout=json.dumps([operator_card("q-1", blocked_days_ago=30)]),
     )
-    # Act
+    # Act — a cold read costs N spawns (the board, then the store identity);
+    # what must not happen is paying ANY of them again inside the TTL.
     first = notice("agent-x")
+    cold = subprocess_shim.call_count("scitex-cards")
     second = notice("agent-x")
+    warm = subprocess_shim.call_count("scitex-cards")
     # Assert
-    assert (first, subprocess_shim.call_count("scitex-cards")) == (second, 1)
+    assert (first, warm) == (second, cold)
 
 
 def test_an_unreadable_board_is_paid_once_per_ttl_not_once_per_stop(
