@@ -190,6 +190,55 @@ for _prog in sac scitex-agent-container; do
 done
 export PATH="$TMPDIR/bin:$PATH"
 
+# ASSERT THE PLUGIN SET BEFORE TRUSTING A SINGLE PASS/FAIL COUNT.
+#
+# MEASURED 2026-08-11 in the fleet's shared /opt/venv-sac: a wide run produced
+# 93 failures that were ALL `async def` tests, under a header reading
+# `plugins: anyio, scitex-dev` — pytest-asyncio ABSENT. The same files pass
+# standalone with asyncio-1.4.0 loaded. Plugin autoload had silently dropped it.
+#
+# THAT FAILURE IS INDISTINGUISHABLE FROM A REAL REGRESSION by inspection, and
+# that is the whole problem: 93 red async tests look exactly like someone
+# breaking the event loop. It also poisons the opposite direction — a run that
+# quietly loses a plugin can go GREEN by not collecting what it should have.
+# Any tuning decision (worker counts, selection strategy, the version matrix)
+# taken against such a run is measuring the plugin lottery, not the code.
+#
+# So: fail LOUDLY and IMMEDIATELY when the set is incomplete, instead of handing
+# back a number nobody can interpret. One line of diagnosis beats an afternoon.
+#
+# The check asks PYTEST what it actually loaded rather than asking Python what
+# is importable — an installed-but-not-registered plugin is precisely the case
+# that bit us, and `import pytest_asyncio` would have said everything was fine.
+# An empty directory keeps it to a fraction of a second and collects nothing.
+#
+# NOT `-q`. THE FIRST VERSION OF THIS CHECK SHIPPED WITH `-q` AND FAILED EVERY
+# JOB IT WAS ADDED TO: `-q` SUPPRESSES THE `plugins:` HEADER, so the grep found
+# nothing, concluded the plugin set was empty, and refused to run the suite —
+# all three matrix legs red in ~35s, on the very PR that introduced it. A guard
+# whose sensor is switched off reports "broken" about a healthy environment,
+# which is worse than no guard. Default verbosity prints the header; keep it.
+_PLUGCHECK="$TMPDIR/plugcheck"
+mkdir -p "$_PLUGCHECK"
+_PLUGINS="$(python -m pytest --collect-only -p no:cacheprovider "$_PLUGCHECK" 2>&1 |
+    grep -m1 '^plugins:' || true)"
+echo "preflight ${_PLUGINS:-plugins: <no header emitted>}"
+for _need in asyncio xdist cov timeout; do
+    case "$_PLUGINS" in
+    *"$_need"*) ;;
+    *)
+        echo "::error::pytest plugin '$_need' did NOT load in this environment."
+        echo "::error::header was: ${_PLUGINS:-<none>}"
+        echo "::error::Every pass/fail count from this run would be untrustworthy" \
+            "— a missing pytest-asyncio turns every async test red, and a" \
+            "missing plugin can also turn a run green by not collecting." \
+            "Refusing to run the suite. Rebuild the CI SIF or fix the" \
+            "[all,dev] install rather than re-running and hoping."
+        exit 1
+        ;;
+    esac
+done
+
 # Parallelise with pytest-xdist (baked in [dev]/[all,dev] as pytest-xdist>=3).
 # scitex-agent-container's suite is ~2460 tests; single-process it overran the job's old
 # 30-min cap (2300 passed in ~28 min, cancelled at 96%). Each xdist worker is

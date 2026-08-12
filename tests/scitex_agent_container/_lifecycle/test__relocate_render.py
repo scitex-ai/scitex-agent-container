@@ -16,9 +16,11 @@ constructing them IS the check that the shapes are right. No mocks.
 
 from __future__ import annotations
 
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
 from scitex_agent_container._lifecycle._relocate_preflight import (
     Check,
     PreflightReport,
+    SourceFacts,
     TargetFacts,
     preflight,
 )
@@ -47,11 +49,32 @@ ALL_GOOD = TargetFacts(
     rejected_spec_keys=(),
     ports_in_use=(),
     hub_reachable_from_target=True,
+    sac_on_path=True,
+    sac_resolved_path="/usr/local/bin/sac",
+)
+
+#: The source scanned and clean. Supplied on every render so the rendering
+#: itself is what is under test — a report that refuses because nobody scanned
+#: the source would exercise the renderer's refusal path in every case. The
+#: transcripts and marker are part of "scanned" since the session check reads
+#: them; three transcripts rather than one, because that is the ordinary shape
+#: (every agent measured on 2026-08-12 held between two and five).
+CLEAN_SOURCE = SourceFacts(
+    repos=(RepoWork(path="/proj/x", branch="develop", uncommitted=0, unpushed=0),),
+    transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000)),
+    session_marker="bbb2",
 )
 
 
 def _report(facts: TargetFacts, runtime: str = "tui") -> PreflightReport:
-    return preflight(agent=AGENT, to_host=HOST, facts=facts, runtime=runtime)
+    return preflight(
+        agent=AGENT,
+        to_host=HOST,
+        facts=facts,
+        runtime=runtime,
+        source_facts=CLEAN_SOURCE,
+        from_host="ywata-note-win",
+    )
 
 
 def _text(lines: list[str]) -> str:
@@ -240,3 +263,33 @@ def test_render_observed_tolerates_a_report_with_one_check() -> None:
     lines = render_observed(report)
     # Assert
     assert any("PASS" in ln and "fine" in ln for ln in lines)
+
+
+def test_the_executing_header_does_not_claim_nothing_was_touched() -> None:
+    # Arrange: THE lie, measured 2026-08-11 on the canary run. The header was
+    # unconditional, so the first real relocation printed "(nothing was touched)"
+    # above a report of 3.6 MB moved between two hosts.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False)[0]
+    # Assert
+    assert "nothing was touched" not in head
+
+
+def test_the_executing_header_says_both_hosts_change() -> None:
+    # Arrange: the reader needs to know, from the first line, which of the two
+    # modes they are looking at.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False)[0]
+    # Assert
+    assert "EXECUTING" in head
+
+
+def test_the_header_still_defaults_to_the_dry_run_wording() -> None:
+    # Arrange: a caller that forgets the flag must OVER-warn, not under-warn.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report)[0]
+    # Assert
+    assert "DRY RUN" in head

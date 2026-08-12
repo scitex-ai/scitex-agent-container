@@ -84,15 +84,30 @@ AGENT_START_DEADLINE_S = 30.0
 CLIENT_MARGIN_S = 10.0
 
 
-def client_timeout_for(server_deadline_s: float = AGENT_START_DEADLINE_S) -> float:
+def client_timeout_for(server_deadline_s: float | None = None) -> float:
     """Return the socket timeout a client should use against a bounded route.
 
     Derived, never guessed: a client MUST outlive the server's own answer-by
     deadline, otherwise it destroys the very 202 that tells it the work is
     still in flight — and then reports the timeout as a failure, which is the
     original bug wearing a new number.
+
+    ``None`` resolves ``AGENT_START_DEADLINE_S`` HERE, in the body, at call
+    time. It used to be the signature default — and a default argument is
+    evaluated ONCE, when this module is first imported, so that spelling
+    captured the VALUE and stopped tracking the NAME. The server does not:
+    :func:`._agent_exec.agents_start` imports ``AGENT_START_DEADLINE_S`` inside
+    the function and therefore reads it live. Move the deadline and the server
+    would honour the new number while every client still waited for the old
+    one — ``client > server`` silently inverts, which is precisely the failure
+    this module exists to prevent, reintroduced through the derivation itself.
+    ``CLIENT_MARGIN_S`` was already read live in the body; now both halves of
+    the sum are.
     """
-    return float(server_deadline_s) + CLIENT_MARGIN_S
+    deadline = (
+        AGENT_START_DEADLINE_S if server_deadline_s is None else server_deadline_s
+    )
+    return float(deadline) + CLIENT_MARGIN_S
 
 
 def accepted_payload(

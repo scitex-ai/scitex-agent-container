@@ -452,15 +452,64 @@ From: ubuntu:24.04
     # release that drops it dies LOUD at bake rather than shipping silently.
     # That gate is the honest protection: verify the artifact you built,
     # do not freeze the input and call it safety.
-    # sac's [openai] extra (openai-agents — the `spec.provider: openai`
-    # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
-    # image serves EVERY agent, so a per-spec conditional install is
-    # impossible at image-build time. Per-spec conditionality is a
-    # RUNTIME concern instead — only `provider: openai` launches get the
+    # sac is installed with ``[all]`` — the union aggregate — and NOT the
+    # narrower ``[openai]`` it carried until 2026-08-11.
+    #
+    # WHY THE WIDENING: ``[openai]`` left the image WITHOUT TEST TOOLING,
+    # because pytest and its plugins are declared in ``[dev]``. Measured on
+    # scitex-compute-04 the night of 2026-08-11, against the live SIF:
+    #
+    #   * a pristine container answered ``NO_PYTEST_ON_PATH`` and
+    #     ``/opt/venv-sac/bin/python: No module named pytest``;
+    #   * 19 of 20 agent overlays had NEITHER pytest NOR pytest-asyncio;
+    #   * so every agent that needed to run the suite hand-installed its own
+    #     tooling, and the fleet legitimately held DIFFERENT plugin sets and
+    #     different pytest MAJORS — one container ended up on pytest 9,
+    #     outside pyproject's declared ``>=7.0.0,<9.0.0``, while CI ran 8;
+    #   * and a 14-minute window in one overlay (pytest installed at 21:48,
+    #     pytest-asyncio not until 22:02) produced a run where 93 async tests
+    #     failed as pure ENVIRONMENT ARTEFACTS and were briefly read as a
+    #     regression in the code.
+    #
+    # An image that cannot run its own tests exports that cost to every agent
+    # booting it, and pays it again in wrong diagnoses. Operator ruling,
+    # 2026-08-11: 「デベロップメントは必ず SIF に入れないといけないっていうのは
+    # 当たり前だと思うんですけど、というか多分オールを入れておけばいいと思うん
+    # ですよね」— put dev IN the SIF; just install ``[all]``.
+    #
+    # ``[all]`` ALONE IS SUFFICIENT — ``[all,dev]`` would be redundant.
+    # pyproject's ``all`` is the union aggregate and lists
+    # ``scitex-agent-container[dev]`` explicitly (alongside mcp / telegram /
+    # notify / slurm / openai / codex / docs), so pytest, pytest-asyncio,
+    # pytest-xdist and pytest-cov ride in through it. Read ``all`` in
+    # pyproject.toml before narrowing this bracket: if a future edit drops
+    # ``[dev]`` from the aggregate, THIS line silently stops shipping test
+    # tooling again — which is why the contract test in
+    # tests/integration/test_apptainer_def_openai_agents.py asserts BOTH
+    # halves (the bracket here AND ``[dev]``'s membership in the aggregate).
+    #
+    # ``[all]`` IS A SUPERSET OF ``[openai]``, so nothing about the previous
+    # contract is lost: openai-agents (the `spec.provider: openai` agent-SDK
+    # family, openai-compat-3) is still baked UNCONDITIONALLY, which is the
+    # only option at image-build time — one image serves EVERY agent, so a
+    # per-spec conditional install is impossible here. Per-spec conditionality
+    # stays a RUNTIME concern: only `provider: openai` launches get the
     # OPENAI_* env injection + `openai_session` executor routing (see
-    # runtimes/_apptainer_provider.py). The extra's version floor lives
-    # in pyproject.toml (SSoT); the bracket syntax on the local source
-    # path resolves it through the bundled tree's own metadata.
+    # runtimes/_apptainer_provider.py).
+    #
+    # EVERY version floor stays in pyproject.toml (SSoT); the bracket syntax
+    # on the local source path resolves them through the bundled tree's own
+    # metadata. That is what keeps the image's pytest inside
+    # ``>=7.0.0,<9.0.0`` instead of drifting to a major CI does not run — a
+    # hand-install carries no such constraint, which is exactly how the
+    # pytest-9 container happened.
+    #
+    # COST, measured against the SIF this line replaces: the heavy scientific
+    # stack was ALREADY in the image (scitex-dev 0.47.0, playwright, numpy,
+    # scipy, matplotlib, pymupdf were all present under ``[openai]``), so
+    # ``[all]`` does not import a new ecosystem — it adds the test / docs /
+    # bridge leaves on top of one already paid for. Re-measure rather than
+    # assume if the aggregate grows.
     #
     # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
     # ``--force-reinstall`` are PIP flags; uv does not honour them as a
@@ -492,7 +541,7 @@ From: ubuntu:24.04
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
         "scitex-cards>=0.32.0" \
-        "/opt/scitex-agent-container-src[openai]"
+        "/opt/scitex-agent-container-src[all]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs

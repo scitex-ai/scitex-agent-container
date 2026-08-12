@@ -61,8 +61,64 @@ __all__ = [
     "is_developer",
     "is_privileged",
     "is_researcher",
+    "resolve_group_name",
     "resolve_group_names",
+    "same_named_group",
 ]
+
+
+def resolve_group_name(
+    *,
+    name: str,
+    db_path: Path | None = None,
+) -> str:
+    """Return ``name``'s PRIMARY named group, or ``""`` if ungrouped.
+
+    The single-bucket projection the default-ACL mesh resolves through
+    (first-of + role derivation), as opposed to the any-of authority set
+    :func:`resolve_group_names` returns. The distinction is load-bearing:
+    a solver authored as ``groups: [solver]`` must stay outside the fleet
+    mesh.
+
+    Reads the SPEC first, for the same reasons and with the same
+    tri-state contract as :func:`resolve_group_names` — the two
+    projections must resolve through one source or they start
+    disagreeing about the same agent, which is precisely the
+    2026-08-10 ``grant`` incident. Falls back to
+    ``node_comms_policy.group_name`` only when no spec is visible from
+    this process (foreign / remote nodes).
+    """
+    if not name:
+        return ""
+    from ..config._group_authority import group_name_from_spec
+
+    from_spec = group_name_from_spec(name)
+    if from_spec is not None:
+        return from_spec
+    from .state_db_acl_policy import read_comms_policy
+
+    policy = read_comms_policy(name=name, db_path=db_path)
+    return str(policy.get("group_name", "") or "")
+
+
+def same_named_group(
+    *,
+    sender: str,
+    target: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
+
+    Both groups must be NON-EMPTY and equal. Two ungrouped agents
+    (empty group) do NOT match — that keeps absence byte-equivalent to
+    the pre-group-name behaviour (an ungrouped fleet falls through to
+    the lineage-mesh + explicit-grant ACL exactly as before).
+    """
+    sender_group = resolve_group_name(name=sender, db_path=db_path)
+    if not sender_group:
+        return False
+    target_group = resolve_group_name(name=target, db_path=db_path)
+    return target_group == sender_group
 
 
 def resolve_group_names(
@@ -88,9 +144,43 @@ def resolve_group_names(
     Group names are returned verbatim (whitespace already trimmed at
     write time); compare through :func:`in_named_group`, which folds
     case. An unknown / empty name yields the empty set.
+
+    **The spec answers first** (operator 2026-08-12, "configuration →
+    files under git"). Named groups are configuration: a human writes
+    them in ``spec.yaml`` and nothing at runtime changes them. When that
+    file is visible from this process it IS the answer, and the DB row
+    is not consulted — see
+    :mod:`scitex_agent_container.config._group_authority` for the full
+    argument. The persisted row remains the fallback for names with no
+    visible spec (foreign / remote nodes registered through
+    ``comms_nodes``, and any host that has the row but not the file).
+
+    This is what makes the answer identical in a container and on the
+    bare host. The DB could not do that: in a SIF,
+    ``$SCITEX_AGENT_CONTAINER_STATE_DB`` is a private per-agent shard
+    holding no policy row for anyone, so this function returned the
+    empty set for EVERY agent — measured on scitex-compute-04
+    2026-08-11 — while the spec on the same filesystem said
+    ``['active', 'developer', 'infra']``. Empty means "denied" at every
+    authority gate, so the cache turned a readable fact into a 403.
+
+    The spec's answer REPLACES the row rather than unioning with it, so
+    deleting a group from a spec actually revokes it. That is sound only
+    because no writer puts non-spec-derived groups in the column:
+    ``record_comms_policy`` is reached solely from ``persist_acl_policy``
+    (at ``agent_start``) and ``sac agents refresh-acl``, and both derive
+    the value from ``metadata.labels`` through the same pure resolver.
     """
     if not name:
         return frozenset()
+    from ..config._group_authority import group_names_from_spec
+
+    # Tri-state: None = no spec visible here (fall through to the row);
+    # frozenset() = the spec IS visible and names no groups, which is a
+    # final answer, not an absence.
+    from_spec = group_names_from_spec(name)
+    if from_spec is not None:
+        return from_spec
     from .state_db_acl_policy import read_comms_policy
 
     policy = read_comms_policy(name=name, db_path=db_path)

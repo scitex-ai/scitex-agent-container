@@ -223,42 +223,13 @@ def derive_group(
 # ---------------------------------------------------------------------------
 
 
-def resolve_group_name(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> str:
-    """Return ``name``'s persisted NAMED group, or ``""`` if ungrouped.
-
-    Reads ``node_comms_policy.group_name`` (written at ``agent_start``
-    from the resolved ``metadata.labels.group`` / role default). An
-    agent with no policy row, or a row with an empty ``group_name``,
-    is "ungrouped" and shares a named group with no one.
-    """
-    if not name:
-        return ""
-    policy = read_comms_policy(name=name, db_path=db_path)
-    return str(policy.get("group_name", "") or "")
-
-
-def same_named_group(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
-
-    Both groups must be NON-EMPTY and equal. Two ungrouped agents
-    (empty group) do NOT match — that keeps absence byte-equivalent to
-    the pre-group-name behaviour (an ungrouped fleet falls through to
-    the lineage-mesh + explicit-grant ACL exactly as before).
-    """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
-    if not sender_group:
-        return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
-    return target_group == sender_group
+# ``resolve_group_name`` (the PRIMARY / mesh projection) and
+# ``same_named_group`` moved into the sibling group module alongside the
+# MULTI-value readers: both projections now resolve through the SPEC
+# first (operator 2026-08-12, "configuration → files under git"), and
+# keeping the two in one file is what stops them drifting onto different
+# sources again. Re-exported here so the long-standing import path
+# ``from ..._state.state_db_nodes import resolve_group_name`` keeps working.
 
 
 # The AUTHORITY predicates (``is_developer`` / ``is_researcher`` /
@@ -271,7 +242,9 @@ from .state_db_groups import (  # noqa: E402
     is_developer,
     is_privileged,
     is_researcher,
+    resolve_group_name,
     resolve_group_names,
+    same_named_group,
 )
 
 # ---------------------------------------------------------------------------

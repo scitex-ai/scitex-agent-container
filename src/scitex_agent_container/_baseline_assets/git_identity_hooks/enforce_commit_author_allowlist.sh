@@ -58,6 +58,10 @@
 set -u
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Shell-local path; exported to the inline python body below as the
+# namespaced SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH. Writer and reader are
+# both in THIS file, so the contract cannot drift. Unset/empty => no audit
+# log; the block decision itself is unaffected.
 LOG_PATH="$THIS_DIR/.$(basename "$0").log"
 
 # ------------------------------------------------------------------
@@ -196,7 +200,7 @@ printf '%s' "$INPUT" | grep -qF 'hook-bypass: cla-author' && exit 0
 # Main decision. The Python body is captured via a QUOTED heredoc so it
 # may contain arbitrary single/double quotes (the block message + git
 # fix commands need both); it is passed to `python3 -c`. INPUT arrives on
-# stdin, LOG_PATH via the environment.
+# stdin, SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH via the environment.
 # ------------------------------------------------------------------
 PYCODE=$(cat <<'PYEOF'
 import json, sys, re, os, shlex, subprocess, fnmatch
@@ -406,7 +410,7 @@ if not violations:
     sys.exit(0)
 
 # Block + log.
-log_path = os.environ.get("LOG_PATH", "")
+log_path = os.environ.get("SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH", "")
 if log_path:
     try:
         import datetime
@@ -481,7 +485,7 @@ sys.exit(2)
 PYEOF
 )
 
-printf '%s' "$INPUT" | LOG_PATH="$LOG_PATH" python3 -c "$PYCODE"
+printf '%s' "$INPUT" | SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH="$LOG_PATH" python3 -c "$PYCODE"
 exit $?
 
 # EOF

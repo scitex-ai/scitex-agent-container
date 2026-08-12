@@ -43,6 +43,13 @@ on:
     - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else (the nightly cron
+# included — a scheduled run keys on its own run_id and is alone in its group).
+# Argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   install-check:
     # Kept byte-identical — see lint.yml. (Verified: not protection-pinned.)

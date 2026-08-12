@@ -42,6 +42,46 @@ on:
     - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
   workflow_dispatch:
 
+# STOP RE-TESTING COMMITS THAT A NEWER PUSH HAS ALREADY REPLACED.
+#
+# MEASURED on this repo, 2026-08-11, over the last 276 push/pull_request runs:
+#
+#     runs a newer push obsoleted while they were still in flight   86  (31.2%)
+#     total CI machine time                                       3591  min
+#     machine time spent on those already-stale runs              1841  min  (51.3%)
+#
+# HALF of every minute this repo's runners spend is spent proving something
+# about a commit nobody will merge. It is not a capacity problem — the same
+# window measured queue at 72.2% of job latency on 2 runner slots, and the
+# cheapest way to buy back a slot is to stop occupying it with dead work.
+# An agent pushing three fixups to a PR fires three full gates and, until now,
+# all three ran to completion.
+#
+# THE GROUP EXPRESSION IS THE WHOLE DESIGN, so read it before simplifying it:
+#
+#   pull_request  ->  group = <workflow>-<PR number>. The PR's previous,
+#                     superseded run is cancelled the moment a new push lands.
+#                     This is the case the numbers above are about.
+#
+#   everything    ->  group = <workflow>-<run id>, which is UNIQUE PER RUN, so
+#   else              the run is alone in its group and NOTHING is ever
+#                     cancelled or queued behind anything.
+#
+# That second line is not padding — it is the guard. The obvious spelling,
+# `group: ${{ github.workflow }}-${{ github.ref }}`, puts every push to
+# `develop` into ONE group; with cancel-in-progress false they would then
+# SERIALISE (one active run per group), and with it true a push to `develop`
+# would CANCEL the in-flight run that autobump-release-sweep.yaml and
+# auto-merge-to-develop.yaml read the conclusion of. Keying non-PR events on
+# run_id makes this change a strict no-op for `main`, `develop`, the nightly
+# cron and every workflow_dispatch — it only ever removes work from PRs.
+#
+# `cancel-in-progress: true` is therefore safe unconditionally: only the
+# pull_request branch of the expression can ever produce a shared group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
