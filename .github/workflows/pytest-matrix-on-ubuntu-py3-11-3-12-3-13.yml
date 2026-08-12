@@ -23,10 +23,62 @@ name: tests
 # pypi-publish-and-github-release-on-tag.yml. Not "an equivalent setup" —
 # the same bytes. Green PR => green release, by construction.
 #
-# Operator rule (2026-07-14, absolute, no exceptions): NO GitHub-hosted runners
-# anywhere in this repo, PR tests included. If Spartan misbehaves, that is OURS
-# to fix — never fall back to a hosted runner. There is deliberately NO
-# `ubuntu-latest` escape hatch below; adding one back is the bug, not the fix.
+# WHERE THIS RUNS, AND WHY — WRITTEN AS A PRINCIPLE, NOT AS AN ABSOLUTE.
+#
+# This header used to read "Operator rule (2026-07-14, absolute, no exceptions):
+# NO GitHub-hosted runners anywhere in this repo, PR tests included." That
+# sentence was FALSE ON THE DAY IT WAS WRITTEN — cla.yml has always been a
+# deliberate security carve-out — and it went on being quoted as an absolute
+# into six other workflow files. An absolute with live exceptions does not get
+# obeyed; it gets discovered, disbelieved, and worked around. So this states the
+# PRINCIPLE and points at the mechanism, rather than asserting a rule that the
+# next operator decision will falsify again:
+#
+#   * ANYTHING A HUMAN WAITS ON RUNS ON HARDWARE WE CONTROL — this gate, lint,
+#     import-smoke, docs. That is why there is deliberately no `ubuntu-latest`
+#     escape hatch below: adding one HERE is the bug, not the fix. If our pool
+#     misbehaves, that is OURS to fix.
+#   * A JOB NOBODY WAITS ON MAY RUN ON GITHUB'S HARDWARE when there is a written
+#     argument for it. Today that is cla.yml (security) and the 3.12 nightly
+#     (cost — hosted runners are free for public repos and slow, which is the
+#     right trade when no human is blocked). Both live in
+#     .github/hosted-runner-allowlist.yaml WITH the argument attached, and
+#     _hosted_runner_guard.py fails CI on an exception that is undocumented or
+#     stale. "No hosted runners" is shorthand for "none outside that file".
+#
+# WHICH MACHINES "OUR POOL" MEANS IS NOT SETTLED, AND THIS FILE DOES NOT SAY.
+# It resolves `vars.CI_RUNS_ON` — a repository Variable — precisely so the pool
+# can change without editing workflows. It is changing right now: the spartan
+# nodes were banned from CI, and the operator moved on 2026-08-12 to re-admit
+# them (four org runners + three spartan ≈ 75% more capacity), gated on
+# scitex-dev #575-#578 — the four PRs that stop tests asserting facts about the
+# machine they run on. Until those land, the SAME code goes green on spartan and
+# red on an org runner, which would make this gate's verdict depend on which
+# runner picked the job up. Do not add spartan labels here to "help"; the switch
+# is flipped in the Variable, once those PRs land.
+#
+# THE THREE PATHS HAVE DIFFERENT AUDIENCES, WHICH IS WHY THE SAME SUITE RUNS
+# THREE SHAPES:
+#
+#   PR gate    3.11 + 3.13            a human is waiting  -> optimise LATENCY
+#   nightly    3.12 (hosted)          nobody is waiting   -> optimise COST
+#   release    3.11 + 3.12 + 3.13     correctness only    -> optimise COVERAGE
+#
+# THE ENDS OF THE RANGE, NOT ONE VERSION. Dropping to a single leg was measured
+# and rejected the same night: scitex-dev #578 (a fix for LD_LIBRARY_PATH being
+# stripped from child processes, 21 tests) failed on 3.11 and 3.13 and PASSED on
+# 3.12 — only the ends link libpython dynamically. A one-leg gate picked from
+# the middle would have shipped it, and a one-leg gate picked from an end is one
+# interpreter's build options away from the same hole. Min and max bracket the
+# range; the middle is what the nightly is for.
+#
+# So a green PR does NOT have to predict a green release on its own — the
+# release gate (pypi-publish-and-github-release-on-tag.yml) runs the FULL matrix
+# in this same SIF before anything reaches PyPI, and the nightly is the
+# early warning that a 3.12/3.13-only regression exists days before a tag.
+# Pushes to `develop`/`main` also keep the full matrix here, so the version that
+# is NOT on the PR gate is still exercised in the release-identical environment
+# on the very merge that introduces it.
 #
 # Constitution §4: freshness comes from discarding the ENVIRONMENT, not the
 # runner — a shared read-only base SIF, and per-job scratch created and
@@ -39,7 +91,15 @@ on:
   pull_request:
     branches: [main, develop]
   schedule:
-    - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
+    # Nightly 17:00 UTC (~02:00 JST), off-peak — KEPT even though
+    # nightly-python-matrix-on-github-hosted.yml now also runs nightly, because
+    # the two watch different things. That one watches the CODE on 3.12/3.13
+    # using GitHub's stock image; this one watches the ENVIRONMENT — the shared
+    # ci-cpu.sif, its baked interpreters and the layered [all,dev] install are
+    # infrastructure that changes OUTSIDE this repo, and this is the only daily
+    # run that would notice such drift before a tag does. At 02:00 JST our nodes
+    # are idle, so it competes with nobody.
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
 # STOP RE-TESTING COMMITS THAT A NEWER PUSH HAS ALREADY REPLACED.
@@ -85,10 +145,21 @@ concurrency:
 env:
   SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
   SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+  # xdist worker count per leg. Unset => all cores, the historical behaviour.
+  # Set it when several matrix legs share ONE machine (they do now: Spartan CI
+  # was retired 2026-08-05 and the suite runs on scitex-04), otherwise three
+  # legs x nproc workers oversubscribe the box by 3x. See run-in-sif.sh.
+  CI_XDIST_WORKERS: ${{ vars.CI_XDIST_WORKERS }}
 
 permissions:
   contents: read
   id-token: write
+  # `actions: read` lets the verdict job read the FAILED JOBS' logs so a red
+  # notification can name the failing test instead of saying only "Red".
+  # A workflow that withholds a permission its own job needs is one of the
+  # inert-but-configured shapes this fleet keeps rediscovering, so it is
+  # declared here rather than assumed from the default token.
+  actions: read
 
 jobs:
   test:
@@ -117,7 +188,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # THE ENDS OF THE RANGE ON A PULL REQUEST, THE FULL SET EVERYWHERE ELSE.
+        #
+        # MEASURED 2026-08-11/12: all four CPU runners saturated while several
+        # stacked PRs each fanned out three legs of the heaviest job on the
+        # queue. Dropping the middle leg is a 1/3 cut to that job — an honest
+        # third, not a headline: this does not make CI twice as fast, it stops
+        # one of every three heavy legs from being queued behind the others.
+        # The version it drops is covered by
+        #   * nightly-python-matrix-on-github-hosted.yml (daily, someone else's
+        #     hardware), and
+        #   * this same job on the `develop`/`main` push that merges the PR, and
+        #   * the release gate, which runs all three before anything ships.
+        #
+        # SPELLING: one `fromJSON` over two STRING literals, not
+        # `cond && fromJSON(a) || fromJSON(b)`. Both forms work, but the string
+        # form has no truthiness trap — an empty/short array operand in the
+        # second form would silently fall through to the other branch.
+        #
+        # THESE TWO LISTS ARE THE ONLY PLACE THE PR/BRANCH SPLIT IS WRITTEN, and
+        # tests/integration/test_ci_python_matrix_shape.py DERIVES the rest from
+        # them: the PR list must be exactly [oldest, newest] of the full list,
+        # the nightly must be exactly the full list MINUS the PR list, the
+        # release matrix must equal the full list, and the full list must agree
+        # with pyproject's declared classifiers. A Python bump that edits one
+        # place and not the others turns that test RED instead of half-applying
+        # in silence — which is the failure mode this fleet keeps hitting.
+        python-version: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+                       && '["3.11","3.13"]'
+                       || '["3.11","3.12","3.13"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -142,8 +242,12 @@ jobs:
       # OIDC avoids a repository upload token while still authenticating every
       # upload. Codecov has not activated this repository yet, so keep its
       # explicit upload failure visible without overriding a green test suite.
+      # 3.11, NOT 3.12: the upload has to key on a leg that EXISTS in every
+      # event shape. Since the PR gate now runs the floor version alone, keying
+      # on 3.12 would mean no pull request ever uploads coverage again — the
+      # exact silent half-application this change is trying not to commit.
       - name: Upload coverage to Codecov
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.11'
         continue-on-error: true
         uses: codecov/codecov-action@v7
         with:
@@ -170,3 +274,102 @@ jobs:
       - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
         if: always()
         run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
+
+  # THE CI FEEDBACK RAIL (ADR-0024). The operator asked for this mechanism by
+  # name on 2026-08-12: 「GitHub から信号が帰ってきたときに、フックでカードに
+  # 書き込む、それがエージェントに通知が行く」— when GitHub's signal comes
+  # back, write it to the card, and that reaches the agent. This job is that
+  # return path. `pre-push` already registered the commit on a card; this
+  # writes the verdict onto the SAME card and delivers it to whoever pushed.
+  #
+  # WHY NOT A WEBHOOK. `sac listen` binds 127.0.0.1 only, and that is policy,
+  # not accident — so there is no public route for GitHub to POST to. A
+  # self-hosted runner, however, long-polls OUTWARD to GitHub and then
+  # executes ON OUR HARDWARE, where loopback is reachable and the bearer is a
+  # local file. The GitHub -> host path already exists and is already trusted.
+  # That is nearer the operator's 「フック」 than the two existing pollers: it
+  # fires ON the event rather than noticing it up to 300 s later, and it drops
+  # the `gh`-auth dependency that made both of them fail closed. Neither has
+  # ever delivered a verdict on this host — the `verdict_delivered` table has
+  # never even been created.
+  #
+  # `runs-on: sac-control-plane` IS THE LOAD-BEARING LINE, and it is the one
+  # thing ADR-0024 got wrong. That ADR reasoned "the self-hosted runners
+  # execute on this host", but `vars.CI_RUNS_ON` is `scitex-org-cpu`, which is
+  # FOUR runners on FOUR DIFFERENT MACHINES (scitex-01..04). Only
+  # scitex-04-org-cpu-01 sits on the box that runs `sac listen` and the card
+  # store. So the premise holds for 25% of jobs, and on the other 75% both
+  # `127.0.0.1:7878` and `127.0.0.1:55432` resolve to a DIFFERENT machine's
+  # daemon and a DIFFERENT postgres — writing the verdict somewhere nobody
+  # reads and delivering it to nobody, with nothing raising an error. Pinning
+  # the job to a label carried by exactly that one machine is what makes the
+  # rail's own premise true instead of assumed. The label was added to that
+  # runner and to no other; no other workflow names it, so it widens nothing.
+  #
+  # THE COST, STATED HONESTLY, IN TWO PARTS. This is a deliberate trade, not
+  # a side effect of solving the loopback problem.
+  #
+  # 1. LATENCY. A separate job pays a queue admission (measured median ~706 s
+  #    on this pool, p90 ~2325 s). ADR-0024's cheaper in-job placement was
+  #    only available under the false premise above.
+  # 2. AVAILABILITY. Pinning makes THE RAIL EXACTLY AS AVAILABLE AS THIS ONE
+  #    HOST. Exactly one runner advertises `sac-control-plane` (verified
+  #    online at merge time, not merely written here). If that machine is
+  #    down, verdicts stop -- and they stop SILENTLY, because a queued job
+  #    reports nothing and "still queued after 15 minutes" is normal here
+  #    (p90 ~902 s). A job pinned to a label nobody carries is
+  #    indistinguishable from a saturated pool, which is why the label must
+  #    be verified as ADVERTISED BY A LIVE RUNNER, never merely as named in
+  #    YAML. `verdict_delivered` reconciliation is the intended backstop and
+  #    does not exist yet.
+  #
+  # Correct-and-late beats fast-and-delivered-to-nobody, so the trade is
+  # taken; revisit if a control-plane-local runner joins the gate pool, or
+  # if a second machine is ever given the control plane.
+  verdict:
+    name: ci-verdict-to-pushing-agent
+    needs: [test]
+    # `always()` so RED reports AT ALL — a rail that only fires on green is
+    # not a feedback rail, it is a congratulations service. The script skips
+    # `cancelled` itself (a superseded push is not a verdict about the code).
+    if: always()
+    runs-on: [self-hosted, Linux, X64, sac-control-plane]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # $SCITEX_CARDS_DB IS PASSED EXPLICITLY, and that is load-bearing too. A
+      # `run:` step gets a NON-INTERACTIVE shell which sources no profile, so
+      # an unset DSN does not fail — it silently resolves to a local
+      # `cards.db` FILE that no board reads. Worse, this host answers on BOTH
+      # :5442 and :55432 with the same `store_uuid` but different row counts
+      # (3496 vs 3793) — two divergent databases wearing one identity, so the
+      # field meant to detect a split cannot detect this one. The script
+      # re-checks the resolved backend and refuses to write rather than
+      # guessing. `vars.SCITEX_CARDS_DB` overrides without a workflow edit.
+      #
+      # uv BY ABSOLUTE PATH: the runner service's PATH is the system default
+      # and does NOT include ~/.local/bin, so a bare `uv` is not found here
+      # even though it is on the operator's interactive PATH.
+      - name: Write the CI verdict to the card and notify the pushing agent
+        env:
+          SCITEX_CARDS_DB: ${{ vars.SCITEX_CARDS_DB || 'postgresql://scitex_cards@127.0.0.1:55432/scitex_cards' }}
+          TEST_RESULT: ${{ needs.test.result }}
+          # Reads the FAILED JOBS' logs so a red verdict names the failing
+          # test. Deliberately the per-JOB log endpoint: this job is itself
+          # running, so the whole-RUN log archive is still empty and would
+          # grep exactly like a clean one.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+          "$UV" run --quiet --with scitex-cards \
+            python .github/ci/ci_card_rail.py verdict \
+              --repo "${{ github.repository }}" \
+              --branch "${{ github.head_ref || github.ref_name }}" \
+              --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+              --conclusion "$TEST_RESULT" \
+              --leg "pytest-matrix" \
+              --run-id "${{ github.run_id }}" \
+              --workflow "${{ github.workflow }}" \
+              --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

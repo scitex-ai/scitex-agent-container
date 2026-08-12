@@ -124,7 +124,9 @@ _PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
         "_relocate_effects_handover: the source's lease is bootstrapped when the store "
         "holds none (sac still does not claim one at agent start-up — the bootstrap is "
         "recorded as such), handed to the target, and the row is RE-READ to confirm "
-        "the holder and the fence",
+        "the holder and the fence. A row naming a THIRD host is settled by OBSERVING "
+        "that host, through the same predicate the lease_holdable check already ran "
+        "before anything was stopped",
         "—",
     ),
     (
@@ -280,23 +282,35 @@ def declared_from_spec(spec: dict) -> dict[str, object]:
 def _residency_history(name: str):
     """The agent's stays, read from the STATE DB — the only authority on host.
 
-    THERE IS NO RESIDENCY TABLE YET, and pretending otherwise would be the worse
-    of the two available lies. What exists is ``instances.host``, which
-    ``record_instance_start`` canonicalises and writes when a process starts —
-    an observation, and the right kind of one. So an active instance row becomes
-    a single OPEN stay and that is the whole history.
+    THE RESIDENCY TABLE WINS, AND IT EXISTS NOW: ``agent_residency``, written by
+    a relocation's DONE phase, an append-only history of stays with at most one
+    open. The instance row is the FALLBACK — ``instances.host`` is where a
+    process was last recorded STARTING, which nothing closes if it dies without a
+    stop.
 
-    The cost is stated rather than hidden: with one row there is no audit trail,
-    so ``host_at(history, t)`` can answer "where does it live now" and cannot
-    answer "which host wrote this row in March". Closing that needs a residency
-    table; until then this returns the shortest history that is TRUE rather than
-    a longer one that is invented.
+    Measured 2026-08-12 on scitex-compute-04: residency said
+    ``canary-resume-test`` lives on ywata-note-win (written by the move that took
+    it there) while an instance row on scitex-compute-04 had never ended. Reading
+    the instance row first made this command answer with the host the agent had
+    LEFT, so relocating back was refused with "already recorded on that host —
+    nothing to relocate". The phantom row won over reality.
 
-    No row yields ``()`` — genuinely "the db knows nothing", which is what lets
-    a legacy spec ``host:`` seed it once.
+    The order also fixes the STOPPED case, which is the NORMAL one:
+    ``source_drain`` requires the agent stopped, a stopped agent has no active
+    instance row, and the next fallback is the spec's legacy ``host:`` — which a
+    relocation never updates. The residency table is the only one of the three a
+    relocation keeps current.
+
+    No row anywhere yields ``()`` — genuinely "the db knows nothing", which is
+    what lets a legacy spec ``host:`` seed it once.
     """
     from .._lifecycle._residency import Residency
     from .._state.state_db_instances import list_active_instances
+    from .._state.state_db_relocation import read_residency_history
+
+    stays = read_residency_history(name)
+    if stays:
+        return stays
 
     rows = [r for r in list_active_instances() if r.get("name") == name]
     if not rows:
@@ -432,6 +446,12 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
         to_host, spec, required_ports=_required_ports(declared)
     )
     gathered = gather_target_facts(probes)
+    # THE LEASE IS READ HERE, not at the handover — which is the last phase
+    # before DONE and therefore runs with the agent already stopped, its
+    # transcript already carried and the target already booted. Measured
+    # 2026-08-11: exit 5 at that phase, correctly, with nothing running anywhere.
+    from .._lifecycle._relocate_lease_facts import gather_lease_facts
+
     report = preflight(
         agent=name,
         to_host=to_host,
@@ -442,6 +462,7 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
             spec, body if isinstance(body, dict) else {}, name, where.host or ""
         ),
         from_host=where.host or "",
+        lease_facts=gather_lease_facts(name, from_host=where.host or ""),
     )
 
     for line in render_dry_run(

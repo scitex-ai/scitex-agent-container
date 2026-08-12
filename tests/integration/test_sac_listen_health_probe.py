@@ -24,7 +24,6 @@ from __future__ import annotations
 import http.server
 import os
 import shutil
-import socket
 import subprocess
 import threading
 from pathlib import Path
@@ -79,13 +78,11 @@ def live_health_server():
         server.server_close()
 
 
-def _free_port() -> int:
-    """Grab then release a port so nothing is listening on it."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# The dead port comes from the shared ``dead_port`` fixture
+# (tests/scitex_agent_container/_helpers/ports.py, wired in tests/conftest.py):
+# bound WITHOUT listening, so it refuses, and HELD, so nothing can take it
+# mid-test. The helper that used to live here grabbed a port and released it
+# again before the probe ran — see that module for the flake it caused.
 
 
 @pytest.fixture(autouse=True)
@@ -135,10 +132,10 @@ def _run_probe(*args: str, env_extra: dict[str, str] | None = None):
     )
 
 
-def _down_env() -> dict[str, str]:
-    """Env pointing the probe at a real closed port (connection refused)."""
+def _down_env(dead_port) -> dict[str, str]:
+    """Env pointing the probe at a held, never-listened port (refuses)."""
     return {
-        "SAC_LISTEN_HEALTH_URL": f"http://127.0.0.1:{_free_port()}/v1/health",
+        "SAC_LISTEN_HEALTH_URL": dead_port.url("/v1/health"),
         "SAC_LISTEN_PROBE_TIMEOUT": "2",
     }
 
@@ -155,18 +152,18 @@ def test_check_only_passes_against_live_server(live_health_server):
     assert result.returncode == 0
 
 
-def test_check_only_fails_against_dead_port():
+def test_check_only_fails_against_dead_port(dead_port):
     # Arrange
-    env = _down_env()
+    env = _down_env(dead_port)
     # Act
     result = _run_probe("--check-only", env_extra=env)
     # Assert
     assert result.returncode == 1
 
 
-def test_check_only_down_names_the_verdict():
+def test_check_only_down_names_the_verdict(dead_port):
     # Arrange
-    env = _down_env()
+    env = _down_env(dead_port)
     # Act
     result = _run_probe("--check-only", env_extra=env)
     # Assert — the probe now reports a THREE-STATE verdict. "UNHEALTHY" was a
@@ -189,7 +186,7 @@ def test_check_only_healthy_is_quiet(live_health_server):
 # --- probe: heal-mode loudness (no real systemctl needed) -----------------
 
 
-def _corroborated_down_env() -> dict[str, str]:
+def _corroborated_down_env(dead_port) -> dict[str, str]:
     """A dead port, probed ONCE already — the next probe corroborates.
 
     A SINGLE failed probe is no longer grounds to restart: that was the
@@ -199,15 +196,15 @@ def _corroborated_down_env() -> dict[str, str]:
     the bug. They now earn the verdict first (a refusal is weight 2, the
     threshold is 3, so a second one crosses it).
     """
-    env = _down_env()
+    env = _down_env(dead_port)
     env["SAC_LISTEN_UNIT"] = "sac-listen-nonexistent-test.service"
     _run_probe(env_extra=env)
     return env
 
 
-def test_uncorroborated_down_does_not_restart():
+def test_uncorroborated_down_does_not_restart(dead_port):
     # Arrange — the regression that made this whole rewrite necessary.
-    env = _down_env()
+    env = _down_env(dead_port)
     env["SAC_LISTEN_UNIT"] = "sac-listen-nonexistent-test.service"
     # Act
     result = _run_probe(env_extra=env)
@@ -215,18 +212,18 @@ def test_uncorroborated_down_does_not_restart():
     assert "RESTARTING" not in result.stderr
 
 
-def test_heal_mode_corroborated_down_emits_loud_error():
+def test_heal_mode_corroborated_down_emits_loud_error(dead_port):
     # Arrange
-    env = _corroborated_down_env()
+    env = _corroborated_down_env(dead_port)
     # Act
     result = _run_probe(env_extra=env)
     # Assert
     assert "ERROR: sac-listen DOWN" in result.stderr
 
 
-def test_heal_mode_logs_restart_intent():
+def test_heal_mode_logs_restart_intent(dead_port):
     # Arrange
-    env = _corroborated_down_env()
+    env = _corroborated_down_env(dead_port)
     # Act
     result = _run_probe(env_extra=env)
     # Assert — a genuinely dead listen still comes back (incident 2026-06-26).
