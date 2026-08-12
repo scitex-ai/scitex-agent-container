@@ -173,6 +173,17 @@ dev = [
     # marker explicit per test, which matches the rest of the codebase
     # (no implicit-async-on-conftest surprises).
     "pytest-asyncio>=0.23",
+    # DECLARED 2026-08-12, AND IT WAS ALWAYS REQUIRED — [dev] simply never said
+    # so. `.github/ci/run-in-sif.sh` REFUSES TO RUN THE SUITE unless pytest
+    # reports the plugin set {asyncio, xdist, cov, timeout}, and that check has
+    # been passing only because the shared ci-cpu.sif happens to supply
+    # pytest-timeout transitively through scitex-dev's own environment. The
+    # first run of the suite in a CLEAN venv built from this package's own
+    # extras (the GitHub-hosted nightly, run 31551320295) therefore aborted
+    # immediately: "pytest plugin 'timeout' did NOT load in this environment."
+    # Same principle as the PS210 note on scitex-hpc above: if the full suite
+    # cannot run from `pip install -e .[dev]`, [dev] is under-declared.
+    "pytest-timeout>=2.0",
     "pre-commit>=3.5.0",
     # MCP test surface (tests/scitex_agent_container/_mcp/) imports
     # fastmcp unconditionally; without it the entire _mcp/ suite is

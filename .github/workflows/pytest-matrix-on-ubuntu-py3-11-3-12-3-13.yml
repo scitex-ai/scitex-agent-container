@@ -23,10 +23,62 @@ name: tests
 # pypi-publish-and-github-release-on-tag.yml. Not "an equivalent setup" —
 # the same bytes. Green PR => green release, by construction.
 #
-# Operator rule (2026-07-14, absolute, no exceptions): NO GitHub-hosted runners
-# anywhere in this repo, PR tests included. If Spartan misbehaves, that is OURS
-# to fix — never fall back to a hosted runner. There is deliberately NO
-# `ubuntu-latest` escape hatch below; adding one back is the bug, not the fix.
+# WHERE THIS RUNS, AND WHY — WRITTEN AS A PRINCIPLE, NOT AS AN ABSOLUTE.
+#
+# This header used to read "Operator rule (2026-07-14, absolute, no exceptions):
+# NO GitHub-hosted runners anywhere in this repo, PR tests included." That
+# sentence was FALSE ON THE DAY IT WAS WRITTEN — cla.yml has always been a
+# deliberate security carve-out — and it went on being quoted as an absolute
+# into six other workflow files. An absolute with live exceptions does not get
+# obeyed; it gets discovered, disbelieved, and worked around. So this states the
+# PRINCIPLE and points at the mechanism, rather than asserting a rule that the
+# next operator decision will falsify again:
+#
+#   * ANYTHING A HUMAN WAITS ON RUNS ON HARDWARE WE CONTROL — this gate, lint,
+#     import-smoke, docs. That is why there is deliberately no `ubuntu-latest`
+#     escape hatch below: adding one HERE is the bug, not the fix. If our pool
+#     misbehaves, that is OURS to fix.
+#   * A JOB NOBODY WAITS ON MAY RUN ON GITHUB'S HARDWARE when there is a written
+#     argument for it. Today that is cla.yml (security) and the 3.12 nightly
+#     (cost — hosted runners are free for public repos and slow, which is the
+#     right trade when no human is blocked). Both live in
+#     .github/hosted-runner-allowlist.yaml WITH the argument attached, and
+#     _hosted_runner_guard.py fails CI on an exception that is undocumented or
+#     stale. "No hosted runners" is shorthand for "none outside that file".
+#
+# WHICH MACHINES "OUR POOL" MEANS IS NOT SETTLED, AND THIS FILE DOES NOT SAY.
+# It resolves `vars.CI_RUNS_ON` — a repository Variable — precisely so the pool
+# can change without editing workflows. It is changing right now: the spartan
+# nodes were banned from CI, and the operator moved on 2026-08-12 to re-admit
+# them (four org runners + three spartan ≈ 75% more capacity), gated on
+# scitex-dev #575-#578 — the four PRs that stop tests asserting facts about the
+# machine they run on. Until those land, the SAME code goes green on spartan and
+# red on an org runner, which would make this gate's verdict depend on which
+# runner picked the job up. Do not add spartan labels here to "help"; the switch
+# is flipped in the Variable, once those PRs land.
+#
+# THE THREE PATHS HAVE DIFFERENT AUDIENCES, WHICH IS WHY THE SAME SUITE RUNS
+# THREE SHAPES:
+#
+#   PR gate    3.11 + 3.13            a human is waiting  -> optimise LATENCY
+#   nightly    3.12 (hosted)          nobody is waiting   -> optimise COST
+#   release    3.11 + 3.12 + 3.13     correctness only    -> optimise COVERAGE
+#
+# THE ENDS OF THE RANGE, NOT ONE VERSION. Dropping to a single leg was measured
+# and rejected the same night: scitex-dev #578 (a fix for LD_LIBRARY_PATH being
+# stripped from child processes, 21 tests) failed on 3.11 and 3.13 and PASSED on
+# 3.12 — only the ends link libpython dynamically. A one-leg gate picked from
+# the middle would have shipped it, and a one-leg gate picked from an end is one
+# interpreter's build options away from the same hole. Min and max bracket the
+# range; the middle is what the nightly is for.
+#
+# So a green PR does NOT have to predict a green release on its own — the
+# release gate (pypi-publish-and-github-release-on-tag.yml) runs the FULL matrix
+# in this same SIF before anything reaches PyPI, and the nightly is the
+# early warning that a 3.12/3.13-only regression exists days before a tag.
+# Pushes to `develop`/`main` also keep the full matrix here, so the version that
+# is NOT on the PR gate is still exercised in the release-identical environment
+# on the very merge that introduces it.
 #
 # Constitution §4: freshness comes from discarding the ENVIRONMENT, not the
 # runner — a shared read-only base SIF, and per-job scratch created and
@@ -39,7 +91,15 @@ on:
   pull_request:
     branches: [main, develop]
   schedule:
-    - cron: "0 17 * * *"  # nightly 17:00 UTC (~02:00 JST), off-peak
+    # Nightly 17:00 UTC (~02:00 JST), off-peak — KEPT even though
+    # nightly-python-matrix-on-github-hosted.yml now also runs nightly, because
+    # the two watch different things. That one watches the CODE on 3.12/3.13
+    # using GitHub's stock image; this one watches the ENVIRONMENT — the shared
+    # ci-cpu.sif, its baked interpreters and the layered [all,dev] install are
+    # infrastructure that changes OUTSIDE this repo, and this is the only daily
+    # run that would notice such drift before a tag does. At 02:00 JST our nodes
+    # are idle, so it competes with nobody.
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
 # STOP RE-TESTING COMMITS THAT A NEWER PUSH HAS ALREADY REPLACED.
@@ -117,7 +177,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # THE ENDS OF THE RANGE ON A PULL REQUEST, THE FULL SET EVERYWHERE ELSE.
+        #
+        # MEASURED 2026-08-11/12: all four CPU runners saturated while several
+        # stacked PRs each fanned out three legs of the heaviest job on the
+        # queue. Dropping the middle leg is a 1/3 cut to that job — an honest
+        # third, not a headline: this does not make CI twice as fast, it stops
+        # one of every three heavy legs from being queued behind the others.
+        # The version it drops is covered by
+        #   * nightly-python-matrix-on-github-hosted.yml (daily, someone else's
+        #     hardware), and
+        #   * this same job on the `develop`/`main` push that merges the PR, and
+        #   * the release gate, which runs all three before anything ships.
+        #
+        # SPELLING: one `fromJSON` over two STRING literals, not
+        # `cond && fromJSON(a) || fromJSON(b)`. Both forms work, but the string
+        # form has no truthiness trap — an empty/short array operand in the
+        # second form would silently fall through to the other branch.
+        #
+        # THESE TWO LISTS ARE THE ONLY PLACE THE PR/BRANCH SPLIT IS WRITTEN, and
+        # tests/integration/test_ci_python_matrix_shape.py DERIVES the rest from
+        # them: the PR list must be exactly [oldest, newest] of the full list,
+        # the nightly must be exactly the full list MINUS the PR list, the
+        # release matrix must equal the full list, and the full list must agree
+        # with pyproject's declared classifiers. A Python bump that edits one
+        # place and not the others turns that test RED instead of half-applying
+        # in silence — which is the failure mode this fleet keeps hitting.
+        python-version: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+                       && '["3.11","3.13"]'
+                       || '["3.11","3.12","3.13"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -142,8 +231,12 @@ jobs:
       # OIDC avoids a repository upload token while still authenticating every
       # upload. Codecov has not activated this repository yet, so keep its
       # explicit upload failure visible without overriding a green test suite.
+      # 3.11, NOT 3.12: the upload has to key on a leg that EXISTS in every
+      # event shape. Since the PR gate now runs the floor version alone, keying
+      # on 3.12 would mean no pull request ever uploads coverage again — the
+      # exact silent half-application this change is trying not to commit.
       - name: Upload coverage to Codecov
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.11'
         continue-on-error: true
         uses: codecov/codecov-action@v7
         with:
