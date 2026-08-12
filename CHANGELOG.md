@@ -6,6 +6,42 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`exit_reason='crashed'` is now `'pid_absent_at_sweep'` — the value names
+  the check that ran, not a fate it never established.** The GC sweep does not
+  witness anything die. It runs `os.kill(pid, 0)` at an arbitrary later moment
+  and writes a row for every pid that is no longer there, which supports
+  exactly one claim: *this pid was not present when we looked.* It wrote that
+  as `crashed`, and paired it with `ended_at=now()`, which reads as a time of
+  death nothing measured.
+
+  Both were believed. Measured 2026-08-12: eleven agents on the fleet host
+  carried `ended_at=2026-08-11T17:54:26Z, exit_reason='crashed'`, and **three
+  separate readers** took the identical second across eleven rows as proof of
+  a simultaneous kill — then reasoned about what could kill eleven processes
+  at once. Nothing did. They had died **10h46m earlier**, across a two-second
+  window when the host's tmux server went away, and `17:54:26Z` was
+  `now_iso()` evaluated *once* before the loop and stamped on every row the
+  sweep reaped. An identical timestamp across N rows is the expected output of
+  one sweep; it is not evidence about the agents.
+
+  Saying *at sweep* in the value is the load-bearing half: it warns that the
+  `ended_at` beside it is the moment we looked, not the moment it ended.
+
+  Backward compatible in both directions. `crashed` is still accepted on read
+  — live databases hold those rows, they mean exactly what the new name says,
+  and dropping the old spelling would send every existing corpse down
+  `_reconcile/_rule.py`'s "an exit_reason this rule does not know" path, which
+  refuses to act, silently making real corpses unrecoverable. `db clean --json`
+  emits **both** keys carrying the same count, so a consumer reading `crashed`
+  does not start seeing a zero — which would be precisely the "success value
+  that is also the didn't-check value" this change exists to stop producing.
+
+  The general rule, which outlives this field: **a field whose name asserts
+  more than its check performed will be believed at its name.** Nobody audits
+  the query behind a value that already sounds like an answer.
+
 ### Added
 
 - **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
