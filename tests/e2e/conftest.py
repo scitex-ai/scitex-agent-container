@@ -32,7 +32,6 @@ operator's real agents.
 from __future__ import annotations
 
 import shutil
-import socket
 import subprocess
 import time
 import uuid
@@ -42,15 +41,8 @@ from typing import Iterator
 import pytest
 
 # ---------------------------------------------------------------------------
-# Shared helpers — port allocation, sac binary discovery, registry probe.
+# Shared helpers — sac binary discovery, registry probe.
 # ---------------------------------------------------------------------------
-
-
-def _free_port() -> int:
-    """Return a free TCP port on localhost."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 @pytest.fixture(scope="session")

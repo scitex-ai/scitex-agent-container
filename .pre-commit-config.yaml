@@ -79,6 +79,24 @@ repos:
           lives in .github/hosted-runner-allowlist.yaml WITH its security
           argument — an entry without a real `reason:` fails the guard.
 
+      - id: no-hardcoded-runner-pool
+        name: "no hardcoded runner pool in .github/workflows/"
+        # Same by-path invocation, same reason. This module imports the
+        # sibling guard's `runs-on` parser and carries an explicit fallback
+        # for the no-package-context case that by-path execution creates.
+        entry: python src/scitex_agent_container/_runner_pool_guard.py
+        language: python
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        files: ^\.github/(workflows/.*\.ya?ml|runner-pin-allowlist\.yaml)$
+        description: >
+          A job's runner pool is named by a repo VARIABLE, not frozen into the
+          YAML — a frozen pool can only be re-pointed by a PR through the gate
+          the dead pool just jammed (2026-08-12: five light-lane checks pinned
+          to offline runners held 15 PRs while four runners sat idle). The two
+          deliberate pins live in .github/runner-pin-allowlist.yaml WITH their
+          arguments — an entry without a real `reason:` fails the guard.
+
 # ---------------------------------------------------------------------------
 # `stx-allow-fallback` IS DELIBERATELY ABSENT, AND SAYING SO IS THE POINT.
 #
