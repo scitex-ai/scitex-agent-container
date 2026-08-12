@@ -224,8 +224,7 @@ def test_uv_pip_install_block_can_provide_psycopg(base_def_text: str) -> None:
         "scitex-cards install must PROVIDE psycopg — via an extra "
         f"{sorted(_EXTRAS_PROVIDING_PSYCOPG)} or a floor >= "
         f"{'.'.join(map(str, _CORE_SINCE_PSYCOPG))} where it is core. "
-        f"Got {requirement!r} in:\n{block}. Old form kept for reference: "
-        f"apptainer-base.def; got extras {sorted(extras)} in:\n{block}"
+        f"Got {requirement!r} in:\n{block}"
     )
 
 
