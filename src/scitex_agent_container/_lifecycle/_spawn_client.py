@@ -72,10 +72,15 @@ __all__ = ["SpawnRequestError", "request_spawn"]
 # the server's wait is unbounded by construction (the OAuth settle window is
 # held INSIDE an exclusive flock), so the fix had to be the server learning to
 # SAY "still in flight". ``_handler_deadline`` is import-free (stdlib only).
+#
+# Resolved per CALL (see ``request_spawn``), not once into a module constant.
+# ``_DEFAULT_TIMEOUT_S = client_timeout_for()`` used to live here and it read as
+# a derivation, but a module constant is computed at import and then holds still
+# — move ``AGENT_START_DEADLINE_S`` and the server follows it (it reads the name
+# inside the handler) while this snapshot does not. The ordering client > server
+# would invert silently, which is the bug this comment is about, arriving by way
+# of its own fix.
 from .._listen._handler_deadline import client_timeout_for
-
-_DEFAULT_TIMEOUT_S = client_timeout_for()
-
 
 # Request-construction plumbing — where do I send this, and as whom — now lives
 # in ._listen_client_resolve. It was never spawn-specific: _host_exec_client
@@ -132,7 +137,7 @@ def request_spawn(
     overwrite: bool = False,
     base_url: str | None = None,
     bearer: str | None = None,
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
@@ -165,8 +170,11 @@ def request_spawn(
         Override ``SAC_LISTEN_BEARER``. Tests pass either an explicit
         value or ``""`` to force the unauthenticated branch.
     timeout_s
-        Per-request HTTP timeout (seconds). Defaults to 30 — long enough
-        for the server's ``sac agent start`` subprocess to return.
+        Per-request HTTP timeout (seconds). ``None`` (the default)
+        DERIVES it from the server's declared answer-by deadline via
+        ``client_timeout_for()`` — that deadline plus ``CLIENT_MARGIN_S``,
+        resolved on every call so it can never fall behind the deadline
+        it is supposed to outlive.
     opener
         Optional ``urllib.request.urlopen``-shaped callable. Default
         ``urlrequest.urlopen``; tests inject a fake opener that returns
@@ -240,6 +248,9 @@ def request_spawn(
         (including 403 ACL deny), or malformed-but-otherwise-OK body
         the server itself would reject.
     """
+    if timeout_s is None:
+        timeout_s = client_timeout_for()
+
     if not isinstance(child_name, str) or not child_name:
         raise SpawnRequestError("child_name must be a non-empty string")
 

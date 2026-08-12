@@ -87,6 +87,8 @@ ERR_NO_SUBSCRIBER = "no_live_subscriber"
 ERR_UNREACHABLE = "unreachable"
 ERR_DELIVERY_ERROR = "delivery_error"
 ERR_LOOKUP_FAILED = "lookup_failed"
+ERR_UNKNOWN_TARGET = "unknown_target"
+ERR_TARGET_NOT_RUNNING = "target_not_running"
 
 # What a 0-subscriber send hands the caller instead of a false success.
 #
@@ -113,6 +115,185 @@ NO_SUBSCRIBER_REMEDY: tuple[str, ...] = (
     "their inbox adapter is not attached; it is NOT evidence that the agent "
     "is dead, and a restart would destroy a healthy session.",
 )
+
+
+# What an UNREGISTERED target hands the caller. Deliberately the OPPOSITE
+# advice to NO_SUBSCRIBER_REMEDY, because the two situations look identical
+# from a 0-subscriber count and need opposite actions:
+#
+#     registered agent, adapter detached -> WAIT; it will replay on connect
+#     unregistered name (a typo)         -> FIX THE NAME; nothing will ever
+#                                           connect to drain the queue
+#
+# Measured 2026-08-09 by scitex-dev: they addressed this agent as "sac-04"
+# (real name: scitex-agent-container-04) ALL DAY. Every send returned 200 with
+# durably_queued=true, and NO_SUBSCRIBER_REMEDY told them, in those words, not
+# to re-send — so they didn't. The messages went to a queue no adapter will
+# ever attach to. They only found out by checking the registry for an
+# unrelated reason.
+UNKNOWN_TARGET_REMEDY: tuple[str, ...] = (
+    "FIX THE NAME AND RE-SEND. This is the opposite of the no_live_subscriber "
+    "case: nothing is queued for a name that was never registered, no adapter "
+    "will ever attach to drain it, and waiting will never deliver it.",
+    "Call a2a_peers to list the registered names. `agent_status` on a name "
+    "that 404s is the same signal from the other side.",
+    "Do NOT treat this as the target being down. An unregistered name is not "
+    "a dead agent — the agent you meant may be perfectly healthy under its "
+    "real name.",
+)
+
+
+# What a REGISTERED BUT STOPPED target hands the caller — the third cause of a
+# 0-subscriber count, and the one whose advice was previously inverted.
+#
+# NO_SUBSCRIBER_REMEDY above says, correctly and in bold, "NOT LOST … do NOT
+# re-send … it replays on their next connect". That is right for a live agent
+# whose adapter is detached. For a STOPPED agent there is no next connect: no
+# session exists to reconnect, so the row sits in `channel_events` until someone
+# deliberately starts the agent. Handing the sender "wait, it is queued" is then
+# the same failure as the `sac-04` typo incident (see UNKNOWN_TARGET_REMEDY) —
+# a message parked forever behind reassuring advice.
+#
+# It still does NOT tell the caller to start the agent. Starting someone else's
+# agent is an operator decision — measured 2026-08-12, 9 of 15 registered rows
+# on one host were stopped, and a rail that nudges every blocked sender to start
+# them would have restarted most of a fleet overnight, unasked and unobserved.
+NOT_RUNNING_REMEDY: tuple[str, ...] = (
+    "DO NOT WAIT FOR A REPLY. Unlike a detached inbox adapter, a stopped agent "
+    "has no session that will reconnect, so the queued row will not drain on "
+    "its own. This is the opposite of the no_live_subscriber case.",
+    "The message IS durably queued (sac listen persisted it to channel_events "
+    "before publishing), so it will be delivered IF this agent is started "
+    "later. Do not re-send — that would deliver it twice.",
+    "Do NOT start the target yourself to unblock your send. Whether a stopped "
+    "agent should be running is an operator decision, not a side effect of "
+    "someone wanting to message it.",
+    "To make progress now: file a scitex-cards card assigned to the target "
+    "(durable and pull-based, so it survives the agent being down), or route "
+    "the work to a running peer, or escalate to the operator.",
+)
+
+
+def not_running_error(target: str) -> SendError:
+    """Build the loud error for a send to a REGISTERED BUT STOPPED agent.
+
+    Distinct from :func:`no_subscriber_error` because the count that produced
+    both is identical — ``delivered_subscriber_count == 0`` — while the correct
+    response is opposite. The distinguishing evidence is not the count: it is
+    the ``fault`` the listen route now publishes next to it, derived from the
+    host's tmux table (see ``_listen._inbox_fault``). Only a POSITIVELY observed
+    absence reaches here; an unobservable session falls back to
+    :func:`no_subscriber_error`, which is the safe reading.
+    """
+    return SendError(
+        f"NOT DELIVERED — send to {target!r} reached no live subscriber, and "
+        f"{target!r} IS NOT RUNNING: the listen daemon observed no live session "
+        "for it, so its registry row has outlived its process. The message is "
+        "durably queued, but NOTHING WILL DRAIN THAT QUEUE until the agent is "
+        "started — there is no adapter to reconnect. Do not wait for a reply.",
+        code=ERR_TARGET_NOT_RUNNING,
+        target=target,
+        detail={
+            "delivered": False,
+            "delivered_subscriber_count": 0,
+            "durably_queued": True,
+            "registered": True,
+            "target_running": False,
+            "what_to_do": list(NOT_RUNNING_REMEDY),
+        },
+    )
+
+
+def suggest_names(target: str, known: list[str]) -> list[str]:
+    """Registered names a caller plausibly MEANT by ``target``.
+
+    Plain ``difflib`` is not enough here, and the motivating case proves
+    it: ``difflib.get_close_matches("sac-04", [...])`` returns NOTHING for
+    ``scitex-agent-container-04``. By character ratio they are unrelated
+    strings — yet that is the exact mistake scitex-dev made all day, and a
+    suggester that misses it would be decoration.
+
+    Two fleet-specific signals carry the weight, because fleet names are
+    not typos of each other, they are ABBREVIATIONS of each other:
+
+    * ACRONYM — ``sac`` is the initials of ``scitex-agent-container``.
+      This is the house naming convention, so it is the single most
+      likely way a name goes wrong.
+    * SHARED NUMERIC SUFFIX — ``…-04`` on both sides means the caller had
+      the right instance and the wrong package name.
+
+    Character similarity still contributes, so ordinary typos
+    (``scitex-hubb``) are caught too.
+    """
+    import difflib
+    import re
+
+    def _tokens(text: str) -> list[str]:
+        return [part for part in re.split(r"[^a-z0-9]+", text.lower()) if part]
+
+    target_tokens = _tokens(target)
+    if not target_tokens:
+        return []
+
+    scored: list[tuple[float, str]] = []
+    for name in known:
+        name_tokens = _tokens(name)
+        if not name_tokens:
+            continue
+        score = difflib.SequenceMatcher(None, target.lower(), name.lower()).ratio()
+        acronym = "".join(tok[0] for tok in name_tokens if tok[0].isalpha())
+        head = target_tokens[0]
+        if len(head) >= 2 and acronym.startswith(head):
+            score += 0.5
+        if target_tokens[-1].isdigit() and target_tokens[-1] == name_tokens[-1]:
+            score += 0.3
+        if score >= 0.5:
+            scored.append((score, name))
+
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [name for _, name in scored[:3]]
+
+
+def unknown_target_error(target: str, known: list[str]) -> SendError:
+    """Build the loud error for a send to a name that is NOT REGISTERED.
+
+    Separate from :func:`no_subscriber_error` because the two demand
+    opposite responses. A detached adapter is a WAIT — the row is in
+    ``channel_events`` and replays on the next connect. An unregistered
+    name is a FIX — there is no inbox stream to reconnect, no adapter
+    that will ever attach, and no next connect, so the row is written to
+    a queue nobody will ever read.
+
+    ``known`` is the registered-name list (as ``a2a_peers`` reports it);
+    the closest matches are named in the message so a typo is a
+    five-second correction instead of an indefinite wait.
+    """
+    suggestions = suggest_names(target, known)
+    if suggestions:
+        hint = " Did you mean: " + ", ".join(repr(s) for s in suggestions) + "?"
+    elif known:
+        hint = f" {len(known)} agent(s) are registered; call a2a_peers to list them."
+    else:
+        hint = " No agents are currently registered."
+    return SendError(
+        f"NOT DELIVERED — no agent named {target!r} is registered, so this "
+        "message was not sent. NOTHING IS QUEUED FOR IT: unlike a detached "
+        "inbox adapter, an unregistered name has no inbox stream to "
+        "reconnect and no adapter that will ever attach, so waiting will "
+        "never deliver it." + hint,
+        code=ERR_UNKNOWN_TARGET,
+        target=target,
+        detail={
+            "delivered": False,
+            "delivered_subscriber_count": 0,
+            # The load-bearing difference from no_subscriber_error. Claiming
+            # True here is what made a real message wait forever.
+            "durably_queued": False,
+            "registered": False,
+            "suggestions": suggestions,
+            "what_to_do": list(UNKNOWN_TARGET_REMEDY),
+        },
+    )
 
 
 def no_subscriber_error(target: str) -> SendError:
@@ -215,12 +396,19 @@ __all__ = [
     "ERR_DELIVERY_ERROR",
     "ERR_LOOKUP_FAILED",
     "ERR_NO_SUBSCRIBER",
+    "ERR_TARGET_NOT_RUNNING",
+    "ERR_UNKNOWN_TARGET",
     "ERR_UNREACHABLE",
+    "NOT_RUNNING_REMEDY",
     "NO_SUBSCRIBER_REMEDY",
+    "UNKNOWN_TARGET_REMEDY",
     "SendError",
     "delivery_error",
     "error_result",
     "lookup_error_result",
     "no_subscriber_error",
+    "not_running_error",
+    "suggest_names",
+    "unknown_target_error",
     "unreachable_error",
 ]

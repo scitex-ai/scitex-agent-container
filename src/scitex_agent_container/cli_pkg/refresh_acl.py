@@ -26,9 +26,13 @@ Behaviour
   (skipping dirs starting with ``_`` — ``_shared``, ``_template_*``).
   It does NOT route through the cwd-sensitive resolver — the glob is
   deterministic regardless of cwd.
-* For each spec: reads the CURRENTLY persisted ``group_name``, then
+* For each spec: reads the CURRENTLY persisted group SET, then
   ``load_config`` + ``persist_acl_policy`` re-resolves + re-writes the
-  policy, then reads the NEW ``group_name`` and prints a per-agent diff.
+  policy, then reads the NEW set and prints a per-agent diff. The set
+  (not just the primary group) is what the diff shows, because the
+  AUTHORITY gates read the set — an agent listing several groups was
+  reduced to its first one before 2026-08-10, and this command is how a
+  row written by the old code becomes correct without a relaunch.
 * Idempotent + safe — it only refreshes the DB from on-disk specs;
   running it twice is a no-op on the second run.
 * ``--dry-run`` shows the diff WITHOUT writing (the new group is
@@ -106,7 +110,15 @@ def refresh_acl(dry_run: bool) -> None:
     from .._lifecycle._spawn_gate import persist_acl_policy
     from .._state.state_db_nodes import read_comms_policy
     from ..config import load_config
-    from ..config._group_resolver import group_from_labels
+    from ..config._group_resolver import all_named_groups
+
+    def _groups_of(name: str) -> tuple[str, ...]:
+        """The persisted AUTHORITY set for ``name`` (sorted, for display)."""
+        policy = read_comms_policy(name=name)
+        out = {g for g in policy["group_names"] if g}
+        if policy["group_name"]:
+            out.add(policy["group_name"])
+        return tuple(sorted(out))
 
     registry = _fleet_registry_dir()
     if not registry.is_dir():
@@ -141,18 +153,20 @@ def refresh_acl(dry_run: bool) -> None:
             continue
 
         name = config.name
-        old_group = read_comms_policy(name=name)["group_name"]
+        old_groups = _groups_of(name)
 
         if dry_run:
-            new_group = group_from_labels(getattr(config, "labels", None))
+            new_groups = tuple(
+                sorted(all_named_groups(getattr(config, "labels", None)))
+            )
         else:
             persist_acl_policy(config)
-            new_group = read_comms_policy(name=name)["group_name"]
+            new_groups = _groups_of(name)
 
         refreshed += 1
-        old_disp = old_group or "(none)"
-        new_disp = new_group or "(none)"
-        if old_group == new_group:
+        old_disp = ", ".join(old_groups) or "(none)"
+        new_disp = ", ".join(new_groups) or "(none)"
+        if old_groups == new_groups:
             console.print(f"{name}: {old_disp} (unchanged)")
         else:
             changed += 1

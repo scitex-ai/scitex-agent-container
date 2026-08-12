@@ -40,18 +40,17 @@ first ``": "``.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from pathlib import Path
 
 from ..config import load_config
 from ..config._to_home_layers_line import insert_to_home_layers
 from ._layers_migration_model import MigrationPlan, SpecEdit, count_added_lines
+from ._roster_state import inspect_roster
 
 logger = logging.getLogger(__name__)
 
 _NO_ANCHOR = "no 'to_home:' line to anchor the declaration to"
-_RESOLVE_LOGGER = "scitex_agent_container.runtimes._to_home_resolve"
 #: An unreadable spec's reason, capped. The full exception is logged; this is
 #: the one-line form a report and a JSON field can carry without either
 #: swallowing the useful half or spilling a 60-line validation dump per spec.
@@ -72,29 +71,6 @@ def _reason(agent: str, exc: BaseException) -> str:
     return f"{agent}: {type(exc).__name__}: {flat}"
 
 
-@contextlib.contextmanager
-def quiet_undeclared_warning():
-    """Silence ``settings_layer_dirs``' per-agent "declares no layers" WARNING.
-
-    That warning exists to make this migration visible, and it works: measured
-    on this host it fires 101 times in one dry-run, once per undeclared spec.
-    Inside THIS verb it is pure noise — the command's entire output is that
-    same finding, counted, attributed and per-agent, and 101 copies on stderr
-    bury the report they duplicate.
-
-    Scoped as tightly as it can be: one named logger, restored in ``finally``,
-    and never touched on any production path. Suppressing it anywhere else
-    would hide the signal instead of rendering it.
-    """
-    log = logging.getLogger(_RESOLVE_LOGGER)
-    previous = log.level
-    log.setLevel(logging.ERROR)
-    try:
-        yield
-    finally:
-        log.setLevel(previous)
-
-
 def fleet_spec_paths(specs_dir: "Path | None" = None) -> "list[Path]":
     """Every fleet spec, via the registry's own enumerator.
 
@@ -107,6 +83,18 @@ def fleet_spec_paths(specs_dir: "Path | None" = None) -> "list[Path]":
     from .._reconcile._pass import fleet_spec_paths as _paths
 
     return _paths(specs_dir)
+
+
+def fleet_agents_dir() -> Path:
+    """WHERE :func:`fleet_spec_paths` looks, from the same resolver it uses.
+
+    Re-exported for the same reason as ``fleet_spec_paths``: a report that
+    names a root it did not actually search would be a second answer about one
+    fleet, which is the class of bug this whole module now guards.
+    """
+    from .._reconcile._pass import fleet_agents_dir as _dir
+
+    return _dir()
 
 
 def resolved_layer_names(config) -> "list[str]":
@@ -167,13 +155,28 @@ def plan_spec(path: Path) -> "SpecEdit | str":
     )
 
 
-def plan_migration(spec_paths: "list[Path] | None" = None) -> MigrationPlan:
+def plan_migration(
+    spec_paths: "list[Path] | None" = None,
+    *,
+    root: "Path | None" = None,
+) -> MigrationPlan:
     """What the sweep WOULD do, over every fleet spec. Reads only.
 
     ``spec_paths`` defaults to the fleet registry. Passing it explicitly is how
     a test points this at a corpus that is not the operator's live fleet.
+
+    ``root`` is the directory ``spec_paths`` came out of, recorded so the plan
+    can tell an UNSEARCHED roster from an empty one. It defaults to the fleet
+    registry whenever ``spec_paths`` does — the common call is
+    ``plan_migration()`` and it must not have to remember to say where it
+    looked. A caller passing paths but no root gets the old judgement: it
+    supplied its own population, so there is no directory to be wrong about.
     """
-    paths = list(spec_paths) if spec_paths is not None else fleet_spec_paths()
+    if spec_paths is None:
+        root = fleet_agents_dir() if root is None else root
+        paths = fleet_spec_paths()
+    else:
+        paths = list(spec_paths)
     edits: list[SpecEdit] = []
     unreadable: list[str] = []
     for path in paths:
@@ -182,14 +185,18 @@ def plan_migration(spec_paths: "list[Path] | None" = None) -> MigrationPlan:
             unreadable.append(outcome)
         else:
             edits.append(outcome)
-    return MigrationPlan(edits=tuple(edits), unreadable=tuple(unreadable))
+    return MigrationPlan(
+        edits=tuple(edits),
+        unreadable=tuple(unreadable),
+        roster=inspect_roster(root, paths),
+    )
 
 
 __all__ = [
     "already_declared",
+    "fleet_agents_dir",
     "fleet_spec_paths",
     "plan_migration",
     "plan_spec",
-    "quiet_undeclared_warning",
     "resolved_layer_names",
 ]

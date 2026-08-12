@@ -15,7 +15,7 @@ two ways:
 
   1. through :func:`parse_a2a` into ``A2ASpec.host`` — covered by calling it;
   2. by ``a2a_block.get("host", "127.0.0.1")`` on the raw YAML dict —
-     ``runtimes/a2a_sidecar.py:109`` (the BIND: it becomes ``a2a serve
+     ``runtimes/a2a_sidecar.py:254`` (the BIND: it becomes ``a2a serve
      --host``), ``_lifecycle/health.py:110`` and ``cli_pkg/a2a_group.py:163``
      (probe URLs). All three are the same expression, exercised here against
      the real before/after documents.
@@ -270,7 +270,7 @@ def _raw_reader_host(text: str) -> str:
 
 
 def test_the_bind_path_resolves_to_the_same_host_before_and_after() -> None:
-    # Arrange — this is the expression at a2a_sidecar.py:109, which becomes
+    # Arrange — this is the expression at a2a_sidecar.py:254, which becomes
     # the `--host` argv of the `a2a serve` process. THE bind.
     after = insert_a2a_host(_BEFORE).text
     # Act

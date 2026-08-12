@@ -7,7 +7,7 @@ the affected set rather than a summary you are asked to trust. This module is
 that dry-run, as a value: :func:`plan_migration` performs no I/O beyond reading,
 and the object it returns is what the applying half consumes.
 
-Two things it refuses to blur:
+Three things it refuses to blur:
 
 * A spec whose shape the editor does not recognise is REFUSED and named, not
   silently skipped. Skipping is how a sweep reports "101 done" over a fleet of
@@ -15,12 +15,20 @@ Two things it refuses to blur:
 * A planned edit that would change more than a single line is a DEFECT, not a
   bigger success. The plan carries that per spec, so the apply can refuse
   before touching a file rather than after.
+* A roster that was never SEARCHED is not a fleet with nothing to do. "0 of 0"
+  is the limit case of the first bullet — a sweep reporting completion over a
+  population it never saw — and it is the one this module shipped wrong; see
+  :mod:`._roster_state`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ._roster_state import RosterState
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,11 @@ class MigrationPlan:
     edits: "tuple[SpecEdit, ...]" = ()
     #: Specs found on disk that could not be parsed into an edit at all.
     unreadable: "tuple[str, ...]" = field(default=())
+    #: What the roster this plan was built from actually WAS — absent, empty or
+    #: populated. None when the caller did not say, which keeps a plan built
+    #: from an explicit list of edits (tests, callers holding their own paths)
+    #: judged exactly as before.
+    roster: "RosterState | None" = None
 
     @property
     def writable(self) -> "tuple[SpecEdit, ...]":
@@ -78,10 +91,23 @@ class MigrationPlan:
         legitimate outcome that a human resolves. A malformed edit or an
         unreadable spec does, because both mean the plan does not describe what
         would actually happen.
+
+        AN UNSEARCHED ROSTER DOES TOO, and it is the one this property used to
+        get wrong. With no specs discovered, ``malformed`` and ``unreadable``
+        are both trivially empty and this returned True — sound, over nothing.
+        A plan that describes no specs does not describe the sweep any more than
+        one that cannot describe a spec it found; see :mod:`._roster_state`.
         """
+        if self.roster is not None and not self.roster.is_populated:
+            return False
         return not self.malformed and not self.unreadable
 
     def summary(self) -> str:
+        # The roster line comes FIRST and alone: when the roster was not
+        # searched, "0 spec(s) would be written" is not a smaller truth to
+        # append to, it is the misreading itself.
+        if self.roster is not None and not self.roster.is_populated:
+            return self.roster.describe()
         parts = [f"{len(self.writable)} spec(s) would be written"]
         if self.refused:
             parts.append(

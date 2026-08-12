@@ -55,8 +55,8 @@ def _resp_json(resp) -> dict:
     return json.loads(bytes(resp.body).decode("utf-8"))
 
 
-def _dev_resolver(name: str) -> str:
-    return "developer"
+def _dev_resolver(name: str) -> set[str]:
+    return {"developer"}
 
 
 def _noop_audit(_entry: dict[str, Any]) -> None:

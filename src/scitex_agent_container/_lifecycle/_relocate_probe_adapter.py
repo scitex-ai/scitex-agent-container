@@ -1,14 +1,16 @@
-"""The eleven callables :class:`.._relocate_probe.TargetProbes` asks for.
+"""The sixteen callables :class:`.._relocate_probe.TargetProbes` asks for.
 
 :mod:`_relocate_probe` is the PORT — pure orchestration that turns any raising
 callable into ``None``. This is the ADAPTER: it reads the agent's spec, asks the
 target once (:mod:`_relocate_probe_ssh` + :mod:`_relocate_probe_script`), and
-hands back eleven closures over that single answer.
+hands back sixteen closures over that single answer. Five of them — everything
+about sac ITSELF on that host — live in :mod:`_relocate_probe_sac` and arrive
+here as a mixin over the same memoized round trip.
 
 HOW PER-FACT DEGRADATION SURVIVES BATCHING — the design point of this file.
-One remote call answers all eleven questions, which is the only way this is fast
+One remote call answers all sixteen questions, which is the only way this is fast
 enough to be run casually. The obvious way to do that is also the dangerous one:
-one blob, one status, eleven facts that stand or fall together. Three rules keep
+one blob, one status, sixteen facts that stand or fall together. Three rules keep
 them independent, and they compose:
 
     the SCRIPT   prints each answer on its own marker line the moment it is
@@ -24,9 +26,9 @@ them independent, and they compose:
                  "credentials_valid: UNKNOWN (no credential file exists on the
                  target among: …)" rather than a bare UNKNOWN.
 
-So a run that answers eight of eleven yields eight OBSERVED facts and three
-unknowns, each naming its own cause. A transport failure yields eleven unknowns
-sharing one cause. Neither yields a single ``False``.
+So a run that answers thirteen of sixteen yields thirteen OBSERVED facts and
+three unknowns, each naming its own cause. A transport failure yields sixteen
+unknowns sharing one cause. Neither yields a single ``False``.
 
 NEVER ``False`` FOR "I COULD NOT TELL". Every accessor below either returns
 something the target actually said or raises. There is no ``except: return
@@ -34,12 +36,12 @@ False`` here, and there must never be: it would turn "no route to the host" into
 "the host has no image", and the relocation would then proceed on fiction — the
 exact 2026-08-07 failure this command exists to prevent.
 
-WHAT IS MEASURED VS WHAT IS READ. Ten facts are measured on the target. One —
-``card_store_url`` — is READ FROM THE SPEC: it is the URL the agent WOULD dial
-after the move, and preflight uses it only to name the endpoint in a failure
-message. It is supplied because a failure that says "card store not reachable"
-without saying WHICH is an error message that starts an investigation instead of
-ending one.
+WHAT IS MEASURED VS WHAT IS READ. Fourteen facts are measured on the target. Two
+are not, and each says so: ``card_store_url`` is READ FROM THE SPEC — the URL the
+agent WOULD dial after the move, supplied only so a "card store not reachable"
+failure can name WHICH store rather than starting an investigation — and
+``preamble_declared`` is OBSERVED BY CONSTRUCTION, because what this prober
+prepended to its own script is not something the target has to be asked.
 """
 
 from __future__ import annotations
@@ -48,7 +50,8 @@ import os
 from typing import Callable
 from urllib.parse import urlparse
 
-from ._relocate_probe import TargetProbes
+from ._relocate_probe import FactUnavailable, TargetProbes
+from ._relocate_probe_sac import SacFacts
 from ._relocate_probe_script import (
     REMOTE_DEFAULT_CREDENTIAL,
     RemoteQuestions,
@@ -77,14 +80,6 @@ __all__ = [
 HUB_ADDR_ENV = "SAC_RELOCATE_HUB_ADDR"
 
 _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0", ""})
-
-
-class FactUnavailable(RuntimeError):
-    """This fact was not observed, and here is the sentence explaining why.
-
-    Raised — never returned as a falsy value. :func:`.._relocate_probe.probe`
-    catches it, records the message, and leaves the fact ``None``.
-    """
 
 
 def _body(spec: dict) -> dict:
@@ -221,13 +216,19 @@ def questions_from_spec(
     )
 
 
-class TargetBatch:
-    """One ssh round trip, memoized, read eleven different ways.
+class TargetBatch(SacFacts):
+    """One ssh round trip, memoized, read sixteen different ways.
+
+    The five facts about sac ITSELF — the three PATH lookups, whether a peer
+    preamble was in play, and whether the target's own start command would
+    accept this agent — arrive as :class:`._relocate_probe_sac.SacFacts`, so a
+    reader looking for "what did we learn about sac over there" finds a file
+    about that rather than five methods among the credentials and the ports.
 
     The run happens on first access and NOT in ``__init__``: a caller that
     builds probes but never gathers must not open a connection. The outcome —
-    success or transport failure — is remembered, so eleven accessors cost one
-    ssh, and a target that is down is not dialled eleven times.
+    success or transport failure — is remembered, so thirteen accessors cost one
+    ssh, and a target that is down is not dialled thirteen times.
     """
 
     def __init__(
@@ -280,7 +281,7 @@ class TargetBatch:
             )
         return value
 
-    # -- the eleven facts --------------------------------------------------
+    # -- the thirteen facts --------------------------------------------------
     def reachable(self) -> bool:
         """True when the target ran our script; False only when ssh itself failed."""
         self._ensure()
@@ -448,7 +449,7 @@ def build_target_probes(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     env: dict[str, str] | None = None,
 ) -> tuple[TargetProbes, TargetBatch]:
-    """Bind the eleven accessors of one :class:`TargetBatch` into a probe set.
+    """Bind the sixteen accessors of one :class:`TargetBatch` into a probe set.
 
     Returns the probes and the batch, so a caller that wants the raw readout
     (for diagnostics) does not have to run the probe twice.
@@ -475,5 +476,10 @@ def build_target_probes(
         rejected_spec_keys=batch.rejected_spec_keys,
         ports_in_use=batch.ports_in_use,
         hub_reachable_from_target=batch.hub_reachable_from_target,
+        sac_on_path=batch.sac_on_path,
+        sac_resolved_path=batch.sac_resolved_path,
+        sac_usable_path=batch.sac_usable_path,
+        preamble_declared=batch.preamble_declared,
+        spec_source_drift=batch.spec_source_drift,
     )
     return probes, batch

@@ -146,27 +146,38 @@ def _local_host_names(current_host: str | None = None) -> set[str]:
     return {n for n in names if n}
 
 
-def _bound_host(config: AgentConfig) -> str | None:
-    """Return the spec-bound preferred host for a singleton config.
+def _bound_hosts(config: AgentConfig) -> list[str]:
+    """Return EVERY host a singleton config is bound to, in priority order.
 
-    Mirrors :func:`_singleton_skip_reason`'s head-of-chain selection —
-    the v3 ``spec.host`` (str or first element of list) wins, then the
-    v2 ``scheduling.preferred_host`` fallback. Returns None when the
-    config is multi-instance or unpinned (no skip would fire and no
-    liveness check is meaningful).
+    The v3 ``spec.host`` chain wins (a string is a one-entry chain), then the
+    v2 ``scheduling.preferred_host`` fallback. Empty when the config is
+    multi-instance or unpinned — no skip would fire, so no liveness check is
+    meaningful.
+
+    Plural on purpose. :func:`_resolve_singleton_skip` asks "is this agent
+    already running on the host it is bound to?", and for a fallback chain the
+    honest question is "on ANY host it is bound to" — the whole point of the
+    chain is that the agent may legitimately be on entry 2. Asking only about
+    the head answers "no", releases the pin, and starts a SECOND copy beside
+    the one already running down-chain.
     """
     spec = config.hosts_spec
     if spec.hosts:
-        return None
-    host = spec.host
-    if host:
-        if isinstance(host, str):
-            return host or None
-        return host[0] if host else None
+        return []
+    if spec.host:
+        from ._host_chain import chain_hosts
+
+        return chain_hosts(spec.host)
     sched = config.scheduling
     if sched.mode != "singleton":
-        return None
-    return sched.preferred_host or None
+        return []
+    return [sched.preferred_host] if sched.preferred_host else []
+
+
+def _bound_host(config: AgentConfig) -> str | None:
+    """Head of :func:`_bound_hosts` — the single highest-priority pin."""
+    hosts = _bound_hosts(config)
+    return hosts[0] if hosts else None
 
 
 def _registry_active_on(name: str, host: str) -> bool:
@@ -217,7 +228,8 @@ def _resolve_singleton_skip(
       2. The singleton check itself yields no skip (host matches, or
          multi-instance config).
       3. The singleton check WOULD fire, but the liveness oracle reports
-         no active instance row on the bound host — the spec-host pin
+         no active instance row on ANY bound host (the whole ``host:``
+         chain, not just its head) — the spec-host pin
          is stale. The lead's bm025 repro (clew pinned to a dead prior
          host with no live row + ``pam_slurm_adopt`` rejecting any ssh
          to it) hung clew because the skip kept deferring to a host
@@ -243,15 +255,16 @@ def _resolve_singleton_skip(
     reason = _singleton_skip_reason(config, hostname)
     if reason is None:
         return None
-    bound = _bound_host(config)
-    if bound is None:
+    bound = _bound_hosts(config)
+    if not bound:
         # No explicit pin → no liveness check can apply; preserve
         # behaviour.
         return reason
     oracle = liveness_oracle if liveness_oracle is not None else _registry_active_on
-    if not oracle(config.name, bound):
+    if not any(oracle(config.name, host) for host in bound):
         # Spec says "should be on X" but the registry has no live row
-        # on X. Skipping would leave the agent unlaunched anywhere —
+        # on X — nor, for a fallback chain, on any other host X falls
+        # back to. Skipping would leave the agent unlaunched anywhere —
         # fall through and start locally instead. This is the lead's
         # bm025 stale-binding repro.
         return None
@@ -457,6 +470,7 @@ __all__ = [
     "classify_dispatch_host",
     "_local_host_names",
     "_bound_host",
+    "_bound_hosts",
     "_registry_active_on",
     "_resolve_dispatch_peer",
     "_resolve_singleton_skip",

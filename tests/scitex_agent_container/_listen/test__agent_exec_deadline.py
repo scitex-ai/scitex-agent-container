@@ -42,6 +42,19 @@ _TOKEN = "test-token-agent-exec-deadline"
 _SHIM_SLEEP_S = 2.0
 _TEST_DEADLINE_S = 0.3
 
+# FAILSAFE ONLY — never a pacing budget. The aftermath loop below exits the
+# INSTANT its condition holds, so a generous ceiling costs a fast run nothing
+# and costs a loaded run its false failure. It used to be ``_SHIM_SLEEP_S * 3``
+# (6 s), which is not a bound on anything the system promises: it has to cover a
+# real fork+exec of a CPython shim, a 2 s sleep, the handler's detached
+# done-callback and a marker write, all on a box CI deliberately saturates
+# (`-n 32` on 32 cores, at `nice 19`). Measured 2026-08-12 on scitex-compute-04:
+# ``test_a_failure_after_the_202_still_writes_its_marker`` went red under the
+# full suite with ``marker is None`` — the marker was not missing, the loop had
+# simply stopped looking — while the same test passes in isolation. A clock was
+# standing in for the event; this is the event's failsafe.
+_AFTERMATH_TIMEOUT_S = 60.0
+
 
 @pytest.fixture
 def isolated_listen_env(tmp_path: Path):
@@ -135,6 +148,7 @@ class _SlowSpawn(NamedTuple):
     status_code: int
     body: dict
     elapsed_s: float
+    launch_still_running_at_answer: bool
     launch_completed: bool
     marker: dict | None
 
@@ -156,9 +170,14 @@ def _run_slow_spawn(
         started = time.monotonic()
         resp = _post(client, name)
         elapsed = time.monotonic() - started
+        # OBSERVE the race, do not time it. The shim touches ``flag`` as its
+        # LAST act, so "the flag is still absent now" is a direct reading of
+        # "the answer arrived before the launch finished" — the property this
+        # module is about — taken at the only instant it is true or false.
+        still_running_at_answer = not flag.exists()
         # Stay inside the client context so the app's event loop is alive and
         # the detached done-callback can actually run.
-        watch_until = time.monotonic() + _SHIM_SLEEP_S * 3
+        watch_until = time.monotonic() + _AFTERMATH_TIMEOUT_S
         marker = None
         while time.monotonic() < watch_until:
             marker = read_marker(state_dir_for(name))
@@ -169,6 +188,7 @@ def _run_slow_spawn(
         status_code=resp.status_code,
         body=resp.json(),
         elapsed_s=elapsed,
+        launch_still_running_at_answer=still_running_at_answer,
         launch_completed=flag.exists(),
         marker=marker,
     )
@@ -203,13 +223,29 @@ def test_a_launch_past_the_deadline_answers_202(slow_ok_spawn) -> None:
 def test_a_launch_past_the_deadline_answers_before_the_launch_finishes(
     slow_ok_spawn,
 ) -> None:
-    """The point of the deadline: the ANSWER beats the work, by a wide margin."""
+    """The point of the deadline: the ANSWER beats the WORK.
+
+    Asserted as an ORDERING, not as a stopwatch reading. This used to be
+    ``elapsed < _SHIM_SLEEP_S / 2`` — a 1.0 s wall-clock ceiling on a full HTTP
+    round trip whose handler is only promised to *decide* within 0.3 s. The
+    remaining 0.7 s was silently standing in for "and everything else the
+    request touches is fast": TestClient's portal thread, the ACL check, the
+    sqlite lineage read, JSON encode/decode. None of that is bounded, and CI
+    runs the suite at ``-n 32`` on 32 cores, so the ceiling measured the BOX,
+    not the deadline. The sibling failure in this same module on 2026-08-12
+    (``marker is None``) was the same clock-for-event substitution.
+
+    ``launch_still_running_at_answer`` reads the actual claim: at the moment the
+    response came back, the shim had NOT yet reached its final act. That stays
+    true however slow the host is, and it goes false for exactly the reason the
+    deadline exists to prevent — the handler blocking until the launch is done.
+    """
     # Arrange
     result = slow_ok_spawn
     # Act
-    elapsed = result.elapsed_s
+    answered_first = result.launch_still_running_at_answer
     # Assert — without the deadline the handler blocks for the full shim sleep.
-    assert elapsed < _SHIM_SLEEP_S / 2
+    assert answered_first is True
 
 
 def test_a_202_body_reports_status_accepted(slow_ok_spawn) -> None:
@@ -315,6 +351,27 @@ def test_a_client_timeout_outlives_the_server_deadline() -> None:
     client = _handler_deadline.client_timeout_for(server)
     # Assert
     assert client > server
+
+
+def test_a_client_timeout_tracks_a_moved_deadline(short_deadline) -> None:
+    """The derivation must READ the deadline, not a copy taken at import.
+
+    ``client_timeout_for`` used to spell its default
+    ``server_deadline_s=AGENT_START_DEADLINE_S`` in the SIGNATURE, and a default
+    argument is evaluated once, when the module is first imported — so it held
+    the value and stopped tracking the name. The handler does not: it imports
+    ``AGENT_START_DEADLINE_S`` inside the function body and honours a moved
+    deadline on the next call. Move it and the server answers on the new budget
+    while every client still waits on the old one; ``client > server`` inverts
+    in silence, which is exactly the failure this module exists to prevent,
+    arriving through the derivation that was supposed to prevent it.
+    """
+    # Arrange — the fixture has moved the server's declared deadline.
+    moved = short_deadline
+    # Act
+    client = _handler_deadline.client_timeout_for()
+    # Assert
+    assert client == pytest.approx(moved + _handler_deadline.CLIENT_MARGIN_S)
 
 
 def test_a_deadline_never_reports_negative_remaining() -> None:

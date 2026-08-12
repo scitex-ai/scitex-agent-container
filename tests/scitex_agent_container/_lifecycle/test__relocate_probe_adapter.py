@@ -25,7 +25,12 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container._lifecycle._relocate_preflight import preflight
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
+from scitex_agent_container._lifecycle._relocate_preflight import (
+    LeaseFacts,
+    SourceFacts,
+    preflight,
+)
 from scitex_agent_container._lifecycle._relocate_probe import gather_target_facts
 from scitex_agent_container._lifecycle._relocate_probe_adapter import (
     build_target_probes,
@@ -48,10 +53,26 @@ SAC_RELOC cred=/creds/a.json|1786249796000|yes
 SAC_RELOC creds_checked=2
 SAC_RELOC ports_checked=0
 SAC_RELOC hub=yes
+SAC_RELOC sac_path=/usr/local/bin/sac
+SAC_RELOC sac_found=/usr/local/bin/sac
+SAC_RELOC sac_usable=/usr/local/bin/sac
 SAC_RELOC runtimes=apptainer,claude-agent-sdk,tui
 SAC_RELOC speckeys=apiVersion,kind,metadata,spec
+SAC_RELOC startdrift=current|0|0|/home/ywatanabe/.dotfiles|origin/main
+SAC_RELOC startdirty=0
 SAC_RELOC end
 """
+
+#: The scitex-compute-04 readout, measured 2026-08-11: sac is installed and the
+#: non-interactive ssh PATH cannot see it, so `ssh compute-04 sac …` answers
+#: "No such file or directory" while sac works perfectly well there.
+SAC_OFF_PATH = HEALTHY.replace(
+    "SAC_RELOC sac_path=/usr/local/bin/sac",
+    "SAC_RELOC sac_path=",
+).replace(
+    "SAC_RELOC sac_found=/usr/local/bin/sac",
+    "SAC_RELOC sac_found=/home/ywatanabe/.env-sac/bin/sac",
+)
 
 # An env with a routable hub, so the hub section is asked about at all.
 HUB_ENV = {"SAC_RELOCATE_HUB_ADDR": "hub.example:7878"}
@@ -327,7 +348,11 @@ def test_a_truncated_batch_still_measures_most_of_the_checks(spec) -> None:
     # Act
     unobserved = set(gathered.errors)
     # Assert
-    assert unobserved == {"supported_runtimes", "rejected_spec_keys"}
+    assert unobserved == {
+        "supported_runtimes",
+        "rejected_spec_keys",
+        "spec_source_drift",
+    }
 
 
 def test_an_old_sac_on_the_target_costs_only_its_own_two_facts(spec) -> None:
@@ -449,6 +474,44 @@ def test_a_healthy_target_reaches_preflight_as_a_go(spec) -> None:
     # propagates.
     gathered = _facts(spec, HEALTHY)
     # Act
-    report = preflight(agent="a", to_host="target", facts=gathered.facts, runtime="tui")
+    report = preflight(
+        agent="a",
+        to_host="target",
+        facts=gathered.facts,
+        runtime="tui",
+        # The source-work and session checks are gathered locally, not by this
+        # batch. A scanned and clean source is supplied so the probe adapter is
+        # what is measured.
+        source_facts=SourceFacts(
+            repos=(RepoWork(path="/proj/x", uncommitted=0, unpushed=0),),
+            transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000)),
+            session_marker="bbb2",
+        ),
+        from_host="ywata-note-win",
+        # The lease is read from the coordinator's own db, not by this batch. A
+        # store that WAS read and holds no row is supplied for the same reason.
+        lease_facts=LeaseFacts(read=True, lease=None, now=1_786_500_000.0),
+    )
     # Assert
     assert report.ok is True
+
+
+def test_sac_installed_off_the_ssh_path_is_read_as_a_path_problem(spec) -> None:
+    # Arrange: the scitex-compute-04 readout. `command -v sac` prints nothing
+    # while /home/ywatanabe/.env-sac/bin/sac exists and works — two different
+    # states behind one "No such file or directory".
+    gathered = _facts(spec, SAC_OFF_PATH)
+    # Act
+    resolved = gathered.facts.sac_resolved_path
+    # Assert
+    assert resolved == "/home/ywatanabe/.env-sac/bin/sac"
+
+
+def test_an_empty_sac_path_line_is_an_answer_not_a_missing_fact(spec) -> None:
+    # Arrange: `sac_path=` means looked-and-found-nothing. Only a line that
+    # never arrived is undetermined.
+    gathered = _facts(spec, SAC_OFF_PATH)
+    # Act
+    on_path = gathered.facts.sac_on_path
+    # Assert
+    assert on_path is False

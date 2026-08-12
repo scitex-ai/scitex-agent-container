@@ -279,6 +279,7 @@ CREATE TABLE IF NOT EXISTS node_comms_policy (
     lineage_group     TEXT NOT NULL DEFAULT '',
     may_spawn         INTEGER NOT NULL DEFAULT 1,
     group_name        TEXT NOT NULL DEFAULT '',
+    group_names       TEXT NOT NULL DEFAULT '',
     updated_at        REAL NOT NULL
 );
 """

@@ -25,7 +25,6 @@ from scitex_agent_container._listen._host_exec import (
     host_exec,
 )
 
-
 _BAD_BODY = object()
 
 
@@ -134,9 +133,7 @@ def test_host_exec_returns_400_when_env_is_not_a_mapping():
 
 def test_host_exec_returns_400_when_caller_is_not_a_string():
     # Arrange
-    req = _FakeRequest(
-        {"argv": ["echo", "hi"], "caller": 42}, authenticated_node=None
-    )
+    req = _FakeRequest({"argv": ["echo", "hi"], "caller": 42}, authenticated_node=None)
     # Act
     resp = _run(host_exec(req))
     # Assert
@@ -165,7 +162,7 @@ def test_host_exec_denies_when_group_is_not_eligible():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "generalist",
+            group_resolver=lambda name: {"generalist"},
             audit_writer=_noop_audit,
         )
     )
@@ -180,7 +177,7 @@ def test_host_exec_allows_the_researcher_group():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "researcher",
+            group_resolver=lambda name: {"researcher"},
             audit_writer=_noop_audit,
         )
     )
@@ -195,7 +192,7 @@ def test_host_exec_allows_the_privileged_group():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "privileged",
+            group_resolver=lambda name: {"privileged"},
             audit_writer=_noop_audit,
         )
     )
@@ -212,7 +209,7 @@ def test_host_exec_denies_unlabeled_privileged_style_caller_helpfully():
     resp = _run(
         host_exec(
             req,
-            group_resolver=lambda name: "",
+            group_resolver=lambda name: set(),
             audit_writer=_noop_audit,
         )
     )
@@ -234,8 +231,8 @@ def test_host_exec_eligible_groups_set_matches_operator_scope():
 # --------------------------------------------------------------------------
 
 
-def _dev_resolver(name: str) -> str:
-    return "developer"
+def _dev_resolver(name: str) -> set[str]:
+    return {"developer"}
 
 
 def test_host_exec_returns_zero_exit_on_true_command():
@@ -366,3 +363,120 @@ def test_host_exec_does_not_block_the_event_loop():
     # implementation would produce, yet far enough above the ~0.5 ideal to
     # absorb scheduler jitter.
     assert concurrent < serial * 0.75
+
+
+# ---------------------------------------------------------------------------
+# A denial must say WHICH empty-group case it hit, and where it looked
+#
+# INCIDENT 2026-08-09. Three agents were refused inside fifteen minutes with
+# "caller '<name>' resolves to group ''". That message ASSERTS one cause — you
+# are registered here and ungrouped — while the truth was the other: no policy
+# row in the store being consulted. Three readers went looking at their group
+# labels when the real question was WHICH DATABASE was consulted.
+#
+# The empty string is produced by two different facts and BOTH layers collapse
+# them, each documented as intended: `resolve_group_name` ("no policy row, or a
+# row with an empty group_name, is ungrouped") and `read_comms_policy` ("a
+# missing row yields DEFAULT_COMMS_POLICY so the distinction is invisible").
+# Right for policy evaluation, wrong for diagnosis — which is where the cost
+# landed.
+#
+# THE DECISION IS UNCHANGED. Both cases still deny, both still fail CLOSED.
+# The first two tests below exist to guard exactly that: this is observability,
+# not a permissions change, and "improving" it into one is the obvious way to
+# get it wrong.
+# ---------------------------------------------------------------------------
+
+
+def _deny_reason(caller: str, *, group: str, registered: bool):
+    """Drive the gate with both seams injected; return the response.
+
+    ``group`` stays a single name for these fixtures' readability; the
+    seam itself answers with the caller's whole group SET (2026-08-10),
+    so an empty ``group`` becomes the empty set — still "ungrouped",
+    still denied, which is exactly what these tests pin.
+    """
+    req = _FakeRequest({"argv": ["true"]}, authenticated_node=caller)
+    return _run(
+        host_exec(
+            req,
+            group_resolver=lambda name: {group} if group else set(),
+            registration_probe=lambda name: registered,
+            audit_writer=lambda *a, **k: None,
+        )
+    )
+
+
+def test_registered_but_ungrouped_caller_is_still_denied():
+    # Arrange
+    caller, group, registered = "known-agent", "", True
+    # Act
+    response = _deny_reason(caller, group=group, registered=registered)
+    # Assert
+    assert response.status_code == 403
+
+
+def test_unregistered_caller_is_still_denied():
+    # Arrange
+    caller, group, registered = "stranger", "", False
+    # Act
+    response = _deny_reason(caller, group=group, registered=registered)
+    # Assert
+    assert response.status_code == 403
+
+
+def test_registered_caller_is_told_it_is_registered():
+    # Arrange
+    caller, registered = "known-agent", True
+    # Act
+    response = _deny_reason(caller, group="", registered=registered)
+    # Assert
+    assert "IS registered here" in json.loads(response.body)["reason"]
+
+
+def test_unregistered_caller_is_told_it_has_no_row():
+    # Arrange
+    caller, registered = "stranger", False
+    # Act
+    response = _deny_reason(caller, group="", registered=registered)
+    # Assert
+    assert "NO policy row" in json.loads(response.body)["reason"]
+
+
+def test_unregistered_message_says_it_is_not_the_same_as_a_denial():
+    # Arrange: the reader must not go looking at group labels, which is
+    # exactly what the old message caused three agents to do.
+    caller = "stranger"
+    # Act
+    response = _deny_reason(caller, group="", registered=False)
+    # Assert
+    assert "NOT the same as being denied" in json.loads(response.body)["reason"]
+
+
+def test_unregistered_message_points_at_the_wrong_store_cause():
+    # Arrange
+    caller = "stranger"
+    # Act
+    response = _deny_reason(caller, group="", registered=False)
+    # Assert
+    assert "DIFFERENT store" in json.loads(response.body)["reason"]
+
+
+def test_denial_names_the_store_it_consulted():
+    # Arrange: the single fact that was missing on 2026-08-09. Without it a
+    # reader cannot tell "I lack a group" from "you asked the wrong database".
+    caller = "stranger"
+    # Act
+    response = _deny_reason(caller, group="", registered=False)
+    # Assert
+    assert "Store consulted:" in json.loads(response.body)["reason"]
+
+
+def test_ineligible_named_group_still_reports_the_group():
+    # Arrange: a caller with a REAL but ineligible group was never ambiguous
+    # and must not regress.
+    caller = "guest-agent"
+    # Act
+    response = _deny_reason(caller, group="guest", registered=True)
+    # Assert
+    assert "'guest'" in json.loads(response.body)["reason"]
