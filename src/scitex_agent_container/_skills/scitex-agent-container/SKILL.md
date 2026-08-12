@@ -73,8 +73,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push via a2a_send
-- [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded
-- [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`
+- [30](30_responsiveness-background-work.md) — short turns; long work backgrounded
+- [31](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`
 - [32](32_nested-apptainer-builds.md)
 
 ### Reference
@@ -84,6 +84,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [44](44_agent-to-agent-recovery.md) — recover a wedged peer: prompt/tmux/MCP/hook decision tree
 - [45](45_agent-to-agent-recovery-tmux.md) — the `tmux send-keys -l` recovery recipe + `/mcp` reconnect
 - [46](46_agents-list-auth-cache.md) — persisted auth verdict → `auth-failed` in the fleet view
+- [47](47_authoritative-vs-convenient-reads.md)
 
 ### Lessons
 - [40_troubleshooting.md](40_troubleshooting.md) — Common issues and debugging
