@@ -269,9 +269,26 @@ done
 # The kernel will schedule this process on 48 CPUs. Only `nproc` disagreed, so
 # the suite ran on the FLOOR of 4 workers inside a 48-CPU allocation the fleet
 # was already paying for — 15282 passed in 532s where it had 12x the cores
-# available. coreutils `nproc` honours OMP_NUM_THREADS / OMP_THREAD_LIMIT AHEAD
-# of the affinity mask, and HPC sites commonly default OMP_NUM_THREADS=1 to stop
-# naive threaded code oversubscribing a shared node.
+# available.
+#
+# CAUSE, MEASURED RATHER THAN MATCHED. coreutils `nproc` honours
+# OMP_NUM_THREADS / OMP_THREAD_LIMIT AHEAD of the affinity mask. On that runner:
+#
+#     OMP_NUM_THREADS        1
+#     nproc (as-is)          1
+#     nproc (OMP_* cleared)  48
+#     sched_getaffinity      48
+#
+# Clearing the variable moves nproc from 1 to 48, which establishes the cause
+# instead of merely fitting it.
+#
+# DO NOT "FIX" THIS BY UNSETTING OMP_NUM_THREADS. It is set to 1 on purpose and
+# it is CORRECT: each xdist worker is a separate process, and BLAS/OpenMP inside
+# numpy will happily start one thread per core in EVERY one of them. 48 workers
+# x 48 OMP threads is 2304 threads on 48 CPUs. OMP_NUM_THREADS=1 with 48
+# PROCESSES is exactly the right shape — one thread per core, no oversubscription.
+# The bug was never the variable; it was reading a THREAD-BUDGET knob as a
+# CPU-COUNT fact.
 #
 # `Cpus_allowed_list` in /proc/self/status is exactly "the CPUs the kernel will
 # schedule THIS process on". It needs no python and no taskset (neither is
