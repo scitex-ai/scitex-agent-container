@@ -132,6 +132,19 @@ codex = [
     # `openai` extra above, which replaces the harness with openai-agents.
     "scitex-genai[gateway]>=0.1.4",
 ]
+state = [
+    # Credential STATE lives in the per-host postgres on 55432 (ADR-0022 §2;
+    # 5432 is never used for scitex). psycopg 3 is the driver ADR-0022 §4
+    # names, and it is already present in the sac base image because
+    # scitex-cards needs it.
+    #
+    # OPTIONAL on purpose. sac's core install has never opened a network
+    # database, and a host that only starts agents must keep working without
+    # one; `_credstate._store` imports psycopg lazily and raises a named
+    # DriverMissingError pointing here. Making it a hard dependency would
+    # put a database driver in the path of `sac agents start`.
+    "psycopg[binary]>=3.1",
+]
 dev = [
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
     # first gained its `path=` parameter in 0.31.1 (verified against the
@@ -192,6 +205,7 @@ all = [
     # the real openai-agents SDK paths; the bare install stays Claude-only.
     "scitex-agent-container[openai]",
     "scitex-agent-container[codex]",
+    "scitex-agent-container[state]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]
