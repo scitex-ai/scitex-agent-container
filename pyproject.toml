@@ -68,13 +68,21 @@ dependencies = [
     # v0.3.0 was the release that split public from ecosystem-internal
     # and exposed both surfaces — that is our hard minimum.
     "scitex-config>=0.3.0",
-    # 0.3.0 floor: sac's source-bundled ``sac image build`` delegates to
-    # scitex-container's atomic ``build(...)`` (timestamped SIF + stable
-    # symlink swap; failed build leaves the prior image intact). That API
-    # — ``cwd`` (build context independent of ``output_dir``),
-    # ``image_name``, ``retain``, Path return — landed in 0.3.0. See
-    # cli_pkg/_image_source_build.py::_default_container_build.
-    "scitex-container>=0.3.0",
+    # 0.3.0 gave sac's source-bundled ``sac image build`` the atomic
+    # ``build(...)`` it delegates to (timestamped SIF + stable symlink
+    # swap; a failed build leaves the prior image intact) with ``cwd``
+    # (build context independent of ``output_dir``), ``image_name``,
+    # ``retain`` and a Path return.
+    #
+    # 0.4.0 is the HARD floor now: ``sac image build --reproducible``
+    # calls ``build_reproducible(..., cwd=...)``, and ``cwd`` reached the
+    # ROUND-TRIP entry points only in 0.4.0. Against 0.3.0 the call is a
+    # TypeError — and were the argument merely dropped, the build would
+    # FATAL, because sac's recipes resolve ``%files`` and
+    # ``From: ./sac-base.sif`` against the staged context. 0.4.0 also
+    # publishes the inner boot symlink the round trip previously left
+    # stale. See cli_pkg/_image_repro_build.py.
+    "scitex-container>=0.4.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).

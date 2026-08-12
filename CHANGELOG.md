@@ -6,7 +6,69 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`sac image build --reproducible` — the build verb can finally express
+  "build reproducibly", and sac finally calls the round trip it has had access
+  to all along.** scitex-container has shipped the whole apparatus for months
+  (`build_reproducible`, `capture_lock`, `generate_locked_def`,
+  `compare_locks`, the `.verified` / `.unverified` markers, the use-time gate),
+  all publicly exported. sac referenced none of it — an `rg` over `src/` found
+  **zero** hits — and no `.lock` / `.verified` / `.unverified` had ever been
+  written on the fleet host. The round trip had never run.
+
+  It could not run. `build_reproducible()` took no build CONTEXT, and sac's
+  entire contribution to a build is a staged one: a copy of its own source
+  tree beside the `.def` plus a symlink to the prerequisite layer's SIF,
+  because the shipped recipes pull sac in by relative path
+  (`%files scitex-agent-container-src`, `From: ./sac-base.sif`) so the SIF
+  pins the source that shipped the recipe. Those paths exist only inside the
+  staging dir; resolved against the containers dir they do not exist, and
+  apptainer FATALs before running a line of `%post`. (Same mechanism as the
+  long-standing observation that rebuilding a SIF by hand goes wrong while
+  building through the `sac` verb works — a raw `apptainer build` on a shipped
+  recipe fails for exactly this reason. Always use the verb.)
+
+  scitex-container 0.4.0 adds that `cwd`; this release calls it. The new verb
+  captures the version set that actually landed into a `.lock`, emits a
+  version-pinned `.def`, rebuilds from it through the same staged context,
+  compares the two version sets, and marks `.verified` or `.unverified`
+  carrying the drift. A mismatch is a **finding, not a build failure** — the
+  image stays usable with its provenance honestly recorded as unproven.
+  `--skip-verify` captures the lock and pinned recipe without the second
+  build, and says plainly that the result is unmarked.
+
+  "Reproducible" here means **environment identity** (the same version set
+  comes back), the reading the operator chose. Byte-for-byte identical digests
+  are explicitly out of scope.
+
+- **`proxy` is buildable.** `_LAYERS` mapped only `base` and `scitex`, so the
+  shipped `apptainer-proxy.def` was a recipe nothing could build — even though
+  `build_layer_from_source` documents `base`/`scitex`/`proxy` and
+  `resolve_bootstrap_sif` already names `proxy` among the top-of-stack layers.
+  An oversight, not a policy.
+
 ### Changed
+
+- **The base inputs are pinned.** `ubuntu:24.04` is a moving tag — Canonical
+  republishes it for every point release — so `apptainer-base.def` and
+  `apptainer-proxy.def` now bootstrap from the digest of 24.04.4 LTS, the
+  exact base the live fleet image was built from. `yq` and `cargo-binstall`
+  move off `releases/latest/download` to v4.53.3 / v1.21.1, and rustup gains
+  `--default-toolchain 1.97.1`. Every one of those values is what the live
+  image *already carries* (verified in-image), so the pins freeze the current
+  state rather than moving it. `gdu` was already pinned for the same reason.
+
+  `@anthropic-ai/claude-code@latest` is deliberately **left floating**: the
+  recipe documents that float as an explicit operator directive (carry the
+  latest of all ecosystem packages; unlock the `fable[1m]` model). The
+  consequence, stated plainly: a `--reproducible` base build will report
+  `.unverified` whenever claude-code publishes between the two builds. That is
+  the round trip working — the drift was always there, it was just invisible.
+
+  Note the digest pins the STARTING layer only; `%post` still runs `apt-get
+  update`, so apt packages can move. That residual drift is now *detected*
+  (dpkg versions are in the `.lock` and compared) but not yet prevented.
 
 - **Every job sac owns is renamed to the ecosystem canonical form
   `scitex-agent-container-<name>`, and the migration that makes that safe
