@@ -253,10 +253,66 @@ done
 # node is ever shared" concern instead of statically reserving half the CPUs.
 # Floor 4. pyproject addopts carries `-v`; override to `-q` here — 2460 verbose
 # lines x workers bloats the CI log and adds measurable overhead.
+#
+# ASK THE KERNEL WHAT THIS PROCESS MAY RUN ON — DO NOT ASK `nproc`.
+#
+# `nproc` was the obvious source and it is wrong on the Spartan runners.
+# Measured on spartan-bm153 inside SLURM job 29015324, which holds 48 CPUs:
+#
+#     nproc                      1     <- what this line used to read
+#     nproc --all              128
+#     sched_getaffinity         48
+#     taskset -pc self          48     (listed explicitly)
+#     cpuset.cpus.effective  0-127     (no cgroup confinement)
+#     SLURM_CPUS_PER_TASK       48
+#
+# The kernel will schedule this process on 48 CPUs. Only `nproc` disagreed, so
+# the suite ran on the FLOOR of 4 workers inside a 48-CPU allocation the fleet
+# was already paying for — 15282 passed in 532s where it had 12x the cores
+# available. coreutils `nproc` honours OMP_NUM_THREADS / OMP_THREAD_LIMIT AHEAD
+# of the affinity mask, and HPC sites commonly default OMP_NUM_THREADS=1 to stop
+# naive threaded code oversubscribing a shared node.
+#
+# `Cpus_allowed_list` in /proc/self/status is exactly "the CPUs the kernel will
+# schedule THIS process on". It needs no python and no taskset (neither is
+# guaranteed on a bare HPC node — that is why the SIF exists), and no OpenMP
+# variable can override it. Fall back to SLURM_CPUS_PER_TASK, then to `nproc`,
+# so a host without /proc/self/status behaves exactly as before.
+#
+# The echo prints EVERY source, not just the winner. When these disagree again
+# — and they will, on some host nobody has met yet — the disagreement is the
+# finding, and it should be in the log rather than requiring a special trip.
+_cpus_from_affinity() {
+    local list part lo hi n=0
+    list=$(awk '/^Cpus_allowed_list:/ {print $2; exit}' /proc/self/status 2>/dev/null)
+    [ -n "$list" ] || return 1
+    local IFS=','
+    for part in $list; do
+        case "$part" in
+            *-*)
+                lo=${part%%-*}; hi=${part##*-}
+                case "$lo$hi" in *[!0-9]*) return 1 ;; esac
+                n=$(( n + hi - lo + 1 ))
+                ;;
+            *)
+                case "$part" in *[!0-9]*) return 1 ;; esac
+                n=$(( n + 1 ))
+                ;;
+        esac
+    done
+    [ "$n" -gt 0 ] || return 1
+    printf '%s\n' "$n"
+}
+
 NPROC="$(nproc 2>/dev/null || echo 4)"
-WORKERS=$NPROC
+AFFINITY="$(_cpus_from_affinity || true)"
+DETECTED="${AFFINITY:-${SLURM_CPUS_PER_TASK:-}}"
+case "$DETECTED" in
+    ''|*[!0-9]*) DETECTED="$NPROC" ;;
+esac
+WORKERS="$DETECTED"
 [ "$WORKERS" -lt 4 ] && WORKERS=4
-echo "xdist workers=$WORKERS (nproc=$NPROC)"
+echo "xdist workers=$WORKERS (affinity=${AFFINITY:-<unreadable>} nproc=$NPROC SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-<unset>})"
 
 # Warm the matplotlib font cache ONCE, single-process, before xdist forks the
 # workers. This builds $MPLCONFIGDIR/fontlist-*.json a single time so every
