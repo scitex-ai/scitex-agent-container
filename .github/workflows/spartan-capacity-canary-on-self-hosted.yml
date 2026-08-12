@@ -1,0 +1,148 @@
+name: spartan-capacity-canary
+
+# WHY THIS EXISTS
+#
+# On 2026-08-12T02:27:58Z the repo Actions Variable CI_RUNS_ON was set to
+# ["self-hosted","Linux","X64","scitex-org-cpu"]. That variable overrides every
+# workflow's own `runs-on` default of ["self-hosted","Linux","X64","scitex-ci"],
+# and the org runners split cleanly along exactly that line:
+#
+#   scitex-01..04-org-cpu-01   ...,scitex-org-cpu            <- the whole pool
+#   spartan-cpu-org-01/02      ...,spartan-cpu,scitex-ci     <- idle, excluded
+#   spartan-pooled-cpu-01      ...,spartan-cpu,scitex-ci     <- idle, excluded
+#
+# Measured immediately after: 45 queued+in-progress jobs against 4 slots, queue
+# median 390s, p90 1798s, max 4076s, and an offered load of ~124% of capacity —
+# i.e. arrival exceeds service, so the backlog grows rather than drains.
+#
+# The obvious remedy is to stop excluding the three idle machines. It is ALSO
+# the dangerous one: CI_RUNS_ON is consumed by NINE workflows in this repo
+# INCLUDING pypi-publish-and-github-release-on-tag.yml, so changing it re-points
+# the release gate's hardware with no diff for a reviewer to read. "A label is
+# not a pool", in a second costume.
+#
+# The missing fact is simply whether those three machines can pass this repo's
+# jobs AT ALL. Nobody has verified it — only that they are idle and carry the
+# label the workflows default to. A pool of three machines that fail
+# differently is not capacity, it is a new denominator.
+#
+# So: this workflow asks that ONE question, and nothing else.
+#
+# WHY IT FIRES ON NOTHING
+#
+# `workflow_dispatch` only. It is never a required check, never gates a PR,
+# never runs on push or schedule, and adds ZERO load to the contended pool it
+# is measuring. Merging it changes the behaviour of no existing job.
+#
+# WHY runs-on IS HARDCODED AND NOT vars.CI_RUNS_ON
+#
+# Every other workflow here reads the pool variable on purpose — the PR gate and
+# the release gate must resolve to the same runner set. This one must NOT: its
+# entire purpose is to interrogate the spartan-cpu machines specifically. If it
+# read CI_RUNS_ON it would test whichever pool is already configured, which is
+# the question we already know the answer to. This is the one place in the repo
+# where naming the labels literally is correct.
+
+on:
+  # The push trigger is scoped to this ONE branch, and that is deliberate.
+  # GitHub only dispatches `workflow_dispatch` for workflows that already exist
+  # on the DEFAULT branch, so a dispatch-only canary cannot answer its own
+  # question until after it is merged — which is backwards: the answer is the
+  # reason to merge it. Scoping a push trigger to the canary's own branch lets
+  # it run BEFORE review, and costs nothing afterwards: once merged and the
+  # branch deleted, this pattern matches no branch that will ever exist again.
+  # It adds no load to the contended pool either — this job runs on spartan-cpu,
+  # which is precisely the set of machines currently sitting idle.
+  push:
+    branches: [ci/spartan-capacity-canary]
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: "Python leg to exercise (matches the real gate's matrix)"
+        default: "3.12"
+        type: choice
+        options: ["3.11", "3.12", "3.13"]
+
+permissions:
+  contents: read
+
+env:
+  SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
+  SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+
+jobs:
+  canary:
+    name: spartan-capacity-canary-py${{ inputs.python-version }}
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # PRECONDITIONS FIRST, AND FAIL LOUD ON THEM.
+      #
+      # The gate script needs two things this repo configures by VARIABLE, not
+      # by discovery: an apptainer binary at SCITEX_CI_APPTAINER and a prebuilt
+      # SIF at SCITEX_CI_SIF. Both are set to paths that are true on the compute
+      # hosts (/usr/bin/apptainer, ~/.scitex/dev/containers/ci-cpu.sif). Neither
+      # is guaranteed on Spartan, where apptainer is often module-provided.
+      #
+      # Reporting this BEFORE the 45-minute suite is the whole value of a
+      # canary: "the pool cannot serve because the SIF is not staged there" is a
+      # finding you want in 20 seconds, not after a timeout.
+      - name: What this host actually provides
+        run: |
+          set -u
+          echo "hostname          = $(hostname)"
+          echo "runner name       = ${RUNNER_NAME:-<unset>}"
+          echo "nproc             = $(nproc 2>/dev/null || echo '?')"
+          echo "SCITEX_CI_APPTAINER = ${SCITEX_CI_APPTAINER:-<unset>}"
+          echo "SCITEX_CI_SIF       = ${SCITEX_CI_SIF:-<unset>}"
+          echo "which apptainer   = $(command -v apptainer 2>/dev/null || echo '<not on PATH>')"
+          echo "which singularity = $(command -v singularity 2>/dev/null || echo '<not on PATH>')"
+          # The Spartan-only project dir the SIF shim binds when present.
+          # exec-in-sif.sh guards this with [ -d ] on develop (PR #880); main
+          # still binds it unconditionally (PR #992 is the fix). Report it so a
+          # green canary here cannot be misread as a statement about main.
+          if [ -d /data/gpfs/projects/punim0264 ]; then
+            echo "punim0264         = present (this IS a Spartan filesystem)"
+          else
+            echo "punim0264         = absent"
+          fi
+
+      # compute-04 fails `git commit` 13/13 with "fatal: failed to write commit
+      # object" — ssh commit signing against a key that is not there. If the
+      # Spartan machines share that fault, routing at them trades one broken
+      # host for three. Probe it in a scratch repo; never touch the checkout.
+      - name: Can this host make a git commit (the compute-04 fault, probed)
+        run: |
+          set -u
+          echo "commit.gpgsign = $(git config --get commit.gpgsign || echo '<unset>')"
+          echo "gpg.format     = $(git config --get gpg.format || echo '<unset>')"
+          echo "user.signingkey= $(git config --get user.signingkey || echo '<unset>')"
+          probe="$(mktemp -d)"
+          git -C "$probe" init -q
+          git -C "$probe" config user.email ci-canary@example.invalid
+          git -C "$probe" config user.name  "ci canary"
+          : > "$probe/probe.txt"
+          git -C "$probe" add probe.txt
+          if git -C "$probe" commit -qm "probe" 2>"$probe/err"; then
+            echo "RESULT: commit OK on $(hostname)"
+          else
+            echo "RESULT: commit FAILED on $(hostname) — same class as compute-04"
+            cat "$probe/err"
+          fi
+          rm -rf "$probe"
+
+      # THE SAME BYTES THE REAL GATE RUNS. Not "an equivalent setup" — the same
+      # script with the same argument shape as
+      # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml, so a green here is a
+      # statement about the real gate and not about a simplified stand-in.
+      - name: Run the real gate script in the CI SIF
+        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ inputs.python-version }}
+
+      # The runner is persistent and the scratch is 1.8-2.2 GB per leg. Same
+      # `always()` cleanup as the real gate, scoped to this leg — a canary that
+      # fills someone's filesystem has not helped anybody.
+      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ inputs.python-version }}
