@@ -181,8 +181,9 @@ def claim(
     token: str,
     now: float,
     ttl_s: float,
+    holder_absent: bool = False,
 ) -> tuple[Lease | None, LeaseVerdict]:
-    """Take an unheld or EXPIRED lease. Returns ``(lease, verdict)``.
+    """Take an unheld, EXPIRED, or demonstrably ABANDONED lease. ``(lease, verdict)``.
 
     Refuses while another holder's lease is live — that refusal is the whole
     point, and it is why a second copy-and-start cannot quietly become a second
@@ -192,6 +193,25 @@ def claim(
     The fence advances on every successful claim, including a reclaim after
     expiry: the previous holder may still be alive and unaware, and must be
     locked out even if its clock disagrees about when the lease ended.
+
+    ``holder_absent`` IS AN OBSERVATION, NOT A FORCE FLAG, and the distinction is
+    the whole reason it is a parameter rather than a bypass. The caller passes it
+    only after LOOKING at the host the row names and finding the agent not
+    running there — the same tmux question the runtime itself asks. It is
+    strictly better evidence than the TTL, which is a guess about liveness
+    expressed as arithmetic on clocks that may disagree; this module's header
+    already draws that line ("the TTL decides when a lease may be RECLAIMED; the
+    fence decides who may WRITE"), and an observed absence is simply a better
+    answer to the first half. What excludes the old holder is unchanged: the
+    fence advances here exactly as it does after an expiry, so a holder that
+    wakes up is locked out by arithmetic either way.
+
+    It exists because the lease is written to the COORDINATOR's local store and
+    the coordinator is always the host being LEFT, so after A -> B the row on A
+    reads ``holder=B`` and B's own store never learns. Measured 2026-08-11: B's
+    store still held ``holder=A`` from an earlier move, and the return leg read
+    it as a live second writer. See :mod:`_relocate_lease_readiness`, which is
+    what decides whether this argument may be passed.
     """
     if lease is not None and lease.agent != agent:
         # UNKNOWN, not a refusal: this record says nothing about `agent` either
@@ -206,7 +226,12 @@ def claim(
                 "cannot answer for an agent this record is not about"
             ),
         )
-    if lease is not None and not lease.is_expired(now) and lease.holder != holder:
+    if (
+        lease is not None
+        and not lease.is_expired(now)
+        and lease.holder != holder
+        and not holder_absent
+    ):
         return lease, _no(
             CODE_HELD_BY_OTHER,
             f"{agent}: held by {lease.holder!r} until {lease.expires_at} — {holder!r} may not write",
@@ -220,11 +245,14 @@ def claim(
         expires_at=now + ttl_s,
         fence=next_fence,
     )
-    was = (
-        "unheld"
-        if lease is None
-        else ("expired" if lease.is_expired(now) else "already ours")
-    )
+    if lease is None:
+        was = "unheld"
+    elif lease.is_expired(now):
+        was = "expired"
+    elif lease.holder == holder:
+        was = "already ours"
+    else:
+        was = f"held by {lease.holder!r}, OBSERVED not running this agent"
     return granted, _ok(
         granted, f"{agent}: claimed by {holder!r} (previous state: {was})"
     )
@@ -326,6 +354,7 @@ def handoff(
         moved,
         f"{lease.agent}: handed {from_holder!r} -> {to_holder!r} at fence {moved.fence}",
     )
+
 
 
 def check_write(

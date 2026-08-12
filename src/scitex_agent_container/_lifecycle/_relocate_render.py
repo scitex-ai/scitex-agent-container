@@ -33,9 +33,11 @@ from ._relocate_plan import Plan, build_plan, why_for_check
 from ._relocate_preflight import PreflightReport
 
 __all__ = [
+    "COORDINATOR_ENV",
     "VERDICT_GO",
     "VERDICT_REFUSED",
     "VERDICT_UNKNOWN",
+    "render_coordinator_env",
     "render_declared",
     "render_dry_run",
     "render_observed",
@@ -43,12 +45,48 @@ __all__ = [
     "verdict_line",
 ]
 
+#: What the COORDINATOR needs in its own environment, and what each one costs
+#: when it is missing. Named here rather than left to be discovered because the
+#: cost is not a partial report — it is nine of twelve checks coming back UNKNOWN
+#: at once, and an UNKNOWN refuses exactly as hard as a FAIL. Measured
+#: 2026-08-12: that output reads as a broken relocation, and the fault is a
+#: container that was started without four variables.
+COORDINATOR_ENV: tuple[tuple[str, str], ...] = (
+    (
+        "SAC_LISTEN_BASE_URL",
+        "the listen daemon this container asks to run ssh for it. Without it NO "
+        "target fact can be measured at all — every probe shares one transport",
+    ),
+    (
+        "SAC_LISTEN_BEARER",
+        "authenticates that request. Without it the daemon answers 403 and the "
+        "probe reports a transport failure rather than anything about the target",
+    ),
+    (
+        "SAC_NAME",
+        "the caller identity the daemon's ACL gate keys off; an unresolvable "
+        "caller is refused the same way a forbidden one is",
+    ),
+    (
+        "SAC_RELOCATE_HUB_ADDR",
+        "the hub as host:port AS THE TARGET WOULD REACH IT. Only this one check "
+        "depends on it — a loopback hub address is refused deliberately, because "
+        "probing it from the target measures the TARGET's loopback",
+    ),
+)
+
 VERDICT_GO = "GO"
 VERDICT_REFUSED = "REFUSED"
 VERDICT_UNKNOWN = "REFUSED (undetermined)"
 
 _LABEL = {True: "PASS", False: "FAIL", None: "UNKNOWN"}
 
+#: Which FACTS feed each CHECK. ``gather_target_facts`` keys its failures by
+#: fact name, and four checks are named differently from the fact behind them
+#: (``credentials_valid`` is fed by ``credential_expires_in_s``, and so on).
+#: Without this map those four print a bare UNKNOWN while the reason for it sits
+#: unused in the errors dict — measured 2026-08-09 against a busybox NAS, where
+#: four of five unknowns lost their explanation on the way to the screen.
 def _why(check_name: str, errors: dict[str, str]) -> str:
     """The probe failure behind ``check_name``. See :func:`._relocate_plan.why_for_check`.
 
@@ -109,6 +147,35 @@ def render_observed(
     return lines
 
 
+def render_coordinator_env(env: dict[str, str] | None = None) -> list[str]:
+    """Name the coordinator's own missing environment — but only when some is missing.
+
+    Returns ``[]`` when all of :data:`COORDINATOR_ENV` is set, because four lines
+    saying "fine" on every run is noise that trains a reader to skip the section
+    on the run where it matters.
+
+    THE VALUE IS NEVER PRINTED, only whether it is set. One of these is a bearer
+    token, and a dry run pasted into a chat window must not be a credential leak
+    — the same rule :mod:`_relocate_probe_script` follows for the refreshToken it
+    reports the presence of and never the content.
+    """
+    import os
+
+    env = os.environ if env is None else env
+    missing = [(k, why) for k, why in COORDINATOR_ENV if not (env.get(k) or "").strip()]
+    if not missing:
+        return []
+    lines = [
+        "COORDINATOR ENVIRONMENT — unset here, and each one costs measurements",
+        "  An unmeasured check REFUSES exactly as firmly as a failed one, so a "
+        "missing variable below reads as a broken target unless it is named.",
+    ]
+    for key, why in missing:
+        lines.append(f"  UNSET    {key}")
+        lines.append(f"           {why}")
+    return lines
+
+
 def verdict_line(report: PreflightReport) -> str:
     """One sentence a reader can act on, with the counts that justify it.
 
@@ -134,10 +201,10 @@ def render_plan(plan: Plan) -> list[str]:
     """The work list: root causes once, then items grouped by what to DO.
 
     Replaces a flat "BLOCKING" dump ordered by check index. Two things changed
-    and both were asked for: several unknowns sharing one probe failure are
-    stated ONCE with the affected checks named, and the rest are bucketed by
-    action so the reader can work top-down instead of re-sorting the list in his
-    head.
+    and both were asked for (2026-08-11, 「なるべく多くのヒントを1回で出す」): several
+    unknowns sharing one probe failure are stated ONCE with the affected checks
+    named, and the rest are bucketed by action so the reader can work top-down
+    instead of re-sorting the list in his head.
 
     Every entry carries its vantage point. "the workdir does not exist" is a
     different sentence depending on which host was asked, and a fix without a
@@ -170,6 +237,7 @@ def render_dry_run(
     declared: dict[str, object] | None = None,
     errors: dict[str, str] | None = None,
     dry_run: bool = True,
+    env: dict[str, str] | None = None,
     workdir: str = "",
     from_host: str = "",
 ) -> list[str]:
@@ -198,6 +266,10 @@ def render_dry_run(
         "",
     ]
     lines += render_declared(declared or {})
+    coordinator = render_coordinator_env(env)
+    if coordinator:
+        lines.append("")
+        lines += coordinator
     lines.append("")
     lines += render_observed(report, errors)
     lines.append("")

@@ -49,11 +49,12 @@ from ._relocate_checks import (
     CHECK_PORTS,
     CHECK_REACHABLE,
     CHECK_RUNTIME,
-    CHECK_SAC_PRESENT,
     CHECK_SCHEMA,
     CHECK_SESSION,
     CHECK_SOURCE_WORK,
 )
+from ._relocate_checks_late import CHECK_LEASE, CHECK_TARGET_START
+from ._relocate_checks_sac import CHECK_SAC_PRESENT
 from ._relocate_checks_spec import CHECK_CARD_STORE_DSN, CHECK_GROUPS, CHECK_WORKDIR
 from ._relocate_preflight_facts import Check, PreflightReport
 
@@ -110,12 +111,14 @@ CHECK_FACTS: Final[dict[str, tuple[str, ...]]] = {
     CHECK_PORTS: ("ports_in_use",),
     CHECK_GROUPS: ("target_resolved_groups",),
     CHECK_HUB_FROM_TARGET: ("hub_reachable_from_target",),
-    CHECK_SAC_PRESENT: ("sac_on_path", "sac_resolved_path"),
+    CHECK_SAC_PRESENT: ("sac_usable_path", "sac_on_path", "sac_resolved_path"),
+    CHECK_TARGET_START: ("spec_source_drift",),
     # Gathered locally rather than over ssh, so their failures are keyed by the
     # check's own name; listed so the map covers every check and a reader does
     # not have to wonder whether the omission means something.
     CHECK_SOURCE_WORK: ("source_repos",),
     CHECK_SESSION: ("source_transcripts",),
+    CHECK_LEASE: ("lease",),
 }
 
 #: What a FAILING check asks the operator to do. Unknowns ignore this table
@@ -129,18 +132,22 @@ _FAIL_ACTION: Final[dict[str, str]] = {
     CHECK_PORTS: ACTION_PROVISION,
     CHECK_HUB_FROM_TARGET: ACTION_PROVISION,
     CHECK_SAC_PRESENT: ACTION_PROVISION,
+    CHECK_TARGET_START: ACTION_PROVISION,
     CHECK_CARD_STORE_DSN: ACTION_SPEC,
     CHECK_RUNTIME: ACTION_SPEC,
     CHECK_SCHEMA: ACTION_SPEC,
     CHECK_GROUPS: ACTION_SPEC,
     CHECK_SOURCE_WORK: ACTION_CARRY,
     CHECK_SESSION: ACTION_CARRY,
+    # The stored lease names a host, and clearing it is work on THAT host —
+    # which is why it is provisioning rather than a spec edit.
+    CHECK_LEASE: ACTION_PROVISION,
 }
 
 #: Checks measured on the machine being LEFT. Naming the vantage point is not
 #: decoration: "path absent" means opposite things depending on which host was
 #: asked, and a hint without its vantage point sends people to the wrong machine.
-_SOURCE_CHECKS: Final = frozenset({CHECK_SOURCE_WORK, CHECK_SESSION})
+_SOURCE_CHECKS: Final = frozenset({CHECK_SOURCE_WORK, CHECK_SESSION, CHECK_LEASE})
 
 
 @dataclass(frozen=True)

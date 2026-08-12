@@ -35,9 +35,30 @@ from typing import Callable, TypeVar
 
 from ._relocate_preflight import TargetFacts
 
-__all__ = ["ProbeOutcome", "TargetProbes", "gather_target_facts", "probe"]
+__all__ = [
+    "FactUnavailable",
+    "ProbeOutcome",
+    "TargetProbes",
+    "gather_target_facts",
+    "probe",
+]
 
 T = TypeVar("T")
+
+
+class FactUnavailable(RuntimeError):
+    """This fact was not observed, and here is the sentence explaining why.
+
+    Raised by an adapter's accessor — never returned as a falsy value.
+    :func:`probe` catches it, records the message, and leaves the fact ``None``.
+
+    IT LIVES IN THE PORT, not in one adapter, because it is the CONTRACT between
+    them: an accessor's only two legal moves are "return what the host said" and
+    "raise this, saying why not". A second adapter defining its own would be a
+    second contract, and the one rule this module exists to enforce — a failed
+    probe becomes UNKNOWN, never a falsy answer — would then hold only for
+    whichever adapter someone remembered to check.
+    """
 
 
 @dataclass(frozen=True)
@@ -93,6 +114,9 @@ class TargetProbes:
     hub_reachable_from_target: Callable[[], bool] | None = None
     sac_on_path: Callable[[], bool] | None = None
     sac_resolved_path: Callable[[], str] | None = None
+    sac_usable_path: Callable[[], str] | None = None
+    preamble_declared: Callable[[], bool] | None = None
+    spec_source_drift: Callable[[], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +152,9 @@ _FIELDS: tuple[str, ...] = (
     "hub_reachable_from_target",
     "sac_on_path",
     "sac_resolved_path",
+    "sac_usable_path",
+    "preamble_declared",
+    "spec_source_drift",
 )
 
 

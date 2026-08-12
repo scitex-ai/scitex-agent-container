@@ -1,14 +1,16 @@
-"""The thirteen callables :class:`.._relocate_probe.TargetProbes` asks for.
+"""The sixteen callables :class:`.._relocate_probe.TargetProbes` asks for.
 
 :mod:`_relocate_probe` is the PORT — pure orchestration that turns any raising
 callable into ``None``. This is the ADAPTER: it reads the agent's spec, asks the
 target once (:mod:`_relocate_probe_ssh` + :mod:`_relocate_probe_script`), and
-hands back thirteen closures over that single answer.
+hands back sixteen closures over that single answer. Five of them — everything
+about sac ITSELF on that host — live in :mod:`_relocate_probe_sac` and arrive
+here as a mixin over the same memoized round trip.
 
 HOW PER-FACT DEGRADATION SURVIVES BATCHING — the design point of this file.
-One remote call answers all thirteen questions, which is the only way this is fast
+One remote call answers all sixteen questions, which is the only way this is fast
 enough to be run casually. The obvious way to do that is also the dangerous one:
-one blob, one status, thirteen facts that stand or fall together. Three rules keep
+one blob, one status, sixteen facts that stand or fall together. Three rules keep
 them independent, and they compose:
 
     the SCRIPT   prints each answer on its own marker line the moment it is
@@ -24,9 +26,9 @@ them independent, and they compose:
                  "credentials_valid: UNKNOWN (no credential file exists on the
                  target among: …)" rather than a bare UNKNOWN.
 
-So a run that answers ten of thirteen yields ten OBSERVED facts and three
-unknowns, each naming its own cause. A transport failure yields thirteen unknowns
-sharing one cause. Neither yields a single ``False``.
+So a run that answers thirteen of sixteen yields thirteen OBSERVED facts and
+three unknowns, each naming its own cause. A transport failure yields sixteen
+unknowns sharing one cause. Neither yields a single ``False``.
 
 NEVER ``False`` FOR "I COULD NOT TELL". Every accessor below either returns
 something the target actually said or raises. There is no ``except: return
@@ -34,12 +36,12 @@ False`` here, and there must never be: it would turn "no route to the host" into
 "the host has no image", and the relocation would then proceed on fiction — the
 exact 2026-08-07 failure this command exists to prevent.
 
-WHAT IS MEASURED VS WHAT IS READ. Twelve facts are measured on the target. One —
-``card_store_url`` — is READ FROM THE SPEC: it is the URL the agent WOULD dial
-after the move, and preflight uses it only to name the endpoint in a failure
-message. It is supplied because a failure that says "card store not reachable"
-without saying WHICH is an error message that starts an investigation instead of
-ending one.
+WHAT IS MEASURED VS WHAT IS READ. Fourteen facts are measured on the target. Two
+are not, and each says so: ``card_store_url`` is READ FROM THE SPEC — the URL the
+agent WOULD dial after the move, supplied only so a "card store not reachable"
+failure can name WHICH store rather than starting an investigation — and
+``preamble_declared`` is OBSERVED BY CONSTRUCTION, because what this prober
+prepended to its own script is not something the target has to be asked.
 """
 
 from __future__ import annotations
@@ -48,7 +50,8 @@ import os
 from typing import Callable
 from urllib.parse import urlparse
 
-from ._relocate_probe import TargetProbes
+from ._relocate_probe import FactUnavailable, TargetProbes
+from ._relocate_probe_sac import SacFacts
 from ._relocate_probe_script import (
     REMOTE_DEFAULT_CREDENTIAL,
     RemoteQuestions,
@@ -88,12 +91,13 @@ HUB_ADDR_ENV = "SAC_RELOCATE_HUB_ADDR"
 _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0", ""})
 
 
-class FactUnavailable(RuntimeError):
-    """This fact was not observed, and here is the sentence explaining why.
-
-    Raised — never returned as a falsy value. :func:`.._relocate_probe.probe`
-    catches it, records the message, and leaves the fact ``None``.
-    """
+#: Where in a spec each fact lives is its own module now — see
+#: :mod:`_relocate_spec_reads`. Aliased rather than re-implemented so there is
+#: exactly one answer to "where does the card store URL live", which is the kind
+#: of question that otherwise grows a second, subtly different answer.
+_apptainer = apptainer_section
+_bind_sources = bind_sources_from_spec
+_credential_paths = credential_paths_from_spec
 
 
 def _endpoint(url: str) -> tuple[str, int]:
@@ -163,7 +167,7 @@ def questions_from_spec(
 
     store_host, store_port = _endpoint(card_store_url_from_spec(spec))
     hub_host, hub_port, _ = hub_address(env)
-    image = apptainer_section(spec).get("image")
+    image = _apptainer(spec).get("image")
     # Asked only when the spec actually claims a group. An empty labels blob
     # would make the target answer "no groups", which is a real-looking verdict
     # about a question nobody asked.
@@ -174,20 +178,26 @@ def questions_from_spec(
     )
     return RemoteQuestions(
         image=image if isinstance(image, str) else "",
-        bind_sources=bind_sources_from_spec(spec),
+        bind_sources=_bind_sources(spec),
         workdirs=workdirs_from_spec(spec),
         group_labels_json=labels_json,
         card_store_host=store_host,
         card_store_port=store_port,
-        credential_paths=credential_paths_from_spec(spec),
+        credential_paths=_credential_paths(spec),
         required_ports=tuple(required_ports),
         hub_host=hub_host,
         hub_port=hub_port,
     )
 
 
-class TargetBatch:
-    """One ssh round trip, memoized, read thirteen different ways.
+class TargetBatch(SacFacts):
+    """One ssh round trip, memoized, read sixteen different ways.
+
+    The five facts about sac ITSELF — the three PATH lookups, whether a peer
+    preamble was in play, and whether the target's own start command would
+    accept this agent — arrive as :class:`._relocate_probe_sac.SacFacts`, so a
+    reader looking for "what did we learn about sac over there" finds a file
+    about that rather than five methods among the credentials and the ports.
 
     The run happens on first access and NOT in ``__init__``: a caller that
     builds probes but never gathers must not open a connection. The outcome —
@@ -441,25 +451,6 @@ class TargetBatch:
             raise FactUnavailable(self._hub_reason or "the hub address is unknown")
         return self._yes_no("hub", "hub")
 
-    def sac_on_path(self) -> bool:
-        """Whether ``command -v sac`` answers under the RAW ssh PATH.
-
-        An empty value is the ANSWER (nothing on PATH), not a missing one — the
-        script prints the line either way. Only a line that never arrived is
-        unknown, which :meth:`_field` raises for.
-        """
-        return bool(self._field("sac_path", "sac-on-PATH").strip())
-
-    def sac_resolved_path(self) -> str:
-        """Where sac actually is, or ``""`` for looked-and-found-nothing.
-
-        The empty string is load-bearing and must NOT be turned into a raise:
-        it is what separates "sac is not installed on this host" from "sac is
-        installed and the ssh PATH cannot see it", and those need opposite
-        fixes. Only an absent line is undetermined.
-        """
-        return self._field("sac_found", "sac-location").strip()
-
 
 def build_target_probes(
     to_host: str,
@@ -471,7 +462,7 @@ def build_target_probes(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     env: dict[str, str] | None = None,
 ) -> tuple[TargetProbes, TargetBatch]:
-    """Bind the thirteen accessors of one :class:`TargetBatch` into a probe set.
+    """Bind the sixteen accessors of one :class:`TargetBatch` into a probe set.
 
     Returns the probes and the batch, so a caller that wants the raw readout
     (for diagnostics) does not have to run the probe twice.
@@ -502,5 +493,8 @@ def build_target_probes(
         hub_reachable_from_target=batch.hub_reachable_from_target,
         sac_on_path=batch.sac_on_path,
         sac_resolved_path=batch.sac_resolved_path,
+        sac_usable_path=batch.sac_usable_path,
+        preamble_declared=batch.preamble_declared,
+        spec_source_drift=batch.spec_source_drift,
     )
     return probes, batch

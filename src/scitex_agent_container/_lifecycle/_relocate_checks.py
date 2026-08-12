@@ -1,9 +1,9 @@
-"""The eleven predicates, one per thing that went wrong when this was done by hand.
+"""The predicates, one per thing that went wrong when this was done by hand.
 
-Every check here was learned by doing the move manually on 2026-08-07 (and the
-sac-present one on 2026-08-11). None of them is hypothetical: rewriting `host:`
-alone produced an agent that STARTED, reported HEALTHY, and did nothing, which
-is the worst failure shape available because it looks exactly like success.
+Every check here was learned by doing the move manually on 2026-08-07. None of
+them is hypothetical: rewriting `host:` alone produced an agent that STARTED,
+reported HEALTHY, and did nothing, which is the worst failure shape available
+because it looks exactly like success.
 
     binds        the spec bound /mnt/c — a Windows drive absent on the nas
     card store   SCITEX_CARDS_DB is 5432 here and 5442 there
@@ -12,10 +12,6 @@ is the worst failure shape available because it looks exactly like success.
                  every turn 401'd while `sac agents health` still said healthy
     runtime      `tui` is rejected by the nas's older sac
     schema       a top-level `provider:` key is rejected by that same validator
-    sac present  `sac` on compute-04 lives at /home/ywatanabe/.env-sac/bin/sac
-                 and is NOT on the non-interactive ssh PATH, so `ssh host sac …`
-                 answers "No such file or directory" while sac is installed and
-                 working
     source work  uncommitted or unpushed work on the machine being LEFT — the
                  one check here that is about the source rather than the target
   + reachability, image presence, free ports, and whether the hub is reachable
@@ -25,12 +21,11 @@ is the worst failure shape available because it looks exactly like success.
 CREDENTIALS IS THE ONE TO READ TWICE. Checking PRESENCE passes on an expired
 file. The check has to be about VALIDITY, and the failure it prevents is silent.
 
-SAC-PRESENT LOOKS LIKE ONE CHECK AND IS TWO. "not installed there" and
-"installed there and ssh cannot see it" produce the identical error and need
-opposite fixes — install it, versus put it on the PATH. A check that reports
-only "sac not found" sends the reader to install a second copy of something that
-is already working, which is why the two are separated here by evidence rather
-than merged into one message.
+TWO SIBLINGS HOLD THE REST, and they are separate files because each is one
+story rather than one predicate: :mod:`_relocate_checks_sac` owns whether sac on
+the target can be REACHED (three different PATHs, and which one the answer is
+about), and :mod:`_relocate_checks_late` owns the two questions the PHASES used
+to ask after the agent had already been stopped.
 
 NO I/O. These evaluate FACTS someone else gathered — facts in, :class:`Check`s
 out — so sac does not learn how to probe a host here, and every check is
@@ -56,7 +51,6 @@ __all__ = [
     "CHECK_PORTS",
     "CHECK_REACHABLE",
     "CHECK_RUNTIME",
-    "CHECK_SAC_PRESENT",
     "CHECK_SCHEMA",
     "CHECK_SESSION",
     "CHECK_SOURCE_WORK",
@@ -68,7 +62,6 @@ __all__ = [
     "check_ports",
     "check_reachable",
     "check_runtime",
-    "check_sac_present",
     "check_schema",
     "check_session_resolvable",
     "check_source_work",
@@ -83,7 +76,6 @@ CHECK_RUNTIME: Final = "runtime_supported"
 CHECK_SCHEMA: Final = "spec_schema_accepted"
 CHECK_PORTS: Final = "ports_free"
 CHECK_HUB_FROM_TARGET: Final = "hub_reachable_from_target"
-CHECK_SAC_PRESENT: Final = "sac_present_on_target"
 CHECK_SOURCE_WORK: Final = "source_work_committed"
 CHECK_SESSION: Final = "session_resolvable"
 
@@ -294,66 +286,6 @@ def check_hub_from_target(facts: TargetFacts, to_host: str) -> Check:
         )
     return Check(
         name=CHECK_HUB_FROM_TARGET, ok=True, detail=f"hub reachable from {to_host}"
-    )
-
-
-def check_sac_present(facts: TargetFacts, to_host: str) -> Check:
-    """Installed AND findable are two questions; the answer names which failed.
-
-    Measured 2026-08-11 on scitex-compute-04: sac lives at
-    ``/home/ywatanabe/.env-sac/bin/sac`` and is absent from the non-interactive
-    ssh PATH, so ``ssh compute-04 sac agents list`` answers "No such file or
-    directory" — the same words a machine with no sac at all produces. Every
-    remote step of a relocation runs under exactly that PATH.
-    """
-    if facts.sac_on_path is None:
-        return _unobserved(CHECK_SAC_PRESENT, "whether sac is on the target's ssh PATH")
-    if facts.sac_on_path:
-        where = f" at {facts.sac_resolved_path}" if facts.sac_resolved_path else ""
-        return Check(
-            name=CHECK_SAC_PRESENT,
-            ok=True,
-            detail=f"sac is on {to_host}'s non-interactive ssh PATH{where}",
-        )
-    if facts.sac_resolved_path is None:
-        return Check(
-            name=CHECK_SAC_PRESENT,
-            ok=None,
-            detail=(
-                f"sac is not on {to_host}'s non-interactive ssh PATH, and whether it is "
-                "installed there at all was not established"
-            ),
-            hint=(
-                "look for it directly before concluding anything: "
-                f"ssh {to_host} 'bash -lc \"command -v sac\"', and check the known venv "
-                "(~/.env-sac/bin/sac). 'Not on PATH' and 'not installed' produce the "
-                "same error and need opposite fixes"
-            ),
-        )
-    if not facts.sac_resolved_path:
-        return Check(
-            name=CHECK_SAC_PRESENT,
-            ok=False,
-            detail=f"sac is NOT INSTALLED on {to_host} — not on the ssh PATH and at no known location",
-            hint=(
-                f"install sac on {to_host} before relocating onto it. Every remote step "
-                "of the relocation — starting the target, verifying the source stopped — "
-                "is a sac call over ssh"
-            ),
-        )
-    return Check(
-        name=CHECK_SAC_PRESENT,
-        ok=False,
-        detail=(
-            f"sac IS INSTALLED on {to_host} at {facts.sac_resolved_path}, but is not on "
-            "the non-interactive ssh PATH that remote sac calls run under"
-        ),
-        hint=(
-            "do NOT install a second copy — set the peer's env_preamble in config.yaml "
-            "so it is on PATH (that is what env_preamble is for), or address it by "
-            f"absolute path. The evidence: ssh {to_host} 'command -v sac' printed "
-            f"nothing while {facts.sac_resolved_path} exists there"
-        ),
     )
 
 

@@ -54,18 +54,7 @@ first one, so you do not have to run it N times to find N problems.
 sac agents relocate <name> --to <host> --dry-run
 ```
 
-Several names preflight together and print a combined summary, so the shape of a
-queued batch is visible before anything is touched:
-
-```bash
-sac agents relocate scitex-dev scitex-hpc scitex-db --to scitex-compute-04
-```
-
-That form is read-only by construction. `--no-dry-run` takes exactly one name:
-the journal that makes a relocation resumable is per-agent, and a batch
-interrupted halfway would leave several agents half-moved across two hosts.
-
-### The fifteen checks
+### The seventeen checks
 
 | check | what it catches | the instance |
 |---|---|---|
@@ -84,6 +73,8 @@ interrupted halfway would leave several agents half-moved across two hosts.
 | `sac_present_on_target` | remote `sac` calls will fail | on scitex-compute-04 sac lives at `/home/ywatanabe/.env-sac/bin/sac` and is **not** on the non-interactive ssh PATH, so `ssh host sac …` answers "No such file or directory" while sac is installed and working (2026-08-11) |
 | `source_work_committed` | uncommitted/unpushed work on the host being **left** | a relocation carries the spec and the transcript and nothing else; a half-finished branch stays on a machine nobody is watching |
 | `session_resolvable` | which conversation would travel cannot be named | asked HERE because the phase that needs the answer runs *after* the agent has been stopped; ten agents passed every other check on 2026-08-12 and could not complete |
+| `target_start_accepts` | the target's own `sac agents start` would refuse the spec source | asked of the target's sac rather than re-implemented here; it cost the canary its first leg (2026-08-11) |
+| `lease_holdable` | the stored write lease is held by another host | HANDOVER refuses this, and HANDOVER runs after the source has been stopped, transported and booted (2026-08-11, exit 5 with nothing running anywhere) |
 
 **Read the credentials row twice.** A presence check passes on an expired file.
 The failure it prevents is silent.
@@ -156,7 +147,7 @@ Whether an unknown *refuses* is relocation's policy, not a property of the
 three-valued answer — a dashboard may paint the same unknown amber and carry on,
 and be right to. It lives as one named constant
 (`UNKNOWN_BLOCKS_RELOCATION`) at the aggregation site rather than as an `if`
-inside fifteen checks, so it can be read, and by a different consumer replaced,
+inside seventeen checks, so it can be read, and by a different consumer replaced,
 in one place.
 
 ### Every problem in one pass, ordered by what to do about it

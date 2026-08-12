@@ -17,7 +17,10 @@ from __future__ import annotations
 import click
 from click.testing import CliRunner
 
+from scitex_agent_container._lifecycle._residency import current_host
+from scitex_agent_container._state.state_db_relocation import record_residency
 from scitex_agent_container.cli_pkg._relocate_cmd import (
+    _residency_history,
     EXIT_REFUSED,
     EXIT_RETIRED_UNIMPLEMENTED,
     _required_ports,
@@ -30,43 +33,37 @@ from scitex_agent_container.cli_pkg._relocate_cmd import (
 #: ``spec.apptainer``, NOT at the top of ``spec``. A fixture that put them at
 #: the top would let a wrong-level lookup pass its own test.
 FULL_SPEC = {
+    "metadata": {"labels": {"groups": ["developer"]}},
     "spec": {
         "runtime": "tui",
         "host": "ywata-note-win",
+        "workdir": "/home/ywatanabe/proj/thing",
         "a2a": {"port": 19013},  # stx-allow: STX-NL001
         "apptainer": {
             "image": "sac-base.sif",
             "binds": ["/mnt/c:/mnt/c", "/home/ywatanabe/proj"],
             "env": {"SCITEX_CARDS_DB": "postgresql://localhost:5432/cards"},
         },
-    }
+    },
 }
 
 
-def test_a_batch_is_refused_when_it_would_actually_move_agents() -> None:
-    # Arrange: preflighting nine queued agents together is the point of taking
-    # several names, and it is safe because it touches nothing. EXECUTING several
-    # from one invocation is not: the journal that makes a relocation resumable
-    # is per-agent, so one interruption leaves several agents half-moved. The
-    # refusal must happen before anything is read, so this reaches no host.
-    runner = CliRunner()
+def test_declared_reads_the_workdir() -> None:
+    # Arrange: spec.workdir is the container's --pwd and the only checkout key
+    # there is; preflight now asks whether it exists on the TARGET.
     # Act
-    result = runner.invoke(
-        relocate, ["agent-a", "agent-b", "--to", "somewhere", "--no-dry-run"]
-    )
+    declared = declared_from_spec(FULL_SPEC)
     # Assert
-    assert result.exit_code == 2
+    assert declared["workdir"] == "/home/ywatanabe/proj/thing"
 
 
-def test_that_refusal_explains_why_a_batch_cannot_execute() -> None:
-    # Arrange: a bare "refusing" leaves the reader guessing whether it is a bug.
-    runner = CliRunner()
+def test_declared_reads_the_groups_from_metadata_labels() -> None:
+    # Arrange: NOT spec.lineage.group, which is the isolation bucket wearing a
+    # confusingly similar name.
     # Act
-    result = runner.invoke(
-        relocate, ["agent-a", "agent-b", "--to", "somewhere", "--no-dry-run"]
-    )
+    declared = declared_from_spec(FULL_SPEC)
     # Assert
-    assert "half-moved" in result.output
+    assert declared["groups"] == ("developer",)
 
 
 def test_declared_reads_the_runtime() -> None:
@@ -359,3 +356,58 @@ def test_the_notice_says_nothing_is_ever_deleted() -> None:
     text = "\n".join(_readiness_notice())
     # Assert
     assert "Nothing is deleted at any point" in text
+
+
+# ---------------------------------------------------------------------------
+# WHERE IT RUNS NOW — the residency table wins over a never-ended instance row
+#
+# Measured 2026-08-12 on scitex-compute-04: `agent_residency` said
+# canary-resume-test lives on ywata-note-win (written by the relocation that
+# moved it there), while an `instances` row on scitex-compute-04 had never been
+# ended. Reading the instance row first made the command answer with the host
+# the agent had LEFT — and a relocation back was then refused with "already
+# recorded on that host — nothing to relocate".
+#
+# The stopped case makes this the NORMAL path rather than an edge one:
+# source_drain requires the agent stopped, a stopped agent has no active
+# instance row at all, and the next fallback is the spec's legacy `host:` which
+# a relocation never updates.
+# ---------------------------------------------------------------------------
+
+
+def test_the_residency_table_answers_where_the_agent_runs() -> None:
+    # Arrange: a relocation's DONE phase wrote this stay.
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert current_host(history) == "ywata-note-win"
+
+
+def test_a_closed_stay_is_carried_too() -> None:
+    # Arrange: two moves, so the history is more than "where is it now".
+    record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert len(history) == 2
+
+
+def test_the_latest_stay_is_the_open_one() -> None:
+    # Arrange
+    record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
+    record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
+    # Act
+    history = _residency_history("canary")
+    # Assert
+    assert current_host(history) == "ywata-note-win"
+
+
+def test_an_agent_the_table_never_heard_of_yields_no_history() -> None:
+    # Arrange: genuinely "the db knows nothing", which is what lets a legacy
+    # spec host: seed it ONCE. An invented answer here would defeat that.
+    # Act
+    history = _residency_history("never-relocated")
+    # Assert
+    assert history == ()

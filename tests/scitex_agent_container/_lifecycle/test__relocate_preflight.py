@@ -28,6 +28,7 @@ from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_GROUPS,
     CHECK_HUB_FROM_TARGET,
     CHECK_IMAGE,
+    CHECK_LEASE,
     CHECK_PORTS,
     CHECK_REACHABLE,
     CHECK_RUNTIME,
@@ -35,9 +36,12 @@ from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_SCHEMA,
     CHECK_SESSION,
     CHECK_SOURCE_WORK,
+    CHECK_TARGET_START,
     CHECK_WORKDIR,
     Check,
+    LeaseFacts,
     SourceFacts,
+    SpecSourceDrift,
     TargetFacts,
     preflight,
 )
@@ -57,6 +61,8 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
         missing_bind_sources=(),
         missing_workdir_paths=(),
         target_resolved_groups=("developer", "infra"),
+        # 55432 — the fleet's port. 5432 is refused outright by the DSN check, so
+        # a fixture naming it would make "healthy" mean "one guaranteed failure".
         card_store_url="postgresql://scitex_cards@127.0.0.1:55432/scitex_cards",
         card_store_reachable=True,
         credential_expires_in_s=3600.0,
@@ -67,6 +73,9 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
         hub_reachable_from_target=True,
         sac_on_path=True,
         sac_resolved_path="/usr/local/bin/sac",
+        sac_usable_path="/usr/local/bin/sac",
+        preamble_declared=False,
+        spec_source_drift=SpecSourceDrift(state="current", upstream="origin/main"),
     )
     base.update(overrides)
     return TargetFacts(**base)  # type: ignore[arg-type]
@@ -89,11 +98,27 @@ def _clean_source(**overrides: object) -> SourceFacts:
     return SourceFacts(**base)  # type: ignore[arg-type]
 
 
+def _clean_lease(**overrides: object) -> LeaseFacts:
+    """A lease store that was READ and holds nothing for this agent.
+
+    That is a real answer, not an absence of one: sac claims no lease when an
+    agent starts, so the ordinary first relocation finds no row and bootstraps.
+    ``read=True`` is what separates it from "nobody opened the db", which refuses.
+    """
+    base = dict(read=True, lease=None, store="/state/state.db", now=1_786_500_000.0)
+    base.update(overrides)
+    return LeaseFacts(**base)  # type: ignore[arg-type]
+
+
 WORKDIR = "/home/ywatanabe/proj/scitex-agent-container"
 GROUPS = ("developer", "infra")
 
 
-def _run(source_facts: SourceFacts | None = None, **overrides: object):
+def _run(
+    source_facts: SourceFacts | None = None,
+    lease_facts: LeaseFacts | None = None,
+    **overrides: object,
+):
     return preflight(
         agent=AGENT,
         to_host=DST,
@@ -102,6 +127,7 @@ def _run(source_facts: SourceFacts | None = None, **overrides: object):
         required_ports=PORTS,
         source_facts=source_facts if source_facts is not None else _clean_source(),
         from_host=SRC,
+        lease_facts=lease_facts if lease_facts is not None else _clean_lease(),
         workdir=WORKDIR,
         declared_groups=GROUPS,
     )
@@ -473,104 +499,32 @@ def test_an_unobserved_check_still_explains_what_to_run() -> None:
 
 
 # ---------------------------------------------------------------------------
-# sac_present_on_target — installed and findable are two questions
+# sac_present_on_target — WIRED here, decided in _relocate_checks_sac
 #
-# Measured 2026-08-11 on scitex-compute-04: sac lives at
-# /home/ywatanabe/.env-sac/bin/sac and is absent from the non-interactive ssh
-# PATH, so `ssh compute-04 sac …` answers "No such file or directory" — the same
-# words a machine with no sac at all produces, needing the opposite fix.
+# The predicate moved to its own module when the question it answers had to be
+# narrowed (which PATH is the answer about?), and its unit tests moved with it to
+# test__relocate_checks_sac.py. What belongs HERE is that the aggregate still
+# carries it, because a check that stops being run is indistinguishable from one
+# that always passes.
 # ---------------------------------------------------------------------------
 
 
-def test_sac_on_the_ssh_path_passes() -> None:
-    # Arrange
-    report = _run()
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is True
-
-
-def test_sac_installed_but_off_the_ssh_path_fails() -> None:
-    # Arrange: the compute-04 case.
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
+def test_the_sac_presence_check_is_part_of_the_aggregate() -> None:
+    # Arrange: not installed anywhere on the target.
+    report = _run(sac_on_path=False, sac_usable_path="", sac_resolved_path="")
     # Act
     check = _named(report, CHECK_SAC_PRESENT)
     # Assert
     assert check.ok is False
 
 
-def test_sac_off_the_path_is_reported_as_installed_rather_than_missing() -> None:
+def test_a_sac_presence_failure_refuses_the_whole_relocation() -> None:
     # Arrange
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
+    report = _run(sac_on_path=False, sac_usable_path="", sac_resolved_path="")
     # Act
-    check = _named(report, CHECK_SAC_PRESENT)
+    verdict = report.ok
     # Assert
-    assert "IS INSTALLED" in check.detail
-
-
-def test_sac_off_the_path_names_where_it_actually_is() -> None:
-    # Arrange
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "/home/ywatanabe/.env-sac/bin/sac" in check.detail
-
-
-def test_sac_off_the_path_tells_the_reader_not_to_install_a_second_copy() -> None:
-    # Arrange: the wrong fix here is to install sac again, which is what a
-    # single "sac not found" message would send the reader off to do.
-    report = _run(
-        sac_on_path=False, sac_resolved_path="/home/ywatanabe/.env-sac/bin/sac"
-    )
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "do NOT install a second copy" in check.hint
-
-
-def test_sac_absent_everywhere_fails_as_not_installed() -> None:
-    # Arrange: "" means looked and found nothing.
-    report = _run(sac_on_path=False, sac_resolved_path="")
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "NOT INSTALLED" in check.detail
-
-
-def test_sac_absent_everywhere_asks_for_an_install() -> None:
-    # Arrange
-    report = _run(sac_on_path=False, sac_resolved_path="")
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert "install sac" in check.hint
-
-
-def test_sac_off_the_path_with_no_direct_lookup_is_unknown() -> None:
-    # Arrange: not-on-PATH alone cannot tell the two failures apart, and
-    # guessing either way sends the reader to the wrong fix.
-    report = _run(sac_on_path=False, sac_resolved_path=None)
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is None
-
-
-def test_an_unprobed_sac_presence_is_unknown() -> None:
-    # Arrange
-    report = _run(sac_on_path=None, sac_resolved_path=None)
-    # Act
-    check = _named(report, CHECK_SAC_PRESENT)
-    # Assert
-    assert check.ok is None
+    assert verdict is False
 
 
 # ---------------------------------------------------------------------------
@@ -676,8 +630,7 @@ def test_a_source_with_no_repos_at_all_passes_when_it_was_scanned() -> None:
 # `_relocate_probe.probe` does when a prober raises) and the verdict is asserted.
 # ---------------------------------------------------------------------------
 
-#: check name -> the observations to blank so THAT check, and only that check,
-#: loses its evidence. Source-side checks are blanked on SourceFacts instead.
+#: check name -> the observations to blank so THAT check loses its evidence.
 _BLANKING: dict[str, dict[str, object]] = {
     CHECK_REACHABLE: {"reachable": None},
     CHECK_IMAGE: {"image_present": None},
@@ -694,7 +647,12 @@ _BLANKING: dict[str, dict[str, object]] = {
     CHECK_PORTS: {"ports_in_use": None},
     CHECK_GROUPS: {"target_resolved_groups": None},
     CHECK_HUB_FROM_TARGET: {"hub_reachable_from_target": None},
-    CHECK_SAC_PRESENT: {"sac_on_path": None, "sac_resolved_path": None},
+    CHECK_SAC_PRESENT: {
+        "sac_on_path": None,
+        "sac_resolved_path": None,
+        "sac_usable_path": None,
+    },
+    CHECK_TARGET_START: {"spec_source_drift": None},
 }
 
 _SOURCE_BLANKING: dict[str, dict[str, object]] = {
@@ -702,14 +660,20 @@ _SOURCE_BLANKING: dict[str, dict[str, object]] = {
     CHECK_SESSION: {"transcripts": None},
 }
 
+_ALL_BLANKED = sorted(_BLANKING) + sorted(_SOURCE_BLANKING) + [CHECK_LEASE]
+
 
 def _with_failed_probe(check_name: str):
+    if check_name == CHECK_LEASE:
+        # The lease is read from a state db rather than probed; "nobody opened
+        # the db" is its version of a failed probe.
+        return _run(lease_facts=LeaseFacts())
     if check_name in _SOURCE_BLANKING:
         return _run(source_facts=_clean_source(**_SOURCE_BLANKING[check_name]))
     return _run(**_BLANKING[check_name])
 
 
-@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+@pytest.mark.parametrize("check_name", _ALL_BLANKED)
 def test_a_probe_that_failed_makes_its_check_unknown(check_name: str) -> None:
     # Arrange: the prober raised, so the fact is None — never False.
     report = _with_failed_probe(check_name)
@@ -719,7 +683,7 @@ def test_a_probe_that_failed_makes_its_check_unknown(check_name: str) -> None:
     assert check.ok is None
 
 
-@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+@pytest.mark.parametrize("check_name", _ALL_BLANKED)
 def test_a_probe_that_failed_is_not_reported_as_a_failure(check_name: str) -> None:
     # Arrange: an unknown dressed as a fail sends somebody to fix a correct spec.
     report = _with_failed_probe(check_name)
@@ -729,7 +693,7 @@ def test_a_probe_that_failed_is_not_reported_as_a_failure(check_name: str) -> No
     assert check_name not in failed
 
 
-@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+@pytest.mark.parametrize("check_name", _ALL_BLANKED)
 def test_a_probe_that_failed_blocks_the_relocation(check_name: str) -> None:
     # Arrange: unknown refuses as firmly as fail. That is RELOCATION's policy,
     # applied at the aggregation site, not baked into each check.
@@ -740,7 +704,7 @@ def test_a_probe_that_failed_blocks_the_relocation(check_name: str) -> None:
     assert blocks is True
 
 
-@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+@pytest.mark.parametrize("check_name", _ALL_BLANKED)
 def test_a_probe_that_failed_keeps_the_verdict_out_of_false(check_name: str) -> None:
     # Arrange: the whole report must say "could not tell", not "no".
     report = _with_failed_probe(check_name)
@@ -750,7 +714,7 @@ def test_a_probe_that_failed_keeps_the_verdict_out_of_false(check_name: str) -> 
     assert verdict is None
 
 
-@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+@pytest.mark.parametrize("check_name", _ALL_BLANKED)
 def test_every_unknown_check_says_how_to_answer_it(check_name: str) -> None:
     # Arrange: "I could not tell" is only useful with "here is how to tell".
     report = _with_failed_probe(check_name)
@@ -764,7 +728,7 @@ def test_the_blanking_table_covers_every_check_there_is() -> None:
     # Arrange: a new check added without an unknown-case answer here is exactly
     # the omission that lets an unmeasured question read as a pass.
     report = _run()
-    covered = set(_BLANKING) | set(_SOURCE_BLANKING)
+    covered = set(_ALL_BLANKED)
     # Act
     uncovered = {c.name for c in report.checks} - covered
     # Assert
@@ -820,7 +784,9 @@ def test_a_port_less_dsn_fails_because_libpq_defaults_it_to_5432() -> None:
 
 def test_the_dsn_hint_names_the_fleet_port() -> None:
     # Arrange
-    report = _run(card_store_url="postgresql://scitex_cards@127.0.0.1:5432/scitex_cards")
+    report = _run(
+        card_store_url="postgresql://scitex_cards@127.0.0.1:5432/scitex_cards"
+    )
     # Act
     check = _named(report, CHECK_CARD_STORE_DSN)
     # Assert
