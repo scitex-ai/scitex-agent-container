@@ -1,7 +1,7 @@
 ---
 description: |
-  [TOPIC] An instrument's `0` must be shown to be a MEASURED zero before it is believed — "did not check" and "checked, and it is clean" print the same character.
-  [DETAILS] Three independent instances measured in one night (2026-08-12), in three different instruments: greps against a zero-byte CI log ruled out the exact bug being hunted; `gh`'s empty-string `conclusion` made QUEUED checks read as green and let the auto-merge sweep treat un-run CI as passing; and `git log` invoked directly through the Bash tool returned another ref's history while silently discarding an explicit 40-char sha, which reads as "your commits are gone". Covers the one question that catches all three, the size-guard pattern, three-states-not-two, and the rule that a destructive recovery action needs a second instrument.
+  [TOPIC] An instrument's `0` must be shown to be a MEASURED zero before it is believed — "did not check" and "checked, and it is clean" print the same character — and a report that cannot say whether it means BROKEN or merely IMPERFECT is the same defect inverted.
+  [DETAILS] Four independent instances measured in one night (2026-08-12), in four different instruments: greps against a zero-byte CI log ruled out the exact bug being hunted; `gh`'s empty-string `conclusion` made QUEUED checks read as green and let the auto-merge sweep treat un-run CI as passing; `git log` invoked directly through the Bash tool returned another ref's history while silently discarding an explicit 40-char sha, which reads as "your commits are gone"; and `scitex-cards health` filed a dozen untidy rows and a down notifier under one `ok:false`, which read as "the store is unavailable" and cost hours of unwritten cards while the same report said `writable`. Covers the one question that catches all of them, the size-guard pattern, three-states-not-two, severity conflation, and the rule that a destructive recovery action needs a second instrument.
 tags: [scitex-agent-container-a-zero-must-be-a-measured-zero, evidence, ci, gh, git, grep, false-negative, auto-merge]
 ---
 
@@ -140,6 +140,55 @@ force-push — a *destructive* response to a loss that never happened.
 > `merge origin/develop: Merge made by the 'ort' strategy` while `log`
 > was insisting the merge did not exist.
 
+## Instance 4 — the inversion: a doctor that cannot say how bad it is
+
+The three above collapse a third state into the **reassuring** pole. This
+one collapses it into the **alarming** pole, and it cost more than any of
+them.
+
+`scitex-cards health` returns one `ok: false` and one
+`9/14 checks passed` spanning categories that are not commensurable:
+
+| category | example check | what failing means |
+|---|---|---|
+| availability | store unreachable | **the board is down** |
+| delivery | `notifyd_alive`, split backends | notifications may not arrive |
+| data quality | `terminal_state_honest`, `no_falsely_blocked` | ~12 untidy rows |
+
+On 2026-08-12 the failing set was `backend_mode`, `notifyd_alive`,
+`terminal_state_honest`, `no_falsely_blocked` — the last two being *four
+cards carrying a `completed_at` stamp while not done* and *seven cards
+blocked on dependencies that had already finished*. Untidy rows. Nothing
+to do with availability.
+
+In the **same report**:
+
+```
+store_canonical   ok   PostgreSQL ... (3503 cards, readable, writable)
+```
+
+Read as a verdict, "9/14 failing" said *the store is broken*. Read
+check-by-check it said *the store is fine and your board is scruffy*. I
+took the first reading, alongside two genuine (since-resolved) write
+errors, and **stopped writing cards for hours** — losing a night of
+findings to prose. Then I reported that conclusion, and it was relayed
+onward with someone else's weight behind it before a measurement undid
+it.
+
+**The guard**: a health report must let a reader answer *"is it broken,
+or merely imperfect?"* from the summary alone. Categorise checks by
+severity; let the top-level verdict reflect **availability**; report data
+quality as findings, not as failure. `9/14` is not a verdict, it is a
+scoreboard across incommensurable things.
+
+**And the behavioural half, which is on the reader**: a blocking
+condition must be **re-tested before it is treated as standing**. The
+write failures were real when observed and false an hour later. Nothing
+announced the recovery, because nothing ever does — that is what makes
+"I checked once" indistinguishable from "it is still true". Re-measure
+before you report a blocker as current, and especially before you let
+someone else carry it.
+
 ## The rule, generalised
 
 1. **Ask what the output would be if the check never ran.** Same as
@@ -152,6 +201,14 @@ force-push — a *destructive* response to a loss that never happened.
 4. **A destructive action needs a second instrument.** One tool saying
    your work is gone is a hypothesis. `reset --hard` on a hypothesis is
    how the hypothesis becomes true.
+5. **Severity is part of the reading.** An instrument that cannot
+   distinguish *broken* from *imperfect* will be believed too much on
+   Tuesday and ignored on Thursday. Ask which it is claiming before you
+   act on it — and if the report will not say, read the individual
+   checks, not the summary.
+6. **Re-test a blocker before treating it as standing, and before
+   passing it on.** Recovery is silent; "I checked once" and "it is
+   still true" are the same sentence until you check again.
 
 An earlier draft of this note claimed instance 3 was a `--graph`
 rendering artifact. That was wrong, and the correction matters more than
