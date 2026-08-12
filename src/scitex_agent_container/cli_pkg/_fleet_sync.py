@@ -38,12 +38,23 @@ from typing import Any
 
 import click
 
+from rich.console import Console
+
 from .._state.host_config import Config, build_ssh_argv, load
 from .._state.spec_manifest import build_manifest, diff_manifests
 from ._helpers import console
 
 
 _DEFAULT_AGENTS_DIR = "~/.scitex/agent-container/agents"
+
+# The conflict report is a DIAGNOSTIC, not this command's payload: `sac fleet
+# sync` exits non-zero when it prints one, and its sibling fail-loud paths
+# (``_fail_loud_unreachable`` / ``_fail_loud_unresolvable``) already use
+# ``err=True``. Routing it through a stderr Console keeps stdout carrying only
+# the payload, so `sac fleet sync --json | jq` and `sac fleet sync > out` both
+# stay honest. ``Console(stderr=True)`` resolves ``sys.stderr`` per write, so it
+# stays in lockstep with click's isolated streams and pytest's capture.
+_err_console = Console(stderr=True)
 
 
 def _resolve_agents_dir(override: Path | None) -> Path:
@@ -133,17 +144,25 @@ def _fail_loud_unresolvable(
 
 def _render_text_conflicts(diff: dict[str, Any]) -> None:
     """Loud, operator-readable conflict report. Written on stderr so
-    JSON consumers can rely on stdout staying clean."""
+    JSON consumers can rely on stdout staying clean.
+
+    The shared ``_helpers.console`` is a plain ``Console()`` — i.e. stdout —
+    so this deliberately uses the module's ``_err_console`` instead. The
+    docstring above has promised stderr since the command landed; until
+    #1006 the code wrote to stdout regardless.
+    """
     fleet = diff["fleet"]
     unreachable = diff.get("unreachable", [])
-    console.print("FLEET SPEC CONFLICT — fail loud, no auto-merge", style="bold red")
-    console.print("=" * 72)
-    console.print(f"fleet hosts: {', '.join(fleet)}")
+    _err_console.print(
+        "FLEET SPEC CONFLICT — fail loud, no auto-merge", style="bold red"
+    )
+    _err_console.print("=" * 72)
+    _err_console.print(f"fleet hosts: {', '.join(fleet)}")
     if unreachable:
-        console.print("[yellow]warnings (unresolvable peers):[/yellow]")
+        _err_console.print("[yellow]warnings (unresolvable peers):[/yellow]")
         for u in unreachable:
-            console.print(f"  - {u['peer']}: {u.get('reason', '?')}")
-    console.print("")
+            _err_console.print(f"  - {u['peer']}: {u.get('reason', '?')}")
+    _err_console.print("")
 
     conflict_count = 0
     for agent in sorted(diff["agents"].keys()):
@@ -151,37 +170,39 @@ def _render_text_conflicts(diff: dict[str, Any]) -> None:
         if entry["ok"]:
             continue
         conflict_count += 1
-        console.print(f"agent: {agent}", style="bold")
+        _err_console.print(f"agent: {agent}", style="bold")
         for c in entry["conflicts"]:
-            console.print(f"  file: {c['file']}")
-            console.print(f"    kind:       {c['kind']}")
+            _err_console.print(f"  file: {c['file']}")
+            _err_console.print(f"    kind:       {c['kind']}")
             for h in fleet:
                 ph = c["per_host"].get(h)
                 if ph is None:
                     continue
                 if not ph.get("present"):
                     marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                    console.print(f"    {h:<11} <missing>                                     {marker}")
+                    _err_console.print(
+                        f"    {h:<11} <missing>                                     {marker}"
+                    )
                     continue
                 sha = ph.get("sha256", "")
                 size = ph.get("size", "")
                 mode = ph.get("mode", "")
                 marker = "<-- DIFFERS" if h in c["diverged_hosts"] else ""
-                console.print(
+                _err_console.print(
                     f"    {h:<11} sha256={sha[:14] + '...' if sha else '':<18} "
                     f"size={size}  mode={mode}   {marker}".rstrip()
                 )
-        console.print("")
-    console.print("=" * 72)
-    console.print(
+        _err_console.print("")
+    _err_console.print("=" * 72)
+    _err_console.print(
         f"SUMMARY: {conflict_count} agent(s) conflict across {len(fleet)} host(s); refusing to merge.",
         style="bold",
     )
-    console.print("Operator action (sac will NEVER do this for you):")
-    console.print("  1. Pick the authoritative copy per agent — sac has no opinion.")
-    console.print("  2. Rsync that tree to the diverged hosts manually.")
-    console.print("  3. Re-run `sac fleet sync` until it exits 0.")
-    console.print("=" * 72)
+    _err_console.print("Operator action (sac will NEVER do this for you):")
+    _err_console.print("  1. Pick the authoritative copy per agent — sac has no opinion.")
+    _err_console.print("  2. Rsync that tree to the diverged hosts manually.")
+    _err_console.print("  3. Re-run `sac fleet sync` until it exits 0.")
+    _err_console.print("=" * 72)
 
 
 def _fetch_peer_manifest(
