@@ -63,7 +63,26 @@ concurrency:
 jobs:
   no-hosted-runners:
     name: no-hosted-runners-guard-on-self-hosted
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — pinned to spartan-cpu on purpose. Measurements: PR #1001.
+    #
+    # 13s median, single-core, needs nothing but PyYAML, and never enters the
+    # CI SIF. It was holding one of four 32-core machines per run on a pool at
+    # 93-94% utilisation, then queueing 289s median (p90 902s) — a 13-second
+    # job waiting twenty times its own runtime for a machine it used 1/32 of.
+    #
+    # The spartan-cpu runners are nproc=1: wrong for `tests` (497s there vs
+    # 170s on 32 cores), right for this. And see the setup-uv note below — this
+    # job was already written for the bare Spartan node's constraints.
+    #
+    # NOTE THE SELF-REFERENCE: this guard parses every workflow's `runs-on` and
+    # fails anything it cannot prove self-hosted. The literal list below starts
+    # with "self-hosted", so it passes its own check — verified by running the
+    # guard against this tree before committing, not assumed.
+    #
+    # PINNED PER WORKFLOW rather than through vars.CI_RUNS_ON so the routing is
+    # visible in a diff and cannot reach `tests` or the release gate, which DO
+    # enter the SIF and still need #992 first.
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

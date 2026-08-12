@@ -58,7 +58,29 @@ jobs:
     # stops reporting has already held a release hostage once. Correcting the
     # "on-ubuntu" names repo-wide is a separate, coordinated change.
     name: ruff-on-ubuntu-latest
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — pinned to spartan-cpu on purpose. Measurements: PR #1001.
+    #
+    # This repo's CI is bimodal. Over 276 self-hosted jobs (2.1 h): `tests` is
+    # 31% of jobs at 368s and uses all 32 cores (xdist runs -n $(nproc)); the
+    # other 69% — this job included — run 12-51s on about ONE core. `ruff` is
+    # the smallest of them at 12s median, and it never enters the CI SIF: no
+    # exec-in-sif.sh, no /data/gpfs bind, just checkout + uv + ruff.
+    #
+    # So a 12-second single-core job was taking one of four 32-core machines
+    # for its turn, on a pool measured at 93-94% utilisation — and then waiting
+    # 289s median (p90 902s) for the privilege.
+    #
+    # The spartan-cpu runners were sitting idle, and a canary established the
+    # fact nobody had checked: they are nproc=1. That makes them wrong for
+    # `tests` (the suite takes 497s there vs 170s on 32 cores) and correctly
+    # sized for exactly this kind of job.
+    #
+    # PINNED PER WORKFLOW rather than through vars.CI_RUNS_ON so the routing is
+    # visible in a diff, revertible on its own, and CANNOT reach `tests` or
+    # pypi-publish-and-github-release-on-tag.yml by accident. Do not generalise
+    # it to those: both DO enter the SIF, and `main`'s exec-in-sif.sh still
+    # binds /data/gpfs/projects/punim0264 unconditionally (#992 is the fix).
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
