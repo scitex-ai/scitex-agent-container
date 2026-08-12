@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LITERAL runner-pool pins — the ONLY sanctioned exceptions.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# THE RULE: a job's runner pool is named by a repository VARIABLE, not frozen
+# into the workflow. A pool named in YAML can only be re-pointed by a pull
+# request — through the CI gate that the dead pool just jammed.
+#
+# THE INCIDENT (2026-08-12, and the reason this file exists). PR #1006 gave
+# five sub-minute single-core jobs their own "light lane" and wrote the
+# destination as `["self-hosted","Linux","X64","spartan-cpu"]`. The
+# measurement behind it was sound; the SEAM was not. Six days later those
+# runners went offline and `ruff`, `rtd-sphinx-build`, `import-smoke`,
+# `no-hosted-runners` and `scitex-dev-quality-audit` queued FOREVER on every
+# PR while four `scitex-org-cpu` runners sat online and idle. Fifteen PRs
+# could not merge. Nothing was failing — the checks simply never started,
+# which looks identical to "not run yet" on every screen that shows it.
+#
+# Enforced by `src/scitex_agent_container/_runner_pool_guard.py`, which runs
+#   - as a step of the SELF-HOSTED guard job
+#     (.github/workflows/no-hosted-runners-guard-on-self-hosted.yml),
+#   - as a `pre-commit` hook,
+#   - as a pytest test against this very repo.
+#
+# WHEN A LITERAL PIN IS ACTUALLY RIGHT
+# ====================================
+# When the job's purpose is TO REACH ONE NAMED PLACE, rather than to run
+# somewhere appropriate. A variable expresses "wherever this class of work
+# belongs"; it cannot express "that specific machine, and no substitute".
+# Both entries below are of the second kind. Note what they have in common:
+# each would be WRONG if it silently ran somewhere else — a canary reporting
+# on the wrong pool, a verdict written to the wrong host's database.
+#
+# THE `reason:` FIELD IS MANDATORY AND MACHINE-ENFORCED.
+# The guard FAILS (SAC-CI006) on any entry whose `reason:` is missing or
+# shorter than 40 characters, and FAILS (SAC-CI007) on a STALE entry — one
+# whose workflow is gone, or which no longer pins anything — because a dead
+# exception is a live loophole: it pre-approves whatever that file pins next.
+#
+# WRITE THE REASON FOR THE DAY THE POOL DIES. That is the day someone reads
+# it, and the only question they will have is "may I re-point this?" An entry
+# that does not answer that has not earned its place.
+# ─────────────────────────────────────────────────────────────────────────────
+
+allow:
+  - workflow: spartan-capacity-canary-on-self-hosted.yml
+    jobs:
+      - canary
+    approved_on: 2026-08-12
+    reason: >-
+      NAMING THE POOL *IS* THE MEASUREMENT. This workflow exists to answer one
+      question — can the spartan-cpu machines pass this repo's jobs at all —
+      and it is dispatch-only, never a required check, never on push or
+      schedule, so it gates nothing and adds no load. Routing it through
+      vars.CI_RUNS_ON would make it interrogate whichever pool is already
+      configured, which is the question we already know the answer to; the
+      canary would go green while telling us nothing, which is worse than
+      having no canary. If spartan-cpu is offline this job simply never runs,
+      and that is the CORRECT behaviour here: an unanswerable question should
+      not be answered. Do NOT "fix" this one by giving it the variable — if
+      you need to canary a DIFFERENT pool, copy the file and change the label,
+      so each canary keeps saying which pool its result is about.
+
+  - workflow: pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
+    jobs:
+      - verdict
+    approved_on: 2026-08-12
+    reason: >-
+      ONE MACHINE, NOT A POOL. This job writes the CI verdict to the card
+      store and pokes `sac listen` over LOOPBACK, and exactly one host runs
+      both. vars.CI_RUNS_ON resolves to four runners on four different
+      machines, so on 75% of them 127.0.0.1:7878 and 127.0.0.1:55432 would
+      reach a different daemon and a different postgres — writing the verdict
+      somewhere nobody reads and delivering it to nobody, with nothing raising
+      an error. The `sac-control-plane` label is carried by that one runner and
+      by no other, and no other workflow names it, so this widens nothing. The
+      cost is stated in the workflow itself and is deliberate: the rail is
+      exactly as available as that host. IF THAT HOST DIES, the fix is to move
+      the control plane (or add the label to its replacement) — NOT to relax
+      this to a pool, which would restore delivery-to-nobody while looking
+      green. The verdict job never gates a merge, so a stall here blocks no PR.

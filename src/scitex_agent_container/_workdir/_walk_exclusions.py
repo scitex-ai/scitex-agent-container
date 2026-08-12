@@ -2,7 +2,7 @@
 
 Two on-start walkers in SAC enumerate large trees synchronously:
 
-* :func:`_workdir_audit._walk_size_and_count` — the F-CS8 ``.claude/``
+* :func:`._audit._walk_size_and_count` — the F-CS8 ``.claude/``
   bloat warning. Walks the full ``<workdir>/.claude/`` to compute
   totals; runs on every agent start before ``claude`` spawns.
 * :func:`runtimes._symlink_resolve.deref_copy_symlink` — the

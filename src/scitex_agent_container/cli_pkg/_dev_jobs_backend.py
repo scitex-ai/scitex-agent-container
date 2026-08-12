@@ -101,24 +101,27 @@ from dataclasses import dataclass
 
 import click
 
-#: The ecosystem subcommand that serves a kind on the surface that has
-#: SHIPPED: ``cron`` for cron jobs, and ``systemd`` for both unit kinds,
-#: which it lumps together.
-#:
-#: This is a FALLBACK, consulted only after the preferred per-kind
-#: surface (``dev service`` / ``dev timer``) is probed for and found
-#: absent. It disappears on its own the moment scitex-dev ships those
-#: groups — no coordinated release, no flag.
-LEGACY_GROUP_FOR_KIND: dict[str, str] = {
-    "service": "systemd",
-    "timer": "systemd",
-    "cron": "cron",
-}
+# Reading the installed scitex-dev's Click tree lives in its own module;
+# this one builds and runs delegations. Re-exported below so every
+# existing `from ._dev_jobs_backend import ...` keeps resolving.
+from ._dev_jobs_capability import (  # noqa: F401  (re-exported, see below)
+    DEV_SUBGROUP,
+    LEGACY_GROUP_FOR_KIND,
+    _child,
+    _leaf_verbs,
+    _walk,
+    ecosystem_verbs,
+    leaf_command,
+    name_is_an_option,
+    name_style_for,
+    reset_capability_cache,
+)
 
-#: The subgroup scitex-dev moved its job CLI under. Probed for, never
-#: assumed: an older scitex-dev mounts the groups at the top level and a
-#: newer one under here, and both must work without a sac release.
-DEV_SUBGROUP = "dev"
+# The underscore-prefixed three are re-exported ON PURPOSE. Callers reach
+# for them to build a REAL Click tree and point the probe at it — a seam
+# that predates this split and is not a mock: `_walk` is handed an actual
+# Group. Dropping them here would have moved a working seam out from under
+# its users, so they stay reachable at the name they were always at.
 
 #: Verbs the shipped ecosystem surface has always had. Used ONLY when
 #: introspection cannot decide, so a working install is never refused
@@ -131,11 +134,6 @@ SHIPPED_VERBS: frozenset[str] = frozenset({"list", "install", "uninstall"})
 MUTATING_VERBS: frozenset[str] = frozenset(
     {"install", "uninstall", "enable", "disable", "start", "stop", "restart"}
 )
-
-# Sentinel distinguishing "not probed yet" from "probed, unavailable".
-_UNPROBED: object = object()
-_VERBS_CACHE: object = _UNPROBED
-
 
 @dataclass(frozen=True)
 class Delegation:
@@ -169,117 +167,6 @@ class Delegation:
     def group(self) -> str:
         """The path as it is typed: ``"cron"``, ``"dev timer"``, …"""
         return " ".join(self.path)
-
-
-def reset_capability_cache() -> None:
-    """Forget the probed surface. For tests that install a different one."""
-    global _VERBS_CACHE
-    _VERBS_CACHE = _UNPROBED
-
-
-def _child(command, name: str):
-    """Return the named subcommand of ``command``, or None."""
-    getter = getattr(command, "get_command", None)
-    if getter is not None:
-        try:
-            with click.Context(command) as ctx:
-                return getter(ctx, name)
-        except Exception:  # stx-allow: fallback (reason: another package's Group subclass may need a context we cannot build — fall back to the eager dict)
-            pass
-    return (getattr(command, "commands", {}) or {}).get(name)
-
-
-def _leaf_verbs(command) -> frozenset[str]:
-    """The subcommand names of one ecosystem group.
-
-    ``Group.list_commands(ctx)`` rather than ``Group.commands`` so a LAZY
-    group is read correctly — the eager dict can be empty while the group
-    is fully featured.
-
-    Returns an EMPTY set for a node that is a plain ``Command`` (a
-    forwarding shim) rather than a ``Group``. That empty is honest — a
-    shim genuinely has no enumerable verbs — and callers must read it as
-    "cannot tell", never as "serves nothing"; see :func:`resolve`.
-
-    CORRECTION, so the next reader does not inherit a wrong mechanism:
-    an earlier revision claimed laziness EXPLAINED the "four cron verbs
-    locally, zero in CI" split. It did not. Measured afterwards, the real
-    cause was scitex-dev relocating those verbs under ``ecosystem dev``
-    and leaving a deprecated ``Command`` shim behind at the old name.
-    Reading ``list_commands`` is still correct; it was simply not the fix
-    for that symptom — walking into ``dev`` is.
-    """
-    lister = getattr(command, "list_commands", None)
-    if lister is not None:
-        try:
-            with click.Context(command) as ctx:
-                return frozenset(lister(ctx))
-        except Exception:  # stx-allow: fallback (reason: another package's Group subclass may need a context we cannot build — fall back to the eager dict)
-            pass
-    return frozenset(getattr(command, "commands", {}) or {})
-
-
-def _walk(ecosystem) -> dict[tuple[str, ...], frozenset[str]]:
-    """Map ``path under ecosystem -> its verbs``, one level into ``dev``.
-
-    Depth is bounded to the job groups on purpose: enumerating all ~51
-    ecosystem subcommands' children would pay for building trees nobody
-    here consults.
-    """
-    tree: dict[tuple[str, ...], frozenset[str]] = {}
-    for name in sorted(_leaf_verbs(ecosystem)):
-        if name not in _PROBED_GROUPS and name != DEV_SUBGROUP:
-            continue
-        group = _child(ecosystem, name)
-        if group is None:
-            continue
-        tree[(name,)] = _leaf_verbs(group)
-        if name != DEV_SUBGROUP:
-            continue
-        for sub in sorted(tree[(name,)]):
-            if sub not in _PROBED_GROUPS:
-                continue
-            child = _child(group, sub)
-            if child is not None:
-                tree[(name, sub)] = _leaf_verbs(child)
-    return tree
-
-
-#: Group names worth descending into. Everything else under ``ecosystem``
-#: is unrelated to jobs.
-_PROBED_GROUPS: frozenset[str] = frozenset({"service", "timer", "cron", "systemd"})
-
-
-def ecosystem_verbs() -> dict[tuple[str, ...], frozenset[str]] | None:
-    """Return ``{path under `ecosystem` -> verbs}`` for the INSTALLED scitex-dev.
-
-    Keys are PATHS — ``("cron",)``, ``("dev", "timer")`` — because the job
-    groups moved under ``ecosystem dev`` and the old names survive as
-    empty shells. A name-keyed map cannot tell those two apart.
-
-    ``None`` when the Click tree cannot be built at all (an old or partial
-    scitex-dev). ``None`` means "cannot tell", never "unsupported" — the
-    three-state discipline from ``_jobs_audit``: a false "unsupported"
-    here refuses a command that would have worked.
-    """
-    global _VERBS_CACHE
-    if _VERBS_CACHE is not _UNPROBED:
-        return _VERBS_CACHE  # type: ignore[return-value]
-
-    probed: dict[tuple[str, ...], frozenset[str]] | None
-    try:
-        from scitex_dev._cli.ecosystem import register_ecosystem_commands
-
-        @click.group()
-        def _probe_root() -> None:  # pragma: no cover - never invoked
-            """Throwaway root; we only want the tree it gets wired onto."""
-
-        probed = _walk(register_ecosystem_commands(_probe_root))
-    except Exception:  # stx-allow: fallback (reason: introspecting another package's private CLI tree must degrade to "cannot tell", never to a refusal)
-        probed = None
-
-    _VERBS_CACHE = probed
-    return probed
 
 
 def candidate_paths(kind: str) -> tuple[tuple[str, ...], ...]:
@@ -413,8 +300,16 @@ def build_argv(
     yes: bool,
     dry_run: bool = False,
     exe: str = "scitex-dev",
+    leaf: object | None = None,
 ) -> list[str]:
     """The exact argv :func:`invoke` will run. Separated so it is testable.
+
+    ``leaf`` is the resolved Click command the delegation targets. It is a
+    PARAMETER rather than an internal lookup so a caller — a test, most
+    obviously — can hand in a real command of either argument shape and
+    exercise both scitex-dev generations against whichever single version
+    happens to be installed. ``None`` means "look it up", which is what
+    production always does.
 
     ``--dry-run`` and ``--yes`` are FORWARDED, never interpreted here.
     scitex-dev's gate on mutating verbs is what stops ``timer disable
@@ -422,10 +317,24 @@ def build_argv(
     refresher; a pass-through that dropped either flag would convert a
     guarded command into an unguarded one, which is strictly worse than
     not offering the verb.
+
+    The job NAME follows :func:`name_style_for` — ``--name X`` or a bare
+    positional, as the INSTALLED scitex-dev actually declares it. It was
+    unconditionally ``--name`` until scitex-dev 0.48.0 made the shape
+    mixed; emitting the old shape at a positional verb is rejected by
+    Click before the command runs, which looks identical to sac refusing
+    the verb and is not.
     """
     argv = [exe, "ecosystem", *delegation.path, delegation.verb]
     if name is not None:
-        argv += ["--name", name]
+        if leaf is None:
+            style = name_style_for(delegation.path, delegation.verb)
+        else:
+            style = "option" if name_is_an_option(leaf) else "positional"
+        if style == "positional":
+            argv.append(name)
+        else:
+            argv += ["--name", name]
     if dry_run:
         argv.append("--dry-run")
     if yes:
@@ -469,7 +378,10 @@ __all__ = [
     "candidate_paths",
     "ecosystem_verbs",
     "invoke",
+    "leaf_command",
     "manual_hint",
+    "name_is_an_option",
+    "name_style_for",
     "reset_capability_cache",
     "resolve",
 ]

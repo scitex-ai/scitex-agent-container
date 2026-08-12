@@ -15,10 +15,10 @@ seams that make the columns interchangeable, each on REAL objects:
 3. **Session-type routing + NormalizedEvent shape**: both columns'
    ``spec.a2a.handler`` keys route to registered executors sharing
    ``BaseSyncExecutor`` (one task-event surface), and the OpenAI
-   column's concrete session satisfies the ``ProviderSession`` Protocol
+   column's concrete session satisfies the ``HarnessSession`` Protocol
    — the contract whose ``send`` streams :class:`NormalizedEvent`s for
-   BOTH SDK families (the Claude column's ProviderSession retrofit is
-   explicitly future work per ``_provider_session``'s module docstring,
+   BOTH SDK families (the Claude column's HarnessSession retrofit is
+   explicitly future work per ``_harness_session``'s module docstring,
    so the Protocol itself is the shared shape both columns meet today).
 
 Real seams only (no mocks). STX-TQ002 AAA + STX-TQ007 one-assert.
@@ -32,8 +32,8 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container._runners._provider_session import ProviderSession
-from scitex_agent_container._runners.openai_session import OpenAISession
+from scitex_agent_container._runners._harness_session import HarnessSession
+from scitex_agent_container._runners.openai_session import OpenAIAgentsSession
 from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 from scitex_agent_container.config import load_config
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
@@ -253,14 +253,14 @@ def test_both_column_executors_share_the_task_event_surface(
     assert shared is True
 
 
-def test_openai_column_session_satisfies_provider_session_protocol(
+def test_openai_column_session_satisfies_harness_session_protocol(
     _sandbox_env: Path,
 ) -> None:
-    # Arrange — ProviderSession is the shape whose ``send`` streams
+    # Arrange — HarnessSession is the shape whose ``send`` streams
     # NormalizedEvents; construction needs no openai-agents install.
-    session = OpenAISession("openai-col")
+    session = OpenAIAgentsSession("openai-col")
     # Act
-    conforms = isinstance(session, ProviderSession)
+    conforms = isinstance(session, HarnessSession)
     # Assert
     assert conforms is True
 
@@ -268,14 +268,14 @@ def test_openai_column_session_satisfies_provider_session_protocol(
 def test_openai_column_session_streams_normalized_events_shape() -> None:
     # Arrange — real-SDK tier: with openai-agents installed, a real
     # stream event normalizes into the shared NormalizedEvent vocabulary
-    # (the same dataclass the future Claude-side ProviderSession must
+    # (the same dataclass the future Claude-side HarnessSession must
     # yield). Uses the SDK's own event classes — no network. Construction
     # mirrors test_openai_session.py's real-SDK tier exactly.
     pytest.importorskip("agents")
     from agents.stream_events import RawResponsesStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    from scitex_agent_container._runners._provider_session import NormalizedEvent
+    from scitex_agent_container._runners._harness_session import NormalizedEvent
     from scitex_agent_container._runners.openai_session import (
         normalize_stream_event,
     )
