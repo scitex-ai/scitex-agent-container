@@ -32,14 +32,46 @@ from __future__ import annotations
 from ._relocate_preflight import PreflightReport
 
 __all__ = [
+    "COORDINATOR_ENV",
     "VERDICT_GO",
     "VERDICT_REFUSED",
     "VERDICT_UNKNOWN",
+    "render_coordinator_env",
     "render_declared",
     "render_dry_run",
     "render_observed",
     "verdict_line",
 ]
+
+#: What the COORDINATOR needs in its own environment, and what each one costs
+#: when it is missing. Named here rather than left to be discovered because the
+#: cost is not a partial report — it is nine of twelve checks coming back UNKNOWN
+#: at once, and an UNKNOWN refuses exactly as hard as a FAIL. Measured
+#: 2026-08-12: that output reads as a broken relocation, and the fault is a
+#: container that was started without four variables.
+COORDINATOR_ENV: tuple[tuple[str, str], ...] = (
+    (
+        "SAC_LISTEN_BASE_URL",
+        "the listen daemon this container asks to run ssh for it. Without it NO "
+        "target fact can be measured at all — every probe shares one transport",
+    ),
+    (
+        "SAC_LISTEN_BEARER",
+        "authenticates that request. Without it the daemon answers 403 and the "
+        "probe reports a transport failure rather than anything about the target",
+    ),
+    (
+        "SAC_NAME",
+        "the caller identity the daemon's ACL gate keys off; an unresolvable "
+        "caller is refused the same way a forbidden one is",
+    ),
+    (
+        "SAC_RELOCATE_HUB_ADDR",
+        "the hub as host:port AS THE TARGET WOULD REACH IT. Only this one check "
+        "depends on it — a loopback hub address is refused deliberately, because "
+        "probing it from the target measures the TARGET's loopback",
+    ),
+)
 
 VERDICT_GO = "GO"
 VERDICT_REFUSED = "REFUSED"
@@ -66,11 +98,17 @@ _CHECK_FACTS: dict[str, tuple[str, ...]] = {
     "spec_schema_accepted": ("rejected_spec_keys",),
     "ports_free": ("ports_in_use",),
     "hub_reachable_from_target": ("hub_reachable_from_target",),
-    "sac_present_on_target": ("sac_on_path", "sac_resolved_path"),
-    # Gathered locally rather than over ssh, so its failures are keyed by the
-    # check's own name; the tuple is here so the map covers every check and a
-    # reader does not have to wonder whether the omission means something.
+    "sac_present_on_target": (
+        "sac_usable_path",
+        "sac_on_path",
+        "sac_resolved_path",
+    ),
+    "target_start_accepts": ("spec_source_drift",),
+    # Gathered locally rather than over ssh, so their failures are keyed by the
+    # check's own name; the tuples are here so the map covers every check and a
+    # reader does not have to wonder whether an omission means something.
     "source_work_committed": ("source_repos",),
+    "lease_holdable": ("lease",),
 }
 
 
@@ -140,6 +178,35 @@ def render_observed(
     return lines
 
 
+def render_coordinator_env(env: dict[str, str] | None = None) -> list[str]:
+    """Name the coordinator's own missing environment — but only when some is missing.
+
+    Returns ``[]`` when all of :data:`COORDINATOR_ENV` is set, because four lines
+    saying "fine" on every run is noise that trains a reader to skip the section
+    on the run where it matters.
+
+    THE VALUE IS NEVER PRINTED, only whether it is set. One of these is a bearer
+    token, and a dry run pasted into a chat window must not be a credential leak
+    — the same rule :mod:`_relocate_probe_script` follows for the refreshToken it
+    reports the presence of and never the content.
+    """
+    import os
+
+    env = os.environ if env is None else env
+    missing = [(k, why) for k, why in COORDINATOR_ENV if not (env.get(k) or "").strip()]
+    if not missing:
+        return []
+    lines = [
+        "COORDINATOR ENVIRONMENT — unset here, and each one costs measurements",
+        "  An unmeasured check REFUSES exactly as firmly as a failed one, so a "
+        "missing variable below reads as a broken target unless it is named.",
+    ]
+    for key, why in missing:
+        lines.append(f"  UNSET    {key}")
+        lines.append(f"           {why}")
+    return lines
+
+
 def verdict_line(report: PreflightReport) -> str:
     """One sentence a reader can act on, with the counts that justify it.
 
@@ -167,6 +234,7 @@ def render_dry_run(
     declared: dict[str, object] | None = None,
     errors: dict[str, str] | None = None,
     dry_run: bool = True,
+    env: dict[str, str] | None = None,
 ) -> list[str]:
     """The whole dry run, in the order a reader needs it.
 
@@ -193,6 +261,10 @@ def render_dry_run(
         "",
     ]
     lines += render_declared(declared or {})
+    coordinator = render_coordinator_env(env)
+    if coordinator:
+        lines.append("")
+        lines += coordinator
     lines.append("")
     lines += render_observed(report, errors)
     lines.append("")

@@ -24,7 +24,12 @@ from __future__ import annotations
 import pytest
 
 from scitex_agent_container._lifecycle._relocate_origin import RepoWork
-from scitex_agent_container._lifecycle._relocate_preflight import SourceFacts, preflight
+from scitex_agent_container._lifecycle._relocate_preflight import (
+    LeaseFacts,
+    SourceFacts,
+    SpecSourceDrift,
+    preflight,
+)
 from scitex_agent_container._lifecycle._relocate_probe import (
     TargetProbes,
     gather_target_facts,
@@ -224,6 +229,9 @@ def test_a_fully_healthy_probe_set_passes_preflight() -> None:
         hub_reachable_from_target=lambda: True,
         sac_on_path=lambda: True,
         sac_resolved_path=lambda: "/usr/local/bin/sac",
+        sac_usable_path=lambda: "/usr/local/bin/sac",
+        preamble_declared=lambda: False,
+        spec_source_drift=lambda: SpecSourceDrift(state="current"),
     )
     gathered = gather_target_facts(probes)
     # Act
@@ -238,6 +246,7 @@ def test_a_fully_healthy_probe_set_passes_preflight() -> None:
             session_marker="bbb2",
         ),
         from_host="ywata-note-win",
+        lease_facts=LeaseFacts(read=True, lease=None, now=1_786_500_000.0),
     )
     # Assert
     assert report.ok is True
@@ -260,7 +269,11 @@ def test_an_observed_negative_still_reaches_preflight_as_a_refusal() -> None:
     gathered = gather_target_facts(probes)
     # Act
     report = preflight(
-        agent="a", to_host="nas-03", facts=gathered.facts, runtime="apptainer"
+        agent="a",
+        to_host="nas-03",
+        facts=gathered.facts,
+        runtime="apptainer",
+        lease_facts=LeaseFacts(read=True, lease=None, now=1_786_500_000.0)
     )
     # Assert
     assert report.ok is False
