@@ -28,6 +28,18 @@ that needs a host, not in the helper shared by 58 files.
 These tests pin both halves: the deliberate non-defaulting, and the specific
 fixture that must load. No mocks — the real ``load_config`` reads a real file in
 the real dir-as-SSoT layout.
+
+**Why this file lives under ``config/``.** Its subject is a TEST helper
+(``tests/scitex_agent_container/_helpers/explicit_spec.py``), which has no
+production counterpart, and PS-204 (``orphan-test-file``, severity E) fails the
+suite for any ``tests/<pkg>/...`` test that mirrors no ``src/<pkg>/...`` module.
+The honest mirror is :mod:`scitex_agent_container.config._explicit_validation` —
+the module both helpers draw their defaults from via ``explicit_spec_defaults``,
+and the module whose "every field explicit" ruling made placement required in
+the first place. Placing it here keeps it in the normally-collected tree, so it
+actually RUNS in the pytest matrix; a home under ``tests/integration/`` would
+have satisfied the auditor by making the barrier invisible to the default run,
+which is the very failure mode this file exists to prevent.
 """
 
 from __future__ import annotations
