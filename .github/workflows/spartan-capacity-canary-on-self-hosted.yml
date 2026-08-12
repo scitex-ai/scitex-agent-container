@@ -72,7 +72,7 @@ env:
 
 jobs:
   canary:
-    name: spartan-capacity-canary-py${{ inputs.python-version }}
+    name: spartan-capacity-canary-py${{ inputs.python-version || '3.12' }}
     runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
     timeout-minutes: 45
     steps:
@@ -138,11 +138,11 @@ jobs:
       # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml, so a green here is a
       # statement about the real gate and not about a simplified stand-in.
       - name: Run the real gate script in the CI SIF
-        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ inputs.python-version }}
+        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ inputs.python-version || '3.12' }}
 
       # The runner is persistent and the scratch is 1.8-2.2 GB per leg. Same
       # `always()` cleanup as the real gate, scoped to this leg — a canary that
       # fills someone's filesystem has not helped anybody.
       - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
         if: always()
-        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ inputs.python-version }}
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ inputs.python-version || '3.12' }}
