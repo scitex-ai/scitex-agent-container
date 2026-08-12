@@ -246,11 +246,29 @@ done
 # scitex-agent-container style-stack are naturally isolated per worker — the safe way to
 # parallelise a matplotlib-heavy suite.
 #
-# Worker count: use ALL cores. Each matrix leg now runs on its own dedicated
-# self-hosted node (one runner per node: scitex-agent-container-01/02/03), so there is no
-# co-tenant to yield half the box to — the old nproc//2 cap left 2x the cores
-# idle. nice/ionice (below) handles the "yield to higher-priority work if the
-# node is ever shared" concern instead of statically reserving half the CPUs.
+# Worker count: ALL cores by default, because the justification below USED to
+# hold — "each matrix leg runs on its own dedicated self-hosted node (one runner
+# per node: scitex-agent-container-01/02/03), so there is no co-tenant to yield
+# half the box to". nice/ionice handles an occasional higher-priority neighbour.
+#
+# THAT ASSUMPTION DIES THE MOMENT TWO RUNNERS SHARE A BOX, and that is exactly
+# where CI is going: Spartan CI was retired 2026-08-05 and the suite now runs on
+# scitex-04, one 32-core machine. Three matrix legs on three runners there means
+# 3 x 32 = 96 xdist processes fighting over 32 cores — an uncapped default
+# resting on a premise the world quietly invalidated, the same shape as the
+# "runs here are serialised" claim that once justified an unscoped pkill in
+# exec-in-sif.sh.
+#
+# So the count is now an INPUT, not an inference. Set CI_XDIST_WORKERS (repo
+# Actions Variable -> workflow env) to nproc / legs-per-box when runners are
+# co-tenant. Unset keeps the historical behaviour exactly, so nothing changes
+# for a one-leg-per-node deployment.
+#
+# Measured on scitex-04 (32 cores, full suite, one leg at a time):
+#   WORKERS=32 -> 170s     WORKERS=8 -> 233s
+# A single leg is faster with all cores; three CONCURRENT legs at ~10 each
+# finish the whole matrix in about one leg's time instead of three.
+#
 # Floor 4. pyproject addopts carries `-v`; override to `-q` here — 2460 verbose
 # lines x workers bloats the CI log and adds measurable overhead.
 #
@@ -322,14 +340,42 @@ _cpus_from_affinity() {
 }
 
 NPROC="$(nproc 2>/dev/null || echo 4)"
+# THE TWO CHANGES COMPOSE; THEY ARE NOT ALTERNATIVES.
+#
+#   CI_XDIST_WORKERS (#881)                     the OVERRIDE — outermost
+#   affinity -> SLURM_CPUS_PER_TASK -> nproc    the DEFAULT — what it is
+#                                               when nobody sets the override
+#   floor of 4                                  last
+#
+# #881 fixed who *can* set the number. This fixes what it *is* when nobody
+# does. An override with a broken default is still broken for everyone who
+# does not set it; a good default with no override is inflexible.
+
+# DEFAULT: what this process may actually run on.
 AFFINITY="$(_cpus_from_affinity || true)"
 DETECTED="${AFFINITY:-${SLURM_CPUS_PER_TASK:-}}"
 case "$DETECTED" in
     ''|*[!0-9]*) DETECTED="$NPROC" ;;
 esac
-WORKERS="$DETECTED"
+
+# OVERRIDE: an explicit CI_XDIST_WORKERS beats any detection, including a
+# correct one — that is the point of #881 (co-tenant legs on one box).
+WORKERS="${CI_XDIST_WORKERS:-$DETECTED}"
+case "$WORKERS" in
+    ''|*[!0-9]*)
+        # Falls back to DETECTED rather than raw nproc: a malformed override
+        # should degrade to the best number we can measure, not to the one
+        # that reported 1 inside a 48-CPU allocation.
+        echo "::warning::CI_XDIST_WORKERS='$WORKERS' is not a positive integer; using detected=$DETECTED"
+        WORKERS=$DETECTED
+        ;;
+esac
+
 [ "$WORKERS" -lt 4 ] && WORKERS=4
-echo "xdist workers=$WORKERS (affinity=${AFFINITY:-<unreadable>} nproc=$NPROC SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-<unset>})"
+
+# EVERY source, not the winner. When these disagree on a host nobody has met
+# yet, the disagreement is already in the log instead of costing a probe run.
+echo "xdist workers=$WORKERS (affinity=${AFFINITY:-<unreadable>} nproc=$NPROC SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-<unset>} CI_XDIST_WORKERS=${CI_XDIST_WORKERS:-unset})"
 
 # Warm the matplotlib font cache ONCE, single-process, before xdist forks the
 # workers. This builds $MPLCONFIGDIR/fontlist-*.json a single time so every

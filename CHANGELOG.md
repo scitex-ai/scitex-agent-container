@@ -6,7 +6,88 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`exit_reason='crashed'` is now `'pid_absent_at_sweep'` — the value names
+  the check that ran, not a fate it never established.** The GC sweep does not
+  witness anything die. It runs `os.kill(pid, 0)` at an arbitrary later moment
+  and writes a row for every pid that is no longer there, which supports
+  exactly one claim: *this pid was not present when we looked.* It wrote that
+  as `crashed`, and paired it with `ended_at=now()`, which reads as a time of
+  death nothing measured.
+
+  Both were believed. Measured 2026-08-12: eleven agents on the fleet host
+  carried `ended_at=2026-08-11T17:54:26Z, exit_reason='crashed'`, and **three
+  separate readers** took the identical second across eleven rows as proof of
+  a simultaneous kill — then reasoned about what could kill eleven processes
+  at once. Nothing did. They had died **10h46m earlier**, across a two-second
+  window when the host's tmux server went away, and `17:54:26Z` was
+  `now_iso()` evaluated *once* before the loop and stamped on every row the
+  sweep reaped. An identical timestamp across N rows is the expected output of
+  one sweep; it is not evidence about the agents.
+
+  Saying *at sweep* in the value is the load-bearing half: it warns that the
+  `ended_at` beside it is the moment we looked, not the moment it ended.
+
+  Backward compatible in both directions. `crashed` is still accepted on read
+  — live databases hold those rows, they mean exactly what the new name says,
+  and dropping the old spelling would send every existing corpse down
+  `_reconcile/_rule.py`'s "an exit_reason this rule does not know" path, which
+  refuses to act, silently making real corpses unrecoverable. `db clean --json`
+  emits **both** keys carrying the same count, so a consumer reading `crashed`
+  does not start seeing a zero — which would be precisely the "success value
+  that is also the didn't-check value" this change exists to stop producing.
+
+  The general rule, which outlives this field: **a field whose name asserts
+  more than its check performed will be believed at its name.** Nobody audits
+  the query behind a value that already sounds like an answer.
+
 ### Added
+
+- **An agent that declares the Telegram MCP and resolves no bot-token slot no
+  longer comes up silently mute** (`runtimes/_cct_rail_verdict`,
+  `runtimes/_cct_rail_alarm`, `sac agents cct-audit`; card
+  `sac-cct-rail-loud-when-no-slot-resolves-20260812`). When no
+  `CCT_BOT_TOKEN_<SLOT>` resolves, `prune_tokenless_telegrammer_mcp` removes
+  the MCP server — correct, by operator ruling — but it removes the rail in
+  BOTH directions at the one moment nothing can report it: the agent starts
+  perfectly, reports healthy, and cannot even self-diagnose, because `health`
+  is a tool on the server that just went away. The 2026-08-12 outage was found
+  by the operator noticing silence.
+
+  Nothing checked that the two halves of the mapping agree. Candidates are
+  derived from the AGENT NAME; the pool is named by whoever wrote it. The new
+  `sac agents cct-audit` swept compute-04 and measured **81 specs declaring the
+  channel, 15 resolving a token, 66 not** — and its "did you mean" column (pool
+  slots sharing a word with the agent, reported to a human and NEVER acted on)
+  named four live mismatches, two of which nobody had reported: `neurovista` →
+  `PAPER_NEUROVISTA`, `neurovista-paper-writer` → `PAPER_NEUROVISTA_WRITER` (a
+  WORD-ORDER difference no derivation rule can bridge), `scitex-clew` →
+  `PAPER_SCITEX_CLEW`, `spartan-dev` → `DEV`.
+
+  The verdict is THREE-VALUED. `_secret_pool.read_pool` now reports whether a
+  MISS is conclusive: a read that sourced no secret FILE holds only the
+  launching process env, which can prove a slot present but never absent. That
+  flag is the 2026-08-12 root cause in one bit — the pool was on the host and
+  `sac-listen.service` had no `SAC_SECRETS_ENVRC`, so three consecutive
+  diagnoses said "there is no token on 04" when the truth was "it was not in
+  the LAUNCHING PROCESS". A pool that reads clean but holds no
+  `CCT_BOT_TOKEN_*` at all is likewise UNKNOWN, not 80 confident false alarms.
+
+  It does **not** gate the start: 66 of the 81 inherit the channel request from
+  the spec templates as scaffolding, Telegram is a comms rail rather than a
+  boot dependency, and a stranded agent is more silent, not less. Instead every
+  alarming verdict is RECORDED in sac's event log (subsystem `cct-rail`,
+  three-valued at the source) and a `blocker` is PUSHED at the lead (ADR-0013)
+  — over the LEAD's Telegram, not the broken agent's, so a mute agent shouts
+  with somebody else's voice. The push is gated on evidence somebody meant this
+  agent to have a bot (a declared slot, a near miss, or a rail that used to
+  work here), because paging all 66 would rebuild the ignored alert channel the
+  2026-08-10 prune was written to remove. `cct-audit` lists all of them
+  regardless and exits 1, so a timer or a relocation preflight can gate on it.
+
+  Token values are never read, logged, or transmitted anywhere in this path —
+  presence only, slot NAMES and pool source PATHS at most.
 
 - **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
   `inbox_subscribers: 0` has always been confounded — it means a detached
