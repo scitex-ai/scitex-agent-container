@@ -38,6 +38,10 @@ in this package:
   SESSION state (how many times this session was blocked), which the
   executable has no view of, which is why it is ours.
 * :mod:`._decide` — fail-open and loop-guard rules over their verdict.
+* :mod:`._awaiting_operator` — REPORT the cards blocked on a human. Read
+  path only; it never gates and never mutates. See its docstring for why a
+  blocked card had stopped existing, and why the line rides on
+  ``systemMessage`` rather than on the block ``reason``.
 
 An earlier draft of this package parsed scitex-cards' stdout JSON fields and
 its numbered stderr hint lines. That made their output an API they could not
@@ -61,6 +65,7 @@ fired) — never the mechanism. Do not "improve" this package into a poller.
 
 from __future__ import annotations
 
+from ._awaiting_operator import OPERATOR_BLOCKER, notice
 from ._decide import HookDecision, decide
 from ._detector import ALLOW, BLOCK, UNKNOWN, Verdict, detector_argv, probe
 from ._identity import IDENTITY_ENV_VARS, resolve_agent
@@ -71,12 +76,14 @@ __all__ = [
     "BLOCK",
     "IDENTITY_ENV_VARS",
     "MAX_CONSECUTIVE_BLOCKS",
+    "OPERATOR_BLOCKER",
     "UNKNOWN",
     "HookDecision",
     "Verdict",
     "clear_blocks",
     "decide",
     "detector_argv",
+    "notice",
     "probe",
     "record_block",
     "resolve_agent",

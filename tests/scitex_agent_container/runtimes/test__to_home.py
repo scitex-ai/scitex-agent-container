@@ -1428,3 +1428,24 @@ class TestTokenlessTelegrammerPrune:
         deploy_to_home(cfg, str(home))
         # Assert
         assert self._TELEGRAMMER in self._mcp_servers(home)
+
+    def test_a_broken_declared_slot_reaches_the_operator_through_deploy(
+        self, tmp_path, caplog
+    ):
+        # Arrange — the SPEC-AWARE half of the prune (card
+        # sac-cct-prune-hides-misconfigured-telegram-agent-20260810). The unit
+        # tests in test__cct_token_pool.py pass a config in by hand, so they stay
+        # green even if deploy_to_home forgets to pass one — and a prune that
+        # never sees the spec is exactly the blind prune that hid four mute-and-
+        # deaf agents. Only the real entry-point proves the wiring.
+        import scitex_logging
+
+        cfg, _root = self._seed(tmp_path)
+        cfg.claude.channels = ["server:claude-code-telegrammer"]
+        cfg.env = {"CCT_BOT_TOKEN_SLOT": "ZZ_GHOST_SLOT"}
+        home = tmp_path / "home"
+        # Act
+        with caplog.at_level(scitex_logging.ERROR):
+            deploy_to_home(cfg, str(home))
+        # Assert — the declared-but-broken mapping is loud at the entry-point.
+        assert "CCT_BOT_TOKEN_ZZ_GHOST_SLOT" in caplog.text

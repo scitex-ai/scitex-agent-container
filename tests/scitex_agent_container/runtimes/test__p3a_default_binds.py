@@ -72,6 +72,55 @@ def test_default_binds_for_host_skips_todo_bind_when_host_dir_missing(
     assert not any("/.scitex/todo:" in b for b in binds)
 
 
+def test_default_binds_for_host_returns_telegrammer_bind_when_host_dir_exists(
+    fake_home: Path,
+) -> None:
+    # Arrange — the operator's message history. Without this bind cct's store
+    # lands overlay-local, which is how his 2026-08-08 messages became
+    # unreachable to the run that restarted after answering them.
+    (fake_home / ".scitex" / "claude-code-telegrammer").mkdir(parents=True)
+    # Act
+    binds = default_binds_for_host()
+    # Assert
+    assert any("/.scitex/claude-code-telegrammer:" in b for b in binds)
+
+
+def test_default_binds_for_host_skips_telegrammer_bind_when_host_dir_missing(
+    fake_home: Path,
+) -> None:
+    # Arrange — no .scitex subtree, so the candidate path does not exist and
+    # skip-if-missing applies (a silent no-op, per this module's contract).
+    # Act
+    binds = default_binds_for_host()
+    # Assert
+    assert not any("/.scitex/claude-code-telegrammer:" in b for b in binds)
+
+
+def test_the_telegrammer_bind_is_writable(fake_home: Path) -> None:
+    # Arrange — the poller WRITES every inbound message here; a read-only bind
+    # would fail in the one direction that matters and look mounted.
+    (fake_home / ".scitex" / "claude-code-telegrammer").mkdir(parents=True)
+    # Act
+    entry = next(
+        b for b in default_binds_for_host() if "/.scitex/claude-code-telegrammer:" in b
+    )
+    # Assert
+    assert entry.endswith(":rw")
+
+
+def test_the_telegrammer_bind_does_not_expose_the_scitex_parent(
+    fake_home: Path,
+) -> None:
+    # Arrange — ~/.scitex also holds agent-container/accounts (the credential
+    # store), so this store must pay its own narrow line rather than widening
+    # the parent. Guarding the rule the module comment states.
+    (fake_home / ".scitex" / "claude-code-telegrammer").mkdir(parents=True)
+    # Act
+    destinations = [b.split(":")[1] for b in default_binds_for_host() if ":" in b]
+    # Assert
+    assert "/home/agent/.scitex" not in destinations
+
+
 def test_default_binds_for_host_returns_tuple_for_caller_immutability(
     fake_home: Path,
 ) -> None:

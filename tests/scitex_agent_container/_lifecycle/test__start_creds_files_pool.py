@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -27,8 +28,23 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container._creds import NoHealthyAccountError
+from scitex_agent_container._lifecycle._quota_evidence import UNVERIFIABLE_MARKER
 from scitex_agent_container._lifecycle._start import _rotate_to_healthy_account
 from scitex_agent_container.config import AgentConfig
+
+
+def _without_quota_warning(log: str) -> str:
+    """Drop the unverifiable-quota warning, keeping every other line.
+
+    The autouse fixture below points the reader at an ABSENT cache, so the
+    preflight now warns once per boot that it could not confirm the picked
+    account's headroom (see ``._quota_evidence``). That is an orthogonal
+    signal; the assertions here are about POOL-SELECTION output. The marker is
+    imported rather than spelled out so a reworded warning cannot silently
+    start slipping past this filter.
+    """
+    kept = [line for line in log.splitlines() if UNVERIFIABLE_MARKER not in line]
+    return "".join(f"{line}\n" for line in kept)
 
 
 @pytest.fixture
@@ -274,8 +290,8 @@ def test_singular_credentials_file_emits_no_notice(_isolate_home: Path) -> None:
     log = io.StringIO()
     # Act
     _rotate_to_healthy_account(cfg, log_stream=log)
-    # Assert — a 1-element pool that keeps its entry logs nothing.
-    assert log.getvalue() == ""
+    # Assert — a 1-element pool that keeps its entry narrates no selection.
+    assert _without_quota_warning(log.getvalue()) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +406,112 @@ def test_pool_keeps_currently_effective_entry_when_it_is_healthy(
     )
     # Assert — no rotation off a healthy current entry.
     assert cfg.claude.credentials_file == str(p_a)
+
+
+# ---------------------------------------------------------------------------
+# The pick must be VISIBLE — operator 2026-08-11: `sac agents start` /
+# `sac agents restart` printed nothing about the account, so a correct,
+# well-reasoned pick was indistinguishable from no pick at all.
+# ---------------------------------------------------------------------------
+
+
+def test_pool_narrates_the_pick_even_when_it_keeps_the_bound_entry(
+    _isolate_home: Path,
+) -> None:
+    # Arrange — the live fleet shape: a 3-entry pool whose currently bound
+    # entry is still the healthiest, so churn-minimisation re-confirms it and
+    # the binding does not move. That was the SILENT case, and it is the
+    # case that happens on nearly every boot.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    p_c = _write_snapshot(home, "acct-c", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b, p_c])
+    cfg.claude.credentials_file = str(p_a)
+    log = io.StringIO()
+    # Act — both siblings are 7d near-capped, so acct-a is re-confirmed.
+    _rotate_to_healthy_account(
+        cfg,
+        log_stream=log,
+        usage_5h={"acct-a": 20.0, "acct-b": 4.0, "acct-c": 0.0},
+        usage_7d={"acct-a": 25.0, "acct-b": 99.0, "acct-c": 100.0},
+    )
+    # Assert — re-confirming one account over two rejected siblings IS a
+    # decision, and an unnarrated decision cannot be told from none.
+    assert "acct-a" in _without_quota_warning(log.getvalue())
+
+
+@pytest.fixture
+def _logger_at_info() -> Iterator[None]:
+    """Pin the project logger to INFO — the level an operator's console runs at.
+
+    Measured inside a live sac container: ``getEffectiveLevel() == 20`` and
+    ``isEnabledFor(DEBUG) is False``. Pinning it makes the DEBUG-vs-INFO
+    discrimination a property of THIS test rather than of whatever configured
+    logging first in the session.
+    """
+    from scitex_agent_container.cli_pkg._helpers._console import logger
+
+    saved = logger.level
+    logger.setLevel(20)
+    try:
+        yield
+    finally:
+        logger.setLevel(saved)
+
+
+def test_pool_notice_reason_is_emitted_at_info_not_debug(
+    _isolate_home: Path,
+    _logger_at_info: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The reason must be emitted ABOVE the operator console's INFO threshold.
+
+    MEASURED ON THE LEVEL, NOT ON A FILE DESCRIPTOR. This assertion used to
+    read ``"ranking inputs:" in capfd.readouterr().err``, and that made a
+    LEVEL question depend on WHICH STREAM OBJECT the logging stack happened to
+    be holding — process-global state any other test in the same xdist worker
+    can change just by importing a module. ``_mcp/server.py`` does exactly
+    that at IMPORT time: ``_ensure_stderr_logging()`` attaches a
+    ``logging.StreamHandler(sys.stderr)`` to this very logger, and a stock
+    ``StreamHandler`` CACHES the stream object it is handed. Once some earlier
+    test in the worker imports it, sac's log lines go to whatever ``sys.stderr``
+    was at that instant — a capture buffer belonging to a test that has long
+    since finished — so ``capfd`` here sees nothing and the test fails while the
+    code is behaving correctly.
+
+    That is not a hypothesis: in the 2026-08-12 develop run (gw10) pytest's own
+    ``Captured log call`` section recorded ``INFO ... _console.py:43 ... ranking
+    inputs:`` for this very call, while ``capfd`` returned only an unrelated
+    warning. The two instruments disagreed, and only one of them was measuring
+    the property this test is named after. The same test passes alone and
+    passes across all 1813 ``_lifecycle`` tests in a single process — the
+    failure tracks worker composition, not behaviour.
+
+    ``caplog`` records what the LOGGER emitted, which is the property. The
+    discrimination the test exists for is fully preserved by ``_logger_at_info``:
+    with the logger pinned at INFO, a detail emitted under ``style="dim"``
+    (→ ``scitex_logging.DEBUG``) is dropped AT THE LOGGER and never reaches
+    ``caplog`` at all. So the regression this guards — the reason going out
+    below the level anyone reads — still turns this red.
+    """
+    # Arrange — the WHY (policy, rationale, per-candidate ranking inputs) went
+    # out under style="dim", which maps to DEBUG, so the logger dropped it and
+    # only the headline ever reached the operator.
+    home = _isolate_home
+    p_a = _write_snapshot(home, "acct-a", _future_ms())
+    p_b = _write_snapshot(home, "acct-b", _future_ms())
+    cfg = _make_pool_config("alpha", [p_a, p_b])
+    # Act — no log_stream, so the notice takes the real system_msg path.
+    _rotate_to_healthy_account(cfg, usage_7d={"acct-a": 95.0, "acct-b": 5.0})
+    # Assert — the ranking inputs survive an INFO-level console.
+    reason_records = [
+        record
+        for record in caplog.records
+        if "ranking inputs:" in record.getMessage()
+        and record.levelno >= logging.INFO
+    ]
+    assert reason_records
 
 
 def test_pool_first_listed_entry_is_not_implicitly_preferred(

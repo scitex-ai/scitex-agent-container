@@ -21,6 +21,7 @@ import logging
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .._state import state_db as _state_db
 from .._state.registry import Registry
 
 __all__ = ["list_agents"]
@@ -75,8 +76,11 @@ async def list_agents(request: Request) -> JSONResponse:
     except Exception as exc:  # stx-allow: fallback (reason: surface a JSON error to the caller rather than ASGI 500 stack)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
+    n_registry = len(rows)
     _append_self_peers(rows, seen_names)
+    n_self_peers = len(rows) - n_registry
     _append_comms_nodes(rows, seen_names)
+    n_comms_nodes = len(rows) - n_registry - n_self_peers
 
     # Q1 (lead dispatch a2a dc6fd23387f64e329049d218cf85a4d4): surface
     # ``a2a_port`` + derived ``turn_url`` on every row so scitex-todo's
@@ -84,11 +88,61 @@ async def list_agents(request: Request) -> JSONResponse:
     # Idempotent: self-peer rows that already carry a non-None value
     # keep theirs (the discovery layer is the authoritative source for
     # those).
-    from ._registry_endpoints import enrich_row
+    from ._registry_endpoints import enrich_row, port_claims_map
 
-    rows = [enrich_row(row) for row in rows]
+    # ONE query for every port claim, instead of one state.db lookup per row.
+    # Measured 2026-08-09 (warm, wall clock, 19 rows): the per-row path cost
+    # 222.2ms of a ~635ms enrichment. This is FIX A#1 from the July card
+    # `sac-agents-list-slowness-measured`, which landed in the CLI's row builder
+    # and never reached this one. Best-effort — an empty map simply falls back
+    # to the per-row lookup, which also carries the cross-host instances-table
+    # fallback that the claims table alone does not.
+    _ports = port_claims_map()
+    rows = [enrich_row(row, ports=_ports) for row in rows]
     rows = await _annotate_reachability(request, rows)
-    return JSONResponse({"agents": rows})
+
+    # AN EMPTY LIST IS NOT AN ANSWER ON ITS OWN.
+    #
+    # INCIDENT 2026-08-09: this route returned {"agents": []} with HTTP 200
+    # while twelve agents were demonstrably alive and exchanging a2a
+    # messages — the registry had briefly lost its registrations. Two
+    # independent sessions read that empty list as "there are no agents",
+    # and one of them (mine) escalated fleet-wide data loss off the back of
+    # it. "I cannot see the registry" and "there are no agents" are
+    # different facts and this route rendered them identically.
+    #
+    # We cannot tell those apart from row counts alone — both are zero. So
+    # publish what the caller needs to judge for itself: WHICH store was
+    # consulted, and what each source contributed. The same remedy `db show`
+    # needed, for the same reason. `agents` keeps its shape, so existing
+    # consumers are untouched.
+    sources = {
+        "store": str(_state_db.DEFAULT_DB_PATH),
+        "registry_rows": n_registry,
+        "self_peer_rows": n_self_peers,
+        "comms_node_rows": n_comms_nodes,
+    }
+    if not rows:
+        # Zero from EVERY source, on a host whose listen daemon is up enough
+        # to answer this request. That is unusual rather than impossible, and
+        # saying so is the difference between a caller believing it and a
+        # caller checking.
+        sources["note"] = (
+            "ALL THREE sources returned zero rows. This may genuinely mean no "
+            "agents are registered here, but it is also what a registry the "
+            "daemon cannot currently see looks like — a restart that has not "
+            "replayed registrations, or a daemon resolving a different store "
+            "than the agents register into. Do NOT read this as proof that no "
+            "agent is alive: check `tmux ls` on the host, which is independent "
+            "of this registry."
+        )
+        log.warning(
+            "GET /agents returned ZERO rows from all three sources "
+            "(store=%s). If agents are running, the registry is not being "
+            "seen — this is not evidence that none exist.",
+            _state_db.DEFAULT_DB_PATH,
+        )
+    return JSONResponse({"agents": rows, "sources": sources})
 
 
 async def _annotate_reachability(request: Request, rows: list[dict]) -> list[dict]:

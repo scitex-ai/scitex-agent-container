@@ -60,6 +60,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # ALL THREE, UNCONDITIONALLY, AND WRITTEN OUT RATHER THAN REFERENCED.
+        #
+        # The PR gate narrowed to the ends of the range on 2026-08-12 (3.11 +
+        # 3.13; the middle moved to a hosted nightly) because a human waits on
+        # it. NOTHING about that narrowing may reach this job: a release has
+        # correctness as its only job and nobody is waiting on it, so it pays
+        # for full coverage. That is also why there is no shared "matrix
+        # variable" for the two to read — a single referenced list is one edit
+        # away from silently narrowing the release too, which is the exact
+        # half-applied shape this fleet keeps getting caught by. The lists are
+        # instead kept in agreement by
+        # tests/integration/test_ci_python_matrix_shape.py, which fails if this
+        # one stops being the full supported set or grows an event condition.
+        #
+        # AND IT RUNS ON OUR POOL, not on the hosted runner the nightly uses:
+        # this gate exists to be byte-identical to what ships (same SIF, same
+        # xdist invocation, same runner expression). Divergence between the
+        # release gate and the release itself is what left PyPI at 0.21.17 while
+        # eight tags shipped nothing — see the header of
+        # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Resolve version
@@ -83,6 +103,16 @@ jobs:
       # target, then runs pytest. fail-loud on a missing SIF/shim.
       - name: Run tests in the reused CI SIF (apptainer exec — deps layered, not on the bare runner)
         run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ matrix.python-version }}
+
+      # The persistent runner keeps whatever this job leaves in /tmp — 1.8-2.2 GB
+      # per leg. `always()` covers failure and cancellation; the version arg
+      # scopes the removal to THIS leg, because all three share GITHUB_RUN_ID and
+      # an unscoped cleanup would delete the siblings' live scratch. Mirrors the
+      # step above by design (tests/integration/test_ci_tmpdir_lifecycle.py
+      # enforces the pairing).
+      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
 
   build:
     needs: test
@@ -128,6 +158,15 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # build-in-sif.sh leaks the same way run-in-sif.sh did, just once per
+      # release instead of three times per push — slower to notice, not smaller
+      # a bug. LAST, after the wheel assertion and the artifact upload, so the
+      # scratch is only removed once nothing can still want it. `always()` so a
+      # failed or cancelled build does not keep the disk.
+      - name: Remove this job's build scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh build-in-sif.sh 3.12
 
   publish:
     needs: build
@@ -221,6 +260,14 @@ jobs:
           echo "::error::The upload call returned, but no artifact is being served."
           echo "::error::Do NOT cut the GitHub release. Fix publish, then re-tag."
           exit 1
+
+      # publish-in-sif.sh's scratch, third member of the same leaking family.
+      # LAST, after the ghost-tag verification, and `always()` so it fires even
+      # when that verification reds the release — a failed release is exactly
+      # when a persistent runner most needs its disk back.
+      - name: Remove this job's publish scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh publish-in-sif.sh 3.12
 
   release:
     needs: [build, publish]

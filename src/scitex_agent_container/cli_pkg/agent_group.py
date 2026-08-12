@@ -71,7 +71,16 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Preflight", ["check"]),
         ("Discovery", ["find"]),
         ("Account", ["accounts"]),
-        ("Maintenance", ["prune-claude", "archive-claude-bloat", "refresh-acl"]),
+        (
+            "Maintenance",
+            [
+                "prune-claude",
+                "archive-claude-bloat",
+                "refresh-acl",
+                "declare-a2a-host",
+                "migrate-layers",
+            ],
+        ),
     ]
 
 
@@ -187,6 +196,14 @@ agent_group.add_command(_rebind(_forget_impl, "forget"))
 from ._spawn_from_here import spawn_from_here as _spawn_from_here_impl  # noqa: E402
 
 agent_group.add_command(_rebind(_spawn_from_here_impl, "spawn-from-here"))
+# `relocate` — move an agent to a DIFFERENT HOST. The agent relocates; the host
+# does not, and identity/count are unchanged (1 -> 1). Distinct from `twin`,
+# which changes WHAT an agent does and takes the count to two. Dry-run only for
+# now: it reports what must be true about the target BEFORE anything is touched,
+# and refuses to execute while the cross-host transcript transport is unbuilt.
+from ._relocate_cmd import register as _register_relocate  # noqa: E402
+
+_register_relocate(agent_group)
 
 # Polysemous noun-leaves (allowed under noun groups by §1 loosening)
 agent_group.add_command(_rebind(_status_impl, "list"))
@@ -232,5 +249,26 @@ agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloa
 from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
 
 agent_group.add_command(_refresh_acl_impl)
+# `migrate-layers` — step 3 of the to_home_layers migration: write into each
+# spec the ``to_home`` cascade it ALREADY resolves, so what an agent inherits
+# is readable from the spec instead of only derivable by re-running the
+# resolver. Dry-run by default. Behaviour-preserving by construction AND by
+# measurement: the apply compares what every agent ARMS before and after and
+# restores every original unless they are identical over the whole population.
+# Agent-spec-scoped, so it lives here rather than under a new top-level noun
+# that would outlive the one-shot verb needing it.
+from ._agents_migrate_layers import register as _register_migrate_layers  # noqa: E402
+
+_register_migrate_layers(agent_group)
+
+# `declare-a2a-host` — one-shot fleet sweep making every spec state its own
+# a2a bind address instead of inheriting one from a code default. Sits beside
+# `refresh-acl` because it is the same shape: reads every spec in the
+# user-scope registry, safe to re-run, dry-run by default. Writes the value
+# the code already falls back to, so it changes what specs SAY and not what
+# agents BIND.
+from ._declare_a2a_host import declare_a2a_host as _declare_a2a_host_impl  # noqa: E402
+
+agent_group.add_command(_declare_a2a_host_impl)
 
 __all__ = ["agent_group"]

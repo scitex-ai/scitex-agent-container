@@ -49,7 +49,12 @@ echo "=== dist to publish ==="
 ls -l dist
 
 # --- writable scratch (compute-node HOME is RO inside the container) ---
-TMPDIR="/tmp/publish-scitex_agent_container-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-$V"
+# Same leak, same family as run-in-sif.sh / build-in-sif.sh: created per run and
+# never removed. tmpdir-lib.sh owns the naming; an `if: always()` step in the
+# publish job removes it; exec-in-sif.sh prunes SIGKILL/reboot leftovers.
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+TMPDIR="$(ci_tmpdir_path publish "$V")"
 export TMPDIR
 rm -rf "$TMPDIR"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"

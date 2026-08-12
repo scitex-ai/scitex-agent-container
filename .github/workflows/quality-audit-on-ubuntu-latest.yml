@@ -39,6 +39,13 @@ on:
     - cron: "0 6 * * 1"  # Mondays 06:00 UTC
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else (the weekly cron
+# included — a scheduled run keys on its own run_id and is alone in its group).
+# Argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   audit:
     # Deliberate misnomer, kept byte-identical — see lint.yml for the full

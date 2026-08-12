@@ -106,7 +106,7 @@ Non-negotiables:
 
 ## 4. The host refresher cron — `sac.accounts-refresh`
 
-A federated systemd-user timer fires `sac accounts refresh --all --include-active --sync-active-login` every 2h (`OnUnitActiveSec=2h`). It iterates the account store and rotates EVERY account's tokens against `/oauth/token`, mirroring the active account's rotation back into the live `~/.claude/.credentials.json` login. Registered as the `sac.accounts-refresh` JobSpec via `_jobs_plugin.py`; install with `sac dev systemd install --yes`.
+A federated systemd-user timer fires `sac accounts refresh --all --include-active --sync-active-login` every 2h (`OnUnitActiveSec=2h`). It iterates the account store and rotates EVERY account's tokens against `/oauth/token`, mirroring the active account's rotation back into the live `~/.claude/.credentials.json` login. Registered as the `sac.accounts-refresh` JobSpec via `_jobs_plugin.py`; install with `sac dev timer install accounts-refresh --yes` (the CLI group is now the JobSpec **kind**; `sac dev systemd` still works but is deprecated since 2026-08 and removed after 2026-10).
 
 `--include-active` skips nothing — under the current `:ro`-everywhere model (§2) there is no other refresher left to race, so every stored account (including the host-active login and any pinned-running account) is a valid rotation target. Diagnostic stderr announces the intent:
 

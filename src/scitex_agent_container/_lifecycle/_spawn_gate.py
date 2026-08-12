@@ -33,13 +33,14 @@ the policy got mis-triaged; keep it in step with
 :func:`._listen._acl.check_spawn`, which is the SSOT):
 
   * admin / operator (no ``SAC_NAME``) — allowed;
-  * a ``developer``- or ``researcher``-group caller — allowed EVEN AS A
-    CHILD (operator ruling: dev and research agents must both be able to
-    start/stop peer agents);
+  * a caller whose named groups INCLUDE ``developer``, ``researcher`` or
+    ``privileged`` — allowed EVEN AS A CHILD (operator ruling: dev and
+    research agents must both be able to start/stop peer agents;
+    ``privileged`` joined them 2026-07-16). Membership, not primary-group
+    equality — ``groups: [generalist, developer]`` IS a developer;
   * a ROOT node (no lineage parent) — allowed;
-  * any other child (``generalist`` / ``privileged`` / isolated solver /
-    ungrouped) — denied, as is any caller with
-    ``spec.lineage.may_spawn=false``.
+  * any other child (``generalist`` / isolated solver / ungrouped) —
+    denied, as is any caller with ``spec.lineage.may_spawn=false``.
 
 Scope (ADR-0010 staged plan): this module is **Phase 2 / Step 1** —
 make ALL spawn paths go through ``check_spawn`` + write the lineage
@@ -72,14 +73,23 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
     so ``read_comms_policy`` always finds a row for any started agent.
     """
     from .._state.state_db_nodes import record_comms_policy
-    from ..config._group_resolver import group_from_labels
+    from ..config._group_resolver import all_named_groups, group_from_labels
 
     comms = config.comms
     lineage = config.lineage
-    # Named group (operator 2026-06-25): metadata.labels.group, else
-    # role-derived (developer-ish roles → "developer"). Persisted here so
-    # the ACL check can read it by node name at send/spawn/manage time.
-    group_name = group_from_labels(getattr(config, "labels", None))
+    labels = getattr(config, "labels", None)
+    # TWO projections of the SAME metadata.labels, written together so
+    # they cannot drift (incident 2026-08-10):
+    #   group_name  — the PRIMARY group (labels.group, else the first
+    #                 element of labels.groups, else role-derived). The
+    #                 default-ACL mesh resolves through this single
+    #                 bucket, which keeps an isolated solver isolated.
+    #   group_names — EVERY group the labels name. The AUTHORITY gates
+    #                 (developer / researcher / privileged) read this,
+    #                 so naming a group anywhere in the list grants it
+    #                 and list ORDER stops deciding permissions.
+    group_name = group_from_labels(labels)
+    group_names = all_named_groups(labels)
     record_comms_policy(
         name=config.name,
         outbound_siblings=comms.outbound.siblings,
@@ -89,6 +99,7 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
         lineage_group=lineage.group,
         may_spawn=lineage.may_spawn,
         group_name=group_name,
+        group_names=group_names,
         db_path=db_path,
     )
 

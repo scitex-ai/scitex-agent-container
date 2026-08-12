@@ -7,6 +7,7 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
+import logging
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -72,18 +73,39 @@ def _verify_real_liveness(
 
 
 def _resolve_strict_drift(strict_drift: bool | None) -> bool:
-    """Resolve effective strict-drift mode (arg wins, else env).
+    """Resolve effective strict-drift mode. STRICT IS NOW THE DEFAULT.
 
-    ``strict_drift=True/False`` from ``--strict-drift`` takes priority.
-    ``None`` falls back to ``SAC_STRICT_DRIFT`` (``1``/``true``/``yes``
-    → strict). Read through the sac env helper so either prefix works.
+    Operator ruling 2026-08-10: a spec that is wrong refuses to start, and the
+    way past it is an explicitly NAMED override rather than a blanket force.
+    So the precedence is:
+
+      1. ``strict_drift=True/False`` — the caller said so outright
+         (``--strict-drift`` forces strict; ``--allow-stale-spec`` passes
+         ``False``). An explicit argument always wins.
+      2. ``SAC_ALLOW_STALE_SPEC`` truthy → lenient. The named env override.
+      3. ``SAC_STRICT_DRIFT`` — the legacy opt-in knob, still honoured in
+         BOTH directions so an existing ``SAC_STRICT_DRIFT=0`` in someone's
+         environment keeps meaning "do not block me" rather than silently
+         becoming a no-op the day the default flipped.
+      4. otherwise STRICT.
+
+    Read through the sac env helper so either env prefix works. Note that
+    "strict" only ever refuses a STALE spec (BEHIND / DIVERGED) — AHEAD,
+    NOT_A_REPO and UNREACHABLE still start. See ``_drift._local``.
     """
     if strict_drift is not None:
         return strict_drift
+    from .._drift._local import ALLOW_STALE_ENV
     from .._env import getenv as _sac_env
 
-    raw = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    truthy = ("1", "true", "yes", "on")
+    allow = (_sac_env(ALLOW_STALE_ENV.removeprefix("SAC_"), "") or "").strip().lower()
+    if allow in truthy:
+        return False
+    legacy = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
+    if legacy:
+        return legacy in truthy
+    return True
 
 
 def _slug_of_credentials_file(path: Path) -> str:
@@ -145,15 +167,11 @@ def _rotate_among_credentials_files(
     :class:`_creds.NoHealthyAccountError` propagates (agent NOT started).
     Back-compat: a 1-element pool whose one snapshot is healthy resolves
     to that exact file (no-op — ``credentials_file`` unchanged, no log).
+    A pool of TWO OR MORE always narrates the pick, INCLUDING when the
+    winner is the entry already bound — see the guard below.
     """
-    from .._account.quota_cache import quota_cache_present
-    from .._account.quota_cache_refresh import refresh_quota_cache
-    from .._creds import (
-        POLICY_BURN,
-        BlindQuotaCacheError,
-        pick_healthy_account,
-        resolve_7d_policy,
-    )
+    from .._creds import POLICY_BURN, pick_healthy_account, resolve_7d_policy
+    from ._quota_evidence import pick_with_quota_evidence
 
     entries: list[tuple[str, Path]] = []
     grandparents: set[str] = set()
@@ -195,7 +213,7 @@ def _rotate_among_credentials_files(
     else:
         preferred = None
 
-    def _pick() -> str:
+    def _pick(require_quota_evidence: bool) -> str:
         return pick_healthy_account(
             preferred,
             candidates=slugs,
@@ -206,45 +224,37 @@ def _rotate_among_credentials_files(
             quota_cache_path=quota_cache_path,
             spread_key=config.name,
             policy=policy,
-            # Boot gate (constitution §2): on a host that HAS a quota cache, a
-            # fully-BLIND pick means the populator failed (empty/stale cache) —
-            # fail loud rather than land the agent on an unverifiable, possibly
-            # quota-exhausted account (2026-07-20 incident). A host with NO
-            # cache (fresh install / CI / quota-cron-less Spartan node) still
-            # degrades to freshness-only and boots — the never-block invariant.
-            require_quota_evidence=quota_cache_present(quota_cache_path),
+            require_quota_evidence=require_quota_evidence,
         )
 
-    try:
-        picked = _pick()
-    except BlindQuotaCacheError as blind:
-        # AUTO-REFRESH, THEN RE-PICK — operator 2026-08-02:
-        # 「refresh quota cache 勝手にやれよ」. A blind cache told the operator
-        # to run `sac accounts refresh-quota-cache` and retry BY HAND, and it
-        # blocked three of five agents in ONE `sac-restart` invocation. sac
-        # knows the remedy, and the remedy is idempotent and takes seconds —
-        # so sac runs it instead of printing it.
-        #
-        # ONE attempt, and ONLY for BlindQuotaCacheError. Refusing to boot on
-        # unverifiable quota (constitution: unknown is not 'OK') is unchanged:
-        # if the cache is STILL blind after a successful refresh, the refusal
-        # stands and its remedy text is then CORRECT rather than misleading —
-        # "the populator is not the problem; look for another writer".
-        logger.info(
-            "quota cache blind for %r — refreshing it once before refusing",
-            config.name,
-        )
-        try:
-            refresh_quota_cache(cache_path=quota_cache_path)
-        except Exception:  # stx-allow: fallback (reason: the refresh is a BEST-EFFORT self-repair. If it fails, the operator must see the ORIGINAL blind refusal and its remedy — not a refresh traceback that hides why the boot was refused.)
-            raise blind from None
-        picked = _pick()
+    # Boot gate (constitution §2 — unknown is not "OK"). Arming it is NOT the
+    # same question as "does a cache file exist": that predicate disarms the
+    # gate on exactly the host it was built for (see ._quota_evidence for the
+    # scitex-02 measurement). The helper builds the missing evidence first, and
+    # only degrades — loudly, never silently — when it genuinely cannot.
+    picked = pick_with_quota_evidence(
+        _pick,
+        agent_name=config.name,
+        quota_cache_path=quota_cache_path,
+        store_dir=store_dir,
+        log_stream=log_stream,
+    )
 
     picked_path = next(p for slug, p in entries if slug == picked)
     claude.credentials_file = str(picked_path)
 
-    if str(picked_path) == prior:
-        return  # 1-element / already-selected pool — no change, no log.
+    # SILENT ONLY WHEN NOTHING WAS CHOSEN. This guard used to read
+    # ``str(picked_path) == prior`` — "the binding did not move, so say
+    # nothing" — which is backwards for a POOL: re-confirming one account
+    # over two REJECTED siblings is the decision the operator most needs to
+    # see, and it is the COMMON case, because churn-minimisation prefers the
+    # currently-bound entry whenever it is still healthy. Measured 2026-08-11
+    # on the live ``scitex-agent-container`` spec (a 3-entry pool): the picker
+    # re-confirmed the bound account every boot, so start/restart narrated the
+    # account NEVER — the pick was correct and 100% invisible. A 1-element
+    # pool genuinely made no choice; that one stays quiet.
+    if len(entries) <= 1 and str(picked_path) == prior:
+        return  # 1-element pool kept its only entry — no choice, no log.
 
     from .._creds import (
         account_5h_usage,
@@ -301,7 +311,15 @@ def _rotate_among_credentials_files(
     from ..cli_pkg._helpers._console import system_msg
 
     system_msg(headline, style="info")
-    system_msg(detail, style="dim")
+    # INFO, not "dim". ``"dim"`` maps to ``scitex_logging.DEBUG``
+    # (``cli_pkg._helpers._console._STYLE_TO_LEVEL``), which is BELOW the
+    # project logger's effective level (measured: 20 / INFO), so everything
+    # carrying the REASON — the active policy, the rationale sentence and the
+    # per-candidate ranking inputs — was dropped at the logger while the
+    # headline alone survived. That is precisely the "reasoned pick is
+    # indistinguishable from a lucky one" defect ``_creds._pick_audit`` was
+    # written to close, so it must not be emitted below the level anyone reads.
+    system_msg(detail, style="info")
 
 
 def _rotate_to_healthy_account(
@@ -368,22 +386,30 @@ def _rotate_to_healthy_account(
     if not pinned:
         return  # unpinned agent — host live OAuth, untouched.
 
-    from .._account.quota_cache import quota_cache_present
     from .._creds import pick_healthy_account, resolve_7d_policy
+    from ._quota_evidence import pick_with_quota_evidence
 
     policy = resolve_7d_policy()
-    picked = pick_healthy_account(
-        pinned,
-        now=now,
-        usage_5h=usage_5h,
-        usage_7d=usage_7d,
+
+    def _pick(require_quota_evidence: bool) -> str:
+        return pick_healthy_account(
+            pinned,
+            now=now,
+            usage_5h=usage_5h,
+            usage_7d=usage_7d,
+            quota_cache_path=quota_cache_path,
+            spread_key=config.name,
+            policy=policy,
+            require_quota_evidence=require_quota_evidence,
+        )
+
+    # Same arming policy as the pool path above — shared, not restated, so the
+    # gate can never be armed one way here and another way there.
+    picked = pick_with_quota_evidence(
+        _pick,
+        agent_name=config.name,
         quota_cache_path=quota_cache_path,
-        spread_key=config.name,
-        policy=policy,
-        # Boot gate (constitution §2): a blind-quota pin fails loud on a host
-        # that HAS a cache (populator failure); a cache-less host degrades and
-        # boots (never-block invariant). See quota_cache_present.
-        require_quota_evidence=quota_cache_present(quota_cache_path),
+        log_stream=log_stream,
     )
     if picked == pinned:
         return  # pinned is healthy — no rotation, no log line.
@@ -405,19 +431,35 @@ def _rotate_to_healthy_account(
 def _check_spec_source_drift_at_launch(
     config_path: str, agent_name: str, strict_drift: bool | None
 ) -> None:
-    """Run the launch-time drift check; warn loud (or block if strict).
+    """Run the launch-time drift check; REFUSE on a stale spec by default.
 
     Fully guarded: the underlying check never raises except the
     deliberate strict-mode :class:`SpecSourceDriftError`. We let that
     propagate (the CLI / caller turns it into a non-zero exit); any
     other unexpected failure here is swallowed so a launch is never
     crashed by the drift guard.
+
+    When the refusal was OVERRIDDEN and the spec really is stale, that fact is
+    logged at ERROR naming the condition and the agent. A silent override is
+    just a slower version of the warning nobody read.
     """
     from .._drift import SpecSourceDriftError, warn_if_spec_source_drifted
+    from .._drift._local import ALLOW_STALE_ENV, ALLOW_STALE_FLAG
 
     strict = _resolve_strict_drift(strict_drift)
     try:
-        warn_if_spec_source_drifted(config_path, agent=agent_name, strict=strict)
+        status = warn_if_spec_source_drifted(
+            config_path, agent=agent_name, strict=strict
+        )
+        if not strict and status.is_stale:
+            logging.getLogger(__name__).error(
+                "sac-drift BYPASSED for agent %r: the spec source is STALE (%s) "
+                "and the start was allowed anyway by %s / %s.",
+                agent_name,
+                status.summary(),
+                ALLOW_STALE_FLAG,
+                ALLOW_STALE_ENV,
+            )
     except SpecSourceDriftError:
         # Deliberate strict-mode block — propagate so the caller exits
         # non-zero. This is the ONE thing this guard is allowed to raise.

@@ -200,6 +200,51 @@ def _resolve_restart_backoff_s(config: "AgentConfig") -> float:
     return 1.0
 
 
+def _a2a_argv(config: "AgentConfig") -> list[str]:
+    """``spec.a2a`` -> the session runner's ``--a2a-*`` flags.
+
+    Shared by both ``kind`` branches so the two can never drift apart.
+
+    ``--a2a-port`` is the port the runner's inbound-turn server listens on;
+    without it the sidecar never binds and POST /v1/turn is unreachable.
+    ``--a2a-host`` is that server's BIND ADDRESS, threaded from
+    ``spec.a2a.host``. Until this was added the builder emitted only the port,
+    so the runner fell back to its own ``--a2a-host`` default and the address
+    the spec declared reached exactly one of the three bind paths
+    (``runtimes/a2a_sidecar.py``). A spec asking for a reachable address
+    therefore produced an agent whose spec and runtime disagreed, with nothing
+    reporting the disagreement. The value flows
+    ``--a2a-host`` -> ``_session_cli.main`` -> ``claude_session.run(a2a_host=)``
+    -> ``_session_http.serve_inbound(host=)`` -> ``uvicorn.Config(host=)``.
+
+    Resolved-int port only: ``"auto"`` strings or None mean no sidecar arg at
+    this layer. The lifecycle resolves ``"auto"`` -> int via port_allocator
+    BEFORE we get here; if a string slipped through, it's a config that
+    bypassed agent_start (e.g. dry-run inspection) and the sidecar simply
+    won't be wired up. The host rides WITH the port for that same reason: a
+    bind address without a port binds nothing.
+
+    A blank / missing / non-string host emits NO ``--a2a-host`` at all, leaving
+    the runner's own flag default in charge — so a spec that declares nothing
+    binds exactly where it bound before.
+    """
+    a2a_spec = getattr(config, "a2a", None)
+    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
+    if not (isinstance(a2a_port, int) and a2a_port > 0):
+        return []
+    argv = ["--a2a-port", str(a2a_port)]
+    a2a_host = getattr(a2a_spec, "host", None)
+    if isinstance(a2a_host, str) and a2a_host.strip():
+        argv += ["--a2a-host", a2a_host.strip()]
+    cfg_path = getattr(config, "config_path", "")
+    if cfg_path:
+        # Spec path is host-side; apptainer auto-binds /home so the
+        # in-container path is the same string. Used to publish
+        # /.well-known/agent-card.json.
+        argv += ["--a2a-card-yaml", str(cfg_path)]
+    return argv
+
+
 def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
     """Argv tail for ``kind: Agent`` (claude_session)."""
     runner_argv: list[str] = [
@@ -226,23 +271,8 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         if one_shot:
             # one-shot semantics → exit after the first SDK turn.
             runner_argv.append("--print-stream")
-    # spec.a2a.port → --a2a-port (sidecar bind). Without this the
-    # sidecar never binds and POST /v1/turn is unreachable.
-    a2a_spec = getattr(config, "a2a", None)
-    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    # Resolved-int only: ``"auto"`` strings or None mean no sidecar
-    # arg at this layer. The lifecycle resolves ``"auto"`` → int via
-    # port_allocator BEFORE we get here; if a string slipped through,
-    # it's a config that bypassed agent_start (e.g. dry-run inspection)
-    # and the sidecar simply won't be wired up.
-    if isinstance(a2a_port, int) and a2a_port > 0:
-        runner_argv += ["--a2a-port", str(a2a_port)]
-        cfg_path = getattr(config, "config_path", "")
-        if cfg_path:
-            # Spec path is host-side; apptainer auto-binds /home so
-            # the in-container path is the same string. Used to
-            # publish /.well-known/agent-card.json.
-            runner_argv += ["--a2a-card-yaml", str(cfg_path)]
+    # spec.a2a.{port,host} → --a2a-port / --a2a-host (the sidecar bind).
+    runner_argv += _a2a_argv(config)
     # spec.claude.channels → one --channels arg per entry. When the set
     # contains 'server:sac', the daemon runner threads it into
     # build_sdk_options, which auto-registers the 'sac mcp channel' stdio
@@ -273,8 +303,8 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
     """Argv tail for ``kind: AgentProxy`` (a2a_proxy).
 
     Reads spec.proxy.* (upstream / trust / redact / timeout_s) and
-    spec.a2a.port (sidecar bind). No --mission / autonomous — the
-    proxy has no SDK conversation.
+    spec.a2a.{port,host} (the sidecar bind). No --mission / autonomous —
+    the proxy has no SDK conversation.
     """
     proxy = getattr(config, "proxy", None)
     upstream = getattr(proxy, "upstream", "") if proxy else ""
@@ -296,14 +326,7 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
         "--timeout-s",
         str(timeout_s),
     ]
-    a2a_spec = getattr(config, "a2a", None)
-    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    # See _agent_runner_argv for resolved-int rationale.
-    if isinstance(a2a_port, int) and a2a_port > 0:
-        runner_argv += ["--a2a-port", str(a2a_port)]
-        cfg_path = getattr(config, "config_path", "")
-        if cfg_path:
-            runner_argv += ["--a2a-card-yaml", str(cfg_path)]
+    runner_argv += _a2a_argv(config)
     return runner_argv
 
 

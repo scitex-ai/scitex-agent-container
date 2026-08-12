@@ -20,13 +20,14 @@ from typing import Callable
 
 import click
 
-from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._creds import NoHealthyAccountError
+from ..._lifecycle._start_decline import DECLINE_SENTINEL
 from ..._lifecycle._start_outcome import KIND_ALREADY_RUNNING, outcome_kind
 from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
 from ...config._resolve import resolve_with_prefix
+from ...runtimes._apptainer_bind_guard import BindCapabilityError
 from .._helpers import console, system_msg
 from ._common import _multiplex_foreground_tails, _resolve_singleton_skip
 from ._dispatch import try_dispatch
@@ -69,7 +70,7 @@ def run_single_targets(
     as_json: bool,
     foreground: bool,
     one_shot: bool,
-    strict_drift: bool,
+    strict_drift: bool | None,
     no_redispatch: bool,
     multi_foreground: bool,
     preflight_runner: Callable[[], None],
@@ -288,13 +289,14 @@ def run_single_targets(
                         current_host = resolve_hostname()
                     except RuntimeError:  # stx-allow: fallback (reason: hostname resolution failure — treat as local for the preflight)
                         current_host = ""
-                    spec_host = config.hosts_spec.host
-                    target_host = (
-                        (spec_host[0] if spec_host else None)
-                        if isinstance(spec_host, list)
-                        else (spec_host or None)
+                    from ._host_chain import is_remote_placement
+
+                    # A CHAIN that names this machine anywhere can degrade to
+                    # a local start, so pre-flighting it as remote would
+                    # validate the resume id against the wrong machine.
+                    is_remote = is_remote_placement(
+                        config.hosts_spec.host, current_host
                     )
-                    is_remote = bool(target_host) and target_host != current_host
                     preflight_resume_id(
                         config,
                         resume_id,
@@ -406,6 +408,24 @@ def run_single_targets(
                 else:
                     system_msg(f"{raw_target}: {exc.brief}", style="red")
                     system_msg(str(exc), style="dim")
+            except BindCapabilityError as exc:
+                # A declared credential bind that cannot deliver (2026-08-09
+                # gh hosts.yml incident). Deliberately raised, not a crash —
+                # and the message body already names the agent, the spec file,
+                # the host path, the lost capability and the fix. A traceback
+                # would bury exactly the words the operator needs to read.
+                any_error = True
+                if as_json:
+                    _emit_json(
+                        {
+                            "name": raw_target,
+                            "status": "bind-cannot-deliver",
+                            "error": str(exc),
+                            "dry_run": dry_run,
+                        }
+                    )
+                else:
+                    system_msg(str(exc), style="red")
             except Exception as exc:
                 any_error = True
                 if as_json:

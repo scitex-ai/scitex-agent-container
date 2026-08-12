@@ -26,13 +26,89 @@ test -x "$VENV/bin/python" || {
 
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
+# NEVER SIGN COMMITS MADE BY THE TEST SUITE. Dozens of tests build throwaway
+# git repos under tmp_path and commit into them (worktree GC, prune, drift,
+# doctor, the git-identity hooks). They inherit the AMBIENT global config, and
+# the operator's dotfiles set:
+#
+#     ~/.dotfiles/src/.gitconfig
+#       commit.gpgsign  = true
+#       tag.gpgsign     = true
+#       gpg.format      = ssh
+#       user.signingkey = ~/.ssh/id_ed25519_scitex.pub
+#
+# When that key is absent — as it was on 2026-08-09 — every one of those
+# commits dies, and git reports it like this:
+#
+#     error: Couldn't load public key .../id_ed25519_scitex.pub: No such file
+#     fatal: failed to write commit object
+#     exit 128
+#
+# THAT SECOND LINE IS THE TRAP. "failed to write commit object" reads as disk
+# I/O, so the obvious diagnosis is a full filesystem or a broken runner. It
+# cost most of an afternoon and two WRONG root causes broadcast to other
+# agents (a shared-runner git-identity fault, then ENOSPC) before anyone read
+# the line above it. Reproduced exactly, and verified fixed, before this
+# landed — see tests/integration/test_ci_commit_signing_disabled.py.
+#
+# A test's scratch repo has no business carrying a signature. Signing stays ON
+# for real commits; this scopes it off for CI only, and additively — two
+# overrides on top of the ambient config rather than replacing it, so
+# safe.directory and everything else the runner relies on survives.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=commit.gpgsign
+export GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=tag.gpgsign
+export GIT_CONFIG_VALUE_1=false
+
 # Real writable scratch. The runner profile exports TMPDIR=~/.cache/tmp, a host
 # path that does NOT resolve inside the container; tests (tmp_path) and the
 # install target both need a working, writable tmp. Node-local /tmp is writable
-# + ephemeral and per-version-isolated so concurrent matrix legs don't collide.
-export TMPDIR="/tmp/ci-scitex_agent_container-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-$V"
+# + per-version-isolated so concurrent matrix legs don't collide.
+#
+# "+ ephemeral" USED TO BE CLAIMED HERE AND WAS NEVER TRUE. Nothing removed this
+# directory — on the persistent self-hosted node 116 of them at 1.8-2.2 GB each
+# filled the root filesystem (2026-08-09). tmpdir-lib.sh now owns the whole
+# lifecycle: it names the directory (once, here), an `if: always()` job step
+# removes it at the end of the job, and exec-in-sif.sh prunes what a SIGKILL or
+# a reboot left behind. The name is unchanged, so this also reclaims the
+# directories already on disk.
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
+TMPDIR="$(ci_tmpdir_path ci "$V")"
+export TMPDIR
 rm -rf "$TMPDIR"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
+
+# REMOVE OUR OWN SCRATCH ON THE WAY OUT. The `rm -rf` above only ever deletes a
+# RE-RUN of this exact (run_id, attempt, version) triple, because the name it
+# cleans is the name it is about to use. Every new run gets a new GITHUB_RUN_ID
+# and therefore a new directory, so nothing has ever removed the previous one.
+#
+# MEASURED 2026-08-09 on scitex-compute-04: 153 orphaned ci-* directories,
+# 1.8-2.2G each, ~290G total — the root filesystem hit 393G/393G, 0 bytes free.
+# Every writing test then failed with `fatal: failed to write commit object`, on
+# EVERY pull request regardless of its diff, which reads as a runner fault and
+# is not one. `sac listen` also began returning HTTP 500 (it could not write its
+# audit log). One PR costs ~6G across the three matrix legs.
+#
+# The trap preserves the script's exit status (bash re-raises it after the
+# handler), so a failing test suite still fails.
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# ...and sweep SIBLINGS left behind by jobs that never reached the trap — a
+# cancelled workflow, a SIGKILL, an OOM, or any run that predates this change.
+# Without this the 153-directory backlog needs a human with sudo, which is how
+# it reached 290G in the first place: the only cleanup path was one nobody ran.
+#
+# Age-gated rather than name-gated: a concurrent matrix leg on this same runner
+# owns a sibling directory that is minutes old and MUST NOT be removed, while
+# anything untouched for hours belongs to a job that is long gone. Mirrors the
+# `_REAP_MIN_AGE_S` process reap in exec-in-sif.sh — same hazard, same guard.
+_TMPDIR_REAP_MIN_AGE_MIN="${SCITEX_CI_TMPDIR_REAP_MIN_AGE_MIN:-360}"
+find /tmp -maxdepth 1 -type d -name 'ci-scitex_agent_container-*' \
+    -mmin "+$_TMPDIR_REAP_MIN_AGE_MIN" ! -path "$TMPDIR" \
+    -exec rm -rf {} + 2>/dev/null || true
 
 # The HPC compute-node $HOME is READ-ONLY inside the container, so uv/pip cannot
 # create their default caches under ~/.cache — point them at the writable
@@ -113,6 +189,55 @@ for _prog in sac scitex-agent-container; do
     chmod +x "$TMPDIR/bin/$_prog"
 done
 export PATH="$TMPDIR/bin:$PATH"
+
+# ASSERT THE PLUGIN SET BEFORE TRUSTING A SINGLE PASS/FAIL COUNT.
+#
+# MEASURED 2026-08-11 in the fleet's shared /opt/venv-sac: a wide run produced
+# 93 failures that were ALL `async def` tests, under a header reading
+# `plugins: anyio, scitex-dev` — pytest-asyncio ABSENT. The same files pass
+# standalone with asyncio-1.4.0 loaded. Plugin autoload had silently dropped it.
+#
+# THAT FAILURE IS INDISTINGUISHABLE FROM A REAL REGRESSION by inspection, and
+# that is the whole problem: 93 red async tests look exactly like someone
+# breaking the event loop. It also poisons the opposite direction — a run that
+# quietly loses a plugin can go GREEN by not collecting what it should have.
+# Any tuning decision (worker counts, selection strategy, the version matrix)
+# taken against such a run is measuring the plugin lottery, not the code.
+#
+# So: fail LOUDLY and IMMEDIATELY when the set is incomplete, instead of handing
+# back a number nobody can interpret. One line of diagnosis beats an afternoon.
+#
+# The check asks PYTEST what it actually loaded rather than asking Python what
+# is importable — an installed-but-not-registered plugin is precisely the case
+# that bit us, and `import pytest_asyncio` would have said everything was fine.
+# An empty directory keeps it to a fraction of a second and collects nothing.
+#
+# NOT `-q`. THE FIRST VERSION OF THIS CHECK SHIPPED WITH `-q` AND FAILED EVERY
+# JOB IT WAS ADDED TO: `-q` SUPPRESSES THE `plugins:` HEADER, so the grep found
+# nothing, concluded the plugin set was empty, and refused to run the suite —
+# all three matrix legs red in ~35s, on the very PR that introduced it. A guard
+# whose sensor is switched off reports "broken" about a healthy environment,
+# which is worse than no guard. Default verbosity prints the header; keep it.
+_PLUGCHECK="$TMPDIR/plugcheck"
+mkdir -p "$_PLUGCHECK"
+_PLUGINS="$(python -m pytest --collect-only -p no:cacheprovider "$_PLUGCHECK" 2>&1 |
+    grep -m1 '^plugins:' || true)"
+echo "preflight ${_PLUGINS:-plugins: <no header emitted>}"
+for _need in asyncio xdist cov timeout; do
+    case "$_PLUGINS" in
+    *"$_need"*) ;;
+    *)
+        echo "::error::pytest plugin '$_need' did NOT load in this environment."
+        echo "::error::header was: ${_PLUGINS:-<none>}"
+        echo "::error::Every pass/fail count from this run would be untrustworthy" \
+            "— a missing pytest-asyncio turns every async test red, and a" \
+            "missing plugin can also turn a run green by not collecting." \
+            "Refusing to run the suite. Rebuild the CI SIF or fix the" \
+            "[all,dev] install rather than re-running and hoping."
+        exit 1
+        ;;
+    esac
+done
 
 # Parallelise with pytest-xdist (baked in [dev]/[all,dev] as pytest-xdist>=3).
 # scitex-agent-container's suite is ~2460 tests; single-process it overran the job's old

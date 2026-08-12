@@ -19,10 +19,14 @@ home by spec alone (see the two ``*_ENV_VAR`` constants).
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._to_home_errors import UnknownToHomeLayer
+
+logger = logging.getLogger(__name__)
 
 # Env var: explicit override for the shared/common baseline to_home dir.
 # Absolute path. When unset we fall back to ``<agents_dir>/_shared/to_home``
@@ -131,6 +135,55 @@ def _user_baseline_to_home_dir() -> Path | None:
     return None
 
 
+def _collapse_duplicate_paths(
+    layers: "list[tuple[str, Path | None]]",
+) -> "list[tuple[str, Path | None]]":
+    """Drop any layer whose directory an EARLIER layer already contributes.
+
+    ``user-shared`` and ``project-shared`` both search
+    ``<agents root>/_shared/to_home``. For a spec living under the USER agents
+    root those two roots are the same directory, so the cascade merges one
+    directory into itself. Measured 2026-08-09: this is the case for ALL 102
+    registered specs — the "three layer cascade" is really two.
+
+    Merging a directory with itself cannot contribute anything, so today this
+    is invisible: equal scalars are idempotent, hook groups de-dupe on
+    equality, list merges append uniques, ``_comment`` keeps the first. Every
+    one of those has to KEEP being true. One non-idempotent merge rule — a
+    counter, an append-always list, a timestamp — and the duplicate silently
+    doubles it for every agent at once.
+
+    Collapsing here removes that standing trap and makes the layer list honest:
+    what it reports is what actually contributes. The EARLIER (lower
+    precedence) layer keeps the path, which matches the cascade's own
+    first-layer-owns rule, so provenance attribution is unchanged.
+
+    A ``None`` layer is left alone — absence is not a duplicate.
+    """
+    seen: set[Path] = set()
+    collapsed: list[tuple[str, Path | None]] = []
+    for name, path in layers:
+        if path is None:
+            collapsed.append((name, None))
+            continue
+        try:
+            key = path.resolve()
+        except OSError:  # stx-allow: fallback (unresolvable path -> compare raw)
+            key = path
+        if key in seen:
+            logger.debug(
+                "to_home: layer %r resolves to %s, already contributed by an "
+                "earlier layer — collapsed",
+                name,
+                key,
+            )
+            collapsed.append((name, None))
+            continue
+        seen.add(key)
+        collapsed.append((name, path))
+    return collapsed
+
+
 def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     """The ordered settings.json cascade layers (lowest precedence first).
 
@@ -139,12 +192,45 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     :func:`_to_home_settings.deploy_settings_cascade` /
     :func:`_to_home_settings.settings_cascade_provenance`. Shared by
     ``deploy_to_home`` and ``sac agents explain`` so both resolve identically.
+
+    When the spec DECLARES ``to_home_layers``, only the named layers are
+    resolved; every other layer is dropped to ``None`` and contributes nothing.
+    Declaring the empty list therefore inherits nothing, which is a sandboxed
+    agent's legitimate way of pinning its home to its own spec.
+
+    When the spec declares NOTHING, every layer applies — today's behaviour —
+    and this function says nothing about it. It used to log a WARNING here, and
+    that was the wrong place: this is a PURE resolver, and a single start calls
+    it TWICE (workspace home, then the apptainer overlay upper — see
+    ``_to_home_overlay.deploy_to_home_overlay``), so one agent produced two
+    identical paragraphs. The missing declaration is a property of the SPEC,
+    decided once per launch, so the complaint — and, once the fleet's specs are
+    migrated, the REFUSAL — lives in
+    :func:`.._lifecycle._layers_preflight.check_to_home_layers_at_launch`,
+    which ``agent_start`` calls exactly once.
     """
-    return [
-        ("user-shared", _user_baseline_to_home_dir()),
-        ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
-        ("per-agent", resolve_to_home_dir(config)),
-    ]
+    resolved = _collapse_duplicate_paths(
+        [
+            ("user-shared", _user_baseline_to_home_dir()),
+            ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
+            ("per-agent", resolve_to_home_dir(config)),
+        ]
+    )
+
+    declared = getattr(config, "to_home_layers", None)
+    if declared is None:
+        return resolved
+
+    wanted = set(declared)
+    unknown = wanted - {name for name, _ in resolved}
+    if unknown:
+        raise UnknownToHomeLayer(
+            f"spec.to_home_layers names unknown layer(s) {sorted(unknown)!r} "
+            f"for agent {getattr(config, 'name', '<unnamed>')!r}. Valid names: "
+            f"{[name for name, _ in resolved]!r}. A misspelt layer would "
+            f"silently inherit nothing, so this is refused rather than ignored."
+        )
+    return [(name, path if name in wanted else None) for name, path in resolved]
 
 
 def _spec_dir(config: AgentConfig) -> Path | None:

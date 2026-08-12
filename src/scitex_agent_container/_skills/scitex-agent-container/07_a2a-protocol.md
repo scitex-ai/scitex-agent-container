@@ -32,7 +32,9 @@ sac a2a doctor <agent.yaml>    [--host H] [--port N] [--timeout 5.0] [--json]
 
 ## Auto-launch via `spec.a2a`
 
-When a v3 YAML declares `spec.a2a.port`, `sac agents start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `{workdir}/a2a-sidecar.pid`, output at `{workdir}/a2a-sidecar.log`; `sac agents stop` SIGTERMs it via the PID file.
+When a v3 YAML declares `spec.a2a.port`, `sac agents start` spawns the A2A server as a sidecar subprocess after the multiplexer is up. PID lives at `<runtime-root>/<agent>/a2a-sidecar.pid`, output at `<runtime-root>/<agent>/a2a-sidecar.log` — the agent's OWN runtime state dir, next to its `pid` / `heartbeat.json` / `session.jsonl`. `sac agents stop` SIGTERMs it via the PID file.
+
+Both files used to sit at `{workdir}/a2a-sidecar.*`, with no agent identity in the path: two agents sharing one workdir shared one PID file, and the second `start` logged "already running; skipping" and returned the FIRST agent's PID — looking healthy while having no sidecar of its own. Keying on the agent directory removes that collision by construction. A sidecar started before this change is still recorded at the legacy workdir path; `start` adopts it (and moves the record) and `stop` terminates it, but only when `/proc/<pid>/cmdline` confirms the process is serving THIS agent's spec — a co-tenant's sidecar is never touched.
 
 ```yaml
 apiVersion: scitex-agent-container/v3
