@@ -46,6 +46,16 @@ versioning follows [SemVer](https://semver.org/).
   and the same wording. That they call the same function is an
   implementation detail, and an implementation detail is not the property.
 
+  Two adapters agreeing is necessary but not sufficient: that suite stays
+  green whatever they agree ON, including a wrong answer. So the predicate
+  is also tested directly, at the mirrored path
+  `tests/scitex_agent_container/_baseline_assets/telegram_hooks/test__telegram_rules.py`
+  — the decided accept/reject table asserted against the one function that
+  decides it, plus the API the adapters consume (the `Verdict` shape, the
+  `as_dict` payload the MCP binding serialises, and the `ESCAPE_ENV` name
+  both honour). A shared predicate with no direct unit tests is exactly the
+  thing that drifts.
+
 - **`sac agents reconcile` refuses a MASS restart: N corpses with no tmux
   server at all is ONE event, not N agents dying.** The reconcile timer is
   currently disabled and has never run; this is what has to land before it is
