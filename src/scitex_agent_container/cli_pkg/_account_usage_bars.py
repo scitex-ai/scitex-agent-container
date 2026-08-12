@@ -74,6 +74,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterable
 
+from ._account_usage_state import KNOWN, STALE, UNKNOWN, format_age_short
 from ._timefmt import _coerce_dt, format_relative_until
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -92,26 +93,37 @@ _DEFAULT_BAR_WIDTH = 20
 # ---------------------------------------------------------------------------
 
 
-def render_usage_bar(pct: float | None, *, width: int = _DEFAULT_BAR_WIDTH) -> str:
+def render_usage_bar(
+    pct: float | None,
+    *,
+    width: int = _DEFAULT_BAR_WIDTH,
+    placeholder: str = "no data",
+) -> str:
     """Render ``pct`` (0-100) as a fixed-width bracketed ASCII bar.
 
-    ``[████████░░░░░░░░░░░░]`` for a number; a same-width
-    ``[      no data       ]`` placeholder for ``None`` so columns of
-    bars stay vertically aligned whether or not a row has data.
+    ``[████████░░░░░░░░░░░░]`` for a number; a same-width word placeholder
+    (``[      no data       ]`` / ``[      unknown       ]``) for ``None``
+    so columns of bars stay vertically aligned whether or not a row has
+    data.
 
-    Guards against two visual lies:
+    Guards against three visual lies:
 
     * a value ``< 100`` never renders a completely full bar (so 99 %
       is visibly distinct from 100 %);
     * a value ``> 0`` never renders a completely empty bar (so 1 % is
-      visibly distinct from 0 %).
+      visibly distinct from 0 %);
+    * a figure sac cannot vouch for is never drawn AT ALL. Callers pass
+      ``pct=None`` for an unknown reading rather than a number, because a
+      bar is an assertion and there is no fill level that honestly means
+      "we did not measure this" — the 2026-08-12 incident was a confident
+      2 % bar drawn over a figure belonging to another account.
 
     Values outside ``[0, 100]`` are clamped. Never raises.
     """
     if width < 1:
         width = 1
     if pct is None:
-        return "[" + "no data".center(width) + "]"
+        return "[" + placeholder.center(width)[:width] + "]"
     p = max(0.0, min(100.0, float(pct)))
     filled = int(round(p / 100.0 * width))
     if filled >= width and p < 100.0:
@@ -121,11 +133,26 @@ def render_usage_bar(pct: float | None, *, width: int = _DEFAULT_BAR_WIDTH) -> s
     return "[" + _BAR_FILL * filled + _BAR_EMPTY * (width - filled) + "]"
 
 
-def _pct_paren(pct: float | None) -> str:
-    """Trailing percentage label: ``(29%)`` for a number, ``(?)`` for unknown."""
-    if pct is None:
-        return "(?)"
-    return f"({int(round(max(0.0, min(100.0, float(pct)))))}%)"
+def _pct_paren(
+    pct: float | None,
+    *,
+    state: str = KNOWN,
+    age_seconds: int | None = None,
+) -> str:
+    """Trailing label, carrying the reading's STANDING as well as its value.
+
+    ``(29%)`` for a measured figure, ``(29% stale 1d)`` for one older than
+    the refresh window, ``(unknown)`` when sac cannot vouch for a number at
+    all. The staleness never appears as a bare percentage: an operator
+    reading ``(2%)`` has no way to know it is a day old, which is precisely
+    how the 2026-08-12 capacity misread happened.
+    """
+    if state == UNKNOWN or pct is None:
+        return "(unknown)"
+    value = int(round(max(0.0, min(100.0, float(pct)))))
+    if state == STALE:
+        return f"({value}% stale {format_age_short(age_seconds)})"
+    return f"({value}%)"
 
 
 def _wrap_hint(hint: str) -> str:
@@ -140,6 +167,8 @@ def render_window_line(
     hint: str,
     hint_width: int,
     width: int = _DEFAULT_BAR_WIDTH,
+    state: str = KNOWN,
+    age_seconds: int | None = None,
 ) -> str:
     """One per-window line of an account block, operator-mockup shape:
 
@@ -153,12 +182,24 @@ def render_window_line(
     every line pads its hint to it, so the bars of BOTH windows of
     EVERY account start at the same column. ``hint_width == 0`` (no row
     in the block has any cached reset) omits the hint column entirely.
+
+    ``state`` is the reading's standing (``known`` / ``stale`` /
+    ``unknown``). An ``unknown`` reading draws NO bar — the percentage is
+    suppressed even if one was passed, so a caller cannot accidentally
+    render an unattributable figure as a fact.
     """
+    drawable = None if state == UNKNOWN else pct
     parts = [f"  {window}"]
     if hint_width > 0:
         parts.append(hint.ljust(max(hint_width, len(hint))))
-    parts.append(render_usage_bar(pct, width=width))
-    parts.append(_pct_paren(pct))
+    parts.append(
+        render_usage_bar(
+            drawable,
+            width=width,
+            placeholder="unknown" if state == UNKNOWN else "no data",
+        )
+    )
+    parts.append(_pct_paren(drawable, state=state, age_seconds=age_seconds))
     return " ".join(parts)
 
 
@@ -170,21 +211,44 @@ def render_account_block(
     hint_width: int,
     width: int = _DEFAULT_BAR_WIDTH,
 ) -> list[str]:
-    """The 3-line block for one account (operator mockup 2026-07-17):
+    """The block for one account (operator mockup 2026-07-17):
 
     ``- <name>`` then one :func:`render_window_line` per window
     (5h first, then 7d). The caller inserts the blank line BETWEEN
     accounts and supplies the block-level ``hint_width``.
+
+    When the reading is not ``known`` a fourth line states WHY in prose.
+    An operator who sees ``(unknown)`` needs to know whether the network
+    was down or the credential belongs to somebody else — those call for
+    opposite responses, and a bare ``unknown`` cannot distinguish them.
     """
-    return [
+    state = getattr(row, "usage_state", UNKNOWN)
+    age = getattr(row, "usage_age_seconds", None)
+    lines = [
         f"- {row.provider}:{row.name}",
         render_window_line(
-            "5h", row.used_pct_5h, hint=hint_5h, hint_width=hint_width, width=width
+            "5h",
+            row.used_pct_5h,
+            hint=hint_5h,
+            hint_width=hint_width,
+            width=width,
+            state=state,
+            age_seconds=age,
         ),
         render_window_line(
-            "7d", row.used_pct_7d, hint=hint_7d, hint_width=hint_width, width=width
+            "7d",
+            row.used_pct_7d,
+            hint=hint_7d,
+            hint_width=hint_width,
+            width=width,
+            state=state,
+            age_seconds=age,
         ),
     ]
+    reason = getattr(row, "usage_reason", None)
+    if state != KNOWN and reason:
+        lines.append(f"     ! {reason}")
+    return lines
 
 
 def _mean_reset_at(rows: Iterable["AccountRow"]) -> datetime | None:
@@ -230,19 +294,36 @@ def render_average_block(
     used to be the ``Fleet 7d capacity used:`` line, rendered in the same
     visual language as every other bar instead of as prose.
 
-    ``n`` counts only accounts WITH cached 7d usage — the same denominator
-    :func:`fleet_7d_capacity_used` averages over, so the percentage and the
-    count can never describe different populations. Returns ``[]`` when no
-    account has data, so the caller emits nothing rather than an empty bar
-    that would read as 0%.
+    ``n`` counts only accounts whose 7d reading is ``known`` — the same
+    denominator :func:`fleet_7d_capacity_used` averages over, so the
+    percentage and the count can never describe different populations.
+    Returns ``[]`` when no account has a known reading, so the caller emits
+    nothing rather than an empty bar that would read as 0 %.
+
+    Readings that are ``stale`` or ``unknown`` are EXCLUDED, and the count
+    of exclusions is stated beside the average. Averaging them in would
+    launder their uncertainty: the fleet figure would look exactly as
+    confident as an all-fresh one, which is how the 2026-08-12 plan came to
+    treat a saturated fleet as having 98 % headroom. A capacity number
+    computed from two rows out of three must say so.
     """
     row_list = list(rows)
-    pct, n = fleet_7d_capacity_used(r.used_pct_7d for r in row_list)
+    # The getattr fallback is UNKNOWN, not KNOWN: a row that cannot say it was
+    # measured must not be counted into a capacity figure on the strength of
+    # having omitted the field.
+    counted = [r for r in row_list if getattr(r, "usage_state", UNKNOWN) == KNOWN]
+    excluded = len(row_list) - len(counted)
+    pct, n = fleet_7d_capacity_used(r.used_pct_7d for r in counted)
     if pct is None:
+        if excluded:
+            return [f"- Average (unknown — {excluded} of {len(row_list)} not counted)"]
         return []
-    hint = _wrap_hint(format_relative_until(_mean_reset_at(row_list), now=now))
+    label = f"- Average (n={n})"
+    if excluded:
+        label += f" — {excluded} of {len(row_list)} not counted"
+    hint = _wrap_hint(format_relative_until(_mean_reset_at(counted), now=now))
     return [
-        f"- Average (n={n})",
+        label,
         render_window_line("7d", pct, hint=hint, hint_width=hint_width, width=width),
     ]
 
