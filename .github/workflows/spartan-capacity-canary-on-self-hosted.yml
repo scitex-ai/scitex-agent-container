@@ -156,6 +156,32 @@ jobs:
           echo "=== OUTSIDE the SIF (bare runner process) ==="
           probe
           echo
+          # THE DECISIVE TEST.
+          #
+          # First pass found: nproc=1, nproc --all=128, sched_getaffinity=48,
+          # cpuset.cpus.effective=0-127, SLURM_CPUS_PER_TASK=48. So the kernel
+          # WILL schedule this process on 48 CPUs and no cgroup is confining it
+          # — only `nproc` disagrees, and `nproc` is what run-in-sif.sh feeds to
+          # `xdist -n`.
+          #
+          # coreutils `nproc` is documented to honour OMP_NUM_THREADS /
+          # OMP_THREAD_LIMIT ahead of the affinity mask, and HPC sites commonly
+          # set OMP_NUM_THREADS=1 in the default environment to stop naive
+          # threaded code oversubscribing a shared node.
+          #
+          # That is a hypothesis until it is tested, so test it: print the
+          # variables, then re-run nproc with them cleared. If clearing them
+          # returns 48, the cause is established rather than matched.
+          echo "=== is nproc being overridden by OpenMP env? ==="
+          echo "  OMP_NUM_THREADS       = ${OMP_NUM_THREADS:-<unset>}"
+          echo "  OMP_THREAD_LIMIT      = ${OMP_THREAD_LIMIT:-<unset>}"
+          echo "  OMP_DYNAMIC           = ${OMP_DYNAMIC:-<unset>}"
+          echo "  SRUN_CPUS_PER_TASK    = ${SRUN_CPUS_PER_TASK:-<unset>}"
+          echo "  nproc (as-is)                    = $(nproc 2>/dev/null || echo '?')"
+          echo "  nproc (OMP_* cleared)            = $(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc 2>/dev/null || echo '?')"
+          echo "  python len(sched_getaffinity)    = $(python3 -c 'import os;print(len(os.sched_getaffinity(0)))' 2>/dev/null || echo '?')"
+          echo "  => if 'OMP_* cleared' is 48 and 'as-is' is 1, OpenMP env is the cause"
+          echo
           echo "=== cgroup confinement ==="
           echo "  /proc/self/cgroup:"
           sed 's/^/    /' /proc/self/cgroup 2>/dev/null || echo "    <unreadable>"
