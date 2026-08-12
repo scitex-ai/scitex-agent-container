@@ -320,8 +320,8 @@ def status(
             # silently trip SDK auto-discovery. Expose the per-agent
             # audit so operators can spot bloat without spelunking via
             # `find <workdir>/.claude/ -type f | wc -l`.
-            from .._workdir_audit import audit_workdir_claude
-            from .._workdir_audit import to_dict as _audit_to_dict
+            from .._workdir import audit_workdir_claude
+            from .._workdir import to_dict as _audit_to_dict
 
             workdir = info.get("expanded_workdir") or info.get("workdir") or ""
             # stx-allow: fallback (reason: workdir audit walks a real fs
