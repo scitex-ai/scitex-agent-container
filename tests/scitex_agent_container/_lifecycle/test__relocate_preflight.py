@@ -22,14 +22,20 @@ import pytest
 from scitex_agent_container._lifecycle._relocate_origin import RepoWork
 from scitex_agent_container._lifecycle._relocate_preflight import (
     CHECK_BINDS,
+    CHECK_CARD_STORE,
+    CHECK_CARD_STORE_DSN,
     CHECK_CREDENTIALS,
+    CHECK_GROUPS,
     CHECK_HUB_FROM_TARGET,
+    CHECK_IMAGE,
     CHECK_PORTS,
+    CHECK_REACHABLE,
     CHECK_RUNTIME,
     CHECK_SAC_PRESENT,
     CHECK_SCHEMA,
     CHECK_SESSION,
     CHECK_SOURCE_WORK,
+    CHECK_WORKDIR,
     Check,
     SourceFacts,
     TargetFacts,
@@ -49,7 +55,9 @@ def _healthy_facts(**overrides: object) -> TargetFacts:
         reachable=True,
         image_present=True,
         missing_bind_sources=(),
-        card_store_url="postgresql://scitex_cards@127.0.0.1:5442/scitex_cards",
+        missing_workdir_paths=(),
+        target_resolved_groups=("developer", "infra"),
+        card_store_url="postgresql://scitex_cards@127.0.0.1:55432/scitex_cards",
         card_store_reachable=True,
         credential_expires_in_s=3600.0,
         credential_refresh_token_present=True,
@@ -81,6 +89,10 @@ def _clean_source(**overrides: object) -> SourceFacts:
     return SourceFacts(**base)  # type: ignore[arg-type]
 
 
+WORKDIR = "/home/ywatanabe/proj/scitex-agent-container"
+GROUPS = ("developer", "infra")
+
+
 def _run(source_facts: SourceFacts | None = None, **overrides: object):
     return preflight(
         agent=AGENT,
@@ -90,6 +102,8 @@ def _run(source_facts: SourceFacts | None = None, **overrides: object):
         required_ports=PORTS,
         source_facts=source_facts if source_facts is not None else _clean_source(),
         from_host=SRC,
+        workdir=WORKDIR,
+        declared_groups=GROUPS,
     )
 
 
@@ -208,8 +222,15 @@ def test_an_agent_with_no_transcript_at_all_fails_the_session_check() -> None:
 
 
 def test_every_check_is_unknown_when_nothing_was_observed() -> None:
-    # Arrange
-    report = preflight(agent=AGENT, to_host=DST, facts=TargetFacts(), runtime=RUNTIME)
+    # Arrange: declared_groups is supplied so the groups check has something to
+    # be unknown ABOUT — a spec claiming no groups passes it by construction.
+    report = preflight(
+        agent=AGENT,
+        to_host=DST,
+        facts=TargetFacts(),
+        runtime=RUNTIME,
+        declared_groups=GROUPS,
+    )
     # Act
     unknown = report.unknown
     # Assert
@@ -636,5 +657,225 @@ def test_a_source_with_no_repos_at_all_passes_when_it_was_scanned() -> None:
     source = SourceFacts(repos=())
     # Act
     check = _named(_run(source_facts=source), CHECK_SOURCE_WORK)
+    # Assert
+    assert check.ok is True
+
+
+# ---------------------------------------------------------------------------
+# ONE CASE PER CHECK WHERE THE PROBE ITSELF FAILED
+#
+# The operator's requirement, 2026-08-11, and the bug this fleet ships most
+# often: a probe that could not answer must report UNKNOWN, must not read as a
+# pass, and must not be dressed up as a definite failure. Both mistakes have a
+# cost and they are different costs — treating unreachable-as-fine relocates into
+# a machine nobody verified; treating it as a fail sends somebody to debug a spec
+# that is perfectly correct.
+#
+# Parametrized over EVERY check so a new one cannot be added without an answer
+# here: the facts that feed it are blanked (which is exactly what
+# `_relocate_probe.probe` does when a prober raises) and the verdict is asserted.
+# ---------------------------------------------------------------------------
+
+#: check name -> the observations to blank so THAT check, and only that check,
+#: loses its evidence. Source-side checks are blanked on SourceFacts instead.
+_BLANKING: dict[str, dict[str, object]] = {
+    CHECK_REACHABLE: {"reachable": None},
+    CHECK_IMAGE: {"image_present": None},
+    CHECK_BINDS: {"missing_bind_sources": None},
+    CHECK_WORKDIR: {"missing_workdir_paths": None},
+    CHECK_CARD_STORE_DSN: {"card_store_url": None},
+    CHECK_CARD_STORE: {"card_store_reachable": None},
+    CHECK_CREDENTIALS: {
+        "credential_expires_in_s": None,
+        "credential_refresh_token_present": None,
+    },
+    CHECK_RUNTIME: {"supported_runtimes": None},
+    CHECK_SCHEMA: {"rejected_spec_keys": None},
+    CHECK_PORTS: {"ports_in_use": None},
+    CHECK_GROUPS: {"target_resolved_groups": None},
+    CHECK_HUB_FROM_TARGET: {"hub_reachable_from_target": None},
+    CHECK_SAC_PRESENT: {"sac_on_path": None, "sac_resolved_path": None},
+}
+
+_SOURCE_BLANKING: dict[str, dict[str, object]] = {
+    CHECK_SOURCE_WORK: {"repos": None},
+    CHECK_SESSION: {"transcripts": None},
+}
+
+
+def _with_failed_probe(check_name: str):
+    if check_name in _SOURCE_BLANKING:
+        return _run(source_facts=_clean_source(**_SOURCE_BLANKING[check_name]))
+    return _run(**_BLANKING[check_name])
+
+
+@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+def test_a_probe_that_failed_makes_its_check_unknown(check_name: str) -> None:
+    # Arrange: the prober raised, so the fact is None — never False.
+    report = _with_failed_probe(check_name)
+    # Act
+    check = _named(report, check_name)
+    # Assert
+    assert check.ok is None
+
+
+@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+def test_a_probe_that_failed_is_not_reported_as_a_failure(check_name: str) -> None:
+    # Arrange: an unknown dressed as a fail sends somebody to fix a correct spec.
+    report = _with_failed_probe(check_name)
+    # Act
+    failed = [c.name for c in report.failed]
+    # Assert
+    assert check_name not in failed
+
+
+@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+def test_a_probe_that_failed_blocks_the_relocation(check_name: str) -> None:
+    # Arrange: unknown refuses as firmly as fail. That is RELOCATION's policy,
+    # applied at the aggregation site, not baked into each check.
+    report = _with_failed_probe(check_name)
+    # Act
+    blocks = report.blocks
+    # Assert
+    assert blocks is True
+
+
+@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+def test_a_probe_that_failed_keeps_the_verdict_out_of_false(check_name: str) -> None:
+    # Arrange: the whole report must say "could not tell", not "no".
+    report = _with_failed_probe(check_name)
+    # Act
+    verdict = report.ok
+    # Assert
+    assert verdict is None
+
+
+@pytest.mark.parametrize("check_name", sorted(_BLANKING) + sorted(_SOURCE_BLANKING))
+def test_every_unknown_check_says_how_to_answer_it(check_name: str) -> None:
+    # Arrange: "I could not tell" is only useful with "here is how to tell".
+    report = _with_failed_probe(check_name)
+    # Act
+    check = _named(report, check_name)
+    # Assert
+    assert len(check.hint) > 20
+
+
+def test_the_blanking_table_covers_every_check_there_is() -> None:
+    # Arrange: a new check added without an unknown-case answer here is exactly
+    # the omission that lets an unmeasured question read as a pass.
+    report = _run()
+    covered = set(_BLANKING) | set(_SOURCE_BLANKING)
+    # Act
+    uncovered = {c.name for c in report.checks} - covered
+    # Assert
+    assert uncovered == set()
+
+
+# ---------------------------------------------------------------------------
+# the three checks added 2026-08-11: does the SPEC hold on the TARGET
+# ---------------------------------------------------------------------------
+
+
+def test_a_workdir_absent_on_the_target_fails() -> None:
+    # Arrange: spec.workdir becomes apptainer's --pwd. Absent, the agent fails at
+    # boot — which under relocation is after the source has been stopped.
+    report = _run(missing_workdir_paths=("/home/ywatanabe/proj/scitex-hpc",))
+    # Act
+    check = _named(report, CHECK_WORKDIR)
+    # Assert
+    assert check.ok is False
+
+
+def test_the_missing_workdir_is_named_with_its_host() -> None:
+    # Arrange: a path without a vantage point is a fix applied on the wrong machine.
+    report = _run(missing_workdir_paths=("/home/ywatanabe/proj/scitex-hpc",))
+    # Act
+    check = _named(report, CHECK_WORKDIR)
+    # Assert
+    assert "/home/ywatanabe/proj/scitex-hpc" in check.detail and DST in check.detail
+
+
+def test_a_card_store_dsn_naming_5432_fails_however_reachable_it_is() -> None:
+    # Arrange: THE point of this check. Something answers on 5432 nearly
+    # everywhere, so reachability passes while the agent writes its cards into a
+    # database nobody reads.
+    report = _run(
+        card_store_url="postgresql://scitex_cards@127.0.0.1:5432/scitex_cards",
+        card_store_reachable=True,
+    )
+    # Act
+    check = _named(report, CHECK_CARD_STORE_DSN)
+    # Assert
+    assert check.ok is False
+
+
+def test_a_port_less_dsn_fails_because_libpq_defaults_it_to_5432() -> None:
+    # Arrange: the same wrong endpoint, wearing no number at all.
+    report = _run(card_store_url="postgresql://scitex_cards@127.0.0.1/scitex_cards")
+    # Act
+    check = _named(report, CHECK_CARD_STORE_DSN)
+    # Assert
+    assert check.ok is False
+
+
+def test_the_dsn_hint_names_the_fleet_port() -> None:
+    # Arrange
+    report = _run(card_store_url="postgresql://scitex_cards@127.0.0.1:5432/scitex_cards")
+    # Act
+    check = _named(report, CHECK_CARD_STORE_DSN)
+    # Assert
+    assert "55432" in check.hint
+
+
+def test_the_fleet_dsn_passes() -> None:
+    # Arrange
+    report = _run()
+    # Act
+    check = _named(report, CHECK_CARD_STORE_DSN)
+    # Assert
+    assert check.ok is True
+
+
+def test_a_target_that_resolves_none_of_the_declared_groups_is_unknown() -> None:
+    # Arrange: THE 2026-08-11 shape — three hosts answer [] for every agent
+    # regardless of spec.yaml, and nine probes were refused 403 by it. Reporting
+    # that as a FAIL sends the operator to edit a correct spec.
+    report = _run(target_resolved_groups=())
+    # Act
+    check = _named(report, CHECK_GROUPS)
+    # Assert
+    assert check.ok is None
+
+
+def test_a_target_that_resolves_some_but_not_all_groups_fails() -> None:
+    # Arrange: the target ANSWERED, and the answer is no. That is a verdict.
+    report = _run(target_resolved_groups=("developer",))
+    # Act
+    check = _named(report, CHECK_GROUPS)
+    # Assert
+    assert check.ok is False
+
+
+def test_that_group_failure_names_the_group_the_target_does_not_know() -> None:
+    # Arrange
+    report = _run(target_resolved_groups=("developer",))
+    # Act
+    check = _named(report, CHECK_GROUPS)
+    # Assert
+    assert "infra" in check.detail
+
+
+def test_a_spec_declaring_no_groups_passes_the_group_check() -> None:
+    # Arrange: nothing claimed, nothing to hold. Observed by construction.
+    report = preflight(
+        agent=AGENT,
+        to_host=DST,
+        facts=_healthy_facts(target_resolved_groups=()),
+        runtime=RUNTIME,
+        source_facts=_clean_source(),
+        declared_groups=(),
+    )
+    # Act
+    check = _named(report, CHECK_GROUPS)
     # Assert
     assert check.ok is True

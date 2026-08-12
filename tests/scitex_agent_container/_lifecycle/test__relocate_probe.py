@@ -215,6 +215,8 @@ def test_a_fully_healthy_probe_set_passes_preflight() -> None:
         reachable=lambda: True,
         image_present=lambda: True,
         missing_bind_sources=lambda: (),
+        missing_workdir_paths=lambda: (),
+        card_store_url=lambda: "postgresql://cards@127.0.0.1:55432/cards",
         card_store_reachable=lambda: True,
         credential_expires_in_s=lambda: 3600.0,
         credential_refresh_token_present=lambda: True,

@@ -62,11 +62,29 @@ from ._relocate_checks import (
     check_session_resolvable,
     check_source_work,
 )
-from ._relocate_preflight_facts import Check, PreflightReport, SourceFacts, TargetFacts
+from ._relocate_checks_spec import (
+    CHECK_CARD_STORE_DSN,
+    CHECK_GROUPS,
+    CHECK_WORKDIR,
+    check_card_store_dsn,
+    check_target_groups,
+    check_workdir,
+)
+from ._relocate_preflight_facts import (
+    UNKNOWN_BLOCKS_RELOCATION,
+    Check,
+    PreflightReport,
+    SourceFacts,
+    TargetFacts,
+)
 
 __all__ = [
     "CHECK_BINDS",
     "CHECK_CARD_STORE",
+    "CHECK_CARD_STORE_DSN",
+    "CHECK_GROUPS",
+    "CHECK_WORKDIR",
+    "UNKNOWN_BLOCKS_RELOCATION",
     "CHECK_CREDENTIALS",
     "CHECK_HUB_FROM_TARGET",
     "CHECK_IMAGE",
@@ -81,6 +99,9 @@ __all__ = [
     "PreflightReport",
     "SourceFacts",
     "TargetFacts",
+    "check_card_store_dsn",
+    "check_target_groups",
+    "check_workdir",
     "preflight",
 ]
 
@@ -94,6 +115,8 @@ def preflight(
     required_ports: tuple[int, ...] = (),
     source_facts: SourceFacts | None = None,
     from_host: str = "",
+    workdir: str = "",
+    declared_groups: tuple[str, ...] = (),
 ) -> PreflightReport:
     """Evaluate every check against observed facts. Touches nothing.
 
@@ -105,16 +128,32 @@ def preflight(
     that has not looked at the source has not established the move is safe, and
     inheriting a pass for a check it never ran is the shape of every bug this
     module was written about.
+
+    ``workdir`` and ``declared_groups`` are the spec's own claims, passed in
+    rather than dug out of a spec here: this module evaluates facts and does not
+    parse yaml. ``workdir`` also gives the binds check the context it needs to
+    tell the agent's own material from the host's — without it every missing path
+    reads as "unclassified", which is honest but far less useful.
+
+    NO CHECK IS SKIPPED BECAUSE AN EARLIER ONE FAILED. All fifteen run, always.
+    An unreachable target makes most of them UNKNOWN — each carrying the same
+    probe error, which is how :mod:`_relocate_plan` recognises them as one root
+    cause rather than reporting twelve independent problems. Stopping early would
+    cost the operator a round trip to another machine per problem, and nine
+    agents are queued.
     """
     checks = (
         check_reachable(facts, to_host),
         check_image(facts, to_host),
-        check_binds(facts, to_host),
+        check_binds(facts, to_host, workdir=workdir, from_host=from_host),
+        check_workdir(facts, to_host),
+        check_card_store_dsn(facts),
         check_card_store(facts, to_host),
         check_credentials(facts),
         check_runtime(facts, runtime),
         check_schema(facts),
         check_ports(facts, required_ports),
+        check_target_groups(facts, declared_groups, to_host),
         check_hub_from_target(facts, to_host),
         check_sac_present(facts, to_host),
         check_source_work(source_facts or SourceFacts(), from_host),
