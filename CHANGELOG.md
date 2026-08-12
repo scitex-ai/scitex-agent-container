@@ -8,6 +8,44 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
+  `inbox_subscribers: 0` has always been confounded — it means a detached
+  inbox adapter *or* an agent that is not running at all — and
+  `_listen/_reachability.py` has warned about that in its own docstring since
+  it was written. Every consumer since has had to *remember* the warning, on
+  the surface an agent consults right before handing over work, and the record
+  says they do not: 2026-07-14, three agents read a wall of zeros as a deaf
+  fleet and escalated a P0 that did not exist (every agent in their lists was
+  simply stopped); 2026-08-12, a peer read the same zeros as evidence that
+  "reach decays with uptime".
+
+  Measured on the fleet host that morning: **15 registry rows, 9 reporting
+  `unreachable`, and all 9 had no tmux session, no `sac mcp channel` process,
+  and an `instances` row stamped `ended_at=2026-08-11T17:54:26Z`,
+  `exit_reason=crashed`.** Not one of them was deaf. They were dead, and their
+  registry rows had outlived them — still advertising a pid, a port and a
+  `turn_url`, with no field anywhere saying otherwise.
+
+  So the zero is now paired with the one instrument that is independent of the
+  broker's own bookkeeping — the host's tmux table — and the result is NAMED on
+  every `GET /agents` row, on `GET /agents/<name>/status`, and in
+  `sac agents health`:
+
+  - `fault: "deaf_inbox"` — a live session observed AND 0 subscribers. The
+    state that was previously unnameable, and the one worth alarming on: green
+    at every surface, work routed to it, work evaporates.
+  - `fault: "not_running"` — the row outlived the process. Not a delivery
+    fault at all; there is nothing to deliver *to*.
+  - `fault: null` — healthy, or a reading nobody could take.
+
+  Only a POSITIVE observation convicts: a snapshot we could not take (a wedged
+  tmux, or the container-blindness trap where an empty result is a namespace
+  boundary rather than an empty fleet) yields no fault, and an agent whose spec
+  does not declare the `tui` runtime is never convicted on a missing tmux
+  session it was never going to have. The overlay is a REPORT and is wired to
+  nothing destructive — least of all `deaf_inbox`, whose subject is by
+  definition a healthy session a restart would destroy.
+
 - **The Stop hook now REPORTS the queue that was waiting on a human, because
   that queue had stopped existing** (`_never_stop_when_task_remains/
   _awaiting_operator.py`). A card with `status=blocked` sends no nudge —
@@ -128,6 +166,31 @@ versioning follows [SemVer](https://semver.org/).
   `build_layer_from_source` documents `base`/`scitex`/`proxy` and
   `resolve_bootstrap_sif` already names `proxy` among the top-of-stack layers.
   An oversight, not a policy.
+
+### Fixed
+
+- **`a2a_send` no longer tells a sender to wait for a reconnect that has no
+  process to happen in.** A 0-subscriber send raised `no_subscriber_error`,
+  whose remedy says — correctly, for a live agent with a detached adapter —
+  "NOT LOST … do NOT re-send … it replays on their next connect". For a
+  *stopped* agent that advice is inverted: no session exists to reconnect, so
+  the row sits in `channel_events` until someone deliberately starts the agent,
+  and the sender waits forever behind reassuring text. This is the same shape
+  as the `sac-04` incident (a name that was never registered, queued all day
+  behind the same "it's queued" advice) one layer over — and on 2026-08-12 it
+  applied to 9 of the 15 registered agents on the host.
+
+  The send path now reads the `fault` the listen route publishes and raises a
+  distinct `target_not_running` failure with the opposite remedy. It still does
+  **not** tell the caller to start the target: whether a stopped agent should be
+  running is an operator decision, not a side effect of someone wanting to
+  message it.
+
+- **`sac agents health` no longer asserts a process state it never observed.**
+  The unreachable branch ended with "The process is up; its inbox adapter is
+  not attached" — a claim about the process the command had not made and could
+  not make. It was wrong for 9 of 15 agents on the host. It now reports which
+  zero it is, and when the cause is unconfirmed it says so instead of guessing.
 
 ### Changed
 

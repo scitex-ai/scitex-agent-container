@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 __all__ = [
     "in_sif",
+    "observed_session_snapshot",
     "pid_namespace_is_observable",
     "session_name_for_config",
     "tmux_probe_ran",
@@ -142,6 +143,33 @@ def _observed_snapshot(
         # not an empty fleet. Refuse to treat a non-observation as one.
         return None
     return snapshot
+
+
+def observed_session_snapshot(
+    socket_name: str | None = None,
+    *,
+    snapshot_fn: Callable[..., dict | None] | None = None,
+    in_sif_fn: Callable[[], bool] | None = None,
+) -> dict | None:
+    """ONE batched tmux reading, for a caller that must judge MANY agents.
+
+    Same contract as :func:`_observed_snapshot` — a ``dict`` of live sessions
+    when we were genuinely in a position to look, ``None`` when we were not
+    (wedged tmux, or the container-blindness trap where an empty result is a
+    namespace boundary rather than an empty fleet).
+
+    Public because a route that annotates every registry row must take the
+    reading ONCE. :func:`tmux_session_observation` re-probes per call, so
+    asking it about N agents costs N ``tmux`` subprocess spawns — the exact
+    O(N)-spawns shape that blew the heartbeat tick's budget and got it
+    abandoned (see :func:`.._runners._tmux._tmux_probe.list_sessions_activity`).
+    Callers look a name up in the returned dict instead.
+
+    A thin wrapper rather than a second implementation: the blindness rule
+    lives in exactly one place, so a batched caller and a per-agent caller can
+    never drift into disagreeing about what "I could not look" means.
+    """
+    return _observed_snapshot(socket_name, snapshot_fn, in_sif_fn)
 
 
 def tmux_probe_ran(
