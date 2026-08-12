@@ -450,7 +450,7 @@ jobs:
               echo "MERGED #$pr -> develop (attribution comment posted first)"
               merges=$((merges + 1))
             else
-              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose. NOTE: its attribution comment was already posted; the next tick will post another when it retries."
+              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose. Its attribution comment is already posted and will NOT be repeated: the next tick recognises the marker and merges without re-commenting."
             fi
           done
 
