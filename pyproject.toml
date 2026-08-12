@@ -331,6 +331,27 @@ library_dirs = ["src", "tests", "apps", "config", "docs", ".github"]
 [project.entry-points."scitex_dev.system_deps"]
 scitex-agent-container = "scitex_agent_container._system_deps:provide"
 
+# sac's LEAF declaration of multi-host sync semantics, aggregated by
+# scitex_dev.store.discover_store_plugins. scitex-dev owns the replication
+# PRIMITIVE (oplog, HLC, per-origin cursors, field-level merge); each leaf
+# declares what ITS rows mean when two hosts merge them. sac is a leaf here,
+# not privileged.
+#
+# The declaration is the deliverable because sac's existing cross-host path
+# is unsafe in a way that is invisible: state_db_export.import_state does
+# INSERT OR IGNORE, so a row that CONTRADICTS the local one and a
+# byte-identical duplicate both return rowcount 0. The success value is also
+# the didn't-happen value, and two hosts can disagree forever with every call
+# reporting success.
+#
+# The classification each schema encodes: an agent's pid/heartbeat is
+# PER-HOST truth (two hosts describe two different processes and each is
+# right about itself — merging them is the bug), the comms directory and the
+# ACL tables are FLEET truth (disagreement is a real conflict), and lineage
+# is append-only HISTORY (a merge must never lose a branch).
+[project.entry-points."scitex_dev.store.plugins"]
+scitex-agent-container = "scitex_agent_container._store_plugin:provide"
+
 # C10 — sac's consumer on scitex-todo's shared card-event bus. When
 # scitex-todo's board emits a card-event (commented / created /
 # reassigned / status_changed / completed / committed / pushed /

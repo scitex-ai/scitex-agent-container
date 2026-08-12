@@ -160,6 +160,22 @@ LIVE_STORE_JSON = json.dumps(
     }
 )
 
+#: The SAME store, once it also reports the engine half of its identity.
+#: ``store_uuid`` lives in the rows and is therefore copied by a fork;
+#: ``system_identifier`` comes from the engine (Postgres
+#: ``pg_control_system()``), which a file copy cannot carry with it. On
+#: 2026-08-11 two endpoints shared the uuid below while their
+#: system_identifiers differed — 7671108644284358700 vs 7672112238472680366 —
+#: and that difference was the only thing that distinguished them.
+PAIRED_STORE_JSON = json.dumps(
+    {
+        "resolved": "postgresql://scitex_cards@127.0.0.1:55432/scitex_cards",
+        "backend": "postgresql",
+        "store_uuid": "1d55dd6e-3d2a-4c24-a429-a78835ab988f",
+        "system_identifier": "7671108644284358700",
+    }
+)
+
 #: The ABANDONED sidecar, measured the same night: 365 rows, 149 unseen, a
 #: zero-byte WAL, and no write since the previous morning while readers kept
 #: attaching. Opened constantly, written never.
