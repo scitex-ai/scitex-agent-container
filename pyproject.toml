@@ -125,8 +125,8 @@ slurm = [
 ]
 openai = [
     # openai-compat-2: the `openai` agent-SDK family (spec.provider:
-    # openai). Backs `_runners/openai_session.py` (OpenAISession — the
-    # concrete ProviderSession over Runner.run_streamed + SQLiteSession)
+    # openai). Backs `_runners/openai_session.py` (OpenAIAgentsSession — the
+    # concrete HarnessSession over Runner.run_streamed + SQLiteSession)
     # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
     # Claude-only deployments must not pull it — every import is lazy and
     # the handler raises a clear HandlerError when absent. 0.17.4 floor

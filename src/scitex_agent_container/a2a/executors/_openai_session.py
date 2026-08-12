@@ -4,7 +4,7 @@ Sibling of :class:`ClaudeSessionExecutor` for the OpenAI agent-SDK
 family (scitex-todo card ``openai-compat-2``). Same wire surface (sync
 ``(name, text) -> str``); the underlying transport is
 ``agents.Runner.run_streamed`` normalized through
-:class:`scitex_agent_container._runners.openai_session.OpenAISession`,
+:class:`scitex_agent_container._runners.openai_session.OpenAIAgentsSession`,
 with conversation state persisted in the agent's ``SQLiteSession`` db.
 
 Requires the optional ``[openai]`` extra
