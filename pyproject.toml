@@ -313,7 +313,14 @@ scitex-agent-container = "scitex_agent_container._jobs._jobs_plugin:provide_jobs
 # — this key replaces them, it does not extend them, and dropping one would
 # silently start demanding @stx.session of every module under it.
 [tool.scitex-linter]
-library_dirs = ["src", "tests", "apps", "config", "docs", ".github/ci"]
+# ".github", not ".github/ci": the linter's is_script() tests `lib_dir in
+# path.parts`, so an entry with a separator in it is never a single path
+# COMPONENT and can never match. ".github/ci" sat here as a silent no-op —
+# it looked configured and exempted nothing, which is the same shape of bug
+# as a hooksPath pointing at a directory that does not exist. Nothing under
+# .github is a SciTeX session script, so the component-level entry is also
+# the honest one.
+library_dirs = ["src", "tests", "apps", "config", "docs", ".github"]
 
 # sac's SYSTEM (apt) dependency declarations, aggregated by
 # scitex_dev.system_deps.discover_system_deps. sac registered NOTHING here
