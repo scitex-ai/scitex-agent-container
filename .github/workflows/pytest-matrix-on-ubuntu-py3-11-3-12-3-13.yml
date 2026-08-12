@@ -301,11 +301,26 @@ jobs:
   # rail's own premise true instead of assumed. The label was added to that
   # runner and to no other; no other workflow names it, so it widens nothing.
   #
-  # THE COST, STATED HONESTLY: this is a separate job, so it pays a queue
-  # admission (measured median ~706 s on this pool, p90 ~2325 s). ADR-0024's
-  # cheaper in-job placement was only available under the false premise above.
-  # Correct-and-late beats fast-and-delivered-to-nobody; revisit if a
-  # control-plane-local runner is ever added to the gate pool itself.
+  # THE COST, STATED HONESTLY, IN TWO PARTS. This is a deliberate trade, not
+  # a side effect of solving the loopback problem.
+  #
+  # 1. LATENCY. A separate job pays a queue admission (measured median ~706 s
+  #    on this pool, p90 ~2325 s). ADR-0024's cheaper in-job placement was
+  #    only available under the false premise above.
+  # 2. AVAILABILITY. Pinning makes THE RAIL EXACTLY AS AVAILABLE AS THIS ONE
+  #    HOST. Exactly one runner advertises `sac-control-plane` (verified
+  #    online at merge time, not merely written here). If that machine is
+  #    down, verdicts stop -- and they stop SILENTLY, because a queued job
+  #    reports nothing and "still queued after 15 minutes" is normal here
+  #    (p90 ~902 s). A job pinned to a label nobody carries is
+  #    indistinguishable from a saturated pool, which is why the label must
+  #    be verified as ADVERTISED BY A LIVE RUNNER, never merely as named in
+  #    YAML. `verdict_delivered` reconciliation is the intended backstop and
+  #    does not exist yet.
+  #
+  # Correct-and-late beats fast-and-delivered-to-nobody, so the trade is
+  # taken; revisit if a control-plane-local runner joins the gate pool, or
+  # if a second machine is ever given the control plane.
   verdict:
     name: ci-verdict-to-pushing-agent
     needs: [test]

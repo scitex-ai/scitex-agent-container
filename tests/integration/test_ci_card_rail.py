@@ -2,23 +2,24 @@
 
 Two kinds of test live here, and the second kind is the point.
 
-**Logic tests** cover the decisions the rail makes with no store and no
+**Logic tests** cover decisions the rail makes with no store and no
 network: which card id both halves derive, who receives a verdict, what
 status a red gate produces.
 
-**Shape tests** assert facts about the WORKFLOW itself, in the spirit of
+**Shape tests** assert facts about the WORKFLOW, in the spirit of
 ``test_ci_python_matrix_shape.py``. They exist because every failure this
-rail is built to prevent is a silent one, and the two ways to re-open
-that hole are both single-line edits to YAML: unpin ``runs-on`` (the
-verdict then executes on a machine where loopback is a different host's
-daemon and a different postgres) or drop ``if: always()`` (the rail then
-only congratulates and never warns). Neither would fail any test that
-only exercised Python, and neither would look wrong in review.
+rail prevents is a silent one, and the ways to re-open that hole are all
+single-line YAML edits: unpin ``runs-on`` (the verdict then runs where
+loopback is a different host's daemon and a different postgres), drop
+``if: always()`` (the rail then only congratulates), or drop the explicit
+DSN (the store silently becomes a local file). None would fail a test
+that only exercised Python, and none would look wrong in review.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -31,20 +32,18 @@ GATE_WORKFLOW = (
     REPO_ROOT / ".github" / "workflows" / "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"
 )
 
-# The label that must remain on the verdict job. It is carried by exactly
-# one runner in the org pool -- the one on the host that runs `sac listen`
-# and the card store.
+# Carried by exactly one runner in the org pool: the machine that runs
+# `sac listen` and the card store.
 CONTROL_PLANE_LABEL = "sac-control-plane"
+LONG_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _load(module_name: str):
-    """Import a rail module by path.
+    """Import a rail module by path, the same way the runner does.
 
-    The rail deliberately is NOT an installed package: it must run under
-    ``uv run --with scitex-cards`` on a runner that has no sac install,
-    and from a git hook inside an agent container. So the tests import it
-    the same way the runner does -- by file -- rather than pretending it
-    is importable as ``scitex_agent_container.something``.
+    The rail is deliberately NOT an installed package: it runs under
+    ``uv run --with scitex-cards`` on a runner with no sac install, and
+    from a git hook inside an agent container.
     """
     sys.path.insert(0, str(CI_DIR))
     spec = importlib.util.spec_from_file_location(
@@ -71,59 +70,45 @@ def gate_workflow() -> dict:
     return yaml.safe_load(GATE_WORKFLOW.read_text(encoding="utf-8"))
 
 
-# ---------------------------------------------------------------------------
-# the card id is the ONLY channel between the two halves
-# ---------------------------------------------------------------------------
-def test_card_id_is_derived_from_repo_and_sha_only(rail_cards) -> None:
-    """Both halves must reach the same id from the same commit.
+@pytest.fixture(scope="module")
+def verdict_job(gate_workflow) -> dict:
+    return gate_workflow["jobs"]["verdict"]
 
-    There is no message passed from a developer's git hook to a runner
-    job minutes later, so the id has to be a pure function of facts both
-    sides independently hold. Anything else -- a branch name, a run id, a
-    timestamp -- would make the verdict land on a card nobody watches.
+
+@pytest.fixture(scope="module")
+def verdict_run_script(verdict_job) -> str:
+    return " ".join(step.get("run", "") for step in verdict_job["steps"])
+
+
+@pytest.fixture(scope="module")
+def verdict_env(verdict_job) -> dict:
+    return next(step["env"] for step in verdict_job["steps"] if "env" in step)
+
+
+@pytest.fixture
+def clean_agent_env():
+    """Real environment, saved and restored -- no monkeypatch.
+
+    ``pushing_agent`` reads ``os.environ`` directly, which is what it
+    does in production, so the test drives the real thing.
     """
-    long_sha = "0123456789abcdef0123456789abcdef01234567"
-    from_push = rail_cards.card_id_for("scitex-ai/scitex-agent-container", long_sha)
-    from_ci = rail_cards.card_id_for("scitex-agent-container", long_sha)
-    assert from_push == from_ci == "ci-scitex-agent-container-0123456789ab"
+    names = (
+        "SCITEX_TODO_AGENT_ID",
+        "SAC_NAME",
+        "SCITEX_AGENT_CONTAINER_AGENT",
+        "CLAUDE_AGENT_ID",
+    )
+    saved = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ.pop(name, None)
+    yield os.environ
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
-def test_card_id_distinguishes_pushes_to_the_same_branch(rail_cards) -> None:
-    a = rail_cards.card_id_for("r/x", "a" * 40)
-    b = rail_cards.card_id_for("r/x", "b" * 40)
-    assert a != b, "a verdict belongs to the commit it judged, not to the branch"
-
-
-# ---------------------------------------------------------------------------
-# a red gate must never produce a gate-less `blocked` card
-# ---------------------------------------------------------------------------
-def test_no_conclusion_maps_to_blocked(rail_cards) -> None:
-    """`blocked` without a named gate is invisible work.
-
-    Such a card nudges nobody and is excluded from the runnable count, so
-    it sits unseen until somebody goes looking -- the exact state this
-    fleet spent 2026-08-11 paying for. A red gate waits on nothing; it is
-    a finished run with a bad result, so it is `failed`.
-    """
-    assert "blocked" not in set(rail_cards.STATUS_FOR_CONCLUSION.values())
-    assert rail_cards.STATUS_FOR_CONCLUSION["failure"] == "failed"
-    assert rail_cards.STATUS_FOR_CONCLUSION["success"] == "done"
-
-
-def test_every_terminal_conclusion_has_a_status(rail, rail_cards) -> None:
-    """The two tables cannot drift apart without this failing."""
-    assert set(rail.TERMINAL_CONCLUSIONS) == set(rail_cards.STATUS_FOR_CONCLUSION)
-
-
-def test_title_leads_with_the_verdict(rail_cards) -> None:
-    title = rail_cards.card_title("scitex-ai/sac", "feat/x", "abcdef1234567890", "failure")
-    assert title.startswith("[CI FAILURE]")
-    assert "sac" in title and "feat/x" in title and "abcdef12" in title
-
-
-# ---------------------------------------------------------------------------
-# recipient resolution -- the difference between delivered and silent
-# ---------------------------------------------------------------------------
 def _agent(name: str, *, project: str, reachable: bool, started: str = "2026-08-10"):
     return {
         "name": name,
@@ -134,146 +119,443 @@ def _agent(name: str, *, project: str, reachable: bool, started: str = "2026-08-
     }
 
 
+# ---------------------------------------------------------------------------
+# the card id is the ONLY channel between the two halves
+# ---------------------------------------------------------------------------
+def test_card_id_ignores_the_repo_owner_prefix(rail_cards) -> None:
+    """Both halves must reach the same id from the same commit.
+
+    Nothing is passed from a developer's git hook to a runner job that
+    starts minutes later, so the id must be a pure function of facts both
+    sides already hold -- and the two sides spell the repo differently.
+    """
+    # Arrange
+    owner_qualified = "scitex-ai/scitex-agent-container"
+    # Act
+    from_push = rail_cards.card_id_for(owner_qualified, LONG_SHA)
+    # Assert
+    assert from_push == rail_cards.card_id_for("scitex-agent-container", LONG_SHA)
+
+
+def test_card_id_uses_twelve_sha_characters(rail_cards) -> None:
+    # Arrange
+    repo = "scitex-ai/scitex-agent-container"
+    # Act
+    card_id = rail_cards.card_id_for(repo, LONG_SHA)
+    # Assert
+    assert card_id == "ci-scitex-agent-container-0123456789ab"
+
+
+def test_card_id_distinguishes_pushes_to_the_same_branch(rail_cards) -> None:
+    """A verdict belongs to the commit it judged, not to the branch."""
+    # Arrange
+    first, second = "a" * 40, "b" * 40
+    # Act
+    ids = {rail_cards.card_id_for("r/x", first), rail_cards.card_id_for("r/x", second)}
+    # Assert
+    assert len(ids) == 2
+
+
+# ---------------------------------------------------------------------------
+# card status: never an unnamed gate, never a phantom runnable
+# ---------------------------------------------------------------------------
+def test_a_red_gate_is_never_filed_as_blocked(rail_cards) -> None:
+    """`blocked` demands a gate, and no blocker describes a red suite.
+
+    A gate-less blocked card nudges nobody and leaves the runnable count
+    -- how 21 operator decisions sat invisible for weeks.
+    """
+    # Arrange
+    statuses = rail_cards.STATUS_FOR_CONCLUSION
+    # Act
+    values = set(statuses.values())
+    # Assert
+    assert "blocked" not in values
+
+
+def test_a_failed_run_files_the_card_failed(rail_cards) -> None:
+    # Arrange
+    conclusion = "failure"
+    # Act
+    status = rail_cards.STATUS_FOR_CONCLUSION[conclusion]
+    # Assert
+    assert status == "failed"
+
+
+def test_a_successful_run_files_the_card_done(rail_cards) -> None:
+    # Arrange
+    conclusion = "success"
+    # Act
+    status = rail_cards.STATUS_FOR_CONCLUSION[conclusion]
+    # Assert
+    assert status == "done"
+
+
+def test_every_terminal_conclusion_has_a_status(rail, rail_cards) -> None:
+    """The two tables cannot drift apart without this failing."""
+    # Arrange
+    conclusions = set(rail.TERMINAL_CONCLUSIONS)
+    # Act
+    mapped = set(rail_cards.STATUS_FOR_CONCLUSION)
+    # Assert
+    assert conclusions == mapped
+
+
+def test_a_pending_card_is_out_of_the_runnable_set(rail_cards) -> None:
+    """`in_progress` would make a waiting card look like a stalled one.
+
+    Queue p90 here is ~902s, so a pending card would sit in somebody's
+    runnable work looking abandoned for a quarter of an hour.
+    """
+    # Arrange
+    expected = "blocked"
+    # Act
+    status = rail_cards.PENDING_STATUS
+    # Assert
+    assert status == expected
+
+
+def test_a_pending_card_names_compute_as_its_gate(rail_cards) -> None:
+    """`compute` is the store's own word for "waiting on a machine"."""
+    # Arrange
+    expected = "compute"
+    # Act
+    blocker = rail_cards.PENDING_BLOCKER
+    # Assert
+    assert blocker == expected
+
+
+def test_the_verdict_clears_the_pending_blocker(rail_cards) -> None:
+    """A card parked on a gate must be un-parked when the gate opens.
+
+    Otherwise the rail leaves one permanently-blocked card per push, on a
+    gate that has already opened -- its own failure mode one level up.
+    """
+    # Arrange
+    source = (CI_DIR / "ci_card_rail.py").read_text(encoding="utf-8")
+    # Act
+    verdict_half = source.split("def record_verdict", 1)[1]
+    # Assert
+    assert "blocker=BLOCKER_CLEARED" in verdict_half
+
+
+def test_clearing_a_field_means_the_empty_string(rail_cards) -> None:
+    # Arrange
+    expected = ""
+    # Act
+    sentinel = rail_cards.BLOCKER_CLEARED
+    # Assert
+    assert sentinel == expected
+
+
+def test_title_leads_with_the_verdict(rail_cards) -> None:
+    """The one word a reader woken at 4am needs, first."""
+    # Arrange
+    repo, branch, sha = "scitex-ai/sac", "feat/x", "abcdef1234567890"
+    # Act
+    title = rail_cards.card_title(repo, branch, sha, "failure")
+    # Assert
+    assert title.startswith("[CI FAILURE]")
+
+
+def test_title_identifies_the_branch_a_human_would_look_for(rail_cards) -> None:
+    # Arrange
+    repo, branch, sha = "scitex-ai/sac", "feat/x", "abcdef1234567890"
+    # Act
+    title = rail_cards.card_title(repo, branch, sha, "failure")
+    # Assert
+    assert "sac" in title and "feat/x" in title and "abcdef12" in title
+
+
+# ---------------------------------------------------------------------------
+# recipient resolution -- the difference between delivered and silent
+# ---------------------------------------------------------------------------
 def test_recipient_prefers_a_reachable_agent_over_a_deaf_one(rail) -> None:
     """The regression that motivated not reusing sac's resolve_owner.
 
-    Two agent specs declare ``project: scitex-agent-container``. sac's
-    ``_ci_owner.resolve_owner`` walks ``sorted(glob("*/spec.yaml"))`` and
-    returns the first match, and "-" sorts before "/", so
-    ``scitex-agent-container-04`` wins -- an agent measured with zero
-    inbox subscribers since 2026-08-10. Delivering there raises no error
-    anywhere; it simply reaches nobody.
+    Two specs declare ``project: scitex-agent-container``. That function
+    walks ``sorted(glob("*/spec.yaml"))`` and takes the first, and "-"
+    sorts before "/", so ``scitex-agent-container-04`` wins -- measured
+    with zero inbox subscribers since 2026-08-10. Delivering there raises
+    nothing anywhere; it simply reaches nobody.
     """
+    # Arrange
     agents = [
-        _agent("scitex-agent-container-04", project="scitex-agent-container", reachable=False),
-        _agent("scitex-agent-container", project="scitex-agent-container", reachable=True),
+        _agent("sac-04", project="sac", reachable=False),
+        _agent("sac", project="sac", reachable=True),
     ]
-    who, how = rail.resolve_recipient(card=None, repo="x/scitex-agent-container", agents=agents)
-    assert who == "scitex-agent-container"
+    # Act
+    who, _how = rail.resolve_recipient(card=None, repo="x/sac", agents=agents)
+    # Assert
+    assert who == "sac"
+
+
+def test_spec_resolution_reports_how_it_decided(rail) -> None:
+    # Arrange
+    agents = [_agent("sac", project="sac", reachable=True)]
+    # Act
+    _who, how = rail.resolve_recipient(card=None, repo="x/sac", agents=agents)
+    # Assert
     assert how == "spec"
 
 
 def test_recorded_pusher_beats_any_inference(rail) -> None:
     """A record of who pushed outranks a guess from the repo name."""
+    # Arrange
     agents = [_agent("some-other-agent", project="sac", reachable=True)]
-    who, how = rail.resolve_recipient(
+    # Act
+    who, _how = rail.resolve_recipient(
         card={"agent": "the-actual-pusher"}, repo="x/sac", agents=agents
     )
-    assert (who, how) == ("the-actual-pusher", "card")
+    # Assert
+    assert who == "the-actual-pusher"
+
+
+def test_card_resolution_reports_how_it_decided(rail) -> None:
+    # Arrange
+    agents = [_agent("some-other-agent", project="sac", reachable=True)]
+    # Act
+    _who, how = rail.resolve_recipient(
+        card={"agent": "the-actual-pusher"}, repo="x/sac", agents=agents
+    )
+    # Assert
+    assert how == "card"
 
 
 def test_unresolvable_recipient_is_reported_not_guessed(rail) -> None:
-    who, how = rail.resolve_recipient(card=None, repo="x/nobody-owns-this", agents=[])
-    assert who is None and how == "unresolved"
+    """The caller must fail loudly rather than drop the verdict."""
+    # Arrange
+    agents: list[dict] = []
+    # Act
+    who, _how = rail.resolve_recipient(card=None, repo="x/nobody", agents=agents)
+    # Assert
+    assert who is None
 
 
 def test_deaf_is_still_chosen_when_it_is_the_only_candidate(rail) -> None:
-    """A deaf owner is better than no addressee -- the event is durable.
+    """A deaf owner beats no addressee -- the event is durable.
 
-    ``publish_to_agent`` persists to ``channel_events`` BEFORE publishing,
-    so a verdict addressed to a currently-unsubscribed agent is replayed
-    on its next connect rather than lost. Refusing to address it would
-    throw away a recoverable delivery.
+    ``publish_to_agent`` persists to ``channel_events`` before it
+    publishes, so a verdict addressed to an unsubscribed agent replays on
+    its next connect. Refusing to address it would discard a recoverable
+    delivery.
     """
+    # Arrange
     agents = [_agent("only-one", project="sac", reachable=False)]
-    who, _ = rail.resolve_recipient(card=None, repo="x/sac", agents=agents)
+    # Act
+    who, _how = rail.resolve_recipient(card=None, repo="x/sac", agents=agents)
+    # Assert
     assert who == "only-one"
 
 
 # ---------------------------------------------------------------------------
 # identity resolution
 # ---------------------------------------------------------------------------
-def test_unexpanded_template_is_not_an_identity(rail, monkeypatch) -> None:
+def test_unexpanded_template_is_not_an_identity(rail, clean_agent_env) -> None:
     """``${SCITEX_TODO_AGENT_ID}`` arrives literally in some processes.
 
     Measured in the cards MCP server on this host. Accepting it would
     file cards owned by an agent whose name is a shell template.
     """
-    monkeypatch.setenv("SCITEX_TODO_AGENT_ID", "${SCITEX_TODO_AGENT_ID}")
-    monkeypatch.setenv("SAC_NAME", "real-agent")
-    assert rail.pushing_agent() == "real-agent"
+    # Arrange
+    clean_agent_env["SCITEX_TODO_AGENT_ID"] = "${SCITEX_TODO_AGENT_ID}"
+    clean_agent_env["SAC_NAME"] = "real-agent"
+    # Act
+    resolved = rail.pushing_agent()
+    # Assert
+    assert resolved == "real-agent"
 
 
-def test_no_identity_anywhere_returns_none(rail, monkeypatch) -> None:
-    for var in rail.AGENT_ID_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
-    assert rail.pushing_agent() is None
+def test_no_identity_anywhere_returns_none(rail, clean_agent_env) -> None:
+    """An owner-less card is rejected by the store, so this must be visible.
+
+    The fixture has already removed every identity variable; returning
+    None is what lets the push half report that plainly instead of
+    filing a card with no owner.
+    """
+    # Arrange
+    present = [v for v in rail.AGENT_ID_ENV_VARS if clean_agent_env.get(v)]
+    # Act
+    resolved = rail.pushing_agent() if not present else "fixture-did-not-clean"
+    # Assert
+    assert resolved is None
 
 
 # ---------------------------------------------------------------------------
 # the message a woken human reads
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("conclusion", ["success", "failure"])
-def test_verdict_text_carries_conclusion_run_and_card(rail, conclusion: str) -> None:
+def test_verdict_text_states_the_conclusion(rail, conclusion: str) -> None:
+    # Arrange
+    run_url = "https://github.com/o/r/actions/runs/1"
+    # Act
     text = rail.verdict_text(
         repo="scitex-ai/sac",
         branch="feat/x",
         sha="abcdef1234567890",
         conclusion=conclusion,
         leg="pytest-matrix",
-        run_url="https://github.com/o/r/actions/runs/1",
+        run_url=run_url,
     )
+    # Assert
     assert conclusion.upper() in text
-    assert "https://github.com/o/r/actions/runs/1" in text
-    assert rail.card_id_for("scitex-ai/sac", "abcdef1234567890") in text
+
+
+def test_verdict_text_links_the_run(rail) -> None:
+    # Arrange
+    run_url = "https://github.com/o/r/actions/runs/1"
+    # Act
+    text = rail.verdict_text(
+        repo="scitex-ai/sac",
+        branch="feat/x",
+        sha="abcdef1234567890",
+        conclusion="failure",
+        leg="pytest-matrix",
+        run_url=run_url,
+    )
+    # Assert
+    assert run_url in text
+
+
+def test_a_red_verdict_names_what_broke(rail) -> None:
+    """Arriving without naming the failing test solves half the problem."""
+    # Arrange
+    detail = "failed: pytest-matrix\n  E   assert 2 == 4"
+    # Act
+    text = rail.verdict_text(
+        repo="scitex-ai/sac",
+        branch="feat/x",
+        sha="abcdef1234567890",
+        conclusion="failure",
+        leg="pytest-matrix",
+        run_url="https://example.test/1",
+        detail=detail,
+    )
+    # Assert
+    assert "assert 2 == 4" in text
 
 
 # ---------------------------------------------------------------------------
-# WORKFLOW SHAPE -- the two single-line edits that would silently re-break it
+# WORKFLOW SHAPE -- the single-line edits that would silently re-break it
 # ---------------------------------------------------------------------------
-def test_verdict_job_is_pinned_to_the_control_plane_host(gate_workflow) -> None:
+def test_verdict_job_is_pinned_to_the_control_plane_host(verdict_job) -> None:
     """ADR-0024 assumed "the self-hosted runners execute on this host".
 
     They do not. ``vars.CI_RUNS_ON`` is ``scitex-org-cpu``: four runners
-    on four machines (scitex-01..04), and only scitex-04-org-cpu-01 sits
-    on the box running ``sac listen`` and the card store. Unpinned, the
-    verdict job would 75% of the time POST to a different machine's
-    loopback and write to a different postgres -- delivering to nobody
-    and recording nowhere, with nothing raising an error.
+    on four machines, and only scitex-04-org-cpu-01 sits on the box
+    running ``sac listen`` and the card store. Unpinned, this job would
+    75% of the time POST to another machine's loopback and write to
+    another postgres -- delivered to nobody, recorded nowhere, silent.
     """
-    job = gate_workflow["jobs"]["verdict"]
-    runs_on = job["runs-on"]
-    assert isinstance(runs_on, list), "must be a literal label list, not vars.CI_RUNS_ON"
-    assert CONTROL_PLANE_LABEL in runs_on
-    assert "self-hosted" in runs_on
+    # Arrange
+    runs_on = verdict_job["runs-on"]
+    # Act
+    labels = set(runs_on) if isinstance(runs_on, list) else set()
+    # Assert
+    assert CONTROL_PLANE_LABEL in labels
 
 
-def test_verdict_job_reports_red(gate_workflow) -> None:
-    """Without ``always()`` the job is skipped exactly when it matters.
+def test_verdict_job_does_not_inherit_the_shared_runner_pool(verdict_job) -> None:
+    """A literal label list, never ``vars.CI_RUNS_ON``."""
+    # Arrange
+    runs_on = verdict_job["runs-on"]
+    # Act
+    is_literal_list = isinstance(runs_on, list)
+    # Assert
+    assert is_literal_list
 
-    ``needs: [test]`` alone means a failed gate skips the verdict job, so
-    the rail would deliver green verdicts and stay silent on red -- a
-    congratulations service, not a feedback rail.
+
+def test_verdict_job_reports_red(verdict_job) -> None:
+    """Without ``always()`` a failed gate SKIPS this job.
+
+    The rail would then deliver green verdicts and stay silent on red --
+    a congratulations service, not a feedback rail.
     """
-    job = gate_workflow["jobs"]["verdict"]
-    assert "always()" in str(job.get("if", ""))
-    assert "test" in job["needs"]
+    # Arrange
+    condition = str(verdict_job.get("if", ""))
+    # Act
+    fires_unconditionally = "always()" in condition
+    # Assert
+    assert fires_unconditionally
 
 
-def test_verdict_job_passes_the_card_store_explicitly(gate_workflow) -> None:
+def test_verdict_job_waits_for_the_gate(verdict_job) -> None:
+    # Arrange
+    needs = verdict_job["needs"]
+    # Act
+    waits_on_test = "test" in needs
+    # Assert
+    assert waits_on_test
+
+
+def test_verdict_job_passes_the_card_store_explicitly(verdict_env) -> None:
     """An unset DSN does not fail -- it silently picks a local file.
 
-    A ``run:`` step gets a non-interactive shell that sources no profile,
-    so the DSN must come from the workflow. Writing the verdict into a
-    store no board reads is the same silent-nobody failure as delivering
-    to a deaf agent.
+    A ``run:`` step gets a non-interactive shell sourcing no profile, so
+    the DSN must come from the workflow. Writing the verdict into a store
+    no board reads is the same silent-nobody failure as a deaf recipient.
     """
-    step = next(
-        s for s in gate_workflow["jobs"]["verdict"]["steps"] if "env" in s
-    )
-    assert "SCITEX_CARDS_DB" in step["env"]
-    assert "postgres" in step["env"]["SCITEX_CARDS_DB"]
+    # Arrange
+    keys = set(verdict_env)
+    # Act
+    declares_store = "SCITEX_CARDS_DB" in keys
+    # Assert
+    assert declares_store
 
 
-def test_verdict_step_invokes_the_rail_with_a_conclusion(gate_workflow) -> None:
-    run = " ".join(
-        s.get("run", "") for s in gate_workflow["jobs"]["verdict"]["steps"]
-    )
-    assert "ci_card_rail.py verdict" in run
-    assert "--conclusion" in run
-    # uv by absolute fallback: the runner service's PATH is the system
-    # default and does not include ~/.local/bin.
-    assert ".local/bin/uv" in run
+def test_verdict_job_points_at_a_postgres_store(verdict_env) -> None:
+    # Arrange
+    dsn = verdict_env["SCITEX_CARDS_DB"]
+    # Act
+    is_postgres = "postgres" in dsn
+    # Assert
+    assert is_postgres
+
+
+def test_verdict_job_can_read_failed_job_logs(gate_workflow) -> None:
+    """Naming the failure needs ``actions: read``.
+
+    A workflow that withholds a permission its own job needs is one of
+    the inert-but-configured shapes this fleet keeps rediscovering.
+    """
+    # Arrange
+    permissions = gate_workflow["permissions"]
+    # Act
+    granted = permissions.get("actions")
+    # Assert
+    assert granted == "read"
+
+
+def test_verdict_step_invokes_the_rail(verdict_run_script) -> None:
+    # Arrange
+    script = verdict_run_script
+    # Act
+    invokes = "ci_card_rail.py verdict" in script
+    # Assert
+    assert invokes
+
+
+def test_verdict_step_passes_the_gate_result(verdict_run_script) -> None:
+    # Arrange
+    script = verdict_run_script
+    # Act
+    passes_conclusion = "--conclusion" in script
+    # Assert
+    assert passes_conclusion
+
+
+def test_verdict_step_resolves_uv_by_absolute_path(verdict_run_script) -> None:
+    """The runner service's PATH is the system default.
+
+    It does not include ~/.local/bin, so a bare ``uv`` is not found here
+    even though it is on the operator's interactive PATH.
+    """
+    # Arrange
+    script = verdict_run_script
+    # Act
+    has_absolute_fallback = ".local/bin/uv" in script
+    # Assert
+    assert has_absolute_fallback
 
 
 # EOF

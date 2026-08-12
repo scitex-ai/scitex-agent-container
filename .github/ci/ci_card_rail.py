@@ -49,6 +49,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ci_rail_cards import (  # noqa: E402 — sibling module, path fixed up above
+    BLOCKER_CLEARED,
     STATUS_FOR_CONCLUSION,
     card_id_for,
     card_title,
@@ -266,6 +267,12 @@ def record_verdict(
         card_id,
         title=card_title(repo, branch, sha, conclusion),
         status=STATUS_FOR_CONCLUSION[conclusion],
+        # CLOSE THE LOOP. The push half parked this card as blocked on
+        # `compute` (waiting for a machine). If the verdict did not clear
+        # that, every pushed commit would leave behind a card blocked
+        # forever on a gate that has already opened -- this rail's own
+        # failure mode, reproduced one level up and at one card per push.
+        blocker=BLOCKER_CLEARED,
         kind="task",
         repo=repo_basename(repo),
         project=repo_basename(repo),

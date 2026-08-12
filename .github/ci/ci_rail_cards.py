@@ -35,6 +35,34 @@ from typing import Any
 # which is what makes ``failed`` both terminal and honest here.
 STATUS_FOR_CONCLUSION = {"success": "done", "failure": "failed"}
 
+# A pushed commit awaiting CI is BLOCKED ON COMPUTE, and both halves of
+# that phrase are load-bearing.
+#
+# Not ``in_progress``: nobody is doing it. A pending card in the runnable
+# set is indistinguishable from a stalled one to every reader and every
+# stop hook, and with queue p90 at ~902 s it would sit there looking
+# abandoned for a quarter of an hour on a healthy day. One card per push
+# per repo in that state is not a board, it is a log wearing a board's
+# clothes -- and it blocked a peer's board three times in an hour before
+# this changed.
+#
+# But ALSO not a bare ``blocked``: a blocked card with no named gate
+# nudges nobody and leaves the runnable count, which is how 21 operator
+# decisions sat invisible for weeks. ``compute`` is the store's own word
+# for "waiting on a machine", which is precisely and literally what a
+# queued CI run is. So the card is out of the runnable set AND says why.
+#
+# The verdict half MUST clear this blocker (see ``BLOCKER_CLEARED``). A
+# pending card whose verdict never arrives is this rail's own failure
+# mode reproduced one level up.
+PENDING_STATUS = "blocked"
+PENDING_BLOCKER = "compute"
+
+# The card package clears a field when handed an empty string. Named,
+# because ``blocker=""`` at a call site reads like an oversight and is
+# in fact the whole close-the-loop step.
+BLOCKER_CLEARED = ""
+
 __all__ = [
     "STATUS_FOR_CONCLUSION",
     "card_id_for",
@@ -170,15 +198,20 @@ def record_push(
 ) -> Any:
     """Register a push on its card. Driven by the ``pre-push`` hook.
 
-    ``agent`` is whoever actually pushed, and recording it is the whole
-    reason the verdict half can address the right agent later. Status is
-    ``in_progress``: a pushed commit awaiting CI is work in flight, and
-    the owner is the person who can act on it.
+    ``agent`` is whoever actually PUSHED -- resolved from the pushing
+    process's own environment, never from the repo's owning agent. The
+    distinction matters the moment this leaves one repo: the pusher is
+    who can act on a red verdict, whereas a repo-level identity simply
+    accumulates everybody's pushes onto one board.
+
+    Status is ``blocked``/``compute`` -- waiting on a machine, with the
+    gate named. See ``PENDING_STATUS``.
     """
     pkg = cards()
     card_id = card_id_for(repo, sha)
     fields: dict[str, Any] = {
-        "status": "in_progress",
+        "status": PENDING_STATUS,
+        "blocker": PENDING_BLOCKER,
         "kind": "task",
         "repo": repo_basename(repo),
         "project": repo_basename(repo),
