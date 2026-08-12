@@ -6,6 +6,64 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sac agents reconcile` refuses a MASS restart: N corpses with no tmux
+  server at all is ONE event, not N agents dying.** The reconcile timer is
+  currently disabled and has never run; this is what has to land before it is
+  safe to arm.
+
+  `_runners/_tmux/_tmux_probe.py` treats tmux's "no server running" as a
+  CONFIRMED-empty fleet — it returns `{}`, a real observation, not `None` — and
+  `_verdict_tmux._observed_snapshot` rescues that only `if not snapshot and
+  in_sif_fn()`, i.e. only inside a container. This job runs under
+  `systemd --user` on the HOST, where `in_sif()` is `False`, so `{}` passed
+  straight through as "every session is genuinely absent".
+
+  Correct when a tmux server is normally absent. Catastrophically wrong when
+  the server dying IS the failure mode — which is what happened on 2026-08-11,
+  when the host's tmux server went away and took eleven agents with it inside a
+  two-second window. Every one of them reads as an independent corpse whose
+  spec asks to be kept running.
+
+  The existing budget does not cover this and is not the thing that fails: it
+  throttles per agent (30-min debounce, 2/agent/hour) and per pass (10), and
+  neither is fleet-wide. **10 restarts/pass x 12 passes/hour = up to 120
+  container starts an hour** on a host that just had a resource event, with 90
+  of 113 specs opted in. It does not even fail fast — `tmux new-session` spawns
+  a server, so `sac agents start` SUCCEEDS into a host that just lost one.
+
+  A pass that would restart more than one agent while **no tmux server exists**
+  now withholds every restart, spends no budget, and exits 2 (new verdict
+  `FLEET-BLACKOUT`, grouped with `UNKNOWN`/`BUDGET-UNKNOWN` because the pass
+  looked and could not resolve what it saw).
+
+  The predicate is SERVER-ABSENT, not zero-sessions, and that distinction is
+  the design. Both incidents show an empty session list and demand opposite
+  responses: a live server holding no sessions means the AGENTS died — the
+  2026-06 OAuth rotation killed 33 with tmux untouched, and recovering exactly
+  that is why this job exists — while no server at all means one thing killed
+  them together. An earlier draft keyed on zero sessions and would have blocked
+  the first; `test_whole_dead_fleet_is_recovered` caught it on the first run.
+  The fact separating them was already in the probe's hands (`rc != 0` plus a
+  no-server marker versus `rc == 0` with no rows) and was being discarded at
+  the boundary; `list_sessions_activity_detailed` now carries it, and
+  `list_sessions_activity` keeps its exact contract.
+
+  A single corpse is still restarted even with the server gone — refusing there
+  would strand a one-agent host, and one restart is a blast radius the
+  per-agent budget already bounds.
+
+- **The fleet-reconcile job description no longer promises a give-up it does
+  not implement.** It claimed an unrecoverable agent is "RECORDED as degraded
+  instead of bounced endlessly". The recording is implemented; the giving-up is
+  not. The hourly cap is a ROLLING window, so steady state for an agent that
+  can never recover is 2 restarts/hour forever (~48 container starts/day) —
+  which `_budget.py` argues deliberately, since a permanent give-up would
+  strand an agent that crashed three times last March. The behaviour is right
+  and the sentence was wrong; it now says "bounded RATE, not eventual
+  give-up". A promise nobody keeps is worse than no promise.
+
 ### Added
 
 - **A zero on the inbox now names its cause: `deaf_inbox` vs `not_running`.**
