@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ci_rail_cards import (  # noqa: E402 — sibling module, path fixed up above
     BLOCKER_CLEARED,
     STATUS_FOR_CONCLUSION,
+    VERDICT_ACTOR,
     card_id_for,
     card_title,
     cards,
@@ -279,6 +280,13 @@ def record_verdict(
     upsert_card(
         pkg,
         card_id,
+        # A runner's `run:` step carries NO agent identity, and the store
+        # refuses to invent a creator. Without this the verdict half
+        # cannot create a card -- the path taken whenever the pre-push
+        # hook did not run, i.e. every human push and every repo where
+        # the hook is not installed. The rail would fail precisely where
+        # it is meant to be the safety net.
+        create_only={"created_by": VERDICT_ACTOR},
         title=card_title(repo, branch, sha, conclusion),
         status=STATUS_FOR_CONCLUSION[conclusion],
         # CLOSE THE LOOP. The push half parked this card as blocked on

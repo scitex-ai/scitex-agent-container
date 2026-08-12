@@ -335,6 +335,53 @@ def test_superseding_is_scoped_to_one_branch(rail_cards) -> None:
     assert store.tasks[other_id]["status"] == "blocked"
 
 
+def test_the_verdict_half_supplies_a_creator_when_it_creates(rail_cards) -> None:
+    """A GitHub runner's `run:` step carries NO agent identity at all.
+
+    The store demands a creator and refuses to invent one, so creating a
+    card there fails unless the rail supplies it. This is the path taken
+    whenever the pre-push hook did not run -- every human push, every
+    repo without the hook -- so the rail would fail exactly where it is
+    meant to be the safety net. Found by running the real command under
+    `env -i` plus the runner service's PATH; from a container shell every
+    identity variable is populated and the call succeeds, which is why
+    this cannot be caught by testing from a shell.
+    """
+    # Arrange
+    source = (CI_DIR / "ci_card_rail.py").read_text(encoding="utf-8")
+    # Act
+    verdict_half = source.split("def record_verdict", 1)[1]
+    # Assert
+    assert 'create_only={"created_by": VERDICT_ACTOR}' in verdict_half
+
+
+def test_creator_is_only_sent_on_creation(rail_cards) -> None:
+    """`created_by` is accepted by add_task and REJECTED by update_task.
+
+    One dict cannot serve both calls, which is the whole reason
+    `create_only` exists as a separate channel.
+    """
+    # Arrange
+    calls: list[str] = []
+
+    class _Store:
+        TaskNotFoundError = KeyError
+
+        def get_task(self, task_id: str):
+            return {"id": task_id}
+
+        def update_task(self, **fields):
+            calls.append("update:" + ",".join(sorted(fields)))
+            return fields
+
+    # Act
+    rail_cards.upsert_card(
+        _Store(), "ci-x-1", title="t", create_only={"created_by": "ci"}, status="done"
+    )
+    # Assert
+    assert "created_by" not in calls[0]
+
+
 def test_a_green_verdict_does_not_claim_mergeability(rail) -> None:
     """This rail sees ONE workflow; `needs:` cannot cross workflow files.
 

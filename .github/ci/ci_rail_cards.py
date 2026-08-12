@@ -63,6 +63,24 @@ PENDING_BLOCKER = "compute"
 # in fact the whole close-the-loop step.
 BLOCKER_CLEARED = ""
 
+# Who the store records as having filed a CI-created card.
+#
+# The store demands a creator AND an assignee and refuses to invent
+# either -- correctly, since an owner-less card is nobody's. The verdict
+# half always resolves an assignee (the pusher, or the reachable owning
+# agent), but on a GitHub runner there is no agent identity in the
+# environment AT ALL: a job's `run:` step has no $SCITEX_TODO_AGENT_ID,
+# no $SAC_NAME, nothing. Measured by running the real command under the
+# runner's exact environment (`env -i` + the runner service's PATH),
+# which is the only way this surfaces -- from a container shell every
+# identity variable is populated and the call succeeds.
+#
+# It matters on the path that MATTERS: the verdict half creates the card
+# whenever the pre-push hook did not run, which is every human push and
+# every repo where the hook is not installed. Without this the rail
+# fails exactly where it was supposed to be the safety net.
+VERDICT_ACTOR = "ci"
+
 __all__ = [
     "STATUS_FOR_CONCLUSION",
     "card_id_for",
@@ -237,16 +255,29 @@ def get_card(pkg: Any, card_id: str) -> dict[str, Any] | None:
         return None
 
 
-def upsert_card(pkg: Any, card_id: str, *, title: str, **fields: Any) -> Any:
+def upsert_card(
+    pkg: Any,
+    card_id: str,
+    *,
+    title: str,
+    create_only: dict[str, Any] | None = None,
+    **fields: Any,
+) -> Any:
     """Create the card, or update it when this rail already made one.
 
     ``add_task`` raises on an existing id, so the read decides. No lock
     spans the two halves of the rail and none is needed: the push half
     runs minutes ahead of the verdict half, and even a genuine race
     converges, because both sides write the same derived id.
+
+    ``create_only`` carries fields the store accepts at CREATION and
+    rejects on update -- ``created_by`` above all. Splitting them is not
+    tidiness: passing ``created_by`` to ``update_task`` is an error, and
+    omitting it from ``add_task`` is also an error, so one dict cannot
+    serve both calls.
     """
     if get_card(pkg, card_id) is None:
-        return pkg.add_task(id=card_id, title=title, **fields)
+        return pkg.add_task(id=card_id, title=title, **fields, **(create_only or {}))
     return pkg.update_task(task_id=card_id, title=title, **fields)
 
 
