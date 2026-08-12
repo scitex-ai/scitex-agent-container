@@ -28,6 +28,7 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_dev",
     "scitex_dev._cli._completion",
     "scitex_dev._cli.ecosystem",
+    "scitex_dev.hooks",
     "scitex_dev.hosts",
     "scitex_dev.jobs",
     "scitex_dev.linter._rules._base",
