@@ -38,6 +38,41 @@ audit:
           a security regression, not a compliance win. Kept hosted until an
           ephemeral/isolated runner exists for untrusted-trigger workflows.
 
+  # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
+  #
+  # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
+  # `JobSpec(name="sac.accounts-refresh")` is genuinely not hyphen-
+  # separated, and the rule exists for a real reason:
+  # `jobs/_systemd.py::systemd_unit_name` derives the unit FILENAME from
+  # the job name verbatim, with no sanitisation.
+  #
+  # What is deferred is the REMEDY, because the obvious one is more
+  # dangerous than the defect. Renaming does not re-label the running
+  # unit; it makes sac install a SECOND unit beside the live hand-written
+  # one. That unit is the fleet's SOLE OAuth refresher, and it refreshes a
+  # SINGLE-USE token — two refreshers racing revoke each other, taking
+  # every agent's authentication down with them. So the rename is a
+  # supervised systemd unit migration (stop-old -> remove-old ->
+  # install-new -> verify-exactly-one), never a drive-by edit, and
+  # never at an hour when nobody is watching.
+  #
+  # The supervised path already exists: `_jobs/_migrate/_renames.py`.
+  # This entry comes off in the same change that runs the migration.
+  skip-rules:
+    - rule: PS-226
+      reason: >-
+        Correct finding, deferred to the supervised job-name migration —
+        not waived. `systemd_unit_name` uses `JobSpec.name` verbatim, so
+        renaming `sac.accounts-refresh` installs a SECOND unit beside the
+        live one instead of adopting it. That job is the fleet's sole
+        OAuth refresher against a SINGLE-USE refresh token, where two
+        racing refreshers revoke each other and take fleet-wide
+        authentication down. The migration must be ordered stop-old ->
+        remove-old -> install-new -> verify-exactly-one and run
+        supervised; the path exists in `_jobs/_migrate/_renames.py`.
+        Tracked in card `sac-accounts-refresh-unit-migration`; this entry
+        is removed by the change that performs the migration.
+
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
   #   - config/      declarative YAML schema + templates the CLI
