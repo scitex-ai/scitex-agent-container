@@ -267,6 +267,25 @@ def test_refusal_names_the_token_the_form_and_a_corrected_example():
     assert present == (True, True, True, True, True), stderr
 
 
+def test_unexpected_payload_shape_fails_open():
+    # Arrange — the header promises FAIL-OPEN on an unexpected payload; a
+    # non-string `text` must not crash the hook into a noisy non-zero.
+    # Kept out of the case table on purpose: it is a fail-open contract,
+    # not one of the tightening's newly-refused cases.
+    payload = json.dumps({"tool_name": _REPLY_TOOL, "tool_input": {"text": ["#970"]}})
+    # Act
+    result = subprocess.run(
+        ["bash", str(_HOOK)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_env_with_python_on_path(),
+    )
+    # Assert
+    assert result.returncode == _ALLOW, result.stderr[-600:]
+
+
 def test_mutation_old_narrow_predicate_flips_exactly_the_newly_enforced_cases(
     tmp_path: Path,
 ):

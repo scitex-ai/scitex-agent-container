@@ -187,8 +187,8 @@ tool = data.get("tool_name", "")
 if "claude-code-telegrammer__reply" not in tool:
     sys.exit(0)
 text = (data.get("tool_input", {}) or {}).get("text", "") or ""
-if not text:
-    sys.exit(0)
+if not isinstance(text, str) or not text:
+    sys.exit(0)   # FAIL-OPEN: an unexpected payload shape is not a violation
 
 # Blank every URL to NULs before scanning. NUL (not space) so a link can
 # never bridge a number to a parenthesis that follows it, and same-length
