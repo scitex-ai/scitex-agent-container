@@ -877,7 +877,7 @@ def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
 
 
 def test_agent_send_allocator_claim_diagnosis_reports_running(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, dead_port
 ):
     # Arrange — only an allocator claim (no row) on a port nothing is
     # listening on, so the dispatch fails its reachability gate and we
