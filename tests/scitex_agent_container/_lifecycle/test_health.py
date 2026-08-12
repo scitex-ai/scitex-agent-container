@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,10 +26,12 @@ import pytest
 from scitex_agent_container._lifecycle import health as health_mod
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config._types import (
+    A2ASpec,
     AgentConfig,
     HealthSpec,
     RestartSpec,
 )
+from scitex_agent_container.runtimes._tui_turn_bridge import build_server
 
 # ---------------------------------------------------------------------------
 # Real fakes & helpers (no unittest.mock)
@@ -352,9 +355,12 @@ def test_check_a2a_card_http_error_includes_status_code(
     assert "HTTP 503" in msg
 
 
-def test_check_a2a_card_url_error_when_port_closed(tmp_path: Path) -> None:
-    # Arrange: YAML points at a guaranteed-closed port.
-    closed_port = _free_port()
+def test_check_a2a_card_url_error_when_port_closed(tmp_path: Path, dead_port) -> None:
+    # Arrange: YAML points at a port bound but never listened on, and HELD —
+    # so it is guaranteed closed for the whole test, not merely closed at the
+    # moment we looked. (`_free_port` above is the OTHER need: a port a real
+    # server is about to bind. It must not be used for a must-stay-dead port.)
+    closed_port = dead_port()
     cfg = _make_cfg(name="ag1", method="a2a-card")
     cfg.config_path = str(_write_a2a_yaml(tmp_path, port=closed_port))
     # Act
@@ -593,3 +599,231 @@ def test_health_monitor_no_restart_fn_with_unhealthy_returns_cleanly(
     )
     # Assert: loop polled at least once with no restart callable and exited.
     assert len(check.calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Turn-bridge health gate (2026-08-11 incident)
+# ---------------------------------------------------------------------------
+# 14 of 15 host-side TUI turn bridges were dead PIDs and every one of those
+# agents still reported GREEN, because `sdk-alive` only asks whether the tmux
+# session is alive. These tests pin the gate that makes a dead bridge fail.
+#
+# The server under test is the PRODUCTION `_TurnBridgeServer` (via the real
+# `build_server`), so the `/health` route being probed is the actual route the
+# real bridge serves — not a stand-in that could drift away from it.
+
+
+@contextmanager
+def _real_turn_bridge(*, port: int, agent_name: str) -> Iterator[Any]:
+    """Run a REAL turn bridge on ``port`` in a background thread."""
+    server = build_server(
+        host="127.0.0.1",
+        port=port,
+        on_turn=lambda *_a, **_kw: None,
+        agent_name=agent_name,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _bridge_cfg(
+    name: str = "ag1",
+    *,
+    port: Any,
+    runtime: str = "tui",
+    method: str = "sdk-alive",
+) -> AgentConfig:
+    """A real config whose a2a port is pinned (no claim lookup needed)."""
+    cfg = _make_cfg(name=name, method=method)
+    cfg.runtime = runtime
+    cfg.a2a = A2ASpec(host="127.0.0.1", port=port)
+    return cfg
+
+
+def _no_delay(_seconds: float) -> None:
+    """Real sleep seam that does not actually sleep."""
+    return None
+
+
+def test_sdk_alive_fails_a_live_tui_agent_whose_turn_bridge_is_dead(dead_port) -> None:
+    # Arrange — the measured fault: tmux session alive, nothing bound to the
+    # a2a port. This is the case that used to report healthy. The port is HELD
+    # unbound, so no other test can bind it and make the bridge look alive.
+    cfg = _bridge_cfg(port=dead_port())
+    # Act
+    healthy, _message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
+    # Assert
+    assert healthy is False
+
+
+def test_dead_turn_bridge_message_names_the_unserved_url(dead_port) -> None:
+    # Arrange
+    port = dead_port()
+    cfg = _bridge_cfg(port=port)
+    # Act
+    _healthy, message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
+    # Assert
+    assert f"http://127.0.0.1:{port}/health" in message
+
+
+def test_sdk_alive_passes_a_tui_agent_whose_turn_bridge_is_serving() -> None:
+    # Arrange — a REAL bridge on the agent's port.
+    port = _free_port()
+    cfg = _bridge_cfg(port=port)
+    # Act
+    with _real_turn_bridge(port=port, agent_name="ag1"):
+        healthy, _message = health_mod.health_check(
+            cfg, runtime=FakeRuntime(running=True)
+        )
+    # Assert
+    assert healthy is True
+
+
+def test_healthy_message_reports_the_turn_bridge_alongside_the_runtime() -> None:
+    # Arrange
+    port = _free_port()
+    cfg = _bridge_cfg(port=port)
+    # Act
+    with _real_turn_bridge(port=port, agent_name="ag1"):
+        _healthy, message = health_mod.health_check(
+            cfg, runtime=FakeRuntime(running=True)
+        )
+    # Assert
+    assert "turn bridge healthy" in message
+
+
+def test_a_dead_runtime_dominates_the_bridge_verdict(dead_port) -> None:
+    # Arrange — a stopped agent must be reported as a stopped RUNTIME, not as
+    # a missing bridge (naming the symptom would send the reader hunting).
+    cfg = _bridge_cfg(port=dead_port())
+    # Act
+    _healthy, message = health_mod.health_check(cfg, runtime=FakeRuntime(running=False))
+    # Assert
+    assert "runtime reports its process not running" in message
+
+
+def test_the_bridge_gate_is_skipped_when_the_a2a_sidecar_is_disabled() -> None:
+    # Arrange — port None means "no inbound HTTP": there is no bridge to miss.
+    cfg = _bridge_cfg(port=None)
+    # Act
+    healthy, _message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
+    # Assert
+    assert healthy is True
+
+
+def test_the_bridge_gate_is_skipped_for_a_non_tui_runtime() -> None:
+    # Arrange — an SDK agent serves /v1/turn from its own runner, not a bridge.
+    cfg = _bridge_cfg(port=_free_port(), runtime="claude-agent-sdk")
+    # Act
+    healthy, _message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
+    # Assert
+    assert healthy is True
+
+
+def test_turn_bridge_method_probes_the_bridge_directly() -> None:
+    # Arrange — the opt-in method, with a real bridge answering.
+    port = _free_port()
+    cfg = _bridge_cfg(port=port, method="turn-bridge")
+    # Act
+    with _real_turn_bridge(port=port, agent_name="ag1"):
+        healthy, _message = health_mod.health_check(cfg)
+    # Assert
+    assert healthy is True
+
+
+def test_turn_bridge_method_fails_when_nothing_is_bound(dead_port) -> None:
+    # Arrange
+    cfg = _bridge_cfg(port=dead_port(), method="turn-bridge")
+    # Act
+    healthy, _message = health_mod.health_check(cfg)
+    # Assert
+    assert healthy is False
+
+
+# --- corroboration: one observation is not a verdict (issue #825's family) ---
+
+
+def test_a_bridge_that_binds_during_the_backoff_is_reported_healthy() -> None:
+    # Arrange — the respawn window our OWN supervisor creates: the first probe
+    # is genuinely refused, then a REAL bridge binds before the second.
+    port = _free_port()
+    cfg = _bridge_cfg(port=port)
+    running: dict = {}
+
+    def _bind_during_backoff(_seconds: float) -> None:
+        if "server" in running:
+            return
+        server = build_server(
+            host="127.0.0.1",
+            port=port,
+            on_turn=lambda *_a, **_kw: None,
+            agent_name="ag1",
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        running["server"] = server
+        running["thread"] = thread
+
+    # Act
+    try:
+        healthy, _message = health_mod._check_turn_bridge(
+            cfg, sleep_fn=_bind_during_backoff
+        )
+    finally:
+        if "server" in running:
+            running["server"].shutdown()
+            running["server"].server_close()
+            running["thread"].join(timeout=2)
+    # Assert
+    assert healthy is True
+
+
+def test_a_persistently_dead_bridge_is_failed_after_every_attempt(dead_port) -> None:
+    # Arrange — PERSISTENTLY dead: the port is held unbound across all three
+    # probes, so "still dead on attempt 3" is a property, not a coincidence.
+    cfg = _bridge_cfg(port=dead_port())
+    # Act
+    healthy, _message = health_mod._check_turn_bridge(cfg, sleep_fn=_no_delay)
+    # Assert
+    assert healthy is False
+
+
+def test_a_failed_verdict_states_how_many_probes_confirmed_it(dead_port) -> None:
+    # Arrange
+    cfg = _bridge_cfg(port=dead_port())
+    # Act
+    _healthy, message = health_mod._check_turn_bridge(
+        cfg, attempts=3, sleep_fn=_no_delay
+    )
+    # Assert
+    assert "confirmed by 3 probes" in message
+
+
+def test_a_foreign_holder_is_failed_without_retrying() -> None:
+    # Arrange — a REAL bridge for a DIFFERENT agent holds this agent's port.
+    # That is settled, not transient, so it must not cost three probes.
+    port = _free_port()
+    cfg = _bridge_cfg(name="ag1", port=port)
+    naps: list[float] = []
+    # Act
+    with _real_turn_bridge(port=port, agent_name="someone-else"):
+        health_mod._check_turn_bridge(cfg, sleep_fn=lambda s: naps.append(s))
+    # Assert
+    assert naps == []
+
+
+def test_a_foreign_holder_message_names_the_agent_that_answered() -> None:
+    # Arrange
+    port = _free_port()
+    cfg = _bridge_cfg(name="ag1", port=port)
+    # Act
+    with _real_turn_bridge(port=port, agent_name="someone-else"):
+        _healthy, message = health_mod._check_turn_bridge(cfg, sleep_fn=_no_delay)
+    # Assert
+    assert "someone-else" in message

@@ -237,15 +237,32 @@ def test_spawn_allowed_returns_false_for_child_node(db_path: Path) -> None:
 def test_spawn_allowed_deny_reason_explains_role_policy(
     db_path: Path,
 ) -> None:
+    """The reason names the groups that WOULD have authorised the spawn.
+
+    It no longer asserts the caller "is in none of" them: that sentence
+    was a claim about the AGENT, and when the multi-group defect made a
+    caller's ``developer`` label unreadable it was flatly false against
+    the same server's own a2a_peers output (2026-08-10).
+    """
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert (
-        reason is not None
-        and "none of the developer, research, or privileged groups" in reason
-    )
+    assert reason is not None and "developer, researcher, privileged" in reason
+
+
+def test_spawn_deny_reason_for_unregistered_caller_says_it_has_no_row(
+    db_path: Path,
+) -> None:
+    """No policy row and "registered but ungrouped" both resolve to an
+    empty group set, and they are DIFFERENT facts (2026-08-09)."""
+    # Arrange — a lineage edge but no node_comms_policy row.
+    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
+    # Assert
+    assert "NO node_comms_policy row" in reason
 
 
 def test_spawn_allowed_returns_true_for_developer_group_child(
@@ -308,17 +325,19 @@ def test_spawn_allowed_returns_false_for_non_dev_research_group_child(
 def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
     db_path: Path,
 ) -> None:
-    """The deny reason names the role-based policy."""
+    """The deny reason reports the group the gate ACTUALLY resolved.
+
+    Reporting what the gate SAW — rather than asserting what the agent
+    is — is what lets a reader tell a correct denial from a stale row
+    without guessing (2026-08-10).
+    """
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
-    assert (
-        reason is not None
-        and "none of the developer, research, or privileged groups" in reason
-    )
+    assert reason is not None and "['analysts']" in reason
 
 
 def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
@@ -434,17 +453,34 @@ def test_spawn_allowed_denies_child_in_neither_group(db_path: Path) -> None:
 
 
 def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
-    """The neither-group deny reason states the new group-scoped policy."""
+    """The neither-group deny reason states the group-scoped policy.
+
+    Spelled ``researcher`` in full. The old text said "research", and a
+    reader reasonably guessed a "research" vs "researcher" string
+    mismatch was the bug — it was not, and the wrong hypothesis cost
+    time (2026-08-10).
+    """
     # Arrange
     record_lineage(child="worker-gen", parent="root", db_path=db_path)
     record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
     # Assert
-    assert (
-        reason is not None
-        and "developer/research/privileged group members, may" in reason
-    )
+    assert reason is not None and "developer, researcher, privileged" in reason
+
+
+def test_spawn_deny_reason_points_at_refresh_acl_for_a_stale_row(
+    db_path: Path,
+) -> None:
+    """A denial whose group list disagrees with the spec means a STALE
+    row; the message must name the command that re-publishes it."""
+    # Arrange
+    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
+    # Act
+    _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
+    # Assert
+    assert "refresh-acl" in reason
 
 
 def test_spawn_allowed_developer_group_child_still_respects_may_spawn(

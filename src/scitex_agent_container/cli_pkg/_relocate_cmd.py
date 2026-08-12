@@ -43,6 +43,8 @@ never eleven of either because one section failed.
 
 from __future__ import annotations
 
+import time
+
 import click
 
 from .._lifecycle._relocate_preflight import preflight
@@ -60,9 +62,166 @@ __all__ = ["declared_from_spec", "register", "relocate"]
 #: from click's own 2 (usage error) so a caller can tell "you asked wrongly"
 #: from "the target is not ready".
 EXIT_REFUSED = 3
-#: Exit code for the not-yet-built executing path. Distinct again, so a script
-#: cannot mistake "unimplemented" for "the target failed preflight".
-EXIT_UNIMPLEMENTED = 4
+#: RETIRED. It meant "the executing path does not exist"; it does now, and the
+#: outcomes it used to cover are :data:`._relocate_run.EXIT_INCOMPLETE` (a phase
+#: refused, understood) and :data:`._relocate_run.EXIT_UNMEASURED` (a phase could
+#: not be measured). The number is not reused: a script written against the old
+#: meaning must not silently start reading a new one.
+EXIT_RETIRED_UNIMPLEMENTED = 4
+
+
+#: What `--no-dry-run` can and cannot do, phase by phase. THE NOTICE IS
+#: GENERATED FROM THIS LIST, so the two cannot drift apart the way the original
+#: hard-coded sentence did — it named the transcript transport as the one missing
+#: piece and went stale the moment that phase was built.
+#:
+#: Each entry is (phase, what is BUILT, what is MISSING). A phase with nothing
+#: missing carries ``"—"`` there and RUNS. The split is the honest unit of
+#: progress: a decision layer being unit-tested says nothing about whether bytes
+#: move, and an adapter is not claimed to work until it has been exercised
+#: against two real hosts.
+_PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
+    (
+        "source_drain",
+        "_relocate_liveness (tmux is the same fact the runtime checks) — a STOPPED "
+        "source drains vacuously and that is measured, not assumed",
+        "no adapter for a RUNNING source: telling an agent to finish its in-flight "
+        "work and take no new work, and confirming it did",
+    ),
+    (
+        "source_stop",
+        "_relocate_effects.stop_source: `sac agents stop` on the source, then a "
+        "SECOND independent liveness observation. Idempotent",
+        "—",
+    ),
+    (
+        "transport",
+        "_relocate_transport (selection, move-aside, byte+line verification), "
+        "_relocate_transport_paths (target-side project dir), "
+        "_relocate_transcript_home (the HOST path backing the container's $HOME) "
+        "and _relocate_transport_ssh (tar-over-ssh; counts taken ON the target)",
+        "—",
+    ),
+    (
+        "target_standby",
+        "_relocate_effects_standby: the spec is carried and byte+line verified on the "
+        "target, the session_id marker is seeded from the CARRIED transcript "
+        "(first boot only — an existing marker refuses rather than being overwritten) "
+        "and confirmed by read-back, then `sac agents start --resume <carried uuid>` "
+        "WITHOUT the lease and a SECOND independent liveness observation on BOTH hosts",
+        "—",
+    ),
+    (
+        "handshake",
+        "_relocate_effects_handshake: the brief is delivered to the agent's sidecar on "
+        "its own host and the answer is read back out of its transcript by the "
+        "coordinator ON THE SOURCE, then put through _relocate_handshake's gate "
+        "(nonce + a proof-of-work answer measured independently on the target)",
+        "—",
+    ),
+    (
+        "handover",
+        "_relocate_effects_handover: the source's lease is bootstrapped when the store "
+        "holds none (sac still does not claim one at agent start-up — the bootstrap is "
+        "recorded as such), handed to the target, and the row is RE-READ to confirm "
+        "the holder and the fence. A row naming a THIRD host is settled by OBSERVING "
+        "that host, through the same predicate the lease_holdable check already ran "
+        "before anything was stopped",
+        "—",
+    ),
+    (
+        "done",
+        "_relocate_effects.finish: both hosts are observed for exactly ONE live "
+        "instance, then residency is written to _state.state_db_relocation and the "
+        "source's transcript MOVED ASIDE — all gated on the two confirmations being "
+        "recorded True",
+        "—",
+    ),
+)
+
+
+def _readiness_notice() -> list[str]:
+    """Say exactly which phases can and cannot run, before running any of them.
+
+    Printed as a PREAMBLE now rather than as a refusal: the executing path
+    exists, so the operator's question has changed from "why won't it run" to
+    "how far will it get". Answering that up front is the difference between a
+    surprising stop and an expected one.
+    """
+    lines = ["", "[bold]PHASE READINESS[/bold]"]
+    for phase, built, missing in _PHASE_READINESS:
+        state = "[green]runs[/green]" if missing == "—" else "[yellow]refuses[/yellow]"
+        lines.append(f"  [bold]{phase}[/bold]  {state}")
+        if built != "—":
+            lines.append(f"    built:   {built}")
+        if missing != "—":
+            lines.append(f"    missing: {missing}")
+    lines += [
+        "",
+        "A phase with no adapter returns UNKNOWN and the relocation STOPS there, in "
+        "a state the journal records; it does not journal its way to DONE having "
+        "moved nothing. Nothing is deleted at any point — anything displaced goes "
+        "to .old/<stamp>/ on the host it was displaced on, so a rollback is you "
+        "moving it back, deliberately.",
+    ]
+    return lines
+
+
+def _source_repo_facts(spec_body: dict, from_host: str):
+    """Scan the agent's workdir for un-saved work, or report that nobody looked.
+
+    ONLY the workdir, and only when it is a git repo. The alternative — walk and
+    guess at every repo an agent might touch — would produce a check whose PASS
+    means "the repos I happened to think of are clean", which is worse than the
+    UNKNOWN it replaces because it reads as an answer.
+
+    A workdir that is not a repo yields an OBSERVED empty scan: there is nothing
+    to strand, which is a real answer and passes. That is deliberately different
+    from passing no facts at all, which is "nobody looked" and refuses.
+    """
+    from pathlib import Path
+
+    from .._lifecycle._relocate_source_scan import scan_source
+
+    workdir = str(spec_body.get("workdir") or "").strip()
+    if not workdir or not (Path(workdir) / ".git").exists():
+        return scan_source(())
+    return scan_source((workdir,))
+
+
+def _source_facts(spec: dict, spec_body: dict, agent: str, from_host: str):
+    """The repo scan PLUS which conversation would travel, both read locally.
+
+    ``session_resolvable`` is a preflight check for one reason: the phase that
+    needs the answer runs after the agent has been stopped. Ten agents on
+    ywata-note-win passed every check on 2026-08-12 and could not complete,
+    because each held more than one transcript and the transport only named a
+    session when there was exactly one. Answering it HERE is what turns that into
+    a refusal while the agent is still up.
+
+    The workdir is resolved against THIS filesystem, which is right precisely
+    because these are the SOURCE's facts and the coordinator is standing on the
+    source. When it is not, the directory is simply not there and
+    :func:`scan_session` reports NOT OBSERVED rather than inventing an empty one.
+    """
+    from pathlib import Path
+
+    from .._lifecycle._relocate_source_scan import scan_session
+    from .._lifecycle._relocate_transcript_home import transcript_home_from_spec
+    from .._lifecycle._relocate_transport_paths import derive_target_dir
+
+    facts = _source_repo_facts(spec_body, from_host)
+    home = transcript_home_from_spec(spec)
+    workdir = str(spec_body.get("workdir") or "").strip()
+    transcript_dir = ""
+    if home.path and workdir:
+        derived = derive_target_dir(
+            target_home=home.path,
+            target_resolved_workdir=str(Path(workdir).resolve()),
+        )
+        transcript_dir = derived.path or ""
+    state_dir = str(Path.home() / ".scitex" / "agent-container" / "runtime" / agent)
+    return scan_session(facts, transcript_dir=transcript_dir, state_dir=state_dir)
 
 
 def _dig(body: dict, *path: str) -> object:
@@ -77,6 +236,16 @@ def _dig(body: dict, *path: str) -> object:
 
 def declared_from_spec(spec: dict) -> dict[str, object]:
     """Pull the spec's own claims out for the DECLARED section.
+
+    ``host`` IS DELIBERATELY NOT HERE. It is an observation, not a declaration
+    (operator, 2026-08-11: 「設定ファイル、人が書くものはファイル、状態は db」), so
+    it comes from the state db and is printed under OBSERVED. Leaving it in this
+    dict would put a machine-owned fact under a heading that reads "from the
+    spec — not verified by this run", which is the same collapse that makes
+    `sac agents list` report a running agent as `defined`. The legacy field
+    still present in every spec on disk is reported by
+    :func:`.._lifecycle._relocate_host_record.legacy_spec_host_notice`, which
+    says out loud that it is ignored.
 
     Reads defensively: a missing key yields ``None``, rendered as ``(unset)``. A
     relocation must be able to report on a half-written spec — refusing to print
@@ -103,12 +272,74 @@ def declared_from_spec(spec: dict) -> dict[str, object]:
     card_store = card_store_url_from_spec(spec) or None
     return {
         "runtime": body.get("runtime"),
-        "host": body.get("host"),
         "image": _dig(body, "apptainer", "image"),
         "a2a port": _dig(body, "a2a", "port"),
         "bind sources": bind_sources,
         "card store": card_store,
     }
+
+
+def _residency_history(name: str):
+    """The agent's stays, read from the STATE DB — the only authority on host.
+
+    THE RESIDENCY TABLE WINS, AND IT EXISTS NOW: ``agent_residency``, written by
+    a relocation's DONE phase, an append-only history of stays with at most one
+    open. The instance row is the FALLBACK — ``instances.host`` is where a
+    process was last recorded STARTING, which nothing closes if it dies without a
+    stop.
+
+    Measured 2026-08-12 on scitex-compute-04: residency said
+    ``canary-resume-test`` lives on ywata-note-win (written by the move that took
+    it there) while an instance row on scitex-compute-04 had never ended. Reading
+    the instance row first made this command answer with the host the agent had
+    LEFT, so relocating back was refused with "already recorded on that host —
+    nothing to relocate". The phantom row won over reality.
+
+    The order also fixes the STOPPED case, which is the NORMAL one:
+    ``source_drain`` requires the agent stopped, a stopped agent has no active
+    instance row, and the next fallback is the spec's legacy ``host:`` — which a
+    relocation never updates. The residency table is the only one of the three a
+    relocation keeps current.
+
+    No row anywhere yields ``()`` — genuinely "the db knows nothing", which is
+    what lets a legacy spec ``host:`` seed it once.
+    """
+    from .._lifecycle._residency import Residency
+    from .._state.state_db_instances import list_active_instances
+    from .._state.state_db_relocation import read_residency_history
+
+    stays = read_residency_history(name)
+    if stays:
+        return stays
+
+    rows = [r for r in list_active_instances() if r.get("name") == name]
+    if not rows:
+        return ()
+    row = rows[0]
+    host = (row.get("host") or "").strip()
+    if not host:
+        return ()
+    return (Residency(host=host, from_ts=_epoch(row.get("started_at"))),)
+
+
+def _epoch(started_at: object) -> float:
+    """``instances.started_at`` is an ISO TEXT column; residency wants seconds.
+
+    An unparseable stamp yields ``0.0`` rather than raising. That is safe HERE
+    and only here: the stay is open, so ``current_host`` reads the host and
+    never consults the start time, and a relocation must not be blocked by a
+    malformed timestamp on a row whose host is perfectly legible. It would NOT
+    be safe for the attribution lookup, which is one more reason that needs a
+    real residency table rather than this row.
+    """
+    if not isinstance(started_at, str) or not started_at.strip():
+        return 0.0
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(started_at.strip()).timestamp()
+    except ValueError:  # stx-allow: fallback (reason: an open stay is read for its HOST; a malformed start time must not block a relocation whose host is legible)
+        return 0.0
 
 
 def _required_ports(declared: dict[str, object]) -> tuple[int, ...]:
@@ -175,41 +406,102 @@ def relocate(name: str, to_host: str, dry_run: bool) -> None:
     spec = yaml.safe_load(spec_path.read_text()) or {}
 
     declared = declared_from_spec(spec)
-    if declared.get("host") == to_host:
+
+    # WHERE IT RUNS NOW comes from the STATE DB, never from the spec. The spec's
+    # `host:` is a legacy field: it is read at most ONCE, to seed a db that knows
+    # nothing, and is ignored from then on. Reading it here instead would make
+    # this command answer "where does it run" from a hand-written file that
+    # exists in one copy per machine — the confusion the 2026-08-11 ruling
+    # removed (「設定ファイル、人が書くものはファイル、状態は db」).
+    from .._lifecycle._relocate_host_record import (
+        legacy_spec_host_notice,
+        resolve_host,
+    )
+
+    body = spec.get("spec") if isinstance(spec.get("spec"), dict) else spec
+    legacy_host = body.get("host") if isinstance(body, dict) else None
+    where = resolve_host(
+        _residency_history(name),
+        legacy_spec_host=legacy_host if isinstance(legacy_host, str) else None,
+        now=time.time(),
+    )
+    notice = legacy_spec_host_notice(
+        spec_host=legacy_host if isinstance(legacy_host, str) else None,
+        db_host=where.host,
+    )
+    if notice:
+        console.print(f"[yellow]note:[/yellow] {notice}", soft_wrap=True)
+    if where.host == to_host:
         console.print(
-            f"[yellow]{name} already declares host {to_host!r} — nothing to relocate.[/yellow]\n"
-            "If it is actually running elsewhere, that disagreement is the thing to fix first."
+            f"[yellow]{name} is already recorded on {to_host!r} — nothing to relocate.[/yellow]\n"
+            f"Source of that answer: {where.reason}"
         )
         raise SystemExit(EXIT_REFUSED)
 
-    # ONE batched ssh round trip answers all eleven facts; each is parsed on its
-    # own marker line, so a section that fails costs only its own fact. See
+    # ONE batched ssh round trip answers all thirteen facts; each is parsed on
+    # its own marker line, so a section that fails costs only its own fact. See
     # `.._lifecycle._relocate_probe_adapter` for how per-fact degradation
     # survives the batching.
     probes, _batch = build_target_probes(
         to_host, spec, required_ports=_required_ports(declared)
     )
     gathered = gather_target_facts(probes)
+    # THE LEASE IS READ HERE, not at the handover — which is the last phase
+    # before DONE and therefore runs with the agent already stopped, its
+    # transcript already carried and the target already booted. Measured
+    # 2026-08-11: exit 5 at that phase, correctly, with nothing running anywhere.
+    from .._lifecycle._relocate_lease_facts import gather_lease_facts
+
     report = preflight(
         agent=name,
         to_host=to_host,
         facts=gathered.facts,
         runtime=str(declared.get("runtime") or ""),
         required_ports=_required_ports(declared),
+        source_facts=_source_facts(
+            spec, body if isinstance(body, dict) else {}, name, where.host or ""
+        ),
+        from_host=where.host or "",
+        lease_facts=gather_lease_facts(name, from_host=where.host or ""),
     )
 
-    for line in render_dry_run(report, declared=declared, errors=gathered.errors):
+    for line in render_dry_run(
+        report, declared=declared, errors=gathered.errors, dry_run=dry_run
+    ):
         console.print(line, soft_wrap=True)
 
-    if not dry_run:
-        console.print(
-            "\n[red]refusing to execute:[/red] the cross-host transcript transport "
-            "is not built, so a relocation would arrive with no memory of the "
-            "conversation that moved it. See docs/relocate.md §5."
-        )
-        raise SystemExit(EXIT_UNIMPLEMENTED)
     if report.ok is not True:
+        # The checks gate the executing path too, and that is the point rather
+        # than a leftover: the dry run is what makes them load-bearing, and a
+        # refusal that becomes advisory the moment there is something to execute
+        # is not a refusal.
         raise SystemExit(EXIT_REFUSED)
+    for line in _readiness_notice():
+        console.print(line, soft_wrap=True)
+    if dry_run:
+        return
+
+    from ._relocate_run import exit_code_for, run_relocation
+
+    if not where.host:
+        console.print(
+            "[red]refusing to execute:[/red] the state db does not know which host "
+            f"{name} runs on, and the spec offered nothing to seed it with. A "
+            "relocation FROM an unknown host cannot stop the right source.",
+            soft_wrap=True,
+        )
+        raise SystemExit(EXIT_REFUSED)
+
+    outcome = run_relocation(
+        name=name,
+        spec=spec,
+        spec_path=str(spec_path),
+        from_host=where.host,
+        to_host=to_host,
+    )
+    code = exit_code_for(outcome)
+    if code:
+        raise SystemExit(code)
 
 
 def register(agent_group) -> None:

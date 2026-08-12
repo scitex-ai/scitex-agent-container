@@ -433,3 +433,110 @@ async def test_default_interval_is_thirty_seconds():
     value = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
     # Assert
     assert value == 30.0
+
+
+# ---------------------------------------------------------------------------
+# Turn-bridge supervision rides on the SAME tick (2026-08-11 incident)
+# ---------------------------------------------------------------------------
+# The host-side /v1/turn bridge is spawned once at start and was supervised by
+# nothing, so 14 of 15 on the host were dead PIDs while their agents still read
+# healthy and every pushed wake was refused. This tick already enumerates every
+# TUI agent with a fresh liveness snapshot, so it re-asserts the bridge too.
+
+
+class RecordingSupervisor:
+    """Real callable with ``supervise_bridges``' shape (the DI seam)."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def __call__(self, agents, *, snapshot):
+        self.calls.append((list(agents), dict(snapshot)))
+        return {}
+
+
+class ExplodingSupervisor:
+    """A supervisor that fails, to prove it cannot cost the heartbeat."""
+
+    def __call__(self, agents, *, snapshot):
+        raise RuntimeError("supervision blew up")
+
+
+@pytest.mark.asyncio
+async def test_the_tick_supervises_the_turn_bridge(tmp_path: Path):
+    # Arrange
+    state_dir = tmp_path / "tui-demo"
+    state_dir.mkdir()
+    supervisor = RecordingSupervisor()
+    # Act
+    await _run_one_tick(
+        settle_for=lambda: bool(supervisor.calls),
+        agent_lister=_one_tui_agent(state_dir),
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
+        write_fn=write_heartbeat,
+        tmux_check=lambda: True,
+        supervise_fn=supervisor,
+    )
+    # Assert
+    assert len(supervisor.calls) >= 1
+
+
+@pytest.mark.asyncio
+async def test_supervision_reuses_this_ticks_snapshot(tmp_path: Path):
+    # Arrange — reusing the batched snapshot is what keeps supervision free of
+    # extra tmux subprocesses (the cost that got this tick abandoned once).
+    state_dir = tmp_path / "tui-demo"
+    state_dir.mkdir()
+    supervisor = RecordingSupervisor()
+    # Act
+    await _run_one_tick(
+        settle_for=lambda: bool(supervisor.calls),
+        agent_lister=_one_tui_agent(state_dir),
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
+        write_fn=write_heartbeat,
+        tmux_check=lambda: True,
+        supervise_fn=supervisor,
+    )
+    # Assert
+    assert supervisor.calls[0][1] == LIVE_SNAPSHOT
+
+
+@pytest.mark.asyncio
+async def test_no_supervision_when_the_tmux_probe_failed(tmp_path: Path):
+    # Arrange — a failed probe means liveness is UNKNOWN, and respawning a
+    # bridge on a guess is the same "infer dead from unknown" mistake the
+    # heartbeat writer already refuses to make.
+    state_dir = tmp_path / "tui-demo"
+    state_dir.mkdir()
+    supervisor = RecordingSupervisor()
+    # Act
+    await _run_one_tick(
+        agent_lister=_one_tui_agent(state_dir),
+        sessions_fn=lambda: None,
+        write_fn=write_heartbeat,
+        tmux_check=lambda: True,
+        supervise_fn=supervisor,
+    )
+    # Assert
+    assert supervisor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_supervisor_still_leaves_the_heartbeat_written(
+    tmp_path: Path,
+):
+    # Arrange — liveness data is the tick's primary duty and must survive a
+    # supervision failure.
+    state_dir = tmp_path / "tui-demo"
+    state_dir.mkdir()
+    # Act
+    await _run_one_tick(
+        settle_for=lambda: (state_dir / "heartbeat.json").is_file(),
+        agent_lister=_one_tui_agent(state_dir),
+        sessions_fn=lambda: dict(LIVE_SNAPSHOT),
+        write_fn=write_heartbeat,
+        tmux_check=lambda: True,
+        supervise_fn=ExplodingSupervisor(),
+    )
+    # Assert
+    assert (state_dir / "heartbeat.json").is_file()

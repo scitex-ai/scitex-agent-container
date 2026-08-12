@@ -1,0 +1,274 @@
+name: spartan-capacity-canary
+
+# WHY THIS EXISTS
+#
+# On 2026-08-12T02:27:58Z the repo Actions Variable CI_RUNS_ON was set to
+# ["self-hosted","Linux","X64","scitex-org-cpu"]. That variable overrides every
+# workflow's own `runs-on` default of ["self-hosted","Linux","X64","scitex-ci"],
+# and the org runners split cleanly along exactly that line:
+#
+#   scitex-01..04-org-cpu-01   ...,scitex-org-cpu            <- the whole pool
+#   spartan-cpu-org-01/02      ...,spartan-cpu,scitex-ci     <- idle, excluded
+#   spartan-pooled-cpu-01      ...,spartan-cpu,scitex-ci     <- idle, excluded
+#
+# Measured immediately after: 45 queued+in-progress jobs against 4 slots, queue
+# median 390s, p90 1798s, max 4076s, and an offered load of ~124% of capacity —
+# i.e. arrival exceeds service, so the backlog grows rather than drains.
+#
+# The obvious remedy is to stop excluding the three idle machines. It is ALSO
+# the dangerous one: CI_RUNS_ON is consumed by NINE workflows in this repo
+# INCLUDING pypi-publish-and-github-release-on-tag.yml, so changing it re-points
+# the release gate's hardware with no diff for a reviewer to read. "A label is
+# not a pool", in a second costume.
+#
+# The missing fact is simply whether those three machines can pass this repo's
+# jobs AT ALL. Nobody has verified it — only that they are idle and carry the
+# label the workflows default to. A pool of three machines that fail
+# differently is not capacity, it is a new denominator.
+#
+# So: this workflow asks that ONE question, and nothing else.
+#
+# WHY IT FIRES ON NOTHING
+#
+# `workflow_dispatch` only. It is never a required check, never gates a PR,
+# never runs on push or schedule, and adds ZERO load to the contended pool it
+# is measuring. Merging it changes the behaviour of no existing job.
+#
+# WHY runs-on IS HARDCODED AND NOT vars.CI_RUNS_ON
+#
+# Every other workflow here reads the pool variable on purpose — the PR gate and
+# the release gate must resolve to the same runner set. This one must NOT: its
+# entire purpose is to interrogate the spartan-cpu machines specifically. If it
+# read CI_RUNS_ON it would test whichever pool is already configured, which is
+# the question we already know the answer to. This is the one place in the repo
+# where naming the labels literally is correct.
+
+on:
+  # The push trigger is scoped to this ONE branch, and that is deliberate.
+  # GitHub only dispatches `workflow_dispatch` for workflows that already exist
+  # on the DEFAULT branch, so a dispatch-only canary cannot answer its own
+  # question until after it is merged — which is backwards: the answer is the
+  # reason to merge it. Scoping a push trigger to the canary's own branch lets
+  # it run BEFORE review, and costs nothing afterwards: once merged and the
+  # branch deleted, this pattern matches no branch that will ever exist again.
+  # It adds no load to the contended pool either — this job runs on spartan-cpu,
+  # which is precisely the set of machines currently sitting idle.
+  push:
+    branches: [ci/spartan-capacity-canary]
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: "Python leg to exercise (matches the real gate's matrix)"
+        default: "3.12"
+        type: choice
+        options: ["3.11", "3.12", "3.13"]
+
+permissions:
+  contents: read
+
+env:
+  SCITEX_CI_APPTAINER: ${{ vars.SCITEX_CI_APPTAINER }}
+  SCITEX_CI_SIF: ${{ vars.SCITEX_CI_SIF }}
+
+jobs:
+  canary:
+    name: spartan-capacity-canary-py${{ inputs.python-version || '3.12' }}
+    runs-on: ["self-hosted", "Linux", "X64", "spartan-cpu"]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # PRECONDITIONS FIRST, AND FAIL LOUD ON THEM.
+      #
+      # The gate script needs two things this repo configures by VARIABLE, not
+      # by discovery: an apptainer binary at SCITEX_CI_APPTAINER and a prebuilt
+      # SIF at SCITEX_CI_SIF. Both are set to paths that are true on the compute
+      # hosts (/usr/bin/apptainer, ~/.scitex/dev/containers/ci-cpu.sif). Neither
+      # is guaranteed on Spartan, where apptainer is often module-provided.
+      #
+      # Reporting this BEFORE the 45-minute suite is the whole value of a
+      # canary: "the pool cannot serve because the SIF is not staged there" is a
+      # finding you want in 20 seconds, not after a timeout.
+      - name: What this host actually provides
+        run: |
+          set -u
+          echo "hostname          = $(hostname)"
+          echo "runner name       = ${RUNNER_NAME:-<unset>}"
+          echo "nproc             = $(nproc 2>/dev/null || echo '?')"
+          echo "SCITEX_CI_APPTAINER = ${SCITEX_CI_APPTAINER:-<unset>}"
+          echo "SCITEX_CI_SIF       = ${SCITEX_CI_SIF:-<unset>}"
+          echo "which apptainer   = $(command -v apptainer 2>/dev/null || echo '<not on PATH>')"
+          echo "which singularity = $(command -v singularity 2>/dev/null || echo '<not on PATH>')"
+          # The Spartan-only project dir the SIF shim binds when present.
+          # exec-in-sif.sh guards this with [ -d ] on develop (PR #880); main
+          # still binds it unconditionally (PR #992 is the fix). Report it so a
+          # green canary here cannot be misread as a statement about main.
+          if [ -d /data/gpfs/projects/punim0264 ]; then
+            echo "punim0264         = present (this IS a Spartan filesystem)"
+          else
+            echo "punim0264         = absent"
+          fi
+
+      # WHY ONE CORE, INSIDE A 48-CPU ALLOCATION?
+      #
+      # `squeue` shows this runner's SLURM job holding CPUS=48 on spartan-bm153
+      # and holding it for 2d10h. This canary measured `nproc = 1` inside that
+      # same runner. Both are correct, which means ~47 allocated cores are idle
+      # inside an allocation the fleet already pays for — and `xdist -n $(nproc)`
+      # spawns ONE worker where it could spawn 48. The 497s suite time this
+      # canary reported was therefore measured against a crippled allocation,
+      # not against the machine.
+      #
+      # These are different faults with different fixes, so measure rather than
+      # infer. They can all disagree, and which pair disagrees is the answer:
+      #
+      #   nproc vs nproc --all      affinity mask vs CPUs actually online
+      #   sched_getaffinity         what the kernel will schedule us on
+      #   cpuset.cpus.effective     what a cgroup permits (v2, then v1)
+      #   SLURM_* env               what SLURM believes it gave us, and
+      #                             whether we are in a STEP (srun) at all
+      #
+      # A runner started WITHOUT srun sits in the job's shell rather than in a
+      # step holding the allocation's CPU set; a step requested with
+      # --cpus-per-task=1 confines it a different way; a cpuset cgroup confines
+      # it a third way. The reads below tell those apart.
+      #
+      # Repeated INSIDE the SIF, because apptainer can narrow affinity further:
+      # if the outside sees 48 and the inside sees 1, the shim is the culprit
+      # and nothing about the SLURM submission needs to change.
+      #
+      # READ-ONLY. This step does not resize, resubmit or touch the SLURM job —
+      # it has been up 2d10h, the long lease is deliberate, and it is currently
+      # serving the light lane.
+      - name: Why does this see one core (CPU visibility, read-only)
+        run: |
+          set -u
+          probe() {
+            echo "  nproc                 = $(nproc 2>/dev/null || echo '?')"
+            echo "  nproc --all           = $(nproc --all 2>/dev/null || echo '?')"
+            # NOTE: no heredoc here on purpose — a heredoc body must sit at
+            # column 0, which would terminate this YAML block scalar.
+            python3 -c "import os; a=sorted(os.sched_getaffinity(0)); print('  sched_getaffinity     = %d cpus %s' % (len(a), a[:16]))" 2>/dev/null \
+              || echo "  sched_getaffinity     = <no python3 here>"
+            echo "  taskset -pc self      = $(taskset -pc $$ 2>/dev/null || echo '<no taskset>')"
+            echo "  /proc/cpuinfo count   = $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo '?')"
+          }
+          echo "=== OUTSIDE the SIF (bare runner process) ==="
+          probe
+          echo
+          # THE DECISIVE TEST.
+          #
+          # First pass found: nproc=1, nproc --all=128, sched_getaffinity=48,
+          # cpuset.cpus.effective=0-127, SLURM_CPUS_PER_TASK=48. So the kernel
+          # WILL schedule this process on 48 CPUs and no cgroup is confining it
+          # — only `nproc` disagrees, and `nproc` is what run-in-sif.sh feeds to
+          # `xdist -n`.
+          #
+          # coreutils `nproc` is documented to honour OMP_NUM_THREADS /
+          # OMP_THREAD_LIMIT ahead of the affinity mask, and HPC sites commonly
+          # set OMP_NUM_THREADS=1 in the default environment to stop naive
+          # threaded code oversubscribing a shared node.
+          #
+          # That is a hypothesis until it is tested, so test it: print the
+          # variables, then re-run nproc with them cleared. If clearing them
+          # returns 48, the cause is established rather than matched.
+          echo "=== is nproc being overridden by OpenMP env? ==="
+          echo "  OMP_NUM_THREADS       = ${OMP_NUM_THREADS:-<unset>}"
+          echo "  OMP_THREAD_LIMIT      = ${OMP_THREAD_LIMIT:-<unset>}"
+          echo "  OMP_DYNAMIC           = ${OMP_DYNAMIC:-<unset>}"
+          echo "  SRUN_CPUS_PER_TASK    = ${SRUN_CPUS_PER_TASK:-<unset>}"
+          echo "  nproc (as-is)                    = $(nproc 2>/dev/null || echo '?')"
+          echo "  nproc (OMP_* cleared)            = $(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc 2>/dev/null || echo '?')"
+          echo "  python len(sched_getaffinity)    = $(python3 -c 'import os;print(len(os.sched_getaffinity(0)))' 2>/dev/null || echo '?')"
+          echo "  => if 'OMP_* cleared' is 48 and 'as-is' is 1, OpenMP env is the cause"
+          echo
+          echo "=== cgroup confinement ==="
+          echo "  /proc/self/cgroup:"
+          sed 's/^/    /' /proc/self/cgroup 2>/dev/null || echo "    <unreadable>"
+          for f in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset.cpus; do
+            [ -r "$f" ] && echo "  $f = $(cat "$f")"
+          done
+          _leaf=$(awk -F: '/cpuset/ {print $3; exit}' /proc/self/cgroup 2>/dev/null || true)
+          if [ -n "${_leaf:-}" ]; then
+            for f in "/sys/fs/cgroup/cpuset${_leaf}/cpuset.cpus" \
+                     "/sys/fs/cgroup/cpuset${_leaf}/cpuset.cpus.effective" \
+                     "/sys/fs/cgroup${_leaf}/cpuset.cpus.effective"; do
+              [ -r "$f" ] && echo "  $f = $(cat "$f")"
+            done
+          fi
+          echo
+          echo "=== what SLURM thinks it gave us ==="
+          for v in SLURM_JOB_ID SLURM_STEP_ID SLURM_PROCID SLURM_CPUS_ON_NODE \
+                   SLURM_JOB_CPUS_PER_NODE SLURM_CPUS_PER_TASK SLURM_NTASKS \
+                   SLURM_TASKS_PER_NODE SLURM_JOB_NODELIST SLURM_NODEID; do
+            eval "_val=\${$v:-<unset>}"
+            echo "  $v = $_val"
+          done
+          # SLURM_STEP_ID present => we are inside an srun STEP. Absent => the
+          # runner is in the batch shell, which is the leading hypothesis for
+          # why it holds one CPU while the JOB holds 48.
+          if [ -n "${SLURM_STEP_ID:-}" ]; then
+            echo "  => running INSIDE an srun step"
+          else
+            echo "  => NOT in an srun step (batch shell / no step)"
+          fi
+          if command -v scontrol >/dev/null 2>&1 && [ -n "${SLURM_JOB_ID:-}" ]; then
+            echo
+            echo "=== scontrol show job ${SLURM_JOB_ID} (CPU fields) ==="
+            scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+              | tr ' ' '\n' | grep -E '^(NumCPUs|NumNodes|CPUs/Task|TRES|ReqTRES|NodeList)=' \
+              | sed 's/^/  /' || echo "  <scontrol returned nothing>"
+          else
+            echo "  (scontrol unavailable or SLURM_JOB_ID unset)"
+          fi
+          echo
+          echo "=== INSIDE the SIF (does apptainer narrow it further?) ==="
+          _APP="${SCITEX_CI_APPTAINER:-apptainer}"
+          _SIF=$(eval echo "${SCITEX_CI_SIF:-}")
+          if [ -x "$_APP" ] && [ -f "$_SIF" ]; then
+            "$_APP" exec "$_SIF" sh -c '
+              echo "  nproc               = $(nproc 2>/dev/null || echo ?)"
+              echo "  nproc --all         = $(nproc --all 2>/dev/null || echo ?)"
+              echo "  /proc/cpuinfo count = $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo ?)"
+            ' 2>&1 | sed 's/^/  /'
+          else
+            echo "  (apptainer or SIF not resolvable: APP=$_APP SIF=$_SIF)"
+          fi
+
+      # compute-04 fails `git commit` 13/13 with "fatal: failed to write commit
+      # object" — ssh commit signing against a key that is not there. If the
+      # Spartan machines share that fault, routing at them trades one broken
+      # host for three. Probe it in a scratch repo; never touch the checkout.
+      - name: Can this host make a git commit (the compute-04 fault, probed)
+        run: |
+          set -u
+          echo "commit.gpgsign = $(git config --get commit.gpgsign || echo '<unset>')"
+          echo "gpg.format     = $(git config --get gpg.format || echo '<unset>')"
+          echo "user.signingkey= $(git config --get user.signingkey || echo '<unset>')"
+          probe="$(mktemp -d)"
+          git -C "$probe" init -q
+          git -C "$probe" config user.email ci-canary@example.invalid
+          git -C "$probe" config user.name  "ci canary"
+          : > "$probe/probe.txt"
+          git -C "$probe" add probe.txt
+          if git -C "$probe" commit -qm "probe" 2>"$probe/err"; then
+            echo "RESULT: commit OK on $(hostname)"
+          else
+            echo "RESULT: commit FAILED on $(hostname) — same class as compute-04"
+            cat "$probe/err"
+          fi
+          rm -rf "$probe"
+
+      # THE SAME BYTES THE REAL GATE RUNS. Not "an equivalent setup" — the same
+      # script with the same argument shape as
+      # pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml, so a green here is a
+      # statement about the real gate and not about a simplified stand-in.
+      - name: Run the real gate script in the CI SIF
+        run: bash .github/ci/exec-in-sif.sh run-in-sif.sh ${{ inputs.python-version || '3.12' }}
+
+      # The runner is persistent and the scratch is 1.8-2.2 GB per leg. Same
+      # `always()` cleanup as the real gate, scoped to this leg — a canary that
+      # fills someone's filesystem has not helped anybody.
+      - name: Remove this leg's CI scratch (persistent runner — nothing else reclaims it)
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ inputs.python-version || '3.12' }}

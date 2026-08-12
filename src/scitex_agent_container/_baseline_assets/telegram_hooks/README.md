@@ -18,10 +18,67 @@ was the OP-PRIO-2 bug fixed the same day; do not regress it.
 | Script | Rule | Behaviour | Escape env |
 |---|---|---|---|
 | `enforce_telegram_numbering.sh` | 1. Lettered options must be numbered (`1a/1b` or `1./2.`) | BLOCK | `CC_ALLOW_LETTERED_OPTIONS=1` |
-| `enforce_telegram_no_bare_issue.sh` | 2. A message can't be just `#162` (bare issue/PR number) | BLOCK | `CC_ALLOW_BARE_ISSUE=1` |
+| `enforce_telegram_no_bare_issue.sh` | 2. Every `#NNN` **anywhere** in the message needs a parenthetical description — `#970（説明）` / `#970 (description)` | BLOCK | `CC_ALLOW_BARE_ISSUE=1` |
 | `enforce_telegram_use_lists.sh` | 3. 3+ enumerated items must be a list, not run-on prose | BLOCK | `CC_ALLOW_PROSE_ENUM=1` |
 | `enforce_telegram_no_filler.sh` | 4. No filler / hedging words (`basically`, `actually`, `一旦`, `とりあえず`, ...) | BLOCK | `CC_ALLOW_FILLER=1` |
 | `encourage_telegram_terse_style.sh` | 5. Long sentences should end in a terse closer (`します/しました/done/...`) | REMINDER (stderr nudge, rc=0) | `CC_ALLOW_NON_TERSE=1` |
+
+### Rule 2 was tightened on 2026-08-11
+
+As shipped on 2026-06-09 the hook only refused a message that reduced
+ENTIRELY to bare `#NNN` tokens, so a number inside a sentence passed
+untouched — which is the common case. The operator noticed after being
+sent a line containing `#970` with no description and asked why his rule
+was not enforced. **A guard whose trigger condition is narrower than its
+stated rule reads as enforcement while enforcing almost nothing.**
+
+The hook now refuses any `#NNN` that is not immediately followed by a
+parenthetical description, with five documented decisions: URLs are
+blanked before scanning (a `…/pull/970` path segment and a `…#123`
+fragment are not references); a repeated `#NNN` inherits the description
+given EARLIER in the same message, left to right; a repo name is not
+a description (`scitex-dev #578` still needs one); a `#` glued to
+letters is a hex colour, not a reference (`#589abc` must never be
+refused); and code is data, not prose (a number inside a fenced block or
+an inline code span is being SHOWN, not cited). The rationale for each
+lives in `_telegram_rules.py`. Case table + mutation check:
+`tests/integration/telegram_hooks/test_telegram_no_bare_issue_rule.py`.
+
+The **parenthesis is the required form** — the operator's stipulation,
+2026-08-11: 「ナンバーの後に ( をつけて説明する、っていうのをルールに
+してください」. A dash (`#589 — auditd rules declared`) or a colon does
+**not** pass, and the refusal text says so, so the fix is never a guess.
+
+### Rule 2 lives in ONE place (2026-08-12)
+
+> 「mcp も同じですね。同じルールなので、ルールは一つの場所に、shell 用の
+>   hook と mcp のフィルタで同じルールを適用させて ssot に、が良いかと」
+
+The rule and its refusal wording live in **`_telegram_rules.py`**. Two
+consumers, one implementation, both thin adapters:
+
+| Consumer | Adapter | Contract |
+|---|---|---|
+| Claude Code PreToolUse | `enforce_telegram_no_bare_issue.sh` | hook JSON on stdin → rc 0 allow / rc 2 block, refusal on stderr |
+| claude-code-telegrammer MCP filter | `python3 _telegram_rules.py --text-stdin` | raw text on stdin → one JSON line `{"ok":true}` / `{"ok":false,"token","excerpt","message"}` |
+
+Neither adapter formats its own wording — the refusal text comes from
+the module, because the wording IS the fix instruction the operator
+reads on his phone, and two paths that compose their own will drift.
+A rule enforced on one path and absent on the other is exactly how a
+bare `scitex-dev #589` reaches him anyway.
+
+`_telegram_rules.py` is stdlib-only and ships **beside** the hook in
+`pre-tool-use/`, so the `to_home` cascade that materializes the hooks
+materializes the rule with them. The hook FAILS OPEN if the module is
+missing; the pytest pins that they travel together, so a packaging slip
+breaks CI rather than silently disarming the gate.
+
+Both adapters are driven over one shared case table in
+`tests/integration/telegram_hooks/test_telegram_rule_ssot.py`, which
+asserts they return the same verdict **and** the same wording — that
+they call the same function is an implementation detail, and an
+implementation detail is not the property.
 
 Each script supports `--self-test` and emits a `pass=N fail=M` summary
 plus rc=0 (all pass) / rc=1 (any fail). The companion pytest at

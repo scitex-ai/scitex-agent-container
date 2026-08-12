@@ -134,30 +134,15 @@ def provide_jobs() -> "list[JobSpec]":
       ``spec.workdir``, so the command is correct as written.
 
     ``sac listen`` is DELIBERATELY NOT declared here, and adding it back
-    would take the fleet's control plane down. scitex-dev derives a unit
-    name from the job name VERBATIM (``scitex-todo.dashboard`` ->
-    ``scitex-todo.dashboard.service``), so a ``sac.listen`` JobSpec
-    materialises ``sac.listen.service`` — while the listen that actually
-    runs on the host is ``sac-listen.service`` (a HYPHEN), hand-written
-    2026-07-05 14:38, ``Restart=always``, with ``10-venv-path`` and
-    ``20-hardening`` drop-ins. The two names differ by one character and
-    systemd treats them as unrelated units, so ``scitex-dev service ensure
-    sac.listen`` does not adopt the running supervisor — it installs a
-    SECOND one. Two units, both ``Restart=always``, both running
-    ``sac listen``, both binding 127.0.0.1:7878: they fight for the port
-    forever, and every lost round destroys the in-memory Broker, which
-    deafens EVERY agent's inbox at once.
-
-    PR #543 declared it on the premise that ``sac listen`` "had NO
-    SUPERVISOR". That premise was false by the time it merged — the
-    hand-written unit was created the SAME DAY the PR was opened, and had
-    been supervising listen for nine days (``NRestarts=0``). The PR was
-    obsolete on arrival and nobody re-checked before merging it.
-
-    If this is ever federated, it must be named ``sac-listen`` (hyphen) so
-    the derived unit is the one that already exists — and even then,
-    ``ensure`` must be shown to ADOPT the running unit rather than
-    overwrite its drop-ins. Do not re-add it without measuring that.
+    would take the fleet's control plane down: scitex-dev derives the unit
+    filename from the job name VERBATIM, so a ``sac.listen`` JobSpec
+    materialises ``sac.listen.service`` while the unit that really runs is
+    ``sac-listen.service`` (a HYPHEN) — a second ``Restart=always``
+    supervisor fighting the first for 127.0.0.1:7878. The full argument,
+    the PR that shipped on a premise already false, and the conditions
+    under which it could ever be federated are recorded in
+    ``docs/adr/0022-listen-is-not-a-jobspec.md``. The migration enforces it:
+    ``_jobs._migrate.NEVER_TOUCH`` + ``assert_never_touches_listen``.
 
     Why ``sac.accounts-refresh`` is not ``--skip-active``: under the
     pre-2026-07-08 two-refresher model both the host timer and the
@@ -171,17 +156,29 @@ def provide_jobs() -> "list[JobSpec]":
     ``--sync-active-login`` keeps the operator's live session valid across
     the single-use refresh_token rotation.
 
-    The clew incident (``clew-incident-sac-host-listen-down``, 2026-07-05)
-    that motivated federating listen was ALREADY fixed on the day it
-    happened, by the hand-written ``sac-listen.service`` above — not by a
-    JobSpec. The fragile ``sac-listen-watch.sh`` ``*/2`` cron it replaced
-    is gone. Re-federating it does not fix that incident again; it only
-    adds a second supervisor to fight the first.
     """
     from scitex_dev.jobs import JobSpec
 
+    from ._specs_liveness import liveness_jobs
+
     return [
         JobSpec(
+            # THE ONE NAME STILL ON THE LEGACY PREFIX, AND IT IS ON PURPOSE.
+            # Every other job here was cut over to `scitex-agent-container-*`;
+            # this one is HELD, with the reason recorded in
+            # `_migrate._renames.RENAMES` (the SSoT for the cutover).
+            #
+            # A spec renamed AHEAD of its unit is the one shape that must not
+            # ship. The live, enabled, actively-refreshing unit is
+            # `sac.accounts-refresh.timer`; if this said
+            # `scitex-agent-container-accounts-refresh` while that unit ran,
+            # `sac dev timer status accounts-refresh` would resolve to a name
+            # no unit carries and report the fleet's SOLE OAuth refresher as
+            # ABSENT while it refreshes. A name that does not match the
+            # convention yet is a PS-227 warning; a CLI that reports the
+            # credential machinery as missing when it is healthy is an
+            # incident. So the declared name tracks the DEPLOYED unit until
+            # the supervised cutover renames both together.
             name="sac.accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
             command=("sac accounts refresh --all --include-active --sync-active-login"),
@@ -206,7 +203,7 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=120,
         ),
         JobSpec(
-            name="sac.accounts-keepalive",
+            name="scitex-agent-container-accounts-keepalive",
             schedule="*/15 * * * *",  # every 15min (cron form; timer below)
             command=(
                 "sac accounts keepalive --all "
@@ -268,7 +265,7 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=300,
         ),
         JobSpec(
-            name="sac.host-sync-check",
+            name="scitex-agent-container-host-sync-check",
             schedule="0 * * * *",  # hourly (cron form; timer cadence below)
             command="sac host sync --check --all --alarm",
             description=(
@@ -290,7 +287,7 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=600,
         ),
         JobSpec(
-            name="sac.worktree-gc",
+            name="scitex-agent-container-worktree-gc",
             schedule="30 4 * * *",  # daily 04:30 (cron form; timer cadence below)
             command="sac worktree gc --apply --all",
             description=(
@@ -317,7 +314,7 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=900,
         ),
         JobSpec(
-            name="sac.spartan-sif-bake",
+            name="scitex-agent-container-spartan-sif-bake",
             schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
             command="sac image bake-remote --yes",
             description=(
@@ -361,7 +358,7 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=14_400,
         ),
         JobSpec(
-            name="sac.freshness-refresh",
+            name="scitex-agent-container-freshness-refresh",
             schedule="7 * * * *",  # hourly (cron form; timer cadence below)
             command="sac freshness refresh",
             description=(
@@ -388,78 +385,13 @@ def provide_jobs() -> "list[JobSpec]":
             # waiting on this run.
             timeout_sec=300,
         ),
+        # The two AGENT-LIVENESS enforcers live together in
+        # :mod:`._specs_liveness` — each one's scope is defined by what the
+        # other covers (corpses vs live-but-wedged), so they are unreadable
+        # apart. Spliced in HERE to preserve the historical order.
+        *liveness_jobs(),
         JobSpec(
-            name="sac.fleet-reconcile",
-            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents reconcile --apply",
-            description=(
-                "The enforcer of 'should be running => is running'. Restarts "
-                "agents whose tmux session is GONE while their spec asks to be "
-                "kept running AND nothing recorded a deliberate stop. Only ever "
-                "touches a CORPSE (no session => no context to lose); never a "
-                "live-but-wedged agent (auth-heal owns those) and never a "
-                "deliberately-stopped one. Rate-limited (30min/agent debounce, "
-                "<=2/agent/hour, <=10/pass); an agent it cannot recover is "
-                "RECORDED as degraded instead of bounced endlessly."
-            ),
-            kind="timer",
-            # THIS JOB IS THE MECHANISM, not an optimisation. `restart.policy`
-            # in ~93 specs is dead code — `_lifecycle/_start.py` launches the
-            # loop that reads it on a `daemon=True` thread and then returns,
-            # and `sac agents start` is a short-lived CLI, so the supervisor
-            # dies with the process that promised it. Nothing else owns fleet
-            # liveness: `sac listen`'s reconciler only alarms on stuck CARDS.
-            # An OAuth rotation killed 33 agents and they stayed dead until the
-            # operator noticed by chance. Unschedule this and that returns.
-            #
-            # 5min: the window an agent stays dead. A pass that finds nothing
-            # (the normal case) is one batched `tmux list-sessions` plus a spec
-            # read each — cheap enough to run often.
-            on_boot_sec="5min",
-            on_unit_active_sec="5min",
-            # A no-op pass takes ~seconds; this bounds the pathological one
-            # (`--limit` restarts, each a stop+settle+start). A pass killed at
-            # this timeout is SAFE: the restart history is persisted per
-            # restart, not at the end, so the next tick still honours the
-            # debounce for anything already bounced.
-            timeout_sec=300,
-        ),
-        JobSpec(
-            name="sac.restart-login-expired-agents",
-            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents restart-login-expired --apply",
-            description=(
-                "Restarts LIVE agents wedged behind a frozen 'Login expired' "
-                "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
-                "leaves alone. Detection is READ-ONLY + 2-run-corroborated (a "
-                "banner that moved between the two captures = working, never "
-                "restarted); the restart runs through the pool-loading start "
-                "path (cannot strip CCT tokens) and is rate-limited (30min/agent "
-                "debounce, <=2/agent/hour, <=10/pass); an agent still wedged "
-                "after the cap is RECORDED as degraded, not bounced endlessly. "
-                "DEPLOY GATE: do NOT enable until the host's auth-heal.py "
-                "scan_tui cron is retired (double-supervisor risk)."
-            ),
-            # Same taxonomy note as the jobs above: kind must be one of
-            # {"service","timer","cron"} (scitex-dev #153); a periodic
-            # systemd --user timer is ``kind="timer"`` with the cadence in
-            # ``on_unit_active_sec``. A wrong kind raises at construction and
-            # ``ecosystem up`` then silently drops sac's WHOLE provider.
-            kind="timer",
-            # 5min matched to fleet-reconcile so the two enforcers sweep on the
-            # same beat rather than harmonising into one; it is the window a
-            # wedged agent stays wedged. A no-op pass is one `tmux list-sessions`
-            # plus two pane captures ~4s apart.
-            on_boot_sec="5min",
-            on_unit_active_sec="5min",
-            # Mirrors fleet-reconcile: bounds the pathological pass (`--limit`
-            # restarts, each a stop+settle+start) plus the ~4s capture interval.
-            # A pass killed here is SAFE — history is persisted per restart, so
-            # the next tick still honours the debounce for anything bounced.
-            timeout_sec=300,
-        ),
-        JobSpec(
-            name="sac.heal-agent-auth",
+            name="scitex-agent-container-heal-agent-auth",
             schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
             # ABSOLUTE by design, both tokens. `resolve_execstart` passes a
             # command whose head starts with "/" through VERBATIM, so this is

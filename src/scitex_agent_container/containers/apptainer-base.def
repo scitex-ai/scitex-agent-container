@@ -19,7 +19,25 @@
 # Layer this with apptainer-scitex.def to add scitex[all] + claude-sdk + sac.
 
 Bootstrap: docker
-From: ubuntu:24.04
+# PINNED BY DIGEST, not by tag. ``ubuntu:24.04`` is a MOVING tag — Canonical
+# republishes it for every point release and security refresh, so two builds
+# a month apart start from different bytes and the version-set comparison has
+# no fixed floor to stand on. The digest below is 24.04.4 LTS, the exact base
+# the live fleet image was built from (verified in-image 2026-08-12).
+#
+# The trade this makes, stated plainly: a pinned base stops picking up
+# Canonical's refreshed layer on rebuild. BUMP IT DELIBERATELY (resolve with
+# ``curl`` against registry-1.docker.io, or ``skopeo inspect
+# docker://ubuntu:24.04``) rather than letting it drift silently.
+#
+# Note this pins the STARTING layer only. ``%post`` still runs ``apt-get
+# update``, which pulls whatever the Ubuntu archive currently holds, so apt
+# packages can still move. That residual drift is DETECTED — the reproducible
+# round trip (``sac image build --reproducible``) captures dpkg versions into
+# the .lock and reports any change — but not yet prevented; pinning apt needs
+# ``pkg=ver`` injection or snapshot.ubuntu.com, which scitex-container's
+# ``generate_locked_def`` explicitly defers.
+From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
 
 %files
     # Bundle the package's OWN source tree so the in-SIF sac is the
@@ -244,13 +262,26 @@ From: ubuntu:24.04
     # For the operator's hand-curated extra Rust-CLI set (per-host,
     # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
     # in the operator dotfiles.
+    # The rustup INSTALLER at sh.rustup.rs is unversioned, but the toolchain
+    # it lays down is what actually ends up in the image — so pin THAT with
+    # --default-toolchain. Without it, `sh.rustup.rs -y` installs whatever
+    # "stable" means on build day and the two halves of a round trip can
+    # land different rustc versions. 1.97.1 is what the live fleet image
+    # carries (verified in-image 2026-08-12).
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
+    RUST_TOOLCHAIN=1.97.1
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --no-modify-path
+        | sh -s -- -y --profile minimal --no-modify-path \
+              --default-toolchain "${RUST_TOOLCHAIN}"
     export PATH=/opt/cargo/bin:$PATH
+    # PINNED: ``releases/latest/download`` is a moving target, exactly like
+    # the yq fetch below and unlike the gdu fetch in 4c which has been
+    # pinned all along for the same reason. 1.21.1 is what the live fleet
+    # image carries (verified in-image 2026-08-12).
+    CARGO_BINSTALL_VERSION=1.21.1
     curl --proto '=https' --tlsv1.2 -sSfL \
-        https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
+        "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-musl.tgz" \
         | tar xz -C /opt/cargo/bin/
     chmod +x /opt/cargo/bin/cargo-binstall
     cargo binstall --no-confirm --force sd du-dust
@@ -263,15 +294,20 @@ From: ubuntu:24.04
     # uses. Pull the Go binary directly to /usr/local/bin so callers
     # get the expected `.path | select(...)` syntax — non-interactive,
     # single static binary, no runtime deps.
+    # PINNED for the same reason gdu is pinned in 4c: callers depend on a
+    # stable CLI surface across rebuilds, and ``releases/latest/download``
+    # silently retargets whenever upstream tags. v4.53.3 is what the live
+    # fleet image carries (verified in-image 2026-08-12).
+    YQ_VERSION=4.53.3
     curl -fsSL \
-        https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+        "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
         -o /usr/local/bin/yq
     chmod +x /usr/local/bin/yq
 
     # ---- 4c. gdu — dundee/gdu (pinned), NOT Ubuntu's gnu-disk-usage --
     # Ubuntu 24.04's apt `gdu` is the ambiguous "gnu-disk-usage" build
     # (no `-o-` machine-readable JSON). sac's .claude size-audit
-    # (F-CS8, _workdir_audit.py) hard-depends on dundee/gdu's
+    # (F-CS8, _workdir/_audit.py) hard-depends on dundee/gdu's
     # `gdu -o- <path>` JSON contract — different binary, same name.
     # Pull a PINNED static release tarball from the dundee/gdu GitHub
     # releases page so the .claude audit's JSON parser stays stable
@@ -452,15 +488,70 @@ From: ubuntu:24.04
     # release that drops it dies LOUD at bake rather than shipping silently.
     # That gate is the honest protection: verify the artifact you built,
     # do not freeze the input and call it safety.
-    # sac's [openai] extra (openai-agents — the `spec.provider: openai`
-    # agent-SDK family, openai-compat-3) is baked UNCONDITIONALLY: one
-    # image serves EVERY agent, so a per-spec conditional install is
-    # impossible at image-build time. Per-spec conditionality is a
-    # RUNTIME concern instead — only `provider: openai` launches get the
+    # sac is installed with ``[all,dev]`` — and NOT the narrower ``[openai]``
+    # it carried until 2026-08-11.
+    #
+    # WHY THE WIDENING: ``[openai]`` left the image WITHOUT TEST TOOLING,
+    # because pytest and its plugins are declared in ``[dev]``. Measured on
+    # scitex-compute-04 the night of 2026-08-11, against the live SIF:
+    #
+    #   * a pristine container answered ``NO_PYTEST_ON_PATH`` and
+    #     ``/opt/venv-sac/bin/python: No module named pytest``;
+    #   * 19 of 20 agent overlays had NEITHER pytest NOR pytest-asyncio;
+    #   * so every agent that needed to run the suite hand-installed its own
+    #     tooling, and the fleet legitimately held DIFFERENT plugin sets and
+    #     different pytest MAJORS — one container ended up on pytest 9,
+    #     outside pyproject's declared ``>=7.0.0,<9.0.0``, while CI ran 8;
+    #   * and a 14-minute window in one overlay (pytest installed at 21:48,
+    #     pytest-asyncio not until 22:02) produced a run where 93 async tests
+    #     failed as pure ENVIRONMENT ARTEFACTS and were briefly read as a
+    #     regression in the code.
+    #
+    # An image that cannot run its own tests exports that cost to every agent
+    # booting it, and pays it again in wrong diagnoses. Operator ruling,
+    # 2026-08-11: 「デベロップメントは必ず SIF に入れないといけないっていうのは
+    # 当たり前だと思うんですけど、というか多分オールを入れておけばいいと思うん
+    # ですよね」— put dev IN the SIF — and, on the bracket itself,
+    # 「オールとデブですね」: ``[all,dev]``.
+    #
+    # ``dev`` IS NAMED EXPLICITLY EVEN THOUGH ``all`` CONTAINS IT TODAY.
+    # pyproject's ``all`` is the union aggregate and lists
+    # ``scitex-agent-container[dev]`` (alongside mcp / telegram / notify /
+    # slurm / openai / codex / docs), so ``[all]`` alone would resolve the
+    # same set right now. Naming ``dev`` anyway is not ceremony: it makes the
+    # REQUIREMENT — this image must arrive able to run its own tests — legible
+    # in the line that implements it, and it keeps that requirement satisfied
+    # if ``all`` is ever trimmed. An aggregate quietly losing a member is
+    # exactly the silent drift this whole change exists to end; the redundancy
+    # costs nothing and removes a way to lose it again. (The contract test in
+    # tests/integration/test_apptainer_def_openai_agents.py holds the same
+    # line from the other side.)
+    #
+    # ``[all,dev]`` IS A SUPERSET OF ``[openai]``, so nothing about the previous
+    # contract is lost: openai-agents (the `spec.provider: openai` agent-SDK
+    # family, openai-compat-3) is still baked UNCONDITIONALLY, which is the
+    # only option at image-build time — one image serves EVERY agent, so a
+    # per-spec conditional install is impossible here. Per-spec conditionality
+    # stays a RUNTIME concern: only `provider: openai` launches get the
     # OPENAI_* env injection + `openai_session` executor routing (see
-    # runtimes/_apptainer_provider.py). The extra's version floor lives
-    # in pyproject.toml (SSoT); the bracket syntax on the local source
-    # path resolves it through the bundled tree's own metadata.
+    # runtimes/_apptainer_provider.py).
+    #
+    # EVERY version floor stays in pyproject.toml (SSoT); the bracket syntax
+    # on the local source path resolves them through the bundled tree's own
+    # metadata. That is what keeps the image's pytest inside
+    # ``>=7.0.0,<9.0.0`` instead of drifting to a major CI does not run — a
+    # hand-install carries no such constraint, which is exactly how the
+    # pytest-9 container happened.
+    #
+    # COST, MEASURED on scitex-compute-04 (2026-08-12 bake) rather than
+    # guessed: 161 -> 221 distributions (+60) and 1535.5 -> 1585.8 MB of SIF
+    # (+50.3 MB, +3.3%); the venv grows 1.1G -> 1.3G. It is that small because
+    # the heavy scientific stack was ALREADY in the image — scitex-dev 0.47.0,
+    # playwright, numpy, scipy, matplotlib and pymupdf were all present under
+    # ``[openai]`` — so this does not import a new ecosystem, it adds the test
+    # / docs / bridge leaves on top of one already paid for. Operator, shown
+    # the number: 「別に入れればいいじゃん…全部入れちゃえばいいと思う」.
+    # Re-measure rather than assume if the aggregate grows.
     #
     # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
     # ``--force-reinstall`` are PIP flags; uv does not honour them as a
@@ -492,7 +583,7 @@ From: ubuntu:24.04
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
         "scitex-cards>=0.32.0" \
-        "/opt/scitex-agent-container-src[openai]"
+        "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs

@@ -171,10 +171,23 @@ From: ./sac-base.sif
         # re-resolves to the newest published version. A FRESH-base bake
         # happens to work either way, which is precisely why this went
         # unnoticed — and why the timer-driven routine bake needs it.
+        #
+        # ``pytest`` CARRIES ITS FLOOR HERE, and the ``<9`` half is the
+        # load-bearing one. Base now installs sac's ``[all]`` (which includes
+        # ``[dev]``), so the inherited venv already holds a pytest inside
+        # pyproject's declared ``>=7.0.0,<9.0.0`` plus pytest-asyncio and
+        # pytest-xdist. An UNVERSIONED ``pytest`` on THIS ``-U`` line would
+        # then do real damage rather than nothing: ``-U`` re-resolves to the
+        # newest published pytest — a MAJOR CI does not run — while the
+        # plugins stay where base put them. That is the same split that cost
+        # an evening on 2026-08-11, when a hand-installed pytest 9 met a
+        # pytest-asyncio built for 8 and 93 async tests failed as pure
+        # environment artefacts. The floor mirrors pyproject.toml's ``[dev]``
+        # (SSoT) and must be bumped in lockstep with it.
         uv pip install --python /opt/venv-sac/bin/python -U \
             black flake8 \
             ipython ipdb \
-            pytest pytest-cov \
+            "pytest>=7.0.0,<9.0.0" pytest-cov \
             "claude-agent-sdk" \
             "openai-agents>=0.17.4" \
             "scitex[all]" \
@@ -300,10 +313,14 @@ From: ./sac-base.sif
             pip setuptools wheel
         # openai-agents: explicit for the same --no-deps reason as the
         # uv branch above; floor mirrors pyproject.toml's [openai] extra.
+        # pytest floor: MUST TRACK THE uv BRANCH ABOVE — see it for why the
+        # ``<9`` half is load-bearing (an unversioned pytest under
+        # ``--upgrade`` crosses a major the inherited pytest-asyncio was not
+        # built for, and the suite then fails as an environment artefact).
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             black flake8 \
             ipython ipdb \
-            pytest pytest-cov \
+            "pytest>=7.0.0,<9.0.0" pytest-cov \
             "claude-agent-sdk" \
             "openai-agents>=0.17.4" \
             "scitex[all]" \

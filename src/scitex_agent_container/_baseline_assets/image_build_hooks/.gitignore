@@ -1,0 +1,6 @@
+# The hook writes its audit trail next to itself (THIS_DIR), which is the
+# right default once deployed to $HOME/.claude/hooks/pre-tool-use/ but
+# means running the script from a checkout drops a log into the source
+# tree. Never commit it. Override the location with
+# SCITEX_AGENT_CONTAINER_HOOK_LOG_PATH.
+.*.sh.log

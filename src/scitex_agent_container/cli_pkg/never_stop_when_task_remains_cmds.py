@@ -19,6 +19,14 @@ to the operator instead of buried in the debug log.
 
 Because stdout IS the protocol, this command prints the JSON object and
 nothing else; every diagnostic goes to stderr.
+
+``systemMessage`` also carries the AWAITING-OPERATOR REPORT — the count of
+this agent's cards blocked on a human, and the age of the oldest. It is a
+report, never a gate: those cards are correctly waiting, so they must not
+prevent a stop. It rides on ``systemMessage`` precisely because that field
+can be emitted while STILL ALLOWING the stop, which is the only way to reach
+the agent that would otherwise truthfully report "board clear". See
+:mod:`~scitex_agent_container._never_stop_when_task_remains._awaiting_operator`.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ import sys
 
 import click
 
+from .._never_stop_when_task_remains._awaiting_operator import notice
 from .._never_stop_when_task_remains._decide import decide
 from .._never_stop_when_task_remains._detector import probe
 from .._never_stop_when_task_remains._identity import resolve_agent
@@ -100,10 +109,21 @@ def never_stop_when_task_remains(agent_flag: str) -> None:
         print(decision.log, file=sys.stderr)
 
     # The executable's decision, forwarded verbatim — we add only what sac
-    # owns (the fail-open / alarm systemMessage).
+    # owns (the fail-open / alarm systemMessage, and the awaiting-operator
+    # report).
     out: dict = dict(decision.payload) if decision.block else {}
-    if decision.system_message:
-        out["systemMessage"] = decision.system_message
+
+    # REPORT, NEVER GATE. This line is merged into ``systemMessage`` and
+    # deliberately not into ``decision`` / ``reason``: a card blocked on the
+    # operator is CORRECTLY waiting and must not stop an agent from stopping.
+    # It goes here rather than into the block reason because the failure being
+    # fixed is the ALLOW path — the agent that truthfully reports "board
+    # clear" because a blocked card is counted by nothing.
+    messages = [
+        text for text in (decision.system_message, notice(agent)) if text.strip()
+    ]
+    if messages:
+        out["systemMessage"] = "\n".join(messages)
 
     if out:
         # stdout is the protocol — the JSON object and nothing else.

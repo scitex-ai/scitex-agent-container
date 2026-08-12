@@ -42,7 +42,7 @@ from typing import Literal
 # but nothing branches on ``AgentConfig.provider`` yet — selecting
 # ``"openai"`` today only affects `sac agents explain` / config introspection.
 # openai-compat-2 lands the concrete ``openai`` runner (see
-# ``_runners/_provider_session.py`` for the ``ProviderSession`` Protocol it
+# ``_runners/_harness_session.py`` for the ``HarnessSession`` Protocol it
 # will implement); openai-compat-3 wires the selection into the apptainer
 # entrypoint + container image.
 AgentProvider = Literal["anthropic", "openai"]

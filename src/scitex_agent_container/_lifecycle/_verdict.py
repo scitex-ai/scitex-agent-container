@@ -119,6 +119,7 @@ from ._verdict_instruments import (
     WEDGED,
     InstrumentSpec,
     Signal,
+    delivery_alive_wins,
 )
 
 __all__ = [
@@ -430,9 +431,9 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
 
     1. **A ``delivery`` ALIVE is authoritative ⇒ ALIVE.** The broker OBSERVED the
        agent's inbox adapter attached — the one signal that watched a message be
-       able to WAKE the agent, not a shadow of it. A broker-reachable agent is
-       working, full stop, so it is never flagged. This is FIRST so it beats even
-       WEDGED — see rule 2's rationale.
+       able to WAKE the agent, not a shadow of it. This is FIRST so it beats even
+       WEDGED (rule 2). ONE exception, withdrawn in :func:`delivery_alive_wins`:
+       a refusal WEDGE — the agent's own record that its last turn did not run.
     2. **Any WEDGED ⇒ WEDGED.** The screen instrument read the pane's rendered
        CONTENT and found a FROZEN auth banner above the prompt: the agent is
        PRESENT but NOT WORKING. This OVERRULES a ``process`` / ``heartbeat`` /
@@ -472,9 +473,8 @@ def decide(agent: str, signals: Iterable[Signal] | Sequence[Signal]) -> Liveness
     # can a message reach this agent — and it is supreme, ABOVE even a WEDGED. It
     # is pulled out of the general positive-life step (rule 3) purely so it sits
     # ahead of rule 2.
-    for sig in sigs:
-        if sig.verdict == ALIVE and sig.source == SOURCE_DELIVERY:
-            return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
+    if delivery_alive_wins(sigs):
+        return LivenessVerdict(agent=agent, verdict=ALIVE, signals=sigs)
     # (2) Any WEDGED wins over a pid/session ALIVE. Those proxies see only that
     # the process EXISTS; the screen instrument saw that it is not WORKING. A
     # WEDGED that reaches here is already fresh + this-incarnation — all the

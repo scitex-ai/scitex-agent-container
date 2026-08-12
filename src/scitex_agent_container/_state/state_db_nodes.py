@@ -24,11 +24,23 @@ the prior limited scope had deferred):
     :func:`grant_send`.
 
   * **Spawn permission** — a node with no parent may call
-    ``sac agents start``; so may a child whose resolved NAMED group
-    is ``developer`` or ``researcher`` (operator ruling 2026-07-05:
-    "dev agents and research agents MUST have full permissions —
-    including the ability to start/stop peer agents"). Any other
-    child is denied. See :func:`spawn_allowed`.
+    ``sac agents start``; so may a child whose NAMED GROUPS INCLUDE
+    ``developer``, ``researcher`` or ``privileged`` (operator ruling
+    2026-07-05: "dev agents and research agents MUST have full
+    permissions — including the ability to start/stop peer agents").
+    Any other child is denied. See :func:`spawn_allowed`.
+
+  * **Two group projections, one source.** ``group_name`` is the
+    PRIMARY group — the single bucket the default-ACL mesh resolves
+    through (:func:`resolve_group_name` / :func:`same_named_group`).
+    ``group_names`` is the FULL set the spec authored, and it is what
+    the AUTHORITY predicates read (:func:`is_developer` /
+    :func:`is_researcher` / :func:`is_privileged`, in
+    :mod:`.state_db_groups`). Both are written from the same
+    ``metadata.labels`` at ``agent_start``. Collapsing authority onto
+    the primary is what made ``grant`` — ``groups: [generalist,
+    privileged, developer, researcher, active]`` — a non-developer to
+    every gate while ``a2a_peers`` listed all five (2026-08-10).
 
 The N-level structural capability of ``lineage`` is preserved —
 nothing here hard-codes "2" or assumes fixed depth.
@@ -67,8 +79,10 @@ __all__ = [
     "derive_group",
     "grant_send",
     "has_grant",
+    "in_named_group",
     "is_developer",
     "is_local_node",
+    "is_privileged",
     "is_researcher",
     "list_comms_grants",
     "list_comms_nodes",
@@ -80,6 +94,7 @@ __all__ = [
     "record_lineage",
     "register_comms_node",
     "resolve_group_name",
+    "resolve_group_names",
     "resolve_node_host",
     "resolve_node_token",
     "revoke_send",
@@ -208,84 +223,29 @@ def derive_group(
 # ---------------------------------------------------------------------------
 
 
-def resolve_group_name(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> str:
-    """Return ``name``'s persisted NAMED group, or ``""`` if ungrouped.
-
-    Reads ``node_comms_policy.group_name`` (written at ``agent_start``
-    from the resolved ``metadata.labels.group`` / role default). An
-    agent with no policy row, or a row with an empty ``group_name``,
-    is "ungrouped" and shares a named group with no one.
-    """
-    if not name:
-        return ""
-    policy = read_comms_policy(name=name, db_path=db_path)
-    return str(policy.get("group_name", "") or "")
+# ``resolve_group_name`` (the PRIMARY / mesh projection) and
+# ``same_named_group`` moved into the sibling group module alongside the
+# MULTI-value readers: both projections now resolve through the SPEC
+# first (operator 2026-08-12, "configuration → files under git"), and
+# keeping the two in one file is what stops them drifting onto different
+# sources again. Re-exported here so the long-standing import path
+# ``from ..._state.state_db_nodes import resolve_group_name`` keeps working.
 
 
-def same_named_group(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
-
-    Both groups must be NON-EMPTY and equal. Two ungrouped agents
-    (empty group) do NOT match — that keeps absence byte-equivalent to
-    the pre-group-name behaviour (an ungrouped fleet falls through to
-    the lineage-mesh + explicit-grant ACL exactly as before).
-    """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
-    if not sender_group:
-        return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
-    return target_group == sender_group
-
-
-def is_developer(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``developer``.
-
-    The developer group has FULL AUTHORITY (operator 2026-06-25):
-    members may CRUD agents (spawn / start / stop / restart / delete)
-    and CRUD the ACL (grant / revoke). The spawn + lineage ACL gates
-    consult this to short-circuit their default (root-only / lineage-
-    descendant) checks.
-    """
-    from ..config._group_resolver import is_developer_group
-
-    return is_developer_group(resolve_group_name(name=name, db_path=db_path))
-
-
-def is_researcher(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``researcher``.
-
-    Mirrors :func:`is_developer` for the research-role group
-    (:data:`scitex_agent_container.config._group_resolver.RESEARCHER_GROUP`).
-    Per the operator's 2026-07-05 ruling ("dev agents and research
-    agents MUST have full permissions — including the ability to
-    start/stop peer agents"), a researcher-group member gets the same
-    spawn authority as a developer-group member; see
-    :func:`spawn_allowed`.
-    """
-    from ..config._group_resolver import RESEARCHER_GROUP
-
-    group = resolve_group_name(name=name, db_path=db_path)
-    if not group:
-        return False
-    return group.strip().lower() == RESEARCHER_GROUP.lower()
-
+# The AUTHORITY predicates (``is_developer`` / ``is_researcher`` /
+# ``is_privileged``) are MULTI-value and live in a sibling module under
+# the per-file line cap. They ask "is <group> among this agent's named
+# groups", NOT "is it the primary group" — see state_db_groups for why
+# that distinction is the whole point (incident 2026-08-10, grant).
+from .state_db_groups import (  # noqa: E402
+    in_named_group,
+    is_developer,
+    is_privileged,
+    is_researcher,
+    resolve_group_name,
+    resolve_group_names,
+    same_named_group,
+)
 
 # ---------------------------------------------------------------------------
 # spawn permission — root nodes, plus dev/research-role children
@@ -301,18 +261,25 @@ def spawn_allowed(
 
     Current policy (handoff §4 / WI-2, relaxed per operator ruling
     2026-07-05): a *root* node (no parent) is allowed to spawn.
-    A *child* is ALSO allowed when its resolved NAMED group is
+    A *child* is ALSO allowed when its named groups INCLUDE
     ``developer`` or ``researcher`` (:func:`is_developer` /
     :func:`is_researcher`) — the operator's exact words: "Dev agents
     and research agents MUST have full permissions — including the
     ability to start/stop peer agents." The ``privileged`` group is
     allowed on the same footing (operator ruling 2026-07-16: denying
-    a privileged-group agent — dotfiles — "is a sac bug"; checked in
-    the group fallthrough below, which every named path also reaches).
+    a privileged-group agent — dotfiles — "is a sac bug").
     Any other child is denied.
     ``caller=None`` means the administrative / human-operator path
     (e.g., a shell invocation from outside any sac-managed agent) —
     allowed.
+
+    INCLUDE, not "equals the primary group" (incident 2026-08-10):
+    every one of these three checks is a MEMBERSHIP test over the FULL
+    set the spec authored, so authority never depends on where a group
+    sits in a YAML list. ``grant``, whose spec says
+    ``groups: [generalist, privileged, developer, researcher, active]``,
+    was refused here for months because only ``generalist`` — the first
+    element — ever reached the DB.
 
     Returns ``(True, None)`` on allow or ``(False, reason)`` on
     deny. The reason is suitable for inclusion in a 403 body and a
@@ -327,8 +294,17 @@ def spawn_allowed(
         # Admin / human operator. Skips the global root-only check;
         # per-spec may_spawn (Phase-3 Gap-5) layers on top.
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    if is_developer(name=caller, db_path=db_path) or is_researcher(
-        name=caller, db_path=db_path
+    # The three spawn-authorised groups, checked as MEMBERSHIP over the
+    # caller's whole named-group set. Hoisted above the lineage lookup
+    # because the authority is lineage-independent: a developer- /
+    # research- / privileged-group member may spawn or restart a peer to
+    # self-heal a DOWN agent without waiting on the operator (operator
+    # 2026-07-06 ACL incident). The per-spec may_spawn gate still layers
+    # on top, exactly like the root path above.
+    if (
+        is_developer(name=caller, db_path=db_path)
+        or is_researcher(name=caller, db_path=db_path)
+        or is_privileged(name=caller, db_path=db_path)
     ):
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
     from .state_db import open_db
@@ -339,35 +315,54 @@ def spawn_allowed(
         ).fetchone()
     if parent_row is None:
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    # Child node: denied by default, EXCEPT a developer- or research-group
-    # member may spawn / restart a peer regardless of parent/child lineage
-    # (operator 2026-07-06 ACL incident — a research child such as neurovista
-    # must be able to self-heal a DOWN peer like scitex-clew without waiting
-    # on the operator). The per-spec may_spawn gate still layers on top,
-    # exactly like the root path above.
-    from ..config._group_resolver import (
-        is_developer_group,
-        is_privileged_group,
-        is_research_group,
-    )
+    return (False, _spawn_denied_reason(caller, parent_row["parent_name"], db_path))
 
-    group = resolve_group_name(name=caller, db_path=db_path)
-    if (
-        is_developer_group(group)
-        or is_research_group(group)
-        or is_privileged_group(group)
-    ):
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+
+def _spawn_denied_reason(
+    caller: str,
+    parent: str,
+    db_path: Path | None,
+) -> str:
+    """Compose the spawn-deny reason, naming the groups ACTUALLY resolved.
+
+    The message this replaces asserted the caller "is in none of the
+    developer, research, or privileged groups" — a claim about the
+    AGENT. When the underlying bug made ``grant``'s ``developer`` label
+    unreadable, that sentence was flatly false against the same server's
+    own ``a2a_peers`` output, and it sent the reader after their group
+    labels (which were correct) instead of after the reduction that
+    dropped them. A denial must report what the GATE SAW, never assert
+    what the agent is.
+
+    So this states the resolved set verbatim, distinguishes "no policy
+    row in this store at all" from "registered and ungrouped" (the
+    2026-08-09 host_exec lesson — both produce an empty set and they are
+    different facts), and names the command that re-publishes a stale
+    row. Same decision, honest evidence.
+    """
+    from .state_db_acl_policy import comms_policy_row_exists
+
+    groups = sorted(resolve_group_names(name=caller, db_path=db_path))
+    if groups:
+        seen = (
+            f"the groups this host resolved for it are {groups}, none of "
+            "which grant spawn authority"
+        )
+    elif comms_policy_row_exists(name=caller, db_path=db_path):
+        seen = "it IS registered on this host but resolved to NO named group at all"
+    else:
+        seen = (
+            "this host holds NO node_comms_policy row for it, so its groups "
+            "could not be determined at all — which is not the same as being "
+            "denied groups you hold; check WHICH state.db was consulted"
+        )
     return (
-        False,
-        (
-            f"spawn denied: caller {caller!r} is a child of "
-            f"{parent_row['parent_name']!r} and is in none of the developer, "
-            "research, or privileged groups. Current policy: only root "
-            "nodes, or developer/research/privileged group members, may "
-            "spawn (handoff §4 'lift-able policy' — a single edit to "
-            "spawn_allowed())."
-        ),
+        f"spawn denied: caller {caller!r} is a child of {parent!r} and "
+        f"{seen}. Spawn requires one of: developer, researcher, privileged "
+        "(membership — naming the group anywhere in metadata.labels.groups "
+        "is enough), or being a root node. If the groups above disagree "
+        "with the agent's spec.yaml, this host's row is STALE: run "
+        "'sac agents refresh-acl' to re-publish it from the spec."
     )
 
 

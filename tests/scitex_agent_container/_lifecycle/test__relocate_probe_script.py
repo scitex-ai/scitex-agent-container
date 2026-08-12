@@ -91,9 +91,21 @@ def test_the_preamble_runs_before_anything_is_measured(questions) -> None:
     # facts only the target's validator can answer go silently unanswered.
     script = render_probe_script(questions, preamble='export PATH="$HOME/x:$PATH"')
     # Act
+    second_line = script.splitlines()[1]
+    # Assert
+    assert second_line == 'export PATH="$HOME/x:$PATH"'
+
+
+def test_the_raw_path_is_captured_before_the_preamble_changes_it(questions) -> None:
+    # Arrange: the sac-presence question is about the PATH a bare `ssh host sac`
+    # runs under. Measuring it AFTER the preamble — whose whole job is putting
+    # sac on PATH — answers a different question in the same words, and answers
+    # it "yes" on exactly the hosts where the bare form fails.
+    script = render_probe_script(questions, preamble='export PATH="$HOME/x:$PATH"')
+    # Act
     first_line = script.splitlines()[0]
     # Assert
-    assert first_line == 'export PATH="$HOME/x:$PATH"'
+    assert first_line == 'SACRELOC_PATH0="$PATH"'
 
 
 def test_a_path_with_a_space_is_quoted_rather_than_split() -> None:

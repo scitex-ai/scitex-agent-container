@@ -465,7 +465,7 @@
 <span class="c1"># but nothing branches on ``AgentConfig.provider`` yet — selecting</span>
 <span class="c1"># ``&quot;openai&quot;`` today only affects `sac agents explain` / config introspection.</span>
 <span class="c1"># openai-compat-2 lands the concrete ``openai`` runner (see</span>
-<span class="c1"># ``_runners/_provider_session.py`` for the ``ProviderSession`` Protocol it</span>
+<span class="c1"># ``_runners/_harness_session.py`` for the ``HarnessSession`` Protocol it</span>
 <span class="c1"># will implement); openai-compat-3 wires the selection into the apptainer</span>
 <span class="c1"># entrypoint + container image.</span>
 <span class="n">AgentProvider</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;anthropic&quot;</span><span class="p">,</span> <span class="s2">&quot;openai&quot;</span><span class="p">]</span>

@@ -39,12 +39,31 @@ on:
     - cron: "0 6 * * 1"  # Mondays 06:00 UTC
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else (the weekly cron
+# included — a scheduled run keys on its own run_id and is alone in its group).
+# Argued once, in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   audit:
     # Deliberate misnomer, kept byte-identical — see lint.yml for the full
     # reasoning. (Verified: not a protection-pinned required context.)
     name: scitex-dev-quality-audit-on-ubuntu-latest
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
+    #
+    # 44s median, single-core, and it never enters the CI SIF — the audit-*
+    # verbs are filesystem and AST analysis over the checkout, so nothing here
+    # depends on the host beyond having uv and a Python. It was holding one of
+    # four 32-core machines per run on a pool at 93-94% utilisation, then
+    # queueing 289s median (p90 902s). #1006 routed it away for that reason,
+    # and that intent is UNCHANGED — only the SEAM changed, from a literal
+    # label list to a repo variable, so a dead pool is a settings change rather
+    # than a code change. LIGHT_RUNS_ON is read by the light lane alone; it
+    # never reaches `tests` or the release gate, which DO enter the SIF and
+    # still need #992 first.
+    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
