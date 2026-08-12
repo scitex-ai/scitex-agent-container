@@ -26,8 +26,6 @@ markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 from pathlib import Path
@@ -41,9 +39,14 @@ from scitex_agent_container._lifecycle._in_sif_broker import (
     is_in_sif,
 )
 from scitex_agent_container._lifecycle._start import agent_start
+from scitex_agent_container._listen._handler_deadline import (
+    AGENT_START_DEADLINE_S,
+    client_timeout_for,
+)
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real (non-mock) fake response + opener (urllib protocol)
@@ -286,6 +289,59 @@ def test_broker_raises_on_host_listen_acl_deny(listen_env) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The client must OUTLIVE the server's declared deadline (incident 2026-08-11)
+#
+# ``broker_start_to_host`` hardcoded ``timeout_s=30.0`` — the SAME number as
+# ``AGENT_START_DEADLINE_S``, which is the budget the handler is ENTITLED to
+# spend before it answers. Equal is not enough. ``client_timeout_for`` adds
+# ``CLIENT_MARGIN_S`` precisely so the answer can still reach a client that is
+# listening — including the ``202`` "accepted, still in flight" the server sends
+# so a slow spawn is not mistaken for a dead host. Landing the client on the
+# deadline cancelled that margin and made the client give up at the exact moment
+# the server was still legitimately working.
+#
+# Measured that day: a spawn over this path was reported as "no response" while
+# the host had ACCEPTED it and worked for 5m12s (started_at 06:15:08Z,
+# failed_at 06:20:20Z, phase container_creation). A healthy route was escalated
+# as wedged on the strength of that false timeout.
+#
+# These assert the ORDERING against the real derivation, never a literal 40.0 —
+# pinning the number would re-freeze the same coupling one layer up and would
+# stay green through exactly the next drift it is meant to catch.
+# ---------------------------------------------------------------------------
+
+
+def test_broker_client_timeout_outlives_server_deadline(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener)
+    # Assert — STRICTLY greater. The old 30.0 sat exactly on the deadline.
+    assert captured["timeout"] > AGENT_START_DEADLINE_S
+
+
+def test_broker_client_timeout_equals_the_one_derivation(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener)
+    # Assert — derived from the server's deadline, not picked a third time.
+    assert captured["timeout"] == pytest.approx(client_timeout_for())
+
+
+def test_broker_honours_an_explicit_timeout_override(listen_env) -> None:
+    # Arrange — the derivation is the DEFAULT, not a lock; callers may override.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener, timeout_s=1.5)
+    # Assert
+    assert captured["timeout"] == pytest.approx(1.5)
+
+
+# ---------------------------------------------------------------------------
 # PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic chain.
 # ``broker_start_to_host`` and ``maybe_broker_in_sif_spawn`` forward
 # ``foreground`` / ``one_shot`` to ``request_spawn`` → body fields → host
@@ -438,19 +494,21 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {yaml_root / (name + '-work')}\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n"
-        "    model: sonnet\n"
-        "  health:\n"
-        "    enabled: false\n"
-        "    interval: 60\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {yaml_root / (name + '-work')}\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: false\n"
+            "    interval: 60\n"
+        )
     )
     return spec
 

@@ -154,9 +154,7 @@ def ssh_op_argv(
     """
     from .._state.host_config import build_ssh_argv
 
-    return build_ssh_argv(
-        peer, list(command), _peers_with_lean_preamble(peer, peers)
-    )
+    return build_ssh_argv(peer, list(command), _peers_with_lean_preamble(peer, peers))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -172,9 +170,7 @@ class SshTransport:
     peers: Mapping[str, "PeerSpec"]
     timeout_s: float = _DEFAULT_TIMEOUT_S
 
-    def run(
-        self, command: Sequence[str], *, stdin: bytes | None = None
-    ) -> RunResult:
+    def run(self, command: Sequence[str], *, stdin: bytes | None = None) -> RunResult:
         argv = ssh_op_argv(self.peer, command, self.peers)
         try:
             proc = subprocess.run(
@@ -336,6 +332,7 @@ def push_snapshot(
     *,
     transport: PeerTransport,
     remote_path: str | None = None,
+    payload: bytes | None = None,
 ) -> dict[str, Any]:
     """Copy one refreshed snapshot to the peer, at the IDENTICAL abs path.
 
@@ -351,29 +348,34 @@ def push_snapshot(
        remote ``dd`` exiting 0 on a TRUNCATED file, which would publish a
        corrupt credential. Any mismatch removes the staged file and raises
        — the peer keeps its previous snapshot, untouched.
-    4. Publish with an atomic same-directory ``mv -f``.
-    5. Prove the LIVE path is what was verified. ``mv`` preserves mode and
-       contents, so a mismatch here means the peer's filesystem mutated the
-       file on rename — hostile; the file is removed rather than left as a
-       token whose mode cannot be vouched for. A ``stat`` that cannot RUN
-       at all (transport failure) still fails the run loud but does NOT
-       delete: that same inode was already proven 0600 and complete before
-       the rename, so deleting would strip the peer of its credentials for
-       no security gain.
+    4. Publish — an atomic same-directory ``mv -f``, or a DELIBERATE
+       in-place write when the destination is a bind mount and rename is
+       therefore impossible (EBUSY). See :mod:`._snapshot_publish`; the
+       method actually taken comes back in the record's ``publish`` key so
+       the caller can report it.
+    5. Prove the LIVE path is what was verified.
 
     Args:
         account: account name, for the returned record + error messages.
         local_path: the freshly-rotated snapshot on THIS host. Must be an
-            absolute path to an existing file.
+            absolute path; must be an existing file unless ``payload``
+            supplies the bytes, in which case it only supplies the peer's
+            identical destination path.
         transport: the transfer seam. Defaults are supplied by the caller
             (:func:`resolve_peer_transport` builds the real ssh one).
         remote_path: override the destination. Defaults to the IDENTICAL
             absolute path — a peer whose layout matches (the fleet's
             ``/home/ywatanabe`` convention) needs no mapping.
+        payload: send THESE bytes instead of reading ``local_path``. The
+            seam ``sac accounts keepalive`` uses to push an ACCESS-ONLY
+            rendering of a snapshot whose on-disk form still carries the
+            refresh token — the stripped bytes exist only in memory and are
+            never written to a local file.
 
     Returns:
-        ``{"account", "peer", "local_path", "remote_path", "mode", "bytes"}``
-        — paths, an account name and a verified mode. Never a token.
+        ``{"account", "peer", "local_path", "remote_path", "mode", "bytes",
+        "publish"}`` — paths, an account name, a verified mode and the
+        publish method. Never a token.
 
     Raises:
         SnapshotPushError: on ANY failure, naming the peer and the path.
@@ -385,7 +387,7 @@ def push_snapshot(
             f"'{transport.peer}': local snapshot path {local!s} is not "
             "absolute, so the peer's identical path cannot be derived."
         )
-    if not local.is_file():
+    if payload is None and not local.is_file():
         raise SnapshotPushError(
             f"refusing to push account '{account}' to peer "
             f"'{transport.peer}': no snapshot at {local!s}."
@@ -396,7 +398,8 @@ def push_snapshot(
     staged = remote + STAGED_SUFFIX
     remote_dir = str(PurePosixPath(remote).parent)
 
-    payload = local.read_bytes()
+    if payload is None:
+        payload = local.read_bytes()
     size = len(payload)
 
     # 1. An 0700 directory FIRST.
@@ -435,20 +438,17 @@ def push_snapshot(
         _discard(transport, staged)
         raise
 
-    # 4. Publish atomically.
-    _op(transport, ["mv", "-f", staged, remote], what="publish", path=remote)
+    # 4-5. Publish (atomic rename, or a deliberate in-place write on a
+    # bind-mounted destination) and prove the LIVE path.
+    from ._snapshot_publish import publish_verified
 
-    # 5. Prove the LIVE path. (See the docstring for why a mode/size
-    # mismatch deletes but an unreachable `stat` does not.)
-    mode, remote_size = stat_remote(transport, remote)
-    if mode != FILE_MODE or remote_size != size:
-        _discard(transport, remote)
-        raise SnapshotPushError(
-            f"account '{account}' published to peer '{transport.peer}' at "
-            f"{remote} did NOT verify (mode 0{mode}, {remote_size} bytes; "
-            f"expected 0{FILE_MODE}, {size} bytes). The file has been "
-            "removed from the peer rather than left unverified."
-        )
+    method, mode, remote_size = publish_verified(
+        account,
+        transport=transport,
+        staged=staged,
+        remote=remote,
+        payload=payload,
+    )
 
     return {
         "account": account,
@@ -456,7 +456,8 @@ def push_snapshot(
         "local_path": str(local),
         "remote_path": remote,
         "mode": mode,
-        "bytes": size,
+        "bytes": remote_size,
+        "publish": method,
     }
 
 

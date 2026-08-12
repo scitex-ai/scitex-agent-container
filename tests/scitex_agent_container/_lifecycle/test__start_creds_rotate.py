@@ -24,8 +24,23 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container._creds import NoHealthyAccountError
+from scitex_agent_container._lifecycle._quota_evidence import UNVERIFIABLE_MARKER
 from scitex_agent_container._lifecycle._start import _rotate_to_healthy_account
 from scitex_agent_container.config import AgentConfig
+
+
+def _without_quota_warning(log: str) -> str:
+    """Drop the unverifiable-quota warning, keeping every other line.
+
+    These fixtures describe a host with no quota cache and no measurable
+    account, so the preflight now warns once per boot that it could not
+    confirm the picked account's headroom (see ``._quota_evidence``). That is
+    an orthogonal signal; the assertions here are about ROTATION output. The
+    marker is imported rather than spelled out so a reworded warning cannot
+    silently start slipping past this filter.
+    """
+    kept = [line for line in log.splitlines() if UNVERIFIABLE_MARKER not in line]
+    return "".join(f"{line}\n" for line in kept)
 
 
 @pytest.fixture
@@ -135,8 +150,12 @@ def test_pinned_healthy_agent_emits_no_rotation_line(_isolate_home: Path) -> Non
     log = io.StringIO()
     # Act
     _rotate_to_healthy_account(cfg, log_stream=log)
-    # Assert — quiet when no rotation happened.
-    assert log.getvalue() == ""
+    # Assert — quiet when no rotation happened. Scoped to ROTATION output:
+    # these fixtures also describe a host with no quota cache, which now emits
+    # its own unverifiable-quota warning (see ._quota_evidence). That warning
+    # is a different signal on a different condition, and this guard is about
+    # not narrating a pick that did not change anything.
+    assert _without_quota_warning(log.getvalue()) == ""
 
 
 # ---------------------------------------------------------------------------

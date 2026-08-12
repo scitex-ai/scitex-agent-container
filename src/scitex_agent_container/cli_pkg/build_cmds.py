@@ -41,9 +41,13 @@ def check(name_or_path: str) -> None:
             console.print(f"  [red]- {error}[/red]")
         sys.exit(1)
 
+    # advise=True: this is THE command that answers "is this spec well-formed?",
+    # so authoring lints (long startup_prompts, ...) belong here and nowhere
+    # else. They used to fire from load_config itself, which meant `agents list`
+    # printed one WARN per offending agent above the table on every run.
     # stx-allow: fallback (reason: load_config may fail post-validation in rare schema-evolution scenarios; CLI exits cleanly)
     try:
-        config = load_config(config_path)
+        config = load_config(config_path, advise=True)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)

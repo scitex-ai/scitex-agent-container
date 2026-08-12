@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from scitex_agent_container._listen._card_event_delivery import (
+    _resolve_bearer,
     deliver_card_event,
     resolve_targets,
 )
@@ -153,7 +154,9 @@ def fake_notify_daemon():
             raw = self.rfile.read(length) if length else b"{}"
             try:
                 body = json.loads(raw.decode("utf-8"))
-            except Exception:  # stx-allow: fallback (reason: stub records whatever arrives)
+            except (
+                Exception
+            ):  # stx-allow: fallback (reason: stub records whatever arrives)
                 body = {"_raw": raw.decode("utf-8", "replace")}
             recorder_posts.append(
                 {
@@ -251,3 +254,103 @@ def test_one_bad_target_does_not_abort_the_rest(fake_notify_daemon) -> None:
     delivered = deliver_card_event(event)
     # Assert — one success (bob); the 500 for the flaky owner is swallowed.
     assert delivered == 1
+
+
+# ---------------------------------------------------------------------------
+# Bearer resolution must match every other sac client
+#
+# This module read ``os.environ.get("SAC_LISTEN_BEARER")`` directly — the SHORT
+# spelling only — while every other client goes through ``_env.getenv``, which
+# accepts ``SAC_<NAME>`` AND ``SCITEX_AGENT_CONTAINER_<NAME>``. A deployment
+# setting only the long form therefore authenticated everywhere else and 401'd
+# here alone. Its own docstring claimed the opposite ("what every other sac
+# client reads"), which is why the divergence looked deliberate.
+# ---------------------------------------------------------------------------
+
+_BEARER_KEYS = (
+    "SAC_LISTEN_BEARER",
+    "SCITEX_AGENT_CONTAINER_LISTEN_BEARER",
+)
+
+
+@pytest.fixture
+def isolated_bearer_env(tmp_path):
+    """Clear BOTH env spellings and redirect HOME to a clean tmp dir.
+
+    Clearing both matters: a stray value in the operator's shell would make the
+    must-read-the-long-form test pass for the wrong reason. HOME is redirected
+    so the token-file fallback reads an isolated dir, never the real token.
+    """
+    saved = {k: os.environ.get(k) for k in _BEARER_KEYS}
+    saved_home = os.environ.get("HOME")
+    for k in _BEARER_KEYS:
+        os.environ.pop(k, None)
+    os.environ["HOME"] = str(tmp_path)
+    try:
+        yield tmp_path
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
+def _write_host_token_file(home, token: str) -> None:
+    from scitex_agent_container._listen.tokens import default_token_path
+
+    path = default_token_path(home=home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+
+
+def test_the_long_form_bearer_env_prefix_is_honoured(isolated_bearer_env) -> None:
+    """The regression: this spelling was invisible here, and worked elsewhere."""
+    # Arrange
+    os.environ["SCITEX_AGENT_CONTAINER_LISTEN_BEARER"] = "long-form-tok"
+    # Act
+    resolved = _resolve_bearer()
+    # Assert
+    assert resolved == "long-form-tok"
+
+
+def test_the_short_form_bearer_env_prefix_still_works(isolated_bearer_env) -> None:
+    # Arrange
+    os.environ["SAC_LISTEN_BEARER"] = "short-form-tok"
+    # Act
+    resolved = _resolve_bearer()
+    # Assert
+    assert resolved == "short-form-tok"
+
+
+def test_the_host_token_file_fallback_still_works(isolated_bearer_env) -> None:
+    # Arrange — no env at all; a real token file on disk.
+    _write_host_token_file(isolated_bearer_env, "file-tok-card-event")
+    # Act
+    resolved = _resolve_bearer()
+    # Assert
+    assert resolved == "file-tok-card-event"
+
+
+def test_an_env_bearer_still_wins_over_the_token_file(isolated_bearer_env) -> None:
+    # Arrange — both present; the env must win.
+    _write_host_token_file(isolated_bearer_env, "file-tok")
+    os.environ["SAC_LISTEN_BEARER"] = "env-tok"
+    # Act
+    resolved = _resolve_bearer()
+    # Assert
+    assert resolved == "env-tok"
+
+
+def test_no_bearer_env_and_no_file_resolves_to_none(isolated_bearer_env) -> None:
+    """Absent stays non-fatal — the POST goes out unauthenticated and 401s
+    loudly in the per-target log line, which is the documented behaviour."""
+    # Arrange — cleared env, no token file written.
+    # Act
+    resolved = _resolve_bearer()
+    # Assert
+    assert resolved is None

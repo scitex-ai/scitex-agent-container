@@ -280,16 +280,18 @@ def test_spawn_denies_child_caller(db_path: Path) -> None:
 
 
 def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
-    """The 403 body explains the role-based spawn policy."""
+    """The 403 body names the groups that WOULD authorise the spawn.
+
+    It no longer asserts the caller holds none of them — that claim was
+    about the AGENT, and the multi-group defect made it false against
+    the same server's own a2a_peers output (2026-08-10).
+    """
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
     _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
-    assert (
-        reason is not None
-        and "none of the developer, research, or privileged groups" in reason
-    )
+    assert reason is not None and "developer, researcher, privileged" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -532,9 +534,7 @@ def test_http_agents_start_403_carries_role_policy_text(
         )
     body_json = r.json()
     # Assert
-    assert "none of the developer, research, or privileged groups" in body_json.get(
-        "reason", ""
-    )
+    assert "developer, researcher, privileged" in body_json.get("reason", "")
 
 
 # ---------------------------------------------------------------------------

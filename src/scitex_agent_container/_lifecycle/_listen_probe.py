@@ -298,8 +298,11 @@ def transport_failure_message(
     Otherwise the daemon is UP, and what we can say next depends on whether
     a SECOND, AUTHENTICATED route was measured (``authed_probe``):
 
-      * it answered → the daemon is serving authenticated work, so the fault
-        is specific to THIS route. A restart is not indicated, and we say so.
+      * it answered → the daemon is serving authenticated work. That rules
+        OUT a daemon-wide fault. It does NOT establish a route-specific one:
+        a route still WORKING on an operation longer than the timeout is
+        indistinguishable, from outside, from a wedged one. So say what was
+        ruled out, and send the reader to the agent's own state.
       * it also hung → the fault is shared. A restart is worth its cost.
       * it was rejected (401/403) or not attempted → we measured nothing
         about authenticated work and must not pretend otherwise.
@@ -323,11 +326,13 @@ def transport_failure_message(
                 f"route was measured (no bearer token available).\n"
                 f"NEXT, to find out rather than guess: call an authenticated "
                 f"route (e.g. GET {AUTHED_PATH}) and compare. If it answers, "
-                f"the fault is specific to {route} and restarting the daemon "
-                f"will not fix it. If it also hangs, the fault is shared and "
-                f"a restart is worth trying — `sac listen restart` on the "
-                f"host, which interrupts EVERY agent mid-operation, so "
-                f"establish that it is shared first."
+                f"a daemon-wide fault is ruled out and restarting the daemon "
+                f"will not help — note that this still does NOT establish "
+                f"that {route} is faulty, since a route merely slower than "
+                f"{timeout_s:.0f}s looks identical from outside. If it also "
+                f"hangs, the fault is shared and a restart is worth trying — "
+                f"`sac listen restart` on the host, which interrupts EVERY "
+                f"agent mid-operation, so establish that it is shared first."
             )
         if not authed_probe.serving:
             return head + (
@@ -354,12 +359,28 @@ def transport_failure_message(
             f"ALSO OBSERVED: {authed_probe.evidence()}. So the daemon is "
             f"serving AUTHENTICATED work fine on a different prefix, in the "
             f"same seconds that {route} did not answer.\n"
-            f"THEREFORE the fault is specific to {route}, not daemon-wide. "
+            f"RULED OUT: a daemon-wide fault.\n"
+            f"NOT ESTABLISHED: whether {route} is FAULTY or merely SLOWER "
+            f"than {timeout_s:.0f}s. Two fast control routes prove the daemon "
+            f"is up; they CANNOT tell a wedged route from one still working, "
+            f"because from outside those look identical. Measured 2026-08-11: "
+            f"a spawn reported here as 'no response' had in fact been "
+            f"ACCEPTED and ran for 5m12s — the server was fine and this "
+            f"client stopped listening.\n"
+            f"NEXT, to find out rather than guess: read the AGENT's own "
+            f"state, not this HTTP result. `sac agents list {name}` reports "
+            f"running / startup_failed with started_at and failed_at, which "
+            f"distinguishes 'never began', 'still in flight' and 'failed on "
+            f"its own merits'. This timeout distinguishes none of them.\n"
             f"Do NOT run `sac listen restart` for this — it interrupts every "
-            f"agent on the box and would not address a per-route fault. "
-            f"Retry, and if it recurs report {route} with these two timings; "
-            f"the route has been seen to answer and then degrade, so a single "
-            f"success afterwards does not mean it was fixed."
+            f"agent on the box, and the one thing actually established here "
+            f"is that whatever is wrong is not daemon-wide, which is the only "
+            f"condition that remedy addresses.\n"
+            f"Finally: if you retry and it succeeds, that does not mean it "
+            f"was fixed. The same route has been seen to answer and then not "
+            f"answer, which is equally consistent with a genuine fault AND "
+            f"with an operation whose duration varies either side of "
+            f"{timeout_s:.0f}s. One success discriminates neither."
         )
     return (
         f"{verb} of {name!r} failed: cannot reach listen at {base!r} ({exc}).\n"

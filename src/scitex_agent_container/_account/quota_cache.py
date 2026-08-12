@@ -117,9 +117,6 @@ def _resolve_cache_path(override: Path | str | None) -> Path:
 def quota_cache_present(cache_path: Path | str | None = None) -> bool:
     """Whether a quota-cache FILE actually exists for the reader to consult.
 
-    This is the discriminator the boot picker's fail-loud gate keys off (see
-    :func:`_creds.pick_healthy_account` ``require_quota_evidence``):
-
     * ``True`` — a cache source exists (the container bind, or a host
       ``quota-cache.json`` a populator/cron writes). On such a host an
       all-UNKNOWN pick is a POPULATOR failure (an empty/stale cache), so the
@@ -127,9 +124,24 @@ def quota_cache_present(cache_path: Path | str | None = None) -> bool:
       silently launch on an unverifiable, possibly quota-exhausted account
       (2026-07-20 incident).
     * ``False`` — no cache source exists at all (a fresh install, CI, or a
-      quota-cron-less host such as a Spartan compute node). The documented
-      graceful-degradation contract holds: the boot degrades to freshness-only
-      and is NEVER blocked on a quota system that this host simply does not run.
+      quota-cron-less host such as a Spartan compute node).
+
+    NOT the boot gate's discriminator, though it was used as one. The start
+    preflight armed :func:`_creds.pick_healthy_account`'s
+    ``require_quota_evidence`` with this predicate directly, which meant the
+    gate could not fire in the situation it was built for: it protects against
+    "the cache tells us nothing", yet it was armed only when a cache FILE
+    already existed, so a host with NO cache — the blind case — ran DISARMED
+    (2026-08-06, scitex-02: an agent booted onto a d7=100% account and answered
+    "You've hit your weekly limit" on every turn while startup reported
+    success). :func:`_lifecycle._quota_evidence.pick_with_quota_evidence` owns
+    that decision now: a ``False`` here means "try to BUILD the evidence", and
+    only a build that genuinely cannot run degrades to freshness-only — loudly.
+
+    The never-block invariant this predicate exists to protect is unchanged and
+    deliberate: a boot is NEVER blocked merely because this host runs no quota
+    system. The defect was never that sac declined to block; it was that sac
+    went silent.
 
     Mirrors :func:`_resolve_cache_path`'s resolution order (container bind →
     host runtime → legacy). A missing source resolves to the non-existent

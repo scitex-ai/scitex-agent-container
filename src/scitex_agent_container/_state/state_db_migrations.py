@@ -18,6 +18,9 @@ every :func:`state_db.init_schema`.
   * :func:`migrate_node_comms_policy_add_group_name` — ADD COLUMN the
     ``group_name`` column (group-based ACL, operator 2026-06-25) onto a
     pre-existing ``node_comms_policy`` table.
+  * :func:`migrate_node_comms_policy_add_group_names` — ADD COLUMN the
+    MULTI-value ``group_names`` column (authority-is-membership,
+    incident 2026-08-10) onto a pre-existing ``node_comms_policy``.
 """
 
 from __future__ import annotations
@@ -175,4 +178,44 @@ def migrate_node_comms_policy_add_group_name(conn: sqlite3.Connection) -> None:
         return
     conn.execute(
         "ALTER TABLE node_comms_policy ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"
+    )
+
+
+def migrate_node_comms_policy_add_group_names(conn: sqlite3.Connection) -> None:
+    """ADD the MULTI-value ``group_names`` column to ``node_comms_policy``.
+
+    Authority-is-membership (incident 2026-08-10): ``group_name`` holds
+    only the FIRST group a spec's ``metadata.labels.groups`` list names,
+    so an agent authored as ``groups: [generalist, developer]`` was not a
+    developer to any ACL gate. ``group_names`` holds the WHOLE set
+    (comma-separated, sorted, written from the same labels), and the
+    authority predicates read it.
+
+    ``ALTER TABLE ... ADD COLUMN`` with ``DEFAULT ''`` leaves every
+    pre-existing row with an empty set. That is deliberately NOT a
+    regression: :func:`.state_db_groups.resolve_group_names` unions the
+    set with ``group_name``, so an un-refreshed row still resolves to
+    ``{primary}`` — exactly the pre-migration behaviour. Running
+    ``sac agents refresh-acl`` (or restarting the agent) re-publishes the
+    full set from the on-disk spec.
+
+    Detection: ``node_comms_policy`` exists AND lacks ``group_names``.
+    Idempotent: a no-op once the column is present (or the table is
+    absent).
+    """
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "node_comms_policy" not in existing:
+        return
+    cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(node_comms_policy)").fetchall()
+    }
+    if "group_names" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE node_comms_policy ADD COLUMN group_names TEXT NOT NULL DEFAULT ''"
     )

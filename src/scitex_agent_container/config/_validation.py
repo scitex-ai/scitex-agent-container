@@ -95,6 +95,16 @@ _KNOWN_SPEC_KEYS = frozenset(
         "apptainer",  # F-CS18 — apptainer-specific build extension
         "user",  # container user: "host" | "uid:gid" | "" (image default)
         "to_home",  # ADR-0006 — directory mirrored into container $HOME
+        # ADR-0006/0018 — WHICH to_home cascade layers this agent inherits.
+        # `_types`/`_loaders` gained the field but this allowlist did not, so
+        # every spec declaring it failed to load with "Unknown spec field" —
+        # which made the whole declaration mechanism unreachable, and would
+        # have made the fleet-wide migration sweep write 101 specs that then
+        # could not be parsed. OPTIONAL, deliberately: it is absent from the
+        # explicit-required map in `_explicit_fields`, so a spec that omits it
+        # still loads and still inherits the implicit cascade. Turning that
+        # omission into an error is a separate, later step.
+        "to_home_layers",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         # v3 removed (rejected explicitly below with relocation hints):

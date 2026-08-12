@@ -75,6 +75,24 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # widening would expose it to every agent. One bind per store; each new
     # store pays its own explicit line. That cost is the feature.
     #
+    # AND THE PARENT IS NOT ONLY "overlay-local" — 2026-08-08 measured a SECOND
+    # way it moves under you, which none of these binds defend against. A
+    # dotfiles deploy ran inside a container, treated ~/.scitex as a DOTFILE,
+    # moved the real tree aside as .scitex_back_<timestamp> and symlinked its
+    # own copy in:
+    #     /home/agent/.scitex -> ~/.dotfiles/.worktrees/<branch>/src/.scitex
+    # The agent then booted into the substituted tree with a month-stale message
+    # store and reported healthy, and the credential path resolved to a
+    # directory that does not exist. The operator lost an hour of his evening to
+    # it (card sac-cct-store-diverges-across-restart-two-dbs-20260808).
+    #
+    # WHY THAT MATTERS TO WHOEVER EDITS THIS LIST: a per-store bind here cannot
+    # survive its PARENT being replaced. These lines make each store
+    # host-persistent, which is necessary and not sufficient. Do not read a
+    # green bind as proof the agent is using the store you think it is —
+    # `readlink -f` the path from INSIDE the container, which is the only check
+    # that sees a substituted parent.
+    #
     # Skip-if-missing applies (see default_binds_for_host): on a host with no
     # ~/.scitex/cards this entry is a SILENT no-op — safe, but NOT a signal.
     # Verify a rollout by comparing dev:inode from INSIDE a booted container
@@ -84,6 +102,25 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # in-container stat confirmed one directory / two names before this went
     # fleet-wide.
     "~/.scitex/cards:/home/agent/.scitex/cards:rw",
+    # The operator's OWN MESSAGE HISTORY — third store to pay the toll above,
+    # and the one whose absence he felt directly. On 2026-08-08 he asked whether
+    # I remembered eleven things he had sent an hour earlier; my previous run had
+    # answered every one of them, and my restarted run could find none. He
+    # forwarded the whole conversation back by hand: 「忘れている、思い出せない、
+    # となると結構辛いです。」
+    #
+    # cct had done its part correctly — it migrated that day to the
+    # scitex-standard deterministic path (ts/lib/config.ts::resolveStateDir,
+    # ~/.scitex/claude-code-telegrammer/runtime/<agent>), whose own docstring
+    # names "a drifting default path opened a fresh empty DB and lost the
+    # operator's message history" as the reason it exists. sac never grew the
+    # matching bind, so that store landed OVERLAY-LOCAL — the exact shape the
+    # cards note above records from 2026-07-16, one store later.
+    #
+    # Bound at the PACKAGE root (not .../runtime/<agent>) so the per-agent
+    # subdir cct creates on first boot lands on the host rather than in the
+    # overlay; a bind of a not-yet-existing leaf would skip silently.
+    "~/.scitex/claude-code-telegrammer:/home/agent/.scitex/claude-code-telegrammer:rw",
     # 2026-06-13 STOPGAP (lead a2a b6f3916c) — bind the host's working
     # ``scitex_agent_container`` source over the in-SIF install so
     # agents pick up new CLI surface (e.g., ``sac pytest spartan run``

@@ -52,6 +52,7 @@ from scitex_agent_container.a2a._card import (
     project_card_proto,
     validate_card_v1,
 )
+from scitex_agent_container.a2a._delivery_report import report_zero_delivery
 from scitex_agent_container.a2a._handlers import HANDLERS
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
@@ -366,7 +367,13 @@ async def _publish_channel_event(
     row_id = persist_event(target=name, event=event)
     event["_row_id"] = row_id
 
-    await ctx.inbox.publish(name, event)
+    report_zero_delivery(
+        log,
+        target=name,
+        what="message:send fan-out",
+        delivered=await ctx.inbox.publish(name, event),
+        row_id=row_id,
+    )
 
 
 def _base_url(request: Request) -> str:

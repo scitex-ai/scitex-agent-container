@@ -35,6 +35,7 @@ from pathlib import Path
 import click
 
 from ..._lifecycle.lifecycle import agent_stop
+from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
 from ..._state.state_db import now_iso, record_instance_stop
@@ -148,7 +149,8 @@ def _dispatch_remote_stop(peer: str, row: dict, peers: dict, name: str) -> dict:
             f"(rc={result.returncode}):\n"
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}",
+            f"stderr:\n{result.stderr}"
+            + remote_sac_not_found_hint(peer, result.returncode, result.stderr, peers),
             peer=peer,
         )
     try:

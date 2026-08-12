@@ -338,6 +338,102 @@ def test_build_sandbox_flag_forwarded_to_source_builder(home_tmp):
     assert calls[0][1]["sandbox"] is True
 
 
+@contextmanager
+def _use_reproducible_builder(*, result=None) -> Iterator[list[dict]]:
+    """Swap ``image_group._run_reproducible_build`` for a recording fake.
+
+    Same save/restore pattern as ``_use_source_builder``. The round trip
+    itself is covered in ``test__image_repro_build``; what matters here is
+    that ``--reproducible`` ROUTES to it instead of the plain build.
+    """
+    calls: list[dict] = []
+
+    def _fake(**kw):
+        calls.append(kw)
+        return result
+
+    saved = ig._run_reproducible_build
+    ig._run_reproducible_build = _fake  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        ig._run_reproducible_build = saved  # type: ignore[assignment]
+
+
+def test_build_reproducible_routes_to_the_round_trip(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_reproducible_builder() as calls:
+        runner.invoke(image_group, ["build", "base", "--yes", "--reproducible"])
+    # Assert
+    assert len(calls) == 1
+
+
+def test_build_reproducible_does_not_call_the_plain_builder(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/x.sif")) as plain:
+        with _use_reproducible_builder():
+            runner.invoke(image_group, ["build", "base", "--yes", "--reproducible"])
+    # Assert
+    assert plain == []
+
+
+def test_build_reproducible_verifies_by_default(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_reproducible_builder() as calls:
+        runner.invoke(image_group, ["build", "base", "--yes", "--reproducible"])
+    # Assert
+    assert calls[0]["verify"] is True
+
+
+def test_build_skip_verify_turns_the_replay_off(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _use_reproducible_builder() as calls:
+        runner.invoke(
+            image_group,
+            ["build", "base", "--yes", "--reproducible", "--skip-verify"],
+        )
+    # Assert
+    assert calls[0]["verify"] is False
+
+
+def test_build_reproducible_with_sandbox_is_refused(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(
+        image_group, ["build", "base", "--yes", "--reproducible", "--sandbox"]
+    )
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_build_skip_verify_without_reproducible_is_refused(home_tmp):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["build", "base", "--yes", "--skip-verify"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_build_accepts_the_proxy_layer(home_tmp):
+    # Arrange — proxy shipped a recipe that no layer mapping could reach
+    runner = CliRunner()
+    # Act
+    with _use_source_builder(result=Path("/tmp/sac-proxy.sif")) as calls:
+        runner.invoke(image_group, ["build", "proxy", "--yes"])
+    # Assert
+    assert calls[0][1]["def_path"].name == "apptainer-proxy.def"
+
+
 def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp):
     # Arrange
     runner = CliRunner()

@@ -46,19 +46,12 @@
 #
 # FLEET LINEAGE: this is the fleet-standard shim (scitex-writer 0e7d6ad,
 # "ci(sif-shim): make exec-in-sif.sh adapt to the host instead of assuming
-# Spartan"), verbatim except for the repo name in this header and the
-# leaked-process reap below, which is ours because THIS repo's suite spawns
-# detached `python -m scitex_agent_container` processes that no other repo in
-# the fleet creates. Keep the rest byte-aligned with the fleet copy: a second
-# dialect of this file is the failure mode, not the deliverable.
-#
-# NOTE FOR THE NEXT develop -> main PROMOTION: develop's copy carries one
-# further block, a scratch-dir prune that sources .github/ci/tmpdir-lib.sh.
-# That library does not exist on this branch, so the block cannot come across
-# yet without dragging its dependency and the workflows' clean-tmpdir steps
-# into what has to stay a narrow release-path fix. It arrives with the normal
-# promotion. This is the ONE intended difference between the two branches'
-# copies of this file.
+# Spartan"), verbatim except for the repo name in this header and the two
+# scitex-agent-container-specific blocks below (the leaked-process reap and the
+# scratch-dir prune), which exist because THIS repo's suite spawns detached
+# `python -m scitex_agent_container` processes and per-run SIF scratch dirs that
+# no other repo in the fleet creates. Keep the rest byte-aligned with the fleet
+# copy: a second dialect of this file is the failure mode, not the deliverable.
 set -euo pipefail
 
 INNER="${1:?inner script name required (relative to .github/ci/)}"
@@ -108,7 +101,7 @@ else
 fi
 mkdir -p "$APPTAINER_TMPDIR"
 
-# --- scitex-agent-container-specific: reap leaked CI processes ---------------
+# --- scitex-agent-container-specific (1/2): reap leaked CI processes ----------
 # Reap leaked CI processes from PRIOR runs on this persistent self-hosted node.
 # Several tests spawn DETACHED `sac agents`/`sac listen` background processes
 # (`python -m scitex_agent_container ...`); a failed/killed run leaves them
@@ -153,6 +146,27 @@ else
     echo "::warning::pkill --older unsupported here; skipping the leftover reap." \
          "An unscoped pkill would SIGTERM the sibling matrix legs (see run 29284554656)."
 fi
+
+# --- scitex-agent-container-specific (2/2): prune leaked in-SIF scratch -------
+# THE DISK-SIDE SIBLING OF THE REAP ABOVE, and the same reasoning: age is what
+# separates a leftover from a live concurrent sibling.
+#
+# MEASURED 2026-08-09 on scitex-04-cpu-01: the three in-SIF scripts each created
+# a per-run scratch under /tmp and NOTHING ever removed it. 116 survivors at
+# 1.8-2.2 GB each put /tmp at 270 GB of a 393 GB root — root 100% FULL (39 MB
+# free), inodes 92% — on a box hosting twelve fleet agents. A leaked temp dir is
+# free on a hosted runner, where the VM is discarded; on a persistent one it is
+# a slow outage.
+#
+# Here, host-side, because this is the ONE place all five in-SIF call sites pass
+# through, it still runs when the SIF never starts, and /tmp is shared with the
+# container anyway (`mount tmp = yes`, no --contain below). This sweep is only
+# the backstop for SIGKILL/reboot; the normal ending is the `if: always()`
+# clean-tmpdir.sh step in each job. Guards (self-exclusion by run identity, 24 h
+# age floor) and the /scratch decision are argued in tmpdir-lib.sh.
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
+ci_tmpdir_prune
 # --- end scitex-agent-container-specific -------------------------------------
 
 # Build the argv as an ARRAY so the GPFS bind can be dropped cleanly rather than

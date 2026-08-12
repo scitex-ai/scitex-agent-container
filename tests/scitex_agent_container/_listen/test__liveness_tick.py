@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -461,23 +462,70 @@ class TestResolveLiveness:
 # ===========================================================================
 
 
-async def _run_one_tick(*, consumers, doc, liveness, **kw) -> None:
-    """Spin the loop briefly then cancel — forces ≥1 tick deterministically."""
+#: How long a barrier waits for the loop to make progress before failing.
+#: Generous on purpose: it is not a timing assertion, it is the point at
+#: which we stop believing the loop is merely slow.
+_BARRIER_TIMEOUT_S = 10.0
+
+
+async def _await_ticks(counter: "list[int]", wanted: int) -> None:
+    """Block until the loop has COMPLETED ``wanted`` ticks, or fail loudly.
+
+    ``counter[0]`` is bumped by the loop's own ``now_fn`` seam, which the
+    loop calls exactly once per tick — after the interval sleep, before
+    detection and emit. So the (N+1)-th call is proof that tick N ran all
+    the way through its emit: the loop cannot reach the next ``now_fn()``
+    without having finished the previous iteration.
+    """
+    deadline = time.monotonic() + _BARRIER_TIMEOUT_S
+    while counter[0] <= wanted:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"loop completed {max(counter[0] - 1, 0)} of {wanted} ticks "
+                f"in {_BARRIER_TIMEOUT_S}s — it is not running, not slow"
+            )
+        await asyncio.sleep(0.001)
+
+
+async def _run_one_tick(*, consumers, doc, liveness, ticks: int = 1, **kw) -> None:
+    """Run the loop until ``ticks`` FULL ticks have completed, then cancel.
+
+    The barrier is the loop's own progress (see :func:`_await_ticks`), NOT
+    the wall clock. The previous version slept a fixed 0.15s against a
+    0.05s interval and called that "deterministic"; it is not. Wall time
+    keeps moving while the event loop is starved, so on a loaded CI runner
+    the whole budget can elapse before the loop is ever scheduled — which
+    is exactly what happened in #967: 151ms of wall time, zero ticks,
+    ``assert 0 >= 1``, on py3.12 only, while the same commit passed on
+    3.11 and 3.13.
+
+    This also makes the ``emits_nothing`` tests mean something. Under a
+    fixed sleep they passed whenever the loop had not run at all — an
+    empty list proves silence only once a tick has demonstrably happened.
+    """
+    counter = [0]
+
+    def _now() -> float:
+        counter[0] += 1
+        return NOW
+
     task = asyncio.create_task(
         liveness_tick_reconciler_loop(
-            interval_s=0.05,
+            interval_s=0.001,
             stale_s=STALE_S,
             tasks_doc_source=doc,
             liveness_source=liveness,
             consumers_source=consumers,
-            now_fn=lambda: NOW,
+            now_fn=_now,
             **kw,
         )
     )
-    await asyncio.sleep(0.15)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await _await_ticks(counter, ticks)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 @pytest.mark.asyncio
@@ -587,24 +635,16 @@ async def test_loop_dedups_within_renotify_cooldown() -> None:
     # Arrange — many ticks at fixed NOW within a long cooldown.
     events: list[dict] = []
     liveness = {"agent-x": AgentLiveness(is_live=False, last_active_ts=None)}
-    task = asyncio.create_task(
-        liveness_tick_reconciler_loop(
-            interval_s=0.02,
-            stale_s=STALE_S,
-            renotify_s=10_000.0,  # huge → never re-notify in this test
-            tasks_doc_source=_stuck_doc(),
-            liveness_source=liveness,
-            consumers_source=[events.append],
-            now_fn=lambda: NOW,  # frozen clock → all ticks share one "now"
-        )
+    # Act — let SEVERAL ticks complete. Counted, not timed: "assert it fired
+    # once" is only a dedup claim if more than one tick actually ran, and a
+    # fixed sleep cannot promise that on a loaded runner (#967).
+    await _run_one_tick(
+        consumers=[events.append],
+        doc=_stuck_doc(),
+        liveness=liveness,
+        ticks=3,
+        renotify_s=10_000.0,  # huge → never re-notify in this test
     )
-    # Act — let several ticks run.
-    await asyncio.sleep(0.2)
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
     # Assert — despite many ticks, the (agent, card) fired exactly once.
     assert len(events) == 1
 
