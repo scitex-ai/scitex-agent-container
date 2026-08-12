@@ -109,6 +109,106 @@ jobs:
             echo "punim0264         = absent"
           fi
 
+      # WHY ONE CORE, INSIDE A 48-CPU ALLOCATION?
+      #
+      # `squeue` shows this runner's SLURM job holding CPUS=48 on spartan-bm153
+      # and holding it for 2d10h. This canary measured `nproc = 1` inside that
+      # same runner. Both are correct, which means ~47 allocated cores are idle
+      # inside an allocation the fleet already pays for — and `xdist -n $(nproc)`
+      # spawns ONE worker where it could spawn 48. The 497s suite time this
+      # canary reported was therefore measured against a crippled allocation,
+      # not against the machine.
+      #
+      # These are different faults with different fixes, so measure rather than
+      # infer. They can all disagree, and which pair disagrees is the answer:
+      #
+      #   nproc vs nproc --all      affinity mask vs CPUs actually online
+      #   sched_getaffinity         what the kernel will schedule us on
+      #   cpuset.cpus.effective     what a cgroup permits (v2, then v1)
+      #   SLURM_* env               what SLURM believes it gave us, and
+      #                             whether we are in a STEP (srun) at all
+      #
+      # A runner started WITHOUT srun sits in the job's shell rather than in a
+      # step holding the allocation's CPU set; a step requested with
+      # --cpus-per-task=1 confines it a different way; a cpuset cgroup confines
+      # it a third way. The reads below tell those apart.
+      #
+      # Repeated INSIDE the SIF, because apptainer can narrow affinity further:
+      # if the outside sees 48 and the inside sees 1, the shim is the culprit
+      # and nothing about the SLURM submission needs to change.
+      #
+      # READ-ONLY. This step does not resize, resubmit or touch the SLURM job —
+      # it has been up 2d10h, the long lease is deliberate, and it is currently
+      # serving the light lane.
+      - name: Why does this see one core (CPU visibility, read-only)
+        run: |
+          set -u
+          probe() {
+            echo "  nproc                 = $(nproc 2>/dev/null || echo '?')"
+            echo "  nproc --all           = $(nproc --all 2>/dev/null || echo '?')"
+            # NOTE: no heredoc here on purpose — a heredoc body must sit at
+            # column 0, which would terminate this YAML block scalar.
+            python3 -c "import os; a=sorted(os.sched_getaffinity(0)); print('  sched_getaffinity     = %d cpus %s' % (len(a), a[:16]))" 2>/dev/null \
+              || echo "  sched_getaffinity     = <no python3 here>"
+            echo "  taskset -pc self      = $(taskset -pc $$ 2>/dev/null || echo '<no taskset>')"
+            echo "  /proc/cpuinfo count   = $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo '?')"
+          }
+          echo "=== OUTSIDE the SIF (bare runner process) ==="
+          probe
+          echo
+          echo "=== cgroup confinement ==="
+          echo "  /proc/self/cgroup:"
+          sed 's/^/    /' /proc/self/cgroup 2>/dev/null || echo "    <unreadable>"
+          for f in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset.cpus; do
+            [ -r "$f" ] && echo "  $f = $(cat "$f")"
+          done
+          _leaf=$(awk -F: '/cpuset/ {print $3; exit}' /proc/self/cgroup 2>/dev/null || true)
+          if [ -n "${_leaf:-}" ]; then
+            for f in "/sys/fs/cgroup/cpuset${_leaf}/cpuset.cpus" \
+                     "/sys/fs/cgroup/cpuset${_leaf}/cpuset.cpus.effective" \
+                     "/sys/fs/cgroup${_leaf}/cpuset.cpus.effective"; do
+              [ -r "$f" ] && echo "  $f = $(cat "$f")"
+            done
+          fi
+          echo
+          echo "=== what SLURM thinks it gave us ==="
+          for v in SLURM_JOB_ID SLURM_STEP_ID SLURM_PROCID SLURM_CPUS_ON_NODE \
+                   SLURM_JOB_CPUS_PER_NODE SLURM_CPUS_PER_TASK SLURM_NTASKS \
+                   SLURM_TASKS_PER_NODE SLURM_JOB_NODELIST SLURM_NODEID; do
+            eval "_val=\${$v:-<unset>}"
+            echo "  $v = $_val"
+          done
+          # SLURM_STEP_ID present => we are inside an srun STEP. Absent => the
+          # runner is in the batch shell, which is the leading hypothesis for
+          # why it holds one CPU while the JOB holds 48.
+          if [ -n "${SLURM_STEP_ID:-}" ]; then
+            echo "  => running INSIDE an srun step"
+          else
+            echo "  => NOT in an srun step (batch shell / no step)"
+          fi
+          if command -v scontrol >/dev/null 2>&1 && [ -n "${SLURM_JOB_ID:-}" ]; then
+            echo
+            echo "=== scontrol show job ${SLURM_JOB_ID} (CPU fields) ==="
+            scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+              | tr ' ' '\n' | grep -E '^(NumCPUs|NumNodes|CPUs/Task|TRES|ReqTRES|NodeList)=' \
+              | sed 's/^/  /' || echo "  <scontrol returned nothing>"
+          else
+            echo "  (scontrol unavailable or SLURM_JOB_ID unset)"
+          fi
+          echo
+          echo "=== INSIDE the SIF (does apptainer narrow it further?) ==="
+          _APP="${SCITEX_CI_APPTAINER:-apptainer}"
+          _SIF=$(eval echo "${SCITEX_CI_SIF:-}")
+          if [ -x "$_APP" ] && [ -f "$_SIF" ]; then
+            "$_APP" exec "$_SIF" sh -c '
+              echo "  nproc               = $(nproc 2>/dev/null || echo ?)"
+              echo "  nproc --all         = $(nproc --all 2>/dev/null || echo ?)"
+              echo "  /proc/cpuinfo count = $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo ?)"
+            ' 2>&1 | sed 's/^/  /'
+          else
+            echo "  (apptainer or SIF not resolvable: APP=$_APP SIF=$_SIF)"
+          fi
+
       # compute-04 fails `git commit` 13/13 with "fatal: failed to write commit
       # object" — ssh commit signing against a key that is not there. If the
       # Spartan machines share that fault, routing at them trades one broken
