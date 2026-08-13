@@ -30,9 +30,16 @@ from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
 if TYPE_CHECKING:
     from ..config import AgentConfig
 
-# Runner-module dispatch by ``config.kind``. Kept here so the parent
-# orchestrator doesn't need to know either runner's module path.
+# Runner-module dispatch by ``config.kind`` and ``config.provider``.
+# Kept here so the parent orchestrator doesn't need to know either
+# runner's module path.
 RUNNER_MODULE_AGENT = "scitex_agent_container._runners.claude_session"
+
+# OpenAI provider runner module (scitex-todo card ``openai-compat-2``;
+# ``spec.provider: openai``). When the config's provider is ``"openai"``,
+# dispatches this module instead of ``RUNNER_MODULE_AGENT``.
+RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
+
 RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
 
 _TINI_PREFIX = ["/usr/bin/tini", "-s", "--", "python3", "-m"]
@@ -109,14 +116,15 @@ def build_inner_argv(
     tui_dev_channels: str | None = None,
     tui_settings: str | None = None,
 ) -> list[str]:
-    """Return the apptainer-inner argv. Dispatches on ``config.kind``.
+    """Return the apptainer-inner argv. Dispatches on ``config.kind``
+    and ``config.provider``.
 
     The argv is now ALWAYS wrapped in
     ``[/bin/bash, -lc, "<git-env-alias>; [set -e; <cmd1>; sleep N; <cmd2>;]
     exec <tini ...>"]`` — never returned bare. The first steps are the
     fixed, unconditional :data:`_GIT_ENV_ALIAS_STEPS` (see there); when
     ``spec.startup_commands`` is also non-empty those follow next, run as
-    container-internal shell BEFORE the claude SDK process starts. ``exec``
+    container-internal shell BEFORE the SDK process starts. ``exec``
     replaces bash with tini, keeping PID 1 clean. NOT a claude prompt — see
     ``spec.startup_prompts``.
 
@@ -135,6 +143,12 @@ def build_inner_argv(
     belt-and-suspenders (the flag is a no-op for the interactive TUI, which
     is why the file MUST be ``settings.json``, not ``settings.local.json``:
     there is no ``.local.json`` at user scope).
+
+    Provider dispatch: when ``config.provider == "openai"``, the inner
+    runner is ``RUNNER_MODULE_OPENAI`` instead of ``RUNNER_MODULE_AGENT``.
+    The argv tail (mission, a2a flags, etc.) is identical — the OpenAI
+    runner accepts the same CLI flags as the Claude runner (with legacy
+    flags silently ignored).
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
@@ -148,9 +162,17 @@ def build_inner_argv(
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
+        # Provider dispatch: ``provider: openai`` → the OpenAI runner;
+        # everything else (default "anthropic") → the Claude runner.
+        provider = getattr(config, "provider", None)
+        runner_module = (
+            RUNNER_MODULE_OPENAI
+            if provider == "openai"
+            else RUNNER_MODULE_AGENT
+        )
         runner_tail = (
             _TINI_PREFIX
-            + [RUNNER_MODULE_AGENT]
+            + [runner_module]
             + _agent_runner_argv(config, one_shot=one_shot)
         )
 
@@ -332,6 +354,7 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
 
 __all__ = [
     "RUNNER_MODULE_AGENT",
+    "RUNNER_MODULE_OPENAI",
     "RUNNER_MODULE_PROXY",
     "build_inner_argv",
 ]

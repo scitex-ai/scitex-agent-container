@@ -63,6 +63,8 @@ __all__ = [
     "usage_as_dict",
     "build_mcp_server",
     "McpConfigError",
+    "_parse_argv",
+    "main",
 ]
 
 _INSTALL_HINT = (
@@ -497,3 +499,162 @@ class OpenAIAgentsSession:
             )
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
+
+
+# ---------------------------------------------------------------------------
+# CLI entry — mirrors the claude-session argument parser so the runtime
+# adapter's fixed argv lands here without ``ArgumentError`` on extra flags.
+# ---------------------------------------------------------------------------
+
+
+def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
+    """Argparse mirror of the claude-session parser."""
+    import argparse as _argparse
+    from pathlib import Path as _Path
+
+    from ._session_state import DEFAULT_TICK_SECONDS
+
+    p = _argparse.ArgumentParser(
+        prog="python -m scitex_agent_container._runners.openai_session",
+        description="openai-session runner.",
+    )
+    p.add_argument("--name", required=True, help="Agent name (state-dir leaf).")
+    p.add_argument(
+        "--state-root",
+        type=_Path,
+        default=None,
+        help="Accepted for parity; OpenAI runner has no state directory.",  # no heartbeat/PID
+    )
+    p.add_argument(
+        "--tick-seconds",
+        type=float,
+        default=DEFAULT_TICK_SECONDS,
+        help="Accepted for parity; no heartbeat loop.",  # no daemon loop
+    )
+    p.add_argument(
+        "--mission",
+        type=str,
+        default=None,
+        help="Initial user prompt (first user message).",
+    )
+    p.add_argument(
+        "--resume-session-id",
+        type=str,
+        default=None,
+        help="Accepted for parity; maps to session_id on the state db.",  # maps to session_id
+    )
+    p.add_argument(
+        "--a2a-port",
+        type=int,
+        default=None,
+        help="Accepted for parity; no HTTP sidecar.",  # no HTTP server
+    )
+    p.add_argument(
+        "--a2a-host",
+        type=str,
+        default="127.0.0.1",
+        help="Accepted for parity; no a2a-port sidecar.",  # no HTTP server
+    )
+    p.add_argument(
+        "--a2a-card-yaml",
+        type=str,
+        default="",
+        help="Accepted for parity; no card publishing.",  # no HTTP server
+    )
+    p.add_argument(
+        "--channels",
+        action="append",
+        default=None,
+        metavar="CHANNEL",
+        help="Accepted for parity; channel wiring is claude-SDK-specific.",  # no SDK channel system
+    )
+    p.add_argument(
+        "--print-stream",
+        action="store_true",
+        help="Mirror assistant text to stdout.",
+    )
+    p.add_argument(
+        "--autonomous-enabled",
+        action="store_true",
+        help="Accepted for parity; no autonomous loop.",  # single-turn mission only
+    )
+    p.add_argument(
+        "--autonomous-drive-until",
+        type=str,
+        default="DONE",
+        help="Accepted for parity; no autonomous loop.",  # single-turn mission only
+    )
+    p.add_argument(
+        "--autonomous-max-turns",
+        type=int,
+        default=50,
+        help="Turn cap; forwarded to OpenAISession.max_turns.",
+    )
+    p.add_argument(
+        "--autonomous-kick-text",
+        type=str,
+        default="Continue. Print DONE when finished.",
+        help="Accepted for parity; no autonomous loop.",  # single-turn mission only
+    )
+    p.add_argument(
+        "--max-restarts",
+        type=int,
+        default=0,
+        help="Accepted for parity; no restart logic.",  # no supervisor loop
+    )
+    p.add_argument(
+        "--restart-backoff-s",
+        type=float,
+        default=1.0,
+        help="Accepted for parity; no restart logic.",  # no supervisor loop
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point — construct an :class:`OpenAISession`, run one
+    mission turn (if any), then tear down."""
+    import sys
+
+    args = _parse_argv(argv)
+
+    # BOOT ASSERTION — same contract as claude_session's main().
+    from .._maintenance._venv_dist_assertion import assert_venv_distributions_unique
+
+    assert_venv_distributions_unique(args.name)
+
+    session = OpenAISession(
+        args.name,
+        session_id=args.resume_session_id or args.name,
+        max_turns=args.autonomous_max_turns
+        if args.autonomous_enabled
+        else None,
+    )
+
+    async def _run() -> int:
+        print_stream = args.print_stream
+        await session.start()
+        try:
+            if args.mission:
+                async for event in session.send(
+                    Message(role="user", content=args.mission)
+                ):
+                    if print_stream and event.kind == "text_delta":
+                        sys.stdout.write(event.text)
+                        sys.stdout.flush()
+                    if event.kind == "result":
+                        return 0
+                    if event.kind == "error":
+                        print(f"error: {event.error}", file=sys.stderr)
+                        return 1
+                return 0
+            else:
+                return 0
+        finally:
+            await session.close()
+
+    return asyncio.run(_run())
+
+
+if __name__ == "__main__":  # pragma: no cover — exercised by adapter
+    sys.exit(main())

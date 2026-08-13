@@ -37,6 +37,12 @@ from ._apptainer_quota_cache import (
 # ----------------------------------------------------------------------
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 
+# Runner module for the ``provider: openai`` path (scitex-todo
+# card ``openai-compat-2``; ``spec.provider: openai``). Dispatched
+# when the config's provider is ``"openai"``; otherwise the default
+# ``RUNNER_MODULE`` above (claude_session) is used.
+RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
+
 # Quota-cache constants + resolver now live in _apptainer_quota_cache (this
 # file sat at the 512-line cap); imported below and re-exported via __all__ so
 # both historical import paths keep resolving.
@@ -419,7 +425,17 @@ def build_run_argv(
         )
     else:
         kind = getattr(config, "kind", "Agent")
-        module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE
+        if kind == "AgentProxy":
+            module = RUNNER_MODULE_PROXY
+        else:
+            # Provider dispatch for pre-built runner_argv: same logic
+            # as build_inner_argv — openai → OpenAI runner, else Claude.
+            provider = getattr(config, "provider", None)
+            module = (
+                RUNNER_MODULE_OPENAI
+                if provider == "openai"
+                else RUNNER_MODULE
+            )
         inner_argv = [
             "/usr/bin/tini",
             "-s",
