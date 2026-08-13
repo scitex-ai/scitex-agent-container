@@ -61,8 +61,13 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # symlinks in section 1b. ``tree`` is still source-built in section
     # 5 (apt ships an older 2.0.x; we want 2.1.3 features).
     #
+    # postgresql-client: the cards/fleet store IS PostgreSQL, and the image
+    # already gates the PYTHON driver (psycopg, section 7). The CLI was the
+    # missing half — an agent asked to inspect the store had no `psql` and
+    # could not answer, which is how this gap surfaced (2026-08-13).
+    #
     # Agent-useful, non-interactive CLI tool set:
-    #   fd-find ripgrep bat eza tree jq git-delta (apt)
+    #   fd-find ripgrep bat eza tree jq git-delta postgresql-client (apt)
     #   yq sd dust (sections 4a / 4b — not in apt)
     #   gdu — NOT from apt: Ubuntu's `gdu` package is the ambiguous
     #         "gnu-disk-usage" build with no machine-readable output;
@@ -124,6 +129,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         procps lsof strace less \
         iputils-ping dnsutils netcat-openbsd \
         nano jq \
+        postgresql-client \
         fd-find ripgrep bat eza \
         git-delta \
         direnv \
@@ -731,6 +737,21 @@ try:
         )
 except Exception as _exc:
     failures.append("psycopg is not importable: %r" % (_exc,))
+
+# psql GATE — the CLI half of the same store. The driver above lets CODE reach
+# PostgreSQL; this lets a PERSON (or an agent answering a question about the
+# store) look at it. Gated rather than merely listed in apt because an apt line
+# is a request and this is the assertion that it arrived: 2026-08-13 an agent
+# asked to describe the fleet DB had no psql, no driver reachable either, and
+# could only answer from general knowledge.
+import shutil as _shutil
+
+if _shutil.which("psql") is None:
+    failures.append(
+        "psql not on PATH — the cards/fleet store is PostgreSQL and this image "
+        "gates its Python driver, so the CLI must be present too. Check that "
+        "postgresql-client survived the apt line in section 1."
+    )
 
 # The version string lies (uv's wheel cache is version-keyed and sac's
 # version does not advance per-commit). File content cannot lie — but the
