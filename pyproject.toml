@@ -225,7 +225,42 @@ dev = [
     # by widening the specifier. A specifier stretched until the red goes
     # away is a gate configured so it cannot fail, which is worse than no
     # gate, because the config still lists it and everyone believes it.
-    "scitex-dev>=0.31.1,<0.48",
+    # CEILING LIFTED 2026-08-13, operator authorised ("ガンガンいってください",
+    # "遅い方が罪"). Read the block above before widening this further.
+    #
+    # What the ceiling was NOT protecting against: lifting it does not touch
+    # the OAuth refresher. The credential danger the block describes comes
+    # ONLY from performing the PS-226 RENAME, which installs a second unit
+    # beside the live sac.accounts-refresh.timer and races a single-use
+    # refresh token. THAT RENAME IS STILL DELIBERATELY NOT DONE and must not
+    # be done as a side effect of this bump.
+    #
+    # What lifting it costs, all of it red-not-broken: (1) and (2) are the two
+    # tests named above, fixed in this same change; (3) was upstream
+    # scitex-ai/scitex-dev#590 — a declared skip rule suppresses the report but
+    # not the exit status. The block itself ruled that survivable: "A red audit
+    # rule is survivable; a revoked fleet credential is not."
+    #
+    # (3) IS NO LONGER OWED. #590 was root-caused and fixed upstream on
+    # 2026-08-13: `fully_masked` tested `not self.unmasked`, which counts
+    # WARN-tier findings that provably fail nothing, so warnings vetoed the
+    # downgrade and audit-all printed "0 unmasked error(s)" beside exit=1. It
+    # now gates on `unmasked_error_count`. Shipped in 0.49.2.
+    #
+    # Why now: scitex_dev.store ships after 0.48, and sac cannot adopt the
+    # fleet store primitive — the whole point of moving state off SQLite —
+    # while this specifier excludes it.
+    #
+    # THE FLOOR IS 0.49.2, NOT 0.31.1, and the difference is not cosmetic.
+    # 0.49.0 shipped `scitex_dev.store` with a Postgres backend nothing could
+    # use: psycopg appeared in its pyproject only as a COMMENT, and every
+    # Postgres READ crashed because the dialect set no row factory while
+    # `row_from_db` addresses columns by name. Writes were unaffected — they
+    # bind parameters — which is exactly why it survived: the Postgres path had
+    # been written to and never read from. A floor that admits 0.49.0 admits a
+    # store this package cannot read, so the version that first WORKS is the
+    # version this package may depend on.
+    "scitex-dev>=0.49.2",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
