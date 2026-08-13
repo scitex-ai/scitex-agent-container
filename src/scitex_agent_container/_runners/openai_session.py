@@ -4,28 +4,25 @@ scitex-todo card ``openai-compat-2`` — the first concrete implementation
 of the openai-compat-1 Protocol (see :mod:`_runners._harness_session`
 for the shape rationale). Wires:
 
-* :class:`~._harness_session.ToolSpec` → ``agents.FunctionTool``
-  (:func:`tool_spec_to_function_tool` — a near-direct field mapping, as
-  the ToolSpec docstring predicted).
+* :class:`~._harness_session.ToolSpec` → ``agents.FunctionTool`` via
+  :func:`tool_spec_to_function_tool` — a near-direct field mapping.
 * ``Runner.run_streamed()`` → an async generator of
   :class:`~._harness_session.NormalizedEvent`
   (:func:`normalize_stream_event` + :meth:`OpenAIAgentsSession.send`).
 * ``SQLiteSession`` for conversation state (multi-turn memory across
   :meth:`OpenAIAgentsSession.send` calls; placement via
   :func:`runtimes._openai_sdk_common.resolve_state_db_path`).
-* Per-turn spend recording into the ledger of
-  :mod:`_account.openai_usage` (spend-based tracking — best-effort,
-  never fails the turn).
+* Per-turn spend recording into :mod:`_account.openai_usage`'s ledger
+  (best-effort; never fails the turn).
 
 The ``openai-agents`` dependency is OPTIONAL (``pip install
 scitex-agent-container[openai]``). This module imports it LAZILY inside
 :meth:`OpenAIAgentsSession.start` / :func:`tool_spec_to_function_tool` —
 importing the module (and constructing :class:`OpenAIAgentsSession`) works on
 Claude-only deployments; only actually OPENING a session requires the
-SDK. :func:`normalize_stream_event` is deliberately duck-typed on the
-SDK's own ``type`` / ``name`` string discriminators (stable public
-Literal fields) so event normalization is pure and testable without a
-network connection.
+SDK. :func:`normalize_stream_event` is duck-typed on the SDK's own
+``type`` / ``name`` string discriminators (stable public Literal fields)
+so event normalization is pure and testable offline.
 
 Vocabulary mapping (openai-agents → NormalizedEvent.kind)
 ----------------------------------------------------------
@@ -63,6 +60,8 @@ __all__ = [
     "usage_as_dict",
     "build_mcp_server",
     "McpConfigError",
+    "_parse_argv",
+    "main",
 ]
 
 _INSTALL_HINT = (
@@ -497,3 +496,17 @@ class OpenAIAgentsSession:
             )
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
+
+
+# CLI entry — it mirrors the claude-session argument parser so the runtime
+# adapter's fixed argv lands without ``ArgumentError`` on extra flags, and it
+# lives in _openai_session_cli because this module crossed the 512-line cap
+# when the entrypoint landed. Re-exported so `python -m
+# scitex_agent_container._runners.openai_session` — the module name the
+# apptainer argv builder emits — still resolves.
+from ._openai_session_cli import _parse_argv, main  # noqa: E402
+
+if __name__ == "__main__":  # pragma: no cover — exercised by the adapter
+    raise SystemExit(main())
+
+# EOF

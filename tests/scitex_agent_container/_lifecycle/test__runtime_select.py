@@ -7,6 +7,10 @@ unset maps here) → the in-apptainer TUI runner; ``claude-agent-sdk`` →
 the headless SDK runner. Legacy ``apptainer`` maps to ``claude-agent-sdk``
 with a one-line deprecation log.
 
+scitex-todo card ``openai-compat-2``: when ``spec.provider: openai``,
+``_get_runtime`` returns ``OpenAISessionRuntime`` regardless of
+``spec.runtime``.
+
 STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — uses a tiny stub
 ``SimpleNamespace`` config (the existing test pattern for
 ``_get_runtime`` callers; the runtime selector reads ONE attribute).
@@ -25,6 +29,7 @@ from scitex_agent_container._lifecycle._runtime_select import (
     warn_if_legacy_harness_key,
 )
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+from scitex_agent_container.runtimes.openai_session import OpenAISessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
 # ---------------------------------------------------------------------------
@@ -271,3 +276,60 @@ def test_get_runtime_rejects_unknown_value_names_accepted_set():
         raised = exc
     # Assert
     assert raised is not None and "claude-agent-sdk" in str(raised)
+
+
+# ---------------------------------------------------------------------------
+# OpenAI provider — dispatches OpenAISessionRuntime (openai-compat-2)
+# ---------------------------------------------------------------------------
+
+
+def test_get_runtime_returns_openai_session_for_openai_provider():
+    # Arrange — spec.provider: openai selects the OpenAI SDK path
+    # regardless of spec.runtime.
+    config = SimpleNamespace(name="beta", runtime="", provider="openai")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, OpenAISessionRuntime)
+
+
+def test_get_runtime_returns_openai_session_even_with_claude_runtime():
+    # Arrange — provider: openai WINS over runtime: claude-agent-sdk.
+    config = SimpleNamespace(name="gamma", runtime="claude-agent-sdk", provider="openai")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, OpenAISessionRuntime)
+
+
+def test_get_runtime_returns_openai_session_even_with_apptainer_runtime():
+    # Arrange — provider: openai WINS over runtime: apptainer (back-compat).
+    config = SimpleNamespace(name="delta", runtime="apptainer", provider="openai")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, OpenAISessionRuntime)
+
+
+# ---------------------------------------------------------------------------
+# Default (anthropic provider) — unchanged behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_get_runtime_returns_tui_session_for_default_provider():
+    # Arrange — default provider is "anthropic" (DEFAULT_AGENT_PROVIDER);
+    # with no provider set and runtime="", we still get TUI.
+    config = SimpleNamespace(name="epsilon")  # runtime defaults to "", provider defaults to None
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, TuiSessionRuntime)
+
+
+def test_get_runtime_returns_claude_session_for_anthropic_provider():
+    # Arrange — explicit provider: anthropic with runtime: claude-agent-sdk.
+    config = SimpleNamespace(name="zeta", runtime="claude-agent-sdk", provider="anthropic")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, ClaudeSessionRuntime)
