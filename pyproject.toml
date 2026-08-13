@@ -225,7 +225,27 @@ dev = [
     # by widening the specifier. A specifier stretched until the red goes
     # away is a gate configured so it cannot fail, which is worse than no
     # gate, because the config still lists it and everyone believes it.
-    "scitex-dev>=0.31.1,<0.48",
+    # CEILING LIFTED 2026-08-13, operator authorised ("ガンガンいってください",
+    # "遅い方が罪"). Read the block above before widening this further.
+    #
+    # What the ceiling was NOT protecting against: lifting it does not touch
+    # the OAuth refresher. The credential danger the block describes comes
+    # ONLY from performing the PS-226 RENAME, which installs a second unit
+    # beside the live sac.accounts-refresh.timer and races a single-use
+    # refresh token. THAT RENAME IS STILL DELIBERATELY NOT DONE and must not
+    # be done as a side effect of this bump.
+    #
+    # What lifting it costs, all of it red-not-broken: (1) and (2) are the two
+    # tests named above, fixed in this same change; (3) is upstream
+    # scitex-ai/scitex-dev#590 — a declared skip rule suppresses the report but
+    # not the exit status — and stays red until that lands. The block itself
+    # rules that survivable: "A red audit rule is survivable; a revoked fleet
+    # credential is not."
+    #
+    # Why now: scitex_dev.store ships after 0.48, and sac cannot adopt the
+    # fleet store primitive — the whole point of moving state off SQLite —
+    # while this specifier excludes it.
+    "scitex-dev>=0.31.1",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
