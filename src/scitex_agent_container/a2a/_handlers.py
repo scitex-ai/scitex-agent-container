@@ -250,13 +250,26 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
     )
     from scitex_agent_container.runtimes._openai_sdk_common import (
         OpenAISDKCommonError,
+        resolve_agent_workspace,
     )
 
     system = _sac_env("A2A_OPENAI_SYSTEM", "").strip() or None
     model = _sac_env("A2A_OPENAI_MODEL") or None
+    # Same workspace resolution the Claude handler uses — the agent's
+    # .mcp.json, written by sac at start time from spec.mcp_servers. Reusing
+    # it is the point of _openai_sdk_common re-exporting it: an agent declares
+    # its servers ONCE and gets them under either harness. Without this the
+    # session was conversational only, which is why a locally-served model
+    # could not do agent work even though the model tool-calls correctly.
+    mcp_servers, _workspace_cwd = resolve_agent_workspace(agent_name)
 
     async def _drive() -> str:
-        session = OpenAIAgentsSession(agent_name, model=model, instructions=system)
+        session = OpenAIAgentsSession(
+            agent_name,
+            model=model,
+            instructions=system,
+            mcp_servers=mcp_servers,
+        )
         await session.start()
         try:
             reply = ""
