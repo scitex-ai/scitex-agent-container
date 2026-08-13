@@ -303,17 +303,15 @@ def test_the_pass_through_forwards_dry_run() -> None:
     argv = backend.build_argv(
         delegation, name="sac.accounts-refresh", yes=False, dry_run=True, exe="sd"
     )
-    # Assert
-    assert argv == [
-        "sd",
-        "ecosystem",
-        "dev",
-        "timer",
-        "disable",
-        "--name",
-        "sac.accounts-refresh",
-        "--dry-run",
-    ]
+    # Assert — the GATE, not the name SHAPE. scitex-dev <=0.47 takes the job
+    # as `--name X`; >=0.48 takes it positionally. Both are correct, and
+    # `name_style_for` reads the INSTALLED cli to decide, so pinning the
+    # literal argv here reds on a correct code path the moment the floor
+    # moves. What must never happen is --dry-run being dropped: this verb
+    # stops the fleet's SOLE OAuth refresher.
+    assert argv[:5] == ["sd", "ecosystem", "dev", "timer", "disable"]
+    assert "--dry-run" in argv
+    assert "sac.accounts-refresh" in argv
 
 
 def test_the_pass_through_forwards_yes() -> None:
