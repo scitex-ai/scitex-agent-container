@@ -14,6 +14,7 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
+from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
 from ._provider_types import ProviderSpec
 
 
@@ -382,6 +383,11 @@ class AgentConfig:
     harness: AgentHarness = DEFAULT_AGENT_HARNESS
     # Provenance, NOT a spec field: reached only through the alias.
     harness_key_is_legacy: bool = False
+    # RESIDENCY: does the daemon outlive its work? "resident" (default)
+    # parks awaiting more turns after a conversation completes;
+    # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when
+    # the conversation completes. v4 step 6 — see config._residency_types.
+    residency: AgentResidency = DEFAULT_AGENT_RESIDENCY
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a

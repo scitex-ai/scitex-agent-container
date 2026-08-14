@@ -207,6 +207,20 @@ def test_certificate_compiled_spec_is_redacted_json(db: Path) -> None:
     assert stored["env"]["API_KEY"] == "<redacted:API_KEY>"
 
 
+def test_certificate_compiled_spec_carries_residency(db: Path, tmp_path: Path) -> None:
+    # Arrange: a compiled config declaring the v4 residency axis — the
+    # birth certificate must record it (provenance for "why did this
+    # incarnation end at oneshot-complete?").
+    from scitex_agent_container.config._residency_types import ONE_SHOT
+
+    cfg = AgentConfig(name="alpha", residency=ONE_SHOT)
+    # Act
+    write_birth_certificate(cfg, "inc-b7", db_path=db)
+    stored = json.loads(get_incarnation("inc-b7", db_path=db)["compiled_spec_json"])
+    # Assert
+    assert stored["residency"] == ONE_SHOT
+
+
 def test_certificate_failure_is_false_not_raise(db: Path) -> None:
     # Arrange: a config whose serialization cannot work (not a dataclass).
     broken = object()

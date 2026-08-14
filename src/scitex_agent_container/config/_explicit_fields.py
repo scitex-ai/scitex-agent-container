@@ -42,6 +42,13 @@ EXCLUDED from the required map, each with its reason:
   * ``spec.startup`` — listed in ``_KNOWN_SPEC_KEYS`` but materialised
     by NO parser (``getattr(config, "startup", None)`` is always None);
     a dead key cannot be meaningfully required.
+  * ``spec.residency`` — the v4 residency axis (``resident`` |
+    ``one-shot``), added AFTER the corpus was written and DEFAULTED to
+    ``resident`` (``_residency_types``). Requiring it today would
+    red-start every live spec for declaring nothing new; the v3→v4
+    converter materializes the explicit line per spec, and turning
+    omission into an error is that later step — the same posture
+    ``to_home_layers`` took (see ``_validation._KNOWN_SPEC_KEYS``).
   * ``spec.multiplexer`` / ``spec.env-file`` / ``spec.exclude_hooks`` /
     ``spec.exclude_skills`` — read by ``load_v3`` but ABSENT from
     ``_KNOWN_SPEC_KEYS``, so ``validate_raw`` rejects them as unknown;

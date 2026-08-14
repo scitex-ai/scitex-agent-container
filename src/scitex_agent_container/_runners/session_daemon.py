@@ -44,6 +44,20 @@ the daemon stayed parked on ``stop.wait()`` forever, a RESIDENT ZOMBIE
 with green heartbeats, a bound a2a port, and no inbox consumer. Now the
 daemon exits instead, with ``reason=harness-returned`` (clean return)
 or ``crashed`` (exception) in the ExitRecord and a non-zero exit code.
+
+v4 step 6 — the residency AXIS (``spec.residency``)
+---------------------------------------------------
+Whether the daemon OUTLIVES its work is now a declared spec axis
+(``config._residency_types``), threaded here as the explicit
+``residency`` parameter — never re-read from global config inside the
+daemon. Under ``resident`` (the default) the behaviour above is
+unchanged: park on ``stop.wait()``, and a driver that returns on its
+own is a violation. Under ``one-shot`` the conversation completing
+normally IS the plan: the mission envelope carries ``exit_after`` so
+the driver ends the run when the work is done, and a clean driver
+return records ``reason=oneshot-complete`` with exit code 0 instead of
+``harness-returned``. A crash stays ``crashed`` either way — one-shot
+declares a planned END, never an excuse.
 """
 
 from __future__ import annotations
@@ -55,6 +69,11 @@ import signal
 from pathlib import Path
 from typing import Any
 
+from ..config._residency_types import (
+    AGENT_RESIDENCIES,
+    ONE_SHOT,
+    RESIDENT,
+)
 from ._daemon_contract import (
     make_convo_done_callback,
     make_daemon_state_fn,
@@ -94,6 +113,7 @@ async def run_session_daemon(
     name: str,
     *,
     turn_driver: Any,
+    residency: str = RESIDENT,
     state_root: Path | None = None,
     tick_seconds: float = DEFAULT_TICK_SECONDS,
     mission: str | None = None,
@@ -131,7 +151,21 @@ async def run_session_daemon(
     against it; afterward it idles awaiting SIGTERM. With no mission,
     the daemon just heartbeats — useful for lifecycle correctness
     checks and for hand-driven manual sessions.
+
+    ``residency`` is the spec-declared axis (v4 step 6; see the module
+    docstring), threaded EXPLICITLY from the compiled spec by the
+    caller: ``resident`` (default) keeps today's park-until-signal
+    behaviour; ``one-shot`` makes a normal conversation completion the
+    planned end — the daemon exits 0 with ExitRecord reason
+    ``oneshot-complete`` instead of parking. Unknown values are refused
+    loudly, naming the closed set.
     """
+    if residency not in AGENT_RESIDENCIES:
+        raise ValueError(
+            f"unknown residency {residency!r} for agent {name!r}: "
+            f"spec.residency must be one of {sorted(AGENT_RESIDENCIES)} "
+            "(v4 residency axis — see config._residency_types)"
+        )
     state_dir = state_dir_for(name, state_root)
     state_dir.mkdir(parents=True, exist_ok=True)
 
@@ -160,8 +194,15 @@ async def run_session_daemon(
     # the exit resolution see it through this mutable ref.
     convo_ref: dict[str, asyncio.Task | None] = {"task": None}
     # A ``--print-stream`` mission is a PLANNED one-shot: the driver
-    # returning is its success, not a residency violation.
+    # returning is its success, not a residency violation. Kept separate
+    # from the DECLARED axis below because this flag also routes the
+    # foreground await-the-turn block, which the headless declared
+    # one-shot must NOT take (its shutdown runs the full stop-path
+    # cleanup — a2a sidecar included).
     oneshot_mode = bool(mission and print_stream and not autonomous_enabled)
+    # The DECLARED plan (spec.residency: one-shot — v4 step 6): a clean
+    # driver return is ``oneshot-complete``, never ``harness-returned``.
+    declared_oneshot = residency == ONE_SHOT
 
     def _on_signal(signum: int) -> None:
         logger.info("runner %s received signal %d, stopping", name, signum)
@@ -262,13 +303,15 @@ async def run_session_daemon(
     autonomous_task: asyncio.Task | None = None
     if mission or a2a_port is not None:
         if mission and not autonomous_enabled:
-            # Seed the inbox with the mission turn. exit_after=True only
-            # for foreground (--print-stream) mode so the runner exits
-            # when done.
+            # Seed the inbox with the mission turn. exit_after=True for
+            # foreground (--print-stream) mode AND for a declared
+            # one-shot (spec.residency) — in both, the mission
+            # completing means the run is over, so the driver must end
+            # the conversation instead of parking for more turns.
             mission_env = TurnEnvelope(
                 text=mission,
                 response=loop.create_future(),
-                exit_after=print_stream,
+                exit_after=print_stream or declared_oneshot,
             )
             await inbox.put(mission_env)
         convo_task = asyncio.create_task(
@@ -291,13 +334,16 @@ async def run_session_daemon(
         # THE ZOMBIE FIX (see module docstring + _daemon_contract): the
         # conversation ending — clean return, crash, or stray cancel —
         # folds into ``stop`` with its honest cause instead of leaving a
-        # resident zombie parked on ``stop.wait()``.
+        # resident zombie parked on ``stop.wait()``. Under a PLANNED
+        # one-shot — foreground --print-stream OR the spec-declared
+        # residency axis — a clean return is ``oneshot-complete``, not a
+        # violation; a crash stays ``crashed`` in both residencies.
         convo_task.add_done_callback(
             make_convo_done_callback(
                 name=name,
                 stop=stop,
                 exit_cause=exit_cause,
-                oneshot_mode=oneshot_mode,
+                oneshot_mode=oneshot_mode or declared_oneshot,
             )
         )
         if mission and autonomous_enabled:
