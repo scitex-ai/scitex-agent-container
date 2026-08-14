@@ -40,13 +40,14 @@ from ._agent_list_fleet_model import (
     MALFORMED,
     RESPONDED,
     SAC_MISSING,
+    SAC_TOO_OLD,
     TIMED_OUT,
     UNREACHABLE,
     HostReport,
     HostTarget,
 )
 
-__all__ = ["local_probe", "ssh_peer_probe"]
+__all__ = ["local_probe", "ssh_json_probe", "ssh_peer_probe"]
 
 # The peer runs its OWN sac, which would fan out again — and its peers would fan
 # out after that. ``--no-fanout`` is the recursion guard, and it is the same flag
@@ -104,16 +105,16 @@ def _remote_argv(
     return argv
 
 
-def _parse_rows(stdout: str) -> list[dict]:
+def _parse_rows(stdout: str, envelope_key: str = "agents") -> list[dict]:
     """Read a peer's ``--json`` payload. Raises ``ValueError`` when unreadable.
 
-    Accepts BOTH shapes this codebase emits: the CLI's ``{"agents": [...]}``
-    envelope and the bare list ``print_agent_list_json`` writes.
+    Accepts BOTH shapes this codebase emits: an ``{"<key>": [...]}`` envelope
+    and a bare list (which ``print_agent_list_json`` writes).
     """
     payload = json_mod.loads(stdout)
-    rows = payload.get("agents") if isinstance(payload, dict) else payload
+    rows = payload.get(envelope_key) if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
-        raise ValueError("payload carries no 'agents' list")
+        raise ValueError(f"payload carries no {envelope_key!r} list")
     return [row for row in rows if isinstance(row, dict)]
 
 
@@ -135,12 +136,12 @@ def _stamp_host(rows: list[dict], target: HostTarget) -> list[dict]:
     """
     out: list[dict] = []
     for row in rows:
-        declared = row.get("host_display")
-        host = (
-            declared
-            if isinstance(declared, str) and declared not in ("", "local", "localhost")
-            else target.name
-        )
+        host = target.name
+        for key in ("host_display", "host"):
+            declared = row.get(key)
+            if isinstance(declared, str) and declared not in ("", "local", "localhost"):
+                host = declared
+                break
         stamped = dict(row)
         stamped["host"] = host
         stamped["host_display"] = host
@@ -208,7 +209,44 @@ def ssh_peer_probe(
     peers: dict | None = None,
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> tuple[HostReport, list[dict]]:
-    """Ask ONE peer for its own listing over ssh. Returns ``(report, rows)``.
+    """Ask ONE peer for its AGENT listing over ssh. Returns ``(report, rows)``.
+
+    A thin argv-builder over :func:`ssh_json_probe`, which owns every transport
+    concern. Kept as its own name because the agent listing's label filters
+    (``--capability`` / ``--machine`` / ``--group``) travel with the request.
+    """
+    return ssh_json_probe(
+        target,
+        timeout_s,
+        argv=_remote_argv(
+            capability=capability, machine=machine, group=group, guard=True
+        ),
+        envelope_key="agents",
+        peers=peers,
+        runner=runner,
+    )
+
+
+def ssh_json_probe(
+    target: HostTarget,
+    timeout_s: float,
+    *,
+    argv: list[str],
+    envelope_key: str = "agents",
+    guard_flag: str = "--no-fanout",
+    required_flags: tuple[str, ...] = (),
+    peers: dict | None = None,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> tuple[HostReport, list[dict]]:
+    """Run ``argv`` on ONE peer and read a JSON envelope back.
+
+    THE one cross-host read in this package: ``sac agents list`` and
+    ``sac accounts list`` differ only in the argv they send and the envelope key
+    they read, so they share this body rather than growing two transports that
+    drift apart in their failure mapping. Everything that makes the fan-out
+    honest lives here — the ternary verdicts, the timeout that is not an
+    unreachability, the ``sac_missing`` that is not a network fault, the
+    stale-peer retry.
 
     Rides :func:`..._state.host_config.build_ssh_argv` — the fleet's single ssh
     choke point, which already renders ``via:`` ProxyJump chains, the Lmod
@@ -227,11 +265,10 @@ def ssh_peer_probe(
 
     connect = int(max(2, min(timeout_s, 15)))
     started = time.monotonic()
+    full_argv = list(argv)
     guard = True
     while True:
-        argv = _remote_argv(
-            capability=capability, machine=machine, group=group, guard=guard
-        )
+        argv = full_argv if guard else [a for a in full_argv if a != guard_flag]
         # stx-allow: fallback (reason: every transport failure is a REPORTED
         # host state — an exception here would drop the host from the listing.)
         try:
@@ -270,9 +307,30 @@ def ssh_peer_probe(
             )
         rc = int(getattr(proc, "returncode", 1) or 0)
         stderr = (getattr(proc, "stderr", "") or "").strip()
-        if rc != 0 and guard and _looks_like_unknown_flag(stderr):
-            guard = False  # older sac there: it cannot recurse, so ask again
-            continue
+        if rc != 0 and _looks_like_unknown_flag(stderr):
+            if required_flags:
+                # DO NOT RETRY WITHOUT THEM. The retry that rescues a merely
+                # stale peer is forbidden when a flag is load-bearing for
+                # SAFETY: dropping ``--passive`` would let that host refresh —
+                # and thereby rotate — a credential every other host is still
+                # using. Report the host and name the remedy instead.
+                named = ", ".join(required_flags)
+                return (
+                    HostReport(
+                        host=target.name,
+                        status=SAC_TOO_OLD,
+                        instrument=INSTRUMENT_SSH,
+                        detail=(
+                            f"its sac does not accept {named}; re-asking without "
+                            f"it is unsafe — upgrade sac on this host"
+                        ),
+                        elapsed_ms=_ms_since(started),
+                    ),
+                    [],
+                )
+            if guard:
+                guard = False  # older sac there: it cannot recurse, so ask again
+                continue
         break
 
     if rc != 0:
@@ -295,7 +353,9 @@ def ssh_peer_probe(
     # parse is MALFORMED, not unreachable — the transport demonstrably worked,
     # and saying "unreachable" sends the operator to debug the wrong layer.)
     try:
-        rows = _stamp_host(_parse_rows(getattr(proc, "stdout", "") or ""), target)
+        rows = _stamp_host(
+            _parse_rows(getattr(proc, "stdout", "") or "", envelope_key), target
+        )
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
         return (
             HostReport(
@@ -312,7 +372,7 @@ def ssh_peer_probe(
             host=target.name,
             status=RESPONDED,
             instrument=INSTRUMENT_SSH,
-            detail="sac agents list --json over ssh",
+            detail=f"{' '.join(argv[:3])} --json over ssh",
             elapsed_ms=_ms_since(started),
             agents=len(rows),
         ),
