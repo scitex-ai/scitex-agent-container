@@ -79,6 +79,11 @@ def deletions(repo, base, target, before, after, allowed, as_json) -> None:
     a domain answer.
 
     \b
+    A symbol is a def or a class, never an import — so replacing a
+    ``def foo`` with ``from elsewhere import foo`` reports a deletion
+    even though ``foo`` still imports. Clear that with --allow.
+
+    \b
     Examples:
       $ sac guard deletions --base HEAD                 # worktree vs HEAD
       $ sac guard deletions --base origin/develop --target HEAD

@@ -24,6 +24,22 @@ Nested definitions are deliberately NOT walked. The failure being guarded
 is a module-level name vanishing out from under an importing sibling; a
 helper nested inside a function is not importable, so its disappearance is
 a different (and non-breaking) event.
+
+Known limitation, stated rather than hidden
+===========================================
+A symbol is a ``def`` or a ``class``, never an ``import``. So a RE-EXPORT
+refactor — deleting ``def foo`` and replacing it with ``from elsewhere
+import foo`` — reads as a deletion even though ``foo`` is still importable
+from that module. This was measured on the very commit that promoted this
+code: running the guard over it reported four functions "deleted" from
+``scripts/local_model_trials/detectors.py``, which had become re-exports.
+
+That is a real false positive for one refactor shape, and it is left in
+place ON PURPOSE. Teaching :func:`symbol_set` about imports would change
+what the 36 measured local-model trials measured, and the safer direction
+for a guard is to over-report a shape a human clears with ``--allow`` than
+to learn a rule that lets a genuine deletion through. Clear it with
+``--allow '<path>::func:<name>'``.
 """
 
 from __future__ import annotations
