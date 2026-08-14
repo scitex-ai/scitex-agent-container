@@ -2,19 +2,37 @@
 
 ## Builtin layers
 
-Two `.def` recipes, layered:
+Four `.def` recipes, chained — each builds `FROM` the one above it:
 
-| Tag       | What's inside                                                                                               | When                                   |
-|-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | **Default** when `spec.image` is unset |
-| `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
+| # | Tag            | What's inside                                                                                              | When                                   |
+|---|----------------|------------------------------------------------------------------------------------------------------------|----------------------------------------|
+| 1 | `:system-deps` | Ubuntu 24.04 + OS tooling: git, gh, node 20 + npm globals, rust toolchain, apptainer, and the pinned static binaries (yq, gdu, tree, rtk) | Rebuild when apt/node/rust changes     |
+| 2 | `:python-pkgs` | `FROM :system-deps` + uv/pipx/pre-commit + `/opt/venv-sac` carrying claude-agent-sdk, scitex-cards and sac `[all,dev]` | Rebuild when a Python pin moves        |
+| 3 | `:base`        | `FROM :python-pkgs` + the baked `sac versions` manifest                                                     | **Default** when `spec.image` is unset |
+| 4 | `:scitex`      | `FROM :base` + ffmpeg + portaudio + `scitex[all]`                                                           | Optional heavier layer                 |
+
+`:base` still contains everything it always did — the split moved *where*
+things install, not what a `:base` container carries.
+
+### Why four and not one
+
+Layers 1 and 2 have very different rebuild frequencies. The OS floor (apt +
+rustup + a source-built `tree` + a cargo-built `rtk`) is most of the bake
+wall-clock and changes roughly monthly; the Python pin set above it
+(scitex-cards floors, claude-agent-sdk floated to latest, sac's own bundled
+source) changes weekly. Fused in one recipe, every pin bump re-paid the whole
+apt/cargo cost. Split, a pin bump rebuilds layer 2 and reuses
+`sac-system-deps.sif` untouched.
+
+`:proxy` also ships a recipe but is **not** in the chain — it is a standalone
+sidecar built straight from the registry.
 
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`.
 Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
 
 ```
 <site-packages>/scitex_agent_container/containers/
-  apptainer-{base,scitex}.def    ← canonical SSoT
+  apptainer-{system-deps,python-pkgs,base,scitex,proxy}.def   ← canonical SSoT
 ```
 
 ## Cross-package convention: `~/.scitex/<pkg>/{containers,bin}`
@@ -44,11 +62,21 @@ operator design 8566; ecosystem doctrine of minimal scope.
 
 ## Build
 
+Build bottom-up the first time. Each layer FAILS LOUD (before invoking
+apptainer) if its prerequisite SIF is missing, naming the immediate parent
+and the exact command to build it:
+
 ```bash
-sac image build           # :base SIF (default; OS + dev tools, ~15-25 min)
-sac image build scitex    # :scitex SIF (FROM :base + scitex[all], ~10-20 min)
-sac image build --sandbox # writable sandbox dir instead of frozen SIF
+sac image build system-deps -y  # 1: OS + apt + node + rust + static bins
+sac image build python-pkgs -y  # 2: /opt/venv-sac + claude-agent-sdk + sac
+sac image build -y              # 3: :base (default) — bakes the versions manifest
+sac image build scitex -y       # 4: FROM :base + scitex[all]
+sac image build --sandbox       # writable sandbox dir instead of frozen SIF
 ```
+
+After the first pass, rebuild only the layer you changed — everything below
+it is reused untouched. A Python-pin bump is `sac image build python-pkgs -y`
+followed by `sac image build -y`, and never re-pays the apt/rust cost.
 
 ## Sandbox / freeze workflow
 

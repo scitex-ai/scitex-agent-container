@@ -6,6 +6,45 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`sac image build` is now a four-layer chain: `system-deps` → `python-pkgs`
+  → `base` → `scitex`.** The old `apptainer-base.def` was one 898-line recipe
+  fusing two halves with very different rebuild frequencies. The OS floor —
+  apt, rustup, a source-built `tree`, a cargo-built `rtk` — is most of the bake
+  wall-clock and changes roughly monthly. The Python pin set above it
+  (scitex-cards floors, claude-agent-sdk floated to latest, sac's own bundled
+  source) changes weekly. Fused, **every** pin bump re-paid the whole apt/cargo
+  cost. Split, a pin bump rebuilds `python-pkgs` and reuses
+  `sac-system-deps.sif` untouched.
+
+  A `:base` container carries exactly what it always did — the split moved
+  *where* things install, not what the image contains.
+
+  - `apptainer-system-deps.def` (new): apt, the canonical `agent` user, gh,
+    nested apptainer, node 20 + npm globals, the Rust toolchain, and the
+    pinned static binaries (yq, gdu, tree, rtk).
+  - `apptainer-python-pkgs.def` (new): uv/pipx/pre-commit, `/opt/venv-sac`,
+    the SAC runner deps, and the fail-loud staleness gate.
+  - `apptainer-base.def`: now a thin capstone that bakes the `sac versions`
+    manifest against the assembled venv — captured at the top of the Python
+    stack so it describes the venv as it will actually ship.
+  - `_image_layer_chain.py` (new) owns the topology (`LAYER_DEFS`,
+    `STACK_ORDER`, `BOOTSTRAP_PARENT`, `resolve_bootstrap_sif`), read by the
+    CLI, the source-build path, and the reproducible round trip instead of
+    each carrying a partial copy. A missing prerequisite now names the
+    **immediate** parent; the previous single-link version always pointed at
+    `base`, which for a `python-pkgs` build would have sent the operator to
+    build the very layer that was blocked.
+
+  Every layer declares its **full** `%environment`, not a delta: apptainer
+  overwrites `/.singularity.d/env/90-environment.sh` on a `localimage` build,
+  so a child exporting only its own additions silently drops the parent's PATH
+  ordering.
+
+  `proxy` is unchanged and still buildable — it bootstraps from the registry
+  as a standalone sidecar and is deliberately not a link in the chain.
+
 ### Fixed
 
 - **The `#NNN` rule now lives in ONE place, and stops firing on hex colours
