@@ -174,10 +174,14 @@ class OpenAISessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
+            # FAIL CLOSED — parity with the Claude path: no bare-host
+            # fallback exists, and the offered "docker | podman" this
+            # replaces named engines ripped out 2026-05-13.
             print(
-                f"error: OpenAISessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
+                f"error: OpenAISessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer.",
                 file=sys.stderr,
                 flush=True,
             )

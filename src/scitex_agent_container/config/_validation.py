@@ -1,8 +1,15 @@
 """YAML config validation.
 
-Sac is SDK-only and container-only since the CLI/TUI runtime cleanup.
-Accepted ``spec.runtime`` values are ``docker``, ``podman``, ``apptainer``
-— each backend wraps the same long-running Claude Agent SDK runner.
+Sac is SDK-only and container-only. The container ENGINE is not a spec
+decision at all: apptainer is the only one, unconditionally (see
+``_container_engine``), and ``spec.container.runtime`` — the field that
+used to pretend otherwise — is REMOVED and rejected on sight.
+
+``spec.runtime`` is a different axis with an unfortunate shared name: it
+selects the HARNESS LAUNCH MODE (``tui`` / ``claude-agent-sdk``, plus the
+legacy ``apptainer`` alias) and is derived from the harness registry.
+Both launch modes run inside apptainer.
+
 Communication with the agent uses the HTTP A2A surface, never panes.
 """
 
@@ -20,6 +27,7 @@ from ._acl_validation import validate_phase3_acl
 # back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
+from ._container_engine import container_runtime_removed_error
 from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
 
@@ -63,9 +71,9 @@ _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 # it is imported elsewhere (e.g. ``_lifecycle/_relocate_probe_shell``).
 _VALID_RUNTIMES = valid_runtime_spellings()
 
-# spec.container.runtime — every value here must have a working engine
-# behind it. docker/podman were ripped out 2026-05-13.
-VALID_CONTAINER_RUNTIMES = frozenset({"none", "apptainer"})
+# ``VALID_CONTAINER_RUNTIMES`` is GONE, and deliberately not replaced by a
+# one-member frozenset: a set of one is still a menu, and the menu is what
+# 2026-08-14 abolished. The engine is ``_container_engine.CONTAINER_ENGINE``.
 
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
@@ -365,15 +373,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # module (keeps this orchestrator under the per-file cap).
         errors.extend(validate_claude(spec))
 
-        # container.runtime — apptainer is the only implemented engine
-        # (docker/podman ripout 2026-05-13).
+        # container.runtime — REMOVED 2026-08-14: the container ENGINE is
+        # not a spec decision. Keyed on key PRESENCE (not truthiness), so a
+        # ``runtime:`` written empty or null is caught too — the previous
+        # ``if cr and cr not in ...`` shape let exactly those through
+        # unexamined. See _container_engine for the ruling and the message.
+        errors.extend(container_runtime_removed_error(spec))
+
         container = spec.get("container", {}) or {}
-        cr = container.get("runtime")
-        if cr and cr not in VALID_CONTAINER_RUNTIMES:
-            errors.append(
-                "spec.container.runtime must be "
-                f"{'|'.join(sorted(VALID_CONTAINER_RUNTIMES))}, got '{cr}'"
-            )
 
         # container.mount_host_claude (opt-in; default False)
         mhc = container.get("mount_host_claude")

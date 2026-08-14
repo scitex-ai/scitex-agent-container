@@ -20,7 +20,7 @@ from ._provider_types import ProviderSpec
 
 @dataclass
 class ContainerSpec:
-    runtime: str = "none"  # none | apptainer (see VALID_CONTAINER_RUNTIMES)
+    # NO engine field: apptainer is the only one — see _container_engine.
     image: str = "scitex-agent-container:latest"
     volumes: list[str] = field(default_factory=list)
     network: str = "host"

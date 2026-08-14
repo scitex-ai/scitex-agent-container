@@ -46,7 +46,6 @@ spec:
   user: ""
   to_home: ./to_home
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host

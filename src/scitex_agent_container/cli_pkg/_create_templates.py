@@ -45,7 +45,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -217,7 +216,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host

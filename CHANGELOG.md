@@ -6,7 +6,83 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`spec.container.runtime` — the container-ENGINE choice is abolished.**
+  Operator, 2026-08-14: 「runtime を選べること自体を廃止、apptainer 一本化」
+  「うちはかつ丼だけ出す店です」. What was abolished is the CHOICE, not just
+  the alternatives, and what is bought back is containment as a default
+  guarantee: by default nothing leaks out, and there is one fewer field a
+  reader can be wrong about.
+
+  The field was not a stale option, it was a stale LIE. Measured on
+  scitex-compute-04 before the change: **112 of 112 spec files declared it,
+  every one of them spelling `none`** — the value meaning "no container
+  engine" — while every one of those agents ran inside apptainer. The fleet
+  told the same lie on ywata-note-win (106/106) and scitex-compute-03
+  (105/107). Nothing read the field. It was
+  parsed into `ContainerSpec.runtime` and consulted by no launch path; the
+  engine actually dispatched comes from `spec.runtime` (the HARNESS
+  launch-mode axis), a different field that merely shares the name.
+
+  Declaring the key is now a hard load error naming the one-line fix, the
+  same posture `spec.access` and `apptainer.container_workdir` took when
+  they were removed. There is deliberately no accept-and-ignore branch and
+  no deprecation window. The check keys on key PRESENCE, not truthiness:
+  the check it replaces read `if cr and cr not in VALID_CONTAINER_RUNTIMES`,
+  so a `runtime:` written empty or null passed unexamined — the exact shape
+  that lets a removed field survive a migration sweep unnoticed.
+  `VALID_CONTAINER_RUNTIMES` is gone and was deliberately not replaced by a
+  one-member set: a set of one is still a menu.
+
+  **Sequencing note for operators.** Old code REQUIRES the key (explicit-fields
+  ruling) and new code REJECTS it, so the two states are mutually exclusive.
+  Strip the line from a host's specs immediately AFTER upgrading that host's
+  sac, never before.
+
+- **`sac agents send`: the bare-host `claude --resume` fallback is gone** —
+  the one path that genuinely ran an agent outside apptainer during normal
+  operation. When no A2A port was recorded, the command shelled out to a
+  full Claude agent TURN on the host, in the agent's workdir, with the host
+  operator's `~/.claude` credentials. It could not have worked anyway: a
+  contained agent's session lives in the CONTAINER's `~/.claude/projects/`
+  store, so a host-side resume finds nothing or resumes an unrelated host
+  session — worse than an error, because it looks like it worked. The
+  command now refuses and names the real condition. `--no-stream` and the
+  trailing `-- <forward>` escape hatch went with it: both existed only to
+  shape a `claude` argv that is no longer built.
+
 ### Fixed
+
+- **The MCP `image_build` tool advertised an engine that does not exist, and
+  could never have run.** Its signature carried `runtime: str = "docker"` —
+  an engine ripped out 2026-05-13, offered as the DEFAULT — and it passed
+  `--runtime`, `--target` and `--image` to `sac image build`, which accepts
+  none of the three. Every call died on "no such option" before building
+  anything, while the documented surface read as a working capability. It
+  now mirrors the CLI exactly: positional layer, `--sandbox`, `--dry-run`,
+  and no engine parameter at all.
+
+- **The "no container engine" refusals no longer point at ripped-out
+  engines.** `ClaudeSessionRuntime` / `OpenAISessionRuntime` told the
+  operator they required `spec.runtime: docker | podman` — engines gone
+  since 2026-05-13 — sending the reader after a knob that had not existed
+  for months instead of at the launch-mode spelling that was actually
+  wrong. Both now name apptainer and state that sac never runs an agent
+  outside it. Behaviour is unchanged and was already correct: they fail
+  CLOSED, returning False rather than falling back to the host.
+
+### Added
+
+- **A test that pins the containment invariant** (`tests/scitex_agent_container/
+  test__apptainer_only_containment.py`). The repo had argv-shape assertions
+  and a resolver unit test, but nothing that said "and there is no OTHER way
+  an agent gets launched". It pins: the adapter set `_get_runtime` may return
+  is closed to the two apptainer-dispatching runtimes, for every accepted
+  `spec.runtime` spelling; every SDK spelling resolves a real
+  `ApptainerContainerRuntime` and never `None`; both session runtimes fail
+  CLOSED when no engine resolves; and `sac agents send` refuses instead of
+  running the turn on the host.
 
 - **The `#NNN` rule now lives in ONE place, and stops firing on hex colours
   and code.** The rule was correct and the wording was good, but it existed

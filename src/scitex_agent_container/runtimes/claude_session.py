@@ -327,10 +327,18 @@ class ClaudeSessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
+            # FAIL CLOSED — never fall back to a bare-host launch. The
+            # engine is always apptainer; what failed to resolve is the
+            # spec.runtime LAUNCH MODE. (This message used to offer
+            # "docker | podman", engines ripped out 2026-05-13, which sent
+            # the reader looking for a knob that has not existed for
+            # months instead of at the spelling that is actually wrong.)
             print(
-                f"error: ClaudeSessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
+                f"error: ClaudeSessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer. Use "
+                f"runtime: claude-agent-sdk (headless) or tui.",
                 file=sys.stderr,
                 flush=True,
             )
