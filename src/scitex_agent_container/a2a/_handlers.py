@@ -236,12 +236,21 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
     import asyncio
 
     try:
-        import agents  # noqa: F401 — availability probe only
+        import agents
     except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
         raise HandlerError(
             "openai_session handler requires `openai-agents` "
             "(`pip install scitex-agent-container[openai]`)."
         ) from exc
+
+    # The SDK asks for /v1/responses by default; a self-hosted gateway only
+    # routes /v1/chat/completions and answers 404, which reads like a dead
+    # endpoint. See _openai_api_surface for the measurement.
+    from scitex_agent_container._runners._openai_api_surface import (
+        select_api_surface,
+    )
+
+    select_api_surface(agents)
 
     from scitex_agent_container._runners._harness_session import Message
     from scitex_agent_container._runners.openai_session import (
