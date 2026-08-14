@@ -200,9 +200,11 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     get_logger(__name__).warning("\n".join(lines))
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — a one-member tuple of engines is the same abolished menu the
+# spec field was, kept alive as a module constant. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``. Empty / unset
+# ``spec.runtime`` is treated as the SDK launch mode below.
 
 
 def _container_runtime_for(config: AgentConfig):
@@ -327,15 +329,24 @@ class ClaudeSessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
+            # FAIL CLOSED — never fall back to a bare-host launch. The
+            # engine is always apptainer; what failed to resolve is the
+            # spec.runtime LAUNCH MODE. (This message used to offer
+            # "docker | podman", engines ripped out 2026-05-13, which sent
+            # the reader looking for a knob that has not existed for
+            # months instead of at the spelling that is actually wrong.)
+            #
             # This is a START FAILURE reported by a bare `return False`, so
-            # this line is the caller's only account of WHY. As a raw print it
-            # carried no origin and died with whatever stderr happened to be
-            # attached; as a logged ERROR it names the emitting module and is
-            # durable in the scitex-logging runtime log.
+            # this line is the caller's only account of WHY. Logged as an
+            # ERROR rather than printed (#1049) so it names the emitting
+            # module and is durable in the scitex-logging runtime log
+            # instead of dying with whatever stderr happened to be attached.
             get_logger(__name__).error(
-                f"ClaudeSessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}."
+                f"ClaudeSessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer. Use "
+                f"runtime: claude-agent-sdk (headless) or tui."
             )
             return False
 

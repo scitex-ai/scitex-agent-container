@@ -27,13 +27,14 @@ externally addressable Claude agent.
                               │       │  live-runner route
                               │       │
   sac listen :7878 ───────────┼───────┘
-  bearer-auth /v1/sac/{                 \
-    health, agents,                      ─→ claude --resume <sid> -p
-    agents/<n>/{status,send,card},                          (re-launch fallback when
-    ...                                                      no live runner)
-  }
-                                                            ▲
-  sac peer  post-turn  AGENT TEXT  ────────────────────────┘
+  bearer-auth /v1/sac/{       │
+    health, agents,           │   NO host-side `claude --resume` fallback.
+    agents/<n>/{status,send,  │   Every agent runs inside apptainer and its
+                       card}, │   session lives in the CONTAINER's
+    ...                       │   ~/.claude/projects/ store, so a host-side
+  }                           │   resume could not see it. With no live
+                              │   runner the send REFUSES and says so.
+  sac peer  post-turn  AGENT TEXT  ──┘
 ```
 
 ## What each piece does

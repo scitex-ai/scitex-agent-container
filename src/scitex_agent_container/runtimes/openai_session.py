@@ -63,9 +63,9 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
     deploy_to_home(config, home_dir)
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — see the twin comment in ``claude_session``. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``.
 
 
 def _container_runtime_for(config: AgentConfig):
@@ -174,12 +174,17 @@ class OpenAISessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
-            # Same start-failure-reported-as-False shape as
-            # ClaudeSessionRuntime.start; see the note there.
+            # FAIL CLOSED — parity with the Claude path: no bare-host
+            # fallback exists, and the offered "docker | podman" this
+            # replaces named engines ripped out 2026-05-13. Same
+            # start-failure-reported-as-False shape as
+            # ClaudeSessionRuntime.start; see the note there for why this
+            # is logged rather than printed.
             get_logger(__name__).error(
-                f"OpenAISessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}."
+                f"OpenAISessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer."
             )
             return False
 
