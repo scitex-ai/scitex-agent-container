@@ -49,6 +49,7 @@ container runtime in (3), which is the seam the runtimes already expose.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from types import SimpleNamespace
 
 import click
@@ -162,24 +163,42 @@ def test_claude_runtime_refuses_to_start_without_a_container_engine():
     assert started is False
 
 
-def test_claude_refusal_says_it_will_not_run_outside_apptainer(capsys):
+# The refusal is LOGGED, not printed (#1049 converted these diagnostics to
+# scitex-logging and added a ruff T201/T203 gate). ``caplog`` therefore reads
+# the record where ``capsys`` used to read stderr — asserting on stderr here
+# would silently pass on an EMPTY string the day the logger stops emitting,
+# which is the failure mode this pair of tests exists to catch.
+def test_claude_refusal_says_it_will_not_run_outside_apptainer(caplog):
     # Arrange
     runtime = ClaudeSessionRuntime(container_runtime_for=lambda config: None)
     # Act
-    runtime.start(_config("bare-metal"))
-    message = capsys.readouterr().err
+    with caplog.at_level(logging.ERROR):
+        runtime.start(_config("bare-metal"))
+    message = caplog.text
     # Assert — the operator must learn WHY, not just that it failed.
     assert CONTAINER_ENGINE in message, message
 
 
-def test_claude_refusal_does_not_offer_a_ripped_out_engine(capsys):
+def test_claude_refusal_does_not_offer_a_ripped_out_engine(caplog):
     # Arrange — this message offered "docker | podman" until 2026-08-14.
     runtime = ClaudeSessionRuntime(container_runtime_for=lambda config: None)
     # Act
-    runtime.start(_config("bare-metal"))
-    message = capsys.readouterr().err.lower()
+    with caplog.at_level(logging.ERROR):
+        runtime.start(_config("bare-metal"))
+    message = caplog.text.lower()
     # Assert
     assert "podman" not in message, message
+
+
+def test_claude_refusal_is_actually_emitted(caplog):
+    """Guards the two assertions above from passing on an empty log."""
+    # Arrange
+    runtime = ClaudeSessionRuntime(container_runtime_for=lambda config: None)
+    # Act
+    with caplog.at_level(logging.ERROR):
+        runtime.start(_config("bare-metal"))
+    # Assert
+    assert caplog.text.strip(), "the refusal produced no log record at all"
 
 
 def test_openai_runtime_refuses_to_start_without_a_container_engine():

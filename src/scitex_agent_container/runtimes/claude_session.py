@@ -20,9 +20,9 @@ through ``sac --on <peer>`` (F-CS12) and ``spec.host`` pinning.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._skills_boot_log import log_effective_skills
 from ._to_home import deploy_to_home
@@ -197,7 +197,7 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         lines.append("  then reference other repos via absolute paths.")
     lines.append("=" * 72)
     lines.append("")
-    print("\n".join(lines), file=sys.stderr, flush=True)
+    get_logger(__name__).warning("\n".join(lines))
 
 
 # ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
@@ -335,14 +335,18 @@ class ClaudeSessionRuntime(RuntimeBase):
             # "docker | podman", engines ripped out 2026-05-13, which sent
             # the reader looking for a knob that has not existed for
             # months instead of at the spelling that is actually wrong.)
-            print(
-                f"error: ClaudeSessionRuntime cannot resolve an apptainer "
+            #
+            # This is a START FAILURE reported by a bare `return False`, so
+            # this line is the caller's only account of WHY. Logged as an
+            # ERROR rather than printed (#1049) so it names the emitting
+            # module and is durable in the scitex-logging runtime log
+            # instead of dying with whatever stderr happened to be attached.
+            get_logger(__name__).error(
+                f"ClaudeSessionRuntime cannot resolve an apptainer "
                 f"dispatch for spec.runtime="
                 f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
                 f"start — sac never runs an agent outside apptainer. Use "
-                f"runtime: claude-agent-sdk (headless) or tui.",
-                file=sys.stderr,
-                flush=True,
+                f"runtime: claude-agent-sdk (headless) or tui."
             )
             return False
 

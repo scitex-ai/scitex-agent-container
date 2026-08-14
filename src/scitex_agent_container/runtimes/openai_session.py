@@ -20,9 +20,9 @@ recording — is identical to the Claude path.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._to_home import deploy_to_home
 from .base import RuntimeBase
@@ -176,14 +176,15 @@ class OpenAISessionRuntime(RuntimeBase):
         if container_rt is None:
             # FAIL CLOSED — parity with the Claude path: no bare-host
             # fallback exists, and the offered "docker | podman" this
-            # replaces named engines ripped out 2026-05-13.
-            print(
-                f"error: OpenAISessionRuntime cannot resolve an apptainer "
+            # replaces named engines ripped out 2026-05-13. Same
+            # start-failure-reported-as-False shape as
+            # ClaudeSessionRuntime.start; see the note there for why this
+            # is logged rather than printed.
+            get_logger(__name__).error(
+                f"OpenAISessionRuntime cannot resolve an apptainer "
                 f"dispatch for spec.runtime="
                 f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
-                f"start — sac never runs an agent outside apptainer.",
-                file=sys.stderr,
-                flush=True,
+                f"start — sac never runs an agent outside apptainer."
             )
             return False
 
