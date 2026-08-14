@@ -1,14 +1,27 @@
 """The promoted symbol primitives must keep the semantics they were
-measured with.
+measured with — and the trials harness must still get the SAME objects.
 
 These functions judged 36 local-model coding trials before they moved into
 the package. If the promotion quietly changed what counts as a symbol, the
 36 results stop meaning what we said they mean — so the contract is pinned
 here rather than left to the reader of a diff.
+
+The re-export half lives here too, rather than in its own file: the four
+primitives ``scripts/local_model_trials/detectors.py`` re-exports are all
+defined in ``_symbols.py``, so this is their mirror (PS-204 §2 — a test
+file must mirror a source file, and there is no ``_trials_reexport.py``
+for a ``test__trials_reexport.py`` to mirror).
 """
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+from scitex_agent_container import _guard
 from scitex_agent_container._guard import (
     added_symbols,
     detect_deletions,
@@ -16,6 +29,21 @@ from scitex_agent_container._guard import (
     symbol_locations,
     symbol_set,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DETECTORS = _REPO_ROOT / "scripts" / "local_model_trials" / "detectors.py"
+
+
+@pytest.fixture(scope="module")
+def detectors():
+    """Load the trials script by path, exactly as its harness would."""
+    spec = importlib.util.spec_from_file_location(
+        "local_model_trials_detectors", _DETECTORS
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 SOURCE = '''\
 def top_level():
@@ -180,3 +208,79 @@ def test_added_symbols_lists_new_definitions() -> None:
     added = added_symbols(before, after)
     # Assert
     assert added == ["m.py::func:b"]
+
+
+# --- the trials harness still gets these exact objects ---------------------
+#
+# harness.py / selfcheck.py do ``import detectors`` and call four functions
+# on it. A promotion that FORKED the detector would leave the 36 measured
+# trials describing code nobody runs any more, so identity is asserted, not
+# behaviour-equivalence.
+
+
+def test_detect_deletions_is_the_promoted_function(detectors) -> None:
+    """Same object — no forked copy to drift."""
+    # Arrange
+    promoted = _guard.detect_deletions
+    # Act
+    exported = detectors.detect_deletions
+    # Assert
+    assert exported is promoted
+
+
+def test_symbol_set_is_the_promoted_function(detectors) -> None:
+    """Same object."""
+    # Arrange
+    promoted = _guard.symbol_set
+    # Act
+    exported = detectors.symbol_set
+    # Assert
+    assert exported is promoted
+
+
+def test_diff_trees_is_the_promoted_function(detectors) -> None:
+    """Same object."""
+    # Arrange
+    promoted = _guard.diff_trees
+    # Act
+    exported = detectors.diff_trees
+    # Assert
+    assert exported is promoted
+
+
+def test_added_symbols_is_the_promoted_function(detectors) -> None:
+    """Same object."""
+    # Arrange
+    promoted = _guard.added_symbols
+    # Act
+    exported = detectors.added_symbols
+    # Assert
+    assert exported is promoted
+
+
+def test_trial_only_judges_stayed_in_the_script(detectors) -> None:
+    """Transcript/summary judging is trial-shaped and did NOT move."""
+    # Arrange
+    names = ("narration_events", "honesty_delta")
+    # Act
+    present = all(hasattr(detectors, name) for name in names)
+    # Assert
+    assert present is True
+
+
+def test_selfcheck_renamed_clamp_assertion_still_holds(detectors) -> None:
+    """The exact assertion ``selfcheck.py`` makes, pinned as a test.
+
+    It renames ``clamp`` and demands the detector report exactly
+    ``calc.py::func:clamp``. If that ever changes, the self-check breaks
+    on the next trial run rather than here — so it is checked here.
+    """
+    # Arrange
+    before = {"calc.py": "def clamp(value, low, high):\n    return value\n"}
+    after = {
+        "calc.py": "def clamp_renamed(value, low, high):\n    return value\n"
+    }
+    # Act
+    found = detectors.detect_deletions(before, after)
+    # Assert
+    assert found["deleted"] == ["calc.py::func:clamp"]
