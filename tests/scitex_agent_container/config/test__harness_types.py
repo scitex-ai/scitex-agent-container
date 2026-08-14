@@ -203,9 +203,11 @@ def test_spec_carrying_both_keys_is_not_flagged_as_legacy():
     assert legacy is False
 
 
-def test_the_harness_registry_is_exactly_anthropic_and_openai():
-    # Arrange
-    expected = {"anthropic", "openai"}
+def test_the_harness_registry_is_exactly_anthropic_openai_and_codex():
+    # Arrange — the set is DERIVED from config._harness_registry, so
+    # "codex" appearing here is the fourth row's doing, not an edit of
+    # the harness-types module (that derivation is the point).
+    expected = {"anthropic", "openai", "codex"}
     # Act
     names = set(list_harnesses())
     # Assert

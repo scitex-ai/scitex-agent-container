@@ -138,7 +138,29 @@ codex = [
     # Anthropic Messages -> ChatGPT Codex subscription bridge selected by
     # `spec.claude.provider: codex`; this is intentionally separate from the
     # `openai` extra above, which replaces the harness with openai-agents.
+    # NOT the same thing as `codex-sdk` below — see that extra's comment.
     "scitex-genai[gateway]>=0.1.4",
+]
+codex-sdk = [
+    # sac's FOURTH harness (card sac-codex-python-sdk-harness-20260814):
+    # `spec.harness: codex`, backing `_runners/codex_session.py`
+    # (CodexSession -- the concrete HarnessSession over AsyncCodex).
+    #
+    # DELIBERATELY NOT NAMED `codex`: that extra is TAKEN, and by the OTHER
+    # axis. `codex` installs scitex-genai for `spec.claude.provider: codex`,
+    # an INFERENCE backend with Claude Code still running the loop. THIS
+    # extra replaces the HARNESS -- the codex agent program runs the loop
+    # and brings its own file-edit/exec/apply_patch tooling. `codex` is the
+    # first value to land on both axes, so the two extras are spelled
+    # differently rather than one silently shadowing the other.
+    #
+    # WEIGHT WARNING: openai-codex pins `openai-codex-cli-bin`, a wheel-only
+    # package shipping a ~285 MB native `codex` binary (plus rg, bwrap, zsh).
+    # OPTIONAL on purpose: Claude-only deployments must not pull it -- every
+    # import is lazy and CodexSession raises CodexSessionError with this
+    # install hint when absent. 0.144.4 floor: the first release carrying the
+    # AsyncCodex/thread_resume surface the runner is written against.
+    "openai-codex>=0.144.4",
 ]
 dev = [
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
@@ -315,6 +337,15 @@ all = [
     # the real openai-agents SDK paths; the bare install stays Claude-only.
     "scitex-agent-container[openai]",
     "scitex-agent-container[codex]",
+    # `codex-sdk` is DELIBERATELY ABSENT, not forgotten. It pins
+    # openai-codex, which pins openai-codex-cli-bin — a wheel-only
+    # package shipping a ~285 MB native binary. CI installs `[all,dev]`
+    # on every job, and the codex harness's tests need none of it: they
+    # drive hand-rolled HarnessSession stand-ins and assert the
+    # MISSING-SDK path via a sys.modules sentinel, so the SDK's presence
+    # would add a quarter-gigabyte per job and zero coverage. Install it
+    # explicitly (`pip install -e ".[codex-sdk]"`) on a host that will
+    # actually run a codex agent.
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]

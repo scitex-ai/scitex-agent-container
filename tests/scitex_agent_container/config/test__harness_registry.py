@@ -19,6 +19,7 @@ from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
+    CODEX_SDK,
     HARNESS_DESCRIPTORS,
     OPENAI_AGENTS,
     UnmappableHarnessError,
@@ -259,9 +260,13 @@ def test_resolve_config_and_mapping_surfaces_agree():
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_exactly_the_three_real_entries():
-    # Arrange
-    expected = {CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS}
+def test_registry_has_exactly_the_four_real_entries():
+    # Arrange — CODEX_SDK joined on 2026-08-14 (card
+    # sac-codex-python-sdk-harness-20260814), the first vendor added
+    # since the registry landed. A closed-set assertion like this one is
+    # deliberately allowed to break when a row is added: the break is
+    # the review prompt asking whether the new entry was intended.
+    expected = {CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK}
     # Act
     keys = set(HARNESS_DESCRIPTORS)
     # Assert
@@ -567,9 +572,9 @@ def test_sdk_heartbeat_loop_skip_set_derives_from_the_registry():
     assert _TUI_RUNTIMES == derived
 
 
-def test_known_harnesses_lists_the_two_families_sorted():
-    # Arrange
-    expected = ("anthropic", "openai")
+def test_known_harnesses_lists_the_three_families_sorted():
+    # Arrange — "codex" joined the axis with the fourth registry row.
+    expected = ("anthropic", "codex", "openai")
     # Act
     harnesses = known_harnesses()
     # Assert

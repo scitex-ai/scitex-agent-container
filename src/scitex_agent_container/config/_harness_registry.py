@@ -68,6 +68,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only, no runtime import cycle
 __all__ = [
     "CLAUDE_AGENT_SDK",
     "CLAUDE_CODE_TUI",
+    "CODEX_SDK",
     "HARNESS_DESCRIPTORS",
     "HarnessDescriptor",
     "OPENAI_AGENTS",
@@ -97,6 +98,20 @@ CLAUDE_AGENT_SDK = "claude-agent-sdk"
 #: The ``openai-agents`` SDK session runner (``spec.harness: openai``).
 OPENAI_AGENTS = "openai-agents"
 
+#: The ``openai-codex`` Python SDK session runner (``spec.harness: codex``).
+#:
+#: NOT the same thing as ``spec.claude.provider: codex`` — that value is an
+#: INFERENCE backend (``config._provider_registry``: the local scitex-genai
+#: gateway at 127.0.0.1:18765 translating Anthropic Messages to a ChatGPT
+#: Codex subscription, with Claude Code still running the loop). THIS key is
+#: a HARNESS: the ``codex`` agent program runs the loop and brings its own
+#: file-edit / exec / apply_patch tooling. The two axes are the ones this
+#: package split apart in #1027 / ``config._harness_types``, and ``codex``
+#: is the first value to appear on BOTH — so the composition is refused
+#: loudly rather than silently resolved (see
+#: ``runtimes._apptainer_codex_env.codex_env_flags``).
+CODEX_SDK = "codex-sdk"
+
 
 class UnmappableHarnessError(ValueError):
     """``spec.harness`` + ``spec.runtime`` select no registered harness.
@@ -117,111 +132,27 @@ def _v4_card() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Per-entry callables. Defined at module level (not lambdas) so tests and
-# tracebacks can name them; every runtimes/ import is call-time only —
-# runtimes imports config, never the reverse at module level.
+# Per-entry callables live in ``_harness_callables`` — the split the
+# 512-line cap forced when the FOURTH harness landed (see that module's
+# docstring). Imported by name so an unused hook lints as an error.
+# The runner-module constants keep their private spellings here because
+# ``runtimes/_apptainer_inner_argv`` and ``_apptainer_build_argv`` derive
+# their ``RUNNER_MODULE*`` re-exports from the DESCRIPTORS, not from these.
 # ---------------------------------------------------------------------------
 
-
-def _noop_prepare_home(config: "AgentConfig") -> None:
-    """Default ``prepare_home`` — nothing beyond the shared machinery.
-
-    Home materialisation (``to_home`` deployment, CLAUDE.md management)
-    still lives in the runtime adapters (``ClaudeSessionRuntime`` /
-    ``OpenAISessionRuntime`` / ``TuiSessionRuntime`` ``_setup_workspace``)
-    today; harnesses hook per-harness extras here in a later step.
-    """
-
-
-def _claude_tui_inner_argv(
-    config: "AgentConfig", options: "Mapping[str, object] | None" = None
-) -> list[str]:
-    """Inner argv for the interactive Claude Code TUI (pre-shell-wrap)."""
-    options = options or {}
-    from ..runtimes._apptainer_inner_argv_tui import _tui_runner_argv
-
-    return _tui_runner_argv(
-        config,
-        mcp_config=options.get("tui_mcp_config"),  # type: ignore[arg-type]
-        channel_mcp=options.get("tui_channel_mcp"),  # type: ignore[arg-type]
-        dev_channels=options.get("tui_dev_channels"),  # type: ignore[arg-type]
-        settings=options.get("tui_settings"),  # type: ignore[arg-type]
-    )
-
-
-def _session_runner_inner_argv(
-    config: "AgentConfig", module: str, options: "Mapping[str, object] | None"
-) -> list[str]:
-    """Shared ``tini → python -m <module>`` tail for runner-hosted entries.
-
-    Both runner-hosted SDK families take the SAME argv surface — the
-    shared session-daemon flags (``--name`` / ``--state-root`` /
-    supervisor caps / ``--mission`` / ``--a2a-*`` / ``--channels`` /
-    ``--residency`` / autonomous) that both CLIs thread into
-    ``run_session_daemon`` (v4 step 7) — so the builder is shared and
-    only the module differs.
-    """
-    options = options or {}
-    from ..runtimes._apptainer_inner_argv import _TINI_PREFIX, _agent_runner_argv
-
-    return (
-        list(_TINI_PREFIX)
-        + [module]
-        + _agent_runner_argv(config, one_shot=bool(options.get("one_shot", False)))
-    )
-
-
-def _claude_sdk_inner_argv(
-    config: "AgentConfig", options: "Mapping[str, object] | None" = None
-) -> list[str]:
-    """Inner argv for the headless ``claude-agent-sdk`` session runner."""
-    return _session_runner_inner_argv(config, _CLAUDE_SESSION_RUNNER, options)
-
-
-def _openai_agents_inner_argv(
-    config: "AgentConfig", options: "Mapping[str, object] | None" = None
-) -> list[str]:
-    """Inner argv for the ``openai-agents`` session runner.
-
-    The runner itself is daemon-hosted since v4 step 7 (its CLI hands
-    the process to ``run_session_daemon`` with the OpenAI turn driver),
-    but the step-2 refusal (``ensure_harness_matches_claude_launch``)
-    still guards every LAUNCH path — nothing dispatches this argv until
-    the canary step lifts that guard.
-    """
-    return _session_runner_inner_argv(config, _OPENAI_SESSION_RUNNER, options)
-
-
-def _claude_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
-    """Auth env + creds-bind flags for the Claude-family entries.
-
-    Delegates to :func:`runtimes._apptainer_auth.auth_argv` — the real
-    builder both the TUI and SDK launches already flow through (OAuth
-    creds bind, or ``spec.claude.provider`` API-key backend).
-    """
-    from ..runtimes._apptainer_auth import auth_argv
-
-    return auth_argv(config, state_dir)
-
-
-def _openai_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
-    """Auth env flags for the ``openai-agents`` entry (no creds bind).
-
-    Delegates to :func:`runtimes._apptainer_provider.openai_env_flags` —
-    OPENAI_* key injection + routing pass-throughs; declines (returns
-    ``[]``) when the launch does not resolve to the openai harness.
-    """
-    del state_dir  # the openai path mounts no credentials file
-    from ..runtimes._apptainer_provider import openai_env_flags
-
-    return openai_env_flags(config)
-
-
-# Runner-module paths (the ``python -m`` targets). Fed into the entries
-# below and derived FROM them by ``runtimes/_apptainer_inner_argv`` /
-# ``_apptainer_build_argv`` (their ``RUNNER_MODULE*`` re-exports).
-_CLAUDE_SESSION_RUNNER = "scitex_agent_container._runners.claude_session"
-_OPENAI_SESSION_RUNNER = "scitex_agent_container._runners.openai_session"
+from ._harness_callables import (  # noqa: F401 (re-export)
+    CLAUDE_SESSION_RUNNER as _CLAUDE_SESSION_RUNNER,
+    CODEX_SESSION_RUNNER as _CODEX_SESSION_RUNNER,
+    OPENAI_SESSION_RUNNER as _OPENAI_SESSION_RUNNER,
+    _claude_env_and_binds,
+    _claude_sdk_inner_argv,
+    _claude_tui_inner_argv,
+    _codex_env_and_binds,
+    _codex_sdk_inner_argv,
+    _noop_prepare_home,
+    _openai_agents_inner_argv,
+    _openai_env_and_binds,
+)
 
 
 @dataclass(frozen=True)
@@ -329,6 +260,45 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             # driver both REFUSE --resume-session-id, reading this field.
             can_resume=False,
             env_and_binds=_openai_env_and_binds,
+        ),
+        HarnessDescriptor(
+            key=CODEX_SDK,
+            spec_harness="codex",
+            # Sole entry of its family, like openai-agents: the runtime
+            # axis spells ANTHROPIC launch modes ("tui" / the legacy
+            # container-engine values), so it cannot discriminate here.
+            spec_runtimes=frozenset(),
+            runner_module=_CODEX_SESSION_RUNNER,
+            inner_argv=_codex_sdk_inner_argv,
+            # RUNNER, not "external" — and the distinction is subtler
+            # here than for the other three, so state the evidence.
+            # ``openai-codex`` is NOT an in-process API client: its
+            # ``CodexClient`` runs ``subprocess.Popen([codex_bin,
+            # "app-server", "--listen", "stdio://"])`` and speaks
+            # JSON-RPC over that pipe (sdk/python/src/openai_codex/
+            # client.py, v0.144.4). But this axis asks WHO OWNS THE
+            # SAC-VISIBLE LOOP, not whether a vendor subprocess exists —
+            # claude-agent-sdk also spawns the ``claude`` binary and is
+            # "runner". The sac inner process here is OUR session runner
+            # (``python -m ..._runners.codex_session``) and the codex
+            # app-server is its CHILD, so the daemon owns residency, the
+            # pid file and the a2a sidecar exactly as for the other two
+            # runner entries. "external" is reserved for claude-code-tui,
+            # where sac starts NO runner at all and the inner container
+            # process IS the vendor binary in a tmux pane.
+            hosted="runner",
+            beat_writer="in-process",  # daemon + turn-driver beats, self-stamped
+            # TRUE — and unlike every prior runner-hosted entry this is a
+            # REAL resume, not a hopeful one: the SDK exposes
+            # ``AsyncCodex.thread_resume(thread_id: str, ...) ->
+            # AsyncThread`` (signature read off the installed 0.144.4
+            # wheel), and ``AsyncThread.id`` is the id to persist. The
+            # runner reports it as ``RunResult.session_id`` and feeds
+            # ``--resume-session-id`` straight back into thread_resume,
+            # so this is the FIRST descriptor whose can_resume=True
+            # exercises the accept side of the registry-derived gate.
+            can_resume=True,
+            env_and_binds=_codex_env_and_binds,
         ),
     )
 }

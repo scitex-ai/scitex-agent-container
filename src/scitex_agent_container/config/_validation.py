@@ -292,10 +292,16 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     f"spec.{key} must be one of {list_harnesses()} "
                     f"(got '{value}'). 'anthropic' (default) = the "
                     "claude-agent-sdk harness; 'openai' = the "
-                    "openai-agents SDK harness. ('provider' is the "
-                    "DEPRECATED alias of 'harness'; neither is "
+                    "openai-agents SDK harness; 'codex' = the "
+                    "openai-codex (Codex SDK) harness. ('provider' is "
+                    "the DEPRECATED alias of 'harness'; neither is "
                     "spec.claude.provider, which selects an "
-                    "Anthropic-compatible inference backend.)"
+                    "Anthropic-compatible inference backend — note "
+                    "'codex' is a legal value of BOTH, and they mean "
+                    "different things: as a HARNESS the codex agent "
+                    "program runs the loop, as spec.claude.provider it "
+                    "is an inference gateway with Claude Code still "
+                    "driving.)"
                 )
 
         # spec.residency — DOES THE DAEMON OUTLIVE ITS WORK (v4 step 6):
