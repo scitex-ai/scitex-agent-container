@@ -6,6 +6,14 @@ a2a, health, restart, autonomous, listen, skills, telegram, hooks)
 stay at the top level. Every curated block has a `raw_*` escape hatch
 — the full underlying surface is always reachable.
 
+> **On the name `spec.claude`.** It is a legacy key name, not a scope
+> claim: the block carries the SDK-harness session/model knobs
+> generally, and its `provider` sub-key demonstrably configures
+> non-Anthropic endpoints. Do not read `spec.claude.*` as "the Claude
+> harness only" — and do not confuse `spec.claude.provider` (which
+> *inference endpoint* answers) with the top-level `spec.harness`
+> (which *agent program* drives the turn). The two axes compose.
+
 The agent name is the parent directory of `spec.yaml` (dir-as-SSoT —
 no `metadata.name` field).
 
@@ -128,7 +136,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | Field                | Type                       | Description                                                              |
 |----------------------|----------------------------|--------------------------------------------------------------------------|
 | `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
-| `harness`            | `anthropic` (default) \| `openai` | **Which agent SDK runs the session** (NOT the same field as `spec.claude.provider`, which points the *Claude* SDK at an Anthropic-compatible inference gateway — the two axes compose). `openai` runs the agent on the `openai-agents` SDK: at launch sac injects `SAC_OPENAI_API_KEY` + `OPENAI_API_KEY` (resolved host-side, shell export > `$HOME/.env`, `SAC_OPENAI_API_KEY` preferred over `OPENAI_API_KEY`) and forwards `OPENAI_BASE_URL` / `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` / `SAC_OPENAI_MODEL` when set on the host; NO Anthropic OAuth env or credentials bind is emitted. Fail-loud when no key resolves or when composed with an active `spec.claude.provider` override. A2A serving uses the `openai_session` executor (`spec.a2a.handler`). **Ops-only override:** exporting `SAC_PROVIDER=openai` (or `anthropic`) in the shell that runs `sac agents start` overrides `spec.harness` for every launch from that shell — an operations escape hatch for emergency flips / A/B smoke tests, never a spec surface; unknown values are rejected loudly. (The env var keeps its older `SAC_PROVIDER` name.) |
+| `harness`            | `anthropic` (default) \| `openai` \| `codex` | **Which agent SDK runs the session** (NOT the same field as `spec.claude.provider`, which points the *Claude* SDK at an Anthropic-compatible inference gateway — the two axes compose). `openai` runs the agent on the `openai-agents` SDK: at launch sac injects `SAC_OPENAI_API_KEY` + `OPENAI_API_KEY` (resolved host-side, shell export > `$HOME/.env`, `SAC_OPENAI_API_KEY` preferred over `OPENAI_API_KEY`) and forwards `OPENAI_BASE_URL` / `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` / `SAC_OPENAI_MODEL` when set on the host; NO Anthropic OAuth env or credentials bind is emitted. Fail-loud when no key resolves or when composed with an active `spec.claude.provider` override. **Launch caveat today — read this before choosing a harness:** the registry has four entries (`claude-code-tui`, `claude-agent-sdk`, `openai-agents`, `codex-sdk`) and `spec.harness` accepts three values, but **only `anthropic` can be STARTED**. `openai` and `codex` both load, validate and resolve to their registry entries, and then every lifecycle launch path REFUSES them — loudly, rather than silently launching a Claude runner under a spec that asked for something else. A2A serving uses the `openai_session` executor (`spec.a2a.handler`), which is the working path for the OpenAI SDK meanwhile; there is no equivalent executor for `codex` yet. **`codex` is also a legal `spec.claude.provider` value and means something different there** — as a HARNESS the Codex agent program runs the loop; as a PROVIDER Claude Code still drives and Codex only answers. **Ops-only override:** exporting `SAC_PROVIDER=openai` (or `anthropic`) in the shell that runs `sac agents start` overrides `spec.harness` for every launch from that shell — an operations escape hatch for emergency flips / A/B smoke tests, never a spec surface; unknown values are rejected loudly. (The env var keeps its older `SAC_PROVIDER` name.) |
 | `provider`           | *(deprecated alias of `harness`)* | The spelling this field had before it was renamed. **Still honoured** — a spec carrying `provider:` loads unchanged and satisfies the explicit-fields requirement for `harness`; starting such an agent logs a one-line deprecation naming the agent. Writing BOTH keys is fine when they carry the same value; writing both with DIFFERENT values is a hard load error naming both, because a spec that says two things does not say which harness it wants. It was renamed because it never named a provider: it selects which agent PROGRAM drives the loop, while `spec.claude.provider` (unchanged, and still correctly named) selects which inference endpoint answers. |
 | `residency`          | `resident` (default) \| `one-shot` | **Does the daemon outlive its work?** (v4 residency axis.) `resident` — the fleet posture — keeps the session daemon alive after a conversation completes, parked awaiting more turns; a turn driver that returns on its own is then a residency VIOLATION (ExitRecord `harness-returned`/`crashed`, non-zero exit). `one-shot` makes a normal completion the PLAN: the mission turn carries `exit_after`, and the daemon exits `0` with ExitRecord reason `oneshot-complete` — for experiment trials and one-off workers. Absence/null defaults to `resident` (the axis postdates the live corpus; the v3→v4 converter materializes the explicit line — requiring it is that later step). Illegal values are rejected loudly naming the closed set. Only runner-hosted harnesses honour it: `one-shot` on the interactive TUI (`runtime: tui`, which has no session daemon) or on `kind: AgentProxy` is refused at validation time. |
 | `access`             | `full` (default) \| `capsule` | Host-access posture. `full` (the default; absent → `full`) binds the operator's WHOLE home rw at its canonical path (`/home/<user>:/home/<user>:rw`) so the agent reaches every project + config, and opens `--pwd` at the workdir's **canonical** path (the `/work` alias stays bound for back-compat). The agent's own `$HOME=/home/agent` (credentials / to_home / overlay wiring) is untouched. `capsule` restricts the agent to ONLY the binds explicitly listed in the spec + the `/work` alias (pre-2026-06-19 behaviour) — for leak-prevention agents. |
@@ -141,8 +149,8 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `host` / `hosts`     | string / list of strings   | Singleton on one peer / multi-instance one-per-peer (mutually exclusive). `hosts: "all"` = every fleet host. |
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
-| `startup_commands[]` | list of `{delay, command}` | Run **before** Claude starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to Claude as first user message(s)                                   |
+| `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
+| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
 
 ### `spec.apptainer` — engine knobs
 
@@ -167,7 +175,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                       | Type                                  | Description                                                       |
 |-----------------------------|---------------------------------------|-------------------------------------------------------------------|
-| `model`                     | alias or full ID (default `sonnet`)   | Claude model — see **Available models** below |
+| `model`                     | alias or full ID (default `sonnet`)   | The model this agent's turns run on. Without a `provider` override it is a Claude model — see **Available models** below. WITH one it is the override endpoint's own id (e.g. `deepseek-chat`, `gpt-5.6-sol`) and the `claude-*` alias check relaxes. **The `sonnet` default is applied to every agent regardless of harness** — an Anthropic-shaped default the harness/runtime/inference layering work has not yet unwound. |
 | `account`                   | string                                | Pin this agent to a stored OAuth account (`sac accounts` store-name). Mutually exclusive with `provider`. |
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
@@ -224,9 +232,9 @@ pinned regex catches this early.
 | `restart.backoff.multiplier`| exponential factor                                                                       |
 | `watchdog.enabled`          | parsed for back-compat; lifecycle managed via hooks                                      |
 | `autonomous.enabled`        | drive turns until `drive_until` token or `max_turns`                                     |
-| `autonomous.drive_until`    | string token Claude prints when done (default `DONE`)                                    |
+| `autonomous.drive_until`    | string token the agent prints when done (default `DONE`)                                 |
 | `autonomous.max_turns`      | int                                                                                      |
-| `autonomous.kick_text`      | nudge sent when Claude pauses                                                            |
+| `autonomous.kick_text`      | nudge sent when the agent pauses                                                         |
 
 ### `spec.a2a` / `spec.listen` — network endpoints
 
@@ -311,7 +319,7 @@ per-invocation tweak doesn't mutate the persistent default.
 ## `kind: AgentProxy` — HTTP forwarder agents
 
 A proxy agent forwards `POST /v1/turn` to an **external A2A
-endpoint** instead of running a Claude SDK conversation in-process.
+endpoint** instead of running an agent session in-process.
 There is no SDK in the container; the runner is a thin Starlette
 forwarder (image: `sac-proxy.sif`, lighter than `sac-scitex.sif` —
 no Python ML stack).

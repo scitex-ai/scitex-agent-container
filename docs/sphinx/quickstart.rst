@@ -12,7 +12,12 @@ Quickstart
    ``full-agent``, ``proxy-agent``). See :doc:`templates` for details.
 
 2. Create an agent definition directory with a ``spec.yaml`` manifest
-   plus an optional ``to_home/`` sibling (CLAUDE.md / .mcp.json / ...):
+   plus an optional ``to_home/`` sibling (e.g. CLAUDE.md / .mcp.json / ...).
+   The example below leaves ``spec.harness`` implicit, so it selects the
+   default ``anthropic`` harness. ``spec.harness`` and ``spec.runtime``
+   together choose which agent program drives the turn, and
+   ``spec.claude.provider`` separately chooses which inference endpoint
+   answers it — see :doc:`spec-reference`.
 
 .. code-block:: yaml
 
@@ -48,7 +53,7 @@ Quickstart
     sac agents tail my-agent
     sac agents recall my-agent
 
-4. (Optional) Wire Claude Code hooks so ``list --json`` can surface
-   recent tool calls, prompts, and sub-agent launches. See
-   :doc:`status_and_hooks` for the full ``.claude/settings.local.json``
-   snippet.
+4. (Optional, Claude Code harness only) Wire Claude Code hooks so
+   ``list --json`` can surface recent tool calls, prompts, and sub-agent
+   launches. See :doc:`status_and_hooks` for the full
+   ``.claude/settings.local.json`` snippet.

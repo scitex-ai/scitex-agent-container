@@ -6,6 +6,14 @@ a2a, health, restart, autonomous, listen, skills, telegram, hooks)
 stay at the top level. Every curated block has a `raw_*` escape hatch
 — the full underlying surface is always reachable.
 
+> **On the name `spec.claude`.** It is a legacy key name, not a scope
+> claim: the block carries the SDK-harness session/model knobs
+> generally, and its `provider` sub-key demonstrably configures
+> non-Anthropic endpoints. Do not read `spec.claude.*` as "the Claude
+> harness only" — and do not confuse `spec.claude.provider` (which
+> *inference endpoint* answers) with the top-level `spec.harness`
+> (which *agent program* drives the turn). The two axes compose.
+
 The agent name is the parent directory of `spec.yaml` (dir-as-SSoT —
 no `metadata.name` field).
 
@@ -127,7 +135,9 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                | Type                       | Description                                                              |
 |----------------------|----------------------------|--------------------------------------------------------------------------|
-| `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
+| `harness`            | `anthropic` (default) \| `openai` \| `codex` | **Which agent program drives the turn** — NOT `spec.claude.provider`, which points the SDK session at an Anthropic-compatible *inference* endpoint. The two axes compose, and `codex` is a legal value of BOTH: as a HARNESS the Codex agent program runs the loop, as a PROVIDER Claude Code still drives and Codex only answers. **Launch caveat today — read before choosing:** the registry has four entries (`claude-code-tui`, `claude-agent-sdk`, `openai-agents`, `codex-sdk`), but only `anthropic` can be STARTED. `openai` and `codex` load, validate and resolve to their registry entries, then every lifecycle launch path REFUSES them — loudly, rather than silently launching a Claude runner under a spec that asked for something else. The working path for the OpenAI SDK meanwhile is the `openai_session` A2A executor (`spec.a2a.handler`); there is no equivalent executor for `codex` yet. |
+| `provider`           | *(deprecated alias of `harness`)* | The spelling this field had before it was renamed. Still honoured: a spec carrying `provider:` loads unchanged; starting it logs a one-line deprecation. Both keys with the SAME value is fine; both with DIFFERENT values is a hard load error naming both. |
+| `runtime`            | `tui` (default) \| `claude-agent-sdk` \| `apptainer` | **Launch mode within the Anthropic harness family.** Empty/unset = `tui` (the interactive Claude Code TUI in a PTY); `claude-agent-sdk` = the headless SDK runner; `apptainer` is the back-compat spelling of the pre-2026-06-13 container-engine field and maps to `claude-agent-sdk`. docker/podman were dropped 2026-05-13. |
 | `workdir`            | path                       | Mounted rw at `/work` (default: `~/.scitex/agent-container/runtime/agents/<name>/`) |
 | `to_home`            | path                       | Mirrored into the agent's container `$HOME` (= `runtime/<name>/home/`) at start. Every path under `to_home/` lands at the same relative path under `$HOME`. Default `./to_home` — auto-discovers a sibling `to_home/` next to `spec.yaml`. |
 | `python-venv`        | string \| list             | Pre-activated for startup_commands; `auto` probes `~/.venv-3.11`, `~/.venv` |
@@ -137,8 +147,8 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `host` / `hosts`     | string / list of strings   | Singleton on one peer / multi-instance one-per-peer (mutually exclusive). `hosts: "all"` = every fleet host. |
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
-| `startup_commands[]` | list of `{delay, command}` | Run **before** Claude starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to Claude as first user message(s)                                   |
+| `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
+| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
 
 ### `spec.apptainer` — engine knobs
 
@@ -161,7 +171,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field                       | Type                                  | Description                                                       |
 |-----------------------------|---------------------------------------|-------------------------------------------------------------------|
-| `model`                     | alias or full ID (default `sonnet`)   | Claude model — see **Available models** below |
+| `model`                     | alias or full ID (default `sonnet`)   | The model this agent's turns run on. Without a `provider` override it is a Claude model — see **Available models** below. WITH one it is the override endpoint's own id (e.g. `deepseek-chat`, `gpt-5.6-sol`) and the `claude-*` alias check relaxes. **The `sonnet` default is applied to every agent regardless of harness** — an Anthropic-shaped default the harness/runtime/inference layering work has not yet unwound. |
 | `account`                   | string                                | Pin this agent to a stored OAuth account (`sac accounts` store-name). Mutually exclusive with `provider`. |
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
@@ -218,9 +228,9 @@ pinned regex catches this early.
 | `restart.backoff.multiplier`| exponential factor                                                                       |
 | `watchdog.enabled`          | parsed for back-compat; lifecycle managed via hooks                                      |
 | `autonomous.enabled`        | drive turns until `drive_until` token or `max_turns`                                     |
-| `autonomous.drive_until`    | string token Claude prints when done (default `DONE`)                                    |
+| `autonomous.drive_until`    | string token the agent prints when done (default `DONE`)                                 |
 | `autonomous.max_turns`      | int                                                                                      |
-| `autonomous.kick_text`      | nudge sent when Claude pauses                                                            |
+| `autonomous.kick_text`      | nudge sent when the agent pauses                                                         |
 
 ### `spec.a2a` / `spec.listen` — network endpoints
 
@@ -305,7 +315,7 @@ per-invocation tweak doesn't mutate the persistent default.
 ## `kind: AgentProxy` — HTTP forwarder agents
 
 A proxy agent forwards `POST /v1/turn` to an **external A2A
-endpoint** instead of running a Claude SDK conversation in-process.
+endpoint** instead of running an agent session in-process.
 There is no SDK in the container; the runner is a thin Starlette
 forwarder (image: `sac-proxy.sif`, lighter than `sac-scitex.sif` —
 no Python ML stack).
