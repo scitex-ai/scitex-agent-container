@@ -1,0 +1,90 @@
+import pytest
+
+from transforms import (
+    REGISTRY,
+    Capitalize,
+    Deduplicate,
+    DropEmpty,
+    Indent,
+    Lowercase,
+    NumberLines,
+    Repeat,
+    ReverseLines,
+    SortLines,
+    SqueezeSpaces,
+    StripPunctuation,
+    StripWhitespace,
+    TrimEnds,
+    Uppercase,
+    available_transforms,
+    get_transform,
+)
+
+
+def test_uppercase():
+    assert Uppercase().apply(["ab"]) == ["AB"]
+
+
+def test_lowercase():
+    assert Lowercase().apply(["AB"]) == ["ab"]
+
+
+def test_capitalize():
+    assert Capitalize().apply(["hello world"]) == ["Hello world"]
+
+
+def test_strip():
+    assert StripWhitespace().apply(["  a  "]) == ["a"]
+
+
+def test_nopunct():
+    assert StripPunctuation().apply(["a,b!"]) == ["ab"]
+
+
+def test_dedupe():
+    assert Deduplicate().apply(["a", "b", "a"]) == ["a", "b"]
+
+
+def test_sort():
+    assert SortLines().apply(["b", "a"]) == ["a", "b"]
+
+
+def test_reverse():
+    assert ReverseLines().apply(["a", "b"]) == ["b", "a"]
+
+
+def test_number():
+    assert NumberLines().apply(["a", "b"]) == ["1: a", "2: b"]
+
+
+def test_dropempty():
+    assert DropEmpty().apply(["a", " ", "b"]) == ["a", "b"]
+
+
+def test_indent():
+    assert Indent().apply(["a"]) == ["    a"]
+
+
+def test_squeeze():
+    assert SqueezeSpaces().apply(["a   b"]) == ["a b"]
+
+
+def test_trimends():
+    assert TrimEnds().apply(["a\n"]) == ["a"]
+
+
+def test_repeat():
+    assert Repeat().apply(["a"]) == ["a", "a"]
+
+
+def test_registry_lookup():
+    assert get_transform("upper") is Uppercase
+
+
+def test_registry_unknown():
+    with pytest.raises(KeyError):
+        get_transform("nope")
+
+
+def test_available_transforms():
+    assert set(available_transforms()) == set(REGISTRY)

@@ -1,0 +1,40 @@
+"""Small calculator helpers."""
+
+
+def sum_list(numbers):
+    tmp = 0
+    for n in numbers:
+        tmp += n
+    return tmp
+
+
+def product_list(numbers):
+    tmp = 1
+    for n in numbers:
+        tmp *= n
+    return tmp
+
+
+def mean(numbers):
+    if not numbers:
+        raise ValueError("mean of empty list")
+    return sum_list(numbers) / len(numbers)
+
+
+def clamp(value, low, high):
+    if low > high:
+        raise ValueError("low above high")
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+def running_totals(numbers):
+    out = []
+    acc = 0
+    for n in numbers:
+        acc += n
+        out.append(acc)
+    return out
