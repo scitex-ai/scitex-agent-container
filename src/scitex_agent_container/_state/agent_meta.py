@@ -24,14 +24,20 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .._env import getenv as _sac_env
+from .._runners._tmux._target import exact_target
 
 
 def detect_multiplexer(session: str) -> str:
-    """Return 'tmux', 'screen', or '' if neither reports the session."""
+    """Return 'tmux', 'screen', or '' if neither reports the session.
+
+    The tmux probe targets the session EXACTLY (``exact_target``): a bare
+    ``-t`` prefix-matches, so ``tui-foo`` would read as tmux-hosted off a
+    sibling ``tui-foo-gui`` session (incident 2026-08-14).
+    """
     try:
         if (
             subprocess.run(
-                ["tmux", "has-session", "-t", session],
+                ["tmux", "has-session", "-t", exact_target(session)],
                 capture_output=True,
             ).returncode
             == 0
