@@ -39,7 +39,11 @@ from ._agent_list_fleet_model import (  # noqa: F401 (re-export)
     resolve_host_filter,
     resolve_targets,
 )
-from ._agent_list_fleet_probe import local_probe, ssh_peer_probe  # noqa: F401
+from ._agent_list_fleet_probe import (  # noqa: F401 (re-export)
+    local_probe,
+    ssh_json_probe,
+    ssh_peer_probe,
+)
 from ._agent_list_host import _resolve_display_host
 
 __all__ = [
@@ -63,6 +67,7 @@ __all__ = [
     "local_probe",
     "resolve_host_filter",
     "resolve_targets",
+    "ssh_json_probe",
     "ssh_peer_probe",
 ]
 

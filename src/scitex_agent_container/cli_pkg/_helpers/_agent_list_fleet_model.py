@@ -19,6 +19,13 @@ and an unanswered report carries ``agents=None``, never ``0``:
   UNREACHABLE on purpose: a host that is merely slow (or behind a wedged
   ProxyJump) has not refused us, and the two want different remedies.
 * :data:`UNREACHABLE` — the probe RAN and positively failed (ssh non-zero).
+* :data:`SAC_TOO_OLD` — we reached the host, sac is there, and it rejected an
+  option this query REQUIRES for safety. Its own state because the retry that
+  saves a merely-stale peer is forbidden here: ``sac accounts list`` sends
+  ``--passive`` so the peer does not refresh (and thereby ROTATE) a credential
+  every other host is still using, so re-asking without it would do the exact
+  damage the flag prevents. Upgrading sac there is the remedy, and only a
+  distinct state can say so.
 * :data:`SAC_MISSING` — we REACHED the host and ``sac`` is not on its PATH.
   Measured live on two NAS boxes the first time this shipped. Folding it into
   UNREACHABLE would send the operator to debug a network that is fine; the
@@ -64,6 +71,7 @@ __all__ = [
     "NOT_QUERIED",
     "RESPONDED",
     "SAC_MISSING",
+    "SAC_TOO_OLD",
     "TIMED_OUT",
     "UNREACHABLE",
     "UnknownHostFilter",
@@ -78,6 +86,7 @@ RESPONDED = "responded"
 TIMED_OUT = "timed_out"
 UNREACHABLE = "unreachable"
 SAC_MISSING = "sac_missing"
+SAC_TOO_OLD = "sac_too_old"
 MALFORMED = "malformed"
 NOT_QUERIED = "not_queried"
 
