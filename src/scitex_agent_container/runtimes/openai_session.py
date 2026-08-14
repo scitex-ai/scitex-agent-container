@@ -78,11 +78,14 @@ def _container_runtime_for(config: AgentConfig):
     the apptainer argv builder (which branches on ``spec.provider``).
     """
     runtime = getattr(config, "runtime", "") or "apptainer"
-    # Both the legacy ``apptainer`` value and the current
-    # ``claude-agent-sdk`` selector dispatch the headless SDK runner via
+    # Every spelling the harness registry's SDK entry claims (the legacy
+    # ``apptainer`` value and the current ``claude-agent-sdk`` selector —
+    # v4 step-4 derivation) dispatches the headless SDK runner via
     # ``apptainer exec``. The OpenAI path uses the same container
     # runtime — only the inner module differs.
-    if runtime in ("apptainer", "claude-agent-sdk"):
+    from ..config._harness_registry import CLAUDE_AGENT_SDK, runtime_spellings_for
+
+    if runtime in runtime_spellings_for(CLAUDE_AGENT_SDK):
         from ._apptainer_runtime import ApptainerContainerRuntime
 
         return ApptainerContainerRuntime()

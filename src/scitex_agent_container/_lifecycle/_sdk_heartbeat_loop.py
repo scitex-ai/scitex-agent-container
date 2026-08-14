@@ -55,6 +55,8 @@ from concurrent.futures import TimeoutError as _FuturesTimeout
 from pathlib import Path
 from typing import Any, Callable
 
+from ..config._harness_registry import host_probed_runtime_spellings
+
 logger = logging.getLogger(__name__)
 
 # Default cadence. The SDK ``health.interval`` default is 300s; beating
@@ -75,8 +77,10 @@ DEFAULT_PROBE_TIMEOUT_S = 2.0
 
 # Runtimes handled by the TUI loop, NOT here (avoid double-beating a TUI
 # agent — the TUI loop stamps the pane-activity epoch, this loop would
-# clobber it with wall clock).
-_TUI_RUNTIMES = frozenset({"", "tui"})
+# clobber it with wall clock). DERIVED from the harness registry (v4
+# step 4): the spellings of every entry whose ``beat_writer`` is
+# ``host-probe`` — exactly the agents whose beats another loop owns.
+_TUI_RUNTIMES = host_probed_runtime_spellings()
 
 # State written for a live SDK agent. ``running`` mirrors the
 # observability vocabulary the TUI/SDK heartbeat use; the read side

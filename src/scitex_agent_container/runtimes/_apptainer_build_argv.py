@@ -23,6 +23,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import AgentConfig
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    HARNESS_DESCRIPTORS,
+    OPENAI_AGENTS,
+)
 from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 from ._apptainer_quota_cache import (
     QUOTA_CACHE_CONTAINER_PATH,
@@ -33,17 +38,20 @@ from ._apptainer_quota_cache import (
 
 # ----------------------------------------------------------------------
 # Module-level constants (moved from _apptainer_runtime, re-exported
-# there for back-compat).
+# there for back-compat). DERIVED from the harness registry (v4 step 4,
+# ``config._harness_registry``) — the registry entry is the single
+# source for each runner-module path.
 # ----------------------------------------------------------------------
-RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
+RUNNER_MODULE = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].runner_module
 
 # OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
-# NOT DISPATCHED YET: the old ``getattr(config, "provider", None)``
-# selector was dead (the harness rename removed the field), and v4
-# step 2 replaces it with a loud refusal rather than a repoint —
-# harness-aware dispatch arrives with the step-4 descriptor registry
+# NOT DISPATCHED from here YET: the v4 step-2 refusal at the top of
+# ``build_run_argv`` guards every shape of this argv, so a non-Anthropic
+# harness raises instead of dispatching. The registry's ``openai-agents``
+# entry carries the real module + argv builder; key-based launch is
+# migration step 7
 # (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
-RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
+RUNNER_MODULE_OPENAI = HARNESS_DESCRIPTORS[OPENAI_AGENTS].runner_module
 
 # Quota-cache constants + resolver now live in _apptainer_quota_cache (this
 # file sat at the 512-line cap); imported below and re-exported via __all__ so
@@ -456,7 +464,9 @@ def build_run_argv(
             # guard already refused any non-Anthropic spec (v4 step 2 —
             # the old ``getattr(config, "provider", None)`` read here
             # was DEAD, so ``RUNNER_MODULE_OPENAI`` was never actually
-            # dispatched; harness-aware dispatch is step 4).
+            # dispatched). ``RUNNER_MODULE`` is now DERIVED from the
+            # harness registry's SDK entry (v4 step 4); dispatching
+            # OTHER entries' modules here is migration step 7.
             module = RUNNER_MODULE
         inner_argv = [
             "/usr/bin/tini",

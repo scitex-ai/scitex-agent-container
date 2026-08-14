@@ -116,6 +116,7 @@ from pathlib import Path
 from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
+from ..config._harness_registry import known_harnesses
 
 
 class ProviderEnvError(RuntimeError):
@@ -244,7 +245,9 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
 # once. It is listed as a follow-up, not fixed here.
 AGENT_HARNESS_ENV = "SAC_PROVIDER"
 
-_VALID_AGENT_HARNESSES = ("anthropic", "openai")
+# DERIVED from the harness registry (v4 step 4): the families the
+# descriptor entries declare, so a new harness is one registry entry.
+_VALID_AGENT_HARNESSES = known_harnesses()
 
 _SAC_OPENAI_KEY_ENV = "SAC_OPENAI_API_KEY"
 _OPENAI_KEY_ENV = "OPENAI_API_KEY"

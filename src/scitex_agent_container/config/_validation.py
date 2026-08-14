@@ -27,6 +27,7 @@ from ._placement_validation import validate_placement
 # DEPRECATED alias spec.provider — distinct from spec.claude.provider
 # (the inference backend, validated inside validate_claude via
 # _provider_validation). See config._harness_types.
+from ._harness_registry import valid_runtime_spellings
 from ._harness_types import (
     HARNESS_KEY,
     LEGACY_HARNESS_KEY,
@@ -55,7 +56,11 @@ _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 # (degenerate since sac became apptainer-only on 2026-05-13). ``""``
 # and ``"apptainer"`` are accepted as back-compat and mapped to
 # ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.
-_VALID_RUNTIMES = frozenset({"claude-agent-sdk", "tui", "apptainer", ""})
+# DERIVED from the harness registry (v4 step 4): the accepted spellings
+# are whatever the descriptor entries claim, so a new harness's runtime
+# spelling is one registry entry, not an edit here. The name is kept —
+# it is imported elsewhere (e.g. ``_lifecycle/_relocate_probe_shell``).
+_VALID_RUNTIMES = valid_runtime_spellings()
 
 # spec.container.runtime — every value here must have a working engine
 # behind it. docker/podman were ripped out 2026-05-13.
