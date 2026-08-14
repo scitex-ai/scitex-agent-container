@@ -75,7 +75,7 @@ versioning follows [SemVer](https://semver.org/).
 ### Added
 
 - **A test that pins the containment invariant** (`tests/scitex_agent_container/
-  test__apptainer_only_containment.py`). The repo had argv-shape assertions
+  config/test__container_engine.py`). The repo had argv-shape assertions
   and a resolver unit test, but nothing that said "and there is no OTHER way
   an agent gets launched". It pins: the adapter set `_get_runtime` may return
   is closed to the two apptainer-dispatching runtimes, for every accepted
