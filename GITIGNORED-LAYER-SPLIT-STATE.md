@@ -88,7 +88,52 @@ not touched.)
       `containers/spartan-sif-bake.sh`, `_drift/versions.py`, `_image_repro_build.py`.
 - [ ] CHANGELOG entry.
 
-## The two warnings (separate concern, NOT yet started)
+## TEST PROGRESS
+
+- Run 1 (before any test fix): **51 failed / 118 passed**
+- Run 2 (after contract-test repointing): **13 failed / 155 passed** — all 13 in
+  `test_image_group.py`, ALL one root cause: those tests build the DEFAULT layer
+  (`base`), which now requires `sac-python-pkgs.sif`, so the CLI fails loud
+  before reaching the builder.
+- Fix applied (commit pending at time of writing): added a `staged_python_pkgs_sif`
+  fixture to `test_image_group.py` that stages the prerequisite (timestamped SIF +
+  inner boot symlink) under `ig._CONTAINERS_DIR`, and wired it into the 12 tests
+  that build the default layer. Also renamed
+  `test_build_base_passes_none_bootstrap_sif` →
+  `test_build_system_deps_passes_none_bootstrap_sif` and pointed it at
+  `system-deps` (the property moved with the bottom of the stack, it did not vanish).
+  **Run 3 result not yet seen.**
+
+DO NOT touch `test_build_scitex_errors_loud_when_base_sif_missing` — it needs
+`sac-base.sif` ABSENT. The fixture only stages `sac-python-pkgs.sif`, so it is safe.
+
+## AUDIO / PHONE ESCALATION — NOT POSSIBLE FROM THIS SESSION
+
+`/speak-and-call` was requested. Verified on scitex-compute-04:
+- no `scitex` CLI (only scitex-agent-container / -container / -dev / -ssh in .venv)
+- no `espeak-ng`, no `aplay`/`paplay`/`ffplay` (`pico`/`piconv` are Perl/Pine, NOT pico2wave)
+- no `mcp__scitex__audio_speak` / `notification_call` / `notification_sms` in this
+  session's tool set
+Only channel available is the harness `PushNotification` tool. Do NOT claim to have
+spoken or called — that is exactly the false-positive the operator's
+`02_quality_01_no-false-positives.md` forbids.
+
+## The two warnings
+
+### 2. sac-drift NOT_A_REPO — ROOT CAUSE FOUND (2026-08-14)
+
+`~/.scitex/agent-container/agents/scitex-agent-container/spec.yaml` is a REAL FILE
+in a plain directory. `git -C <that dir> rev-parse --show-toplevel` →
+`fatal: not a git repository`. Other agents' specs are symlinked into a checkout
+(`_drift/_local.py::spec_source_repo` resolves symlinks precisely so a
+`~/.scitex/...` symlink is followed into `~/.dotfiles/...`).
+
+So drift is genuinely UNKNOWABLE for this agent — the warning is CORRECT, not a bug.
+Fix is a provisioning choice, needs operator input:
+  (a) move the spec into a git checkout and symlink it (matches every other agent), or
+  (b) accept NOT_A_REPO for locally-authored specs and stop warning for them.
+
+### (original notes below)
 
 1. **gdu** — `_workdir/_audit.py:629` warns when `shutil.which("gdu")` is None.
    `apptainer-base.def` (now `apptainer-system-deps.def` §4c) DOES bake dundee/gdu

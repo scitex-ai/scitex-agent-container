@@ -229,6 +229,34 @@ def home_tmp(tmp_path: Path) -> Iterator[Path]:
         ig._SCITEX_USER_STATE_ROOT = saved_state_root  # type: ignore[assignment]
 
 
+@pytest.fixture
+def staged_python_pkgs_sif(home_tmp: Path) -> Path:
+    """Stage the prerequisite SIF that a ``:base`` build now requires.
+
+    Since the four-layer split (system-deps -> python-pkgs -> base ->
+    scitex), ``base`` is no longer the bottom of the stack: it bootstraps
+    ``From: ./sac-python-pkgs.sif``, so ``sac image build base`` FAILS LOUD
+    before reaching the builder when that SIF is absent.
+
+    Every test below that builds the DEFAULT layer is about something else
+    entirely — flag plumbing, priority demotion, the reproducible round trip
+    — and would otherwise die on a prerequisite it never meant to exercise.
+    Staging it here keeps those tests testing what their names claim.
+
+    Models the atomic layout scitex-container 0.3.0 lands: a timestamped SIF
+    plus the stable inner boot symlink that ``resolve_bootstrap_sif``
+    resolves (``is_file()`` follows the symlink).
+    """
+    parent_dir = ig._CONTAINERS_DIR / "sac-python-pkgs"
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    real_sif = parent_dir / "sac-python-pkgs-20260814T000000Z.sif"
+    real_sif.write_bytes(b"fake python-pkgs SIF")
+    inner = parent_dir / "sac-python-pkgs.sif"
+    inner.symlink_to(real_sif.name)
+    return inner
+
+
+
 # ---------------------------------------------------------------------------
 # build
 # ---------------------------------------------------------------------------
@@ -301,7 +329,7 @@ def test_build_errors_when_recipe_def_file_is_missing(home_tmp):
     assert result.exit_code == 1 and "recipe not found" in result.output
 
 
-def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
+def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -311,7 +339,7 @@ def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp)
     assert result.exit_code == 0 and "built" in result.output and len(calls) == 1
 
 
-def test_build_success_passes_layer_def_path_pkg_root_and_force(home_tmp):
+def test_build_success_passes_layer_def_path_pkg_root_and_force(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -328,7 +356,7 @@ def test_build_success_passes_layer_def_path_pkg_root_and_force(home_tmp):
     )
 
 
-def test_build_sandbox_flag_forwarded_to_source_builder(home_tmp):
+def test_build_sandbox_flag_forwarded_to_source_builder(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -360,7 +388,7 @@ def _use_reproducible_builder(*, result=None) -> Iterator[list[dict]]:
         ig._run_reproducible_build = saved  # type: ignore[assignment]
 
 
-def test_build_reproducible_routes_to_the_round_trip(home_tmp):
+def test_build_reproducible_routes_to_the_round_trip(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -381,7 +409,7 @@ def test_build_reproducible_does_not_call_the_plain_builder(home_tmp):
     assert plain == []
 
 
-def test_build_reproducible_verifies_by_default(home_tmp):
+def test_build_reproducible_verifies_by_default(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -391,7 +419,7 @@ def test_build_reproducible_verifies_by_default(home_tmp):
     assert calls[0]["verify"] is True
 
 
-def test_build_skip_verify_turns_the_replay_off(home_tmp):
+def test_build_skip_verify_turns_the_replay_off(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -434,7 +462,7 @@ def test_build_accepts_the_proxy_layer(home_tmp):
     assert calls[0][1]["def_path"].name == "apptainer-proxy.def"
 
 
-def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp):
+def test_build_reports_apptainer_failure_with_exit_code_1(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -466,14 +494,20 @@ def test_build_scitex_passes_bootstrap_sif_pointing_at_built_base_sif(home_tmp):
     )
 
 
-def test_build_base_passes_none_bootstrap_sif(home_tmp):
-    # Arrange — top-of-stack ``base`` .def has no prerequisite SIF;
-    # CLI must NOT make one up (would dangle a stale symlink in the
-    # staging dir).
+def test_build_system_deps_passes_none_bootstrap_sif(home_tmp):
+    # Arrange — ``system-deps`` is the BOTTOM of the four-layer stack: it
+    # bootstraps off the pinned ubuntu registry image, so it has no
+    # prerequisite SIF and the CLI must NOT make one up (would dangle a
+    # stale symlink in the staging dir).
+    #
+    # This assertion used to name ``base``. The split moved base up the
+    # chain — it now bootstraps From ./sac-python-pkgs.sif — so the
+    # no-prerequisite property moved with the bottom of the stack rather
+    # than disappearing.
     runner = CliRunner()
     # Act
-    with _use_source_builder(result=Path("/tmp/sac-base.sif")) as calls:
-        runner.invoke(image_group, ["build", "base", "--yes"])
+    with _use_source_builder(result=Path("/tmp/sac-system-deps.sif")) as calls:
+        runner.invoke(image_group, ["build", "system-deps", "--yes"])
     # Assert
     assert calls[0][1]["bootstrap_sif"] is None
 
@@ -497,7 +531,7 @@ def test_build_scitex_errors_loud_when_base_sif_missing(home_tmp):
 # ---------------------------------------------------------------------------
 
 
-def test_build_default_calls_priority_demoter_with_skip_false(home_tmp):
+def test_build_default_calls_priority_demoter_with_skip_false(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -508,7 +542,7 @@ def test_build_default_calls_priority_demoter_with_skip_false(home_tmp):
     assert calls == [{"skip": False}]
 
 
-def test_build_no_nice_flag_forwards_skip_true_to_demoter(home_tmp):
+def test_build_no_nice_flag_forwards_skip_true_to_demoter(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -529,7 +563,7 @@ def test_build_dry_run_never_calls_priority_demoter(home_tmp):
     assert calls == []
 
 
-def test_build_echoes_low_priority_notice_from_demoter(home_tmp):
+def test_build_echoes_low_priority_notice_from_demoter(home_tmp, staged_python_pkgs_sif):
     # Arrange — the loud one-line notice must land in the build output
     # so nobody is surprised by a slower build.
     from scitex_agent_container._build_priority import LOW_PRIORITY_NOTICE
@@ -548,7 +582,7 @@ def test_build_echoes_low_priority_notice_from_demoter(home_tmp):
 # ---------------------------------------------------------------------------
 
 
-def test_build_consults_remote_advisory_before_heavy_work(home_tmp):
+def test_build_consults_remote_advisory_before_heavy_work(home_tmp, staged_python_pkgs_sif):
     # Arrange
     runner = CliRunner()
     # Act
@@ -559,7 +593,7 @@ def test_build_consults_remote_advisory_before_heavy_work(home_tmp):
     assert calls == [{}]
 
 
-def test_build_proceeds_demoted_when_advisory_fires(home_tmp):
+def test_build_proceeds_demoted_when_advisory_fires(home_tmp, staged_python_pkgs_sif):
     # Arrange — the advisory is a WARNING, never a refusal: a loaded
     # host still gets its (demoted) build.
     runner = CliRunner()
