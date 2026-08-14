@@ -19,6 +19,7 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
+from ..config._harness_types import ensure_harness_matches_claude_launch
 from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
     _home_has_resumable_conversation,
     _tui_runner_argv,
@@ -30,14 +31,16 @@ from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
 if TYPE_CHECKING:
     from ..config import AgentConfig
 
-# Runner-module dispatch by ``config.kind`` and ``config.provider``.
-# Kept here so the parent orchestrator doesn't need to know either
-# runner's module path.
+# Runner-module dispatch by ``config.kind``. Kept here so the parent
+# orchestrator doesn't need to know either runner's module path.
 RUNNER_MODULE_AGENT = "scitex_agent_container._runners.claude_session"
 
-# OpenAI provider runner module (scitex-todo card ``openai-compat-2``;
-# ``spec.provider: openai``). When the config's provider is ``"openai"``,
-# dispatches this module instead of ``RUNNER_MODULE_AGENT``.
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED YET: the old ``getattr(config, "provider", None)``
+# selector was dead (the harness rename removed the field), and v4
+# step 2 replaces it with a loud refusal rather than a repoint —
+# harness-aware dispatch arrives with the step-4 descriptor registry
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
 RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
 
 RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
@@ -116,8 +119,7 @@ def build_inner_argv(
     tui_dev_channels: str | None = None,
     tui_settings: str | None = None,
 ) -> list[str]:
-    """Return the apptainer-inner argv. Dispatches on ``config.kind``
-    and ``config.provider``.
+    """Return the apptainer-inner argv. Dispatches on ``config.kind``.
 
     The argv is now ALWAYS wrapped in
     ``[/bin/bash, -lc, "<git-env-alias>; [set -e; <cmd1>; sleep N; <cmd2>;]
@@ -144,14 +146,24 @@ def build_inner_argv(
     is why the file MUST be ``settings.json``, not ``settings.local.json``:
     there is no ``.local.json`` at user scope).
 
-    Provider dispatch: when ``config.provider == "openai"``, the inner
-    runner is ``RUNNER_MODULE_OPENAI`` instead of ``RUNNER_MODULE_AGENT``.
-    The argv tail (mission, a2a flags, etc.) is identical — the OpenAI
-    runner accepts the same CLI flags as the Claude runner (with legacy
-    flags silently ignored).
+    Harness guard (v4 step 2, card ``sac-v4-layering-refactor-harness-
+    runtime-inference-20260813``): both the TUI and SDK branches launch
+    the CLAUDE harness, so a non-Anthropic ``config.harness`` REFUSES
+    loudly instead of dispatching. The old ``getattr(config, "provider",
+    None)`` selector here was DEAD (the harness rename removed the
+    field), so ``harness: openai`` specs silently got the Claude runner;
+    dispatching ``RUNNER_MODULE_OPENAI`` for real is step 4 (the
+    descriptor registry). ``kind: AgentProxy`` is exempt — the a2a proxy
+    runner is vendor-neutral.
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
+        # Same v4 step-2 guard as the SDK branch below: the interactive
+        # claude TUI is just as wrong a vendor for a non-Anthropic
+        # harness (and this branch never had even the dead check).
+        ensure_harness_matches_claude_launch(
+            config, launching="the interactive claude TUI"
+        )
         runner_tail = _tui_runner_argv(
             config,
             mcp_config=tui_mcp_config,
@@ -162,17 +174,15 @@ def build_inner_argv(
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
-        # Provider dispatch: ``provider: openai`` → the OpenAI runner;
-        # everything else (default "anthropic") → the Claude runner.
-        provider = getattr(config, "provider", None)
-        runner_module = (
-            RUNNER_MODULE_OPENAI
-            if provider == "openai"
-            else RUNNER_MODULE_AGENT
+        # v4 step-2 loudness: refuse a wrong-vendor launch on the REAL
+        # field (the dead ``config.provider`` read used to sit here and
+        # silently fell through to the Claude runner).
+        ensure_harness_matches_claude_launch(
+            config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
         )
         runner_tail = (
             _TINI_PREFIX
-            + [runner_module]
+            + [RUNNER_MODULE_AGENT]
             + _agent_runner_argv(config, one_shot=one_shot)
         )
 

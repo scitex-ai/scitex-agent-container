@@ -7,13 +7,21 @@ unset maps here) → the in-apptainer TUI runner; ``claude-agent-sdk`` →
 the headless SDK runner. Legacy ``apptainer`` maps to ``claude-agent-sdk``
 with a one-line deprecation log.
 
-scitex-todo card ``openai-compat-2``: when ``spec.provider: openai``,
-``_get_runtime`` returns ``OpenAISessionRuntime`` regardless of
-``spec.runtime``.
+v4 step-2 loudness (card
+``sac-v4-layering-refactor-harness-runtime-inference-20260813``): every
+runtime ``_get_runtime`` can return launches the CLAUDE harness, so a
+non-Anthropic ``config.harness`` raises ``HarnessRuntimeMismatchError``
+instead of silently falling through to the Claude/TUI runner. (The old
+``spec.provider: openai -> OpenAISessionRuntime`` tests pinned a DEAD
+branch: they stubbed a ``provider`` attribute that the harness rename
+removed from the real ``AgentConfig``, so production configs never took
+it — verified 2026-08-14, ``hasattr(AgentConfig("x"), "provider")`` is
+False.)
 
-STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — uses a tiny stub
-``SimpleNamespace`` config (the existing test pattern for
-``_get_runtime`` callers; the runtime selector reads ONE attribute).
+STX-TQ002 AAA + STX-TQ007 one-assert. No mocks — a tiny stub
+``SimpleNamespace`` config for the single-attribute selector paths, and
+the REAL ``AgentConfig`` for the harness-refusal contract (the stub is
+exactly what masked the dead branch).
 """
 
 from __future__ import annotations
@@ -28,8 +36,12 @@ from scitex_agent_container._lifecycle._runtime_select import (
     warn_if_legacy_apptainer_runtime,
     warn_if_legacy_harness_key,
 )
+from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._harness_types import (
+    V4_HARNESS_DISPATCH_CARD,
+    HarnessRuntimeMismatchError,
+)
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
-from scitex_agent_container.runtimes.openai_session import OpenAISessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
 # ---------------------------------------------------------------------------
@@ -279,56 +291,112 @@ def test_get_runtime_rejects_unknown_value_names_accepted_set():
 
 
 # ---------------------------------------------------------------------------
-# OpenAI provider — dispatches OpenAISessionRuntime (openai-compat-2)
+# Non-Anthropic harness — LOUD refusal, never a silent Claude launch
+# (v4 step 2; real AgentConfig on purpose: the old tests stubbed a
+# ``provider`` attribute the harness rename removed, pinning a dead branch)
 # ---------------------------------------------------------------------------
 
 
-def test_get_runtime_returns_openai_session_for_openai_provider():
-    # Arrange — spec.provider: openai selects the OpenAI SDK path
-    # regardless of spec.runtime.
-    config = SimpleNamespace(name="beta", runtime="", provider="openai")
+def test_get_runtime_never_hands_an_openai_harness_the_claude_runner():
+    # Arrange — the pre-fix bug verbatim: harness: openai silently got
+    # TuiSessionRuntime because the dead ``config.provider`` read fell
+    # through. Whatever else happens (today: a refusal raise; step 4: a
+    # real OpenAI dispatch), the Claude-family runner must never come back.
+    config = AgentConfig(name="beta", runtime="tui", harness="openai")
+    rt: object | None = None
     # Act
-    rt = _get_runtime(config)
+    try:
+        rt = _get_runtime(config)
+    except Exception:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; a raise is a PASS for this pin — only a returned Claude runner fails it.)
+        pass
     # Assert
-    assert isinstance(rt, OpenAISessionRuntime)
+    assert not isinstance(rt, (TuiSessionRuntime, ClaudeSessionRuntime))
 
 
-def test_get_runtime_returns_openai_session_even_with_claude_runtime():
-    # Arrange — provider: openai WINS over runtime: claude-agent-sdk.
-    config = SimpleNamespace(name="gamma", runtime="claude-agent-sdk", provider="openai")
+def test_get_runtime_raises_harness_mismatch_for_openai_harness():
+    # Arrange
+    config = AgentConfig(name="beta", runtime="tui", harness="openai")
+    raised: BaseException | None = None
     # Act
-    rt = _get_runtime(config)
+    try:
+        _get_runtime(config)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
     # Assert
-    assert isinstance(rt, OpenAISessionRuntime)
+    assert isinstance(raised, HarnessRuntimeMismatchError)
 
 
-def test_get_runtime_returns_openai_session_even_with_apptainer_runtime():
-    # Arrange — provider: openai WINS over runtime: apptainer (back-compat).
-    config = SimpleNamespace(name="delta", runtime="apptainer", provider="openai")
+def test_get_runtime_openai_harness_refusal_names_what_the_spec_asked():
+    # Arrange
+    config = AgentConfig(name="beta", runtime="tui", harness="openai")
+    raised: BaseException | None = None
     # Act
-    rt = _get_runtime(config)
+    try:
+        _get_runtime(config)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
     # Assert
-    assert isinstance(rt, OpenAISessionRuntime)
+    assert raised is not None and "harness='openai'" in str(raised)
+
+
+def test_get_runtime_openai_harness_refusal_names_what_would_launch():
+    # Arrange — runtime: tui, so the wrong-vendor launch it refuses is
+    # the interactive Claude TUI.
+    config = AgentConfig(name="beta", runtime="tui", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        _get_runtime(config)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and "TuiSessionRuntime" in str(raised)
+
+
+def test_get_runtime_openai_harness_refusal_names_the_decision_site():
+    # Arrange
+    config = AgentConfig(name="beta", runtime="claude-agent-sdk", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        _get_runtime(config)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert — file:line of the decision, so the reader lands on the guard.
+    assert raised is not None and "_runtime_select.py:" in str(raised)
+
+
+def test_get_runtime_openai_harness_refusal_names_the_v4_card():
+    # Arrange
+    config = AgentConfig(name="beta", runtime="tui", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        _get_runtime(config)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
 
 
 # ---------------------------------------------------------------------------
-# Default (anthropic provider) — unchanged behaviour
+# Default (anthropic harness) — unchanged behaviour, byte-identical selection
 # ---------------------------------------------------------------------------
 
 
-def test_get_runtime_returns_tui_session_for_default_provider():
-    # Arrange — default provider is "anthropic" (DEFAULT_AGENT_PROVIDER);
-    # with no provider set and runtime="", we still get TUI.
-    config = SimpleNamespace(name="epsilon")  # runtime defaults to "", provider defaults to None
+def test_get_runtime_returns_tui_session_for_default_harness():
+    # Arrange — default harness is "anthropic" (DEFAULT_AGENT_HARNESS);
+    # with no harness stated and runtime="", we still get TUI.
+    config = SimpleNamespace(name="epsilon")  # runtime defaults to "", harness defaults to anthropic
     # Act
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, TuiSessionRuntime)
 
 
-def test_get_runtime_returns_claude_session_for_anthropic_provider():
-    # Arrange — explicit provider: anthropic with runtime: claude-agent-sdk.
-    config = SimpleNamespace(name="zeta", runtime="claude-agent-sdk", provider="anthropic")
+def test_get_runtime_returns_claude_session_for_anthropic_harness():
+    # Arrange — a REAL config with the explicit canonical value.
+    config = AgentConfig(name="zeta", runtime="claude-agent-sdk", harness="anthropic")
     # Act
     rt = _get_runtime(config)
     # Assert

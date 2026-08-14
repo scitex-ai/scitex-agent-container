@@ -25,8 +25,11 @@ from scitex_agent_container.config._explicit_validation import (
 )
 from scitex_agent_container.config._harness_types import (
     DEFAULT_AGENT_HARNESS,
+    V4_HARNESS_DISPATCH_CARD,
     HarnessKeyConflictError,
+    HarnessRuntimeMismatchError,
     declared_harness,
+    ensure_harness_matches_claude_launch,
     is_known_harness,
     list_harnesses,
     resolve_spec_harness,
@@ -386,3 +389,87 @@ def test_the_paste_ready_defaults_write_the_canonical_key():
     written = set(defaults) & {"harness", "provider"}
     # Assert
     assert written == {"harness"}
+
+
+# ---------------------------------------------------------------------------
+# The v4 step-2 loudness guard — ensure_harness_matches_claude_launch
+# (card sac-v4-layering-refactor-harness-runtime-inference-20260813).
+# End to end through the REAL load_config, both key spellings: the guard
+# must attribute the ask to the key the spec actually used.
+# ---------------------------------------------------------------------------
+
+
+def _refusal(config):
+    """The mismatch error the guard raises for ``config``, or ``None``."""
+    try:
+        ensure_harness_matches_claude_launch(
+            config, launching="the Claude runner (test)"
+        )
+    except HarnessRuntimeMismatchError as exc:
+        return exc
+    return None
+
+
+def test_the_guard_refuses_a_canonical_openai_spec(tmp_path):
+    # Arrange
+    config = load_config(_write_spec(tmp_path, "canon", {"harness": "openai"}))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None
+
+
+def test_the_guard_names_the_canonical_key_when_the_spec_used_it(tmp_path):
+    # Arrange
+    config = load_config(_write_spec(tmp_path, "canon", {"harness": "openai"}))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None and "spec.harness" in str(exc)
+
+
+def test_the_guard_refuses_a_legacy_provider_openai_spec(tmp_path):
+    # Arrange — the alias the loader still accepts must reach the guard.
+    config = load_config(_legacy_spec(tmp_path, "legacy", "openai"))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None
+
+
+def test_the_guard_names_the_legacy_key_when_the_spec_used_it(tmp_path):
+    # Arrange — the operator should be pointed at the line THEIR spec has.
+    config = load_config(_legacy_spec(tmp_path, "legacy", "openai"))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None and "spec.provider" in str(exc)
+
+
+def test_the_guard_names_what_was_about_to_launch(tmp_path):
+    # Arrange
+    config = load_config(_write_spec(tmp_path, "canon", {"harness": "openai"}))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None and "the Claude runner (test)" in str(exc)
+
+
+def test_the_guard_names_the_v4_card(tmp_path):
+    # Arrange
+    config = load_config(_write_spec(tmp_path, "canon", {"harness": "openai"}))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is not None and V4_HARNESS_DISPATCH_CARD in str(exc)
+
+
+def test_the_guard_passes_an_anthropic_spec_untouched(tmp_path):
+    # Arrange — the fleet's entire live spec corpus (117 agent dirs on
+    # this host, surveyed 2026-08-14) resolves to anthropic; the guard
+    # must be a no-op for every one of them.
+    config = load_config(_write_spec(tmp_path, "canon", {"harness": "anthropic"}))
+    # Act
+    exc = _refusal(config)
+    # Assert
+    assert exc is None
