@@ -37,8 +37,9 @@ WHAT THIS STEP DOES NOT CHANGE (behavior-preserving by contract):
     a ``harness: openai`` spec resolves to a real registry key here, but
     the lifecycle launch path still cannot START it —
     ``ensure_harness_matches_claude_launch`` refuses before any dispatch
-    site consults a descriptor. Key-based launch of non-Anthropic
-    harnesses is migration step 7.
+    site consults a descriptor. Step 7 moved the openai RUNNER onto the
+    shared session daemon; key-based LAUNCH of non-Anthropic harnesses
+    stays behind that refusal until the canary step proves the runner.
   * The ``SAC_PROVIDER`` ops-only env override keeps its own surface
     (``runtimes/_apptainer_provider.resolve_agent_harness``); this
     resolver reads the SPEC axes only.
@@ -153,11 +154,12 @@ def _session_runner_inner_argv(
 ) -> list[str]:
     """Shared ``tini → python -m <module>`` tail for runner-hosted entries.
 
-    Both runner-hosted SDK families take the SAME argv surface today
-    (``--name`` / ``--state-root`` / supervisor caps / ``--mission`` /
-    ``--a2a-*`` / ``--channels`` / autonomous flags — the openai session
-    CLI accepts every one of them for parity), so the builder is shared
-    and only the module differs.
+    Both runner-hosted SDK families take the SAME argv surface — the
+    shared session-daemon flags (``--name`` / ``--state-root`` /
+    supervisor caps / ``--mission`` / ``--a2a-*`` / ``--channels`` /
+    ``--residency`` / autonomous) that both CLIs thread into
+    ``run_session_daemon`` (v4 step 7) — so the builder is shared and
+    only the module differs.
     """
     options = options or {}
     from ..runtimes._apptainer_inner_argv import _TINI_PREFIX, _agent_runner_argv
@@ -181,9 +183,11 @@ def _openai_agents_inner_argv(
 ) -> list[str]:
     """Inner argv for the ``openai-agents`` session runner.
 
-    REAL but not yet lifecycle-reachable: the step-2 refusal
-    (``ensure_harness_matches_claude_launch``) still guards every launch
-    path, so nothing dispatches this until migration step 7.
+    The runner itself is daemon-hosted since v4 step 7 (its CLI hands
+    the process to ``run_session_daemon`` with the OpenAI turn driver),
+    but the step-2 refusal (``ensure_harness_matches_claude_launch``)
+    still guards every LAUNCH path — nothing dispatches this argv until
+    the canary step lifts that guard.
     """
     return _session_runner_inner_argv(config, _OPENAI_SESSION_RUNNER, options)
 
@@ -316,9 +320,14 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             spec_runtimes=frozenset(),
             runner_module=_OPENAI_SESSION_RUNNER,
             inner_argv=_openai_agents_inner_argv,
-            hosted="runner",
-            beat_writer="in-process",
-            can_resume=False,  # single-turn CLI today; resume flags are parity-only
+            hosted="runner",  # shared session daemon since v4 step 7
+            beat_writer="in-process",  # daemon + turn-driver beats, self-stamped
+            # The SQLiteSession db persists turns under the agent's own
+            # name, but sac's resume contract (rehydrate a PRIOR
+            # conversation from a caller-supplied session id) is not
+            # implemented for this harness — the runner CLI and turn
+            # driver both REFUSE --resume-session-id, reading this field.
+            can_resume=False,
             env_and_binds=_openai_env_and_binds,
         ),
     )
