@@ -59,7 +59,6 @@ FULL_CONFIG = {
         },
         "screen": {"name": "full-agent"},
         "container": {
-            "runtime": "apptainer",
             "image": "my-image:latest",
             "volumes": ["/data:/data"],
             "network": "bridge",

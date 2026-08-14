@@ -63,9 +63,9 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
     deploy_to_home(config, home_dir)
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — see the twin comment in ``claude_session``. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``.
 
 
 def _container_runtime_for(config: AgentConfig):

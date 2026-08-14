@@ -200,9 +200,11 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     print("\n".join(lines), file=sys.stderr, flush=True)
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — a one-member tuple of engines is the same abolished menu the
+# spec field was, kept alive as a module constant. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``. Empty / unset
+# ``spec.runtime`` is treated as the SDK launch mode below.
 
 
 def _container_runtime_for(config: AgentConfig):
