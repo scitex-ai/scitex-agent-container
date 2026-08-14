@@ -36,7 +36,7 @@ cat > ~/.scitex/agent-container/agents/hello/spec.yaml <<'EOF'
 apiVersion: scitex-agent-container/v3
 kind: Agent
 spec:
-  runtime: apptainer                  # or docker for dev laptops
+  runtime: apptainer                  # launch mode; there is no docker option
   workdir: /tmp/hello-workspace
   model: claude-haiku-4-5
   startup_commands:
