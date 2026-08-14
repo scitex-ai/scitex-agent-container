@@ -47,6 +47,8 @@ from __future__ import annotations
 import sys
 from typing import Literal, Mapping
 
+from ._harness_registry import known_harnesses
+
 __all__ = [
     "AGENT_HARNESSES",
     "AgentHarness",
@@ -77,8 +79,13 @@ DEFAULT_AGENT_HARNESS: AgentHarness = "anthropic"
 
 #: The closed set of agent harnesses sac knows how to run a session
 #: through at all. ``"openai"`` validates and resolves; the concrete
-#: runner landed with openai-compat-2/3.
-AGENT_HARNESSES: tuple[str, ...] = ("anthropic", "openai")
+#: runner landed with openai-compat-2/3. DERIVED from the harness
+#: registry (v4 step 4, ``config._harness_registry``): the set is
+#: whatever families the descriptor entries declare, so a new harness
+#: is one registry entry, not an edit here. The registry module imports
+#: NOTHING from this module at import time, so the derivation is not a
+#: cycle (its reverse imports are call-time only).
+AGENT_HARNESSES: tuple[str, ...] = known_harnesses()
 
 
 class HarnessKeyConflictError(ValueError):

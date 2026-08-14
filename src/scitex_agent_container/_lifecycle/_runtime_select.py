@@ -34,6 +34,12 @@ import logging
 from pathlib import Path
 
 from ..config import AgentConfig
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    CLAUDE_CODE_TUI,
+    resolve_harness_key,
+    runtime_spellings_for,
+)
 from ..config._harness_types import ensure_harness_matches_claude_launch
 
 log = logging.getLogger(__name__)
@@ -42,29 +48,29 @@ log = logging.getLogger(__name__)
 def _get_runtime(config: AgentConfig):
     """Return the runtime adapter for the config's launch mode.
 
-    Branches on TWO axes:
+    Resolution (v4 step 4 — the harness registry,
+    ``config._harness_registry``):
 
-    1. ``config.harness`` — the harness axis (``AgentHarness =
-       Literal["anthropic", "openai"]``). This check runs FIRST so the
-       harness always wins over ``runtime`` — and because every runtime
-       this function can return launches the CLAUDE harness, a
-       non-Anthropic harness is REFUSED loudly here instead of being
-       dispatched (v4 step-2 loudness; harness-aware dispatch is the
-       step-4 descriptor registry). The refusal replaces a DEAD read of
-       ``getattr(config, "provider", None)`` — a field the harness
-       rename removed from ``AgentConfig`` — which silently fell
-       through and launched the Claude runner for ``harness: openai``
-       specs.
-    2. ``config.runtime`` — the launch-mode selector (operator
-       directive 12870). Default: an empty / unset ``runtime``
-       selects the interactive in-apptainer ``tui`` runtime
-       (operator directive 2026-06-15). Back-compat: the legacy
-       ``"apptainer"`` value (the old container-engine selector)
-       maps to ``"claude-agent-sdk"`` SILENTLY. The deprecation
-       log for ``runtime='apptainer'`` fires at the actual start
-       path (:func:`_lifecycle._start.start_agent`) — not here,
-       because every status / list / discovery walk also goes
-       through :func:`_get_runtime` and a per-call warning would
+    1. ``config.harness`` — the harness axis — is checked FIRST so the
+       harness always wins over ``runtime``: every adapter this function
+       can return launches the CLAUDE harness, so a non-Anthropic
+       harness is REFUSED loudly here instead of being dispatched
+       (v4 step-2 loudness, preserved verbatim; key-based launch of
+       non-Anthropic harnesses is migration step 7). The refusal
+       replaced a DEAD read of ``getattr(config, "provider", None)`` —
+       a field the harness rename removed from ``AgentConfig`` — which
+       silently fell through and launched the Claude runner for
+       ``harness: openai`` specs.
+    2. The surviving axes collapse to ONE registry key via
+       :func:`resolve_harness_key` and the key picks the adapter.
+       Default: an empty / unset ``runtime`` selects the interactive
+       in-apptainer TUI entry (operator directive 2026-06-15).
+       Back-compat: the legacy ``"apptainer"`` value (the old
+       container-engine selector) maps to the SDK-runner entry
+       SILENTLY. The deprecation log for ``runtime='apptainer'`` fires
+       at the actual start path (:func:`_lifecycle._start.start_agent`)
+       — not here, because every status / list / discovery walk also
+       goes through :func:`_get_runtime` and a per-call warning would
        (a) spam the operator's logs and (b) contaminate CLI output
        streams (CliRunner-captured commands like
        ``sac agents status --json`` end up with the warning text
@@ -72,10 +78,15 @@ def _get_runtime(config: AgentConfig):
        ``f468a6d2e11443598103ed1672e2e40b``: emit the deprecation
        when the runtime is actually USED to start something, not
        on every read.
+
+    ``kind: AgentProxy`` states no harness (the a2a proxy runner is
+    vendor-neutral — the same exemption the step-2 guard applies), so a
+    proxy resolves by the launch-mode axis alone: its harness field, if
+    any, selects nothing here.
     """
     runtime = getattr(config, "runtime", "") or ""
     # v4 STEP-2 LOUDNESS (card sac-v4-layering-refactor-harness-runtime-
-    # inference-20260813): every runtime below launches the CLAUDE
+    # inference-20260813): every adapter below launches the CLAUDE
     # harness, so a non-Anthropic ``config.harness`` refuses here rather
     # than silently falling through (the fate of the old dead
     # ``getattr(config, "provider", None)`` read this replaces).
@@ -88,30 +99,35 @@ def _get_runtime(config: AgentConfig):
         config,
         launching=(
             "TuiSessionRuntime (the interactive Claude TUI)"
-            if runtime in ("", "tui")
+            if runtime in runtime_spellings_for(CLAUDE_CODE_TUI)
             else "ClaudeSessionRuntime (the headless claude-agent-sdk runner)"
         ),
         log=False,
     )
-    # TUI is the default launch mode (operator directive 2026-06-15,
-    # post the SDK-pool cutoff): empty / unset → interactive in-apptainer
-    # TUI. Explicit legacy values still map to the headless SDK runner so
-    # existing SDK specs are untouched.
-    if runtime in ("", "tui"):
+    if getattr(config, "kind", "Agent") == "AgentProxy":
+        # A proxy is not a harness: resolve by launch mode alone (an
+        # empty mapping states no harness, so only ``runtime`` selects).
+        key = resolve_harness_key({"runtime": runtime})
+    else:
+        # Post-guard the harness is Anthropic-family, so the key is one
+        # of the two Claude entries; an unknown ``runtime`` spelling
+        # raises UnmappableHarnessError (a ValueError) naming both spec
+        # values and the v4 card.
+        key = resolve_harness_key(config)
+    if key == CLAUDE_CODE_TUI:
         from ..runtimes.tui_session import TuiSessionRuntime
 
         return TuiSessionRuntime()
-    if runtime in ("apptainer", "claude-agent-sdk"):
+    if key == CLAUDE_AGENT_SDK:
         from ..runtimes.claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime()
+    # Defensive totality: a registry key with no lifecycle adapter (the
+    # openai-agents entry is guard-refused above until step 7 lands).
     raise ValueError(
-        f"Unsupported runtime: {runtime!r}. "
-        "spec.runtime must be 'tui' (default, interactive in-apptainer "
-        "TUI), 'claude-agent-sdk' (headless SDK runner), or the "
-        "back-compat 'apptainer' (mapped to 'claude-agent-sdk'). "
-        "There is no 'openai' runtime: OpenAI-harness agents cannot yet "
-        "start through the lifecycle launch path (v4 gap, card "
+        f"Unsupported runtime: no lifecycle adapter for harness key "
+        f"{key!r} (spec.runtime={runtime!r}). Key-based launch of "
+        "non-Anthropic harnesses is a KNOWN v4 gap (card "
         "sac-v4-layering-refactor-harness-runtime-inference-20260813) — "
         "drive them through a2a.handler: openai_session instead."
     )
