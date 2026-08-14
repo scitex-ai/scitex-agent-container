@@ -164,6 +164,23 @@ codex-sdk = [
     "openai-codex>=0.144.4",
 ]
 dev = [
+    # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares the
+    # openai_codex module and the codex tests name it, so `[dev]` must
+    # carry it too — the rule's contract is that a fresh
+    # `pip install -e .[dev]` runs the FULL suite with nothing skipped.
+    #
+    # The rule's other remedy — `pytest.importorskip("openai_codex")` —
+    # is WRONG here and must not be substituted: the tests that mention
+    # the module assert the SDK-ABSENT behaviour (CodexSession must be
+    # constructible without it, and start() must raise CodexSessionError
+    # carrying the pip hint). importorskip would skip exactly the tests
+    # whose whole subject is the absence, i.e. it would delete the
+    # coverage instead of enabling it.
+    #
+    # Costs nothing in CI, which installs `[all,dev]` and already gets
+    # this via `all` (PS-221 §3). It does add openai-codex-cli-bin's
+    # ~285 MB native wheel to a bare `[dev]` install.
+    "scitex-agent-container[codex-sdk]",
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
     # first gained its `path=` parameter in 0.31.1 (verified against the
     # published wheels: 0.31.0 has NEITHER `path=` NOR the CWD-git-root
