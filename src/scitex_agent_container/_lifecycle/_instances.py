@@ -287,6 +287,19 @@ def record_local_instance(
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
+
+    # v4 step 5 — THE BIRTH CERTIFICATE (operator requirement 2026-08-14:
+    # 「起動した後にコンパイルされた最終的なスペックをエージェントが持つ
+    # ようにしてください…状態なのでdb に入れるのがよさそうですよね」).
+    # This is the one point where the COMPILED config and the freshly
+    # minted incarnation id are both in hand, so the fully-resolved spec
+    # (secrets referenced by slot/source name, never by value) is
+    # recorded here, keyed by the same id the beats and the ExitRecord
+    # carry. Best-effort with a LOGGED origin, same contract as the
+    # sibling side-writes above — see ``_birth_certificate``.
+    from ._birth_certificate import write_birth_certificate
+
+    write_birth_certificate(config, instance_id, db_path=db_path)
     return instance_id
 
 
