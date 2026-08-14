@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] scitex-agent-container — agent image build & rebuild (apptainer .sif)
-  [DETAILS] Where sac-base / sac-scitex .def + .sif live (dotfiles containers/), how sac is installed from git@develop, the `sac image build scitex` / `scitex-container build` commands, the @develop→@tag stable pin, and the gotcha that runner/channel changes do NOT reach running agents until the image is rebuilt.
+  [DETAILS] The FOUR-layer chain (system-deps → python-pkgs → base → scitex), where each .def + .sif lives (dotfiles containers/), how sac is installed from the %files-staged source tree, the `sac image build <layer>` / `scitex-container build` commands, which layer to rebuild for a given change (Python pin → python-pkgs; apt/rust → system-deps), the @develop→@tag stable pin, and the gotcha that runner/channel changes do NOT reach running agents until the image is rebuilt.
 tags: [scitex-agent-container-image-build]
 ---
 
@@ -50,14 +50,38 @@ image after a runner/channel change before expecting agents to pick it up.
 
 ## Build / rebuild commands
 
-```bash
-# Preferred (versioned):
-sac image build scitex            # or: scitex-container build scitex-agent-container-scitex
-sac image build base              # rebuild the base layer first if it changed
+The stack is FOUR layers, each built `FROM` the one below it:
 
-# Raw apptainer (from the containers/ dir):
-apptainer build sac-base.sif   sac-base.def
-apptainer build sac-scitex.sif sac-scitex.def   # uses sac-base.sif as bootstrap
+    system-deps  ->  python-pkgs  ->  base  ->  scitex
+
+Split on 2026-08-14 because layers 1 and 2 have very different rebuild
+frequencies: the OS floor (apt + rustup + source-built `tree` + cargo-built
+`rtk`) is most of the bake wall-clock and changes monthly, while the Python
+pin set above it changes weekly. Fused in one recipe, every pin bump re-paid
+the whole apt/cargo cost.
+
+A `:base` container carries exactly what it always did — the split moved
+*where* things install, not what the image contains.
+
+```bash
+# Preferred (versioned). Bottom-up on a cold start:
+sac image build system-deps -y    # 1: OS + apt + node + rust + yq/gdu/tree/rtk
+sac image build python-pkgs -y    # 2: /opt/venv-sac + claude-agent-sdk + sac
+sac image build -y                # 3: :base (default) — bakes the versions manifest
+sac image build scitex -y         # 4: FROM :base + scitex[all]
+
+# After the first pass, rebuild ONLY the layer you changed. A Python-pin bump is:
+sac image build python-pkgs -y && sac image build -y   # never re-pays the apt/rust cost
+
+# Each layer FAILS LOUD before invoking apptainer when its prerequisite SIF is
+# absent, naming the IMMEDIATE parent and the exact command to build it.
+
+# Raw apptainer (from the containers/ dir; you must arrange the prerequisite
+# SIF adjacency yourself — `sac image build` does that staging for you):
+apptainer build sac-system-deps.sif apptainer-system-deps.def
+apptainer build sac-python-pkgs.sif apptainer-python-pkgs.def  # From: ./sac-system-deps.sif
+apptainer build sac-base.sif        apptainer-base.def         # From: ./sac-python-pkgs.sif
+apptainer build sac-scitex.sif      apptainer-scitex.def       # From: ./sac-base.sif
 ```
 
 `sac-scitex.sif` is multi-GB; the build pulls `scitex[all]` (≈1–3 min with uv) plus

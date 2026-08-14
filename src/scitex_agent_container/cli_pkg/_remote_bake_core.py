@@ -44,11 +44,25 @@ _CONTAINERS_ASSETS = Path(__file__).resolve().parent.parent / "containers"
 BAKE_SCRIPT = _CONTAINERS_ASSETS / "spartan-sif-bake.sh"
 SYMBOL_PROBE = _CONTAINERS_ASSETS / "sif_symbol_probe.py"
 
-LAYERS = ("base", "scitex")
+# The four-link chain, bottom-up. Kept in lockstep with
+# _image_layer_chain.STACK_ORDER and with spartan-sif-bake.sh's own PARENT_OF
+# case block — a remote bake that cannot name a layer cannot bake it, and
+# before the 2026-08-14 split this tuple silently capped the remote path at
+# the two layers that existed then.
+LAYERS = ("system-deps", "python-pkgs", "base", "scitex")
 
 # Timestamped artifact name, e.g. sac-scitex-2026-0717-092952.sif —
 # matches scitex-container's ``_store`` timestamp shape.
-SIF_RE = re.compile(r"^sac-(?P<layer>base|scitex)-(?P<ts>\d{4}-\d{4}-\d{6})\.sif$")
+#
+# Built FROM ``LAYERS`` rather than hand-spelled: the previous literal
+# ``base|scitex`` alternation was a second place the layer set had to be
+# updated, and a stale one here does not fail loudly — it just stops
+# RECOGNISING freshly baked SIFs, which reads as "the bake produced nothing".
+# ``python-pkgs`` and ``system-deps`` contain a ``-``, so escape each name.
+SIF_RE = re.compile(
+    r"^sac-(?P<layer>" + "|".join(re.escape(_l) for _l in LAYERS) + r")"
+    r"-(?P<ts>\d{4}-\d{4}-\d{6})\.sif$"
+)
 
 # Module-level seams (save/restore in tests, same pattern as image_group's
 # _load_apptainer): every subprocess this pipeline spawns goes through

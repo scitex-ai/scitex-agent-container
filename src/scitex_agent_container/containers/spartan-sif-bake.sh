@@ -104,9 +104,17 @@ fail() {
     exit 1
 }
 
+# The image stack is a four-link chain (2026-08-14 split of the monolithic
+# :base). PARENT_OF is the SSoT here for what each layer bootstraps off, and
+# must stay in lockstep with cli_pkg/_image_layer_chain.BOOTSTRAP_PARENT.
+# An EMPTY parent means "bootstraps from the registry, no prior SIF".
 case "$LAYER" in
-    base|scitex) : ;;
-    *) fail "bad-layer" "--layer must be base|scitex, got '${LAYER}'" ;;
+    system-deps) PARENT_LAYER="" ;;
+    python-pkgs) PARENT_LAYER="system-deps" ;;
+    base)        PARENT_LAYER="python-pkgs" ;;
+    scitex)      PARENT_LAYER="base" ;;
+    *) fail "bad-layer" \
+         "--layer must be system-deps|python-pkgs|base|scitex, got '${LAYER}'" ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -176,11 +184,16 @@ echo "clone: $REPO at $HEAD_SHA (origin/$BRANCH)"
 # ---------------------------------------------------------------------------
 STEP="skip-check"
 STATE_FILE="$WORKDIR/state/$LAYER.last"
+# Resolve the PARENT layer's live SIF, whatever that parent is. This was
+# hardcoded to scitex->base; with a four-link chain that left `--layer base`
+# staging no bootstrap at all, so apptainer would FATAL on an unresolvable
+# `From: ./sac-python-pkgs.sif`.
 BASE_LIVE=""
-if [ "$LAYER" = "scitex" ]; then
-    BASE_LIVE="$(readlink -f "$STORE/sac-base.sif" 2>/dev/null || true)"
+if [ -n "$PARENT_LAYER" ]; then
+    BASE_LIVE="$(readlink -f "$STORE/sac-$PARENT_LAYER.sif" 2>/dev/null || true)"
     [ -n "$BASE_LIVE" ] && [ -f "$BASE_LIVE" ] \
-        || fail "missing-base" "no live sac-base.sif in $STORE — bake base first"
+        || fail "missing-parent" \
+             "no live sac-$PARENT_LAYER.sif in $STORE — bake $PARENT_LAYER first"
 fi
 STATE_KEY="$HEAD_SHA:$(basename "${BASE_LIVE:-none}")"
 if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
@@ -211,8 +224,9 @@ cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
-if [ "$LAYER" = "scitex" ]; then
-    ln -s "$BASE_LIVE" "$CTX/sac-base.sif" || fail "stage-base-sif"
+if [ -n "$PARENT_LAYER" ]; then
+    # The .def's relative `From: ./sac-<parent>.sif` resolves against $CTX.
+    ln -s "$BASE_LIVE" "$CTX/sac-$PARENT_LAYER.sif" || fail "stage-parent-sif"
 fi
 echo "stage: $CTX"
 
