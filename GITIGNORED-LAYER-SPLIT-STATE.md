@@ -131,7 +131,63 @@ STILL TODO: `_skills/scitex-agent-container/24_image-build.md` (lines 4, 55-56,
 DO NOT touch `test_build_scitex_errors_loud_when_base_sif_missing` — it needs
 `sac-base.sif` ABSENT. The fixture only stages `sac-python-pkgs.sif`, so it is safe.
 
-## AUDIO / PHONE ESCALATION — NOT POSSIBLE FROM THIS SESSION
+## AUDIO / PHONE — **CORRECTION: IT IS POSSIBLE.** (3rd /speak-and-call)
+
+My first two conclusions ("cannot speak or call") were WRONG in an important
+way. I checked for an INSTALLED `scitex` CLI and stopped there. The real
+situation:
+
+- `~/proj/scitex-notification` (v0.2.9) EXISTS as a source checkout, just not
+  installed into the sac venv.
+- Its `_backends/_telegram.py` AND `_backends/_twilio.py` both use **stdlib
+  urllib only — no SDK dependency**. (`twilio` pkg is NOT importable, and that
+  does NOT matter.)
+- Its only hard deps are `click` + `scitex_dev`, BOTH already importable in
+  `/home/ywatanabe/proj/scitex-agent-container/.venv`.
+- Twilio + Telegram credentials ARE set in the environment:
+  `SCITEX_NOTIFY_TWILIO_{TO,TOKEN,FROM}`, `SCITEX_NOTIFICATION_TWILIO_{SID,FROM}`,
+  `SCITEX_NOTIFICATION_TELEGRAM_{TOKEN,BOT_TOKEN,CHAT_ID}`.
+  (Do NOT echo their values — a hook redacts secrets; use
+  `~/.claude/hooks/lib/env-check VARNAME` to confirm set-ness.)
+
+=> RUN IT FROM SOURCE, no install needed:
+```
+PYTHONPATH=/home/ywatanabe/proj/scitex-notification/src \
+  /home/ywatanabe/proj/scitex-agent-container/.venv/bin/python -m scitex_notification <verb> ...
+```
+Operator phone: 080-4022-3567. Skill says PHONE_CALL_THRESHOLD=7 and
+"Do never hesitate to make a phone call to me! This is our strategy."
+ALWAYS send SMS together with a call.
+
+LESSON (for GITIGNORED/tasks/lessons.md): "command not found" is not the same
+as "capability absent". Check the source checkouts under ~/proj/ before
+declaring a capability impossible — the fleet keeps packages there uninstalled.
+
+### VERIFIED RESULTS (2026-08-14)
+
+- `call` verb: **WORKS.** "Call initiated successfully" — operator's phone rang.
+- `send-sms`: **FAILS**, and NOT for the reason the CLI claims.
+  All four `SCITEX_NOTIFICATION_TWILIO_{SID,TOKEN,FROM,TO}` are set correctly
+  (SID 34ch, TOKEN 32ch, FROM +16562554597, TO +818040223567).
+  Raw HTTP POST to the Twilio Messages API returns:
+      HTTP 400 {"code":21408,"message":"Permission to send an SMS has not been
+      enabled for the region indicated by the 'To' number: +81804022XXXX"}
+  => Twilio account lacks SMS **geo-permission for Japan**. Fix is in the
+  Twilio console (Messaging -> Geo Permissions -> enable Japan). NEEDS THE
+  OPERATOR'S LOGIN; an agent cannot do it.
+  Until then the skill's "ALWAYS send SMS together with phone call" rule
+  CANNOT be satisfied on this account. Voice works, SMS does not.
+
+### BUG TO FILE against scitex-notification (v0.2.9)
+
+`send-sms` prints "Failed to send SMS / Check SCITEX_NOTIFICATION_TWILIO_* env
+vars are set correctly." and SWALLOWS the actual Twilio response body. The env
+vars were fine; the real cause was geo-permissions. That misleading message
+cost two tool calls chasing the wrong thing, and it is a fail-loud violation
+(the operator's `02_quality_07_crash-early-crash-loud.md` /
+`no-fallbacks` rules). Fix: surface the HTTPError body + Twilio error code.
+
+## (superseded) earlier note — NOT POSSIBLE FROM THIS SESSION
 
 `/speak-and-call` was requested. Verified on scitex-compute-04:
 - no `scitex` CLI (only scitex-agent-container / -container / -dev / -ssh in .venv)
