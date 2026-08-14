@@ -24,10 +24,14 @@ Why the checker lives in the test suite, not in a new mechanism
 A checker THAT NOBODY RUNS is the fifth instance of the very disease. So
 this module is consumed by ``tests/scitex_agent_container/
 test__jobs_audit.py``, which runs in ``pytest-matrix-on-ubuntu-py*`` — a
-REQUIRED status check on both ``develop`` and ``main``. It is deliberately
-NOT wired into ``quality-audit-on-ubuntu-latest.yml``: every step there is
-``continue-on-error: true``, so a checker hung off it could never go red,
-which is precisely how you ship instance #5 with a straight face.
+REQUIRED status check on both ``develop`` and ``main``. It was deliberately
+NOT wired into the old ``quality-audit-on-ubuntu-latest.yml``: every step
+there was ``continue-on-error: true``, so a checker hung off it could never
+go red, which is precisely how you ship instance #5 with a straight face.
+That workflow was the disease it warns about and has since been DELETED —
+its five audit steps called pre-0.11 verb spellings that all exited 2, so
+it reported green while measuring nothing (instance #6). The choice of host
+stands regardless: a checker belongs on a check that can fail.
 
 Three states, never two
 =======================

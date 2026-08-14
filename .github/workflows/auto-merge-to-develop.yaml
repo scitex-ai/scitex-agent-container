@@ -216,7 +216,6 @@ jobs:
           # Space-separated; every entry must accept a bare workflow_dispatch.
           POST_MERGE_GATES: >-
             pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
-            quality-audit-on-ubuntu-latest.yml
             lint.yml
             import-smoke-on-ubuntu-py3-12.yml
             no-hosted-runners-guard-on-self-hosted.yml

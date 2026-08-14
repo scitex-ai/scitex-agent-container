@@ -33,7 +33,6 @@
 <p align="center">
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml?branch=develop&label=Tests" alt="Tests"></a>
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/import-smoke-on-ubuntu-py3-12.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/import-smoke-on-ubuntu-py3-12.yml?branch=develop&label=Install-Check" alt="Install-Check"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/quality-audit-on-ubuntu-latest.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/quality-audit-on-ubuntu-latest.yml?branch=develop&label=Quality" alt="Quality"></a>
   <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container"><img src="https://img.shields.io/codecov/c/github/ywatanabe1989/scitex-agent-container/develop?label=CodeCov" alt="CodeCov"></a>
 </p>
 <!-- scitex-badges:end -->
