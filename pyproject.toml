@@ -692,6 +692,69 @@ target-version = "py310"
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
+# ---------------------------------------------------------------------------
+# T201 (`print` found) allowlist — the raw-print gate's ONLY escape hatch.
+#
+# CI (.github/workflows/lint.yml, step "No raw print() in src/ (T201)") runs
+# `ruff check --select T201,T203 src/`. sac's diagnostics belong to
+# scitex-logging, which stamps the emitting module on every record and fans out
+# to the rotating runtime log as well as stderr; a raw print carries no origin
+# and dies with whatever stream was attached.
+#
+# Note T201 already ignores `print(..., file=<injected stream>)`, so a
+# function whose caller supplies `stream=` / `err_stream=` / `log_stream=`
+# needs NO entry here — that print is part of the function's reporting
+# contract, not an unrouted diagnostic. Everything below therefore writes to a
+# HARDCODED stdout/stderr on purpose.
+#
+# HOUSE RULE: one file per entry, each with its own written reason, added
+# deliberately. Never a blanket ignore and never a widened glob — a gate that
+# cannot fail is worse than no gate. If you are tempted to add an entry for a
+# DIAGNOSTIC, you want the logger instead; these exemptions exist only where
+# stdout/stderr IS the interface.
+[tool.ruff.lint.per-file-ignores]
+# The build hook runs under hatch during wheel/sdist construction, before the
+# package (and therefore scitex_logging) is importable at all. Its prints are
+# build-log progress; a logger here would be a circular dependency.
+"src/hatch_build.py" = ["T201"]
+
+# Claude Code WorktreeCreate hook, executed as a standalone script from the
+# agent's own $HOME after being copied out of _baseline_assets. STDOUT IS THE
+# PROTOCOL: the SDK reads the created worktree path from it (`print(policy_path)`),
+# so a stray log line on stdout breaks worktree creation outright. Its stderr
+# prints are the SDK's documented human-diagnostic channel. It also cannot rely
+# on scitex_logging being importable in the environment it is copied into.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_create.py" = ["T201"]
+
+# Same deal: a standalone Claude Code hook copied into the agent's $HOME,
+# reporting through the SDK's stderr channel with no sac import available.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_remove.py" = ["T201"]
+
+# Same deal: a standalone SessionStart hook copied into the agent's $HOME. Its
+# one print is the reap summary the SDK surfaces to the operator.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/session_start_reap_stale.py" = ["T201"]
+
+# `sac never-stop-when-task-remains` is a Claude Code Stop hook whose STDOUT IS
+# A JSON DECISION FRAME (tests/.../test_never_stop_when_task_remains_cmds.py
+# asserts `json.loads(stdout)` still parses). Routing its stderr diagnostics to
+# a logger would risk a handler putting log text on stdout and corrupting that
+# frame — the precise failure class this whole change is meant to avoid.
+"src/scitex_agent_container/cli_pkg/never_stop_when_task_remains_cmds.py" = ["T201"]
+
+# `sac-statusline` is invoked by Claude Code on every status-line update and its
+# STDOUT IS THE RENDERED STATUS LINE consumed by the client. Nothing else may
+# appear there.
+"src/scitex_agent_container/statusline.py" = ["T201"]
+
+# A standalone probe baked into the SIF and run by the image build to verify
+# the artifact's symbols. It deliberately imports nothing from sac (that is the
+# point of the probe) and its stdout OK/FATAL lines are the build's verdict.
+"src/scitex_agent_container/containers/sif_symbol_probe.py" = ["T201"]
+
+# A worked example shipped inside a skill for operators to copy and run; its
+# print is the example's output. Not a sac code path.
+"src/scitex_agent_container/_skills/scitex-agent-container/scitex_smoke_test.py" = ["T201"]
+
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters
 # (subprocess.run, jupyter nbconvert --execute, etc.) are wired in via
