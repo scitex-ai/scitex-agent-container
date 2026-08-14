@@ -238,23 +238,16 @@ def image_build(
     not a build failure). "Reproducible" here means ENVIRONMENT IDENTITY
     (same version set), not byte-identical digests.
 
-    \b
-    The stack is FOUR layers, each built FROM the one below it. Build them
-    bottom-up the first time; after that rebuild only the layer you changed
-    and everything below it is reused untouched:
-      1. system-deps   OS + apt + node + rust + static bins  (~15-20 min)
-      2. python-pkgs   /opt/venv-sac + claude-agent-sdk + sac (~5-10 min)
-      3. base          bakes the `sac versions` manifest      (~1 min)
-      4. scitex        FROM :base + scitex[all]               (~10-20 min)
-    `proxy` is also buildable but is NOT in the chain — it is a standalone
-    sidecar image built straight from the registry.
+    Build bottom-up the first time; after that rebuild only the layer you
+    changed — the ones below it are reused untouched. See _image_layer_chain
+    for the chain itself. `proxy` is buildable but is NOT in the chain.
 
     \b
     Examples:
-      $ sac image build system-deps -y # layer 1 (from ubuntu:24.04)
-      $ sac image build python-pkgs -y # layer 2 (needs sac-system-deps.sif)
-      $ sac image build                # layer 3 :base (default; needs sac-python-pkgs.sif)
-      $ sac image build scitex         # layer 4 (needs sac-base.sif)
+      $ sac image build system-deps -y # 1: OS+apt+node+rust (from ubuntu:24.04)
+      $ sac image build python-pkgs -y # 2: venv+sdk+sac (needs sac-system-deps.sif)
+      $ sac image build                # 3: :base, default (needs sac-python-pkgs.sif)
+      $ sac image build scitex         # 4: scitex[all] (needs sac-base.sif)
       $ sac image build --sandbox      # writable sandbox dir
       $ sac image build --reproducible # round trip + .verified marker (~2x build time)
     """

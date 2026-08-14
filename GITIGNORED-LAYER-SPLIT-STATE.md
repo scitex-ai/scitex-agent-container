@@ -102,7 +102,14 @@ not touched.)
   `test_build_base_passes_none_bootstrap_sif` →
   `test_build_system_deps_passes_none_bootstrap_sif` and pointed it at
   `system-deps` (the property moved with the bottom of the stack, it did not vanish).
-  **Run 3 result not yet seen.**
+- Run 3: **168 passed, 0 failed in 4.08s** — GREEN across all six affected files
+  (test_image_group, test__image_source_build, playwright_libs, cross_host_tools,
+  scitex_todo, openai_agents). Verified with
+  `PYTHONPATH=<worktree>/src` so the worktree's code was actually exercised.
+
+CAUTION: `pytest <worktree>/tests/scitex_agent_container/cli_pkg/ <worktree>/tests/integration/`
+(whole dirs) TIMED OUT at 120s — something in those dirs is slow/hanging. The
+six-file targeted run is 4s. Investigate before assuming a full-suite green.
 
 DO NOT touch `test_build_scitex_errors_loud_when_base_sif_missing` — it needs
 `sac-base.sif` ABSENT. The fixture only stages `sac-python-pkgs.sif`, so it is safe.
