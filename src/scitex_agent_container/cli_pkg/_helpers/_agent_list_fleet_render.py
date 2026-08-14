@@ -56,9 +56,9 @@ def _suppression_note(listing: FleetListing) -> str:
     if not listing.suppressed_reason:
         return ""
     named = sum(1 for r in listing.reports if r.status == NOT_QUERIED)
-    n = max(0, listing.peers_known - named)
-    if not n:
-        return "" if named else f"peers not queried ({listing.suppressed_reason})"
+    n = listing.peers_known - named
+    if n <= 0:
+        return ""
     noun = "peer" if n == 1 else "peers"
     return f"{n} {noun} NOT queried ({listing.suppressed_reason})"
 

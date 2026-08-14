@@ -155,6 +155,9 @@ class FleetListing:
     reports: list[HostReport] = field(default_factory=list)
     resolutions: tuple[tuple[str, str], ...] = ()
     suppressed_reason: str = ""
+    # Peers IN SCOPE for this listing (i.e. after ``--host``), NOT the whole
+    # topology: the header's "N peers NOT queried" note should describe what
+    # this run meant to do, not enumerate machines the caller excluded.
     peers_known: int = 0
 
     @property

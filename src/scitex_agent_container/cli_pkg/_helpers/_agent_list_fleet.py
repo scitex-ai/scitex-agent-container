@@ -134,8 +134,12 @@ def collect_fleet(
     all_targets = (
         list(targets) if targets is not None else resolve_targets(local_host=local_host)
     )
-    peers_known = sum(1 for t in all_targets if not t.local)
     selected, resolutions = resolve_host_filter(hosts, all_targets, local_host)
+    # Peers IN SCOPE for this listing, i.e. after ``--host``. Counted post-filter
+    # so the header's "N peers NOT queried" note describes what this run meant to
+    # do: an operator who asked for one host does not need to be told about nine
+    # machines he deliberately excluded.
+    peers_known = sum(1 for t in selected if not t.local)
 
     suppressed = fanout_suppressed_reason(no_fanout)
     skipped: list[HostTarget] = []

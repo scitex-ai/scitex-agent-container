@@ -558,6 +558,36 @@ def test_suppressed_fanout_says_so_in_the_header():
     assert "2 peers NOT queried (--no-fanout)" in line
 
 
+def test_a_localhost_only_listing_does_not_mention_the_peers_it_excluded():
+    # Arrange -- the caller asked for one host; the others are not news, and a
+    # note about them would train him to skim the line that matters.
+    listing = collect_fleet(
+        targets=_targets("mba", "spartan"),
+        local_lister=_one_local,
+        hosts=["localhost"],
+        no_fanout=True,
+    )
+    # Act
+    line = summary_line(listing)
+    # Assert
+    assert "NOT queried" not in line
+
+
+def test_a_named_peer_is_not_also_counted_in_the_aggregate_note():
+    # Arrange -- it already has its own not_queried row; saying it twice makes
+    # the header noisier without making it truer.
+    listing = collect_fleet(
+        targets=_targets("mba", "spartan"),
+        local_lister=_one_local,
+        hosts=["localhost", "spartan"],
+        no_fanout=True,
+    )
+    # Act
+    line = summary_line(listing)
+    # Assert
+    assert "NOT queried" not in line
+
+
 def test_a_named_host_that_was_not_queried_gets_its_own_row():
     # Arrange -- the operator ASKED for spartan; silence would read "empty".
     listing = collect_fleet(
