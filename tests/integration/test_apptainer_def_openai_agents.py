@@ -34,6 +34,10 @@ from pathlib import Path
 
 import pytest
 
+from ._base_stack import base_stack_text
+
+# The sac install moved to :python-pkgs in the four-layer split; the property
+# under test is about the :base IMAGE, so read the composed stack.
 _CONTAINERS = (
     Path(__file__).resolve().parents[2]
     / "src"
@@ -45,7 +49,7 @@ _CONTAINERS = (
 @pytest.fixture(scope="module")
 def base_def_text() -> str:
     # Arrange
-    return (_CONTAINERS / "apptainer-base.def").read_text()
+    return base_stack_text()
 
 
 @pytest.fixture(scope="module")
@@ -147,9 +151,7 @@ def test_scitex_def_floors_openai_agents_in_both_branches(
 def test_scitex_def_floor_matches_pyproject_extra(scitex_def_text: str) -> None:
     # Arrange — the .def floor mirrors pyproject's [openai] extra; a bump
     # in one without the other is drift this test refuses.
-    pyproject = (
-        Path(__file__).resolve().parents[2] / "pyproject.toml"
-    ).read_text()
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
     # Act
     in_both = "openai-agents>=0.17.4" in pyproject and (
         "openai-agents>=0.17.4" in scitex_def_text

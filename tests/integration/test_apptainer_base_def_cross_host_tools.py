@@ -26,13 +26,13 @@ from pathlib import Path
 
 import pytest
 
-_DEF = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "scitex_agent_container"
-    / "containers"
-    / "apptainer-base.def"
-)
+from ._base_stack import base_stack_paths
+
+# The apt install lives in :system-deps since the four-layer split, but the
+# property under test is about the :base IMAGE — so scan every recipe that
+# composes it rather than pinning this test to whichever layer currently
+# holds the apt block.
+_DEFS = base_stack_paths()
 
 
 def _installed_tokens() -> set[str]:
@@ -49,30 +49,34 @@ def _installed_tokens() -> set[str]:
     package, not that someone wrote its name down.
     """
     tokens: set[str] = set()
-    in_block = False
-    for raw in _DEF.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0]  # comments carry no packages
-        stripped = line.strip()
-        if "apt-get install" in stripped:
-            in_block = True
-            stripped = stripped.split("apt-get install", 1)[1]
-        elif not in_block:
-            continue
-        continues = stripped.endswith("\\")
-        for tok in stripped.rstrip("\\").split():
-            if not tok.startswith("-"):  # skip -y, --no-install-recommends
-                tokens.add(tok)
-        if not continues:
-            in_block = False
+    for path in _DEFS:
+        in_block = False
+        # Reset per recipe: a continuation must never bleed across a file
+        # boundary, or a def ending mid-block would swallow the next def's
+        # opening lines as package names.
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0]  # comments carry no packages
+            stripped = line.strip()
+            if "apt-get install" in stripped:
+                in_block = True
+                stripped = stripped.split("apt-get install", 1)[1]
+            elif not in_block:
+                continue
+            continues = stripped.endswith("\\")
+            for tok in stripped.rstrip("\\").split():
+                if not tok.startswith("-"):  # skip -y, --no-install-recommends
+                    tokens.add(tok)
+            if not continues:
+                in_block = False
     return tokens
 
 
 def test_the_base_def_exists_at_the_expected_path() -> None:
     """Control: if this fails, every other assertion here is vacuous."""
-    # Arrange
-    path = _DEF
+    # Arrange — every recipe composing :base, not just one file
+    path = _DEFS[0]
     # Act
-    found = path.is_file()
+    found = all(p.is_file() for p in _DEFS)
     # Assert
     assert found is True
 

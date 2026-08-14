@@ -762,13 +762,59 @@ def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_bootstrap_sif_base_returns_none(tmp_path):
-    # Arrange — top-of-stack ``base`` has no prerequisite SIF.
+def test_resolve_bootstrap_sif_system_deps_returns_none(tmp_path):
+    # Arrange — ``system-deps`` is the BOTTOM of the chain: it bootstraps
+    # off the pinned ubuntu registry image, not a prior SIF.
     out_dir = tmp_path / "out"
+    # Act
+    result = isb.resolve_bootstrap_sif("system-deps", out_dir)
+    # Assert
+    assert result is None
+
+
+def test_resolve_bootstrap_sif_proxy_returns_none(tmp_path):
+    # Arrange — ``proxy`` is a standalone sidecar built straight from the
+    # registry. It is buildable but is not a link in the four-layer chain,
+    # so it has no prerequisite either.
+    out_dir = tmp_path / "out"
+    # Act
+    result = isb.resolve_bootstrap_sif("proxy", out_dir)
+    # Assert
+    assert result is None
+
+
+def test_resolve_bootstrap_sif_base_returns_inner_python_pkgs_boot_symlink(tmp_path):
+    # Arrange — since the four-layer split, ``base`` is NO LONGER the bottom
+    # of the stack: it bootstraps off :python-pkgs. Same atomic layout as
+    # every other link — the STABLE inner boot symlink beside the live
+    # timestamped SIF.
+    out_dir = tmp_path / "out"
+    parent_dir = out_dir / "sac-python-pkgs"
+    parent_dir.mkdir(parents=True)
+    real_sif = parent_dir / "sac-python-pkgs-20260814T000000Z.sif"
+    real_sif.write_bytes(b"fake python-pkgs SIF")
+    inner = parent_dir / "sac-python-pkgs.sif"
+    inner.symlink_to(real_sif.name)
     # Act
     result = isb.resolve_bootstrap_sif("base", out_dir)
     # Assert
-    assert result is None
+    assert result == inner
+
+
+def test_resolve_bootstrap_sif_python_pkgs_names_its_immediate_parent(tmp_path):
+    # Arrange — the chain is four links deep, so a missing prerequisite must
+    # name the IMMEDIATE parent. Pointing every failure at ``base`` (as the
+    # single-link version did) would send the operator to build the very
+    # layer that is blocked.
+    out_dir = tmp_path / "out"
+
+    # Act
+    def _call():
+        return isb.resolve_bootstrap_sif("python-pkgs", out_dir)
+
+    # Assert
+    with pytest.raises(isb.BootstrapSifMissing, match=r"sac image build system-deps"):
+        _call()
 
 
 def test_resolve_bootstrap_sif_scitex_returns_inner_base_boot_symlink(tmp_path):
@@ -812,10 +858,35 @@ def test_resolve_bootstrap_sif_scitex_raises_when_base_missing(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-# All three shipped .defs — base/scitex/proxy. _LAYERS only covers
-# base+scitex (those are what ``sac image build`` accepts); proxy is
-# built by other paths but the same source-bundled invariant applies.
+# Every shipped .def. _LAYERS covers all five since the four-layer split
+# (system-deps / python-pkgs / base / scitex / proxy); the union with the
+# proxy literal is kept so this set stays correct if proxy is ever dropped
+# from the CLI's layer map while still shipping a recipe.
 _ALL_DEF_NAMES = sorted(set(_LAYERS.values()) | {"apptainer-proxy.def"})
+
+# The subset that actually INSTALLS sac from the staged source tree, and so
+# must carry the %files entry and the /opt/scitex-agent-container-src path.
+#
+# Two recipes are excluded, and neither exclusion is a loosening of the
+# invariant — it never applied to them:
+#
+#   * apptainer-system-deps.def is the OS floor. It has no Python packaging
+#     step at all (no venv, no uv), so there is nothing for a staged source
+#     tree to be installed INTO. Staging it there would copy the tree into a
+#     layer that cannot consume it.
+#   * apptainer-base.def became a thin capstone in the four-layer split: it
+#     bakes the `sac versions` manifest against the venv that :python-pkgs
+#     already assembled. It INHERITS both the install and the staged tree at
+#     /opt/scitex-agent-container-src from its parent layer, so re-declaring
+#     %files would re-copy the source over an identical inherited path — the
+#     exact nesting hazard apptainer-scitex.def carries a guard for.
+#
+# The invariant these tests exist to protect — the in-SIF sac is the source
+# tree that shipped the .def, never a git+... snapshot — is unchanged and is
+# still enforced on every recipe that performs the install.
+_SAC_INSTALLING_DEF_NAMES = sorted(
+    set(_ALL_DEF_NAMES) - {"apptainer-system-deps.def", "apptainer-base.def"}
+)
 
 
 @pytest.fixture
@@ -827,7 +898,7 @@ def def_text(request) -> str:
     return path.read_text()
 
 
-@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+@pytest.mark.parametrize("def_text", _SAC_INSTALLING_DEF_NAMES, indirect=True)
 def test_def_has_files_section_copying_bundled_source(def_text: str):
     # Arrange — the .def declares the %files entry the staging helper depends on
     expected = f"{isb._STAGED_SRC_NAME} /opt/scitex-agent-container-src"
@@ -841,7 +912,7 @@ def test_def_has_files_section_copying_bundled_source(def_text: str):
     )
 
 
-@pytest.mark.parametrize("def_text", _ALL_DEF_NAMES, indirect=True)
+@pytest.mark.parametrize("def_text", _SAC_INSTALLING_DEF_NAMES, indirect=True)
 def test_def_installs_sac_from_bundled_source_absolute_path(def_text: str):
     # Arrange — %post installs from the bundled source path — not from git
     expected = "/opt/scitex-agent-container-src"
@@ -887,8 +958,8 @@ def test_recipes_dir_holds_all_three_shipped_defs():
 
 
 def test_def_files_use_consistent_staged_source_name():
-    # Arrange — all three .defs must agree on the path inside the image
-    names = _ALL_DEF_NAMES
+    # Arrange — every .def that INSTALLS sac must agree on the in-image path
+    names = _SAC_INSTALLING_DEF_NAMES
     # Act
     missing = [
         name
@@ -904,8 +975,9 @@ def test_def_files_use_consistent_staged_source_name():
 
 
 def test_staged_src_name_matches_def_files_files_entry():
-    # Arrange — the contract: every .def declares _STAGED_SRC_NAME in %files
-    names = _ALL_DEF_NAMES
+    # Arrange — the contract: every sac-installing .def declares
+    # _STAGED_SRC_NAME in %files
+    names = _SAC_INSTALLING_DEF_NAMES
     # Act
     missing = [
         name

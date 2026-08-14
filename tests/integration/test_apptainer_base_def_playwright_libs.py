@@ -30,10 +30,11 @@ from pathlib import Path
 
 import pytest
 
+from ._base_stack import base_stack_text
+
+# The apt block moved to :system-deps in the four-layer split; the property
+# under test is about the :base IMAGE, so read the whole composed stack.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_BASE_DEF = (
-    _REPO_ROOT / "src" / "scitex_agent_container" / "containers" / "apptainer-base.def"
-)
 
 # The launch-critical subset of `npx playwright install-deps chromium`. Every
 # one of these was reported "not found" by `ldd` on the current SIF's chromium.
@@ -72,7 +73,7 @@ _REQUIRED_LIBS = (
 @pytest.fixture(scope="module")
 def base_def_text() -> str:
     # Arrange
-    return _BASE_DEF.read_text()
+    return base_stack_text()
 
 
 def _apt_install_block(text: str) -> str:

@@ -47,10 +47,11 @@ from pathlib import Path
 
 import pytest
 
+from ._base_stack import base_stack_text
+
+# The uv pip install block moved to :python-pkgs in the four-layer split; the
+# property under test is about the :base IMAGE, so read the composed stack.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_BASE_DEF = (
-    _REPO_ROOT / "src" / "scitex_agent_container" / "containers" / "apptainer-base.def"
-)
 
 # The capability floor the fleet actually depends on: the WIP-gate fix
 # (scitex-todo #356, first released in 0.8.0) — the gate counts ``in_progress``
@@ -86,7 +87,7 @@ _FLOOR_RE = re.compile(r"(?:>=|==|~=)\s*(?P<version>\d+(?:\.\d+)*)")
 @pytest.fixture(scope="module")
 def base_def_text() -> str:
     # Arrange
-    return _BASE_DEF.read_text()
+    return base_stack_text()
 
 
 def _uv_pip_install_block(text: str) -> str:
