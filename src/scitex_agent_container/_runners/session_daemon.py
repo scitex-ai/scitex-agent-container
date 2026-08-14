@@ -4,10 +4,11 @@ Extracted verbatim from :mod:`.claude_session` (v4 migration step 3 —
 "sac owns the process; a harness owns only the turn"). This module owns
 the RESIDENCY machinery: PID file write, SIGTERM/SIGINT handling, the
 heartbeat side-task, the inbox that feeds turns to the harness, the
-optional A2A inbound sidecar, the autonomous drive-until-done loop, and
-clean shutdown. It knows nothing about any vendor SDK — the actual
-conversation is delegated to the ``turn_driver`` callable that the
-harness-specific runner supplies (:mod:`.claude_session` passes its
+optional A2A inbound sidecar, the autonomous drive-until-done loop
+(:mod:`._session_autonomous`), and clean shutdown. It knows nothing
+about any vendor SDK — the actual conversation is delegated to the
+``turn_driver`` callable that the harness-specific runner supplies
+(:mod:`.claude_session` passes its
 ``_session_conversation.run_conversation``).
 
 Turn-driver contract (the seam a future harness runner implements)::
@@ -22,6 +23,27 @@ Turn-driver contract (the seam a future harness runner implements)::
 The driver drains :class:`._session_inbox.TurnEnvelope` items from
 ``inbox`` until it sees a :class:`._session_inbox.ShutdownEnvelope`,
 resolving each envelope's ``response`` future with the assistant reply.
+
+v4 step 5 — the liveness artifact + the residency contract
+----------------------------------------------------------
+The daemon's beats carry ``{incarnation_id, pid, seq, state,
+turns_completed, ts, writer}`` with the resident state split into
+``starting | busy | ready | stopping`` — READY meaning "the inbox has a
+live consumer", which is precisely what a bare process-alive signal
+could not say. On EVERY exit path the daemon writes a terminal
+ExitRecord (``exit.json`` — see :mod:`._incarnation`) naming WHY it
+ended: ``stopped-by-signal`` / ``oneshot-complete`` /
+``harness-returned`` / ``crashed``.
+
+THE RESIDENCY CONTRACT (the zombie fix, card
+sac-sdk-runner-stop-never-set-zombie-resident-20260814): the
+conversation task's completion is TIED to ``stop`` via a done-callback
+(:func:`._daemon_contract.make_convo_done_callback`). Before this,
+nothing set ``stop`` when the turn driver returned or died on its own —
+the daemon stayed parked on ``stop.wait()`` forever, a RESIDENT ZOMBIE
+with green heartbeats, a bound a2a port, and no inbox consumer. Now the
+daemon exits instead, with ``reason=harness-returned`` (clean return)
+or ``crashed`` (exception) in the ExitRecord and a non-zero exit code.
 """
 
 from __future__ import annotations
@@ -33,6 +55,22 @@ import signal
 from pathlib import Path
 from typing import Any
 
+from ._daemon_contract import (
+    make_convo_done_callback,
+    make_daemon_state_fn,
+    resolve_exit,
+)
+from ._incarnation import (
+    EXIT_ONESHOT_COMPLETE,
+    EXIT_STOPPED_BY_SIGNAL,
+    WRITER_SESSION_DAEMON,
+    ExitReasonHolder,
+    clear_exit_record,
+    clear_incarnation_binding,
+    try_bind_incarnation,
+    write_exit_record,
+)
+from ._session_autonomous import _autonomous_loop
 from ._session_state import (
     DEFAULT_TICK_SECONDS,
     STATE_STARTING,
@@ -49,48 +87,7 @@ from ._session_state import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["run_session_daemon"]
-
-
-async def _autonomous_loop(
-    inbox: "asyncio.Queue",
-    *,
-    mission: str,
-    drive_until: str,
-    max_turns: int,
-    kick_text: str,
-    stop: asyncio.Event,
-    loop: asyncio.AbstractEventLoop,
-) -> int:
-    """Drive turns until ``drive_until`` matches an assistant reply or
-    ``max_turns`` is reached.
-
-    Returns 0 on a clean ``drive_until`` match, 1 if the cap is hit
-    without a match. Always sets ``stop`` before returning so the
-    surrounding daemon shuts down cleanly.
-
-    F-CS3 phase 2 — pairs with the schema landed in phase 1
-    (``spec.autonomous`` in agent yaml).
-    """
-    from ._session_inbox import TurnEnvelope
-
-    text = mission
-    rc = 1
-    for _ in range(max(1, max_turns)):
-        if stop.is_set():
-            break
-        env = TurnEnvelope(text=text, response=loop.create_future(), exit_after=False)
-        await inbox.put(env)
-        try:
-            reply = await env.response
-        except Exception:  # stx-allow: fallback (reason: convo task may fail mid-loop; treat as terminal — set stop and exit non-zero)
-            break
-        if drive_until and drive_until in (reply or ""):
-            rc = 0
-            break
-        text = kick_text
-    stop.set()
-    return rc
+__all__ = ["_autonomous_loop", "run_session_daemon"]
 
 
 async def run_session_daemon(
@@ -115,11 +112,15 @@ async def run_session_daemon(
     serve_inbound_fn: Any | None = None,
     shutdown_timeout_s: float = 5.0,
 ) -> int:
-    """Run the daemon loop until SIGTERM / SIGINT.
+    """Run the daemon loop until SIGTERM / SIGINT — or until the
+    conversation task ends on its own (the residency contract; see the
+    module docstring).
 
-    Returns the exit code (0 on clean shutdown). Idempotent re-entry is
-    *not* attempted — the adapter is responsible for ensuring at most
-    one runner per name.
+    Returns the exit code: 0 for a planned end (signal stop, one-shot
+    completion), non-zero when the harness violated residency
+    (``harness-returned`` / ``crashed``). Idempotent re-entry is *not*
+    attempted — the adapter is responsible for ensuring at most one
+    runner per name.
 
     ``turn_driver`` is the harness seam: the async callable that owns
     the conversation (see the module docstring for its call shape). The
@@ -146,9 +147,33 @@ async def run_session_daemon(
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
 
+    # v4 step 5 — incarnation + exit bookkeeping. A NEW daemon must not
+    # inherit its predecessor's incarnation bind (in-process test
+    # harnesses run several daemons per interpreter) nor its farewell
+    # ExitRecord; the bind is then re-attempted per beat until the start
+    # path publishes the fresh ``instance_id`` marker.
+    clear_incarnation_binding(state_dir)
+    clear_exit_record(state_dir)
+    try_bind_incarnation(state_dir)
+    exit_cause = ExitReasonHolder()
+    # ``convo_task`` is created further down; the beat state machine and
+    # the exit resolution see it through this mutable ref.
+    convo_ref: dict[str, asyncio.Task | None] = {"task": None}
+    # A ``--print-stream`` mission is a PLANNED one-shot: the driver
+    # returning is its success, not a residency violation.
+    oneshot_mode = bool(mission and print_stream and not autonomous_enabled)
+
     def _on_signal(signum: int) -> None:
         logger.info("runner %s received signal %d, stopping", name, signum)
-        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING, name=name, host=host)
+        exit_cause.set_once(EXIT_STOPPED_BY_SIGNAL, 0)
+        write_heartbeat(
+            state_dir,
+            pid=pid,
+            state=STATE_STOPPING,
+            name=name,
+            host=host,
+            writer=WRITER_SESSION_DAEMON,
+        )
         stop.set()
 
     # Register signal handlers BEFORE the first heartbeat write. The
@@ -173,7 +198,14 @@ async def run_session_daemon(
         pass
     else:
         write_started_at(state_dir)
-    write_heartbeat(state_dir, pid=pid, state=STATE_STARTING, name=name, host=host)
+    write_heartbeat(
+        state_dir,
+        pid=pid,
+        state=STATE_STARTING,
+        name=name,
+        host=host,
+        writer=WRITER_SESSION_DAEMON,
+    )
 
     hb_task = asyncio.create_task(
         _heartbeat_loop(
@@ -183,6 +215,8 @@ async def run_session_daemon(
             stop=stop,
             name=name,
             host=host,
+            state_fn=make_daemon_state_fn(state_dir, stop=stop, convo_ref=convo_ref),
+            writer=WRITER_SESSION_DAEMON,
         ),
     )
 
@@ -191,6 +225,18 @@ async def run_session_daemon(
     inbox: asyncio.Queue = make_inbox()
     convo_task: asyncio.Task | None = None
     http_task: asyncio.Task | None = None
+
+    def _write_exit() -> int:
+        """Write the terminal ExitRecord; returns the exit code."""
+        reason, code = resolve_exit(exit_cause, convo_ref)
+        write_exit_record(
+            state_dir,
+            reason=reason,
+            code=code,
+            incarnation_id=try_bind_incarnation(state_dir),
+            pid=pid,
+        )
+        return code
 
     if a2a_port is not None:
         if serve_inbound_fn is None:
@@ -241,12 +287,28 @@ async def run_session_daemon(
                 a2a_port=a2a_port,
             )
         )
+        convo_ref["task"] = convo_task
+        # THE ZOMBIE FIX (see module docstring + _daemon_contract): the
+        # conversation ending — clean return, crash, or stray cancel —
+        # folds into ``stop`` with its honest cause instead of leaving a
+        # resident zombie parked on ``stop.wait()``.
+        convo_task.add_done_callback(
+            make_convo_done_callback(
+                name=name,
+                stop=stop,
+                exit_cause=exit_cause,
+                oneshot_mode=oneshot_mode,
+            )
+        )
         if mission and autonomous_enabled:
             # F-CS3 phase 2: drive turns until drive_until matches or
             # max_turns is reached. The loop sets ``stop`` itself, so
             # the surrounding shutdown path handles cleanup uniformly.
-            autonomous_task = asyncio.create_task(
-                _autonomous_loop(
+            # The wrapper records the one-shot cause — UNLESS the driver
+            # died mid-loop, in which case the done-callback's CRASHED
+            # (first cause wins) must not be papered over.
+            async def _drive_autonomous() -> int:
+                rc = await _autonomous_loop(
                     inbox,
                     mission=mission,
                     drive_until=autonomous_drive_until,
@@ -255,8 +317,18 @@ async def run_session_daemon(
                     stop=stop,
                     loop=loop,
                 )
-            )
-        if mission and print_stream and not autonomous_enabled:
+                task = convo_ref["task"]
+                driver_died = (
+                    task is not None
+                    and task.done()
+                    and (task.cancelled() or task.exception() is not None)
+                )
+                if not driver_died:
+                    exit_cause.set_once(EXIT_ONESHOT_COMPLETE, rc)
+                return rc
+
+            autonomous_task = asyncio.create_task(_drive_autonomous())
+        if oneshot_mode:
             # Foreground mode: wait for mission turn to complete, then exit.
             try:
                 await convo_task
@@ -272,8 +344,10 @@ async def run_session_daemon(
                     state=STATE_STOPPING,
                     name=name,
                     host=host,
+                    writer=WRITER_SESSION_DAEMON,
                 )
-            return 0
+                rc = _write_exit()
+            return rc
 
     try:
         await stop.wait()
@@ -323,6 +397,15 @@ async def run_session_daemon(
             await hb_task
         except asyncio.CancelledError:
             pass
-        # Final heartbeat so consumers see the clean stop.
-        write_heartbeat(state_dir, pid=pid, state=STATE_STOPPING, name=name, host=host)
-    return 0
+        # Final heartbeat so consumers see the clean stop, then the
+        # terminal ExitRecord so they see WHY the run ended.
+        write_heartbeat(
+            state_dir,
+            pid=pid,
+            state=STATE_STOPPING,
+            name=name,
+            host=host,
+            writer=WRITER_SESSION_DAEMON,
+        )
+        rc = _write_exit()
+    return rc

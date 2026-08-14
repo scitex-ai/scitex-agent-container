@@ -145,6 +145,26 @@ def clear_stale_instance_lease(
             # stx-allow: fallback (reason: a failed UPDATE must not
             # block the start path; the next start retries)
             continue
+
+    # v4 step 5 — the on-disk ``instance_id`` marker is the same
+    # staleness one directory over: a crashed run never reached
+    # ``agent_stop``'s ``clear_instance_id``, so its incarnation id is
+    # still lying in the state dir. The caller's precondition (runtime
+    # reports the agent DEAD) is exactly the justification to remove it,
+    # and removing it matters now that the NEXT runner ADOPTS the first
+    # fresh marker it sees at boot (bind-once — ``_runners._incarnation``):
+    # the boot window must never offer a previous incarnation's id.
+    # ``record_local_instance`` rewrites the marker right after a
+    # successful launch, so nothing is lost on the happy path.
+    try:
+        from .._runners._session_state import clear_instance_id, state_dir_for
+
+        clear_instance_id(state_dir_for(name))
+    except Exception:
+        # stx-allow: fallback (reason: an unreadable runtime dir must not
+        # block the start path; the bind-once mtime grace still guards the
+        # runner against a stale marker)
+        pass
     return cleared
 
 

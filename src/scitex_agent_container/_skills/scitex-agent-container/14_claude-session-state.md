@@ -18,7 +18,8 @@ Per-agent state lives at `<scope>/runtime/<name>/`:
 | File | Contents |
 |---|---|
 | `pid` | Runner's PID (atomic write — tmp + rename). |
-| `heartbeat.json` | `{ts, pid, state}` plus `elapsed_s` (seconds since session start, from `started_at`) and the running token totals `input_tokens / output_tokens / total_tokens` (from `quota.json`). State ∈ `starting / idle / working / stopping`. Refreshed every 10 s (`--tick-seconds`). |
+| `heartbeat.json` | `{ts, pid, state, seq, writer, turns_completed}` plus `incarnation_id` (self-testimony beats only), `elapsed_s` (seconds since session start, from `started_at`) and the running token totals `input_tokens / output_tokens / total_tokens` (from `quota.json`). State ∈ `starting / busy / ready / stopping` (legacy beats may still read `idle` / `working`); `seq` is monotonic per file; `writer` names who wrote the beat (`session-daemon` / `turn-driver` / the listen observers). Refreshed every 10 s (`--tick-seconds`). |
+| `exit.json` | Terminal ExitRecord written on every daemon exit path: `{incarnation_id, reason, code, ts, pid}` with reason ∈ `stopped-by-signal / oneshot-complete / harness-returned / crashed`. Beats say an agent is dead; this says WHY. |
 | `started_at` | Session start time (unix seconds). Written once at startup; preserved across a resumed respawn so `elapsed_s` tracks the conversation, not the process. |
 | `session.jsonl` | One JSON object per turn event: `user / assistant / user_echo / result / error`. The transcript. |
 | `session_id` | Latest SDK session UUID. Auto-resumed by the next `sac agents start`. |

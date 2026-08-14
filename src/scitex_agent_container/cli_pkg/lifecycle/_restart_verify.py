@@ -40,15 +40,27 @@ hand-run ``tmux kill-session``, then ``stop``, then ``start``.
 So a ``True`` now requires TWO independent witnesses:
 
   1. the LEDGER says the identity-of-run changed, and
-  2. the OS says the agent's multiplexer session changed with it —
-     ``#{session_created}``, the one tmux stamp that is constant for the
-     life of a session and different for the next one.
+  2. a PROCESS-SIDE witness corroborates it — one of:
 
-Witness 2 is read through ``instances.screen``, which
+     * the OS: the agent's multiplexer session changed with it —
+       ``#{session_created}``, the one tmux stamp that is constant for
+       the life of a session and different for the next one; or
+     * (v4 step 5) the RUNNER ITSELF: the agent's heartbeat carries the
+       ``incarnation_id`` its process ADOPTED AT BOOT (bind-once — see
+       ``_runners._incarnation``; a later rewrite of the marker never
+       rebinds a live process), so a fresh beat naming the new
+       incarnation is a live process's own testimony that it took up
+       that run — while an untouched old process keeps beating its OLD
+       incarnation no matter how many ids the ledger mints over it.
+       This is what makes an SDK agent (no tmux session to ask about)
+       verifiable at all.
+
+The tmux witness is read through ``instances.screen``, which
 :func:`_lifecycle._instances.record_local_instance` fills with the name
 the runtime passed to ``tmux new-session -s``. A row that does not name a
 session cannot be checked against anything, and the honest answer there
-is "cannot verify" — NOT "verified".
+is "cannot verify" — NOT "verified" (the beat witness then gets its
+chance; blind on both is still an abstention).
 
 TERNARY, NEVER BINARY
 ---------------------
@@ -90,6 +102,7 @@ from typing import Callable
 __all__ = [
     "RestartVerdict",
     "SessionObservation",
+    "read_beat_identity",
     "read_run_identity",
     "read_session_identity",
     "verify_cycled",
@@ -390,3 +403,8 @@ def verify_cycled(
         seen_before.identity,
         seen_after.identity,
     )
+
+
+# The beat witness (v4 step 5) lives in ``_restart_verify_beat`` (line
+# cap); re-exported here so callers import every witness from one place.
+from ._restart_verify_beat import read_beat_identity as read_beat_identity  # noqa: E402
