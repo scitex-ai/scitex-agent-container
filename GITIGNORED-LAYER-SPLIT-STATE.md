@@ -107,9 +107,26 @@ not touched.)
   scitex_todo, openai_agents). Verified with
   `PYTHONPATH=<worktree>/src` so the worktree's code was actually exercised.
 
-CAUTION: `pytest <worktree>/tests/scitex_agent_container/cli_pkg/ <worktree>/tests/integration/`
-(whole dirs) TIMED OUT at 120s — something in those dirs is slow/hanging. The
-six-file targeted run is 4s. Investigate before assuming a full-suite green.
+- Run 4 (after the docstring trim that took image_group.py 517 -> 510):
+  **168 passed in 3.82s**. Still green.
+
+### The full-dir timeout — DIAGNOSED, and NOT ours
+
+`pytest <worktree>/tests/integration/ --timeout=20` stalls at **67%**, on
+`test_listen_startup_sync_no_bind_block.py` (emits `E`, then hangs). Everything
+image-related passes at 31%. That file is in the `listen` SSE/bind subsystem;
+NOTHING in this branch's diff touches `_listen`. Treat the full-dir timeout as
+an unrelated pre-existing hang, not a regression from the layer split.
+(Isolation run of that single file was still in flight at last write — confirm
+it hangs standalone before filing.)
+
+DONE since: docs/images.md, docs/sphinx/images.md, CHANGELOG.md all updated to
+the four-layer chain. GITIGNORED/REFACTORING.md deleted (limit re-armed,
+image_group.py 510, _image_source_build.py 481).
+
+STILL TODO: `_skills/scitex-agent-container/24_image-build.md` (lines 4, 55-56,
+104 still say two layers), `docs/directories.md`, `containers/spartan-sif-bake.sh`,
+`_drift/versions.py`, `_image_repro_build.py`.
 
 DO NOT touch `test_build_scitex_errors_loud_when_base_sif_missing` — it needs
 `sac-base.sif` ABSENT. The fixture only stages `sac-python-pkgs.sif`, so it is safe.
