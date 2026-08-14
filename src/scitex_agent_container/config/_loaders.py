@@ -42,7 +42,7 @@ from ._types import AgentConfig, HostsSpec
 # orchestrator hit the per-file line cap). Re-imported here so every
 # existing consumer keeps its ``config._loaders`` import path.
 from ._loader_startup_defaults import (
-    DEFAULT_DIRENV_ALLOW_COMMAND,
+    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
     DEFAULT_STARTUP_PROMPT,
     _with_default_direnv_allow,
 )
