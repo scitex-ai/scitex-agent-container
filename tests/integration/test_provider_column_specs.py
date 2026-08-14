@@ -8,10 +8,18 @@ seams that make the columns interchangeable, each on REAL objects:
 
 1. **Spec → config**: two real YAML specs differing ONLY in
    ``spec.harness`` load through the one ``load_config`` path.
-2. **Config → entrypoint env** (``build_run_argv`` — the full apptainer
-   argv): the OpenAI column carries the OPENAI_* injection and ZERO
-   Anthropic wiring; the Claude column carries its unchanged Anthropic
-   wiring and ZERO OPENAI_*.
+2. **Config → entrypoint env**: the OpenAI column's env parity is
+   pinned at the AUTH seam (``auth_argv`` — the harness-aware step):
+   OPENAI_* injection, the SAC_PROVIDER marker, and ZERO Anthropic
+   wiring. The FULL ``build_run_argv`` for the OpenAI column now
+   REFUSES with ``HarnessRuntimeMismatchError`` (v4 step-2 loudness,
+   card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``):
+   pre-guard it assembled OPENAI_* auth env around the CLAUDE runner
+   module — the silent wrong-vendor launch these tests unknowingly
+   pinned. Step 4 (the descriptor registry) flips that refusal back
+   into a real OpenAI-runner argv, and THEN the full-argv parity
+   assertions can return here. The Claude column's full argv is
+   unchanged: Anthropic wiring, ZERO OPENAI_*.
 3. **Session-type routing + NormalizedEvent shape**: both columns'
    ``spec.a2a.handler`` keys route to registered executors sharing
    ``BaseSyncExecutor`` (one task-event surface), and the OpenAI
@@ -36,6 +44,10 @@ from scitex_agent_container._runners._harness_session import HarnessSession
 from scitex_agent_container._runners.openai_session import OpenAIAgentsSession
 from scitex_agent_container.a2a.executors import EXECUTORS, BaseSyncExecutor
 from scitex_agent_container.config import load_config
+from scitex_agent_container.config._harness_types import (
+    HarnessRuntimeMismatchError,
+)
+from scitex_agent_container.runtimes._apptainer_auth import auth_argv
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 
 _SPEC_TEMPLATE = """\
@@ -144,6 +156,14 @@ def _column_argv(config, tmp_path: Path) -> list[str]:
     )
 
 
+def _auth_env(config, tmp_path: Path) -> dict[str, str]:
+    """The env the AUTH seam injects — ``auth_argv`` is the harness-aware
+    step ``build_run_argv`` composes, and (until the step-4 descriptor
+    registry re-enables a full OpenAI-column launch argv) the seam where
+    the OpenAI column's env parity is honestly pinned."""
+    return _argv_env(auth_argv(config, tmp_path / "state" / config.name))
+
+
 # ---------------------------------------------------------------------------
 # 1. Spec → config: one loader, two columns
 # ---------------------------------------------------------------------------
@@ -174,31 +194,51 @@ def test_openai_column_spec_loads_as_openai_family(_sandbox_env: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_openai_column_argv_injects_openai_key(_sandbox_env: Path) -> None:
+def test_openai_column_full_argv_refuses_the_wrong_vendor_launch(
+    _sandbox_env: Path,
+) -> None:
+    # Arrange — v4 step-2 loudness: pre-guard, this argv carried the
+    # OPENAI_* env AND the claude_session runner module — a silent
+    # wrong-vendor launch. build_run_argv must refuse until the step-4
+    # descriptor registry can dispatch the OpenAI runner for real.
+    cfg = _openai_column(_sandbox_env)
+    raised: BaseException | None = None
+    # Act
+    try:
+        _column_argv(cfg, _sandbox_env)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_openai_column_auth_seam_injects_openai_key(_sandbox_env: Path) -> None:
     # Arrange
     cfg = _openai_column(_sandbox_env)
     # Act
-    env = _argv_env(_column_argv(cfg, _sandbox_env))
+    env = _auth_env(cfg, _sandbox_env)
     # Assert
     assert env["OPENAI_API_KEY"] == "sk-column-test"
 
 
-def test_openai_column_argv_marks_family_in_container(_sandbox_env: Path) -> None:
-    # Arrange
-    cfg = _openai_column(_sandbox_env)
-    # Act
-    env = _argv_env(_column_argv(cfg, _sandbox_env))
-    # Assert
-    assert env["SAC_PROVIDER"] == "openai"
-
-
-def test_openai_column_argv_carries_no_anthropic_wiring(
+def test_openai_column_auth_seam_marks_family_in_container(
     _sandbox_env: Path,
 ) -> None:
     # Arrange
     cfg = _openai_column(_sandbox_env)
     # Act
-    env = _argv_env(_column_argv(cfg, _sandbox_env))
+    env = _auth_env(cfg, _sandbox_env)
+    # Assert
+    assert env["SAC_PROVIDER"] == "openai"
+
+
+def test_openai_column_auth_seam_carries_no_anthropic_wiring(
+    _sandbox_env: Path,
+) -> None:
+    # Arrange
+    cfg = _openai_column(_sandbox_env)
+    # Act
+    env = _auth_env(cfg, _sandbox_env)
     # Assert
     assert not any(k.startswith(("ANTHROPIC", "CLAUDE_CONFIG")) for k in env)
 
