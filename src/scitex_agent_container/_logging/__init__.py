@@ -34,6 +34,25 @@ three things a raw print cannot give:
   other scitex package, instead of sac being the one package that always
   shouts.
 
+WHY THIS IS A PACKAGE DIRECTORY AND NOT A FLAT ``_logging.py``
+--------------------------------------------------------------
+Not style — a gate. ``scitex-dev``'s PS-108b (§1
+``src-flat-py-files-over-threshold``) caps flat ``.py`` files at the package
+root at 15, and ``develop`` sits at EXACTLY 15. Adding this helper as a
+sixteenth flat module turned that cap into an error-tier violation and reddened
+both required pytest legs on the PR that introduced it — the cumulative-rule
+trap, where a change that is clean in isolation breaks the build because it is
+the Nth one.
+
+Making it a directory keeps the import path byte-identical
+(``from .._logging import get_logger`` resolves to this ``__init__``), so
+nothing at any call site changes, while the root flat count stays at 15.
+
+Do NOT "simplify" this back into a flat ``_logging.py``: that reintroduces the
+failure, and the next person to add a root-level module inherits the blame for
+it. If a genuine second logging concern appears, it belongs beside this file in
+this package.
+
 WHY THE IMPORT IS LAZY
 ----------------------
 ``scitex_logging`` auto-configures handlers on first import, which must not be
