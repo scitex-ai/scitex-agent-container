@@ -83,3 +83,33 @@ class RuntimeBase(ABC):
         """
         del config
         return None
+
+    def session_name(self, config: AgentConfig) -> str | None:
+        """Return the multiplexer session this runtime launches into, or ``None``.
+
+        This is the string ``instances.screen`` records (see
+        :func:`_lifecycle._instances.record_local_instance`), and it must
+        be THE SAME value the runtime passes to ``tmux new-session -s``
+        rather than a name re-derived from a convention, which is free to
+        drift from what was actually launched.
+
+        Why the column has to be filled: ``screen`` is the only column in
+        ``instances`` naming a thing the OS can be asked about
+        independently of sac's own bookkeeping. Without it every "did this
+        agent cycle?" question can only be answered by re-reading the rows
+        sac itself just wrote, which is not evidence but an echo. Measured
+        2026-08-14 on scitex-compute-04: three ``instances`` rows, every
+        one with ``screen`` NULL, while the single real tmux session had
+        been alive and untouched since the previous day — and ``sac agents
+        restart`` compared the ids it had just minted and printed
+        ``verified: ... is a NEW run`` over a process it never touched.
+
+        NOT abstract, and the default is ``None`` ON PURPOSE — the same
+        contract as :meth:`agent_pid`. A runtime with no multiplexer
+        session (the SDK / apptainer runtimes run a bare container
+        process; SSHRemote's session lives on another host) MUST leave
+        this ``None``. ``None`` reads downstream as "cannot verify", which
+        is honest; a guessed name would read as a verified one.
+        """
+        del config
+        return None

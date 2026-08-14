@@ -450,6 +450,13 @@ class TuiSessionRuntime(
             pane_pid_fn=getattr(self._mux, "pane_pid", None),
         )
 
+    def session_name(self, config: AgentConfig) -> str | None:
+        """The ``tui-<name>`` session — the seam ``instances.screen`` reads.
+
+        THE SAME call :meth:`start` passes to ``tmux new-session -s``.
+        """
+        return session_name_for(config)
+
     def is_responsive(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
     ) -> bool:
