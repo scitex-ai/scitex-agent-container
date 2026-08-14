@@ -309,6 +309,63 @@ def test_codex_env_flags_export_the_in_container_codex_home(
     assert f"{codex_env.CODEX_HOME_ENV}={codex_env.CONTAINER_CODEX_HOME}" in argv
 
 
+@pytest.fixture
+def codex_routing_env():
+    """Export the SAC_CODEX_* routing vars for one test, then restore."""
+    values = {
+        "SAC_CODEX_MODEL": "qwen36-35b-a3b",
+        "SAC_CODEX_MODEL_PROVIDER": "vllm",
+        "SAC_CODEX_SANDBOX": "full-access",
+    }
+    previous = {k: os.environ.get(k) for k in values}
+    os.environ.update(values)
+    yield values
+    for key, was in previous.items():
+        if was is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = was
+
+
+def test_codex_env_flags_forward_the_model_provider_routing_var(
+    tmp_path, codex_home, codex_routing_env, no_harness_override
+):
+    # Arrange — the model_provider names a [model_providers.*] entry in
+    # config.toml, and it is the ONLY surface that points a codex agent
+    # at a self-hosted endpoint. Dropping it would silently hardwire the
+    # agent to codex's OpenAI-hosted default.
+    config = AgentConfig(name="t", harness="codex")
+    # Act
+    argv = codex_env.codex_env_flags(config, tmp_path)
+    # Assert
+    assert "SAC_CODEX_MODEL_PROVIDER=vllm" in argv
+
+
+def test_codex_env_flags_forward_the_sandbox_routing_var(
+    tmp_path, codex_home, codex_routing_env, no_harness_override
+):
+    # Arrange — codex sandboxes with bubblewrap, and nested bwrap fails
+    # inside apptainer, so an in-container agent needs to say
+    # full-access explicitly. Measured 2026-08-14 on scitex-compute-04.
+    config = AgentConfig(name="t", harness="codex")
+    # Act
+    argv = codex_env.codex_env_flags(config, tmp_path)
+    # Assert
+    assert "SAC_CODEX_SANDBOX=full-access" in argv
+
+
+def test_codex_env_flags_omit_routing_vars_that_are_unset(
+    tmp_path, codex_home, no_harness_override
+):
+    # Arrange — an unset routing var must not become an empty --env,
+    # which would override codex's own default with nothing.
+    config = AgentConfig(name="t", harness="codex")
+    # Act
+    argv = codex_env.codex_env_flags(config, tmp_path)
+    # Assert
+    assert not any(a.startswith("SAC_CODEX_MODEL=") for a in argv)
+
+
 def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(
     tmp_path, codex_config_with_claude_provider
 ):

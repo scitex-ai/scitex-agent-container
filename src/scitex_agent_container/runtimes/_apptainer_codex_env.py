@@ -76,6 +76,24 @@ CONTAINER_CODEX_HOME = "/home/agent/.codex"
 #: the fallback the codex CLI itself honours for OpenAI-hosted models.
 _KEY_ENVS = ("SAC_CODEX_API_KEY", "CODEX_API_KEY", "OPENAI_API_KEY")
 
+#: Routing pass-throughs — the sac-namespaced env the in-container runner
+#: reads (see ``_runners._codex_options``) to pick the model, the
+#: ``[model_providers.*]`` entry and the sandbox. Forwarded when set on
+#: the host, skipped when not, so the container's env stays minimal.
+#:
+#: These are the surface that points a codex agent at a SELF-HOSTED
+#: endpoint, and without forwarding them the harness would come up
+#: hardwired to codex's OpenAI-hosted default with no way to say
+#: otherwise short of hand-editing the bound config.toml. There is no
+#: ``spec.codex`` block yet (that needs a typed spec section + validation
+#: — a follow-up); until there is, an operator sets these in the launching
+#: shell or in ``spec.apptainer.env``.
+_ROUTING_ENVS = (
+    "SAC_CODEX_MODEL",
+    "SAC_CODEX_MODEL_PROVIDER",
+    "SAC_CODEX_SANDBOX",
+)
+
 
 def codex_harness_active(config: AgentConfig) -> bool:
     """True when this launch resolves to the ``codex`` harness."""
@@ -152,5 +170,10 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
             # alias supplied it, so the container needs no sac knowledge.
             argv += ["--env", f"CODEX_API_KEY={value}"]
             break
+
+    for env_name in _ROUTING_ENVS:
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            argv += ["--env", f"{env_name}={value}"]
 
     return argv
