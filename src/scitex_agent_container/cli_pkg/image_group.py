@@ -27,6 +27,7 @@ import click
 from .. import _build_priority
 from . import (
     _image_inventory_cmds,
+    _image_layer_chain,
     _image_remote_bake,
     _image_repro_build,
     _image_source_build,
@@ -74,19 +75,21 @@ _CONTAINERS_DIR = Path.home() / ".scitex" / "agent-container" / "containers"
 # own surface; the aggregator never hard-codes package names).
 _SCITEX_USER_STATE_ROOT = Path.home() / ".scitex"
 
-# Layer → .def filename mapping.
+# Layer → .def filename mapping, and the build chain that orders them.
+# Both come from _image_layer_chain, the one module that owns the image
+# topology — this group owns the CLI SHAPE, not the shape of the stack.
 #
-# ``proxy`` ships a recipe (containers/apptainer-proxy.def, force-included in
-# the wheel) and the source-build path already treats it as a first-class
-# layer — ``build_layer_from_source`` documents ``base``/``scitex``/``proxy``
-# and ``resolve_bootstrap_sif`` names ``proxy`` among the top-of-stack layers
-# that bootstrap off a registry image rather than a prior SIF. Only this map
-# omitted it, which left sac shipping one recipe nothing could build.
-_LAYERS = {
-    "base": "apptainer-base.def",
-    "scitex": "apptainer-scitex.def",
-    "proxy": "apptainer-proxy.def",
-}
+# ``proxy`` is in the map but NOT in the chain: it ships a recipe
+# (containers/apptainer-proxy.def, force-included in the wheel) and builds
+# straight from the registry as a standalone sidecar, so it is buildable
+# without being anyone's prerequisite.
+#
+# Aliased to the private names this module has always used so the CLI
+# surface, and the tests that reach for ``image_group._LAYERS``, are
+# unchanged by the relocation.
+_LAYERS = _image_layer_chain.LAYER_DEFS
+_STACK_ORDER = _image_layer_chain.STACK_ORDER
+
 _DEFAULT_LAYER = "base"
 
 
@@ -236,9 +239,22 @@ def image_build(
     (same version set), not byte-identical digests.
 
     \b
+    The stack is FOUR layers, each built FROM the one below it. Build them
+    bottom-up the first time; after that rebuild only the layer you changed
+    and everything below it is reused untouched:
+      1. system-deps   OS + apt + node + rust + static bins  (~15-20 min)
+      2. python-pkgs   /opt/venv-sac + claude-agent-sdk + sac (~5-10 min)
+      3. base          bakes the `sac versions` manifest      (~1 min)
+      4. scitex        FROM :base + scitex[all]               (~10-20 min)
+    `proxy` is also buildable but is NOT in the chain — it is a standalone
+    sidecar image built straight from the registry.
+
+    \b
     Examples:
-      $ sac image build                # apptainer :base SIF (default; OS + dev tools, ~15-25 min)
-      $ sac image build scitex         # apptainer :scitex SIF (FROM :base + scitex[all], ~10-20 min)
+      $ sac image build system-deps -y # layer 1 (from ubuntu:24.04)
+      $ sac image build python-pkgs -y # layer 2 (needs sac-system-deps.sif)
+      $ sac image build                # layer 3 :base (default; needs sac-python-pkgs.sif)
+      $ sac image build scitex         # layer 4 (needs sac-base.sif)
       $ sac image build --sandbox      # writable sandbox dir
       $ sac image build --reproducible # round trip + .verified marker (~2x build time)
     """

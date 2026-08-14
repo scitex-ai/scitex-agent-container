@@ -1,0 +1,377 @@
+# scitex-agent-container:system-deps — Apptainer recipe (canonical SSoT).
+#
+# LAYER 1 of 4. The OS + native-toolchain floor: apt packages, the
+# canonical `agent` user, GitHub CLI, nested Apptainer, Node + npm
+# globals, the Rust toolchain, and the hand-fetched static binaries
+# (yq / gdu / tree / rtk). NOTHING Python-package-shaped lives here —
+# that is layer 2 (apptainer-python-pkgs.def).
+#
+# Why this layer exists as its own SIF: it is the SLOWEST and LEAST
+# VOLATILE half of what used to be one 900-line :base recipe. apt +
+# rustup + a source-built tree + a cargo-built rtk cost the bulk of the
+# bake wall-clock and change maybe monthly, while the Python pin set
+# above it (scitex-cards floors, claude-agent-sdk, sac itself) changes
+# weekly. Splitting them means a Python-pin bump rebuilds layer 2 only
+# and reuses this SIF untouched.
+#
+# The four-layer stack:
+#   1. system-deps  <- YOU ARE HERE   (from ubuntu@sha256:...)
+#   2. python-pkgs                    (from ./sac-system-deps.sif)
+#   3. base                           (from ./sac-python-pkgs.sif)
+#   4. scitex                         (from ./sac-base.sif)
+#
+# Build (preferred — go through sac so staging/versioning/atomic swap apply):
+#   sac image build system-deps -y
+#
+# Build (raw apptainer):
+#   apptainer build sac-system-deps.sif containers/apptainer-system-deps.def
+#   apptainer build --sandbox system-deps/ containers/apptainer-system-deps.def
+
+Bootstrap: docker
+# PINNED BY DIGEST, not by tag. ``ubuntu:24.04`` is a MOVING tag — Canonical
+# republishes it for every point release and security refresh, so two builds
+# a month apart start from different bytes and the version-set comparison has
+# no fixed floor to stand on. The digest below is 24.04.4 LTS, the exact base
+# the live fleet image was built from (verified in-image 2026-08-12).
+#
+# The trade this makes, stated plainly: a pinned base stops picking up
+# Canonical's refreshed layer on rebuild. BUMP IT DELIBERATELY (resolve with
+# ``curl`` against registry-1.docker.io, or ``skopeo inspect
+# docker://ubuntu:24.04``) rather than letting it drift silently.
+#
+# Note this pins the STARTING layer only. ``%post`` still runs ``apt-get
+# update``, which pulls whatever the Ubuntu archive currently holds, so apt
+# packages can still move. That residual drift is DETECTED — the reproducible
+# round trip (``sac image build --reproducible``) captures dpkg versions into
+# the .lock and reports any change — but not yet prevented; pinning apt needs
+# ``pkg=ver`` injection or snapshot.ubuntu.com, which scitex-container's
+# ``generate_locked_def`` explicitly defers.
+From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ---- 1. apt: system packages ---------------------------------------
+    # Dev-CLIs ship from apt where Ubuntu 24.04 carries them — faster
+    # builds, no rust toolchain dependency for the default set. The
+    # Debian binary-name quirk (fd→fdfind, bat→batcat) is resolved by
+    # symlinks in section 1b. ``tree`` is still source-built in section
+    # 5 (apt ships an older 2.0.x; we want 2.1.3 features).
+    #
+    # Agent-useful, non-interactive CLI tool set:
+    #   fd-find ripgrep bat eza tree jq git-delta (apt)
+    #   yq sd dust (sections 4a / 4b — not in apt)
+    #   gdu — NOT from apt: Ubuntu's `gdu` package is the ambiguous
+    #         "gnu-disk-usage" build with no machine-readable output;
+    #         sac's .claude size-audit needs the dundee/gdu
+    #         `gdu -o-` JSON path, so we pull a pinned dundee binary
+    #         in section 4c.
+    # Interactive-only tools (htop, top, ncdu, fzf TUI mode) are
+    # intentionally excluded — sac agents are headless; an agent has
+    # no TTY to drive a curses UI and `htop` is dead weight in the SIF.
+    # `procps`/`lsof`/`strace`/`less` stay because their NON-interactive
+    # modes (pgrep, ps, lsof piped, strace -c, less -F) are agent-useful.
+    #
+    # git/curl/ca-certificates/openssh-client/rsync are listed here so any
+    # future base-image trim cannot silently drop them — sac runtime
+    # hard-depends on each one (HTTPS verify chain, SSH dispatch, git).
+    #
+    # rsync earns its place the hard way. `_dispatch_remote_start` shells
+    # `rsync` to sync the workspace before a CROSS-HOST agent start, and it
+    # runs in the CALLER's environment. Every agent runs inside this image,
+    # so while rsync was missing here NO AGENT COULD EVER START AN AGENT ON
+    # ANOTHER HOST — the multi-host feature was unreachable from precisely
+    # the processes meant to use it. Measured 2026-08-05: the first real
+    # cross-host start died with `FileNotFoundError: 'rsync'`, from a
+    # container, against a target host that had rsync installed.
+    #
+    # libglib2.0-0 is REQUIRED by the scitex stack: without it,
+    # libgthread-2.0.so.0 is missing and ``import scitex.io`` silently
+    # falls back to "minimal mode" — runs look green but lose the
+    # full IO surface. Also blocks clew's H2 full-DAG tamper-detection
+    # (``chain_verified`` needs the gthread shim). Caught by clew's
+    # capsule-0220918 cohort-A audit (2026-06-06); the silent fallback
+    # is the real bug, the missing system lib is the immediate fix.
+    # Added on the lib row because it's a runtime system library (no
+    # -dev companion needed for the consumers that hit the silent-
+    # fallback path). Supersedes the standalone PR #322.
+    #
+    # The "playwright/headless-chromium runtime libs" group at the tail
+    # of the apt list is the shared-object set a headless Chromium needs
+    # to LAUNCH (equivalent to `npx playwright install-deps chromium`).
+    # Baked at :system-deps — NOT via scitex_dev.system_deps — on purpose:
+    # the system-deps SSoT only runs at the :scitex layer (scitex-dev isn't
+    # installed here), but the operator wants ANY agent to screenshot /
+    # run browser e2e regardless of which scitex packages its overlay
+    # carries. Two consumers ALREADY baked into this layer need exactly
+    # these libs — `@mermaid-js/mermaid-cli` (section 3) and puppeteer's
+    # `chrome-headless-shell` (section 3a) both drive a headless Chromium
+    # — so this also fixes their latent "libnspr4.so: cannot open shared
+    # object file" breakage, not just Playwright's. libglib2.0-0 is
+    # already on the lib row above; libcairo2/libpango pull it transitively.
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl wget gnupg \
+        git openssh-client sshpass autossh git-crypt \
+        rsync \
+        build-essential pkg-config \
+        libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
+        python3 python3-pip python3-venv python3-dev \
+        locales tzdata \
+        procps lsof strace less \
+        iputils-ping dnsutils netcat-openbsd \
+        nano jq \
+        fd-find ripgrep bat eza \
+        git-delta \
+        direnv \
+        tmux ncurses-term \
+        tini \
+        libnss3 libnspr4 \
+        libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
+        libcups2t64 libdrm2 libgbm1 libxshmfence1 \
+        libxkbcommon0 libasound2t64 \
+        libcairo2 libpango-1.0-0 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libxext6 libxrender1 \
+        fonts-liberation
+    locale-gen en_US.UTF-8
+
+    # ---- 1a. Canonical container user `agent` (UID 1000) --------------
+    # Ubuntu 24.04's base image ships a `ubuntu` user at UID 1000. sac's
+    # convention (D5 in docs/isolation.md) is that the in-container user
+    # is always `agent` with HOME=/home/agent — operator-independent,
+    # matches sac's auto-injected `--home /home/agent`, and gives
+    # `whoami` a meaningful answer (the host operator's UID still maps
+    # to UID 1000 inside via apptainer's passwd inheritance, but the
+    # entry at UID 1000 is now `agent`, not `ubuntu`).
+    userdel -r ubuntu 2>/dev/null || true
+    rm -rf /home/ubuntu
+    useradd -m -d /home/agent -s /bin/bash -u 1000 agent
+
+    # ---- 1b. Debian binary-name quirk symlinks -------------------------
+    # apt-installed ``fd-find`` ships its binary as ``fdfind`` (avoids a
+    # name clash with the long-retired ``fd`` chess engine package), and
+    # ``bat`` ships as ``batcat`` (clash with bacula-console-tray). Every
+    # piece of muscle memory + tooling we care about (rg/fd shorthand,
+    # ``bat`` pager) expects the short names; symlink both into
+    # ``/usr/local/bin`` so the apt build behaves like an upstream
+    # cargo-installed name. ``ripgrep`` and ``eza`` already install as
+    # ``rg`` / ``eza`` — no symlink needed.
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+    ln -sf "$(command -v batcat)" /usr/local/bin/bat
+
+    # ---- 1c. direnv hook + whitelist -----------------------------------
+    # direnv (apt-installed above) activates a directory's ``.envrc`` on ``cd``
+    # — sac uses ``.envrc`` to pin a per-project identity (e.g. each agent's own
+    # Telegram bot via ``CCT_BOT_TOKEN``). Two pieces make it work headlessly:
+    #   * hook it into every bash shell (system-wide /etc/bash.bashrc), and
+    #   * whitelist all paths so ``.envrc`` loads WITHOUT a manual
+    #     ``direnv allow`` (no-surprise: the per-dir env just applies).
+    # Whitelisting "/" is safe HERE precisely because the container is
+    # single-tenant and every ``.envrc`` is operator-authored — the same files
+    # sac folds host-side at deploy, never arbitrary third-party scripts.
+    echo 'eval "$(direnv hook bash)"' >> /etc/bash.bashrc
+    mkdir -p /etc/direnv
+    printf '[whitelist]\nprefix = [ "/" ]\n' > /etc/direnv/direnv.toml
+
+    # ---- 2. GitHub CLI -------------------------------------------------
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list
+    apt-get update
+    apt-get install -y --no-install-recommends gh
+
+    # ---- 2a. Apptainer (for inside-SIF nested launch) -------------------
+    # Bundled so sac-from-sac flows (clew -> cohort capsule spawn) work
+    # without needing a host bind. Per operator decision 2026-05-28 (msg
+    # 6704: SIF-bundle preferred over host-bind / upstream conditional
+    # bypass). Spartan's host `which apptainer` is a 1KB bash shim that
+    # requires `module` (Lmod) -- not available in the container -- so
+    # the bind approach was infeasible.
+    #
+    # Unprivileged user-namespace mode only (no setuid in nested SIF);
+    # `--fakeroot` requires `uidmap` for newuidmap/newgidmap.
+    # squashfs-tools for SIF read.
+    #
+    # Apptainer is NOT in Ubuntu 24.04 noble main/universe (verified
+    # 2026-05-28 against packages.ubuntu.com); the only canonical
+    # distribution channel is the official PPA `ppa:apptainer/ppa`
+    # (see apptainer.org/docs/admin/main/installation.html). We use
+    # `add-apt-repository` from software-properties-common, which is
+    # the path the upstream install doc prescribes verbatim.
+    apt-get install -y --no-install-recommends software-properties-common
+    add-apt-repository -y ppa:apptainer/ppa
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        apptainer uidmap squashfs-tools
+
+    # ---- 3. Node.js + npm globals --------------------------------------
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y --no-install-recommends nodejs
+    mkdir -p /opt/npm-global
+    npm config set prefix /opt/npm-global
+    export PATH=/opt/npm-global/bin:$PATH
+    npm install -g \
+        prettier \
+        eslint \
+        @typescript-eslint/parser \
+        @typescript-eslint/eslint-plugin \
+        jsonlint \
+        @mermaid-js/mermaid-cli \
+        @anthropic-ai/claude-code@latest
+
+    # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
+    # 2026-07-02: the SDK-bundled CLI (`_bundled/claude`) lags the
+    # standalone npm claude-code release even on the latest
+    # claude-agent-sdk, and the operator wants the LATEST claude-code
+    # (e.g. to unlock the `fable[1m]` model). So the PATH `claude` binary
+    # is DECOUPLED from the SDK: we install the standalone
+    # `@anthropic-ai/claude-code@latest` npm package (added to the
+    # `npm install -g` list above; npm prefix is /opt/npm-global, so it
+    # lands at /opt/npm-global/bin/claude) and the :python-pkgs layer
+    # repoints /usr/local/bin/claude at THAT. Per the operator directive to
+    # "carry the LATEST of ALL ecosystem packages", BOTH the npm
+    # claude-code (here) and the Python claude-agent-sdk (:python-pkgs)
+    # float to latest — the decoupling is STRUCTURAL (standalone npm CLI
+    # vs the SDK's internal bundle), not a frozen version mismatch; see
+    # apptainer-python-pkgs.def for the caveat about SDK/claude-session
+    # agents.
+    npx puppeteer browsers install chrome-headless-shell || true
+
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- 4. Rust toolchain + cargo-binstall ----------------------------
+    # Toolchain + cargo-binstall stay so additional Rust CLIs can be
+    # layered in (apptainer-scitex.def or downstream image-rebuild flows)
+    # without re-installing rustup. The default dev-CLI set baked here:
+    #
+    #   * ``sd``   — sed-like find/replace, non-interactive (Rust)
+    #   * ``dust`` — du-like disk-usage summary (one-shot, non-interactive)
+    #
+    # Both are useful to a headless agent (scripted refactors, "what is
+    # eating my overlay") and ship from cargo because Ubuntu 24.04 has
+    # neither in apt. The interactive disk-explorer cousin ``ncdu`` is
+    # deliberately NOT installed — the dundee/``gdu`` binary fetched
+    # in section 4c covers the headless ``gdu -o-`` JSON case sac
+    # itself needs (apt's ambiguous ``gdu`` package was dropped).
+    #
+    # For the operator's hand-curated extra Rust-CLI set (per-host,
+    # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
+    # in the operator dotfiles.
+    # The rustup INSTALLER at sh.rustup.rs is unversioned, but the toolchain
+    # it lays down is what actually ends up in the image — so pin THAT with
+    # --default-toolchain. Without it, `sh.rustup.rs -y` installs whatever
+    # "stable" means on build day and the two halves of a round trip can
+    # land different rustc versions. 1.97.1 is what the live fleet image
+    # carries (verified in-image 2026-08-12).
+    export RUSTUP_HOME=/opt/rust
+    export CARGO_HOME=/opt/cargo
+    RUST_TOOLCHAIN=1.97.1
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --no-modify-path \
+              --default-toolchain "${RUST_TOOLCHAIN}"
+    export PATH=/opt/cargo/bin:$PATH
+    # PINNED: ``releases/latest/download`` is a moving target, exactly like
+    # the yq fetch below and unlike the gdu fetch in 4c which has been
+    # pinned all along for the same reason. 1.21.1 is what the live fleet
+    # image carries (verified in-image 2026-08-12).
+    CARGO_BINSTALL_VERSION=1.21.1
+    curl --proto '=https' --tlsv1.2 -sSfL \
+        "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-musl.tgz" \
+        | tar xz -C /opt/cargo/bin/
+    chmod +x /opt/cargo/bin/cargo-binstall
+    cargo binstall --no-confirm --force sd du-dust
+    rm -rf /opt/cargo/registry /opt/cargo/git
+
+    # ---- 4a. yq — pulled as a static binary from mikefarah/yq --------
+    # ``yq`` is the YAML cousin of ``jq``; Ubuntu's ``yq`` apt package
+    # ships kislyuk/yq (a thin jq wrapper, different CLI surface), not
+    # the mikefarah Go binary that the rest of the SciTeX ecosystem
+    # uses. Pull the Go binary directly to /usr/local/bin so callers
+    # get the expected `.path | select(...)` syntax — non-interactive,
+    # single static binary, no runtime deps.
+    # PINNED for the same reason gdu is pinned in 4c: callers depend on a
+    # stable CLI surface across rebuilds, and ``releases/latest/download``
+    # silently retargets whenever upstream tags. v4.53.3 is what the live
+    # fleet image carries (verified in-image 2026-08-12).
+    YQ_VERSION=4.53.3
+    curl -fsSL \
+        "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
+        -o /usr/local/bin/yq
+    chmod +x /usr/local/bin/yq
+
+    # ---- 4c. gdu — dundee/gdu (pinned), NOT Ubuntu's gnu-disk-usage --
+    # Ubuntu 24.04's apt `gdu` is the ambiguous "gnu-disk-usage" build
+    # (no `-o-` machine-readable JSON). sac's .claude size-audit
+    # (F-CS8, _workdir/_audit.py) hard-depends on dundee/gdu's
+    # `gdu -o- <path>` JSON contract — different binary, same name.
+    # Pull a PINNED static release tarball from the dundee/gdu GitHub
+    # releases page so the .claude audit's JSON parser stays stable
+    # across SIF rebuilds.
+    GDU_VERSION=5.31.0
+    curl -fsSL \
+        "https://github.com/dundee/gdu/releases/download/v${GDU_VERSION}/gdu_linux_amd64.tgz" \
+        -o /tmp/gdu.tgz
+    tar -xzf /tmp/gdu.tgz -C /tmp
+    install -m 0755 /tmp/gdu_linux_amd64 /usr/local/bin/gdu
+    rm -f /tmp/gdu.tgz /tmp/gdu_linux_amd64
+    # Verify: dundee/gdu's --version line starts with "Version:	v5.31.0".
+    /usr/local/bin/gdu --version
+
+    # ---- 5. tree v2.1.3 from source ------------------------------------
+    curl -fsSL https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.1.3/unix-tree-2.1.3.tar.gz \
+        | tar xz -C /tmp
+    make -C /tmp/unix-tree-2.1.3 -j"$(nproc)"
+    make -C /tmp/unix-tree-2.1.3 install PREFIX=/usr/local
+    rm -rf /tmp/unix-tree-*
+
+    # ---- 7. rtk — Rust Token Killer (the operator's token-saving proxy) -
+    # rtk rewrites dev commands through a token-optimizing CLI proxy. The
+    # operator's ~/.claude/settings.json already wires the rtk
+    # command-rewrite hook, but it silently no-ops in agents unless `rtk`
+    # is on PATH — the host build lands in the operator's ~/.cargo/bin,
+    # which is NOT on the container PATH. Bake rtk into the image so EVERY
+    # agent has it (every layer above this one inherits it).
+    #
+    # Built from source with the toolchain from section 4; the binary
+    # lands in $CARGO_HOME/bin (/opt/cargo/bin, already on PATH). PINNED to
+    # a release tag for reproducible rebuilds — the same drift-avoidance as
+    # the bundled sac source (never a moving @main). `--git` targets the
+    # operator's repo, avoiding the unrelated crates.io `rtk`
+    # (name collision: reachingforthejack/rtk).
+    #
+    # Lives in :system-deps, not :python-pkgs, because it is a native
+    # cargo build with no Python involvement — it belongs with the
+    # toolchain that produces it, and keeping it here means a Python-pin
+    # bump never re-pays its compile.
+    cargo install --git https://github.com/rtk-ai/rtk --tag v0.38.0 rtk
+    rm -rf /opt/cargo/registry /opt/cargo/git
+    # Fail loud if the build did not produce a working binary.
+    /opt/cargo/bin/rtk --version
+
+%environment
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
+    # NOTE: no /opt/venv-sac here — the SAC venv is created by the
+    # :python-pkgs layer above. Declared in FULL rather than as a delta
+    # because apptainer OVERWRITES /.singularity.d/env/90-environment.sh
+    # on each localimage-derived build; a child layer that exports only
+    # its own additions silently drops whatever the parent set.
+    export PATH=/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    export RUSTUP_HOME=/opt/rust
+    export CARGO_HOME=/opt/cargo
+
+%labels
+    org.scitex.layer system-deps
+    org.scitex.runtime apptainer
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust mermaid prettier eslint jsonlint apptainer rtk"
+
+%help
+    scitex-agent-container :system-deps layer (stack layer 1 of 4).
+    OS packages, the canonical `agent` user, GitHub CLI, nested
+    Apptainer, Node + npm globals, the Rust toolchain, and the pinned
+    static binaries (yq / gdu / tree / rtk). No Python packages — layer
+    apptainer-python-pkgs.def on top for the SAC venv.

@@ -57,6 +57,15 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
+# Layer topology lives in its own module (see _image_layer_chain). Re-exported
+# here — and listed in this module's ``__all__`` — because callers and tests
+# have imported these two names from _image_source_build since before the
+# stack grew past one link; moving the code should not move the import.
+from ._image_layer_chain import (  # noqa: F401  (re-export)
+    BootstrapSifMissing,
+    resolve_bootstrap_sif,
+)
+
 # ---------------------------------------------------------------------------
 # Staging
 # ---------------------------------------------------------------------------
@@ -452,49 +461,13 @@ def build_layer_from_source(
     return artifact_dir / f"{image_name}.sif"
 
 
-class BootstrapSifMissing(FileNotFoundError):
-    """Raised when a layered build's prerequisite SIF is absent.
-
-    Carries the fail-loud remediation text the CLI surfaces verbatim, so
-    the layer→prerequisite policy lives with the source-build path rather
-    than inline in the ``sac image build`` command.
-    """
-
-
-def resolve_bootstrap_sif(layer: str, output_dir: Path) -> Path | None:
-    """Return the prerequisite SIF a layered ``.def`` bootstraps off.
-
-    Layered .defs (currently only ``scitex``) start ``From: ./sac-base.sif``
-    — a path RELATIVE to the build-context dir. The prerequisite is the
-    prior layer's STABLE inner boot symlink,
-    ``<output_dir>/sac-base/sac-base.sif`` (a symlink to the live
-    timestamped SIF under scitex-container 0.3.0's atomic layout).
-    :func:`build_layer_from_source` symlinks it into the staging dir so
-    apptainer's relative ``From:`` resolves at build time.
-
-    Returns ``None`` for top-of-stack layers (``base``) which bootstrap
-    off a registry image, not a prior SIF.
-
-    Raises
-    ------
-    BootstrapSifMissing
-        When a layered build is requested but the prerequisite SIF has not
-        been built. Fails loud BEFORE staging so apptainer never FATAL's
-        on a half-staged context (the 2026-06-07 cohort-A rebuild stall).
-        The exception message names the missing path AND the remediation
-        command.
-    """
-    if layer != "scitex":
-        return None
-    bootstrap_sif = output_dir / "sac-base" / "sac-base.sif"
-    if not bootstrap_sif.is_file():
-        raise BootstrapSifMissing(
-            f"scitex layer requires a built sac-base.sif at "
-            f"{bootstrap_sif}; build the base layer first:\n"
-            f"  $ sac image build base -y\n"
-            f"then retry `sac image build scitex -y`."
-        )
-    return bootstrap_sif
+# ``BootstrapSifMissing`` and ``resolve_bootstrap_sif`` MOVED to
+# ``_image_layer_chain`` when the monolithic :base recipe became the
+# four-link ``system-deps -> python-pkgs -> base -> scitex`` stack: the
+# layer topology is its own responsibility and is read by three modules,
+# while THIS module stays about staging and building. Re-exported at the
+# top of this file (and in ``__all__`` below) so every existing importer
+# keeps resolving unchanged.
 
 
 __all__ = [

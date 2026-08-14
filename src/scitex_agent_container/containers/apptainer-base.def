@@ -1,861 +1,49 @@
 # scitex-agent-container:base — Apptainer recipe (canonical SSoT).
 #
-# Self-contained: no `source`-ing of external module trees. The matching
-# Dockerfile.base is a hand-mirrored convenience for dev-laptop docker
-# users; this .def is the canonical record of what `:base` contains.
+# LAYER 3 of 4, and the CAPSTONE of the agent runtime stack. As of the
+# four-layer split this recipe is deliberately THIN: everything :base
+# used to install directly now lives in the two layers below it, and
+# what remains here is the composition step — bake the `sac versions`
+# manifest that describes the assembled venv, and publish the :base
+# environment/labels contract every downstream consumer reads.
 #
-# Build (preferred — go through scitex-container for versioning/sandbox):
-#   scitex-container build scitex-agent-container-base
+# :base IS STILL THE FLEET'S BOOT IMAGE. Most agent specs boot
+# sac-base.sif directly; splitting the recipe changed WHERE things are
+# installed, not what a :base container contains. A :base SIF carries
+# the union of layers 1-3.
 #
-# Build (raw apptainer):
-#   apptainer build scitex-agent-container-base.sif containers/apptainer-base.def
-#   apptainer build --sandbox base/ containers/apptainer-base.def
+# The four-layer stack:
+#   1. system-deps      OS + toolchain    (from ubuntu@sha256:...)
+#   2. python-pkgs      venv + SAC deps   (from ./sac-system-deps.sif)
+#   3. base             <- YOU ARE HERE   (from ./sac-python-pkgs.sif)
+#   4. scitex           scitex[all]       (from ./sac-base.sif)
+#
+# Build (preferred — go through sac so staging/versioning/atomic swap apply):
+#   sac image build base -y             # requires sac-python-pkgs.sif
+#
+# Build the whole stack from nothing:
+#   sac image build system-deps -y
+#   sac image build python-pkgs -y
+#   sac image build base -y
 #
 # Sandbox + mutate:
 #   apptainer build --sandbox base/ apptainer-base.def
 #   apptainer exec --writable base/ apt-get install -y NEW_TOOL
 #   apptainer build base.sif base/        # re-bake to immutable
 #
-# Layer this with apptainer-scitex.def to add scitex[all] + claude-sdk + sac.
+# Layer this with apptainer-scitex.def to add scitex[all] on top.
 
-Bootstrap: docker
-# PINNED BY DIGEST, not by tag. ``ubuntu:24.04`` is a MOVING tag — Canonical
-# republishes it for every point release and security refresh, so two builds
-# a month apart start from different bytes and the version-set comparison has
-# no fixed floor to stand on. The digest below is 24.04.4 LTS, the exact base
-# the live fleet image was built from (verified in-image 2026-08-12).
-#
-# The trade this makes, stated plainly: a pinned base stops picking up
-# Canonical's refreshed layer on rebuild. BUMP IT DELIBERATELY (resolve with
-# ``curl`` against registry-1.docker.io, or ``skopeo inspect
-# docker://ubuntu:24.04``) rather than letting it drift silently.
-#
-# Note this pins the STARTING layer only. ``%post`` still runs ``apt-get
-# update``, which pulls whatever the Ubuntu archive currently holds, so apt
-# packages can still move. That residual drift is DETECTED — the reproducible
-# round trip (``sac image build --reproducible``) captures dpkg versions into
-# the .lock and reports any change — but not yet prevented; pinning apt needs
-# ``pkg=ver`` injection or snapshot.ubuntu.com, which scitex-container's
-# ``generate_locked_def`` explicitly defers.
-From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
-
-%files
-    # Bundle the package's OWN source tree so the in-SIF sac is the
-    # source tree that shipped this .def — never a `git+...@main`
-    # snapshot of whatever happened to be on a branch at build time.
-    # The CLI (cli_pkg/image_group.py) stages a build-context dir that
-    # contains this .def alongside a `scitex-agent-container-src/` copy
-    # of the installed package; apptainer resolves the relative source
-    # path below against the build CWD, which the CLI sets to that
-    # staging dir. See sac image build for the staging implementation.
-    scitex-agent-container-src /opt/scitex-agent-container-src
+Bootstrap: localimage
+# The prerequisite SIF, resolved RELATIVE to the build-context directory.
+# ``sac image build`` stages a context dir containing this .def alongside a
+# symlink to <containers>/sac-python-pkgs/sac-python-pkgs.sif and sets the
+# build CWD there, so this relative path resolves. Building raw with
+# ``apptainer build`` requires you to arrange the same adjacency yourself.
+From: ./sac-python-pkgs.sif
 
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
-
-    # ---- 1. apt: system packages ---------------------------------------
-    # Dev-CLIs ship from apt where Ubuntu 24.04 carries them — faster
-    # builds, no rust toolchain dependency for the default set. The
-    # Debian binary-name quirk (fd→fdfind, bat→batcat) is resolved by
-    # symlinks in section 1b. ``tree`` is still source-built in section
-    # 5 (apt ships an older 2.0.x; we want 2.1.3 features).
-    #
-    # Agent-useful, non-interactive CLI tool set:
-    #   fd-find ripgrep bat eza tree jq git-delta (apt)
-    #   yq sd dust (sections 4a / 4b — not in apt)
-    #   gdu — NOT from apt: Ubuntu's `gdu` package is the ambiguous
-    #         "gnu-disk-usage" build with no machine-readable output;
-    #         sac's .claude size-audit needs the dundee/gdu
-    #         `gdu -o-` JSON path, so we pull a pinned dundee binary
-    #         in section 4c.
-    # Interactive-only tools (htop, top, ncdu, fzf TUI mode) are
-    # intentionally excluded — sac agents are headless; an agent has
-    # no TTY to drive a curses UI and `htop` is dead weight in the SIF.
-    # `procps`/`lsof`/`strace`/`less` stay because their NON-interactive
-    # modes (pgrep, ps, lsof piped, strace -c, less -F) are agent-useful.
-    #
-    # git/curl/ca-certificates/openssh-client/rsync are listed here so any
-    # future base-image trim cannot silently drop them — sac runtime
-    # hard-depends on each one (HTTPS verify chain, SSH dispatch, git).
-    #
-    # rsync earns its place the hard way. `_dispatch_remote_start` shells
-    # `rsync` to sync the workspace before a CROSS-HOST agent start, and it
-    # runs in the CALLER's environment. Every agent runs inside this image,
-    # so while rsync was missing here NO AGENT COULD EVER START AN AGENT ON
-    # ANOTHER HOST — the multi-host feature was unreachable from precisely
-    # the processes meant to use it. Measured 2026-08-05: the first real
-    # cross-host start died with `FileNotFoundError: 'rsync'`, from a
-    # container, against a target host that had rsync installed.
-    #
-    # libglib2.0-0 is REQUIRED by the scitex stack: without it,
-    # libgthread-2.0.so.0 is missing and ``import scitex.io`` silently
-    # falls back to "minimal mode" — runs look green but lose the
-    # full IO surface. Also blocks clew's H2 full-DAG tamper-detection
-    # (``chain_verified`` needs the gthread shim). Caught by clew's
-    # capsule-0220918 cohort-A audit (2026-06-06); the silent fallback
-    # is the real bug, the missing system lib is the immediate fix.
-    # Added on the lib row because it's a runtime system library (no
-    # -dev companion needed for the consumers that hit the silent-
-    # fallback path). Supersedes the standalone PR #322.
-    #
-    # The "playwright/headless-chromium runtime libs" group at the tail
-    # of the apt list is the shared-object set a headless Chromium needs
-    # to LAUNCH (equivalent to `npx playwright install-deps chromium`).
-    # Baked at :base — NOT via scitex_dev.system_deps — on purpose: the
-    # system-deps SSoT only runs at the :scitex layer (scitex-dev isn't
-    # installed here), but the operator wants ANY agent to screenshot /
-    # run browser e2e regardless of which scitex packages its overlay
-    # carries. Two consumers ALREADY baked into :base need exactly these
-    # libs — `@mermaid-js/mermaid-cli` (section 3) and puppeteer's
-    # `chrome-headless-shell` (section 3a) both drive a headless Chromium
-    # — so this also fixes their latent "libnspr4.so: cannot open shared
-    # object file" breakage, not just Playwright's. libglib2.0-0 is
-    # already on the lib row above; libcairo2/libpango pull it transitively.
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        ca-certificates curl wget gnupg \
-        git openssh-client sshpass autossh git-crypt \
-        rsync \
-        build-essential pkg-config \
-        libffi-dev libssl-dev libgl1-mesa-dev libc6-dev libglib2.0-0 \
-        python3 python3-pip python3-venv python3-dev \
-        locales tzdata \
-        procps lsof strace less \
-        iputils-ping dnsutils netcat-openbsd \
-        nano jq \
-        fd-find ripgrep bat eza \
-        git-delta \
-        direnv \
-        tmux ncurses-term \
-        tini \
-        libnss3 libnspr4 \
-        libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
-        libcups2t64 libdrm2 libgbm1 libxshmfence1 \
-        libxkbcommon0 libasound2t64 \
-        libcairo2 libpango-1.0-0 \
-        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-        libxext6 libxrender1 \
-        fonts-liberation
-    locale-gen en_US.UTF-8
-
-    # ---- 1a. Canonical container user `agent` (UID 1000) --------------
-    # Ubuntu 24.04's base image ships a `ubuntu` user at UID 1000. sac's
-    # convention (D5 in docs/isolation.md) is that the in-container user
-    # is always `agent` with HOME=/home/agent — operator-independent,
-    # matches sac's auto-injected `--home /home/agent`, and gives
-    # `whoami` a meaningful answer (the host operator's UID still maps
-    # to UID 1000 inside via apptainer's passwd inheritance, but the
-    # entry at UID 1000 is now `agent`, not `ubuntu`).
-    userdel -r ubuntu 2>/dev/null || true
-    rm -rf /home/ubuntu
-    useradd -m -d /home/agent -s /bin/bash -u 1000 agent
-
-    # ---- 1b. Debian binary-name quirk symlinks -------------------------
-    # apt-installed ``fd-find`` ships its binary as ``fdfind`` (avoids a
-    # name clash with the long-retired ``fd`` chess engine package), and
-    # ``bat`` ships as ``batcat`` (clash with bacula-console-tray). Every
-    # piece of muscle memory + tooling we care about (rg/fd shorthand,
-    # ``bat`` pager) expects the short names; symlink both into
-    # ``/usr/local/bin`` so the apt build behaves like an upstream
-    # cargo-installed name. ``ripgrep`` and ``eza`` already install as
-    # ``rg`` / ``eza`` — no symlink needed.
-    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
-    ln -sf "$(command -v batcat)" /usr/local/bin/bat
-
-    # ---- 1c. direnv hook + whitelist -----------------------------------
-    # direnv (apt-installed above) activates a directory's ``.envrc`` on ``cd``
-    # — sac uses ``.envrc`` to pin a per-project identity (e.g. each agent's own
-    # Telegram bot via ``CCT_BOT_TOKEN``). Two pieces make it work headlessly:
-    #   * hook it into every bash shell (system-wide /etc/bash.bashrc), and
-    #   * whitelist all paths so ``.envrc`` loads WITHOUT a manual
-    #     ``direnv allow`` (no-surprise: the per-dir env just applies).
-    # Whitelisting "/" is safe HERE precisely because the container is
-    # single-tenant and every ``.envrc`` is operator-authored — the same files
-    # sac folds host-side at deploy, never arbitrary third-party scripts.
-    echo 'eval "$(direnv hook bash)"' >> /etc/bash.bashrc
-    mkdir -p /etc/direnv
-    printf '[whitelist]\nprefix = [ "/" ]\n' > /etc/direnv/direnv.toml
-
-    # ---- 2. GitHub CLI -------------------------------------------------
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list
-    apt-get update
-    apt-get install -y --no-install-recommends gh
-
-    # ---- 2a. Apptainer (for inside-SIF nested launch) -------------------
-    # Bundled so sac-from-sac flows (clew -> cohort capsule spawn) work
-    # without needing a host bind. Per operator decision 2026-05-28 (msg
-    # 6704: SIF-bundle preferred over host-bind / upstream conditional
-    # bypass). Spartan's host `which apptainer` is a 1KB bash shim that
-    # requires `module` (Lmod) -- not available in the container -- so
-    # the bind approach was infeasible.
-    #
-    # Unprivileged user-namespace mode only (no setuid in nested SIF);
-    # `--fakeroot` requires `uidmap` for newuidmap/newgidmap.
-    # squashfs-tools for SIF read.
-    #
-    # Apptainer is NOT in Ubuntu 24.04 noble main/universe (verified
-    # 2026-05-28 against packages.ubuntu.com); the only canonical
-    # distribution channel is the official PPA `ppa:apptainer/ppa`
-    # (see apptainer.org/docs/admin/main/installation.html). We use
-    # `add-apt-repository` from software-properties-common, which is
-    # the path the upstream install doc prescribes verbatim.
-    apt-get install -y --no-install-recommends software-properties-common
-    add-apt-repository -y ppa:apptainer/ppa
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        apptainer uidmap squashfs-tools
-
-    # ---- 3. Node.js + npm globals --------------------------------------
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y --no-install-recommends nodejs
-    mkdir -p /opt/npm-global
-    npm config set prefix /opt/npm-global
-    export PATH=/opt/npm-global/bin:$PATH
-    npm install -g \
-        prettier \
-        eslint \
-        @typescript-eslint/parser \
-        @typescript-eslint/eslint-plugin \
-        jsonlint \
-        @mermaid-js/mermaid-cli \
-        @anthropic-ai/claude-code@latest
-
-    # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
-    # 2026-07-02: the SDK-bundled CLI (`_bundled/claude`) lags the
-    # standalone npm claude-code release even on the latest
-    # claude-agent-sdk, and the operator wants the LATEST claude-code
-    # (e.g. to unlock the `fable[1m]` model). So the PATH `claude` binary
-    # is DECOUPLED from the SDK: we install the standalone
-    # `@anthropic-ai/claude-code@latest` npm package (added to the
-    # `npm install -g` list above; npm prefix is /opt/npm-global, so it
-    # lands at /opt/npm-global/bin/claude) and repoint /usr/local/bin/claude
-    # at THAT in section 6b. Per the operator directive to "carry the
-    # LATEST of ALL ecosystem packages", BOTH the npm claude-code (here)
-    # and the Python claude-agent-sdk (section 6b) now float to latest —
-    # the decoupling is STRUCTURAL (standalone npm CLI vs the SDK's
-    # internal bundle), not a frozen version mismatch; see section 6b for
-    # the caveat about SDK/claude-session agents.
-    npx puppeteer browsers install chrome-headless-shell || true
-
-    rm -rf /var/lib/apt/lists/*
-
-    # ---- 4. Rust toolchain + cargo-binstall ----------------------------
-    # Toolchain + cargo-binstall stay so additional Rust CLIs can be
-    # layered in (apptainer-scitex.def or downstream image-rebuild flows)
-    # without re-installing rustup. The default dev-CLI set baked here:
-    #
-    #   * ``sd``   — sed-like find/replace, non-interactive (Rust)
-    #   * ``dust`` — du-like disk-usage summary (one-shot, non-interactive)
-    #
-    # Both are useful to a headless agent (scripted refactors, "what is
-    # eating my overlay") and ship from cargo because Ubuntu 24.04 has
-    # neither in apt. The interactive disk-explorer cousin ``ncdu`` is
-    # deliberately NOT installed — the dundee/``gdu`` binary fetched
-    # in section 4c covers the headless ``gdu -o-`` JSON case sac
-    # itself needs (apt's ambiguous ``gdu`` package was dropped).
-    #
-    # For the operator's hand-curated extra Rust-CLI set (per-host,
-    # post-launch in an overlay) see ``~/.bin/installers/install_rust_clis.sh``
-    # in the operator dotfiles.
-    # The rustup INSTALLER at sh.rustup.rs is unversioned, but the toolchain
-    # it lays down is what actually ends up in the image — so pin THAT with
-    # --default-toolchain. Without it, `sh.rustup.rs -y` installs whatever
-    # "stable" means on build day and the two halves of a round trip can
-    # land different rustc versions. 1.97.1 is what the live fleet image
-    # carries (verified in-image 2026-08-12).
-    export RUSTUP_HOME=/opt/rust
-    export CARGO_HOME=/opt/cargo
-    RUST_TOOLCHAIN=1.97.1
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --no-modify-path \
-              --default-toolchain "${RUST_TOOLCHAIN}"
-    export PATH=/opt/cargo/bin:$PATH
-    # PINNED: ``releases/latest/download`` is a moving target, exactly like
-    # the yq fetch below and unlike the gdu fetch in 4c which has been
-    # pinned all along for the same reason. 1.21.1 is what the live fleet
-    # image carries (verified in-image 2026-08-12).
-    CARGO_BINSTALL_VERSION=1.21.1
-    curl --proto '=https' --tlsv1.2 -sSfL \
-        "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-musl.tgz" \
-        | tar xz -C /opt/cargo/bin/
-    chmod +x /opt/cargo/bin/cargo-binstall
-    cargo binstall --no-confirm --force sd du-dust
-    rm -rf /opt/cargo/registry /opt/cargo/git
-
-    # ---- 4a. yq — pulled as a static binary from mikefarah/yq --------
-    # ``yq`` is the YAML cousin of ``jq``; Ubuntu's ``yq`` apt package
-    # ships kislyuk/yq (a thin jq wrapper, different CLI surface), not
-    # the mikefarah Go binary that the rest of the SciTeX ecosystem
-    # uses. Pull the Go binary directly to /usr/local/bin so callers
-    # get the expected `.path | select(...)` syntax — non-interactive,
-    # single static binary, no runtime deps.
-    # PINNED for the same reason gdu is pinned in 4c: callers depend on a
-    # stable CLI surface across rebuilds, and ``releases/latest/download``
-    # silently retargets whenever upstream tags. v4.53.3 is what the live
-    # fleet image carries (verified in-image 2026-08-12).
-    YQ_VERSION=4.53.3
-    curl -fsSL \
-        "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
-        -o /usr/local/bin/yq
-    chmod +x /usr/local/bin/yq
-
-    # ---- 4c. gdu — dundee/gdu (pinned), NOT Ubuntu's gnu-disk-usage --
-    # Ubuntu 24.04's apt `gdu` is the ambiguous "gnu-disk-usage" build
-    # (no `-o-` machine-readable JSON). sac's .claude size-audit
-    # (F-CS8, _workdir/_audit.py) hard-depends on dundee/gdu's
-    # `gdu -o- <path>` JSON contract — different binary, same name.
-    # Pull a PINNED static release tarball from the dundee/gdu GitHub
-    # releases page so the .claude audit's JSON parser stays stable
-    # across SIF rebuilds.
-    GDU_VERSION=5.31.0
-    curl -fsSL \
-        "https://github.com/dundee/gdu/releases/download/v${GDU_VERSION}/gdu_linux_amd64.tgz" \
-        -o /tmp/gdu.tgz
-    tar -xzf /tmp/gdu.tgz -C /tmp
-    install -m 0755 /tmp/gdu_linux_amd64 /usr/local/bin/gdu
-    rm -f /tmp/gdu.tgz /tmp/gdu_linux_amd64
-    # Verify: dundee/gdu's --version line starts with "Version:	v5.31.0".
-    /usr/local/bin/gdu --version
-
-    # ---- 5. tree v2.1.3 from source ------------------------------------
-    curl -fsSL https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.1.3/unix-tree-2.1.3.tar.gz \
-        | tar xz -C /tmp
-    make -C /tmp/unix-tree-2.1.3 -j"$(nproc)"
-    make -C /tmp/unix-tree-2.1.3 install PREFIX=/usr/local
-    rm -rf /tmp/unix-tree-*
-
-    # ---- 6. uv (Astral) + pipx + pre-commit ----------------------------
-    # uv (Astral) — install, then place uv+uvx at a WORLD-READABLE path.
-    # The curl|sh installer ignores UV_INSTALL_DIR and lands in
-    # $HOME/.local/bin (=/root/.local/bin under the root build shell),
-    # which is unreachable to the uid-1000 `agent` user (/root is 0700) —
-    # which is why agents used to re-curl|sh uv into /uvwork at boot.
-    # Copy to /usr/local/bin (0755) so the baked uv is on agent's PATH.
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    for b in uv uvx; do
-        src="$(command -v "$b" 2>/dev/null || echo "/root/.local/bin/$b")"
-        [ -x "$src" ] && install -m 0755 "$src" "/usr/local/bin/$b"
-    done
-    /usr/local/bin/uv --version   # fail loud if uv is not runnable world-readable
-    python3 -m pip install --no-cache-dir --break-system-packages pipx
-    # pre-commit into SYSTEM python on purpose: every repo's git hook execs
-    # ``INSTALL_PYTHON=/usr/bin/python3 -m pre_commit`` — the interpreter
-    # ``pre-commit install`` bakes into .git/hooks/pre-commit. A module
-    # invocation (``-m pre_commit``), so pipx's isolated venv does NOT
-    # satisfy it; it must import from /usr/bin/python3. Without this, EVERY
-    # repo's commit hook silently dies with ModuleNotFoundError. Same
-    # --break-system-packages exception as pipx above (a lightweight dev
-    # tool the hooks invoke via system python; the heavy scientific stack
-    # still stays in the venv, section 6b). Regression context: this was a
-    # runtime overlay install that the fresh-SIF refresh wiped fleet-wide
-    # (figrecipe 2026-06-28) — pinning it into the image makes it durable.
-    python3 -m pip install --no-cache-dir --break-system-packages pre-commit
-
-    # ---- 6a. python convenience symlink -----------------------------
-    # Ubuntu 24.04's `python3-is-python3` doesn't ship by default; many
-    # tools (and sac's runner shim) call bare `python`. One symlink
-    # makes the SIF compatible with both without forcing every caller
-    # to use `python3`.
-    ln -sf /usr/bin/python3 /usr/local/bin/python
-
-    # ---- 6b. SAC runner deps (minimal, no scitex umbrella) ----------
-    # The runner module that sac's apptainer dispatcher invokes lives
-    # in scitex-agent-container, which needs claude-agent-sdk. Install
-    # just these two into a dedicated venv so /usr/bin/python3 stays
-    # untouched and per-agent overlays own their own scientific stack.
-    #
-    # claude-agent-sdk is FLOORED TO LATEST (installed bare, no `==`
-    # pin) per the operator directive to "install the LATEST
-    # claude-agent-sdk" / "carry the LATEST of ALL ecosystem packages".
-    # History: it was previously pinned (0.1.72 → 0.2.87 → 0.2.114); the
-    # 0.1.72 pin was a workaround for a since-fixed 2.1.139 startup hang
-    # on `GET /v1/mcp_servers`, and the SDK has long since rolled forward
-    # past that window, so a floating latest is safe and is what the
-    # operator wants. The SDK bundles its OWN CLI under `_bundled/claude`,
-    # but that bundle lags the standalone npm release — so we no longer
-    # surface it on PATH; the PATH `claude` binary is the standalone npm
-    # `@anthropic-ai/claude-code@latest` install instead (see section 3a
-    # and the repoint below in this section). The SDK (floated to latest)
-    # is installed ONLY for the Python runtime that
-    # scitex-agent-container's runner imports.
-    #
-    # sac itself is installed from /opt/scitex-agent-container-src/ —
-    # the package's OWN source tree, copied in by the %files section
-    # above. This pins the in-SIF sac to the source tree that shipped
-    # this .def (no `git+...@main` snapshot drift). The wheel build
-    # via hatchling happens inside the SIF, against the bundled tree.
-    #
-    # uv is now baked WORLD-READABLE at /usr/local/bin/uv (section 6
-    # copies it out of /root/.local/bin, which the curl|sh installer
-    # uses despite UV_INSTALL_DIR and which is unreachable to the
-    # uid-1000 `agent` user). /root/.local/bin is kept on PATH below
-    # for the build shell only (harmless); /usr/local/bin is what
-    # matters at runtime.
-    python3 -m venv /opt/venv-sac
-    export PATH=/root/.local/bin:/usr/local/bin:$PATH
-    # P3a-1.5 (operator directive feedback_scitex_todo_single_shared_store,
-    # lead a2a 5c0c1fe32a9a43888e01151d6fc0fb9e): scitex-todo[mcp] is part
-    # of EVERY agent's runtime so the in-container `scitex-todo mcp start`
-    # path (the P3a MCP wiring) succeeds even on the minimal base layer.
-    # The [mcp] extra pulls in fastmcp>=2.0 — the FastMCP server backing
-    # `scitex_todo._mcp_server:mcp`. scitex-todo's hard deps (click,
-    # pyyaml, ruamel-yaml) are already SAC-transitive via the runner
-    # plumbing, so the [mcp] extra adds just fastmcp.
-    #
-    # scitex-cards: FLOOR (>=0.19.0), not an exact pin (was ==0.16.0). 2026-07-17,
-    # floor raised 0.16.0 -> 0.17.2 on 2026-07-20, -> 0.17.9 on 2026-07-28,
-    # -> 0.19.0 on 2026-07-30 (SECURITY — see below).
-    #
-    # The 0.19.0 raise is a SECURITY floor, not a freshness bump. Through 0.18.0,
-    # `_django/handlers/dm.py` resolved the store as
-    #     getattr(request, STORE_REQUEST_ATTR, None) or _store_of(request)
-    # — a cross-tenant fallback: a request arriving WITHOUT the injected store
-    # attribute silently reads AND WRITES the host store, so under a multi-tenant
-    # mount one user's writes land in another's board. 0.19.0 drops the fallback
-    # and splits read from write (`_store_of` for reads, `_write_store_of` for
-    # writes). Verified in the ARTIFACT, not the version string, because a
-    # dist-info can sit atop missing files:
-    #     0.19.0 wheel  dm.py: "or _store_of(request)" x0, line 108 is a bare
-    #                   getattr; STORE_REQUEST_ATTR referenced 3x
-    #     the copy installed in the CURRENT image: x1 — i.e. the vulnerable
-    #                   path is live in what the fleet is running today
-    # After any bake, re-check by opening the installed dm.py and confirming the
-    # count is 0. `--version` cannot answer this.
-    #
-    # The 0.17.9 raise is EXPLICIT ON PURPOSE, not "latest at bake time". 0.17.8
-    # was published to PyPI and then MORE code was installed onto the host under
-    # that same version, so two codebases shared one number: an agent reading
-    # "0.17.8" in its container got the OLD renderer while the fix read as
-    # deployed. That fix makes an inbox notification name its sender and body
-    # instead of a bare count — the operator's DMs reached agents as the number
-    # "4", and one sat unread for two hours. A floating "latest" here would
-    # silently re-bake 0.17.8 if a bake lands between the merge and the PyPI
-    # publish, reproducing the confusion while the CHANGELOG claims the fix is
-    # in. If the pinned floor is not published yet this build FAILS LOUDLY,
-    # which is intended: a failed bake is cheap, a fleet silently baked with the
-    # old renderer is not. (That reasoning is why the floor is written as an
-    # explicit literal and raised deliberately; the literal is now 0.19.0, and
-    # 0.19.0 was confirmed installable from the index before it was written here.)
-    #
-    # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
-    # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
-    # DATABASES: its store resolution accepts an explicit YAML path that does not
-    # exist plus a bundled-example fallback, and a YAML->sqlite sync then wrote the
-    # example's single card over 2142 real ones (2026-07-19, recovered from
-    # backup). "Does not delete the board" is a capability, so it belongs in the
-    # specifier. >=0.16.0 happens to resolve to 0.17.2 today only because 0.17.2 is
-    # newest; that is luck, and luck expires the moment any other constraint in the
-    # resolve pins the range lower. 0.17.1 is skipped because it was never
-    # published as an artifact — its tag points at a commit predating the fix.
-    #
-    # A floor is not a pin, and the difference is the whole point: `==` freezes
-    # the fleet at one version forever; `>=` states a CAPABILITY REQUIREMENT and
-    # lets the resolver take the newest that satisfies it. The integration guard
-    # `test_uv_pip_install_block_pins_scitex_todo_minimum_version` demands a
-    # specifier for exactly this reason, and it caught my first attempt, which
-    # dropped the specifier entirely — that is the ONE thing neither the pin nor
-    # the floor allows, because an unversioned requirement (its own words) "takes
-    # whatever happens to be newest on the bake day and then freezes it into every
-    # downstream layer." Unpinning is not the same as unversioning. The guard was
-    # right; I was wrong.
-    # THIS layer is the one that matters: most agent specs boot sac-base.sif
-    # directly and the :scitex layer INHERITS this venv, so whatever lands
-    # here is what the whole fleet runs.
-    #
-    # The pin's history, kept because it is a real trade and the next reader
-    # deserves both halves: a bake once 0.13.4 was latest would have pulled a
-    # version costing ~171s per card write (vs ~4.5s on 0.13.5) and the board
-    # would have died the moment the image landed. The pin prevented that.
-    #
-    # It also froze the fleet by construction. Operator ruling 2026-07-17:
-    # 「pin 止めしてたら routine 焁きする意味ないですからね」— a scheduled bake
-    # of a pinned recipe rebuilds the same image forever. And on the
-    # regression itself: 「scitex-cards が悪いならそれを直さなくてはいけない
-    # のでは？なぜ定期焼きを止めるって発想になる？」 That relocates the fix
-    # correctly: a package that ships a write-time regression is caught by
-    # THAT package's CI. This recipe is not the fleet's quarantine ward, and
-    # freezing every agent's image to dodge one hypothetical bad release
-    # trades a certainty (permanent staleness) for a possibility.
-    #
-    # What did NOT change: PUBLISHED PyPI only, never a git branch ref
-    # (operator's hard requirement — unpinned is not unpublished). And the
-    # section-6c gate below still asserts the capability BY SYMBOL, so a
-    # release that drops it dies LOUD at bake rather than shipping silently.
-    # That gate is the honest protection: verify the artifact you built,
-    # do not freeze the input and call it safety.
-    # sac is installed with ``[all,dev]`` — and NOT the narrower ``[openai]``
-    # it carried until 2026-08-11.
-    #
-    # WHY THE WIDENING: ``[openai]`` left the image WITHOUT TEST TOOLING,
-    # because pytest and its plugins are declared in ``[dev]``. Measured on
-    # scitex-compute-04 the night of 2026-08-11, against the live SIF:
-    #
-    #   * a pristine container answered ``NO_PYTEST_ON_PATH`` and
-    #     ``/opt/venv-sac/bin/python: No module named pytest``;
-    #   * 19 of 20 agent overlays had NEITHER pytest NOR pytest-asyncio;
-    #   * so every agent that needed to run the suite hand-installed its own
-    #     tooling, and the fleet legitimately held DIFFERENT plugin sets and
-    #     different pytest MAJORS — one container ended up on pytest 9,
-    #     outside pyproject's declared ``>=7.0.0,<9.0.0``, while CI ran 8;
-    #   * and a 14-minute window in one overlay (pytest installed at 21:48,
-    #     pytest-asyncio not until 22:02) produced a run where 93 async tests
-    #     failed as pure ENVIRONMENT ARTEFACTS and were briefly read as a
-    #     regression in the code.
-    #
-    # An image that cannot run its own tests exports that cost to every agent
-    # booting it, and pays it again in wrong diagnoses. Operator ruling,
-    # 2026-08-11: 「デベロップメントは必ず SIF に入れないといけないっていうのは
-    # 当たり前だと思うんですけど、というか多分オールを入れておけばいいと思うん
-    # ですよね」— put dev IN the SIF — and, on the bracket itself,
-    # 「オールとデブですね」: ``[all,dev]``.
-    #
-    # ``dev`` IS NAMED EXPLICITLY EVEN THOUGH ``all`` CONTAINS IT TODAY.
-    # pyproject's ``all`` is the union aggregate and lists
-    # ``scitex-agent-container[dev]`` (alongside mcp / telegram / notify /
-    # slurm / openai / codex / docs), so ``[all]`` alone would resolve the
-    # same set right now. Naming ``dev`` anyway is not ceremony: it makes the
-    # REQUIREMENT — this image must arrive able to run its own tests — legible
-    # in the line that implements it, and it keeps that requirement satisfied
-    # if ``all`` is ever trimmed. An aggregate quietly losing a member is
-    # exactly the silent drift this whole change exists to end; the redundancy
-    # costs nothing and removes a way to lose it again. (The contract test in
-    # tests/integration/test_apptainer_def_openai_agents.py holds the same
-    # line from the other side.)
-    #
-    # ``[all,dev]`` IS A SUPERSET OF ``[openai]``, so nothing about the previous
-    # contract is lost: openai-agents (the `spec.provider: openai` agent-SDK
-    # family, openai-compat-3) is still baked UNCONDITIONALLY, which is the
-    # only option at image-build time — one image serves EVERY agent, so a
-    # per-spec conditional install is impossible here. Per-spec conditionality
-    # stays a RUNTIME concern: only `provider: openai` launches get the
-    # OPENAI_* env injection + `openai_session` executor routing (see
-    # runtimes/_apptainer_provider.py).
-    #
-    # EVERY version floor stays in pyproject.toml (SSoT); the bracket syntax
-    # on the local source path resolves them through the bundled tree's own
-    # metadata. That is what keeps the image's pytest inside
-    # ``>=7.0.0,<9.0.0`` instead of drifting to a major CI does not run — a
-    # hand-install carries no such constraint, which is exactly how the
-    # pytest-9 container happened.
-    #
-    # COST, MEASURED on scitex-compute-04 (2026-08-12 bake) rather than
-    # guessed: 161 -> 221 distributions (+60) and 1535.5 -> 1585.8 MB of SIF
-    # (+50.3 MB, +3.3%); the venv grows 1.1G -> 1.3G. It is that small because
-    # the heavy scientific stack was ALREADY in the image — scitex-dev 0.47.0,
-    # playwright, numpy, scipy, matplotlib and pymupdf were all present under
-    # ``[openai]`` — so this does not import a new ecosystem, it adds the test
-    # / docs / bridge leaves on top of one already paid for. Operator, shown
-    # the number: 「別に入れればいいじゃん…全部入れちゃえばいいと思う」.
-    # Re-measure rather than assume if the aggregate grows.
-    #
-    # UV SEMANTICS, NOT PIP (INCIDENT 2026-07-18). ``--no-cache-dir`` and
-    # ``--force-reinstall`` are PIP flags; uv does not honour them as a
-    # cache-bypass/rebuild, so it can reinstall a byte-identical STALE wheel it
-    # already built — its built-wheel cache is keyed on (name, version), NOT
-    # content, and sac's version does not advance per-commit (importlib
-    # .metadata reports the last RELEASED version even for brand-new bundled
-    # source). uv's own lever is ``--reinstall-package <pkg>``, which IMPLIES
-    # ``--refresh-package``: it REBUILDS that package from the staged source,
-    # bypassing the cached wheel. Bakes carrying the pip-flag form shipped
-    # pre-#742 sac while reporting rc=0 — a green build carrying OLD code.
-    # ``--no-cache`` is uv's OWN cache-disable (the pip spelling is
-    # --no-cache-dir); belt-and-braces, not the mechanism. Keep the command
-    # starting with ``uv pip install`` — the base-def contract tests locate
-    # this block with startswith("uv pip install"), so an env-var prefix
-    # (UV_NO_CACHE=1 ...) makes the block invisible to them.
-    #
-    # ``-U`` — a FLOOR ALONE DOES NOT UPGRADE. This layer bootstraps from
-    # ubuntu:24.04, so its venv is normally fresh and ``-U`` is a no-op
-    # here; it is load-bearing for the ``--sandbox`` mutate-and-re-bake
-    # flow documented at the top of this file, where the venv already
-    # exists and an already-satisfied floor would leave the OLD build in
-    # place while exiting 0. It also keeps this line honest against its
-    # counterpart in apptainer-scitex.def, where the inherited-venv case
-    # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
-    # weaken ``--reinstall-package``: that stays the stronger lever for
-    # sac's own rebuild-from-staged-source.
-    uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
-        --reinstall-package scitex-agent-container \
-        "claude-agent-sdk" \
-        "scitex-cards>=0.32.0" \
-        "/opt/scitex-agent-container-src[all,dev]"
-
-    # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
-    # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
-    # silently shipped scitex-todo 0.7.50 — days and two minor releases
-    # behind — and NOTHING failed. The bake was green, `sac versions`
-    # looked plausible, and the fleet quietly ran a scitex-todo whose WIP
-    # gate counted DEFERRED + CANCELLED cards as open (refusing legitimate
-    # card creation) while agents "diagnosed" bugs in peer code that had
-    # shipped fixed releases earlier. Silent staleness is the whole bug;
-    # this gate converts it into a BUILD FAILURE.
-    #
-    # Why a SYMBOL and not the version string: the version string LIES.
-    # An orphaned / duplicate .dist-info freezes what
-    # ``importlib.metadata.version()`` reports while the code actually on
-    # sys.path is a different tree entirely — a live open incident, and
-    # precisely why "the SIF says 0.9.4" would be worthless evidence. The
-    # symbol cannot lie: it is imported from the code this image will run.
-    #
-    # ``scitex_todo._throughput.WIP_STATUSES`` is the WIP gate's status
-    # set (scitex-todo #356, first released in 0.8.0): it must contain
-    # ``in_progress`` and must NOT contain terminal states. A pre-0.8.0
-    # scitex-todo dies on the import; a regressed one dies on the
-    # membership checks. Either way the build stops HERE rather than
-    # shipping a fleet-wide silent regression.
-    #
-    # SECOND probe, same standard: the sac in this image must be the
-    # %files-staged SOURCE TREE that shipped this .def — not a transitive
-    # PyPI sac wheel. uv/pip have skipped that local install before (their
-    # version-already-satisfied check) and quietly shipped a SIF built from
-    # the WRONG tree; the source-bundled install exists to stop that, and
-    # until now NOTHING asserted that it worked.
-    #
-    # Explicit ``sys.exit(1)`` rather than ``assert``: a bare ``assert``
-    # is stripped under ``python -O`` / PYTHONOPTIMIZE, which would turn
-    # this very gate into another silent no-op. Fail-loud means the check
-    # cannot be optimised away.
-    cat > /tmp/sac-assert-image-fresh.py <<'EOF'
-"""Build-time gate: nothing stale got baked into this image.
-
-Asserts BY SYMBOL, never by version string. The version string LIES — in
-two different ways, and BOTH of them live in this image:
-
-  * an orphaned / duplicate .dist-info freezes what importlib.metadata
-    reports while the code actually on sys.path is a different tree;
-  * the %files-staged sac reports its last RELEASED version no matter how
-    new the bundled source tree really is.
-
-A symbol cannot lie: it is imported from the code this image will run.
-Exits non-zero and prints WHY on failure; the .def turns that into a
-fatal build error.
-"""
-
-import importlib.metadata as md
-import sys
-
-# Both imports ARE staleness probes: each raises ImportError (unhandled →
-# non-zero exit → dead build) on a stale bake, naming the missing symbol.
-
-# scitex-todo #356 (first released in 0.8.0): the WIP gate must count
-# `in_progress` ONLY. Below it, every agent's WIP gate counts DEFERRED +
-# CANCELLED cards as open and refuses legitimate card creation — the
-# 2026-07-12 fleet-drift incident this gate exists to end.
-#
-# Package renamed scitex-cards (2026-07-16): the canonical module is
-# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
-# to the SAME module objects — un-cutover fleet code imports the old
-# name, so the shim working is itself a ship-gate for this image.
-from scitex_cards._throughput import WIP_STATUSES
-
-import scitex_cards
-import scitex_todo  # the transition shim — its absence breaks the fleet
-
-if scitex_todo is not scitex_cards:
-    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
-    sys.exit(1)
-
-# sac #633: auto-provisions a new agent's container overlay root; without
-# it every newly-created agent is stillborn on a raw apptainer FATAL.
-# This symbol is NEWER THAN ANY PUBLISHED sac RELEASE, so it doubles as
-# proof that the %files-staged local source tree won the install and no
-# transitive PyPI sac wheel overwrote it. Raise this floor when a newer
-# must-ship fix lands; never delete the probe.
-from scitex_agent_container.runtimes._apptainer_overlay import ensure_overlay_dirs
-
-# Printed for the BUILD LOG only — these numbers are NOT the gate.
-print("scitex-cards reported version:", md.version("scitex-cards"))
-print("scitex-cards WIP_STATUSES    :", sorted(WIP_STATUSES))
-print("sac reported version         :", md.version("scitex-agent-container"))
-print(
-    "sac overlay auto-provision   :",
-    f"{ensure_overlay_dirs.__module__}.{ensure_overlay_dirs.__name__}",
-)
-
-failures = []
-
-# psycopg GATE — the cards store is PostgreSQL, so a container without a
-# USABLE driver cannot read or write the fleet board at all.
-#
-# Assert the ATTRIBUTE, not the import, because the import cannot fail in the
-# way that actually happened. Measured 2026-08-02: site-packages held a bare
-# ``psycopg/`` directory containing only subdirectories — no ``__init__.py``,
-# no ``*.py``, and NO dist-info anywhere. Leftovers from a package that was
-# never requested: the pin then was ``scitex-cards[mcp]``, a hand-picked
-# PARTIAL extras set that omitted the driver. Python treats such a directory as
-# a NAMESPACE PACKAGE, so ``import psycopg`` SUCCEEDED, ``psycopg.__file__``
-# was None and ``psycopg.connect`` did not exist. Every agent then failed its
-# card writes with "canonical store postgresql://... does not exist" — blaming
-# the database for a missing driver, and sending three agents to the wrong
-# layer. An import-only check would have passed on that image.
-#
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.32.0``. As of 0.32.0 psycopg,
-# django and fastmcp are CORE dependencies — verified against the published
-# metadata, not the changelog:
-#
-#     psycopg   CORE=True   psycopg[binary]>=3.1
-#     django    CORE=True   django>=4.2
-#     fastmcp   CORE=True   fastmcp>=2.0
-#
-# so a bare install yields a complete client and there is no extras subset left
-# to pick wrong. The floor is 0.32.0 and NOT lower on purpose: psycopg only
-# became core in 0.31.8, so a bare pin admitting 0.31.6/0.31.7 would install NO
-# DRIVER and succeed.
-#
-# Do NOT "fix" a future recurrence by naming ``postgres`` or ``all``. A pin
-# naming an extra that no longer exists does not fail:
-#
-#     uv pip install --dry-run 'pkg[nonexistent]'
-#     -> warning: does not have an extra named `nonexistent`   EXIT=0
-#
-# Warning, not error. So that pin installs less and SUCCEEDS — reproducing this
-# very outage from the fix rather than the bug. This paragraph exists because
-# the sentences above name ``mcp``/``postgres`` as things that were missing,
-# and a reader arriving later would reasonably take those as the remedy. This
-# comment has already gone stale twice in one day; if you change the pin,
-# change this too.
-try:
-    import psycopg as _psycopg
-
-    if not hasattr(_psycopg, "connect"):
-        failures.append(
-            "psycopg imports but exposes no .connect (__file__=%r) — a "
-            "namespace-package phantom, not an install. The cards store is "
-            "PostgreSQL; check that the scitex-cards pin carries the "
-            "[postgres] extra." % (getattr(_psycopg, "__file__", None),)
-        )
-except Exception as _exc:
-    failures.append("psycopg is not importable: %r" % (_exc,))
-
-
-# The version string lies (uv's wheel cache is version-keyed and sac's
-# version does not advance per-commit). File content cannot lie — but the
-# comparison must be SET-AWARE: compare CONTENT of .py files present in
-# BOTH the installed package and the staged source (shared relative
-# paths); a stale wheel makes a shared file's content differ.
-# Set-differences (wheel excludes data files) are NOT staleness and are
-# ignored — comparing whole-tree hashes false-positives on them. Generic
-# on purpose: it names no feature, so a rename or decoupling never breaks it.
-import hashlib as _hashlib, pathlib as _pathlib, sysconfig as _sysconfig
-# Resolve the INSTALLED tree from this interpreter's OWN site-packages, never
-# via ``scitex_agent_container.__file__`` (INCIDENT 2026-07-18): during %post
-# the staged source can be importable, in which case __file__ points at the
-# STAGED tree, the gate compares that tree to ITSELF, and it passes no matter
-# how stale the real install is. It false-greened a pre-#742 image exactly so.
-_installed_root = _pathlib.Path(_sysconfig.get_paths()["purelib"]) / "scitex_agent_container"
-_staged_root = _pathlib.Path("/opt/scitex-agent-container-src/src/scitex_agent_container")
-# A gate that cannot distinguish its two operands is blind — say so, loudly.
-if not _installed_root.is_dir():
-    failures.append(
-        "content assert cannot find the INSTALLED sac at %s — sac is not "
-        "installed into site-packages; the gate has nothing to verify." % _installed_root
-    )
-elif _installed_root.resolve() == _staged_root.resolve():
-    failures.append(
-        "content assert operands are the SAME directory (%s) — installed and "
-        "staged resolve identically, so the comparison proves nothing." % _installed_root
-    )
-def _rel_shas(root):
-    out = {}
-    for p in root.rglob("*.py"):
-        rel = p.relative_to(root).as_posix()
-        out[rel] = _hashlib.sha256(p.read_bytes()).hexdigest()
-    return out
-if _staged_root.is_dir():
-    _inst = _rel_shas(_installed_root)
-    _stg = _rel_shas(_staged_root)
-    _shared = sorted(set(_inst) & set(_stg))
-    print("content-assert shared .py files:", len(_shared))
-    if len(_shared) < 50:
-        failures.append(
-            "content assert compared only %d shared .py files (expected hundreds) — "
-            "installed/staged package roots may be misaligned; comparison is not meaningful." % len(_shared)
-        )
-    else:
-        _mismatch = [rel for rel in _shared if _inst[rel] != _stg[rel]]
-        if _mismatch:
-            failures.append(
-                "installed sac differs from staged source in %d of %d shared .py files "
-                "(e.g. %s) — a STALE wheel shipped; the fix did NOT ship. Verify --no-cache-dir "
-                "on the sac install." % (len(_mismatch), len(_shared), _mismatch[:5])
-            )
-else:
-    print("NOTE: staged source not at /opt/scitex-agent-container-src; content assert skipped")
-
-# The WIP gate counts work IN FLIGHT, and only that. Terminal/parked
-# states must never occupy a WIP slot.
-if "in_progress" not in WIP_STATUSES:
-    failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
-terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
-if terminal:
-    failures.append(
-        f"terminal states {sorted(terminal)} counted as WIP: {sorted(WIP_STATUSES)} "
-        "— the pre-0.8.0 bug that jams every agent's WIP gate."
-    )
-
-# Exactly one installed distribution may claim each name. Two (an
-# orphaned .dist-info left by a partial reinstall) is the failure mode
-# that lets the reported version diverge from the code.
-for name in ("scitex-cards", "scitex-agent-container"):
-    dists = [
-        dist
-        for dist in md.distributions()
-        if (dist.metadata["Name"] or "").lower().replace("_", "-") == name
-    ]
-    if len(dists) != 1:
-        failures.append(
-            f"{len(dists)} {name} distributions installed (expected 1) — a "
-            "duplicate/orphaned .dist-info makes the reported version a lie."
-        )
-
-if failures:
-    print("", file=sys.stderr)
-    for line in failures:
-        print(f"  - {line}", file=sys.stderr)
-    sys.exit(1)
-
-print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
-EOF
-    /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
-        || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
-
-    # Surface the standalone npm-installed claude CLI (latest) on PATH,
-    # DECOUPLED from the SDK's OWN bundled CLI (which lags the standalone
-    # npm release). This is what humans get on `apptainer shell` and what
-    # TUI agents (runtime: tui) invoke via `command -v claude` — so they
-    # get the latest claude-code and the `fable[1m]` model. CAVEAT: the
-    # SDK ships its own bundled CLI, so SDK/claude-session agents may
-    # still invoke that bundled binary (not this PATH symlink) depending
-    # on how subprocess_cli resolves the executable — that path is NOT
-    # yet validated on a rebuilt SIF and needs a smoke-test before
-    # fleet-wide rollout.
-    if [ -x /opt/npm-global/bin/claude ]; then
-        ln -sf /opt/npm-global/bin/claude /usr/local/bin/claude
-    fi
-
-    # ---- 7. rtk — Rust Token Killer (the operator's token-saving proxy) -
-    # rtk rewrites dev commands through a token-optimizing CLI proxy. The
-    # operator's ~/.claude/settings.json already wires the rtk
-    # command-rewrite hook, but it silently no-ops in agents unless `rtk`
-    # is on PATH — the host build lands in the operator's ~/.cargo/bin,
-    # which is NOT on the container PATH. Bake rtk into the image so EVERY
-    # agent has it (base + the scitex layer that bootstraps from base).
-    #
-    # Built from source with the toolchain from section 4; the binary
-    # lands in $CARGO_HOME/bin (/opt/cargo/bin, already on PATH). PINNED to
-    # a release tag for reproducible rebuilds — the same drift-avoidance as
-    # the bundled sac source (never a moving @main). `--git` targets the
-    # operator's repo, avoiding the unrelated crates.io `rtk`
-    # (name collision: reachingforthejack/rtk).
-    cargo install --git https://github.com/rtk-ai/rtk --tag v0.38.0 rtk
-    rm -rf /opt/cargo/registry /opt/cargo/git
-    # Fail loud if the build did not produce a working binary.
-    /opt/cargo/bin/rtk --version
 
     # ---- 8. Bake the scitex-* version manifest (`sac versions`) --------
     # `sac versions --json` reads this baked manifest (source="manifest",
@@ -867,6 +55,12 @@ EOF
     # in pip's own `--format=json` shape so the reader parses both paths
     # identically. Pure pipe + `python -c` (dash-safe — apptainer %post runs
     # under /bin/sh, which has no bash process substitution).
+    #
+    # THIS RUNS AT :base, THE TOP OF THE PYTHON STACK, ON PURPOSE. The venv
+    # is assembled by :python-pkgs; the manifest must describe the venv as
+    # it will actually SHIP, so it is captured by the last layer that can
+    # still see a final answer. Capturing it one layer down would freeze a
+    # snapshot taken before this layer existed.
     /opt/venv-sac/bin/pip list --format=json \
         | /opt/venv-sac/bin/python -c 'import json,sys; rows=[r for r in json.load(sys.stdin) if str(r.get("name","")).lower().replace("_","-").split("-")[0]=="scitex"]; json.dump(sorted(rows,key=lambda r:str(r.get("name","")).lower()), sys.stdout, indent=2)' \
         > /opt/scitex-versions.json
@@ -877,12 +71,18 @@ EOF
     export LC_ALL=en_US.UTF-8
     # /opt/venv-sac/bin first so the runner uses the SAC-shipped python
     # (with scitex-agent-container + claude-agent-sdk preinstalled).
-    # The PATH `claude` resolves to /usr/local/bin/claude, which section
-    # 6b symlinks at the standalone npm `@anthropic-ai/claude-code@latest`
-    # binary (/opt/npm-global/bin/claude) — DECOUPLED from the SDK's OWN
-    # bundled CLI (for `fable[1m]`). No `claude` lands in
-    # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
-    # those earlier entries do NOT shadow the npm claude symlink.
+    # The PATH `claude` resolves to /usr/local/bin/claude, which the
+    # :python-pkgs layer symlinks at the standalone npm
+    # `@anthropic-ai/claude-code@latest` binary (/opt/npm-global/bin/claude)
+    # — DECOUPLED from the SDK's OWN bundled CLI (for `fable[1m]`). No
+    # `claude` lands in /opt/venv-sac/bin or /root/.local/bin (the latter
+    # holds only uv), so those earlier entries do NOT shadow the npm
+    # claude symlink.
+    #
+    # Declared in FULL, not as a delta: apptainer OVERWRITES
+    # /.singularity.d/env/90-environment.sh on each localimage-derived
+    # build, so a child that exports only its own additions silently
+    # drops the parent's PATH ordering.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
@@ -890,9 +90,12 @@ EOF
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk"
+    org.scitex.from scitex-agent-container:python-pkgs
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk claude-agent-sdk scitex-cards scitex-agent-container[all,dev]"
 
 %help
-    scitex-agent-container :base layer.
-    OS + developer tooling. Layer apptainer-scitex.def on top to add
-    scitex[all] + claude-agent-sdk + sac itself.
+    scitex-agent-container :base layer (stack layer 3 of 4).
+    OS + developer tooling (from :system-deps) plus the SAC python venv
+    (from :python-pkgs), capped with the baked `sac versions` manifest.
+    This is the fleet's default boot image. Layer apptainer-scitex.def
+    on top to add scitex[all].
