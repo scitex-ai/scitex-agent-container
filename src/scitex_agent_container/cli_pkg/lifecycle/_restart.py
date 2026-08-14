@@ -59,7 +59,11 @@ from ._restart_remote import (  # noqa: F401
     log_restart_decision,
     must_broker_to_host,
 )
-from ._restart_verify import read_run_identity, verify_cycled  # noqa: F401
+from ._restart_verify import (  # noqa: F401
+    read_run_identity,
+    read_session_identity,
+    verify_cycled,
+)
 from ._selection import (
     _enumerate_fleet,
     _enumerate_running,
@@ -190,13 +194,29 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
     # reads the AGENT: a restart that changed nothing must not report
     # success no matter what the call returned (P0 2026-07-20 — an
     # in-container restart printed green over an untouched process).
+    #
+    # BOTH witnesses are captured BEFORE the call, because both are
+    # destroyed by it: ``agent_restart`` rewrites the marker and (when it
+    # really works) replaces the tmux session. The session reading is the
+    # one that makes this a check at all — the marker is written by the
+    # start path we are checking, so on its own it can only ever agree
+    # with itself (P0 2026-08-14, scitex-compute-04: "verified: ... is a
+    # NEW run" printed over a tmux session alive and untouched since the
+    # previous day).
     before = read_run_identity(name)
+    session_before = read_session_identity(name)
     _result = agent_restart(name)
     restarted = _result is not False
     if outcome_kind(_result) == KIND_ALREADY_RUNNING:
         restarted = False
         no_op_reason = KIND_ALREADY_RUNNING
-    verdict = verify_cycled(name, before, read_run_identity(name))
+    verdict = verify_cycled(
+        name,
+        before,
+        read_run_identity(name),
+        session_before=session_before,
+        session_after=read_session_identity(name),
+    )
     if verdict.verified is False:
         # DEFINITIVE: we held the before-evidence and the run did not
         # change (or vanished). Veto the success. ``verified is None``
@@ -227,7 +247,11 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
     """Console rendering for a locally-performed restart (no JSON here)."""
     if restarted:
         console.print(f"[green]Agent '{name}' restarted[/green]")
-        console.print(f"[dim]verified: {verdict.reason}[/dim]")
+        # Only a True verdict may be labelled "verified". A None verdict
+        # is an ABSTENTION, and printing it under that word is how an
+        # unchecked restart came to read as a checked one.
+        label = "verified" if verdict.verified else "NOT verified"
+        console.print(f"[dim]{label}: {verdict.reason}[/dim]")
         return
     if no_op_reason == _NOT_CYCLED:
         console.print(f"[red]Agent '{name}' NOT restarted — {verdict.reason}[/red]")
