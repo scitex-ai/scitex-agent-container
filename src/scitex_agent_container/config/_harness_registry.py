@@ -61,8 +61,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:  # pragma: no cover — typing only, no runtime import cycle
-    from pathlib import Path
-
+    # ``Path`` moved out with the per-entry callables (the only things that
+    # annotated a state_dir) — it now lives in ``_harness_callables``.
     from ._types import AgentConfig
 
 __all__ = [
