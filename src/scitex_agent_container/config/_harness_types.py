@@ -73,7 +73,13 @@ HARNESS_KEY = "harness"
 #: The DEPRECATED alias still honoured for the existing spec corpus.
 LEGACY_HARNESS_KEY = "provider"
 
-AgentHarness = Literal["anthropic", "openai"]
+# TYPING-ONLY, and the ONE spot a new harness still costs a hand edit:
+# every RUNTIME set on this axis (AGENT_HARNESSES below,
+# config._validation, runtimes._apptainer_provider) derives from the
+# registry, but a `Literal` cannot be built from a runtime tuple without
+# losing static checking, so the members are restated here. Keep in sync
+# with the ``spec_harness`` values in config._harness_registry.
+AgentHarness = Literal["anthropic", "openai", "codex"]
 
 DEFAULT_AGENT_HARNESS: AgentHarness = "anthropic"
 

@@ -138,9 +138,61 @@ codex = [
     # Anthropic Messages -> ChatGPT Codex subscription bridge selected by
     # `spec.claude.provider: codex`; this is intentionally separate from the
     # `openai` extra above, which replaces the harness with openai-agents.
+    # NOT the same thing as `codex-sdk` below — see that extra's comment.
     "scitex-genai[gateway]>=0.1.4",
 ]
+codex-sdk = [
+    # sac's FOURTH harness (card sac-codex-python-sdk-harness-20260814):
+    # `spec.harness: codex`, backing `_runners/codex_session.py`
+    # (CodexSession -- the concrete HarnessSession over AsyncCodex).
+    #
+    # DELIBERATELY NOT NAMED `codex`: that extra is TAKEN, and by the OTHER
+    # axis. `codex` installs scitex-genai for `spec.claude.provider: codex`,
+    # an INFERENCE backend with Claude Code still running the loop. THIS
+    # extra replaces the HARNESS -- the codex agent program runs the loop
+    # and brings its own file-edit/exec/apply_patch tooling. `codex` is the
+    # first value to land on both axes, so the two extras are spelled
+    # differently rather than one silently shadowing the other.
+    #
+    # WEIGHT WARNING: openai-codex pins `openai-codex-cli-bin`, a wheel-only
+    # package shipping a ~285 MB native `codex` binary (plus rg, bwrap, zsh).
+    # OPTIONAL so a BARE install stays Claude-only -- every import is lazy and
+    # CodexSession raises CodexSessionError with this install hint when absent.
+    # It IS still reachable from `[all]`, as PS-221 §3 requires of every public
+    # extra; see the note there. 0.144.4 floor: the first release carrying the
+    # AsyncCodex/thread_resume surface the runner is written against.
+    "openai-codex>=0.144.4",
+]
 dev = [
+    # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
+    # openai-codex, `src/.../_runners/codex_session.py` imports the
+    # `openai_codex` module, and the tests import `scitex_agent_container`
+    # — the rule's TRANSITIVE arm — so `[dev]` must carry it too. The
+    # rule's contract is that a fresh `pip install -e .[dev]` runs the
+    # FULL suite with nothing skipped.
+    #
+    # NAMED DIRECTLY, NOT AS `scitex-agent-container[codex-sdk]`. That
+    # self-referential form is what pip would resolve, but PS-210 reads
+    # `[dev]`'s entries as DISTRIBUTION NAMES — `_strip_version` truncates
+    # each one at the first `[`, so the self-extra registers as
+    # `scitex_agent_container` and the auditor never resolves the extra to
+    # `openai_codex`. It was tried (25fe8a37) and the rule still fired.
+    # Spelling the distribution out is both what the rule asks for and
+    # what the `scitex-hpc` entry below already does for the same reason.
+    #
+    # The rule's other remedy — `pytest.importorskip("openai_codex")` —
+    # is WRONG here and must not be substituted: the tests that mention
+    # the module assert the SDK-ABSENT behaviour (CodexSession must be
+    # constructible without it, and start() must raise CodexSessionError
+    # carrying the pip hint) by forcing `sys.modules["openai_codex"] =
+    # None`. importorskip would skip exactly the tests whose whole subject
+    # is the absence, i.e. delete the coverage instead of enabling it.
+    #
+    # Costs nothing in CI, which installs `[all,dev]` and already gets
+    # this via `all` (PS-221 §3). It does add openai-codex-cli-bin's
+    # ~285 MB native wheel to a bare `[dev]` install. Floor kept in step
+    # with the `[codex-sdk]` extra above.
+    "openai-codex>=0.144.4",
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
     # first gained its `path=` parameter in 0.31.1 (verified against the
     # published wheels: 0.31.0 has NEITHER `path=` NOR the CWD-git-root
@@ -315,6 +367,24 @@ all = [
     # the real openai-agents SDK paths; the bare install stays Claude-only.
     "scitex-agent-container[openai]",
     "scitex-agent-container[codex]",
+    # PRESENT BECAUSE THE POLICY REQUIRES IT, not because the tests need
+    # it. PS-221 §3 (public-extra-not-closed-under-all): every PUBLIC
+    # extra must be a subset of `all`, so `pip install <pkg>[all]` really
+    # does pull everything public — an extra missing here silently
+    # under-installs for anyone who ran the documented "give me
+    # everything" install.
+    #
+    # The cost is real and worth stating: this drags openai-codex, which
+    # pins openai-codex-cli-bin — a wheel-only package shipping a ~285 MB
+    # native binary — into every `[all,dev]` CI job, and the codex
+    # harness's own tests need none of it (they drive hand-rolled
+    # HarnessSession stand-ins and assert the missing-SDK path with a
+    # sys.modules sentinel). Omitting it was tried and is WRONG: it makes
+    # `[all]` a lie. If the CI weight ever needs solving, solve it in the
+    # CI install (a narrower extra set for the test job), not by
+    # un-closing `all`. Do NOT try a leading-underscore "private extra"
+    # either — PEP 508/685 forbids the name outright.
+    "scitex-agent-container[codex-sdk]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]

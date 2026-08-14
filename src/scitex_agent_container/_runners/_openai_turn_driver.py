@@ -43,24 +43,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 
 from ..config._harness_registry import HARNESS_DESCRIPTORS, OPENAI_AGENTS
-from ._harness_session import Message
-from ._incarnation import WRITER_TURN_DRIVER
+from ._harness_turn_pump import drive_harness_turn
 from ._openai_api_surface import select_api_surface
-from ._session_state import (
-    STATE_BUSY,
-    STATE_READY,
-    accumulate_quota,
-    append_session_message,
-    report_sdk_error,
-    write_heartbeat,
-)
+from ._session_state import append_session_message, report_sdk_error
 from ._session_supervisor_helpers import _drain_failed_inbox
-from ._session_turn import _safe_repr
 
 logger = logging.getLogger(__name__)
 
@@ -107,100 +97,29 @@ async def _drive_openai_turn(
 ) -> None:
     """Run ONE turn against the vendor session, resolving ``env.response``.
 
-    Mirrors :func:`._session_turn._drive_turn`'s bookkeeping: a BUSY
-    beat stamped :data:`WRITER_TURN_DRIVER` (self-testimony the daemon's
-    periodic loop preserves), transcript appends per event, quota
-    accumulation on the terminal result, and a READY beat once the turn
-    closes. An ``error`` event is turn-ending per the HarnessSession
-    contract: the awaiting future resolves with the failure instead of a
-    silent empty reply. An EXCEPTION out of ``session.send`` is outside
-    that contract — it propagates to the daemon, whose done-callback
-    records ``crashed`` honestly.
+    THIN WRAPPER since the fourth harness landed (card
+    ``sac-codex-python-sdk-harness-20260814``): the body moved verbatim
+    to :func:`._harness_turn_pump.drive_harness_turn`, which turned out
+    to be openai-specific in NAME only — every line of it is a function
+    of :class:`~._harness_session.NormalizedEvent` kinds and the
+    daemon's bookkeeping surface. The codex driver calls the same pump,
+    so the transcript format, the beat protocol and the error contract
+    cannot drift between harnesses.
+
+    The name is kept because it is this module's tested seam; behaviour
+    is unchanged.
     """
-    write_heartbeat(
-        state_dir,
+    await drive_harness_turn(
+        session,
+        env,
+        state_dir=state_dir,
         pid=pid,
-        state=STATE_BUSY,
+        stop=stop,
+        print_stream=print_stream,
         name=name,
         host=host,
-        writer=WRITER_TURN_DRIVER,
+        harness=OPENAI_AGENTS,
     )
-    append_session_message(state_dir, {"type": "user", "text": env.text})
-    chunks: list[str] = []
-    error_detail: str | None = None
-    try:
-        async for event in session.send(Message(role="user", content=env.text)):
-            if stop.is_set():
-                break
-            if event.kind == "text_delta":
-                chunks.append(event.text)
-                append_session_message(
-                    state_dir, {"type": "assistant", "text": event.text}
-                )
-                if print_stream:
-                    sys.stdout.write(event.text)
-                    sys.stdout.flush()
-            elif event.kind == "tool_call":
-                append_session_message(
-                    state_dir,
-                    {
-                        "type": "tool_call",
-                        "tool": event.tool_name,
-                        "input": _safe_repr(event.tool_input),
-                    },
-                )
-            elif event.kind == "tool_result":
-                append_session_message(
-                    state_dir,
-                    {"type": "tool_result", "output": _safe_repr(event.tool_output)},
-                )
-            elif event.kind in ("reasoning", "task"):
-                append_session_message(
-                    state_dir, {"type": event.kind, "text": event.text}
-                )
-            elif event.kind == "result":
-                result = event.result
-                sid = getattr(result, "session_id", None)
-                if sid:
-                    # Echoed to the /v1/turn caller by the sidecar; set
-                    # BEFORE the future resolves (finally below) so the
-                    # awaiter sees a consistent (text, session_id).
-                    env.session_id = sid
-                usage = dict(getattr(result, "usage", None) or {})
-                accumulate_quota(state_dir, usage)
-                append_session_message(
-                    state_dir,
-                    {"type": "result", "session_id": sid, "usage": usage},
-                )
-            elif event.kind == "error":
-                error_detail = str(event.error)
-                logger.error("openai turn failed for %s: %s", name, error_detail)
-                append_session_message(
-                    state_dir,
-                    {"type": "error", "kind": "harness_turn", "detail": error_detail},
-                )
-                if host:
-                    report_sdk_error(
-                        name=name,
-                        host=host,
-                        cause="harness-turn",
-                        detail=error_detail,
-                    )
-                break
-        if error_detail is not None and not env.response.done():
-            env.response.set_exception(RuntimeError(error_detail))
-    finally:
-        if not env.response.done():
-            env.response.set_result("".join(chunks))
-        if not stop.is_set():
-            write_heartbeat(
-                state_dir,
-                pid=pid,
-                state=STATE_READY,
-                name=name,
-                host=host,
-                writer=WRITER_TURN_DRIVER,
-            )
 
 
 async def run_openai_conversation(
