@@ -84,6 +84,13 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         help="Mirror assistant text to stdout.",
     )
     p.add_argument(
+        "--residency",
+        type=str,
+        choices=("one-shot", "resident"),
+        default="resident",
+        help="Accepted for parity; this single-turn runner is one-shot-shaped either way.",  # daemon adoption is v4 step 7
+    )
+    p.add_argument(
         "--autonomous-enabled",
         action="store_true",
         help="Accepted for parity; no autonomous loop.",  # single-turn mission only

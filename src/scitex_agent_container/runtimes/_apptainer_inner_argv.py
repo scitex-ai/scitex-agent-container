@@ -26,6 +26,7 @@ from ..config._harness_registry import (
     OPENAI_AGENTS,
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
+from ..config._residency_types import DEFAULT_AGENT_RESIDENCY
 from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
     _home_has_resumable_conversation,
     _tui_runner_argv,
@@ -310,6 +311,16 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         "--restart-backoff-s",
         str(_resolve_restart_backoff_s(config)),
     ]
+    # spec.residency (v4 step 6) → --residency. Emitted only when the
+    # compiled spec declares the NON-default ("one-shot"): an agent that
+    # declares nothing keeps a byte-identical argv, so a container whose
+    # installed runner predates the flag still boots — an opt-in one-shot
+    # agent needs the new runner anyway for the behaviour to exist, and
+    # the runner's argparse refuses the flag loudly on an old build
+    # instead of silently staying resident.
+    residency = str(getattr(config, "residency", "") or "").strip()
+    if residency and residency != DEFAULT_AGENT_RESIDENCY:
+        runner_argv += ["--residency", residency]
     # startup_prompts -> claude SDK mission via --mission. NO fallback
     # from startup_commands; that field is shell-exec only (see
     # build_inner_argv wrapper).

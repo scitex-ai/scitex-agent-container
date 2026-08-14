@@ -136,6 +136,7 @@ def _build_event_log_hooks(
 # ---------------------------------------------------------------------------
 
 
+from ..config._residency_types import RESIDENT
 from .session_daemon import _autonomous_loop, run_session_daemon
 
 __all__ += ["_autonomous_loop", "run_session_daemon"]
@@ -144,6 +145,7 @@ __all__ += ["_autonomous_loop", "run_session_daemon"]
 async def run(
     name: str,
     *,
+    residency: str = RESIDENT,
     state_root: Path | None = None,
     tick_seconds: float = DEFAULT_TICK_SECONDS,
     mission: str | None = None,
@@ -185,6 +187,10 @@ async def run(
     return await run_session_daemon(
         name,
         turn_driver=turn_driver,
+        # The spec-declared residency axis (v4 step 6), threaded through
+        # from the compiled spec via the runner argv — the daemon never
+        # re-reads global config for it.
+        residency=residency,
         state_root=state_root,
         tick_seconds=tick_seconds,
         mission=mission,

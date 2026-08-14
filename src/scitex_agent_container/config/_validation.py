@@ -35,6 +35,7 @@ from ._harness_types import (
     is_known_harness,
     list_harnesses,
 )
+from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
 
@@ -80,6 +81,10 @@ _KNOWN_SPEC_KEYS = frozenset(
         "provider",  # DEPRECATED alias of "harness" — still honoured so the
         # existing spec corpus loads unchanged. Unrelated to the nested
         # spec.claude.provider (inference backend). See _harness_types.
+        "residency",  # v4 residency axis: resident (default) | one-shot —
+        # does the daemon outlive its work? DEFAULTED, not required: a NEW
+        # axis the live corpus predates; requiring it would red-start the
+        # fleet for declaring nothing new. See _residency_types.
         "access",  # host-access posture: full (default) | capsule
         "workdir",
         "python-venv",
@@ -292,6 +297,17 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "spec.claude.provider, which selects an "
                     "Anthropic-compatible inference backend.)"
                 )
+
+        # spec.residency — DOES THE DAEMON OUTLIVE ITS WORK (v4 step 6):
+        # resident (default) parks awaiting more turns; one-shot exits
+        # cleanly (ExitRecord reason oneshot-complete) when the
+        # conversation completes. Absence is the resident default — the
+        # live corpus predates the axis — but an ILLEGAL value and the
+        # unsupported couplings (externally hosted TUI harness, kind:
+        # AgentProxy) fail loud. Both checks live with the axis in
+        # _residency_types.
+        errors.extend(residency_value_error(spec))
+        errors.extend(residency_coupling_error(spec, kind))
 
         # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
         # The knob silently injected a whole-home bind, a ``/work`` alias and
