@@ -35,6 +35,15 @@ ExitRecord (``exit.json`` — see :mod:`._incarnation`) naming WHY it
 ended: ``stopped-by-signal`` / ``oneshot-complete`` /
 ``harness-returned`` / ``crashed``.
 
+THE RESIDENCY CONTRACT (the zombie fix, card
+sac-sdk-runner-stop-never-set-zombie-resident-20260814): the
+conversation task's completion is TIED to ``stop`` via a done-callback
+(:func:`._daemon_contract.make_convo_done_callback`). Before this,
+nothing set ``stop`` when the turn driver returned or died on its own —
+the daemon stayed parked on ``stop.wait()`` forever, a RESIDENT ZOMBIE
+with green heartbeats, a bound a2a port, and no inbox consumer. Now the
+daemon exits instead, with ``reason=harness-returned`` (clean return)
+or ``crashed`` (exception) in the ExitRecord and a non-zero exit code.
 """
 
 from __future__ import annotations
@@ -47,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from ._daemon_contract import (
+    make_convo_done_callback,
     make_daemon_state_fn,
     resolve_exit,
 )
@@ -278,6 +288,18 @@ async def run_session_daemon(
             )
         )
         convo_ref["task"] = convo_task
+        # THE ZOMBIE FIX (see module docstring + _daemon_contract): the
+        # conversation ending — clean return, crash, or stray cancel —
+        # folds into ``stop`` with its honest cause instead of leaving a
+        # resident zombie parked on ``stop.wait()``.
+        convo_task.add_done_callback(
+            make_convo_done_callback(
+                name=name,
+                stop=stop,
+                exit_cause=exit_cause,
+                oneshot_mode=oneshot_mode,
+            )
+        )
         if mission and autonomous_enabled:
             # F-CS3 phase 2: drive turns until drive_until matches or
             # max_turns is reached. The loop sets ``stop`` itself, so
