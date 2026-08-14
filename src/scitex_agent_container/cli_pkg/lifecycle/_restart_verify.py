@@ -177,7 +177,11 @@ def _created_snapshot(*, socket_name: str | None = None) -> dict | None:
     return list_sessions_created(socket_name=socket_name)
 
 
-def recorded_session_name(name: str) -> str | None:
+def recorded_session_name(
+    name: str,
+    *,
+    in_sif_fn: Callable[[], bool] | None = None,
+) -> str | None:
     """The multiplexer session ``name``'s newest ``instances`` row names.
 
     ``instances.screen``, read through :func:`_state.state_db
@@ -187,9 +191,18 @@ def recorded_session_name(name: str) -> str | None:
 
     ``None`` when the agent has no row, when the row predates
     :func:`_lifecycle._instances.record_local_instance` filling the column
-    (``screen`` NULL), or when the row was written on ANOTHER HOST: that
-    session lives in a tmux server we cannot reach, so probing the name
-    here would answer about this machine and mean nothing. Never raises.
+    (``screen`` NULL), or when that session is not ours to look at — a row
+    written on ANOTHER HOST, or a caller sitting inside a container, whose
+    tmux is a different namespace from the host's. In both of those the
+    name would be probed against the wrong server, and an answer from the
+    wrong server is not a weaker answer, it is not an answer.
+
+    ``in_sif_fn`` is the injection seam (a real callable; see
+    :func:`_lifecycle._verdict_tmux.pid_namespace_is_observable`) so a
+    test can drive BOTH namespace answers deterministically. It has to
+    exist: this suite runs inside a SIF while its conftest clears the
+    in-SIF markers, so the ambient answer is whatever the harness happens
+    to have left behind — a host-dependent test either way. Never raises.
     """
     try:
         from ..._state.state_db import last_known_instance
@@ -202,16 +215,22 @@ def recorded_session_name(name: str) -> str | None:
     session = str(row.get("screen") or "").strip()
     if not session:
         return None
-    row_host = str(row.get("host") or "")
-    if row_host:
-        from ..._lifecycle._verdict_tmux import pid_namespace_is_observable
+    from ..._lifecycle._verdict_tmux import pid_namespace_is_observable
 
-        # Same predicate the liveness probe uses for pids, and for the same
-        # reason: a name minted in another machine's (or the host's, when
-        # we are in a SIF) namespace is not ours to read.
-        observable, _why = pid_namespace_is_observable(row_host=row_host)
-        if not observable:
-            return None
+    # Same predicate the liveness probe uses for pids, and for the same
+    # reason: a name minted in another machine's (or the host's, when we
+    # are in a SIF) namespace is not ours to read. Asked UNCONDITIONALLY,
+    # never only when the row names a host: ``row_host=None`` skips just
+    # the cross-host arm, and the container arm is the one that must fire
+    # for every row — gating the whole predicate on ``row_host`` let an
+    # in-SIF caller probe a hostless row's name against the CONTAINER's
+    # tmux and read the answer as the host's.
+    observable, _why = pid_namespace_is_observable(
+        row_host=str(row.get("host") or "") or None,
+        in_sif_fn=in_sif_fn,
+    )
+    if not observable:
+        return None
     return session
 
 
@@ -248,9 +267,7 @@ def read_session_identity(
         )
     from ..._lifecycle._verdict_tmux import observed_session_snapshot
 
-    snapshot = observed_session_snapshot(
-        snapshot_fn=snapshot_fn or _created_snapshot
-    )
+    snapshot = observed_session_snapshot(snapshot_fn=snapshot_fn or _created_snapshot)
     if snapshot is None:
         return SessionObservation(
             False,
