@@ -189,6 +189,26 @@ _SAC_CARDS_DB = _SAC_STATE_FLOOR / "cards" / "cards.db"
 os.environ["SCITEX_CARDS_DB"] = str(_SAC_CARDS_DB)
 os.environ["SCITEX_TODO_DB"] = str(_SAC_CARDS_DB)
 
+# --- NEVER let a test ssh into the operator's REAL fleet -------------------
+# `sac agents list` is FLEET-WIDE by default: with no flags it fans out over
+# every peer in `~/.scitex/agent-container/config.yaml` UNION the scitex-dev
+# host registry. On the operator's own machines that is ~12 live hosts, and
+# `scitex_dev.hosts.list_hosts()` SEEDS a default registry from its built-ins
+# on any box where the file is absent — so even a fresh CI runner resolves
+# mba / spartan / the NAS row set and would try to reach them.
+#
+# Six existing tests invoke the fleet view (`runner.invoke(status, ["--json"])`
+# and friends). Without this floor each of them would open real ssh
+# connections, take a per-host timeout to fail, and make its assertions a
+# function of the operator's network. Same reasoning, same shape, as the state
+# / event-log / card floors above: force-set, so it does not depend on any
+# fixture remembering to opt in.
+#
+# Tests that exercise the fan-out ITSELF clear this via `env_save_restore` (or
+# pass explicit `targets=` / `peer_probe=` seams), which is the intended way to
+# reach the peer leg deliberately rather than by accident.
+os.environ["SAC_AGENTS_LIST_NO_FANOUT"] = "1"
+
 
 def _ensure_subprocess_coverage_shim() -> None:
     """Drop an idempotent ``.pth`` shim in site-packages so every child

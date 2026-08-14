@@ -222,9 +222,19 @@ sac agents forget <name> [--force]        # local-only state.db cleanup for the
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
 sac agents send   <name> --key ESC        # interrupt current turn
-sac agents status [<name>] [--snapshot] [--priority]   # fleet view if no name; per-agent
-                                                       # JSON payload otherwise
+sac agents status [<name>] [--snapshot] [--priority]   # FLEET-WIDE view if no name;
+                                                       # per-agent JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)
+sac agents list   --host <hostname>       # one host; repeatable, exact match.
+                                           # `localhost` is resolved at parse time and
+                                           # the header echoes the resolution.
+                                           # The fleet view ALWAYS prints a header saying
+                                           # which hosts answered and which did not, with
+                                           # the reason ("5/6 hosts responded — spartan:
+                                           # ssh timed out after 8s"). A host that could
+                                           # not be reached is REPORTED, never dropped:
+                                           # `agents: []` means an EMPTY fleet only when
+                                           # `hosts.responded == hosts.total` in --json.
 sac agents health <name>
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary
