@@ -20,9 +20,9 @@ through ``sac --on <peer>`` (F-CS12) and ``spec.host`` pinning.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._skills_boot_log import log_effective_skills
 from ._to_home import deploy_to_home
@@ -197,7 +197,7 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         lines.append("  then reference other repos via absolute paths.")
     lines.append("=" * 72)
     lines.append("")
-    print("\n".join(lines), file=sys.stderr, flush=True)
+    get_logger(__name__).warning("\n".join(lines))
 
 
 # 2026-05-13 docker/podman ripout: apptainer is the only accepted
@@ -327,12 +327,15 @@ class ClaudeSessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
-            print(
-                f"error: ClaudeSessionRuntime requires a container engine "
+            # This is a START FAILURE reported by a bare `return False`, so
+            # this line is the caller's only account of WHY. As a raw print it
+            # carried no origin and died with whatever stderr happened to be
+            # attached; as a logged ERROR it names the emitting module and is
+            # durable in the scitex-logging runtime log.
+            get_logger(__name__).error(
+                f"ClaudeSessionRuntime requires a container engine "
                 f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
-                file=sys.stderr,
-                flush=True,
+                f"{getattr(config, 'runtime', '<unset>')!r}."
             )
             return False
 

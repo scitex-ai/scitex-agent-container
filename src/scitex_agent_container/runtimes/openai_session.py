@@ -20,9 +20,9 @@ recording — is identical to the Claude path.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._to_home import deploy_to_home
 from .base import RuntimeBase
@@ -174,12 +174,12 @@ class OpenAISessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
-            print(
-                f"error: OpenAISessionRuntime requires a container engine "
+            # Same start-failure-reported-as-False shape as
+            # ClaudeSessionRuntime.start; see the note there.
+            get_logger(__name__).error(
+                f"OpenAISessionRuntime requires a container engine "
                 f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
-                file=sys.stderr,
-                flush=True,
+                f"{getattr(config, 'runtime', '<unset>')!r}."
             )
             return False
 
