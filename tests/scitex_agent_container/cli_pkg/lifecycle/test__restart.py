@@ -31,6 +31,7 @@ import pytest
 from click.testing import CliRunner
 
 import scitex_agent_container.cli_pkg.lifecycle._restart as restart_mod
+import scitex_agent_container.cli_pkg.lifecycle._restart_local as restart_local_mod
 from scitex_agent_container.cli_pkg.lifecycle._restart import restart
 from scitex_agent_container.cli_pkg.lifecycle._restart_verify import SessionObservation
 
@@ -105,12 +106,23 @@ def _isolate_runtime_root(tmp_path):
 
 @contextmanager
 def _swap(name: str, fn: Callable) -> Iterator[None]:
-    saved = getattr(restart_mod, name)
-    setattr(restart_mod, name, fn)
+    """Swap a collaborator in BOTH restart modules (v4 step 5 split).
+
+    The local leg (``_restart_locally`` / ``_restart_via_broker``) moved
+    into ``_restart_local`` and reads its collaborators from ITS OWN
+    module globals, while the command orchestration stays in
+    ``_restart``. Swapping on whichever of the two carries the name
+    keeps every existing test meaningful across the split.
+    """
+    targets = [m for m in (restart_mod, restart_local_mod) if hasattr(m, name)]
+    saved = [(m, getattr(m, name)) for m in targets]
+    for m in targets:
+        setattr(m, name, fn)
     try:
         yield
     finally:
-        setattr(restart_mod, name, saved)
+        for m, value in saved:
+            setattr(m, name, value)
 
 
 class _FakeCfg:
@@ -1382,13 +1394,16 @@ def test_unverifiable_restart_is_not_reported_as_a_failure(armed_run_marker):
 def test_unverifiable_restart_is_not_printed_under_the_word_verified(armed_run_marker):
     # Arrange — the console line is what the operator actually reads, and
     # printing an ABSTENTION under the word "verified" is how an unchecked
-    # restart came to look like a checked one.
+    # restart came to look like a checked one. v4 step 5 fixed the label
+    # too: "NOT verified" was a BINARY word on a TERNARY verdict — it
+    # accused a restart nobody could observe. An abstention now renders
+    # in its own words.
     runner = CliRunner()
     # Act
     with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
         result = runner.invoke(restart, ["verify-me", "-y"])
     # Assert
-    assert "NOT verified" in result.output
+    assert "CANNOT VERIFY" in result.output
 
 
 def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
