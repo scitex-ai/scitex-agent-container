@@ -34,6 +34,7 @@ import subprocess
 import time
 from typing import Callable, Sequence
 
+from .._runners._tmux._target import exact_target
 from ._state import AgentState
 
 __all__ = [
@@ -67,7 +68,7 @@ def tui_pane_pid(session: str) -> int | None:
     # stx-allow: fallback (reason: an unreadable pane pid must render None — a fabricated or guessed pid is strictly worse, since a recycled pid can vouch for a dead agent as alive)
     try:
         out = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", session, "#{pane_pid}"],
+            ["tmux", "display-message", "-p", "-t", exact_target(session), "#{pane_pid}"],
             capture_output=True,
             text=True,
             timeout=10,

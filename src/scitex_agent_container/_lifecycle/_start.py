@@ -316,14 +316,17 @@ def agent_start(
         else:
             # INFO, not SUCC: the requested end state holds, but nothing was
             # launched — so the line must not read as an accomplishment.
-            # The verdict evidence stays: a no-op that says only "already
+            # The verdict evidence stays, and the notice NAMES the session
+            # (+ pane pid) it believed in: a no-op that says only "already
             # running" is unfalsifiable from the outside, and the operator
-            # could not tell an OBSERVED agent from a process-shaped shadow.
+            # could not tell an OBSERVED agent from a process-shaped shadow
+            # (incident 2026-08-14: a prefix-matched SIBLING session pinned
+            # this branch — see _start_noop_notice).
             from ..cli_pkg._helpers._console import system_msg
-            from ._start_noop_notice import render_already_running
+            from ._start_noop_notice import render_start_noop_notice
 
             system_msg(
-                render_already_running(config.name, verdict.render()),
+                render_start_noop_notice(config, verdict),
                 style="info",
             )
             from ._startup_failed import retract_marker_for

@@ -211,12 +211,13 @@ def _display_field(session_name: str, fmt: str) -> str | None:
     Local import of :class:`TmuxManager` keeps the existence check on the
     one canonical implementation without a module-level import cycle.
     """
+    from ._target import exact_target
     from .tmux import TmuxManager
 
     if not TmuxManager.exists(session_name):
         return None
     result = subprocess.run(  # pragma: no cover  -- requires live tmux, not available on CI runner
-        ["tmux", "display", "-p", "-t", session_name, fmt],
+        ["tmux", "display", "-p", "-t", exact_target(session_name), fmt],
         capture_output=True,
         text=True,
     )
