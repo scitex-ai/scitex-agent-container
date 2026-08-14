@@ -37,10 +37,12 @@ from ._apptainer_quota_cache import (
 # ----------------------------------------------------------------------
 RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
 
-# Runner module for the ``provider: openai`` path (scitex-todo
-# card ``openai-compat-2``; ``spec.provider: openai``). Dispatched
-# when the config's provider is ``"openai"``; otherwise the default
-# ``RUNNER_MODULE`` above (claude_session) is used.
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED YET: the old ``getattr(config, "provider", None)``
+# selector was dead (the harness rename removed the field), and v4
+# step 2 replaces it with a loud refusal rather than a repoint —
+# harness-aware dispatch arrives with the step-4 descriptor registry
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
 RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
 
 # Quota-cache constants + resolver now live in _apptainer_quota_cache (this
@@ -71,6 +73,28 @@ def build_run_argv(
     process differs). The caller (``TuiSessionRuntime``) launches the
     returned argv inside a tmux PTY rather than backgrounding it.
     """
+    # v4 STEP-2 LOUDNESS (card sac-v4-layering-refactor-harness-runtime-
+    # inference-20260813): every shape of this argv launches the CLAUDE
+    # harness (TUI, SDK runner, pre-built runner_argv), so a
+    # non-Anthropic ``config.harness`` refuses HERE — before any side
+    # effect (home mkdir, overlay provisioning, auth provisioning).
+    # The old check sat in the pre-built runner_argv branch below and
+    # read ``getattr(config, "provider", None)`` — a field the harness
+    # rename removed — so it was DEAD, while the auth step later in this
+    # function reads ``config.harness`` CORRECTLY. That split-brain is
+    # exactly the bug this guard retires: OPENAI_* auth env provisioned,
+    # Claude runner launched, no error anywhere.
+    from ..config._harness_types import ensure_harness_matches_claude_launch
+
+    ensure_harness_matches_claude_launch(
+        config,
+        launching=(
+            "the interactive claude TUI"
+            if tui
+            else f"runner module {RUNNER_MODULE!r}"
+        ),
+    )
+
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
     # overlay/writable-tmpfs incompatibility) and docs/isolation.md.
@@ -428,14 +452,12 @@ def build_run_argv(
         if kind == "AgentProxy":
             module = RUNNER_MODULE_PROXY
         else:
-            # Provider dispatch for pre-built runner_argv: same logic
-            # as build_inner_argv — openai → OpenAI runner, else Claude.
-            provider = getattr(config, "provider", None)
-            module = (
-                RUNNER_MODULE_OPENAI
-                if provider == "openai"
-                else RUNNER_MODULE
-            )
+            # Claude runner unconditionally: the top-of-function harness
+            # guard already refused any non-Anthropic spec (v4 step 2 —
+            # the old ``getattr(config, "provider", None)`` read here
+            # was DEAD, so ``RUNNER_MODULE_OPENAI`` was never actually
+            # dispatched; harness-aware dispatch is step 4).
+            module = RUNNER_MODULE
         inner_argv = [
             "/usr/bin/tini",
             "-s",

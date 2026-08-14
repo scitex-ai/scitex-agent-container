@@ -44,6 +44,7 @@ STATED values can disagree.
 
 from __future__ import annotations
 
+import sys
 from typing import Literal, Mapping
 
 __all__ = [
@@ -53,7 +54,10 @@ __all__ = [
     "HARNESS_KEY",
     "LEGACY_HARNESS_KEY",
     "HarnessKeyConflictError",
+    "HarnessRuntimeMismatchError",
+    "V4_HARNESS_DISPATCH_CARD",
     "declared_harness",
+    "ensure_harness_matches_claude_launch",
     "harness_key_conflict_error",
     "is_known_harness",
     "list_harnesses",
@@ -79,6 +83,27 @@ AGENT_HARNESSES: tuple[str, ...] = ("anthropic", "openai")
 
 class HarnessKeyConflictError(ValueError):
     """``spec.harness`` and ``spec.provider`` both stated, and they differ."""
+
+
+class HarnessRuntimeMismatchError(RuntimeError):
+    """A non-Anthropic harness was about to get the Claude launch path.
+
+    Raised by :func:`ensure_harness_matches_claude_launch` — the v4
+    step-2 loudness guard. See that function's docstring for the full
+    story; the short version is that until the descriptor registry
+    (migration step 4) lands, the lifecycle launch path can only start
+    the Claude harness, and starting it under a spec that declared a
+    different harness is a wrong-vendor launch that must refuse loudly
+    instead of proceeding silently.
+    """
+
+
+#: The v4 card tracking harness-aware runtime dispatch (migration step 4,
+#: the descriptor registry). Until it lands, sac VALIDATES ``harness:
+#: openai`` but cannot LAUNCH it through the lifecycle runtime path.
+V4_HARNESS_DISPATCH_CARD = (
+    "sac-v4-layering-refactor-harness-runtime-inference-20260813"
+)
 
 
 def is_known_harness(name: str) -> bool:
@@ -166,3 +191,88 @@ def harness_key_conflict_error(spec: Mapping) -> list[str]:
     except HarnessKeyConflictError as exc:
         return [str(exc)]
     return []
+
+
+def _harness_logger():
+    """scitex-logging logger, imported lazily.
+
+    Same pattern as ``config.__init__._config_logger``: the
+    fleet-consistent coloured ``ERRO:`` stderr line (operator directive
+    2026-07-10), imported inside the function so the package's ~300 ms
+    first-import auto-configuration never taxes ``import
+    scitex_agent_container.config`` itself.
+    """
+    import scitex_logging
+
+    return scitex_logging.getLogger(__name__)
+
+
+def ensure_harness_matches_claude_launch(
+    config, *, launching: str, log: bool = True
+) -> None:
+    """Refuse LOUDLY when ``config.harness`` is non-Anthropic but the
+    calling code path is about to launch ``launching`` — a Claude-family
+    runner — anyway.
+
+    THE v4 STEP-2 LOUDNESS GUARD (additive; card
+    ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
+    Before it, the three launch-path dispatch sites read
+    ``getattr(config, "provider", None)`` — a field the harness rename
+    REMOVED from ``AgentConfig`` — so every one of those branches was
+    dead: a ``harness: openai`` spec got OPENAI_* auth env (the auth
+    path reads ``config.harness`` correctly) and then SILENTLY launched
+    the Claude runner. A wrong-vendor launch with no error anywhere is
+    exactly what the operator's 「エラーが握りつぶされない」 directive
+    forbids. Selection stays byte-identical for every Anthropic-harness
+    spec; harness-aware DISPATCH is migration step 4 (the descriptor
+    registry), deliberately NOT this guard.
+
+    ``kind: AgentProxy`` is exempt: the a2a proxy runner is
+    vendor-neutral, so a harness value on a proxy spec mismatches
+    nothing this guard protects.
+
+    ``log=False`` skips the scitex-logging ERROR line for callers on
+    shared read paths (``_get_runtime`` also serves every status / list
+    / health walk — each of which degrades a raise into an UNKNOWN
+    verdict that KEEPS this message — and a per-read stderr line would
+    contaminate CliRunner-captured ``--json`` output; the same ruling
+    that placed ``warn_if_legacy_harness_key`` on the start path). The
+    raise itself is never skipped.
+
+    Raises :class:`HarnessRuntimeMismatchError` naming (a) what the spec
+    asked for and through which key, (b) what was actually about to
+    launch, (c) the caller's ``file:line`` (the decision site), and
+    (d) the v4 gap card id.
+    """
+    harness = (
+        str(getattr(config, "harness", "") or DEFAULT_AGENT_HARNESS)
+        .strip()
+        .lower()
+    )
+    if harness == DEFAULT_AGENT_HARNESS:
+        return
+    if getattr(config, "kind", "Agent") == "AgentProxy":
+        return
+    caller = sys._getframe(1)
+    site = f"{caller.f_code.co_filename}:{caller.f_lineno}"
+    key = (
+        LEGACY_HARNESS_KEY
+        if getattr(config, "harness_key_is_legacy", False)
+        else HARNESS_KEY
+    )
+    message = (
+        f"REFUSING to launch agent {getattr(config, 'name', '<unknown>')!r}: "
+        f"spec.{key} declares harness={harness!r}, but this code path was "
+        f"about to launch {launching} (decided at {site}). Harness-aware "
+        f"runtime dispatch is a KNOWN v4 gap — card "
+        f"{V4_HARNESS_DISPATCH_CARD} — so until the descriptor registry "
+        f"(migration step 4) lands, a {harness!r} spec cannot start through "
+        "the lifecycle launch path at all; proceeding would silently run "
+        f"the Claude harness under a spec that asked for {harness!r}. "
+        "Working alternatives today: drive the OpenAI SDK through "
+        "``a2a.handler: openai_session`` (the grant-agent pattern), or set "
+        f"``{HARNESS_KEY}: {DEFAULT_AGENT_HARNESS}``."
+    )
+    if log:
+        _harness_logger().error(message)
+    raise HarnessRuntimeMismatchError(message)

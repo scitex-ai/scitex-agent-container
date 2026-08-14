@@ -17,6 +17,10 @@ from pathlib import Path
 
 from scitex_agent_container.config import AgentConfig, ProxySpec
 from scitex_agent_container.config._a2a_defaults import DEFAULT_A2A_HOST
+from scitex_agent_container.config._harness_types import (
+    V4_HARNESS_DISPATCH_CARD,
+    HarnessRuntimeMismatchError,
+)
 from scitex_agent_container.config._types import (
     A2ASpec,
     ClaudeSpec,
@@ -728,3 +732,103 @@ def test_build_inner_argv_carries_the_declared_a2a_host_into_the_exec_line():
     tokens = _exec_tail_tokens(build_inner_argv(cfg))
     # Assert
     assert _flag_value(tokens, "--a2a-host") == _WILDCARD_HOST
+
+
+# ---------------------------------------------------------------------------
+# v4 step-2 harness guard — a non-Anthropic harness must never silently get
+# the Claude runner module (card
+# sac-v4-layering-refactor-harness-runtime-inference-20260813). The old
+# dispatch read ``getattr(config, "provider", None)`` — a field the harness
+# rename removed from AgentConfig — so ``harness: openai`` specs silently
+# got RUNNER_MODULE_AGENT (verified pre-fix 2026-08-14).
+# ---------------------------------------------------------------------------
+
+
+def test_build_inner_argv_never_emits_the_claude_runner_for_openai_harness():
+    # Arrange — the pre-fix bug verbatim: the argv carried
+    # scitex_agent_container._runners.claude_session for an openai harness.
+    cfg = _mk_cfg(harness="openai")
+    argv: list[str] = []
+    # Act
+    try:
+        argv = build_inner_argv(cfg)
+    except Exception:  # stx-allow: test-capture (reason: STX-TQ002; a raise is a PASS for this pin — only a silently built Claude argv fails it.)
+        pass
+    # Assert
+    assert "claude_session" not in " ".join(argv)
+
+
+def test_build_inner_argv_raises_harness_mismatch_for_openai_harness():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_inner_argv_openai_harness_refusal_names_the_runner_module():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert — names what was actually about to launch.
+    assert raised is not None and "claude_session" in str(raised)
+
+
+def test_build_inner_argv_openai_harness_refusal_covers_the_tui_branch():
+    # Arrange — the TUI branch never had even the dead provider check;
+    # the interactive claude TUI is just as wrong a vendor.
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg, tui=True)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_inner_argv_openai_harness_refusal_names_the_v4_card():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
+
+
+def test_build_inner_argv_proxy_kind_is_exempt_from_the_harness_guard():
+    # Arrange — the a2a proxy runner is vendor-neutral: a harness value on
+    # a proxy spec mismatches nothing the guard protects.
+    cfg = _mk_cfg(
+        kind="AgentProxy",
+        proxy=ProxySpec(upstream="http://u"),
+        harness="openai",
+    )
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "a2a_proxy" in " ".join(argv)
+
+
+def test_build_inner_argv_anthropic_harness_still_gets_the_claude_runner():
+    # Arrange — byte-identical selection for the fleet's real specs.
+    cfg = _mk_cfg(harness="anthropic")
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "claude_session" in " ".join(argv)
