@@ -796,7 +796,7 @@ def test_conversation_result_row_records_usage(tmp_path: Path) -> None:
     assert parsed[3]["usage"] == {"output_tokens": 7}
 
 
-def test_conversation_final_heartbeat_is_idle(tmp_path: Path) -> None:
+def test_conversation_final_heartbeat_is_ready(tmp_path: Path) -> None:
     # Arrange
     _reset_stub_state()
     state_dir = tmp_path / "alpha"
@@ -818,8 +818,9 @@ def test_conversation_final_heartbeat_is_idle(tmp_path: Path) -> None:
     # Act
     asyncio.run(_run())
     hb = runner.read_heartbeat(state_dir)
-    # Assert
-    assert hb is not None and hb["state"] == runner.STATE_IDLE
+    # Assert — v4 step 5 vocabulary: the turn closing writes READY (the
+    # inbox consumer is alive), the honest successor of the old "idle".
+    assert hb is not None and hb["state"] == runner.STATE_READY
 
 
 # ---------------------------------------------------------------------------

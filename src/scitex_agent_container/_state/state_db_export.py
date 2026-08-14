@@ -82,6 +82,13 @@ def _table_filter_clauses(
         # acl_deny_notify_log — rate-limit ledger keyed on (sender, target);
         # the ts-equivalent column is ``last_notified_at`` (REAL).
         "acl_deny_notify_log": ("WHERE last_notified_at >= ?", (since,)),
+        # v4 step 5 — birth certificates. A row moves when it is BORN or
+        # when its death is mirrored on, so filter on either stamp (same
+        # shape as ``instances``).
+        "incarnations": (
+            "WHERE born_at >= ? OR exited_at >= ?",
+            (since, since),
+        ),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 
