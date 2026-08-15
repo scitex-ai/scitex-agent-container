@@ -14,6 +14,10 @@ Design rules
 2. ``list_accounts()`` never raises.
 3. ``switch_account()`` copies credential files atomically and never
    propagates the metadata file into ``~/.claude/``.
+4. The store may be SHARED — since 2026-08-15 the host registry is bound
+   read-only into every agent container. Every write path here is guarded
+   accordingly; see :mod:`._account_store_guard` for what each guard
+   asserts and what it deliberately does not.
 """
 
 from __future__ import annotations
@@ -282,14 +286,24 @@ def save_account(
     _home = home or Path.home()
     store = _store_path(store_dir, _home)
     account_dir = store / name
-    account_dir.mkdir(parents=True, exist_ok=True)
     meta_file = account_dir / _METADATA_FILENAME
     payload = dict(metadata)
     payload["name"] = name
     tmp = meta_file.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
-    tmp.rename(meta_file)
+    # The store may now be the HOST registry bound read-only into this
+    # container, where an unguarded failure is a bare errno naming a .tmp
+    # file. Same failure, message the operator can act on.
+    try:
+        account_dir.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        tmp.rename(meta_file)
+    except OSError as exc:
+        from ._account_store_guard import store_write_refused
+
+        raise store_write_refused(
+            store=store, action=f"save account '{name}'", target=meta_file, error=exc
+        ) from exc
     return meta_file
 
 
@@ -300,7 +314,12 @@ def delete_account(
 ) -> bool:
     """Remove an account from the store.
 
-    Returns True if deleted, False if not found.
+    Returns True if deleted, False if not found. Raises
+    :class:`._account_store_guard.SharedStoreWriteRefused` when the account
+    dir SURVIVES the removal: ``ignore_errors=True`` otherwise returns the
+    same ``True`` for "deleted it" and "could not delete it and did not
+    look", which matters now that the store can be the host registry
+    mounted read-only rather than a private directory.
     """
     _home = home or Path.home()
     store = _store_path(store_dir, _home)
@@ -308,6 +327,15 @@ def delete_account(
     if not account_dir.is_dir():
         return False
     shutil.rmtree(account_dir, ignore_errors=True)
+    if account_dir.exists():
+        from ._account_store_guard import (
+            SharedStoreWriteRefused,
+            removal_did_not_happen_message,
+        )
+
+        raise SharedStoreWriteRefused(
+            removal_did_not_happen_message(store=store, account_dir=account_dir)
+        )
     return True
 
 
@@ -384,6 +412,25 @@ def switch_account(
 
     claude_dir = _home / ".claude"
     live_creds = claude_dir / ".credentials.json"
+
+    # REFUSE when the live path IS a stored snapshot — for a pinned agent
+    # ~/.claude/.credentials.json and the account's registry entry are ONE
+    # inode under two names, so this copy would land on another account's
+    # registered credential. Rationale + measurement: _account_store_guard.
+    # Returns the failure dict rather than raising; this function's contract
+    # is "never raises" and rotate_account/quota_watch read result["success"].
+    from ._account_store_guard import snapshot_alias_refusal
+
+    refusal = snapshot_alias_refusal(
+        claude_dir=claude_dir,
+        account_dir=account_dir,
+        skip_names=(_METADATA_FILENAME,),
+        store=store,
+        to_account=name,
+    )
+    if refusal is not None:
+        return {"success": False, "name": name, "message": refusal}
+
     # Capture the OUTGOING (live) token fingerprint BEFORE we overwrite it.
     from_token_fp = _read_access_token_fingerprint(live_creds)
     # stx-allow: fallback (reason: ~/.claude/ may be on a read-only filesystem or a tmp copy may fail mid-flight; returning a failure dict is preferable to an unhandled exception)

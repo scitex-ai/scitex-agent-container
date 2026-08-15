@@ -24,6 +24,15 @@ Two classes of fleet-wide bind live here today:
   Removable: delete the overlay entry once a SIF rebuild folds the
   new package version back into the canonical install.
 
+* **2026-08-15 account registry** — the host's account store bound
+  READ-ONLY so an agent can SEE the fleet's credential registry instead
+  of resolving a private, near-empty copy from its own ``$HOME``. Unlike
+  the entries above its host source is COMPUTED from the SSoT root
+  (``_state/state_paths.py``) rather than expanded from a literal ``~``,
+  so it lives in :func:`accounts_store_bind` instead of in
+  :data:`_FLEET_DEFAULT_BINDS`. Card
+  ``sac-container-home-splits-the-account-registry-20260815``.
+
 Mechanism — see :func:`apply_default_binds`:
   * The list of default binds is :data:`_FLEET_DEFAULT_BINDS` —
     extend cautiously, every entry adds a host directory bind
@@ -44,13 +53,37 @@ default-bind list (``_apptainer_runtime.py``) stay under the
 
 from __future__ import annotations
 
+import logging
+import socket
 from pathlib import Path
 from typing import Iterable
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
+    "ACCOUNTS_STORE_DST",
+    "accounts_store_bind",
     "apply_default_binds",
     "default_binds_for_host",
 ]
+
+
+# The CONTAINER-side path of the account-registry bind.
+#
+# This is NOT a choice. It is the path the in-container resolver ALREADY
+# computes: ``_state.account_store._store_path(None, Path("/home/agent"))``
+# is ``/home/agent/.scitex/agent-container/accounts`` for an agent whose
+# ``$HOME`` is ``/home/agent`` (every sac container). Writing the literal
+# here rather than importing the resolver keeps this module free of a
+# ``_state`` import at module scope and matches the three sibling store
+# entries, which also spell their destination literally.
+#
+# Guarded by ``test__p3a_accounts_store_bind.py``, which does NOT assert
+# this string — it materialises the emitted bind under a fake container
+# home and then asks ``list_accounts`` from that vantage point, so a
+# destination that drifts from the resolver fails the test by returning
+# an empty registry rather than by mismatching a hardcoded literal.
+ACCOUNTS_STORE_DST = "/home/agent/.scitex/agent-container/accounts"
 
 
 # Fleet-wide default binds. Each entry is the string form
@@ -74,6 +107,15 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # ~/.scitex/agent-container/accounts (the credential store); a one-line
     # widening would expose it to every agent. One bind per store; each new
     # store pays its own explicit line. That cost is the feature.
+    #
+    # 2026-08-15 UPDATE — the accounts store has now paid that line, in
+    # ``accounts_store_bind()`` below, after the split registry it describes
+    # cost a fleet outage. Read this paragraph as it was written: the ban is
+    # on WIDENING TO THE PARENT, which would drag `runtime/`, `containers/`
+    # and `agents/` in by accident, and it is untouched. The accounts entry
+    # names its own directory, resolves its source from the SSoT root rather
+    # than `~`, and is `:ro` — which is what turns the incidental exposure
+    # this paragraph warns about into a deliberate, argued and narrower one.
     #
     # AND THE PARENT IS NOT ONLY "overlay-local" — 2026-08-08 measured a SECOND
     # way it moves under you, which none of these binds defend against. A
@@ -238,6 +280,152 @@ def _bind_destination(bind_str: str) -> str:
     return rest.split(":", 1)[0]
 
 
+def accounts_store_bind() -> str | None:
+    """Return the READ-ONLY bind of the HOST account registry, or ``None``.
+
+    The fourth store to pay the toll the ``cards`` entry above states in
+    general terms, and the first one whose absence cost a fleet outage.
+
+    2026-08-15, measured on scitex-compute-04: in-container ``sac accounts
+    list`` read ``/home/agent/.scitex/agent-container/accounts`` and found
+    ONE account — the one that had just been created there. The host store
+    at ``/home/ywatanabe/.scitex/agent-container/accounts`` held FOUR and
+    was readable from inside the container the whole time; the resolver
+    simply never looked there, because it keys off the AGENT's ``$HOME``.
+    When the weekly quota on the container's single account ran out, five
+    delegates died within a minute and nothing inside the container could
+    list, diagnose, or pick a replacement — the registry was present and
+    unreachable at the same time. That is the ``cards`` comment's sentence,
+    written for a different store on 2026-07-16, coming true verbatim.
+
+    WHY THE SOURCE IS COMPUTED AND NOT A LITERAL ``~``
+    --------------------------------------------------
+    The three sibling entries hardcode ``~``, which silently misses a
+    ``$SCITEX_DIR``-relocated root — the precise sin
+    ``_state/state_paths.py``'s own docstring was written to end ("resolving
+    the root and then ignoring it in the next module ... produces state
+    SPLIT across two roots, which is harder to reason about than state
+    consistently in one wrong place"). A credential registry resolved from
+    the wrong root is the same outage in a new costume, so this entry goes
+    through :func:`_state.state_paths.agent_container_root` and is built at
+    call time rather than living as a literal tuple string.
+
+    WHY ``:ro``, DELIBERATELY UNLIKE ITS THREE SIBLINGS
+    ---------------------------------------------------
+    Those stores' single writer IS the agent. This store's single writer is
+    the HOST — ``sac accounts save`` / ``sync-live`` / the
+    ``sac-accounts-refresh`` timer (ADR-0017, one-account-one-refresher).
+    ``:ro`` leaves today's write topology byte-identical: the credential
+    the agent actually runs on is a SEPARATE ``:rw`` bind emitted by
+    ``_apptainer_auth_bind.credentials_file_bind`` (host snapshot file ->
+    ``<container_home>/.claude/.credentials.json``) or by
+    ``_apptainer_auth.auth_argv`` (account dir -> ``/tmp/sac-claude``), and
+    a per-mount option here cannot reach either of them. So token refresh
+    recording is untouched and this change is purely additive on the read
+    side.
+
+    It also keeps this change INDEPENDENT of the identity-verification work
+    (direction (c) on the card): a shared registry plus today's unverified
+    ``sac accounts save <anything>`` would let any container file a
+    mislabeled credential under any account name on the HOST. ``:ro`` means
+    that mistake stays where it is today — contained.
+
+    LOUD, NOT SILENT
+    ----------------
+    :func:`default_binds_for_host` skips a missing host source SILENTLY,
+    which is documented there as deliberate and is correct for a suggestion
+    like the todo store. It is NOT correct for a credential registry:
+    measured in the same container on the same morning, the
+    ``~/.scitex/claude-code-telegrammer`` bind was ABSENT from
+    ``/proc/self/mountinfo`` although its directory existed in the overlay —
+    the silent no-op is real and was live on one of the three siblings. A
+    registry bind that skips silently reproduces the outage while looking
+    configured, so this one says so, names the RESOLVED host path (the root
+    is the thing most likely to be wrong) and the account count, and points
+    at the remedy.
+
+    The count is not decoration. ``_apptainer_bind_guard``'s whole lesson is
+    that source-exists is a different question from capability-delivered: a
+    registry directory that holds zero accounts mounts perfectly and hands
+    the agent nothing.
+    """
+    from .._state.state_paths import agent_container_root
+
+    src = agent_container_root() / "accounts"
+    # ``Path.is_dir()`` is not total: it swallows only
+    # ``pathlib._IGNORED_ERRNOS`` (ENOENT/ENOTDIR/EBADF/ELOOP) and RE-RAISES
+    # the rest, so an EACCES from a 0700 parent or an ESTALE/ETIMEDOUT from
+    # an autofs/NFS hiccup would escape into ``build_run_argv`` — a pure
+    # function whose callers treat a raise as "refuse this start". Grounding
+    # an agent on an unanswerable stat is the outage
+    # ``_apptainer_bind_guard`` is explicitly unwilling to trade for, so the
+    # verdict here matches that module's: name the errno, and continue
+    # without the bind.
+    try:
+        present = src.is_dir()
+    except OSError as exc:  # stx-allow: fallback (reason: see inline comment)
+        logger.error(
+            "ACCOUNT REGISTRY UNVERIFIABLE: could not check %s on host %s "
+            "(%s: %s), so this process can prove neither that the registry "
+            "is there nor that it is missing. NOT refusing the start — a "
+            "refusal must be earned by proof, and an unanswerable stat "
+            "proves nothing. The agent will resolve its own private %s and "
+            "see an EMPTY registry; if `sac accounts list` reports nothing "
+            "inside the container, START HERE.",
+            src,
+            socket.gethostname(),
+            exc.__class__.__name__,
+            exc,
+            ACCOUNTS_STORE_DST,
+        )
+        return None
+    if not present:
+        logger.warning(
+            "ACCOUNT REGISTRY NOT BOUND: no host account store at %s (host "
+            "%s), so every agent launched from here resolves its own private "
+            "%s and will see an EMPTY registry. Consequence: the agent cannot "
+            "list accounts, cannot tell a quota-exhausted credential from an "
+            "unconfigured one, and cannot pick a replacement — it can only "
+            "die and wait for a human (measured 2026-08-15, five delegates "
+            "lost in one minute). FIX: run `sac accounts save <name>` on THIS "
+            "host to create the store, or correct $SCITEX_DIR if the registry "
+            "lives under a different root than the one resolved above.",
+            src,
+            socket.gethostname(),
+            ACCOUNTS_STORE_DST,
+        )
+        return None
+    # ``list_accounts`` never raises and takes no locks; with an explicit
+    # ``store_dir`` it also skips the ``_ensure_short_name_alias`` side
+    # effect, so this stays a pure read of a directory we just statted.
+    from .._state.account_store import list_accounts
+
+    count = len(list_accounts(store_dir=src))
+    if count == 0:
+        logger.warning(
+            "ACCOUNT REGISTRY IS EMPTY: %s exists and will be bound read-only "
+            "at %s, but holds NO accounts. The mount will succeed and deliver "
+            "nothing — inside the container that is indistinguishable from "
+            "'this agent was never granted an account'. FIX: `sac accounts "
+            "save <name>` on host %s.",
+            src,
+            ACCOUNTS_STORE_DST,
+            socket.gethostname(),
+        )
+    else:
+        logger.info(
+            "account registry bound read-only: %s -> %s (%d account(s)). "
+            "Verify from INSIDE the container with `stat -c %%d:%%i %s` "
+            "against the host path — never by reading this argv, which "
+            "cannot tell a bind that landed from one that was skipped.",
+            src,
+            ACCOUNTS_STORE_DST,
+            count,
+            ACCOUNTS_STORE_DST,
+        )
+    return f"{src}:{ACCOUNTS_STORE_DST}:ro"
+
+
 def default_binds_for_host() -> tuple[str, ...]:
     """Return the fleet-default binds whose host source EXISTS today.
 
@@ -267,6 +455,17 @@ def default_binds_for_host() -> tuple[str, ...]:
             # the literal ``~/.scitex/todo`` form broke every agent's
             # boot on restart.
             out.append(f"{expanded}:{rest}")
+    # The account registry is appended rather than listed in
+    # :data:`_FLEET_DEFAULT_BINDS` because its HOST source must be COMPUTED
+    # from the SSoT root instead of expanded from a literal ``~`` — see
+    # :func:`accounts_store_bind` for why that distinction is load-bearing
+    # for this particular store. It is still an ordinary default in every
+    # other respect: ``apply_default_binds`` de-dups it by destination, so
+    # an explicit ``spec.apptainer.binds`` entry to the same destination
+    # still overrides it (the operator's spec is the operator's last word).
+    accounts = accounts_store_bind()
+    if accounts is not None:
+        out.append(accounts)
     return tuple(out)
 
 
