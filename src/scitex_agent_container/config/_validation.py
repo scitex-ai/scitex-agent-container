@@ -106,7 +106,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "startup_commands",
         "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",
-        "context_management",
+        "context_management",  # TOLERATED FOSSIL (2026-08-15): schema deleted — nothing ever read it; key parses to nothing. Drop from this list only after the fleet sweep strips deployed specs, else every spec red-starts (the container.runtime trap).
         "listen",
         "extensions",
         "mcp_servers",

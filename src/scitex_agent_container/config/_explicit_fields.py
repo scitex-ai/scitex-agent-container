@@ -97,7 +97,6 @@ from ._types import (
     AutonomousSpec,
     ClaudeSpec,
     ContainerSpec,
-    ContextManagementConfig,
     HealthSpec,
     HookSpec,
     RestartSpec,
@@ -253,7 +252,11 @@ def _both_kinds_fields() -> list[RequiredField]:
         exclude=("container_workdir",),
     )
     fields += _section("hooks", HookSpec)
-    fields += _section("context_management", ContextManagementConfig)
+    # context_management is GONE from the required set (2026-08-15): all 109
+    # live specs declared strategy=noop and nothing read any of its five
+    # fields. Requiring a block that cannot do anything taught readers the
+    # opposite of the truth. The key itself stays TOLERATED in _validation's
+    # known-fields list until the fleet sweep strips it from deployed specs.
     fields += _section("a2a", A2ASpec)
     fields += _section("comms.outbound", OutboundCommsSpec)
     fields += _section("comms.inbound", InboundCommsSpec)

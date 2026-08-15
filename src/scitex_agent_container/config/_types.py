@@ -224,25 +224,6 @@ class A2ASpec:
 
 
 @dataclass
-class ContextManagementConfig:
-    """Context-lifecycle policy for an agent.
-
-    Defaults mirror ``strategy="noop"`` so absence of the ``context_management``
-    block preserves existing behavior (sensor disabled).
-    """
-
-    trigger_at_percent: float = 70.0
-    strategy: str = "noop"  # "compact" | "restart" | "noop"
-    warn_before_n_checks: int = 0
-    check_interval_seconds: int = 300
-    state_file: str = "~/.scitex/agent-container/state/<agent>.json"
-
-    @property
-    def enabled(self) -> bool:
-        return self.strategy != "noop"
-
-
-@dataclass
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
@@ -425,9 +406,14 @@ class AgentConfig:
     # via the old ``spec.remote.{host,hops,user,key,...}`` block has
     # been retired together with ``runtimes/ssh_remote.py``.
     skills: SkillsSpec = field(default_factory=SkillsSpec)
-    context_management: ContextManagementConfig = field(
-        default_factory=ContextManagementConfig
-    )
+    # ``context_management`` was DELETED 2026-08-15, and deleting it changed
+    # nothing, which is the point: every one of the 109 live specs declared
+    # ``strategy: noop``, ``state_file`` had no reader and no writer anywhere
+    # in this package, and the directory it named was never created. The
+    # status surface hardcoded ``result["context_management"] = None``. Five
+    # required lines per spec, zero behaviour. The key is still TOLERATED at
+    # load (see _validation.py) so deployed specs keep parsing until the
+    # fleet sweep strips the block.
     # startup_commands run as SHELL commands inside the container before
     # the claude SDK starts. startup_prompts (separate field) carries
     # the claude mission. No fallback between the two.
