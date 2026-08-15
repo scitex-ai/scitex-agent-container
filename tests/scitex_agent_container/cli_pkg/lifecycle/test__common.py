@@ -87,6 +87,39 @@ class TestSingletonSkipReason:
         # Assert
         assert msg and "alpha" in msg and "beta" in msg
 
+    def test_v3_host_pin_naming_this_machine_by_another_name_returns_none(self):
+        # Arrange — the nas-03 shape: the pin IS this machine, spelled the way
+        # the fleet spells it, while `hostname -s` is the appliance's factory
+        # name. A skip here would be a SILENT no-start on the agent's own host.
+        cfg = _cfg(host="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(
+            cfg, "DXP480TPLUS-994", local_names={"scitex-nas-03"}
+        )
+        # Assert
+        assert msg is None
+
+    def test_v3_host_pin_naming_a_different_machine_still_returns_reason(self):
+        # Arrange — the case that must KEEP skipping: the pin names a machine
+        # this one is not, under any of its spellings.
+        cfg = _cfg(host="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(cfg, "DXP480TPLUS-994", local_names={"nas-99"})
+        # Assert
+        assert msg and "scitex-nas-03" in msg
+
+    def test_v2_preferred_host_naming_this_machine_by_another_name_returns_none(
+        self,
+    ):
+        # Arrange — same identity question on the v2 scheduling spec.
+        cfg = _cfg(sched_mode="singleton", pref="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(
+            cfg, "DXP480TPLUS-994", local_names={"scitex-nas-03"}
+        )
+        # Assert
+        assert msg is None
+
     def test_v3_host_chain_primary_match_returns_none(self):
         # Arrange
         cfg = _cfg(host=["a", "b", "c"])
