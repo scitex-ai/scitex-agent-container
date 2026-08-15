@@ -234,14 +234,23 @@ os.environ["SAC_AGENTS_LIST_NO_FANOUT"] = "1"
 # lines from 134 tests, none of which is about CI polling or tmux
 # heartbeats. An ACL test does not need a GitHub poller.
 #
-# The loops' OWN test files opt back in (they are the ones exercising the
-# loop): see the `_loop_enabled_for_this_file` fixtures in
-# tests/scitex_agent_container/_lifecycle/test__{tui_heartbeat,github_ci_poll,
-# sdk_heartbeat}_loop.py. Force-set, like every floor above, so it does not
-# depend on a fixture remembering to opt in.
-os.environ["SAC_GITHUB_CI_POLLER_DISABLED"] = "1"
-os.environ["SAC_TUI_HEARTBEAT_DISABLED"] = "1"
-os.environ["SAC_SDK_HEARTBEAT_DISABLED"] = "1"
+# WHY THE GROUP SWITCH AND NOT THE THREE PUBLISHED ONES. The obvious floor
+# is `SAC_GITHUB_CI_POLLER_DISABLED=1` + the two heartbeat twins. It is
+# wrong, and the by-name before/after diff on this very change caught it:
+# those three variables are read by the COROUTINES too, so setting them
+# suite-wide silently changed the behaviour of every test that calls a loop
+# function DIRECTLY — the loops' own unit tests. It failed
+#   _lifecycle/test__sdk_heartbeat_loop_unknown_is_not_dead.py and
+#   _lifecycle/test__tui_heartbeat_loop_unknown_is_not_dead.py,
+# two files a per-file opt-in list had missed, and any file added later
+# would have been missed the same way. A floor whose correctness depends on
+# maintaining a list of exceptions is not a floor.
+#
+# `SAC_LISTEN_POLLER_LOOPS_DISABLED` is read at the LIFESPAN LAUNCH SITE and
+# nowhere else, so it says exactly one thing — "this app boots without its
+# pollers" — and cannot reach a test that drives a loop itself. Force-set,
+# like every floor above.
+os.environ["SAC_LISTEN_POLLER_LOOPS_DISABLED"] = "1"
 
 # --- A `--json` ASSERTION READS result.stdout, NEVER result.output --------
 # Convention for every CliRunner test in this tree. It is one line to get

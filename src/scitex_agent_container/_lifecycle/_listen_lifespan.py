@@ -110,6 +110,21 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             app.state.periodic_drive_task = task
             tasks.append(task)
 
+        # GROUP SWITCH for the three loops immediately below — the GitHub-CI
+        # poller and the two heartbeat writers, and ONLY those three. They
+        # are the loops that need nothing from the host to start, so they
+        # start EVERYWHERE, including in every foreign process that merely
+        # boots this app to test something else.
+        #
+        # Each of the three also has its own `SAC_*_DISABLED` switch, and
+        # those keep their published meaning. This one exists because those
+        # three switches are ALSO read by the coroutines themselves, so a
+        # process that sets them changes how the coroutine behaves when
+        # called DIRECTLY — which is exactly what the loops' own unit tests
+        # do. A caller that wants "this app, without its pollers" needs a
+        # knob that the coroutines do not read. This is that knob.
+        _pollers_off = os.environ.get("SAC_LISTEN_POLLER_LOOPS_DISABLED", "") == "1"
+
         # GitHub-CI verdict-delivery poll loop (sac #404, feedback.pdf §3).
         # Fail-loud when `gh` is unauthenticated, so a broken deploy is
         # never silent — but the KILL SWITCH is honoured HERE, at the
@@ -123,7 +138,7 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         # `CliRunner.invoke` buffer, where it corrupts a `--json`
         # assertion (card sac-clirunner-json-asserts-parse-merged-stderr).
         # Cadence override: SAC_GITHUB_CI_POLL_INTERVAL_S.
-        if os.environ.get("SAC_GITHUB_CI_POLLER_DISABLED", "") != "1":
+        if not _pollers_off and os.environ.get("SAC_GITHUB_CI_POLLER_DISABLED", "") != "1":
             try:
                 _ci_interval = float(
                     os.environ.get(
@@ -144,7 +159,7 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         # poller directly above — this loop is the 30s-periodic one, so
         # it kept writing for as long as the process lived.
         # Cadence override: SAC_TUI_HEARTBEAT_INTERVAL_S.
-        if os.environ.get("SAC_TUI_HEARTBEAT_DISABLED", "") != "1":
+        if not _pollers_off and os.environ.get("SAC_TUI_HEARTBEAT_DISABLED", "") != "1":
             try:
                 _tui_hb_interval = float(
                     os.environ.get(
@@ -166,7 +181,7 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         # its start time. Kill switch SAC_SDK_HEARTBEAT_DISABLED=1 is
         # honoured at the launch site, same as its TUI twin above.
         # Cadence override: SAC_SDK_HEARTBEAT_INTERVAL_S.
-        if os.environ.get("SAC_SDK_HEARTBEAT_DISABLED", "") != "1":
+        if not _pollers_off and os.environ.get("SAC_SDK_HEARTBEAT_DISABLED", "") != "1":
             try:
                 _sdk_hb_interval = float(
                     os.environ.get(

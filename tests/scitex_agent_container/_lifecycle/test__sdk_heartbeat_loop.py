@@ -26,20 +26,6 @@ from scitex_agent_container._lifecycle._sdk_heartbeat_loop import (
 )
 from scitex_agent_container._runners._session_state import write_heartbeat
 
-from tests.scitex_agent_container._helpers.loop_optin import loop_enabled
-
-
-@pytest.fixture(autouse=True)
-def _loop_enabled_for_this_file():
-    """tests/conftest.py turns this loop OFF for the whole suite.
-
-    Same reason as its TUI twin: a periodic background writer no other
-    test asked for. THIS file exercises it, so THIS file opts back in.
-    """
-    with loop_enabled("SAC_SDK_HEARTBEAT_DISABLED"):
-        yield
-
-
 ISO_8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00$")
 
 

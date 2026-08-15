@@ -19,21 +19,6 @@ from scitex_agent_container._lifecycle._github_ci_poll_loop import (
     github_ci_poll_loop,
 )
 
-from tests.scitex_agent_container._helpers.loop_optin import loop_enabled
-
-
-@pytest.fixture(autouse=True)
-def _loop_enabled_for_this_file():
-    """tests/conftest.py turns this loop OFF for the whole suite.
-
-    Its fail-loud "`gh` is not installed/authenticated" line is right in
-    production and pure stderr noise in a test container. THIS file is
-    the file that exercises the loop, so it is the file that opts in.
-    """
-    with loop_enabled("SAC_GITHUB_CI_POLLER_DISABLED"):
-        yield
-
-
 @pytest.mark.asyncio
 async def test_loop_disabled_when_gh_not_ready_delivers_nothing():
     # Arrange — fail-loud preflight: gh not authenticated → loop returns.

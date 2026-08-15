@@ -39,21 +39,6 @@ ISO_8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+0
 # atomic write into a tmp state dir (no mock).
 from scitex_agent_container._runners._session_state import write_heartbeat
 
-from tests.scitex_agent_container._helpers.loop_optin import loop_enabled
-
-
-@pytest.fixture(autouse=True)
-def _loop_enabled_for_this_file():
-    """tests/conftest.py turns this loop OFF for the whole suite.
-
-    It is a background stderr writer on a 30-second period, and no ACL /
-    CLI / listen test asked for one. THIS file is the file that exercises
-    the loop, so it is the file that opts back in.
-    """
-    with loop_enabled("SAC_TUI_HEARTBEAT_DISABLED"):
-        yield
-
-
 PINNED_ACTIVITY_TS = 1_750_000_000
 
 # The loop looks the agent up under its ``tui-<name>`` session key.
