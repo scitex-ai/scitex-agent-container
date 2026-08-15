@@ -986,7 +986,7 @@ def test_cli_list_json_usage_as_of_keeps_iso_t_separator(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert — usage payload present + carries ISO ``T``. If the renderer
     # ever drops the cache, this assertion fires loudly so we notice.
@@ -1070,7 +1070,7 @@ def test_cli_list_json_carries_through_reset_at_5h(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert
     assert usage["reset_at_5h"] == "2026-05-31T12:05:00+00:00"
@@ -1083,7 +1083,7 @@ def test_cli_list_json_carries_through_reset_at_7d(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert
     assert usage["reset_at_7d"] == "2026-06-04T08:00:00+00:00"

@@ -221,7 +221,7 @@ def test_forget_json_envelope_carries_exit_reason(isolated_state: Path) -> None:
     _seed_active_instance("ghost", db_path=isolated_state)
     # Act
     result = _run_forget("ghost", "--force", "--json")
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert
     assert payload.get("exit_reason") == "operator-forget"
 
@@ -231,6 +231,6 @@ def test_forget_json_envelope_carries_name(isolated_state: Path) -> None:
     _seed_active_instance("ghost", db_path=isolated_state)
     # Act
     result = _run_forget("ghost", "--force", "--json")
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert
     assert payload.get("name") == "ghost"

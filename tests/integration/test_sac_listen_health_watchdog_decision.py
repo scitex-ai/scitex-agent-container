@@ -34,7 +34,9 @@ import http.server
 import os
 import shutil
 import subprocess
+import sys
 import threading
+import traceback
 from pathlib import Path
 
 import pytest
@@ -56,21 +58,42 @@ _FAKE_UNIT = "sac-listen-watchdog-pytest-nonexistent.service"
 # --- real servers ---------------------------------------------------------
 
 
-def _handler(status: int, delay: float):
-    """A REAL handler answering `status` after `delay` seconds."""
+def _handler(status: int, delay: float, stopping: threading.Event):
+    """A REAL handler answering `status` after `delay` seconds.
+
+    ``stopping`` is this server's shutdown latch. A handler that is still
+    serving out its ``delay`` when the test ends returns IMMEDIATELY and
+    writes nothing — see ``_QuietThreadingHTTPServer`` for why a write
+    after the test has moved on is a cross-test defect, not a detail.
+    """
 
     class _H(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # A per-connection socket deadline so a handler thread can never
+        # park forever in the keep-alive read and outlive its test.
+        timeout = 10
 
         def do_GET(self):  # noqa: N802 (http.server API)
-            if delay:
-                # A HEALTHY daemon that is merely BUSY: it does answer.
-                threading.Event().wait(delay)
+            if delay and stopping.wait(delay):
+                # The test finished while we were "busy". Its client is
+                # gone; say nothing and let this thread die.
+                self.close_connection = True
+                return
             body = b'{"ok": true, "service": "sac-listen"}'
-            self.send_response(status)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # EXPECTED BY DESIGN: several tests here drive curl past
+                # its own deadline on purpose, so curl has hung up long
+                # before this write. Nothing to report.
+                pass
+            # No keep-alive: the probe is one request per invocation, and
+            # a lingering connection only keeps a thread alive past the
+            # test that owns it.
+            self.close_connection = True
 
         def log_message(self, *_a):
             return
@@ -78,12 +101,68 @@ def _handler(status: int, delay: float):
     return _H
 
 
+class _QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """A threading server that never writes to the CAPTURED stderr.
+
+    ``socketserver.BaseServer.handle_error`` prints a full traceback with
+    ``traceback.print_exc()``, which resolves ``sys.stderr`` AT CALL TIME,
+    from a request thread. Under pytest-xdist every test in this worker
+    shares that process, so a traceback printed from here lands in
+    whatever stream the test running AT THAT MOMENT has installed. When
+    that test is a ``CliRunner.invoke`` of a ``--json`` command, click
+    8.2+ appends it to the captured buffer and the JSON assertion dies
+    with ``JSONDecodeError: Extra data`` — a test in an unrelated file
+    failing because of a thread in this one (develop 312975ec, py3.11,
+    run 31867365078).
+
+    Two rules follow. A client that hung up is EXPECTED here (the probe
+    tests time curl out deliberately), so it is silent. Anything else is
+    a real bug and stays loud, but goes to ``sys.__stderr__`` — the
+    process's own stderr, which no in-process capture can be corrupted
+    by.
+
+    The stock ``server_close()`` looks like it joins the request threads
+    and does not: ``socketserver._Threads.append`` DROPS any thread whose
+    ``daemon`` is set, and ``ThreadingHTTPServer`` sets
+    ``daemon_threads = True``. So a handler serving out a 30s delay
+    really does outlive the test that started it. Threads are tracked
+    here explicitly and joined by ``_Server.kill``; they stay daemons so
+    a wedged one can never block interpreter exit.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._handler_threads: list[threading.Thread] = []
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):  # noqa: D102 (stdlib API)
+        thread = threading.Thread(
+            target=self.process_request_thread,
+            args=(request, client_address),
+            name="watchdog-probe-handler",
+            daemon=True,
+        )
+        self._handler_threads.append(thread)
+        thread.start()
+
+    def join_handlers(self, timeout: float) -> None:
+        """Wait for every request thread this server started."""
+        for thread in self._handler_threads:
+            thread.join(timeout=timeout)
+
+    def handle_error(self, request, client_address):  # noqa: D102 (stdlib API)
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+            return
+        traceback.print_exc(file=sys.__stderr__)
+
+
 class _Server:
     """A real HTTP server on a real ephemeral loopback port (never 7878)."""
 
     def __init__(self, status: int = 200, delay: float = 0.0):
-        self._srv = http.server.ThreadingHTTPServer(
-            ("127.0.0.1", 0), _handler(status, delay)
+        self._stopping = threading.Event()
+        self._srv = _QuietThreadingHTTPServer(
+            ("127.0.0.1", 0), _handler(status, delay, self._stopping)
         )
         self.port = self._srv.server_address[1]
         self._t = threading.Thread(target=self._srv.serve_forever, daemon=True)
@@ -94,9 +173,16 @@ class _Server:
         return f"http://127.0.0.1:{self.port}/v1/health"
 
     def kill(self) -> None:
-        """Really stop serving — the port goes to connection-refused."""
+        """Really stop serving — the port goes to connection-refused.
+
+        The latch is set FIRST so a handler still sleeping out its delay
+        wakes and returns instead of being joined for the full delay.
+        """
+        self._stopping.set()
         self._srv.shutdown()
         self._srv.server_close()
+        self._t.join(timeout=10)
+        self._srv.join_handlers(timeout=10)
 
 
 # A port that refuses connections comes from the shared ``dead_port`` fixture

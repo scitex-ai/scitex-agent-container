@@ -259,4 +259,4 @@ def test_the_per_agent_view_takes_no_hosts_block(fleet_config):
     # Act
     result = runner.invoke(status, ["no-such-agent", "--json"])
     # Assert
-    assert "hosts" not in json.loads(result.output)
+    assert "hosts" not in json.loads(result.stdout)

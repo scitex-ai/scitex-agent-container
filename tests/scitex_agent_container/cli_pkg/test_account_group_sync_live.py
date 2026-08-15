@@ -81,7 +81,7 @@ def test_sync_live_json_action_saved(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["sync-live", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["action"] == "saved"
 
@@ -93,7 +93,7 @@ def test_sync_live_idempotent_reports_up_to_date(sandbox_home):
     runner.invoke(account, ["sync-live"])
     # Act
     result = runner.invoke(account, ["sync-live", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["action"] == "up-to-date"
 
@@ -176,7 +176,7 @@ def test_list_json_includes_freshness_state(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["stored"][0]["freshness"] == "VALID"
 
@@ -187,6 +187,6 @@ def test_list_json_includes_freshness_hours(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["stored"][0]["freshness_hours"] is not None

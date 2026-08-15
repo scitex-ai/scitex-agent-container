@@ -184,7 +184,7 @@ def test_json_output_parses(runner, broken_venv):
     # Act
     result = runner.invoke(installation_check, [str(broken_venv), "--json"])
     # Assert
-    assert json.loads(result.output)["counts"]["broken"] == 1
+    assert json.loads(result.stdout)["counts"]["broken"] == 1
 
 
 def test_json_carries_the_exit_code(runner, broken_venv):
@@ -192,7 +192,7 @@ def test_json_carries_the_exit_code(runner, broken_venv):
     # Act
     result = runner.invoke(installation_check, [str(broken_venv), "--json"])
     # Assert
-    assert json.loads(result.output)["exit_code"] == 1
+    assert json.loads(result.stdout)["exit_code"] == 1
 
 
 def test_json_reason_breakdown_names_shadowed(runner, broken_venv):
@@ -200,14 +200,14 @@ def test_json_reason_breakdown_names_shadowed(runner, broken_venv):
     # Act
     result = runner.invoke(installation_check, [str(broken_venv), "--json"])
     # Assert
-    assert "shadowed-pointer" in json.loads(result.output)["reason_breakdown"]
+    assert "shadowed-pointer" in json.loads(result.stdout)["reason_breakdown"]
 
 
 def test_json_carries_the_dead_pointer_path(runner, broken_venv):
     # Arrange — the pointer path IS the repair instruction.
     # Act
     result = runner.invoke(installation_check, [str(broken_venv), "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     row = next(d for d in payload["distributions"] if d["state"] == "broken")
     # Assert
     assert row["evidence"]["pointers"][0]["target_exists"] is False

@@ -519,7 +519,7 @@ def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["zeta", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("dispatched") is True
 
@@ -631,7 +631,7 @@ def test_force_release_json_envelope_carries_force_released_flag(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("force_released") is True
 
@@ -645,7 +645,7 @@ def test_force_release_json_envelope_carries_release_exit_reason(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("exit_reason") == "peer-unreachable-force-released"
 

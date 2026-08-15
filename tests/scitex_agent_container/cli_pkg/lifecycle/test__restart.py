@@ -465,7 +465,7 @@ def test_cross_host_restart_json_envelope_marks_dispatched(
     runner = CliRunner()
     # Act
     result = runner.invoke(restart, ["zeta", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("dispatched") is True
 
@@ -510,7 +510,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
     # Act
     with _swap("agent_restart", lambda _name: None):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert — JSON envelope reports the local (non-dispatched) restart.
     assert envelope.get("dispatched") is False and envelope.get("restarted") is True
 
@@ -525,7 +525,7 @@ def test_local_restart_failure_json_envelope_carries_error(
     # Act
     with _swap("agent_restart", _boom):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert "boom" in envelope.get("error", "")
 
@@ -758,7 +758,7 @@ def test_multiple_names_json_emits_array():
     # Act
     with _swap("_restart_one", _ok_restart_one):
         result = runner.invoke(restart, ["alpha", "beta", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — multiple names aggregate into a JSON array.
     assert isinstance(payload, list) and len(payload) == 2
 
@@ -793,7 +793,7 @@ def test_all_flag_json_emits_array():
         _swap("_restart_one", _ok_restart_one),
     ):
         result = runner.invoke(restart, ["--all", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — --all always emits an array, even for a single enumerated agent.
     assert isinstance(payload, list) and len(payload) == 1
 
@@ -879,7 +879,7 @@ def test_single_name_json_stays_bare_object():
     # Act
     with _swap("agent_restart", lambda _name: None):
         result = runner.invoke(restart, ["alpha", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert
     assert isinstance(payload, dict) and payload.get("name") == "alpha"
 
@@ -995,7 +995,7 @@ def test_all_running_json_emits_array():
         _swap("_restart_one", _ok_restart_one),
     ):
         result = runner.invoke(restart, ["--all-running", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — a batch selection flag always emits an array.
     assert isinstance(payload, list) and len(payload) == 1
 
@@ -1186,7 +1186,7 @@ def test_in_sif_without_a_listen_url_names_the_missing_env_var(
     runner = CliRunner()
     # Act
     result = runner.invoke(restart, ["broker-me", "-y", "--json"])
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert — the operator is told WHICH knob is missing.
     assert "SAC_LISTEN_BASE_URL" in payload.get("error", "")
 
@@ -1271,7 +1271,7 @@ def _envelope(result):
     """Parse the CLI's ``--json`` envelope off the last stdout line."""
     import json
 
-    return json.loads(result.output.strip().splitlines()[-1])
+    return json.loads(result.stdout)
 
 
 @pytest.fixture

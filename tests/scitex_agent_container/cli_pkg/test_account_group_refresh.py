@@ -251,7 +251,7 @@ def test_account_refresh_json_emits_one_entry_per_account(
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["refresh", "--all", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert len(payload) == 2
 
@@ -264,7 +264,7 @@ def test_account_refresh_json_carries_success_flag(
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["refresh", "work", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload[0]["success"] is True
 

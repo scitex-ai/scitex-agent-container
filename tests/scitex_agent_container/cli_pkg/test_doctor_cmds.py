@@ -64,7 +64,7 @@ def test_fleet_json_lists_each_peer(subprocess_shim, cfg_with_peer):
     subprocess_shim.install("ssh", stdout="SAC_DRIFT current 0 0 origin/develop\n")
     # Act
     result = CliRunner().invoke(doctor, ["--fleet", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["peers"][0]["host"] == "mba"
 
@@ -177,6 +177,6 @@ def test_local_json_carries_state_field(local_drifted_source):
     # Arrange
     # Act
     result = CliRunner().invoke(doctor, ["--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["local"]["state"] == "behind"

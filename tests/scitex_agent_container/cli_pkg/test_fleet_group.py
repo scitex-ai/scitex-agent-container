@@ -243,7 +243,7 @@ def test_launch_dry_run_json_emits_plan_names_in_order(
         fleet_group,
         ["launch", str(spec), "--peer", "spartan", "--dry-run", "--json"],
     )
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["plan"]["names"] == ["a"]
 
@@ -258,7 +258,7 @@ def test_launch_dry_run_json_emits_empty_rows(tmp_path: Path, env_save_restore) 
         fleet_group,
         ["launch", str(spec), "--peer", "spartan", "--dry-run", "--json"],
     )
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["rows"] == []
 
@@ -392,8 +392,7 @@ def test_launch_json_output_row_exit_zero_when_ssh_succeeds(
     result = runner.invoke(
         fleet_group, ["launch", str(spec), "--peer", "spartan", "--json"]
     )
-    start = result.output.index("{")
-    body = json.loads(result.output[start:])
+    body = json.loads(result.stdout)
     # Assert
     assert body["rows"][0]["exit"] == 0
 
@@ -411,8 +410,7 @@ def test_launch_json_output_plan_names_matches_discovered_specs(
     result = runner.invoke(
         fleet_group, ["launch", str(spec), "--peer", "spartan", "--json"]
     )
-    start = result.output.index("{")
-    body = json.loads(result.output[start:])
+    body = json.loads(result.stdout)
     # Assert
     assert body["plan"]["names"] == ["a"]
 
