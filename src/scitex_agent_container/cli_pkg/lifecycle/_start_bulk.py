@@ -61,6 +61,9 @@ def run_bulk_path(
         current_host = resolve_hostname()
     except RuntimeError:
         current_host = ""
+    # Resolved ONCE for the whole bulk run: this machine's identity cannot
+    # change mid-loop, and each call reads the fleet host registry off disk.
+    local_names = _local_host_names(current_host)
     console.print(f"=== [blue]Starting {len(yamls)} agents...[/blue] ===")
     for yaml_path in yamls:
         # stx-allow: fallback (reason: one agent's config parse or
@@ -70,7 +73,7 @@ def run_bulk_path(
         try:
             config = load_config(yaml_path)
             skip = _singleton_skip_reason(
-                config, current_host, local_names=_local_host_names(current_host)
+                config, current_host, local_names=local_names
             )
             if skip:
                 console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
