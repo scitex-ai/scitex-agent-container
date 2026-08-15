@@ -412,13 +412,22 @@ def warn_if_spec_source_drifted(
             import scitex_logging
 
             log = scitex_logging.getLogger(__name__)
-            if refusing:
-                emit = log.error
-            elif status.state in (DriftState.NOT_A_REPO, DriftState.UNREACHABLE):
-                # drift UNKNOWN, launch proceeds — informational, not a warning
-                emit = log.info
-            else:
-                emit = log.warning
+            # A refusal is an error; EVERYTHING ELSE is a warning — including
+            # NOT_A_REPO / UNREACHABLE, where drift is merely UNKNOWN.
+            #
+            # Those two were briefly routed to ``info`` on the grounds that an
+            # unknown is not a problem. Measured against the installed sac,
+            # that made the line VANISH: the default handler level filters
+            # info, so "give this diagnostic a level" turned into "delete this
+            # diagnostic". Downgrading a line that always printed is a
+            # REGRESSION dressed as tidying — the operator loses the report
+            # and nothing announces the loss.
+            #
+            # Level is chosen by what the READER must do, not by how the
+            # emitter feels about the state: "I could not check whether your
+            # spec is stale" is a caveat on the launch that just happened, and
+            # it has to be visible for that launch to be trusted.
+            emit = log.error if refusing else log.warning
             for line in lines:
                 emit(line)
         else:
