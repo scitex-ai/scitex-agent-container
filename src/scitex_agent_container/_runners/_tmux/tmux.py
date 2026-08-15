@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from ._env_snapshot import env_snapshot_shell_line
 from ._host_cwd import resolve_host_cwd
 from ._target import exact_target
 
@@ -129,20 +130,16 @@ class TmuxManager:
                 activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
-        # Env snapshot file (lead a2a 4303f855, 2026-06-14): the
-        # /proc/<pid>/environ + ps-walk verify in TuiSessionRuntime
-        # could mis-attribute to another claude under another tmux
-        # session. Writing the env to a known per-session file
-        # IMMEDIATELY before ``exec command`` gives SAC a structural
-        # source-of-truth for verification independent of any PID
-        # hunting.
-        env_snapshot_path = f"/tmp/sac-tui-env-{session_name}.txt"
+        # Per-session env snapshot, written 0600 into a 0700 per-user dir
+        # immediately before ``exec``. It dumps the pane's WHOLE environment,
+        # so its mode and its directory are the security-relevant parts —
+        # see ``._env_snapshot`` for the two defects that shaped both.
         shell_script = (
             f"cd '{workdir}' || exit 1\n"
             f"{venv_activate}"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
-            f"env > '{env_snapshot_path}' 2>/dev/null || true\n"
+            f"{env_snapshot_shell_line(session_name)}"
             f"exec {command}\n"
         )
 
