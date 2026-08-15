@@ -44,7 +44,6 @@ import argparse
 import os
 import sys
 import urllib.error
-from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -76,47 +75,42 @@ from ci_rail_listen import (  # noqa: E402 — sibling module, path fixed up abo
     reachability_of,
 )
 
+# ADDRESSING lives in its own module — see its docstring for why "the
+# verdict reached the wrong agent" is its own failure domain. Re-exported
+# here (and named in ``__all__``) because this file is the rail's public
+# face: the git hook, the workflow and the tests all reach it through
+# ``ci_card_rail``.
+from ci_rail_recipient import (  # noqa: E402 — sibling module
+    AGENT_ID_ENV_VARS,
+    HOW_FALLBACK,
+    HOW_NONE,
+    HOW_RECORDED,
+    NOT_A_PUSHER,
+    attribution,
+    pushing_agent,
+    resolve_recipient,
+)
+
 # A verdict is only reported for conclusions that ARE a verdict. A
 # cancelled run means a newer push superseded this one (the gate sets
 # ``cancel-in-progress``), not a statement about the code; reporting it
 # would train the fleet to ignore this rail.
 TERMINAL_CONCLUSIONS = frozenset({"success", "failure"})
 
-# The identity of the pushing agent, in precedence order.
-# ``$SCITEX_TODO_AGENT_ID`` is the card package's own canonical variable
-# and so leads — but it is NOT reliably present: measured unset in this
-# container's shell, and present in the cards MCP server process as the
-# literal, unexpanded string ``${SCITEX_TODO_AGENT_ID}``. The sac-side
-# names are set by the runtime that launched the container and were
-# measured correct, so they are working fallbacks rather than decoration.
-# An owner-less card is REJECTED by the store — there is no silent
-# fallback there — so resolving this is what makes the push half work.
-AGENT_ID_ENV_VARS = (
-    "SCITEX_TODO_AGENT_ID",
-    "SAC_NAME",
-    "SCITEX_AGENT_CONTAINER_AGENT",
-    "CLAUDE_AGENT_ID",
-)
-
 __all__ = [
+    "AGENT_ID_ENV_VARS",
+    "HOW_FALLBACK",
+    "HOW_NONE",
+    "HOW_RECORDED",
+    "NOT_A_PUSHER",
     "TERMINAL_CONCLUSIONS",
+    "attribution",
     "main",
     "pushing_agent",
     "record_verdict",
     "resolve_recipient",
     "verdict_text",
 ]
-
-
-def pushing_agent() -> str | None:
-    """First non-empty, non-template agent identity from the environment."""
-    for var in AGENT_ID_ENV_VARS:
-        value = (os.environ.get(var) or "").strip()
-        # Reject an unexpanded shell template rather than filing cards
-        # owned by an agent literally named "${SCITEX_TODO_AGENT_ID}".
-        if value and not value.startswith("${"):
-            return value
-    return None
 
 
 def _warn(msg: str) -> None:
@@ -133,49 +127,6 @@ def _die(msg: str, code: int = 1) -> int:
     print(f"::error::{msg}", file=sys.stderr, flush=True)
     print(f"::error::{msg}", flush=True)
     return code
-
-
-def resolve_recipient(
-    *, card: dict[str, Any] | None, repo: str, agents: list[dict[str, Any]]
-) -> tuple[str | None, str]:
-    """Who should hear this verdict? Returns ``(name, how_it_was_decided)``.
-
-    Precedence, and the reason for each step:
-
-    1. **The card's own agent**, set by ``pre-push`` to whoever actually
-       pushed. A verdict belongs to the pusher, and no inference beats a
-       record of the fact.
-    2. **An agent spec whose ``project`` matches the repo, PREFERRING one
-       that is reachable right now.** sac's ``_ci_owner.resolve_owner``
-       makes the same match but takes the first hit in sorted filename
-       order, which on this very repo deterministically selects
-       ``scitex-agent-container-04`` — zero inbox subscribers since
-       2026-08-10. Sorting reachable candidates first is the whole
-       difference between a delivered verdict and a silent one, and is
-       why this does not simply call that function.
-
-    ``None`` means nobody could be resolved; the caller must treat that
-    as an error, never as a quiet skip.
-    """
-    if card:
-        named = card.get("agent") or card.get("assignee")
-        if isinstance(named, str) and named.strip():
-            return named.strip(), "card"
-
-    base = repo_basename(repo)
-    matches = [a for a in agents if str(a.get("project", "")).strip() == base]
-    if not matches:
-        return None, "unresolved"
-    matches.sort(
-        key=lambda a: (
-            a.get("inbox_reachable") != "reachable",
-            -int(a.get("inbox_subscribers") or 0),
-            str(a.get("started_at") or ""),
-        )
-    )
-    name = matches[0].get("name")
-    return (str(name) if name else None), "spec"
-
 
 
 def record_verdict(
@@ -222,6 +173,11 @@ def record_verdict(
     # Only a red verdict needs the log read; a green one has nothing to
     # name and the API call would be pure latency.
     detail = summarize_failures(repo, run_id) if conclusion == "failure" else ""
+    # THE DECISION THE WHOLE FIX TURNS ON, taken in one place. `owner` is
+    # what may be RECORDED as authorship; `recipient` is only who we TELL.
+    # They diverge exactly when the pusher is unknown.
+    owner, routing = attribution(recipient=recipient, how=how, repo=repo)
+    pusher_known = how == HOW_RECORDED
     body = verdict_text(
         repo=repo,
         branch=branch,
@@ -234,6 +190,7 @@ def record_verdict(
         # Derived from the checkout at verdict time, so a workflow added
         # later cannot silently drop out of the disclaimer.
         unobserved=sibling_workflow_names(workflow),
+        routing=routing,
     )
     upsert_card(
         pkg,
@@ -256,14 +213,40 @@ def record_verdict(
         kind="task",
         repo=repo_basename(repo),
         project=repo_basename(repo),
-        agent=recipient,
-        assignee=recipient,
+        # `owner`, NOT `recipient`. These two fields are the store's
+        # statement of WHO DID THIS, and the rail may only fill them from a
+        # measurement. When the pusher is unknown they get the unclaimed
+        # sentinel instead, so the card is visibly unattributed rather than
+        # confidently attributed to whoever happens to own the repo. The
+        # agent the rail actually notified is recorded below as a
+        # SUBSCRIBER — told, but not made responsible, and not laundered
+        # into an authorship claim the next run would read back as fact.
+        agent=owner,
+        assignee=owner,
         note=(
             f"CI {conclusion} for {sha[:8]} ({leg or 'gate'}) at {now_stamp()} "
-            f"— {run_url}"
+            f"— {run_url}. Pusher: "
+            + (
+                f"{recipient} (recorded by pre-push)."
+                if pusher_known
+                else f"UNKNOWN — no pre-push record; notified {recipient} "
+                f"because its spec declares project={repo_basename(repo)!r}, "
+                "which is a routing guess, not an attribution."
+            )
         ),
         last_activity=now_stamp(),
     )
+    if not pusher_known:
+        # SUBSCRIBER, NOT ASSIGNEE — the whole point, in one call. It is
+        # exactly the right weight for "tell me, but this is not my job":
+        # the agent still hears the verdict, and the board still shows the
+        # card as nobody's work. Best-effort by design: a notify list is a
+        # courtesy, and failing the verdict step over it would trade a
+        # recorded verdict for a cosmetic one.
+        try:
+            pkg.set_subscriber(task_id=card_id, who=recipient, action="add")
+        except Exception as exc:  # noqa: BLE001 — see the comment above
+            _warn(f"could not subscribe {recipient} to {card_id}: {exc}")
     pkg.comment_task(task_id=card_id, text=body, by="ci")
     # READ BACK THE FIELD, NOT THE CARD'S EXISTENCE. A presence check
     # passes straight through the failure this guards against.
@@ -309,8 +292,12 @@ def record_verdict(
     print(f"card {card_id}: recorded {conclusion} (status={expected}, read back)")
 
     reach, subs = reachability_of(agents, recipient)
+    # NAME BOTH, ALWAYS. The recipient is who we TOLD; the owner is what we
+    # RECORDED. They differ exactly when the pusher is unknown, and a run log
+    # that printed only one of them is how nobody noticed for 118 cards.
     print(
-        f"recipient {recipient} (via {how}); inbox_reachable={reach} subscribers={subs}",
+        f"recipient {recipient} (via {how}); card owner={owner}; "
+        f"inbox_reachable={reach} subscribers={subs}",
         flush=True,
     )
 
