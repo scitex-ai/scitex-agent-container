@@ -174,7 +174,7 @@ def test_get_state_json_empty_when_projects_root_missing(tmp_path) -> None:
         ],
     )
     # Assert
-    assert json.loads(result.output) == []
+    assert json.loads(result.stdout) == []
 
 
 def test_get_state_json_returns_one_row_per_subagent(tmp_path) -> None:
@@ -194,7 +194,7 @@ def test_get_state_json_returns_one_row_per_subagent(tmp_path) -> None:
         ],
     )
     # Assert
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert len(payload) == 1
 
 
@@ -215,7 +215,7 @@ def test_get_state_json_carries_description(tmp_path) -> None:
         ],
     )
     # Assert
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload[0]["description"] == "CLI test description"
 
 
@@ -236,7 +236,7 @@ def test_get_state_json_carries_last_tool(tmp_path) -> None:
         ],
     )
     # Assert
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload[0]["last_tool"] == "Read"
 
 
@@ -260,7 +260,7 @@ def test_get_state_agent_id_filter_restricts_payload(tmp_path) -> None:
         ],
     )
     # Assert
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert [r["id"] for r in payload] == ["cli-aaa"]
 
 

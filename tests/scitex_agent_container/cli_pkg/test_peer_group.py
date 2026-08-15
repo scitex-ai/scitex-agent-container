@@ -154,7 +154,7 @@ def test_post_turn_json_emits_full_envelope() -> None:
     # Act
     result = invoke()
     # Assert
-    assert json.loads(result.output) == {"text": "ok", "exit_after": False}
+    assert json.loads(result.stdout) == {"text": "ok", "exit_after": False}
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +244,7 @@ def test_post_turn_timeout_pending_json_emits_structured_body() -> None:
     # Act
     result = invoke(["--json"])
     # Assert
-    assert json.loads(result.output)["status"] == "timeout_wait_elapsed"
+    assert json.loads(result.stdout)["status"] == "timeout_wait_elapsed"
 
 
 # ---------------------------------------------------------------------------

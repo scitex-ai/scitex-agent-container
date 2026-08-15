@@ -246,7 +246,7 @@ def test_json_dry_run_reports_the_new_name(fleet: Layout):
     # Act
     result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
     # Assert
-    assert json.loads(result.output)["new"] == expected
+    assert json.loads(result.stdout)["new"] == expected
 
 
 def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
@@ -256,7 +256,7 @@ def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
     result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
     # Assert
     assert any(
-        needle in c["path"] for c in json.loads(result.output)["spec_changes"]
+        needle in c["path"] for c in json.loads(result.stdout)["spec_changes"]
     )
 
 
