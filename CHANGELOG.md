@@ -6,6 +6,60 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nothing ever applied the declared JobSpecs to a host; provisioning now
+  does, and arming is collective.** sac declares nine periodic jobs and
+  registers them with scitex-dev correctly — `discover_jobs()` finds all
+  nine — but no code path in this repo had ever called an apply verb.
+  Measured before the change: `rg` over the whole tree for any
+  `ecosystem up|install` / `dev {timer,cron,service} install` invocation
+  returned **24 hits and zero of them executable** — READMEs, the
+  CHANGELOG, docstrings and test comments. `sac installation boot`, sac's
+  only host-provisioning path, listed seven steps and applied nothing.
+
+  Four states were being conflated, and only the first two were ever true:
+  **DECLARED** (a JobSpec in the repo), **REGISTERED** (`discover_jobs()`
+  can find it), **APPLIED** (a unit file exists on this host) and **ARMED**
+  (`systemctl enable`, the only state that fires). The mechanical cause of
+  the gap is that scitex-dev's `do_install` writes the unit files and then
+  merely PRINTS `systemctl --user enable --now <unit>` to stderr without
+  running it — so one `install` applied all nine timers and arming them
+  took nine hand-typed commands. On 2026-08-15 seven of ten sac timers
+  were duly found `disabled` on scitex-compute-04, including the sweep
+  that restarts agents wedged behind a frozen "Login expired" banner.
+
+  Two changes close the sac-side half. `sac dev timer enable` and
+  `sac dev cron enable` are now BULK verbs: given no NAME they arm every
+  declared job of that kind, exactly as `install` already did. `disable`
+  stays strictly per-name and the asymmetry is deliberate — bulk enable is
+  convergence, bulk disable is a fleet outage with one word of typing
+  (`sac.accounts-refresh` is the fleet's sole OAuth refresher against a
+  single-use token). And `sac installation boot` gained a step that
+  applies AND arms every declared job, reporting per-job APPLIED/ARMED
+  state and never aborting the bootstrap when a host cannot arm.
+
+  That step is the BASE CASE, stated as such: a convergence timer cannot
+  arm itself, so the recursion needs something that runs unconditionally
+  on a host with nothing. The periodic half that re-asserts the invariant
+  afterwards is deliberately NOT declared here — one job converging every
+  registered leaf belongs in scitex-dev's own provider, not as N copies in
+  N leaf packages. It is carded there
+  (`scitex-dev-collective-apply-and-convergence-for-declared-jobs-20260815`)
+  together with a second finding: `ecosystem up` lowers timer JobSpecs to
+  crontab lines while `ecosystem dev timer install` writes per-leaf units,
+  both surfaces are live, and calling the former on a host carrying the
+  latter would double-supervise all nine sac timers.
+
+### Changed
+
+- **`cli_pkg/_dev_jobs.py` split at the line it already had.** The
+  grammar tables (`GROUP_KINDS`, `GROUP_VERBS`, `Deprecation`, the verb
+  shape sets) move to `cli_pkg/_dev_jobs_grammar.py`; `_dev_jobs.py` keeps
+  the Click command builders and re-exports every public name, so
+  `_jobs_audit` and the existing tests are untouched. The file was at
+  512/512 lines; it is now 371.
+
 ### Removed
 
 - **`spec.container.runtime` — the container-ENGINE choice is abolished.**
