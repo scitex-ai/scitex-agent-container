@@ -21,7 +21,7 @@ from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
 from .._helpers import console
-from ._common import _singleton_skip_reason
+from ._common import _local_host_names, _singleton_skip_reason
 
 
 def run_bulk_path(
@@ -69,7 +69,9 @@ def run_bulk_path(
         # bulk-safe behavior)
         try:
             config = load_config(yaml_path)
-            skip = _singleton_skip_reason(config, current_host)
+            skip = _singleton_skip_reason(
+                config, current_host, local_names=_local_host_names(current_host)
+            )
             if skip:
                 console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
                 continue
