@@ -4,8 +4,11 @@ This file IS the gate. It runs in ``pytest-matrix-on-ubuntu-py{3.11,3.12,
 3.13}``, a REQUIRED status check on both ``develop`` and ``main``, which
 is the whole point: a checker nobody runs is another instance of the
 disease it claims to detect, so the checker had to be hung off something
-that already fails builds. It is deliberately NOT in the quality-audit
-workflow — every step there is ``continue-on-error: true``.
+that already fails builds. It was deliberately NOT put in the old
+quality-audit workflow, every step of which was ``continue-on-error:
+true`` — that workflow has since been DELETED for reporting green while
+its five audit steps all exited 2, which is the same disease again. The
+placement stands on its own: a checker belongs on a check that can fail.
 
 No mocks (PA-306). The two pure functions take plain frozensets/dicts and
 return dataclasses, so the "arrange" is real data, not a patched seam;

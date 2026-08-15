@@ -93,6 +93,7 @@ KNOWN_TABLES = (
     "comms_nodes",
     "node_comms_policy",
     "acl_deny_notify_log",
+    "incarnations",
 )
 
 
@@ -197,6 +198,14 @@ def init_schema(db_path: Path | None = None) -> Path:
 
         conn.executescript(_pp._SCHEMA)
         conn.executescript(_blocks._SCHEMA)
+        # v4 step 5 — the ``incarnations`` birth-certificate table
+        # (compiled-spec-at-launch + exit mirror), keyed by the same
+        # incarnation id the beats and the ExitRecord carry. Lives in
+        # the EXISTING sqlite factory ON PURPOSE so the separately-
+        # carded sqlite→Postgres migration carries it along.
+        from . import state_db_incarnations as _incarn
+
+        conn.executescript(_incarn._SCHEMA_INCARNATIONS)
         # sac-comms item D (lead a2a c42b3e3c): rate-limit log for
         # synthetic ACL-deny notifications published at the target
         # receiver. One row per (sender, target) pair carrying the

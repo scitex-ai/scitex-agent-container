@@ -13,11 +13,11 @@ from .._lifecycle.health import health_check
 from .._lifecycle.lifecycle import agent_status
 from .._state.registry import Registry
 from ..config import load_config
+from ._agents_list_fleet import fleet_list_options, run_fleet_list
 from ._helpers import (
     _json_flag,
     agent_name_complete,
     console,
-    print_agent_list,
 )
 from ._timefmt import format_jst
 
@@ -137,6 +137,7 @@ def _format_claude_account_block(meta: dict) -> list[str]:
 
 
 @click.command(name="show-status")
+@fleet_list_options
 @click.argument("name", required=False, shell_complete=agent_name_complete)
 @click.option(
     "--json",
@@ -237,20 +238,30 @@ def status(
     with_snapshot: bool,
     with_priority: bool,
     with_workdir_audit: bool,
+    hosts: tuple[str, ...],
+    no_fanout: bool,
+    host_timeout: float,
 ) -> None:
     """Show agent status.
 
-    Without ``NAME``: fleet view — every registered agent in a table,
-    optionally filtered by ``--capability`` / ``--machine`` / ``--group``.
+    Without ``NAME``: FLEET-WIDE view — every host this machine can reach
+    (``sac host list``), every row naming its machine, above a MANDATORY header
+    saying which hosts answered and which did not, with the reason. A host that
+    could not be reached is REPORTED, never dropped: omitting it would render
+    ``unknown`` as ``empty``, and an unreachable fleet must never look like an
+    empty one. Filter with ``--host`` (repeatable, exact match; ``localhost``
+    resolves at parse time and the header echoes the resolution).
 
     With ``NAME``: rich per-agent payload (registry entry + config-derived
     fields + resource snapshot).
 
     \b
     Example:
-      $ sac agent status                            # fleet view
+      $ sac agent status                            # fleet-wide view
+      $ sac agent status --host localhost           # this machine only
+      $ sac agent status --host mba --host spartan  # two named hosts
       $ sac agent status orchestrator               # rich per-agent
-      $ sac agent status --json                     # fleet view, JSON
+      $ sac agent status --json                     # fleet-wide, JSON
       $ sac agent status --capability HPC           # fleet view, filtered
       $ sac agent status --group active            # fleet view, by group
     """
@@ -378,31 +389,22 @@ def status(
         # moved to `sac accounts list` — different noun, different
         # concern. Keeping both here turned every status print into a
         # crowded mix of "what's running" + "who I'm logged in as".
-        if use_json:
-            from ._helpers import get_agent_list_data
-
-            click.echo(
-                json_mod.dumps(
-                    {
-                        "agents": get_agent_list_data(
-                            registry,
-                            capability=capability,
-                            machine=machine,
-                            group=group,
-                        ),
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            print_agent_list(
-                registry,
-                capability=capability,
-                machine=machine,
-                group=group,
-                verbose=verbose,
-                show_all=show_all,
-            )
+        # FLEET-WIDE by default (see ``._agents_list_fleet``): every reachable
+        # host, above a mandatory header naming the ones that did not answer.
+        # The ``{"agents": [...]}`` envelope is unchanged; a sibling ``"hosts"``
+        # block carries the reachability record.
+        run_fleet_list(
+            registry,
+            use_json=use_json,
+            hosts=hosts,
+            no_fanout=no_fanout,
+            host_timeout=host_timeout,
+            capability=capability,
+            machine=machine,
+            group=group,
+            verbose=verbose,
+            show_all=show_all,
+        )
 
 
 @click.command(name="check-health")

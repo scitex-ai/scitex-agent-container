@@ -135,7 +135,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -164,13 +163,6 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
-
-  context_management:
-    trigger_at_percent: 70.0
-    strategy: noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
-    state_file: ~/.scitex/agent-container/state/<agent>.json
 
   a2a:
     host: 127.0.0.1

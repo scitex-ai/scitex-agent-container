@@ -46,7 +46,6 @@ spec:
   user: ""
   to_home: ./to_home
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -116,6 +115,10 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
+  # DELIBERATELY KEPT: context_management was deleted from the schema on
+  # 2026-08-15, but every deployed spec still carries the block, so the key
+  # must stay a tolerated no-op until the fleet sweep strips it. This fixture
+  # loading successfully IS the tolerance test.
   context_management:
     trigger_at_percent: 70.0
     strategy: noop
@@ -209,7 +212,7 @@ def test_fully_explicit_spec_loads_green(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # MUTATION-PROOF: removing any sampled field turns the load RED and the
 # error names that exact YAML path. Sample spans top-level, claude,
-# apptainer, health, watchdog, a2a (+ restart/comms/context_management).
+# apptainer, health, watchdog, a2a (+ restart/comms).
 # ---------------------------------------------------------------------------
 
 
@@ -228,7 +231,6 @@ def test_fully_explicit_spec_loads_green(tmp_path: Path) -> None:
         "a2a.port",
         "restart.backoff.initial",
         "comms.a2a.listen",
-        "context_management.strategy",
     ],
 )
 def test_removing_field_turns_load_red_naming_exact_path(

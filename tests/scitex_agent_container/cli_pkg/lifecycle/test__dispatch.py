@@ -1,17 +1,21 @@
 """Tests for cli_pkg.lifecycle._dispatch._dispatch_remote_start (step 4).
 
 See ``~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md``.
-Covers the drift-check / rsync surface (step 3b) AND the remote
+Covers the drift-check / spec-handoff surface (step 3b) AND the remote
 ``sac agents start`` invocation + JSON parse + lead-side instances
 row write (step 4).
 
-No-mocks: real ``subprocess.run`` against PATH-prepended fake
-``rsync`` and ``ssh`` binaries. Conforms to STX-TQ002 (AAA markers),
-STX-TQ003 (descriptive names), STX-TQ007 (one assert per test).
+No-mocks: real ``subprocess.run`` against a PATH-prepended fake ``ssh``
+binary that answers as the peer would in each phase of the handoff.
+Every leg is now an ssh call — the spec no longer travels by rsync, whose
+exit code was not evidence of delivery (see ``_spec_handoff``). Conforms
+to STX-TQ002 (AAA markers), STX-TQ003 (descriptive names), STX-TQ007
+(one assert per test).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -36,53 +40,56 @@ from scitex_agent_container.config._types import HostsSpec
 # ---------------------------------------------------------------------------
 
 
-def _install_rsync_shim(
-    bin_dir: Path,
-    *,
-    dry_stdout: str = "",
-    dry_stderr: str = "",
-    dry_exit: int = 0,
-    real_stdout: str = "",
-    real_stderr: str = "",
-    real_exit: int = 0,
-) -> Path:
-    """rsync shim that branches on ``-acvn`` (dry-run) vs ``-acv``."""
-    log = bin_dir / "rsync.argv.jsonl"
-    script = bin_dir / "rsync"
-    body = (
-        f"#!{sys.executable}\n"
-        "import json, sys\n"
-        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
-        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "is_dry = any(\n"
-        "    a.startswith('-') and not a.startswith('--') and 'n' in a\n"
-        "    for a in sys.argv[1:]\n"
-        ")\n"
-        f"d_out, d_err, d_rc = {json.dumps(dry_stdout)}, {json.dumps(dry_stderr)}, {int(dry_exit)}\n"
-        f"r_out, r_err, r_rc = {json.dumps(real_stdout)}, {json.dumps(real_stderr)}, {int(real_exit)}\n"
-        "out, err, rc = (d_out, d_err, d_rc) if is_dry else (r_out, r_err, r_rc)\n"
-        "sys.stdout.write(out); sys.stderr.write(err); sys.exit(rc)\n"
-    )
-    script.write_text(body)
-    script.chmod(0o755)
-    return script
-
-
 def _install_ssh_shim(
     bin_dir: Path,
     *,
+    peer_manifest: str = "",
+    manifest_exit: int = 0,
+    manifest_stderr: str = "",
+    landed_manifest: str | None = None,
+    extract_exit: int = 0,
+    extract_stderr: str = "",
     stdout: str = "{}",
     stderr: str = "",
     exit: int = 0,
 ) -> Path:
-    """ssh shim that records its argv (JSON list) and emits configured rc/stdout."""
+    """A fake peer, reached the way the real one is — over ``ssh``.
+
+    Every leg of a dispatch is now an ssh call, so the shim answers as the
+    peer would in each PHASE, recognised from the script it was handed:
+
+      * ``md5sum``  — report the spec dir's digests. The FIRST such call is
+        the pre-handoff read (``peer_manifest``); every later one is the
+        post-transfer verification (``landed_manifest``, defaulting to
+        ``peer_manifest`` so a peer that received nothing keeps saying so).
+        Splitting the two is what lets a test model a transport that exits 0
+        and delivers nowhere.
+      * ``tar -C``  — receive the spec (``extract_exit``).
+      * anything else — the ``sac agents start --json`` handoff (``stdout``).
+    """
     log = bin_dir / "ssh.argv.jsonl"
+    seen = bin_dir / "ssh.manifest.count"
     script = bin_dir / "ssh"
+    landed = peer_manifest if landed_manifest is None else landed_manifest
     body = (
         f"#!{sys.executable}\n"
-        "import json, sys\n"
-        f"with open({json.dumps(str(log))}, 'a') as fh:\n"
-        "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "import json, os, sys\n"
+        f"log, seen = {json.dumps(str(log))}, {json.dumps(str(seen))}\n"
+        "argv = sys.argv[1:]\n"
+        "with open(log, 'a') as fh:\n"
+        "    fh.write(json.dumps(argv) + '\\n')\n"
+        "joined = ' '.join(argv)\n"
+        f"before, after = {json.dumps(peer_manifest)}, {json.dumps(landed)}\n"
+        "if 'md5sum' in joined:\n"
+        "    n = int(open(seen).read()) if os.path.exists(seen) else 0\n"
+        "    open(seen, 'w').write(str(n + 1))\n"
+        "    sys.stdout.write(before if n == 0 else after)\n"
+        f"    sys.stderr.write({json.dumps(manifest_stderr)})\n"
+        f"    sys.exit({int(manifest_exit)})\n"
+        "if 'tar -C' in joined:\n"
+        "    sys.stdin.buffer.read()\n"
+        f"    sys.stderr.write({json.dumps(extract_stderr)})\n"
+        f"    sys.exit({int(extract_exit)})\n"
         f"sys.stdout.write({json.dumps(stdout)})\n"
         f"sys.stderr.write({json.dumps(stderr)})\n"
         f"sys.exit({int(exit)})\n"
@@ -92,17 +99,6 @@ def _install_ssh_shim(
     return script
 
 
-def _is_dry_run_argv(argv: list[str]) -> bool:
-    return any(a.startswith("-") and not a.startswith("--") and "n" in a for a in argv)
-
-
-def _rsync_invocations(bin_dir: Path) -> list[list[str]]:
-    log = bin_dir / "rsync.argv.jsonl"
-    if not log.exists():
-        return []
-    return [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
-
-
 def _ssh_invocations(bin_dir: Path) -> list[list[str]]:
     log = bin_dir / "ssh.argv.jsonl"
     if not log.exists():
@@ -110,12 +106,8 @@ def _ssh_invocations(bin_dir: Path) -> list[list[str]]:
     return [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
-def _rsync_dry_count(bin_dir: Path) -> int:
-    return sum(1 for argv in _rsync_invocations(bin_dir) if _is_dry_run_argv(argv))
-
-
-def _rsync_real_count(bin_dir: Path) -> int:
-    return sum(1 for argv in _rsync_invocations(bin_dir) if not _is_dry_run_argv(argv))
+def _phase_count(bin_dir: Path, marker: str) -> int:
+    return sum(1 for argv in _ssh_invocations(bin_dir) if marker in " ".join(argv))
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +129,18 @@ def spec_dir(fake_home: Path) -> Path:
     d.mkdir(parents=True)
     (d / "spec.yaml").write_text("name: alpha\n")
     return d
+
+
+@pytest.fixture
+def registered_peer(fake_home: Path, env_save_restore) -> Path:
+    """Register ``peer-host`` in a real config.yaml.
+
+    Needed by EVERY dispatch test now: each leg of the handoff — the
+    manifest read, the transfer, the verification — is rendered by
+    ``build_ssh_argv``, which resolves the peer from this config. Under the
+    old rsync transport only the final ``sac agents start`` leg did.
+    """
+    return _write_peer_config(fake_home, env_save_restore)
 
 
 @pytest.fixture
@@ -218,29 +222,23 @@ class _Scenario:
         return str(self.raised) if self.raised is not None else ""
 
     @property
-    def dry_count(self) -> int:
-        return _rsync_dry_count(self.bin_dir)
-
-    @property
-    def real_count(self) -> int:
-        return _rsync_real_count(self.bin_dir)
+    def shipped_count(self) -> int:
+        """How many times the spec was actually handed to the peer."""
+        return _phase_count(self.bin_dir, "tar -C")
 
 
 def _act_dispatch(
     shim_bin: Path,
     capsys,
     *,
-    rsync_kwargs: dict[str, Any] | None = None,
     ssh_kwargs: dict[str, Any] | None = None,
     name: str = "alpha",
     peer: str = "peer-host",
     dry_run: bool = False,
     force: bool = False,
 ) -> _Scenario:
-    """Install shim(s) and invoke ``_dispatch_remote_start`` once."""
-    _install_rsync_shim(shim_bin, **(rsync_kwargs or {}))
-    if ssh_kwargs is not None:
-        _install_ssh_shim(shim_bin, **ssh_kwargs)
+    """Install the fake peer and invoke ``_dispatch_remote_start`` once."""
+    _install_ssh_shim(shim_bin, **(ssh_kwargs or {}))
     scen = _Scenario(bin_dir=shim_bin)
     try:
         scen.returned = _dispatch_remote_start(name, peer, dry_run=dry_run, force=force)
@@ -252,13 +250,32 @@ def _act_dispatch(
     return scen
 
 
-_FIRST_LAUNCH_OUTPUT = ">f+++++++++ spec.yaml\ncd+++++++++ overlays/\n"
-_DRIFT_OUTPUT = ">f.st...... spec.yaml\n>f+++++++++ NEWFILE.txt\n"
+#: The spec file the ``spec_dir`` fixture writes, and its real md5 — the
+#: digest a peer that received it correctly must report back.
+_ALPHA_BODY = "name: alpha\n"
+_ALPHA_MD5 = hashlib.md5(_ALPHA_BODY.encode(), usedforsecurity=False).hexdigest()
+
+#: A peer holding exactly what the lead has (post-transfer, or no drift).
+_DELIVERED = f"{_ALPHA_MD5}  ./spec.yaml\n"
+#: A peer holding a DIFFERENT spec.yaml — the drift gate's trigger.
+_PEER_DRIFTED = f"{'0' * 32}  ./spec.yaml\n"
+
 _OK_JSON = '{"a2a_port": 47213, "started_at": "2026-05-16T00:00:00Z"}'
 
-# Reusable step-4 shim kwargs (clean rsync + ok ssh).
-_RK_OK = dict(dry_stdout=_FIRST_LAUNCH_OUTPUT, dry_exit=0, real_exit=0)
-_SK_OK = dict(stdout=_OK_JSON, exit=0)
+def _peer_that_delivers(**start_kwargs) -> dict[str, Any]:
+    """A peer whose handoff genuinely succeeds, varying only its start reply.
+
+    Every step-4 test needs the spec to actually arrive before the remote
+    ``sac agents start`` is reached at all — the handoff now refuses to
+    continue past a mis-delivery — so the delivered digests are pinned here
+    and each test overrides only the ``--json`` reply it cares about.
+    """
+    return dict(peer_manifest="", landed_manifest=_DELIVERED, **start_kwargs)
+
+
+#: Reusable step-4 peer: empty before the handoff, correct after it, and a
+#: well-formed ``sac agents start --json`` reply.
+_SK_OK = _peer_that_delivers(stdout=_OK_JSON, exit=0)
 
 
 # ---------------------------------------------------------------------------
@@ -267,101 +284,143 @@ _SK_OK = dict(stdout=_OK_JSON, exit=0)
 
 
 class TestDispatchDriftBlocksWithoutForce:
-    def test_drift_without_force_raises_runtime_error(self, spec_dir, shim_bin, capsys):
-        # Arrange
-        rk = dict(dry_stdout=_DRIFT_OUTPUT, dry_exit=0)
+    def test_drift_without_force_raises_runtime_error(self, spec_dir, shim_bin, registered_peer, capsys):
+        # Arrange — the peer holds a DIFFERENT spec.yaml.
+        sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert isinstance(scen.raised, RuntimeError)
 
-    def test_drift_message_mentions_spec_drift(self, spec_dir, shim_bin, capsys):
+    def test_drift_message_mentions_spec_drift(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=_DRIFT_OUTPUT, dry_exit=0)
+        sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert "Spec drift" in scen.message
 
-    def test_drift_does_not_invoke_real_rsync(self, spec_dir, shim_bin, capsys):
+    def test_drift_message_names_the_differing_file(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=_DRIFT_OUTPUT, dry_exit=0)
+        sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
-        assert scen.real_count == 0
+        assert "spec.yaml" in scen.message
 
-
-class TestDispatchDryRunMode:
-    def test_dry_run_mode_does_not_raise(self, spec_dir, shim_bin, capsys):
+    def test_drift_ships_nothing(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=">f+++++++++ spec.yaml\n", dry_exit=0)
+        sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk, dry_run=True)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert scen.shipped_count == 0
+
+    def test_a_peer_only_file_alone_does_not_block_a_start(
+        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+    ):
+        """The handoff no longer deletes, so a file only the peer has is news
+        rather than a conflict — losing scitex-nas-03's sidecar launcher to a
+        mirroring delete is what that rule prevents."""
+        # Arrange
+        _write_peer_config(fake_home, env_save_restore)
+        peer_only = _DELIVERED + f"{'1' * 32}  ./start-telegram-sidecar.sh\n"
+        sk = dict(peer_manifest=peer_only, landed_manifest=peer_only, stdout=_OK_JSON)
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert scen.raised is None
 
-    def test_dry_run_mode_returns_zero_exit(self, spec_dir, shim_bin, capsys):
+
+class TestDispatchDryRunMode:
+    def test_dry_run_mode_does_not_raise(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=">f+++++++++ spec.yaml\n", dry_exit=0)
+        sk = dict(peer_manifest="")
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk, dry_run=True)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
+        # Assert
+        assert scen.raised is None
+
+    def test_dry_run_mode_returns_zero_exit(self, spec_dir, shim_bin, registered_peer, capsys):
+        # Arrange
+        sk = dict(peer_manifest="")
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
         assert scen.returned == 0
 
-    def test_dry_run_mode_prints_dispatch_marker(self, spec_dir, shim_bin, capsys):
+    def test_dry_run_mode_prints_dispatch_marker(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=">f+++++++++ spec.yaml\n", dry_exit=0)
+        sk = dict(peer_manifest="")
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk, dry_run=True)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
         assert "[dispatch] dry-run" in scen.captured_stdout
 
-    def test_dry_run_mode_skips_real_rsync(self, spec_dir, shim_bin, capsys):
+    def test_dry_run_mode_ships_nothing(self, spec_dir, shim_bin, registered_peer, capsys):
         # Arrange
-        rk = dict(dry_stdout=">f+++++++++ spec.yaml\n", dry_exit=0)
+        sk = dict(peer_manifest="")
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk, dry_run=True)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
-        assert scen.real_count == 0
+        assert scen.shipped_count == 0
 
 
-class TestDispatchRsyncFailures:
-    def test_dry_run_failure_raises_runtime_error(self, spec_dir, shim_bin, capsys):
+class TestDispatchHandoffFailures:
+    def test_unreadable_peer_manifest_raises_runtime_error(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
-        rk = dict(dry_stderr="ssh: host unreachable\n", dry_exit=255)
+        sk = dict(manifest_stderr="ssh: host unreachable\n", manifest_exit=255)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert isinstance(scen.raised, RuntimeError)
 
-    def test_dry_run_failure_message_identifies_phase(self, spec_dir, shim_bin, capsys):
+    def test_unreadable_peer_manifest_message_identifies_phase(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
-        rk = dict(dry_stderr="ssh: host unreachable\n", dry_exit=255)
+        sk = dict(manifest_stderr="ssh: host unreachable\n", manifest_exit=255)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
-        assert "rsync --dry-run failed" in scen.message
+        assert "Could not read the spec manifest" in scen.message
 
-    def test_real_rsync_failure_message_mentions_rsync_failed(
-        self, spec_dir, shim_bin, capsys
+    def test_a_failed_transfer_message_identifies_the_extract_phase(
+        self, spec_dir, shim_bin, registered_peer, capsys
     ):
-        # Arrange — clean dry-run, fail on real rsync.
-        rk = dict(dry_exit=0, real_stderr="broken pipe\n", real_exit=12)
+        # Arrange — the peer is readable, then refuses the write.
+        sk = dict(peer_manifest="", extract_stderr="broken pipe\n", extract_exit=12)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
-        assert "rsync failed" in scen.message
+        assert "failed while extracting" in scen.message
 
-    def test_real_rsync_failure_excludes_dry_run_phase(
-        self, spec_dir, shim_bin, capsys
+    def test_a_transfer_that_exits_zero_but_delivers_nothing_raises(
+        self, spec_dir, shim_bin, registered_peer, capsys
     ):
-        # Arrange — disambiguate from dry-run failure.
-        rk = dict(dry_exit=0, real_stderr="broken pipe\n", real_exit=12)
+        """THE regression. scitex-nas-03's patched rsync exited 0 and wrote the
+        spec one directory away; the old code then booted the agent from the
+        stale spec and called the dispatch a success."""
+        # Arrange — extraction "succeeds", peer still reports an empty dir.
+        sk = dict(peer_manifest="", landed_manifest="", extract_exit=0)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=rk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
-        assert "rsync --dry-run failed" not in scen.message
+        assert "stale spec" in scen.message
+
+    def test_a_silent_mis_delivery_never_reaches_the_remote_start(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
+        """The consequence that made this urgent: a mis-delivered spec must
+        not be followed by a start that reads whatever is at that path."""
+        # Arrange
+        sk = dict(peer_manifest="", landed_manifest="", extract_exit=0)
+        # Act
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
+        # Assert
+        assert _phase_count(shim_bin, "sac agents start") == 0
 
 
 class TestDispatchMissingSpecDir:
@@ -393,7 +452,7 @@ class TestDispatchSshSuccessPath:
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert — query state.db via the project API so schema is init'd.
         from scitex_agent_container._state.state_db import list_active_instances
 
@@ -406,7 +465,7 @@ class TestDispatchSshSuccessPath:
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert scen.returned == 0
 
@@ -416,7 +475,7 @@ class TestDispatchSshSuccessPath:
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert "started on 'peer-host'" in scen.captured_stdout
 
@@ -426,7 +485,7 @@ class TestDispatchSshSuccessPath:
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert "a2a_port=47213" in scen.captured_stdout
 
@@ -438,7 +497,7 @@ class TestDispatchSshSuccessPath:
         # peer (sac-agent-spawn design, Rule B/F).
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         from scitex_agent_container._state.state_db import list_active_instances
 
@@ -453,7 +512,7 @@ class TestDispatchSshSuccessPath:
         # crux of the remote-port gap fix).
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         from scitex_agent_container._state.state_db import list_active_instances
 
@@ -468,7 +527,7 @@ class TestDispatchSshSuccessPath:
         env_save_restore.set("SAC_NAME", "")
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         from scitex_agent_container._state.state_db import list_active_instances
 
@@ -483,12 +542,12 @@ class TestDispatchSshSuccessPath:
         # rather than substituting a default. Covers the cross-host
         # null-propagation seam.
         _write_peer_config(fake_home, env_save_restore)
-        sk_null = dict(
+        sk_null = _peer_that_delivers(
             stdout='{"a2a_port": null, "started_at": "2026-05-17T00:00:00Z"}',
             exit=0,
         )
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk_null)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=sk_null)
         # Assert
         from scitex_agent_container._state.state_db import list_active_instances
 
@@ -502,9 +561,9 @@ class TestDispatchSshFailurePaths:
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
-        sk = dict(stdout="", stderr="connection refused\n", exit=255)
+        sk = _peer_that_delivers(stdout="", stderr="connection refused\n", exit=255)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert isinstance(scen.raised, RuntimeError)
 
@@ -513,9 +572,9 @@ class TestDispatchSshFailurePaths:
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
-        sk = dict(stderr="connection refused\n", exit=255)
+        sk = _peer_that_delivers(stderr="connection refused\n", exit=255)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert "Remote `sac agents start alpha` failed" in scen.message
 
@@ -524,9 +583,9 @@ class TestDispatchSshFailurePaths:
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
-        sk = dict(stdout="OK\n", exit=0)
+        sk = _peer_that_delivers(stdout="OK\n", exit=0)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert isinstance(scen.raised, RuntimeError)
 
@@ -535,9 +594,9 @@ class TestDispatchSshFailurePaths:
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
-        sk = dict(stdout="OK\n", exit=0)
+        sk = _peer_that_delivers(stdout="OK\n", exit=0)
         # Act
-        scen = _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=sk)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
         assert "non-JSON stdout" in scen.message
 
@@ -557,7 +616,7 @@ class TestDispatchSshArgv:
         # Arrange — peer-side MUST NOT re-trigger the dispatch branch.
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert "--no-redispatch" in " ".join(_ssh_invocations(shim_bin)[-1])
 
@@ -567,7 +626,7 @@ class TestDispatchSshArgv:
         # Arrange — peer must emit machine-parseable output.
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert "--json" in " ".join(_ssh_invocations(shim_bin)[-1])
 
@@ -578,7 +637,7 @@ class TestDispatchSshArgv:
         # `bash -c '<preamble> && <cmd>'`.
         _write_peer_config(fake_home, env_save_restore, env_preamble=_LMOD_PREAMBLE)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert "module load Apptainer/1.3.3 && sac agents start" in " ".join(
             _ssh_invocations(shim_bin)[-1]
@@ -590,17 +649,19 @@ class TestDispatchSshArgv:
         # Arrange — bash -c wrapper is the explicit env_preamble shape.
         _write_peer_config(fake_home, env_save_restore, env_preamble=_LMOD_PREAMBLE)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
         assert any("bash -c" in tok for tok in _ssh_invocations(shim_bin)[-1])
 
 
 # ---------------------------------------------------------------------------
-# Bug 3 — TOFU policy: dispatch must add ``-o
-# StrictHostKeyChecking=accept-new`` to BOTH the ssh handoff AND rsync's
-# transport, so a first-touch peer (the most common dispatch failure
-# mode on a freshly-configured cluster) does not silently rc-1 with no
-# operator-actionable error.
+# Bug 3 — TOFU policy: EVERY leg of a dispatch must carry ``-o
+# StrictHostKeyChecking=accept-new``, so a first-touch peer (the most
+# common dispatch failure mode on a freshly-configured cluster) does not
+# silently rc-1 with no operator-actionable error. The spec handoff used
+# to hand rsync its own ``-e ssh …`` string, which had to repeat the
+# policy; it now goes through build_ssh_argv like everything else, so
+# there is exactly one place the policy can be got wrong.
 # ---------------------------------------------------------------------------
 
 
@@ -611,33 +672,36 @@ class TestDispatchStrictHostKeyChecking:
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert — the rendered ssh argv carries the TOFU policy.
         assert "StrictHostKeyChecking=accept-new" in " ".join(
             _ssh_invocations(shim_bin)[-1]
         )
 
-    def test_dispatch_dry_rsync_argv_uses_accept_new_transport(
+    def test_every_dispatch_leg_carries_the_tofu_policy(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
-        # Arrange — clean first-launch dry-run, ok ssh.
+        # Arrange — manifest read, transfer, verification and remote start.
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
-        # Assert — rsync's -e transport carries the accept-new flag.
-        dry = next(a for a in _rsync_invocations(shim_bin) if _is_dry_run_argv(a))
-        assert any("StrictHostKeyChecking=accept-new" in tok for tok in dry)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
+        # Assert
+        assert all(
+            "StrictHostKeyChecking=accept-new" in " ".join(argv)
+            for argv in _ssh_invocations(shim_bin)
+        )
 
-    def test_dispatch_real_rsync_argv_uses_accept_new_transport(
+    def test_the_spec_transfer_is_one_of_those_legs(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
+        """Guards the claim above from passing vacuously — if the transfer
+        stopped going over ssh, `all(...)` would still be True."""
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
-        _act_dispatch(shim_bin, capsys, rsync_kwargs=_RK_OK, ssh_kwargs=_SK_OK)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
-        real = next(a for a in _rsync_invocations(shim_bin) if not _is_dry_run_argv(a))
-        assert any("StrictHostKeyChecking=accept-new" in tok for tok in real)
+        assert _phase_count(shim_bin, "tar -C") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -884,12 +948,11 @@ class TestTryDispatchClassification:
     def test_known_peer_dispatches_remote_with_expected_ssh_argv(
         self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
     ):
-        # Arrange — host is a known peer distinct from the caller; PATH-shim
-        # rsync (clean first-launch) + ssh (ok JSON) stand in for the network.
+        # Arrange — host is a known peer distinct from the caller; the PATH-shim
+        # ssh stands in for the network across every phase of the handoff.
         # _dispatch_remote_start re-loads peers from the on-disk config for
         # build_ssh_argv, so register peer-host there too (real config.yaml).
         _write_peer_config(fake_home, env_save_restore, peer="peer-host")
-        _install_rsync_shim(shim_bin, **_RK_OK)
         _install_ssh_shim(shim_bin, **_SK_OK)
         cfg = _cfg_host("alpha", "peer-host")
         peers = {"peer-host": PeerSpec(name="peer-host", ssh="peer-host")}
@@ -902,9 +965,11 @@ class TestTryDispatchClassification:
             force=False,
             local_names={"ywata-note-win"},
         )
-        # Assert — dispatched, and the ssh argv runs the peer-side start verb.
+        # Assert — dispatched, and the LAST ssh argv runs the peer-side start
+        # verb (the earlier calls are the manifest read, the transfer and the
+        # post-transfer verification).
         ssh_calls = _ssh_invocations(shim_bin)
-        assert out is True and ssh_calls[0][-6:] == [
+        assert out is True and ssh_calls[-1][-6:] == [
             "sac",
             "agents",
             "start",

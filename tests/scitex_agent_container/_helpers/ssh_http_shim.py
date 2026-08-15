@@ -113,8 +113,17 @@ import httpx
 def _parse_remote_curl(cmd: str) -> dict:
     """Parse a curl invocation built by ``_post_via_ssh_curl``.
 
-    Returns ``{{port, path, url, bearer}}``. Raises ``ValueError`` if
+    Returns ``{{port, path, url, framed}}``. Raises ``ValueError`` if
     the shape doesn't match.
+
+    ``framed`` reports which stdin contract the production code chose.
+    The AUTHENTICATED path deliberately keeps the bearer out of every
+    argv — that is the security property under test — so there is no
+    longer an ``Authorization`` header in this command string to scrape.
+    Instead it emits ``curl --config -`` (the same shape
+    ``_hostsync._push_tokens_io.probe_peer_listen_auth`` uses) and frames
+    ssh stdin as ``<token>\\n<body>``. The shim therefore has to split
+    stdin exactly as the remote snippet's ``read`` builtin would.
     """
     # URL is the final positional arg in the curl line.
     url_match = re.search(r"http://127\\.0\\.0\\.1:(\\d+)(/[^\\s]+)", cmd)
@@ -122,15 +131,11 @@ def _parse_remote_curl(cmd: str) -> dict:
         raise ValueError(f"shim: could not parse URL from curl cmd: {{cmd!r}}")
     port = int(url_match.group(1))
     path = url_match.group(2)
-    bearer = None
-    auth_match = re.search(r"-H 'Authorization: Bearer ([^']*)'", cmd)
-    if auth_match:
-        bearer = auth_match.group(1)
     return {{
         "port": port,
         "path": path,
         "url": f"http://127.0.0.1:{{port}}{{path}}",
-        "bearer": bearer,
+        "framed": "--config -" in cmd,
     }}
 
 
@@ -154,10 +159,19 @@ def main() -> int:
         sys.stderr.write(f"shim ssh: {{exc}}\\n")
         return 3
 
-    body = sys.stdin.buffer.read()
+    stream = sys.stdin.buffer.read()
+    bearer = None
+    if parsed["framed"]:
+        # Same split the remote snippet's `IFS= read -r` performs: the
+        # first line is the token, everything after it is the body.
+        token_bytes, _, body = stream.partition(b"\\n")
+        bearer = token_bytes.decode("utf-8", errors="replace")
+    else:
+        body = stream
+
     headers = {{"Content-Type": "application/json"}}
-    if parsed["bearer"]:
-        headers["Authorization"] = f"Bearer {{parsed['bearer']}}"
+    if bearer:
+        headers["Authorization"] = f"Bearer {{bearer}}"
 
     log_record = {{
         "host": host,
@@ -165,7 +179,7 @@ def main() -> int:
         "url": parsed["url"],
         "port": parsed["port"],
         "path": parsed["path"],
-        "bearer": parsed["bearer"],
+        "bearer": bearer,
         "body": body.decode("utf-8", errors="replace"),
     }}
 

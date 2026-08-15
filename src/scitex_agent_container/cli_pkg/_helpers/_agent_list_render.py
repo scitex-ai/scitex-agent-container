@@ -231,13 +231,14 @@ def _print_hidden_footer(
 
 
 def print_agent_list(
-    registry: Registry,
+    registry: Registry | None,
     capability: str | None = None,
     machine: str | None = None,
     group: str | None = None,
     *,
     verbose: bool = False,
     show_all: bool = False,
+    rows: list[dict] | None = None,
 ) -> None:
     """Print a rich table of registered agents.
 
@@ -251,21 +252,33 @@ def print_agent_list(
     detail — and adds the spec ``Path`` column. ``show_all=True`` (``--all``)
     also shows the full list AND additionally includes dead spec-missing
     registry ghosts (see :func:`_is_ghost_row`), which stay hidden otherwise.
+
+    ``rows`` renders a listing that was ALREADY assembled — the fleet-wide path,
+    whose rows come from several hosts and therefore cannot be re-derived from
+    one local ``registry``. It changes only WHERE the data came from: every
+    filter, column and footer below behaves identically. The empty-listing text
+    differs deliberately, because "registry empty, no specs on disk" is a claim
+    about THIS machine and would be false about a fleet whose hosts answered.
     """
     from ._agent_list import get_agent_list_data
 
-    # PERF: the default view discards non-running rows, so let the data layer
-    # skip their account/movement enrichment. `-v`/`--all` show every row, so
-    # they must stay fully enriched.
-    data = get_agent_list_data(
-        registry,
-        capability=capability,
-        machine=machine,
-        group=group,
-        running_only=not (verbose or show_all),
-    )
+    if rows is not None:
+        data = list(rows)
+        empty_msg = "[dim]No agents on the host(s) that answered.[/dim]"
+    else:
+        # PERF: the default view discards non-running rows, so let the data
+        # layer skip their account/movement enrichment. `-v`/`--all` show every
+        # row, so they must stay fully enriched.
+        data = get_agent_list_data(
+            registry,
+            capability=capability,
+            machine=machine,
+            group=group,
+            running_only=not (verbose or show_all),
+        )
+        empty_msg = "[dim]No agents found (registry empty, no specs on disk).[/dim]"
     if not data:
-        console.print("[dim]No agents found (registry empty, no specs on disk).[/dim]")
+        console.print(empty_msg)
         return
 
     # `--all` reveals dead spec-missing registry ghosts; hidden otherwise.

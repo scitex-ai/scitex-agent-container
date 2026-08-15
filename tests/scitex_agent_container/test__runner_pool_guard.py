@@ -48,14 +48,25 @@ LIGHT = (
 # queue when those runners went offline.
 INCIDENT_PIN = '["self-hosted", "Linux", "X64", "spartan-cpu"]'
 
-# The five jobs the incident jammed. Listed one by one rather than derived,
-# so DELETING a seam cannot quietly shrink the test.
+# The jobs the incident jammed. Listed one by one rather than derived, so
+# DELETING a seam cannot quietly shrink the test.
+#
+# THIS LIST WAS FIVE AND IS NOW FOUR, and the missing entry is named rather
+# than dropped in silence — a shrinking list is precisely what this shape
+# guards against, so removing an entry has to carry its reason.
+# `quality-audit-on-ubuntu-latest.yml` (job `audit`) was DELETED, not
+# re-routed: its five audit steps invoked pre-0.11 `scitex-dev quality
+# audit-*` spellings that every exit 2 on the installed scitex-dev, under
+# `continue-on-error: true` — a job that occupied a light-lane slot on every
+# push and PR while measuring nothing. Its coverage is fully carried by
+# `tests/develop/test_audit.py` (`ecosystem audit-all`) in the pytest matrix.
+# If a standalone audit workflow is ever reinstated it MUST be added back
+# here, because it would be a light-lane job again.
 LIGHT_LANE = [
     ("lint.yml", "ruff"),
     ("import-smoke-on-ubuntu-py3-12.yml", "install-check"),
     ("no-hosted-runners-guard-on-self-hosted.yml", "no-hosted-runners"),
     ("rtd-sphinx-build-on-ubuntu-latest.yml", "sphinx"),
-    ("quality-audit-on-ubuntu-latest.yml", "audit"),
 ]
 
 # The two pins this repo keeps on purpose, with their arguments on file.

@@ -12,7 +12,7 @@
   </a>
 </p>
 
-<p align="center"><b>Declarative, on-prem-first lifecycle manager for Claude Code agents.</b></p>
+<p align="center"><b>Declarative, on-prem-first lifecycle manager for autonomous agent processes.</b></p>
 
 <p align="center">
   One YAML spec → one reproducible, sandboxed, fleet-addressable agent.<br/>
@@ -33,7 +33,6 @@
 <p align="center">
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml?branch=develop&label=Tests" alt="Tests"></a>
   <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/import-smoke-on-ubuntu-py3-12.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/import-smoke-on-ubuntu-py3-12.yml?branch=develop&label=Install-Check" alt="Install-Check"></a>
-  <a href="https://github.com/ywatanabe1989/scitex-agent-container/actions/workflows/quality-audit-on-ubuntu-latest.yml"><img src="https://img.shields.io/github/actions/workflow/status/ywatanabe1989/scitex-agent-container/quality-audit-on-ubuntu-latest.yml?branch=develop&label=Quality" alt="Quality"></a>
   <a href="https://codecov.io/gh/ywatanabe1989/scitex-agent-container"><img src="https://img.shields.io/codecov/c/github/ywatanabe1989/scitex-agent-container/develop?label=CodeCov" alt="CodeCov"></a>
 </p>
 <!-- scitex-badges:end -->
@@ -46,7 +45,7 @@
 |---|---|
 | 1 | **Declarative agents.** One `spec.yaml` per agent — the file IS the agent (dir-as-SSoT, no hidden state). Reproducible across hosts, version-controlled, diff-reviewable. [`spec-reference.md`](docs/spec-reference.md). |
 | 2 | **Rootless Apptainer isolation.** Runs where cloud sandboxes (E2B, Modal, etc.) can't — HPC login nodes, on-prem clusters, fully air-gapped boxes. No root, no daemon, no Docker socket. Hardened by default with `--containall` ([`isolation.md`](docs/isolation.md)). |
-| 3 | **Switchable backend, stable Claude Code harness.** Default: Anthropic OAuth. Alternatives include Codex/ChatGPT subscriptions through scitex-genai, DeepSeek, MiMo/Xiaomi, or any Anthropic-compatible endpoint via one `spec.claude.provider:` knob. Claude Code's TUI, hooks, skills, channels, flags, and `CLAUDE.md` stay in place. |
+| 3 | **Two independent axes, one spec.** sac owns the agent PROCESS; a *harness* owns only the TURN. **Which harness drives the turn** is `spec.harness:` — `anthropic` (default), `openai`, or `codex`. **Which endpoint answers it** is the separate `spec.claude.provider:` knob — Anthropic OAuth (default), Codex/ChatGPT via scitex-genai, DeepSeek, MiMo/Xiaomi, or any Anthropic-compatible `base_url`. Swapping the endpoint does not change the harness, and vice versa. The clearest proof the axes are different: `codex` is a legal value of **both**, and it means different things — as a *harness* the Codex agent program runs the loop; as a *provider* Claude Code still drives and Codex only answers. **[What actually starts today →](#which-harnesses-actually-start)** — the registry has four entries and only the `anthropic` ones can be started. [`spec-reference.md`](docs/spec-reference.md). |
 | 4 | **Fleet ops out of the box.** A2A push (`POST /v1/turn` per agent, native), health & heartbeat, restart policies, multi-account credential rotation with auto-quota-watch, MCP + CLI + Python surface, cross-host orchestration via `sac fleet`. |
 | 5 | **AGPL-3.0.** Research-freedom license — infrastructure stays open, modifications stay shareable. The [Four Freedoms for Research](#four-freedoms-for-research) below. |
 
@@ -126,9 +125,38 @@ sac agents delete hello-agent-1 hello-agent-2 -y
 
 [`examples/`](examples/) walks through the runtime in 15 lessons (image build, sandbox/update/freeze, versioning, run/send/tail, logs/exec, stop/remove, binds, env+user, writing your first spec.yaml, to_home/, A2A endpoint, health+restart, multi-host, debugging). Run them read-only with `bash examples/00_run_all.sh`, or `--apply` to execute the mutating ones. Pre-baked agent specs live in [`examples/agents/`](examples/agents/) (`hello-agent`, `minimal-agent`, `full-agent`, `codex-agent`, `deepseek-agent`, `proxy-agent`).
 
+### Which harnesses actually start
+
+The harness registry has **four** entries, and `spec.harness` accepts **three**
+values. Only the `anthropic` ones can be started today — a registry entry is a
+declaration, not a working launch path, and this table says which is which
+rather than letting the count imply support that is not there:
+
+| `spec.harness` | Registry entry     | Selected by                                       | `sac agents start`? |
+|----------------|--------------------|---------------------------------------------------|---------------------|
+| `anthropic` *(default)* | `claude-code-tui`  | `spec.runtime: tui`, or unset                     | **yes** |
+| `anthropic`    | `claude-agent-sdk` | `spec.runtime: claude-agent-sdk` (legacy alias `apptainer`) | **yes** |
+| `openai`       | `openai-agents`    | the harness axis alone                            | **no** — refused |
+| `codex`        | `codex-sdk`        | the harness axis alone                            | **no** — refused |
+
+A non-`anthropic` harness loads, validates and resolves to its registry entry,
+but every lifecycle launch path refuses it *loudly* rather than silently
+starting a Claude runner under a spec that asked for something else. The one
+working alternative today is `spec.a2a.handler: openai_session` for the OpenAI
+SDK; there is no equivalent A2A executor for `codex` yet.
+
+`spec.runtime` only discriminates *within* the `anthropic` family — the `openai`
+and `codex` families have a single entry each, so the runtime axis selects
+nothing for them.
+
 ### Models
 
-Pick the model per agent under `spec.claude.model`:
+`spec.claude.model` is the per-agent model knob. Be aware that sac resolves it
+to `sonnet` when a spec leaves it empty — for **every** agent, whichever harness
+the spec selects. That Anthropic-shaped default is real and not yet unwound by
+the harness/runtime/inference layering work.
+
+Anthropic aliases:
 
 | Alias    | Model (current)             | Use for                         |
 |----------|-----------------------------|---------------------------------|
@@ -138,25 +166,28 @@ Pick the model per agent under `spec.claude.model`:
 
 Aliases auto-track the latest version of each family; append `[1m]` for the 1M-token context window (`opus[1m]`, `sonnet[1m]`). Pin an exact build with a full ID like `claude-opus-4-7` or `claude-haiku-4-5-20251001`.
 
-**Non-Anthropic backend?** Set `spec.claude.provider: codex` with a GPT model
-to use the local scitex-genai ChatGPT-subscription gateway while retaining the
-Claude Code harness. Other bundled entries are `deepseek`, `mimo`, and
-`xiaomi`; a dict `{ base_url: "...", auth_token_env: "..." }` accepts any
-Anthropic-compatible endpoint. Codex setup and multi-account configuration are
-documented in [`docs/credentials.md`](docs/credentials.md). See
-[`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for the
-generic provider shape. **[Full model + provider reference →](docs/spec-reference.md)**
+**A non-Anthropic inference endpoint?** `spec.claude.provider` swaps the
+ENDPOINT, not the harness — the Claude-family harness keeps running, pointed
+somewhere else. Set `spec.claude.provider: codex` with a GPT model to use the
+local scitex-genai ChatGPT-subscription gateway. Other bundled entries are
+`deepseek`, `mimo`, and `xiaomi`; a dict `{ base_url: "...", auth_token_env:
+"..." }` accepts any Anthropic-compatible endpoint. Under an override the model
+id is the endpoint's own (e.g. `deepseek-chat`), so the `claude-*` alias check
+relaxes and the table above no longer applies. Codex setup and multi-account
+configuration are documented in [`docs/credentials.md`](docs/credentials.md).
+See [`examples/agents/deepseek-agent/`](examples/agents/deepseek-agent/) for the
+generic provider shape. **[Full harness + model + provider reference →](docs/spec-reference.md)**
 
 ## How it works
 
-`sac` materializes a `spec.yaml` into a long-lived, externally addressable Claude agent:
+`sac` materializes a `spec.yaml` into a long-lived, externally addressable agent process — whichever harness drives its turns:
 
 ```
   spec.yaml   ─┐
   to_home/    ─┴─→ sac agents start ──→ apptainer instance
                                           │
                                           ▼
-                              long-lived Claude SDK session
+                              long-lived harness session (TUI or SDK)
                               │
                               ├── <workdir>  (= spec.workdir, mounted rw)
                               ├── spec.mounts[]  ← host-path allowlist (ro/rw)
@@ -168,7 +199,7 @@ generic provider shape. **[Full model + provider reference →](docs/spec-refere
 
 **[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.
 
-**[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.apptainer.*, spec.claude.*, a2a, health, restart, provider).
+**[YAML Spec Reference (v3) →](docs/spec-reference.md)** — annotated full example + field table (apiVersion, spec.harness, spec.runtime, spec.apptainer.*, spec.claude.*, a2a, health, restart, provider).
 
 **[Talking to a Running Agent →](docs/talking-to-agents.md)** — three transports (A2A `POST /v1/turn`, `sac agents send`, host-level `sac listen`), when to use which, copy-pasteable curl examples.
 
@@ -222,9 +253,19 @@ sac agents forget <name> [--force]        # local-only state.db cleanup for the
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
 sac agents send   <name> --key ESC        # interrupt current turn
-sac agents status [<name>] [--snapshot] [--priority]   # fleet view if no name; per-agent
-                                                       # JSON payload otherwise
+sac agents status [<name>] [--snapshot] [--priority]   # FLEET-WIDE view if no name;
+                                                       # per-agent JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)
+sac agents list   --host <hostname>       # one host; repeatable, exact match.
+                                           # `localhost` is resolved at parse time and
+                                           # the header echoes the resolution.
+                                           # The fleet view ALWAYS prints a header saying
+                                           # which hosts answered and which did not, with
+                                           # the reason ("5/6 hosts responded — spartan:
+                                           # ssh timed out after 8s"). A host that could
+                                           # not be reached is REPORTED, never dropped:
+                                           # `agents: []` means an EMPTY fleet only when
+                                           # `hosts.responded == hosts.total` in --json.
 sac agents health <name>
 sac agents tail   <name>                  # render session.jsonl (structured transcript)
 sac agents recall <name>                  # human-readable session summary

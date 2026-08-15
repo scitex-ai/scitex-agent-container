@@ -13,6 +13,8 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
+from ..._runners._tmux._target import exact_target
+
 
 def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     pid = 0
@@ -24,7 +26,7 @@ def _pids_from_session(session: str, multiplexer: str) -> tuple[int, int]:
     try:
         out = (
             subprocess.run(
-                ["tmux", "list-panes", "-t", session, "-F", "#{pane_pid}"],
+                ["tmux", "list-panes", "-t", exact_target(session), "-F", "#{pane_pid}"],
                 capture_output=True,
                 text=True,
             )

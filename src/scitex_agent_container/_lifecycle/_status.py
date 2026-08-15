@@ -237,8 +237,6 @@ def agent_status(
         result["listen"] = []
         result["extensions"] = {}
 
-    result["context_management"] = None
-
     # Snapshot block — cheap read from cache (todo#286). Never re-gathers.
     # stx-allow: fallback (reason: snapshot module may not yet exist or cache may be absent on first run; None snapshot is valid initial state)
     try:

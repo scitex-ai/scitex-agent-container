@@ -103,7 +103,7 @@ def _run(agents: Path, *args: str):
 
 
 def _payload(result) -> dict:
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 # ---------------------------------------------------------------------------

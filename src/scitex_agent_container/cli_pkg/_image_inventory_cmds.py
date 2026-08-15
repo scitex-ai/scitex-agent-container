@@ -75,10 +75,22 @@ def image_list(as_json: bool) -> None:
                 "mtime": p.stat().st_mtime,
             }
         )
-    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
     if as_json:
+        # STDOUT IS THE PAYLOAD. The scan-root banner below is a human
+        # courtesy printed to stdout, so emitting it here made
+        # ``sac image list --json | jq`` fail on the very first byte:
+        #
+        #   scan root: /home/…/.scitex/*/containers/
+        #   [ … ]
+        #
+        # A ``--json`` surface promises stdout is EXACTLY one JSON
+        # document; the banner is for the human render only. (Found by
+        # tightening test_image_group's parse off `result.output`'s
+        # prefix-skip, which had been hiding this since the banner
+        # landed.)
         click.echo(json.dumps(versions, indent=2, default=str))
         return
+    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
     if not versions:
         console.print(
             f"[dim](no SIFs under {root}/*/containers/ — "

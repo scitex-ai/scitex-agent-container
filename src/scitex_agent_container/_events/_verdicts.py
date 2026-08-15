@@ -38,7 +38,6 @@ TRANSITIONS, NOT A HEARTBEAT PER SUBJECT
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -140,7 +139,30 @@ def self_state_path(subsystem: str, *, path: Path | None = None) -> Path:
     return base.parent / f"sac-events-{subsystem}-self.json"
 
 
-def _load_degraded(target: Path, *, err_stream: Any) -> set[str]:
+def _warn(message: str, *, err_stream: Any) -> None:
+    """Report a degraded-memory problem at WARNING.
+
+    ``err_stream=None`` means the caller expressed no preference, so the report
+    goes through scitex-logging and arrives with a level, a module stamp and the
+    file mirror. A caller that DID pass a stream is honoured verbatim — that
+    seam is a reporting contract, and tests pass a StringIO through it.
+
+    The old code collapsed ``None`` to a hardcoded ``sys.stderr`` and hand-wrote
+    a ``[sac-events]`` prefix. A hand-written prefix is a level spelled as text:
+    it cannot be filtered, routed or mirrored, and it does not say whether the
+    line is a warning or an error.
+    """
+    if err_stream is None:
+        # Inside the function, not at module scope: scitex_logging configures
+        # handlers on first import and a pass must not pay that at import time.
+        import scitex_logging
+
+        scitex_logging.getLogger(__name__).warning(message)
+    else:
+        print(f"[sac-events] {message}", file=err_stream)
+
+
+def _load_degraded(target: Path, *, err_stream: Any = None) -> set[str]:
     """Read the remembered set. A MISSING file is a normal empty start.
 
     A file that exists but cannot be read or parsed is NOT normal, and says so
@@ -156,23 +178,23 @@ def _load_degraded(target: Path, *, err_stream: Any) -> set[str]:
     try:
         loaded = json.loads(target.read_text(encoding="utf-8"))
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
-            f"[sac-events] could not read {target} — {exc}. Previously reported "
+        _warn(
+            f"could not read {target} — {exc}. Previously reported "
             f"subjects will be recorded as newly degraded again.",
-            file=err_stream,
+            err_stream=err_stream,
         )
         return set()
     if not isinstance(loaded, list):
-        print(
-            f"[sac-events] {target} is not a list of subjects — ignoring it. "
+        _warn(
+            f"{target} is not a list of subjects — ignoring it. "
             f"Previously reported subjects will be recorded as newly degraded.",
-            file=err_stream,
+            err_stream=err_stream,
         )
         return set()
     return {str(item) for item in loaded}
 
 
-def _save_degraded(target: Path, subjects: set[str], *, err_stream: Any) -> None:
+def _save_degraded(target: Path, subjects: set[str], *, err_stream: Any = None) -> None:
     """Persist the remembered set atomically (tmp + rename). Never raises."""
     # stx-allow: fallback (reason: this file is an optimisation of the RECORD,
     # never an input to a fleet decision — failing to persist it can only cause
@@ -184,10 +206,10 @@ def _save_degraded(target: Path, subjects: set[str], *, err_stream: Any) -> None
         tmp.write_text(json.dumps(sorted(subjects), indent=2), encoding="utf-8")
         tmp.replace(target)
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
-            f"[sac-events] could not persist {target} — {exc}. Subjects already "
+        _warn(
+            f"could not persist {target} — {exc}. Subjects already "
             f"reported this pass may be recorded as newly degraded next pass.",
-            file=err_stream,
+            err_stream=err_stream,
         )
 
 
@@ -219,7 +241,11 @@ def emit_subject_verdicts(
     unwritable file never suppresses the rest of the fleet's records — nor
     unwinds work the pass already performed.
     """
-    stream = err_stream if err_stream is not None else sys.stderr
+    # Do NOT collapse None to sys.stderr here. None means "the caller expressed
+    # no preference", and _warn() routes that through scitex-logging so the
+    # report carries a level. Collapsing it at this line is precisely what
+    # turned every one of these diagnostics into a bare, level-less print.
+    stream = err_stream
     state_file = degraded_state_path(subsystem, path=path)
     remembered = _load_degraded(state_file, err_stream=stream)
 
@@ -304,7 +330,11 @@ def recover_absent_subjects(
     recovery would be a false all-clear. Which meaning applies is a property of
     the calling pass, so it is stated at the call site.
     """
-    stream = err_stream if err_stream is not None else sys.stderr
+    # Do NOT collapse None to sys.stderr here. None means "the caller expressed
+    # no preference", and _warn() routes that through scitex-logging so the
+    # report carries a level. Collapsing it at this line is precisely what
+    # turned every one of these diagnostics into a bare, level-less print.
+    stream = err_stream
     state_file = degraded_state_path(subsystem, path=path)
     remembered = _load_degraded(state_file, err_stream=stream)
     present = set(observed)
@@ -360,7 +390,11 @@ def emit_self_state(
     that mentions it once and goes quiet is indistinguishable from a log
     written by a pass that has itself died.
     """
-    stream = err_stream if err_stream is not None else sys.stderr
+    # Do NOT collapse None to sys.stderr here. None means "the caller expressed
+    # no preference", and _warn() routes that through scitex-logging so the
+    # report carries a level. Collapsing it at this line is precisely what
+    # turned every one of these diagnostics into a bare, level-less print.
+    stream = err_stream
     state_file = self_state_path(subsystem, path=path)
     was_impaired = subsystem in _load_degraded(state_file, err_stream=stream)
 
