@@ -81,8 +81,41 @@ BLOCKER_CLEARED = ""
 # fails exactly where it was supposed to be the safety net.
 VERDICT_ACTOR = "ci"
 
+# THE OWNER OF A CARD WHOSE PUSHER IS NOT KNOWN -- the third value, and the
+# whole point of this constant existing at all.
+#
+# "The pusher is X", "we guessed X" and "we do not know" are three different
+# facts, and this store has exactly one field to say them in. Collapsing them
+# was the defect: the verdict half resolved a recipient by matching agent
+# specs against the repo name -- an INFERENCE from the repository, not an
+# observation of the push -- and then wrote it to `agent`/`assignee`, which is
+# the field `record_push` uses to state a MEASURED identity. The next reader
+# could not tell the two apart, and neither could the rail: on a second
+# verdict for the same sha it read its own guess back and reported provenance
+# "card", i.e. "recorded by the pusher".
+#
+# MEASURED ON THE LIVE STORE, 2026-08-15: of 121 rail-shaped cards
+# (`ci-<repo>-<12 hex>`), 118 -- 97.5% -- were created by the verdict half
+# (`created_by = "ci"`), meaning no pusher was ever on record, and every one
+# of those 118 had `agent` written to a repo-owner guess. 117 named this
+# repo's owning agent. So the fallback was not an edge case; it was the path.
+#
+# WHY A SENTINEL RATHER THAN AN EMPTY FIELD. `add_task` REFUSES an owner-less
+# card -- "assignee is required ... an owner-less card is rejected (no silent
+# fallback; see constitution)" (scitex_cards/_store_mutate.py). So "leave it
+# blank" is not available; the honest options are a real identity or a name
+# that is visibly not one. This is the latter: it is not an agent, no agent
+# spec declares it, and it never resolves to an inbox -- so a verdict filed
+# against it is VISIBLY unrouted rather than confidently misrouted, and
+# `list_tasks(assignee=...)` for a real agent stops returning other people's
+# pushes. The agent the rail notified is recorded as a SUBSCRIBER instead:
+# told, but not made responsible.
+UNCLAIMED_OWNER = "ci-unclaimed"
+
 __all__ = [
     "STATUS_FOR_CONCLUSION",
+    "UNCLAIMED_OWNER",
+    "VERDICT_ACTOR",
     "card_id_for",
     "card_title",
     "cards",
