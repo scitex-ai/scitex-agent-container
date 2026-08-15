@@ -43,7 +43,6 @@ import sys
 import time
 from pathlib import Path
 
-from .._logging import get_logger
 from ._status import DriftState, DriftStatus
 
 # How long a successful ``git fetch`` for a given repo stays "fresh".
@@ -404,7 +403,15 @@ def warn_if_spec_source_drifted(
     lines = drift_warning_lines(status, agent=agent, refusing=refusing)
     if lines:
         if stream is None:
-            log = get_logger(__name__)
+            # scitex-logging DIRECTLY — no sac-side wrapper, no sac-side
+            # logger. Operator ruling 2026-08-15: 「use scitex-logging」/
+            # 「you must not re-create logger on your side」/「it is not
+            # ssot」. The import is inside the function, not at module
+            # scope, because scitex_logging configures handlers on first
+            # import and a launch must not pay that at import time.
+            import scitex_logging
+
+            log = scitex_logging.getLogger(__name__)
             if refusing:
                 emit = log.error
             elif status.state in (DriftState.NOT_A_REPO, DriftState.UNREACHABLE):
