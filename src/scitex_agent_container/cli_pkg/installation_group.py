@@ -86,7 +86,22 @@ def boot(dry_run: bool) -> None:  # noqa: C901
       4. Verify tmux is on PATH (prints instructions if missing).
       5. Create ~/.scitex/agent-container/{agents,skills,runtime/{logs,cron}}/.
       6. Copy bundled post-merge-pull.sh to the cron dir (chmod +x).
-      7. Print "boot OK" and the installed sac version.
+      7. Apply AND ARM every job this package declares (see below).
+      8. Print "boot OK" and the installed sac version.
+
+    \b
+    Step 7 is the BASE CASE of the declared-job invariant, and it is the
+    reason this command is the right place for it. A JobSpec in the repo
+    is DECLARED; the `scitex_dev.jobs` entry point makes it REGISTERED;
+    neither of those puts anything on a host. The step that does — write
+    the unit, then ENABLE it — had no caller at all until 2026-08-15, so
+    every host was armed by hand and a rebuilt one started bare. It
+    cannot be fixed by declaring a convergence timer, because nothing
+    would arm THAT timer either; the recursion needs a step that runs
+    unconditionally on a host with nothing, which is this one. The
+    periodic half that re-asserts the invariant afterwards belongs to
+    scitex-dev, so that one job converges every registered package
+    instead of each package shipping its own copy.
 
     \b
     Example:
@@ -177,7 +192,12 @@ def boot(dry_run: bool) -> None:  # noqa: C901
     _deploy_cron_script(dry_run=dry_run, tag=tag)
 
     # ------------------------------------------------------------------
-    # Step 7 — summary
+    # Step 7 — apply + ARM every job this package declares
+    # ------------------------------------------------------------------
+    _apply_declared_jobs_step(dry_run=dry_run, tag=tag)
+
+    # ------------------------------------------------------------------
+    # Step 8 — summary
     # ------------------------------------------------------------------
     if dry_run:
         console.print("[dim]dry-run complete — no changes were made.[/dim]")
@@ -192,6 +212,62 @@ def boot(dry_run: bool) -> None:  # noqa: C901
         console.print(f"[green bold]boot OK[/green bold] — {ver}")
         console.print(
             "[dim]Re-source your shell or open a new terminal to pick up the PATH change.[/dim]"
+        )
+
+
+def _apply_declared_jobs_step(dry_run: bool, tag: str) -> None:
+    """Turn this package's DECLARED jobs into APPLIED, ARMED units.
+
+    Four states, and the whole point of this step is that the last two do
+    not follow from the first two: a JobSpec in the repo is DECLARED, the
+    ``scitex_dev.jobs`` entry point makes it REGISTERED, a unit file on
+    this host makes it APPLIED, and ``systemctl enable`` makes it ARMED.
+    Only ARMED fires. Nothing in sac produced either of the last two
+    until this step existed.
+
+    Delegated wholesale to :func:`._dev_jobs_apply.apply_declared_jobs`,
+    which routes every verb through scitex-dev. Nothing here knows what a
+    unit file is.
+
+    NEVER FATAL. A failure to arm is reported loudly and does not abort
+    the bootstrap: the venv, PATH and shared dirs from steps 1-6 are what
+    every other recovery path needs, and throwing them away because a
+    timer would not enable would turn a degraded host into an unusable
+    one. The report is the deliverable — an unarmed job that is COUNTED
+    is recoverable; an unarmed job nobody counted is the defect this step
+    exists to end.
+    """
+    from ._dev_jobs_apply import apply_declared_jobs
+
+    console.print(f"{tag}Applying + arming declared jobs…")
+    try:
+        report = apply_declared_jobs(
+            yes=not dry_run,
+            dry_run=dry_run,
+            echo=lambda line: console.print(f"{tag}{line}"),
+        )
+    except Exception as exc:  # noqa: BLE001 — see NEVER FATAL above
+        console.print(
+            f"[yellow]WARNING:[/yellow] could not apply declared jobs: {exc}\n"
+            "  Steps 1-6 completed. Re-run `sac installation boot` once "
+            "scitex-dev is healthy, or apply by hand with "
+            "`sac dev timer install --yes && sac dev timer enable --yes`."
+        )
+        return
+
+    console.print(f"{tag}jobs: {report.summary()}")
+    for line in report.skipped:
+        console.print(f"[yellow]WARNING:[/yellow] skipped {line}")
+    for step in report.failed:
+        console.print(f"[red]FAILED:[/red] {step}")
+    if report.failed:
+        # Naming the remedy matters more than the failure: `install`
+        # refusing because a supervisor already exists is a SAFE outcome,
+        # while `enable` failing means the job genuinely will not fire.
+        console.print(
+            "[dim]  `install` may refuse when a supervisor already exists — "
+            "that is safe. A failed `enable` is not: the job will not "
+            "fire.[/dim]"
         )
 
 
