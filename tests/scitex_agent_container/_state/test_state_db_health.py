@@ -41,21 +41,25 @@ def other_database(tmp_path):
     """A real SQLite file that is NOT our store."""
     path = tmp_path / "someone-elses.db"
     conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE unrelated (id INTEGER)")
-    conn.commit()
-    conn.close()
-    return path
+    try:
+        conn.execute("CREATE TABLE unrelated (id INTEGER)")
+        conn.commit()
+    finally:
+        conn.close()
+    yield path
 
 
 @pytest.fixture
 def real_store(tmp_path):
     path = tmp_path / "state.db"
     conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE instances (name TEXT)")
-    conn.execute("CREATE TABLE definitions (name TEXT)")
-    conn.commit()
-    conn.close()
-    return path
+    try:
+        conn.execute("CREATE TABLE instances (name TEXT)")
+        conn.execute("CREATE TABLE definitions (name TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+    yield path
 
 
 def test_a_missing_file_is_absent_not_empty(missing):
