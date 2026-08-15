@@ -43,6 +43,7 @@ import sys
 import time
 from pathlib import Path
 
+from .._logging import get_logger
 from ._status import DriftState, DriftStatus
 
 # How long a successful ``git fetch`` for a given repo stays "fresh".
@@ -374,15 +375,19 @@ def warn_if_spec_source_drifted(
     newest one that exists, it merely has not propagated. NOT_A_REPO /
     UNREACHABLE never block either — drift is *unknown* there, not present.
 
-    ``stream`` defaults to ``None`` and is resolved to ``sys.stderr`` at
-    CALL time (not import time) so a test's ``capsys`` / a runtime
-    stderr redirect is honoured. Pass an explicit stream to override.
+    ``stream=None`` (the default) routes the report through
+    ``scitex-logging`` — level-tagged, module-stamped, mirrored to the
+    rotating file — because a bare unprefixed line in lifecycle output is
+    exactly the no-discipline print the operator called out on 2026-08-15
+    (a ``sac-drift:`` line with no level sat between properly-tagged
+    ``WARN:`` lines in ``sac-restart``'s output). scitex-logging emits to
+    stderr, so ``capsys`` still observes it. Passing an EXPLICIT stream
+    keeps the old raw-print contract — that seam is deliberate and some
+    callers own their report's destination.
 
     NEVER raises for any reason other than the deliberate strict-mode
     block: the drift computation itself is fully guarded.
     """
-    if stream is None:
-        stream = sys.stderr
     # stx-allow: fallback (reason: the drift check is a best-effort guard;
     # an unforeseen bug in it must NEVER crash a launch — degrade to a
     # silent "unknown" status and let the agent start)
@@ -396,8 +401,22 @@ def warn_if_spec_source_drifted(
             detail=f"drift check raised {type(exc).__name__}: {exc}",
         )
     refusing = bool(strict and status.is_stale)
-    for line in drift_warning_lines(status, agent=agent, refusing=refusing):
-        print(line, file=stream, flush=True)
+    lines = drift_warning_lines(status, agent=agent, refusing=refusing)
+    if lines:
+        if stream is None:
+            log = get_logger(__name__)
+            if refusing:
+                emit = log.error
+            elif status.state in (DriftState.NOT_A_REPO, DriftState.UNREACHABLE):
+                # drift UNKNOWN, launch proceeds — informational, not a warning
+                emit = log.info
+            else:
+                emit = log.warning
+            for line in lines:
+                emit(line)
+        else:
+            for line in lines:
+                print(line, file=stream, flush=True)
     if refusing:
         raise SpecSourceDriftError(status, agent=agent)
     return status
