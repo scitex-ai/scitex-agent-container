@@ -42,6 +42,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from ._sibling import warn_if_newer_sibling
 from ._status import DriftState, DriftStatus
 
 # How long a successful ``git fetch`` for a given repo stays "fresh".
@@ -432,6 +433,17 @@ def warn_if_spec_source_drifted(
         else:
             for line in lines:
                 print(line, file=stream, flush=True)
+    # Sibling-copy staleness — a DIFFERENT mechanism from git drift, and
+    # deliberately INDEPENDENT of it: it must fire even when the spec
+    # source is NOT_A_REPO (the deliberately-not-a-repo live layout is the
+    # exact incident case), and it NEVER refuses. It is advisory and
+    # degrades to silence on any internal error.
+    try:
+        warn_if_newer_sibling(spec_path, agent=agent, stream=stream)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: the sibling check is advisory and already fully guarded inside _sibling; this second guard keeps "a warning must never crash a launch" true even if that guarantee regressed)
+        pass
     if refusing:
         raise SpecSourceDriftError(status, agent=agent)
     return status
