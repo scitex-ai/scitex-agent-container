@@ -127,22 +127,19 @@ def test_tracked_repos_empty_when_no_specs(tmp_path: Path):
 # endpoints silently return nothing for it.
 
 
-def test_tracked_repos_reports_the_name_github_returns_not_the_guess():
+def test_tracked_repos_reports_the_name_github_returns_not_the_guess(
+    tmp_path: Path,
+):
     # Arrange — the constructed guess and the canonical answer differ,
     # which is exactly the transfer case that caused this.
-    from scitex_agent_container._lifecycle._ci_owner import tracked_repos as tr
-    from pathlib import Path as _P
-    import tempfile, textwrap
-
-    with tempfile.TemporaryDirectory() as td:
-        agents = _P(td) / "agents"
-        _write_spec(agents, "proj-hub", "scitex-hub")
-        # Act
-        repos = tr(
-            agents_dir=agents,
-            org="old-owner",
-            canonicalize=lambda repo: "new-org/scitex-hub",
-        )
+    agents = tmp_path / "agents"
+    _write_spec(agents, "proj-hub", "scitex-hub")
+    # Act
+    repos = tracked_repos(
+        agents_dir=agents,
+        org="old-owner",
+        canonicalize=lambda repo: "new-org/scitex-hub",
+    )
     # Assert
     assert repos == ["new-org/scitex-hub"]
 
