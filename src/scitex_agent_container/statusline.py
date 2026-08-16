@@ -53,6 +53,84 @@ def _persist(raw: bytes, agent: str) -> None:
         pass
 
 
+def _hostname() -> str:
+    """Which machine this agent is really on.
+
+    The fleet runs one agent name on several hosts over its life, and a
+    duplicate on two hosts is a real incident (measured 2026-08-17: two
+    `scitex-hub` sessions on compute-03 and compute-04 shared one bot token
+    and split the operator's messages between them). The pane is where a
+    human notices that first, so the host belongs in it.
+    """
+    # stx-allow: fallback (reason: a statusline must never raise; an
+    # unresolvable hostname degrades to empty, not to a crash)
+    try:
+        import socket
+
+        return socket.gethostname()
+    except Exception:
+        return ""
+
+
+def _workdir(data: dict) -> str:
+    """The directory this session is working in, from the payload or cwd."""
+    # stx-allow: fallback (reason: display-only; any failure degrades to empty)
+    try:
+        ws = data.get("workspace") or {}
+        cwd = ws.get("current_dir") or ws.get("cwd") or data.get("cwd")
+        if not cwd:
+            cwd = os.getcwd()
+        return Path(str(cwd)).name or str(cwd)
+    except Exception:
+        return ""
+
+
+def _active_account() -> str:
+    """Which stored account the LIVE credential is, by content match.
+
+    Deliberately local and O(number of accounts): the live
+    ``~/.claude/.credentials.json`` is compared byte-for-byte against each
+    stored snapshot. No network call — a statusline renders on every turn
+    and must not depend on an API being reachable.
+
+    NOTE this reports the account whose SNAPSHOT matches, i.e. it inherits
+    the store's directory naming. The authoritative answer to "whose token
+    is this" is ``/api/oauth/profile`` (see ``_account/account_identity``);
+    that costs a round trip and belongs in ``accounts list``, not here.
+
+    IN A CONTAINER ``$HOME`` IS ``/home/agent`` AND THE ACCOUNTS STORE IS NOT
+    BOUND THERE — only the operator's home is. Measured 2026-08-17 while adding
+    this: the first version looked solely under ``Path.home()`` and rendered
+    ``acct:?`` for every agent, i.e. it was blank in precisely the place the
+    field exists to serve. So both roots are searched, container home first.
+    """
+    # stx-allow: fallback (reason: display-only; unreadable store degrades to
+    # empty rather than breaking the pane)
+    try:
+        live = Path.home() / ".claude" / ".credentials.json"
+        if not live.is_file():
+            return ""
+        want = live.read_bytes()
+        if not want:
+            return ""
+        roots = [
+            Path.home() / ".scitex" / "agent-container" / "accounts",
+            Path("/home/ywatanabe/.scitex/agent-container/accounts"),
+        ]
+        seen: set = set()
+        for root in roots:
+            resolved = str(root)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            for cand in sorted(root.glob("*/.credentials.json")):
+                if cand.read_bytes() == want:
+                    return cand.parent.name
+        return "?"
+    except Exception:
+        return ""
+
+
 def _fallback_display(raw: bytes) -> None:
     # stx-allow: fallback (reason: statusLine display must never raise; corrupt
     # or unexpected payload shape silently outputs nothing rather than aborting)
@@ -60,14 +138,33 @@ def _fallback_display(raw: bytes) -> None:
         data = json.loads(raw)
         ctx_pct = (data.get("context_window") or {}).get("used_percentage", 0)
         model = (data.get("model") or {}).get("display_name", "")
-        parts = [f"ctx:{ctx_pct:.0f}%"]
+        parts: list[str] = []
+
+        host = _hostname()
+        agent = _agent_name()
+        if agent and agent != "unknown":
+            parts.append(f"{agent}@{host}" if host else agent)
+        elif host:
+            parts.append(host)
+
+        wd = _workdir(data)
+        if wd:
+            parts.append(wd)
+
         if model:
-            parts.insert(0, model)
+            parts.append(model)
+        parts.append(f"ctx:{ctx_pct:.0f}%")
+
         rl = data.get("rate_limits") or {}
         fh = rl.get("five_hour") or {}
         fh_pct = fh.get("used_percentage")
         if fh_pct is not None:
             parts.append(f"5h:{fh_pct:.0f}%")
+
+        acct = _active_account()
+        if acct:
+            parts.append(f"acct:{acct}")
+
         print(" | ".join(parts), flush=True)
     except Exception:
         pass
@@ -90,14 +187,32 @@ def main(stdin=None, runner=None) -> None:
     agent = _agent_name()
     _persist(raw, agent)
 
-    # Delegate display to claude-hud if available.
-    # stx-allow: fallback (reason: claude-hud is an optional user-scope plugin;
-    # FileNotFoundError means it is not installed — fall through to minimal echo)
-    try:
-        result = runner(["claude-hud"], input=raw)
-        sys.exit(result.returncode)
-    except FileNotFoundError:
-        pass
+    # sac RENDERS ITS OWN STATUS LINE. Operator ruling 2026-08-17:
+    # 「claude-hud は使わないで、scitex-agent-container 側で用意してもらえると
+    #   嬉しいです。自分たちでコントロールできるので。」
+    # (SUMMARY, translation mine: don't use claude-hud — provide it from sac,
+    # because then it is ours to control.)
+    #
+    # Previously this delegated to `claude-hud` whenever that binary happened
+    # to be on PATH, and only rendered sac's own line when it was absent. That
+    # made the pane's contents depend on what was installed rather than on what
+    # sac decided: the same agent showed different information on two hosts,
+    # and the fields sac wants to guarantee (host, workdir, account) could not
+    # be guaranteed at all. Measured the same day: claude-hud was installed on
+    # NEITHER compute-03 nor compute-04, so every agent was already rendering
+    # this function — the delegation was latent variance, not a live feature.
+    #
+    # Opt back in explicitly with SAC_STATUSLINE_DELEGATE=claude-hud if someone
+    # ever wants it; the default is ours.
+    delegate = os.environ.get("SAC_STATUSLINE_DELEGATE", "").strip()
+    if delegate:
+        # stx-allow: fallback (reason: an explicitly requested delegate that is
+        # not installed must degrade to sac's own line, never to a blank pane)
+        try:
+            result = runner([delegate], input=raw)
+            sys.exit(result.returncode)
+        except FileNotFoundError:
+            pass
 
     _fallback_display(raw)
 
