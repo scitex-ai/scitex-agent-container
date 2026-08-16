@@ -135,6 +135,14 @@ class AccountRow:
     identity_state: str = "unverified"
     verified_email: str | None = None
     duplicate_of: str | None = None
+    # WHICH MACHINE this credential lives on. Empty on the single-host path,
+    # which is why the Host column only appears once something fills it in.
+    # A credential is a per-host FILE and is not on the sync rail, so the same
+    # account is routinely VALID on one machine and EXPIRED on another —
+    # measured 2026-08-14, when a restart on one host refused with "no healthy
+    # stored account" while the identical three accounts were hours-fresh on
+    # another. Without this field the fleet table cannot say which is which.
+    host: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -225,20 +233,28 @@ def render_stored_table(
     the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
+    # The Host column appears ONLY when a row carries a host — i.e. in the
+    # fleet view. Adding it unconditionally would put a column of one repeated
+    # name in front of every single-host listing, and a column that always says
+    # the same thing teaches the eye to skip the place where the answer lives.
+    with_host = any(r.host for r in rows)
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    if with_host:
+        table.add_column("Host", style="cyan")
     table.add_column("Provider")
     table.add_column("Account", style="bold")
     table.add_column("Status")
     table.add_column("Identity")
     table.add_column("Usage as of")
     for r in rows:
-        table.add_row(
+        cells = [
             r.provider,
             r.name,
             _fmt_status(r.freshness_state, r.freshness_hours),
             _fmt_identity_cell(r),
             _fmt_last_update_cell(r.snapshot_as_of, now=now),
-        )
+        ]
+        table.add_row(*([r.host or "—", *cells] if with_host else cells))
     return table
 
 

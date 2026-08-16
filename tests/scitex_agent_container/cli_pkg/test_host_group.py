@@ -386,7 +386,23 @@ def json_run_with_library_warning(cfg_path: Path, empty_registry: Path):
         logging.getLogger("scitex_dev.hosts._retired").warning(_RETIRED_ALIAS_WARNING)
         ctx.invoke(host_list, all_interfaces=False, as_json=True)
 
-    return CliRunner().invoke(warn_then_list, [])
+    # Capture the record at the LOGGER, not at a stream. From scitex-dev
+    # 0.48 `hosts._retired` installs a StreamHandler bound to the real
+    # sys.stderr at import time and sets propagate=False, so the line never
+    # reaches CliRunner's isolated streams and `result.output` no longer
+    # carries it. A handler on the logger sees the emission either way, so
+    # the "it was actually emitted" evidence survives both generations.
+    seen: list[str] = []
+    probe = logging.Handler()
+    probe.emit = lambda record: seen.append(record.getMessage())
+    logger = logging.getLogger("scitex_dev.hosts._retired")
+    logger.addHandler(probe)
+    try:
+        result = CliRunner().invoke(warn_then_list, [])
+    finally:
+        logger.removeHandler(probe)
+    result.emitted_warnings = seen
+    return result
 
 
 def test_json_payload_parses_from_stdout_despite_a_library_warning(
@@ -419,7 +435,10 @@ def test_library_warning_reaches_the_merged_cli_runner_output(
     """
     # Arrange
     result = json_run_with_library_warning
-    # Act
-    merged = result.output
+    # Act — up to scitex-dev 0.47 the warning interleaved into click's merged
+    # stream; from 0.48 it goes to the real stderr instead (see the fixture).
+    # Either destination proves the emission, which is all this test is for:
+    # without it the sibling stdout test could pass vacuously.
+    merged = result.output + "\n" + "\n".join(result.emitted_warnings)
     # Assert
     assert _RETIRED_ALIAS_WARNING in merged

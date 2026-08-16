@@ -411,7 +411,10 @@ jobs:
               # Releasing an un-CI'd tree is worse than merging one. Do NOT proceed
               # (unlike auto-merge). Force develop's matrix so a later tick can gate
               # on real checks, then wait. (Only `tests` is the required, dispatchable
-              # gate; quality-audit/import-smoke lack workflow_dispatch.)
+              # gate; import-smoke lacks workflow_dispatch. This used to name
+              # quality-audit alongside it — that workflow was deleted for
+              # auditing nothing, and it did in fact declare workflow_dispatch,
+              # so the old parenthetical was stale twice over.)
               log "develop head has NO non-advisory checks (likely a github.token merge). Not releasing un-CI'd code."
               if acting; then
                 gh workflow run "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml" --repo "$REPO" --ref develop >/dev/null 2>&1 \

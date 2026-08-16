@@ -35,6 +35,7 @@ from typing import Callable, Iterator
 import pytest
 
 import scitex_agent_container.cli_pkg.lifecycle._restart as restart_mod
+import scitex_agent_container.cli_pkg.lifecycle._restart_local as restart_local_mod
 from scitex_agent_container._lifecycle._start_outcome import (
     KIND_ALREADY_RUNNING,
     NOOP_ALREADY_RUNNING,
@@ -56,12 +57,19 @@ def _isolate_home(tmp_path):
 
 @contextmanager
 def _swap(name: str, fn: Callable) -> Iterator[None]:
-    saved = getattr(restart_mod, name)
-    setattr(restart_mod, name, fn)
+    # The local restart leg moved into ``_restart_local`` (v4 step 5
+    # split) and reads its collaborators from ITS OWN globals; swap on
+    # whichever of the two modules carries the name (same shape as
+    # ``test__restart.py``'s harness).
+    targets = [m for m in (restart_mod, restart_local_mod) if hasattr(m, name)]
+    saved_pairs = [(m, getattr(m, name)) for m in targets]
+    for m in targets:
+        setattr(m, name, fn)
     try:
         yield
     finally:
-        setattr(restart_mod, name, saved)
+        for m, value in saved_pairs:
+            setattr(m, name, value)
 
 
 @contextmanager

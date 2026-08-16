@@ -19,7 +19,6 @@ from scitex_agent_container._lifecycle._github_ci_poll_loop import (
     github_ci_poll_loop,
 )
 
-
 @pytest.mark.asyncio
 async def test_loop_disabled_when_gh_not_ready_delivers_nothing():
     # Arrange — fail-loud preflight: gh not authenticated → loop returns.

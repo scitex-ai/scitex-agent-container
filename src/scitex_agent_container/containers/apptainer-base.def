@@ -732,6 +732,7 @@ try:
 except Exception as _exc:
     failures.append("psycopg is not importable: %r" % (_exc,))
 
+
 # The version string lies (uv's wheel cache is version-keyed and sac's
 # version does not advance per-commit). File content cannot lie — but the
 # comparison must be SET-AWARE: compare CONTENT of .py files present in

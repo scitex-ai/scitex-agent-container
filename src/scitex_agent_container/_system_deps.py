@@ -81,6 +81,16 @@ def provide() -> list[SystemDepSpec]:
             "and the fallback probe for the listen daemon's health endpoint",
             _PROVIDER,
         ),
+        SystemDepSpec(
+            "postgresql-client",
+            "the cards/fleet store IS PostgreSQL and the image already gates "
+            "its PYTHON driver (psycopg); psql is the other half — the one a "
+            "person or an agent uses to look at the store. Measured 2026-08-13: "
+            "asked how the fleet DB is organised, this container had no psql "
+            "and could only answer from general knowledge instead of from the "
+            "database in front of it",
+            _PROVIDER,
+        ),
     ]
 
 

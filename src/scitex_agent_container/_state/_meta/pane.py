@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import subprocess
 
+from ..._runners._tmux._target import exact_target
+
 _SUBAGENT_MARKER_RE = re.compile(
     r"(\d+)\s+local\s+agents?(?:\s+still)?\s+running",
     re.IGNORECASE,
@@ -45,7 +47,7 @@ def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     # correct "unknown" sentinel — never block a heartbeat on tmux error)
     try:
         pane = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p"],
+            ["tmux", "capture-pane", "-t", exact_target(session), "-p"],
             capture_output=True,
             text=True,
         ).stdout
@@ -63,7 +65,7 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10_000) -> st
     try:
         out = (
             subprocess.run(
-                ["tmux", "capture-pane", "-t", session, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", exact_target(session), "-p", "-J"],
                 capture_output=True,
                 text=True,
             ).stdout

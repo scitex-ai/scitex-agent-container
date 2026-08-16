@@ -10,7 +10,10 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │                                listen.{host,port}, a2a.port_range
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
-│   └── to_home/               ← optional: mirrored into the agent $HOME at start
+│   └── to_home/               ← optional: mirrored into the agent $HOME at start.
+│                                Any path lands at the same relative path; the
+│                                entries below are the Claude Code harness's
+│                                filenames, shown as the worked example.
 │       ├── CLAUDE.md           (→ $HOME/CLAUDE.md, marker-protected)
 │       ├── .mcp.json           (→ $HOME/.mcp.json, full overwrite)
 │       ├── .env                (→ $HOME/.env, mode 0600)

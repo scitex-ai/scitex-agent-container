@@ -30,9 +30,10 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from ._incarnation import WRITER_TURN_DRIVER
 from ._session_state import (
-    STATE_IDLE,
-    STATE_WORKING,
+    STATE_BUSY,
+    STATE_READY,
     accumulate_quota,
     append_session_message,
     read_session_id,
@@ -121,13 +122,17 @@ async def _drive_turn(
             dispatch_id=getattr(env, "dispatch_id", None),
         )
 
+    # v4 step 5 vocabulary: BUSY = a turn is in flight (was "working").
+    # ``writer`` marks this as the turn driver's own testimony so the
+    # daemon's periodic loop preserves BUSY instead of overwriting it.
     write_heartbeat(
         state_dir,
         pid=pid,
-        state=STATE_WORKING,
+        state=STATE_BUSY,
         name=name,
         host=host,
         db_writer=db_writer,
+        writer=WRITER_TURN_DRIVER,
     )
     append_session_message(state_dir, {"type": "user", "text": env.text})
     # Tag a turn_id on the envelope so the diary's four
@@ -278,13 +283,16 @@ async def _drive_turn(
 
             await emit_completion_push(turn_context, push_fn, agent_name=name)
         if not stop.is_set():
+            # Turn closed: back to READY (v4 step 5; was "idle") — the
+            # inbox consumer is alive and can take the next envelope.
             write_heartbeat(
                 state_dir,
                 pid=pid,
-                state=STATE_IDLE,
+                state=STATE_READY,
                 name=name,
                 host=host,
                 db_writer=db_writer,
+                writer=WRITER_TURN_DRIVER,
             )
 
 

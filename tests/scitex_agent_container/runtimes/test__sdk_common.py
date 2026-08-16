@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from scitex_agent_container.runtimes import _sdk_common
+from scitex_agent_container.runtimes._mcp_config_file import read_mcp_servers
 from scitex_agent_container.runtimes._sdk_common import (
     SDKCommonError,
     build_sdk_options,
@@ -608,7 +609,7 @@ class TestBuildOptions:
         # Arrange
         opts, _ = _composed_opts
         # Act
-        servers = opts.mcp_servers  # type: ignore[operator]
+        servers = read_mcp_servers(opts.mcp_servers)
         # Assert
         assert "stx" in servers
 
@@ -921,7 +922,9 @@ class TestChannelSidecar:
 
     def test_registers_sac_stdio_mcp(self, _sac_channel_opts, _fake_sac_bin):
         # Arrange
-        servers = _sac_channel_opts.mcp_servers  # type: ignore[operator]
+        # ``mcp_servers`` is a 0600 FILE PATH now — the assembled config must
+        # not ride the world-readable child argv (runtimes/_mcp_config_file).
+        servers = read_mcp_servers(_sac_channel_opts.mcp_servers)
         # Act
         sac = servers.get("sac")
         # Assert — resolver wires the SAC_BIN-overridden absolute path
@@ -929,7 +932,7 @@ class TestChannelSidecar:
 
     def test_sidecar_args_subscribe_to_named_agent_inbox(self, _sac_channel_opts):
         # Arrange
-        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        sac = read_mcp_servers(_sac_channel_opts.mcp_servers)["sac"]
         # Act
         args = sac["args"]
         # Assert
@@ -937,7 +940,7 @@ class TestChannelSidecar:
 
     def test_sidecar_args_omit_a2a_port_listen_url(self, _sac_channel_opts):
         # Arrange
-        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        sac = read_mcp_servers(_sac_channel_opts.mcp_servers)["sac"]
         args = sac["args"]
         # Act — find the --listen-url value, if any.
         if "--listen-url" in args:
@@ -955,7 +958,7 @@ class TestChannelSidecar:
         POST received bus events to the agent's own /v1/turn and WAKE an idle
         session (push ≡ Telegram)."""
         # Arrange
-        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        sac = read_mcp_servers(_sac_channel_opts.mcp_servers)["sac"]
         args = sac["args"]
         # Act
         turn_url = args[args.index("--turn-url") + 1] if "--turn-url" in args else None
@@ -964,7 +967,7 @@ class TestChannelSidecar:
 
     def test_sidecar_listen_url_when_present_is_not_a2a_port(self, _sac_channel_opts):
         # Arrange
-        sac = _sac_channel_opts.mcp_servers["sac"]  # type: ignore[index]
+        sac = read_mcp_servers(_sac_channel_opts.mcp_servers)["sac"]
         args = sac["args"]
         # Act: if a --listen-url is emitted at all, it must be the bus, never
         # the agent's own a2a sidecar port.
@@ -989,4 +992,4 @@ class TestChannelSidecar:
         # must NOT raise — the adapter resolves the bus from env at runtime.
         opts = build_sdk_options("lead", extra={"_channels": ["server:sac"]})
         # Assert
-        assert "sac" in opts.mcp_servers  # type: ignore[operator]
+        assert "sac" in read_mcp_servers(opts.mcp_servers)

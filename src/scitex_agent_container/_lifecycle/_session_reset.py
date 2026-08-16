@@ -43,22 +43,20 @@ def _clear_persisted_session_id(name: str) -> None:
     error is allowed to propagate — the operator wants to know about a
     busted runtime dir, not have it silently swallowed.
     """
-    import sys
-
+    from .._logging import get_logger
     from .._runners._session_state import clear_session_history, clear_session_id
 
+    logger = get_logger(__name__)
     state_dir = _runtime_state_dir(name)
     removed_marker = clear_session_id(state_dir)
     removed_history = clear_session_history(state_dir)
     if removed_marker:
-        print(
+        logger.warning(
             f"[force] cleared persisted session_id for {name!r} "
-            f"({state_dir / 'session_id'})",
-            file=sys.stderr,
+            f"({state_dir / 'session_id'})"
         )
     if removed_history:
-        print(
+        logger.warning(
             f"[force] cleared session_id_history for {name!r} "
-            f"(backed up to {state_dir}/session_id_history.dead-*)",
-            file=sys.stderr,
+            f"(backed up to {state_dir}/session_id_history.dead-*)"
         )

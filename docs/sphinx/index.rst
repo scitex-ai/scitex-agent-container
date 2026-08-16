@@ -4,7 +4,7 @@ scitex-agent-container — Declarative, On-Prem-First Agent Container Runtime
 ===========================================================================
 
 **scitex-agent-container** (``sac``) turns one ``spec.yaml`` into one
-long-lived, sandboxed, fleet-addressable Claude Code agent. Runs
+long-lived, sandboxed, fleet-addressable agent process. Runs
 anywhere Apptainer runs — laptop, HPC login node, on-prem cluster,
 air-gapped server. Part of `SciTeX <https://scitex.ai>`_.
 
@@ -44,7 +44,16 @@ Why sac
 - **Rootless Apptainer isolation.** Runs where Docker/cloud sandboxes
   cannot — HPC login nodes, on-prem, air-gapped. No root, no daemon,
   no Docker socket. Hardened by default via ``--containall``.
-- **LLM-agnostic / on-prem-capable.** Default: Anthropic OAuth.
+- **Two independent axes, one spec.** sac owns the agent *process*; a
+  *harness* owns only the *turn*. ``spec.harness`` picks the harness —
+  ``anthropic`` (default; ``spec.runtime`` then picks the Claude Code
+  TUI or the headless Claude Agent SDK), ``openai``, or ``codex``.
+  ``spec.claude.provider`` is the separate *inference* axis: which
+  endpoint answers the turn. **Only the ``anthropic`` harnesses can be
+  started today** — the other two validate and resolve, then the launch
+  path refuses them rather than silently running a Claude runner. See
+  :doc:`spec-reference` and :doc:`how-sac-works`.
+- **On-prem-capable inference.** Default: Anthropic OAuth.
   Alternative: any Anthropic-API-compatible backend (DeepSeek, MiMo /
   Xiaomi, a self-hosted LiteLLM / vLLM-with-Anthropic-shim gateway)
   via ``spec.claude.provider``. Data, code, and inference can stay

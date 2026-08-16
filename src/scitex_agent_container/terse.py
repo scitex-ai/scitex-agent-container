@@ -42,10 +42,6 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     # liveness
     "tmux_alive",
     "last_post_ts",
-    # context window
-    "context_management.percent",
-    "context_management.strategy",
-    "context_management.trigger_at_percent",
     # pids for kill -0 liveness
     "pids.claude_code",
     "pids.container_daemon",
@@ -59,8 +55,7 @@ TERSE_STATUS_FIELDS: tuple[str, ...] = (
     # consumers of either spelling keep working)
     "subagent_count",
     "subagents",
-    # context-window usage derived from the transcript (complements the
-    # config-side ``context_management.percent`` above)
+    # context-window usage derived from the transcript
     "context_pct",
     # Anthropic quota usage + reset timestamps
     "quota_5h_used_pct",
@@ -136,7 +131,7 @@ def project_terse(source: dict, fields: Iterable[str]) -> dict:
     """Project ``source`` onto ``fields``, emitting ``null`` for missing keys.
 
     Returns a flat dict keyed by the exact dotted field names in ``fields``.
-    Consumers can extract via ``jq -r '.["context_management.percent"]'``.
+    Consumers can extract via ``jq -r '.["pids.claude_code"]'``.
     """
     out: dict[str, Any] = {}
     for key in fields:

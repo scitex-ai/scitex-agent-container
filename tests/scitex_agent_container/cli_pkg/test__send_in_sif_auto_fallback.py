@@ -118,7 +118,7 @@ def test_in_sif_send_outcome_json_carries_ok_true(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(send, ["alice", "hi"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["ok"] is True
 
@@ -149,7 +149,7 @@ def test_in_sif_send_emits_kind_acl_deny(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(send, ["unrelated", "hi"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "acl_deny"
 

@@ -181,6 +181,90 @@ def test_an_unreachable_listen_daemon_raises_rather_than_returning(peers) -> Non
         run()
 
 
+# ---------------------------------------------------------------------------
+# "I was refused" is not "the target said no"
+#
+# The refusal that actually happens is a 403 from the LOCAL listen daemon being
+# asked to broker the ssh — measured 2026-08-11, when nine relocation probes were
+# refused that way while every target involved was healthy. Flattening it into
+# text loses the one bit that separates the two, and sends the reader to debug
+# the wrong machine.
+# ---------------------------------------------------------------------------
+
+
+class _Refused(Exception):
+    """Shaped like ``_host_exec_client.HostExecRequestError``: status + body."""
+
+    def __init__(self) -> None:
+        super().__init__("host_exec rejected: listen returned HTTP 403")
+        self.status = 403
+        self.body = {
+            "error": "ACL deny",
+            "kind": "acl_deny",
+            "reason": "caller sac-x resolves to groups [], none of which is eligible",
+        }
+
+
+def _refused_error(peers) -> ProbeTransportError:
+    try:
+        run_probe_script("hop", SCRIPT, exec_fn=_exec_raising(_Refused()), peers=peers)
+    except ProbeTransportError as exc:
+        return exc
+    raise AssertionError("a 403 must still raise")
+
+
+def test_a_brokered_403_keeps_its_http_status(peers) -> None:
+    # Arrange: a caller that cannot read the status cannot tell the two apart.
+    error = _refused_error(peers)
+    # Act
+    status = error.status
+    # Assert
+    assert status == 403
+
+
+def test_a_brokered_403_says_the_refusal_was_local(peers) -> None:
+    # Arrange: the whole point — this is about THIS container's authorization.
+    error = _refused_error(peers)
+    # Act
+    message = str(error)
+    # Assert
+    assert "LOCAL listen daemon refused" in message
+
+
+def test_a_brokered_403_denies_being_a_statement_about_the_target(peers) -> None:
+    # Arrange: the target may be perfectly healthy; nothing about it was measured.
+    error = _refused_error(peers)
+    # Act
+    message = str(error)
+    # Assert
+    assert "NOT a statement about hop" in message
+
+
+def test_a_brokered_403_carries_the_daemons_own_reason(peers) -> None:
+    # Arrange: the daemon already distinguishes "no policy row" from "resolves to
+    # an ineligible group", and that sentence must survive to the reader.
+    error = _refused_error(peers)
+    # Act
+    message = str(error)
+    # Assert
+    assert "none of which is eligible" in message
+
+
+def test_an_ordinary_transport_failure_carries_no_status(peers) -> None:
+    # Arrange: a refusal and a dead socket are different, and only one of them
+    # is about permissions.
+    try:
+        run_probe_script(
+            "hop", SCRIPT, exec_fn=_exec_raising(OSError("refused")), peers=peers
+        )
+    except ProbeTransportError as exc:
+        error = exc
+    # Act
+    status = error.status
+    # Assert
+    assert status is None
+
+
 def test_a_timed_out_exec_raises_rather_than_returning_a_blank(peers) -> None:
     # Arrange
     body = {"exit_code": 124, "stdout": "", "stderr": "", "timed_out": True}

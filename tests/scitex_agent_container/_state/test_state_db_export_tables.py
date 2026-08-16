@@ -154,7 +154,7 @@ def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "comms_nodes"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert len(payload["tables"]["comms_nodes"]) == 1
 
@@ -194,7 +194,7 @@ def test_db_export_tables_flag_csv_includes_comms_nodes(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "comms_nodes" in payload["tables"]
 
@@ -208,6 +208,6 @@ def test_db_export_tables_flag_csv_includes_instances(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "instances" in payload["tables"]

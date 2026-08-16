@@ -567,7 +567,7 @@ def test_cli_json_output_is_valid_json(tmp_path: Path, _registered):
     runner = CliRunner()
     # Act
     result = runner.invoke(prune_claude, [name, "--json"])
-    parsed = json.loads(result.output)
+    parsed = json.loads(result.stdout)
     # Assert
     assert "pending" in parsed
 

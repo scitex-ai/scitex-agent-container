@@ -108,6 +108,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
+from .._logging import get_logger
 from .._state import state_db as _state_db
 from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
 from ..config._group_resolver import groups_intersect
@@ -177,13 +178,14 @@ def _append_audit(entry: dict[str, Any]) -> None:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
     except Exception as exc:  # stx-allow: fallback (best-effort audit; must not shadow the real exec result)
-        # Log to stderr so the miss is visible in the listen journal, then
-        # continue — the exec's real result still returns to the caller.
-        import sys
-
-        print(
-            f"host_exec: audit log append failed at {path}: {exc}",
-            file=sys.stderr,
+        # Log so the miss is visible in the listen journal, then continue —
+        # the exec's real result still returns to the caller. Routed through
+        # scitex-logging rather than a raw stderr print: this is the sole
+        # account of a LOST AUDIT RECORD, so it must carry its origin and
+        # survive in the runtime log rather than only in whatever journal
+        # happened to be capturing the daemon's stderr.
+        get_logger(__name__).error(
+            f"audit log append failed at {path}: {exc}"
         )
 
 

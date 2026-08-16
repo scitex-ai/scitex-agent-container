@@ -84,6 +84,7 @@ def verdict_text(
     card_id: str,
     detail: str = "",
     unobserved: list[str] | None = None,
+    routing: str = "",
 ) -> str:
     """The message a woken human reads.
 
@@ -93,9 +94,20 @@ def verdict_text(
     reached nobody. Arriving is not the fix; arriving with the failing
     test named is.
 
-    Deliberately NO attribution. The rail reports the verdict and quotes
-    the log; it never says WHY, because it cannot know, and a rail that
-    guesses causes teaches people to distrust the ones it gets right.
+    ``routing`` says WHY THIS REACHED YOU, and is empty exactly when the
+    answer is "because you pushed". It is non-empty when the rail could
+    not identify the pusher and addressed the verdict by repo-owner
+    fallback instead -- a routing guess, not an attribution. Saying so IN
+    THE MESSAGE is the half of the fix the card cannot do: a reader is
+    told the verdict and its provenance in the same breath, rather than
+    receiving an unqualified "your CI failed" for somebody else's push.
+    Same rule as ``unobserved`` below -- state what was observed, state
+    what was not, and decline to draw the conclusion the reader wants.
+
+    Deliberately NO attribution of CAUSE. The rail reports the verdict and
+    quotes the log; it never says WHY it broke, because it cannot know,
+    and a rail that guesses causes teaches people to distrust the ones it
+    gets right.
     """
     head = f"CI {conclusion.upper()} — {_repo_basename(repo)} `{branch}` ({sha[:8]})"
     if leg:
@@ -116,6 +128,10 @@ def verdict_text(
     parts = [f"{head}.", tail]
     if detail.strip():
         parts.append(detail.strip())
+    # ABOVE the run link, not appended after it. A reader who stops at the
+    # first link must already have been told this verdict may not be theirs.
+    if routing.strip():
+        parts.append(routing.strip())
     parts.append(f"Run: {run_url}")
     parts.append(f"Card: {card_id}")
     return "\n".join(parts)

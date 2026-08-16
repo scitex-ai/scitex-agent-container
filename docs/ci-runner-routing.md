@@ -21,7 +21,7 @@ and as a pytest test against this repo.
 | Variable | Read by | Set? |
 |---|---|---|
 | `CI_RUNS_ON` | the heavy gate, the release gate, docs/quality/auto-merge — nine workflows | yes: `["self-hosted","Linux","X64","scitex-org-cpu"]` |
-| `LIGHT_RUNS_ON` | the light lane only (five jobs) | **no — deliberately unset** |
+| `LIGHT_RUNS_ON` | the light lane only (four jobs) | **no — deliberately unset** |
 
 The canonical spellings:
 
@@ -44,7 +44,7 @@ readably are both requirements; neither substitutes for the other.
 `vars.LIGHT_RUNS_ON` evaluates to the empty string when unset, so `||` falls
 through and the light lane rides `CI_RUNS_ON` — the correct default. The
 variable exists so the lane **can** be split off again the moment there is a
-pool worth splitting it onto, without touching five files.
+pool worth splitting it onto, without touching four files.
 
 Setting it is therefore an act with a cost: it becomes a second place the
 routing lives, and a stale override is exactly the failure below. Set it when
@@ -61,9 +61,18 @@ nothing but `uv` and a Python:
 |---|---|---|
 | `ruff` | `lint.yml` | 12 s |
 | `no-hosted-runners` | `no-hosted-runners-guard-on-self-hosted.yml` | 13 s |
-| `scitex-dev-quality-audit` | `quality-audit-on-ubuntu-latest.yml` | 44 s |
 | `import-smoke` | `import-smoke-on-ubuntu-py3-12.yml` | 47 s |
 | `rtd-sphinx-build` | `rtd-sphinx-build-on-ubuntu-latest.yml` | 51 s |
+
+This table had a fifth row, `scitex-dev-quality-audit` /
+`quality-audit-on-ubuntu-latest.yml` (44 s), until that workflow was deleted.
+It is named here because the incident below counts five checks and the
+arithmetic should not look wrong: the job's five audit steps invoked pre-0.11
+`scitex-dev quality audit-*` verb spellings, every one of which exits 2 on the
+installed scitex-dev, under `continue-on-error: true` — 44 s of a light-lane
+slot per push and per PR to produce a green that measured nothing. The audit
+it appeared to perform is really performed by `tests/develop/test_audit.py`
+(`scitex-dev ecosystem audit-all`) inside the `tests` matrix leg.
 
 A 12-second single-core job holding one of four 32-core machines, on a pool at
 93–94% utilisation, after queueing 289 s median (p90 902 s), is a real waste

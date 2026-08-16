@@ -21,11 +21,20 @@ _AUTO_MERGE = _WORKFLOWS / "auto-merge-to-develop.yaml"
 # fails on any drift in either direction.
 REQUIRED_GATES = (
     "pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml",
-    "quality-audit-on-ubuntu-latest.yml",
     "lint.yml",
     "import-smoke-on-ubuntu-py3-12.yml",
     "no-hosted-runners-guard-on-self-hosted.yml",
 )
+
+# `quality-audit-on-ubuntu-latest.yml` USED TO BE IN THIS LIST and was removed
+# with the workflow itself. It is named here, not silently dropped, because a
+# shrinking required-set is exactly the drift the tests below exist to catch:
+# it dispatched a job whose five audit steps all exited 2 on the installed
+# scitex-dev (pre-0.11 `quality audit-*` spellings) under
+# `continue-on-error: true`, so the gate was permanently green while auditing
+# nothing. The real audit gate is `tests/develop/test_audit.py`, which runs
+# `scitex-dev ecosystem audit-all` inside the pytest matrix leg already listed
+# above — so dispatching the deleted workflow added no coverage.
 
 
 @pytest.fixture(scope="module")
