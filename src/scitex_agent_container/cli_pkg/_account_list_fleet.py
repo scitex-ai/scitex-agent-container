@@ -90,6 +90,18 @@ def fleet_account_options(func):
         ),
     )(func)
     func = click.option(
+        "--by-host",
+        "by_host",
+        is_flag=True,
+        default=False,
+        help=(
+            "Fleet view: one row per host AND account instead of one row per "
+            "account. The collapsed default states each account once and names "
+            "any host that disagrees; use this when the per-host detail — which "
+            "machine holds which credential file — is itself the question."
+        ),
+    )(func)
+    func = click.option(
         "--host",
         "hosts",
         multiple=True,
@@ -204,6 +216,7 @@ def run_fleet_account_list(
     host_timeout: float | None = None,
     local_extras: dict | None = None,
     openai_accounts: list[dict] | None = None,
+    by_host: bool = False,
 ) -> None:
     """Collect every reachable host's accounts, print the header, then the rows.
 
@@ -281,4 +294,9 @@ def run_fleet_account_list(
                 f"fleet has none.[/yellow]"
             )
         return
-    console.print(render_stored_table(rows))
+    if by_host:
+        console.print(render_stored_table(rows))
+    else:
+        from ._account_list_collapse import render_accounts_table
+
+        console.print(render_accounts_table(rows))
