@@ -1,4 +1,4 @@
-"""Rich agent metadata collection (claude-hud-style).
+"""Rich agent metadata collection.
 
 Canonical source of truth for the metadata payload that is:
   1. Emitted by ``scitex-agent-container show-status <name> --json``.
@@ -97,7 +97,7 @@ def collect_rich(
     workdir: str,
     session: str,
 ) -> dict[str, Any]:
-    """Collect claude-hud-style metadata for one agent.
+    """Collect the rich metadata payload for one agent.
 
     Parameters
     ----------
