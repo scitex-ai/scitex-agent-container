@@ -237,9 +237,54 @@ def _run_main_capturing_systemexit(stdin_bytes, runner_fn):
         return exc
 
 
+class _Exit7:
+    returncode = 7
+
+
+def _record_calls(sink: list):
+    """A runner that logs every invocation and would exit 7 if used."""
+
+    def _runner(argv, input=None):
+        sink.append(argv)
+        return _Exit7()
+
+    return _runner
+
+
+def test_main_invokes_no_delegate_when_none_is_named(state_dir, env_save_restore):
+    """Operator ruling 2026-08-17: the pane is sac's to control.
+
+    Delegation used to fire whenever ``claude-hud`` happened to be on PATH, so
+    the same agent rendered different information on two hosts depending on
+    what was installed. Now it fires only when explicitly asked.
+    """
+    # Arrange — no SAC_STATUSLINE_DELEGATE set.
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-no-delegate")
+    env_save_restore.set("SAC_STATUSLINE_DELEGATE", "")
+    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
+    called: list = []
+    # Act
+    _run_main_capturing_systemexit(payload, _record_calls(called))
+    # Assert
+    assert called == []
+
+
+def test_main_renders_locally_when_no_delegate_is_named(state_dir, env_save_restore):
+    """No delegate means fall through to sac's renderer, not exit with its code."""
+    # Arrange
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-no-delegate-2")
+    env_save_restore.set("SAC_STATUSLINE_DELEGATE", "")
+    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
+    # Act
+    exc = _run_main_capturing_systemexit(payload, _record_calls([]))
+    # Assert
+    assert exc is None
+
+
 def test_main_propagates_claude_hud_exit_code(state_dir, env_save_restore):
     # Arrange
     env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud")
+    env_save_restore.set("SAC_STATUSLINE_DELEGATE", "claude-hud")
     payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
 
     class _Result:
@@ -254,6 +299,7 @@ def test_main_propagates_claude_hud_exit_code(state_dir, env_save_restore):
 def test_main_forwards_payload_to_claude_hud_stdin(state_dir, env_save_restore):
     # Arrange
     env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud2")
+    env_save_restore.set("SAC_STATUSLINE_DELEGATE", "claude-hud")
     payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
     captured: dict = {}
 
@@ -360,6 +406,7 @@ def test_main_default_runner_uses_subprocess_run(
 ):
     # Arrange real claude-hud shim on PATH so default runner finds it.
     env_save_restore.set("CLAUDE_AGENT_ID", "agent-default-runner")
+    env_save_restore.set("SAC_STATUSLINE_DELEGATE", "claude-hud")
     subprocess_shim.install("claude-hud", exit=0)
     payload = json.dumps({"context_window": {"used_percentage": 12}}).encode()
     # Act invoke without runner so subprocess.run default fires.
