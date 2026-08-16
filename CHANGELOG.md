@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-16
+
 ### Fixed
 
 - **Nothing ever applied the declared JobSpecs to a host; provisioning now
