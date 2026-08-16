@@ -292,7 +292,6 @@ cat > "$PROBE" <<'PYEOF'
 
 import sys
 
-import scitex_cards  # was scitex_todo until 2026-08-16; that shim is now DELETED
 from scitex_cards._throughput import WIP_STATUSES
 
 if "in_progress" not in WIP_STATUSES:

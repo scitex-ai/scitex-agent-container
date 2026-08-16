@@ -79,7 +79,9 @@ def _module_level_bound_names(tree: ast.Module) -> set[str]:
 
 def _loaded_names(tree: ast.Module) -> set[str]:
     return {
-        n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        n.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
     }
 
 
@@ -90,7 +92,9 @@ def test_probe_loads_no_name_it_never_binds():
 
     # Act: bind-vs-load analysis, which needs no package installed
     tree = ast.parse(source, filename=str(PROBE))
-    undefined = _loaded_names(tree) - _module_level_bound_names(tree) - set(dir(builtins))
+    undefined = (
+        _loaded_names(tree) - _module_level_bound_names(tree) - set(dir(builtins))
+    )
 
     # Assert
     assert not undefined, (
@@ -117,7 +121,9 @@ def test_the_detector_itself_catches_the_1072_shape():
 
     # Act
     tree = ast.parse(broken)
-    undefined = _loaded_names(tree) - _module_level_bound_names(tree) - set(dir(builtins))
+    undefined = (
+        _loaded_names(tree) - _module_level_bound_names(tree) - set(dir(builtins))
+    )
 
     # Assert
     assert undefined == {"scitex_todo"}, (
@@ -145,6 +151,6 @@ def test_bake_recipes_do_not_use_the_deleted_name(path: pathlib.Path):
             offenders.append(f"{path.name}:{lineno}: {line.strip()}")
 
     # Assert
-    assert not offenders, "deleted module referenced in executable position:\n" + "\n".join(
-        offenders
+    assert not offenders, (
+        "deleted module referenced in executable position:\n" + "\n".join(offenders)
     )

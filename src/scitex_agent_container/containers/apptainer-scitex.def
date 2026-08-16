@@ -445,7 +445,6 @@ import sys
 # whole check.
 from scitex_cards._throughput import WIP_STATUSES
 
-import scitex_cards  # was scitex_todo until 2026-08-16; that shim is now DELETED
 
 
 # sac #633: auto-provisions a new agent's container overlay root; without
