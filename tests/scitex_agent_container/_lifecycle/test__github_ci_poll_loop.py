@@ -133,3 +133,41 @@ async def test_loop_honours_cancellation_cleanly():
     # Assert — the finally must re-raise CancelledError, not swallow it.
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# --- the post budget must fit inside the tick that starts it -----------
+# post_turn defaults to timeout_s=600.0 while the tick is bounded at
+# max(poll_interval_s, 30.0) = 300s, and run_blocking_or ABANDONS rather
+# than cancels — so one unresponsive peer could leave two ticks alive at
+# once. The dedup key hides the duplicate, so this cannot be caught by
+# looking for symptoms; it has to be pinned as an invariant.
+
+
+def test_verdict_post_budget_fits_inside_the_default_tick_bound():
+    # Arrange
+    from scitex_agent_container._lifecycle._github_ci_poll_loop import (
+        DEFAULT_CI_POLL_INTERVAL_S,
+        VERDICT_POST_TIMEOUT_S,
+    )
+
+    # Act
+    tick_bound = max(DEFAULT_CI_POLL_INTERVAL_S, 30.0)
+    # Assert
+    assert VERDICT_POST_TIMEOUT_S < tick_bound
+
+
+def test_verdict_post_budget_is_shorter_than_the_transport_default():
+    # Arrange — the whole defect is that the transport's own default
+    # (600s) is longer than the tick that wraps it.
+    import inspect
+
+    from scitex_agent_container._lifecycle._github_ci_poll_loop import (
+        VERDICT_POST_TIMEOUT_S,
+    )
+    from scitex_agent_container._network.peer import post_turn
+
+    transport_default = inspect.signature(post_turn).parameters["timeout_s"].default
+    # Act
+    bounded = VERDICT_POST_TIMEOUT_S
+    # Assert
+    assert bounded < transport_default
