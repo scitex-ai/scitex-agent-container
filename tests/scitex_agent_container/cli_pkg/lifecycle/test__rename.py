@@ -305,8 +305,15 @@ def test_rename_migrates_every_card(fleet: Layout, board: Path):
 
 
 def _seed(board: Path, count: int) -> list[str]:
-    """Seed real cards, skipping the test when the optional peer is absent."""
-    pytest.importorskip("scitex_todo")
+    """Seed real cards, skipping the test when the optional peer is absent.
+
+    Names scitex_cards, NOT scitex_todo. scitex-cards v0.41.0 DELETED the
+    scitex_todo module outright, and `importorskip` skips on
+    ModuleNotFoundError — an ImportError subclass — so guarding on a deleted
+    name turns this test into a permanent, silent SKIP. It would never fail
+    and never run: green by absence.
+    """
+    pytest.importorskip("scitex_cards")
     from ..._helpers.fleet_root import seed_cards
 
     return seed_cards(board, OLD, count)
