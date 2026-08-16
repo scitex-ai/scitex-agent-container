@@ -115,7 +115,46 @@ def record_verdict_delivered(
         )
 
 
+def failures_since_last_success(
+    *,
+    repo: str,
+    pr: int,
+    db_path: Path | None = None,
+) -> int:
+    """Count failure verdicts delivered for this PR since its last green.
+
+    The dedup key includes ``head_sha``, so a PR whose head keeps moving
+    re-fires forever — every push is a fresh key. That is correct for a
+    branch someone is pushing fixes to, and wrong for a standing sync PR
+    whose head tracks its source branch: there, each unrelated merge
+    moves the head and earns another "fix-and-push" the recipient cannot
+    act on. This count is the streak the caller caps on.
+
+    Counts only rows *newer* than the most recent ``success`` for the
+    same ``(repo, pr)``, so a red→green→red sequence starts over rather
+    than staying capped forever. With no success on record the floor is
+    ``0.0``, which every real ``delivered_at`` exceeds.
+
+    Returns 0 on a fresh db (the table is ensured first).
+    """
+    from .state_db import open_db
+
+    with open_db(db_path) as conn:
+        _ensure_table(conn)
+        row = conn.execute(
+            "SELECT count(*) FROM verdict_delivered "
+            "WHERE repo=? AND pr=? AND conclusion='failure' "
+            "  AND delivered_at > COALESCE(("
+            "        SELECT max(delivered_at) FROM verdict_delivered "
+            "        WHERE repo=? AND pr=? AND conclusion='success'"
+            "      ), 0.0)",
+            (repo, int(pr), repo, int(pr)),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 __all__ = [
+    "failures_since_last_success",
     "init_verdict_dedup_schema",
     "record_verdict_delivered",
     "verdict_already_delivered",

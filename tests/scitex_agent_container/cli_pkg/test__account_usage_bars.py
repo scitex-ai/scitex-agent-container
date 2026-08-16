@@ -154,13 +154,15 @@ def test_render_window_line_omits_hint_column_when_block_hintless():
     assert line.startswith("  5h [")
 
 
-def test_render_window_line_unknown_pct_renders_question_mark():
-    # Arrange
+def test_render_window_line_unknown_pct_renders_unknown_label():
+    # Arrange — the label was `(?)`, which reads as a typo or a rounding
+    # artefact rather than as a statement. INCIDENT 2026-08-12: the operator
+    # needs an absent measurement to announce itself in words.
     pct = None
     # Act
     line = render_window_line("7d", pct, hint="", hint_width=0, width=20)
     # Assert
-    assert line.endswith("] (?)")
+    assert line.endswith("] (unknown)")
 
 
 def test_render_account_block_first_line_is_dashed_name():
@@ -205,7 +207,14 @@ def test_render_usage_bars_block_empty_rows_is_empty_string():
 
 
 def _two_bar_rows() -> list[AccountRow]:
-    """Two accounts with different-length names for alignment tests."""
+    """Two accounts with different-length names for alignment tests.
+
+    ``usage_state="known"`` is explicit because ``AccountRow`` defaults it to
+    ``"unknown"`` — unknown-until-proven, so a row that never says it was
+    measured does not get drawn as if it had been (INCIDENT 2026-08-12).
+    These fixtures are asserting how a MEASURED reading renders, so they must
+    declare that they are one.
+    """
     return [
         AccountRow(
             name="alpha-example-com",
@@ -214,6 +223,7 @@ def _two_bar_rows() -> list[AccountRow]:
             used_pct_5h=0.0,
             used_pct_7d=99.0,
             snapshot_as_of=None,
+            usage_state="known",
         ),
         AccountRow(
             name="beta-example-com",
@@ -222,6 +232,7 @@ def _two_bar_rows() -> list[AccountRow]:
             used_pct_5h=14.0,
             used_pct_7d=15.0,
             snapshot_as_of=None,
+            usage_state="known",
         ),
     ]
 
@@ -263,7 +274,10 @@ def test_render_usage_bars_block_hintless_rows_share_bar_column():
 
 
 def test_render_usage_bars_block_no_data_row_renders_placeholder():
-    # Arrange — an account with no cached usage must not crash the block.
+    # Arrange — an account with no cached usage must not crash the block. It
+    # now reads `unknown` rather than `no data`: an absent measurement and a
+    # measurement sac cannot vouch for are the same thing to a reader
+    # deciding whether to trust the row, and one word for it is enough.
     rows = [
         AccountRow(
             name="cold",
@@ -277,7 +291,7 @@ def test_render_usage_bars_block_no_data_row_renders_placeholder():
     # Act
     block = render_usage_bars_block(rows)
     # Assert
-    assert "no data" in block
+    assert "unknown" in block
 
 
 # Fixed clock so the relative reset hints are deterministic (operator
@@ -298,6 +312,7 @@ def _hinted_bar_rows() -> list[AccountRow]:
             # From _HINT_NOW: +4h05m → "in 4h05m"; +2d3h → "in 2d03h".
             reset_at_5h="2026-07-12T04:05:00+00:00",
             reset_at_7d="2026-07-14T03:00:00+00:00",
+            usage_state="known",
         ),
         AccountRow(
             name="beta-example-com",
@@ -306,6 +321,7 @@ def _hinted_bar_rows() -> list[AccountRow]:
             used_pct_5h=14.0,
             used_pct_7d=15.0,
             snapshot_as_of=None,
+            usage_state="known",
         ),
     ]
 

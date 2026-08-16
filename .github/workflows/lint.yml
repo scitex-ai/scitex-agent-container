@@ -58,7 +58,30 @@ jobs:
     # stops reporting has already held a release hostage once. Correcting the
     # "on-ubuntu" names repo-wide is a separate, coordinated change.
     name: ruff-on-ubuntu-latest
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
+    #
+    # This repo's CI is bimodal. Over 276 self-hosted jobs (2.1 h): `tests` is
+    # 31% of jobs at 368s and uses all 32 cores (xdist runs -n $(nproc)); the
+    # other 69% — this job included — run 12-51s on about ONE core. `ruff` is
+    # the smallest of them at 12s median, and it never enters the CI SIF: no
+    # exec-in-sif.sh, no /data/gpfs bind, just checkout + uv + ruff.
+    #
+    # So a 12-second single-core job was taking one of four 32-core machines
+    # for its turn, on a pool measured at 93-94% utilisation — and then waiting
+    # 289s median (p90 902s) for the privilege. #1006 routed it away from the
+    # heavy pool for that reason, and that intent is UNCHANGED.
+    #
+    # What changed is the SEAM, not the intent. #1006 wrote the destination as
+    # a LITERAL label list, which made a dead pool a code change: when the
+    # spartan-cpu runners went offline this job queued forever with four idle
+    # machines in sight. `LIGHT_RUNS_ON` is the same routing decision expressed
+    # as DATA — set the repo variable to re-point the whole light lane in one
+    # place, unset it and the lane rides the main pool. It still cannot reach
+    # `tests` or pypi-publish-and-github-release-on-tag.yml, which read
+    # CI_RUNS_ON and never LIGHT_RUNS_ON: both DO enter the SIF, and `main`'s
+    # exec-in-sif.sh still binds /data/gpfs/projects/punim0264 unconditionally
+    # (#992 is the fix).
+    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -79,3 +102,37 @@ jobs:
             --select F401,F811 \
             --extend-per-file-ignores '**/__init__.py:F401' \
             src/ tests/
+
+      # No raw print() in src/ — sac's diagnostics belong to scitex-logging,
+      # which stamps the EMITTING MODULE on every record and fans out to the
+      # rotating runtime log as well as stderr. A raw print carries no origin
+      # and dies with whatever stream happened to be attached, which is how an
+      # error gets swallowed in practice even when someone "printed it".
+      #
+      # WHY T201 IS THE RIGHT MATCHER, not a home-grown one: ruff's
+      # flake8-print does NOT flag `print(..., file=<some object>)` when the
+      # target is anything other than sys.stdout / sys.stderr. That is exactly
+      # the line this repo already draws by hand — a print to a CALLER-INJECTED
+      # `stream=` / `err_stream=` / `log_stream=` is part of that function's
+      # reporting contract (the caller chose the destination; tests capture it
+      # with a StringIO), whereas a print to a HARDCODED stdout/stderr has no
+      # contract to honour and is simply an unrouted diagnostic. So the rule
+      # enforces the classification instead of approximating it, and needs no
+      # bespoke AST checker to do it. (Contrast scripts/check_stx_allow.py,
+      # whose docstring records what a hand-rolled matcher cost: 34% false
+      # positives AND 619 invisible cases, simultaneously.)
+      #
+      # tests/ is deliberately OUT of scope — a print in a test is debugging
+      # scaffolding, not a shipped diagnostic.
+      #
+      # EXEMPTIONS live in pyproject.toml under
+      # [tool.ruff.lint.per-file-ignores], one file at a time, each with a
+      # written reason. Do NOT add a blanket ignore or widen this select: a
+      # gate that cannot fail is worse than no gate. If a new file legitimately
+      # needs stdout (a protocol frame, a hook's return value), add it there
+      # with the reason spelled out, and keep the diagnostics in it on the
+      # logger.
+      - name: No raw print() in src/ (T201)
+        run: |
+          set -euo pipefail
+          .venv/bin/ruff check --select T201,T203 src/

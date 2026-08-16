@@ -21,7 +21,6 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 # Re-exported from _start_failure_diag for back-compat: this helper lived here
 # before the 512-line-cap split.
 from ._identity_drift import check_board_identity_at_launch
-from ._instances import make_restart_callback as _make_restart_callback
 from ._instances import record_local_instance as _record_local_instance
 from ._layers_preflight import check_to_home_layers_at_launch
 from ._runtime_select import _get_runtime
@@ -45,7 +44,7 @@ from ._start_preflight import (  # noqa: F401
     _rotate_to_healthy_account,
     _verify_real_liveness,
 )
-from .health import health_monitor
+from ._start_supervision import start_background_supervision
 
 
 def agent_start(
@@ -317,14 +316,17 @@ def agent_start(
         else:
             # INFO, not SUCC: the requested end state holds, but nothing was
             # launched — so the line must not read as an accomplishment.
-            # The verdict evidence stays: a no-op that says only "already
+            # The verdict evidence stays, and the notice NAMES the session
+            # (+ pane pid) it believed in: a no-op that says only "already
             # running" is unfalsifiable from the outside, and the operator
-            # could not tell an OBSERVED agent from a process-shaped shadow.
+            # could not tell an OBSERVED agent from a process-shaped shadow
+            # (incident 2026-08-14: a prefix-matched SIBLING session pinned
+            # this branch — see _start_noop_notice).
             from ..cli_pkg._helpers._console import system_msg
-            from ._start_noop_notice import render_already_running
+            from ._start_noop_notice import render_start_noop_notice
 
             system_msg(
-                render_already_running(config.name, verdict.render()),
+                render_start_noop_notice(config, verdict),
                 style="info",
             )
             from ._startup_failed import retract_marker_for
@@ -481,28 +483,28 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Restart callback re-records the row (a restart = a NEW pid) AND pins
-    # the state.db it writes to -- see ``_instances.make_restart_callback``.
-    if config.health.enabled:
-        thread = thread_factory(
-            target=health_monitor,
-            args=(
-                config.name,
-                config,
-                registry,
-                _make_restart_callback(runtime_factory),
-            ),
-            daemon=True,
-        )
-        thread.start()
+    # TELEGRAM-RAIL VERDICT (card sac-cct-rail-loud-when-no-slot-resolves-
+    # 20260812). Runs HERE, after ``runtime.start`` materialised the agent's
+    # ``$HOME/.env`` — that file is precedence #1 of the token resolution, so
+    # reading it earlier would report an agent as token-less that in fact has
+    # one. A spec that declares the telegrammer MCP but resolves NO slot has
+    # its MCP server removed (correctly, by operator ruling) and the agent
+    # then starts perfectly, reports healthy, and is MUTE and DEAF on Telegram
+    # with no signal anywhere. It does NOT gate the start; the alarm is
+    # three-valued and rides the LEAD's rail, not the broken one. Full
+    # argument in :mod:`..runtimes._cct_rail_alarm`.
+    from ..runtimes._cct_rail_alarm import check_cct_rail_at_start
 
-    # ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks
-    # a ``priority_list``; otherwise polls the hub every 60 s and steps
-    # aside (snapshot push + SIGTERM) when a higher-priority host is
-    # healthy. Daemon thread, dies with the process.
-    try:
-        _h.start_failback_poller(config)
-    except Exception:
-        traceback.print_exc()
+    check_cct_rail_at_start(config)
+
+    # Daemon supervisors for an agent that is now up — health monitor +
+    # priority-failback poller. See :mod:`._start_supervision`.
+    start_background_supervision(
+        config,
+        registry=registry,
+        runtime_factory=runtime_factory,
+        handover=_h,
+        thread_factory=thread_factory,
+    )
 
     return True

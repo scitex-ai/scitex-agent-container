@@ -58,9 +58,23 @@ MANAGED_POLICIES = ("always", "on-failure")
 #: operator's intent — never second-guess it, never "helpfully" undo it.
 DELIBERATE_EXIT_REASONS = ("stopped", "deleted")
 
-#: ``exit_reason`` values that mean it DIED without being asked to: the
-#: reaper writes ``crashed``, the host-reboot sweep writes ``reboot-swept``.
-UNEXPECTED_EXIT_REASONS = ("crashed", "reboot-swept")
+#: ``exit_reason`` values that mean it ENDED without being asked to: the
+#: reaper writes ``pid_absent_at_sweep``, the host-reboot sweep writes
+#: ``reboot-swept``.
+#:
+#: ``crashed`` is the reaper's PRE-2026-08-12 spelling and is listed because
+#: databases still hold those rows — dropping it would silently reclassify
+#: every existing corpse as "an exit_reason this rule does not know" and
+#: strand it. Both spellings are the same observation.
+#:
+#: Note what this category actually licenses. ``pid_absent_at_sweep`` says
+#: only that a pid was gone when a sweep looked; it does NOT establish a
+#: crash, and the row's ``ended_at`` is the sweep's clock rather than a time
+#: of death. That is sufficient here — this rule additionally requires no live
+#: tmux session before it acts, so the exit_reason is a corroborating signal
+#: and never the sole one — but it is not sufficient to tell anyone WHY an
+#: agent ended, and nothing downstream should read it that way.
+UNEXPECTED_EXIT_REASONS = ("pid_absent_at_sweep", "crashed", "reboot-swept")
 
 #: ``exit_reason`` values that are sac's own internal bookkeeping rather
 #: than a statement about the agent's fate. Not a corpse to resurrect: a
@@ -93,6 +107,10 @@ class Verdict(str, Enum):
     COOLING_DOWN = "COOLING-DOWN"  # inside the debounce → wait, do not card
     CAPPED = "CAPPED"  # this pass's global cap spent; next pass retries
     BUDGET_UNKNOWN = "BUDGET-UNKNOWN"  # we cannot read our OWN memory → refuse
+    # A corpse we refuse to touch because it is not ALONE: this pass saw
+    # multiple corpses and not one live session anywhere, which is the host's
+    # tmux server dying rather than N agents dying. See :mod:`._blackout`.
+    FLEET_BLACKOUT = "FLEET-BLACKOUT"
 
     # Not a thing a pass DID — a thing it could not do. An agent whose pane
     # would not capture, or that is registered with no live session at all,
@@ -129,6 +147,7 @@ def decide(
     session_present: bool | None,
     row: Mapping[str, Any] | None,
     local_host: str | None = None,
+    declared_host_is_local: bool | None = None,
 ) -> Decision:
     """Decide ONE agent's fate from facts alone. Pure — no IO, no clock.
 
@@ -148,6 +167,17 @@ def decide(
     local_host
         This machine's name as ``instances.host`` records it. When given, a
         row belonging to ANOTHER host is skipped — see the remote guard.
+    declared_host_is_local
+        Whether ``spec.host`` — the host the operator PINNED the agent to —
+        resolves to this machine. Three-valued on purpose:
+
+        ``True``   the pin names us; proceed.
+        ``False``  the pin names somewhere else; this pass must not restart it.
+        ``None``   no pin, or it could not be resolved; behave as before.
+
+        This is the DECLARED host, and it is a different question from
+        ``local_host``, which is where the agent was last OBSERVED. Passing
+        only the observed one is the defect this parameter exists to fix.
     """
     if policy not in MANAGED_POLICIES:
         return Decision(
@@ -155,6 +185,33 @@ def decide(
             "policy-never",
             f"restart.policy={policy!r} — sac never promised to keep {name} "
             f"running, so nothing to enforce",
+        )
+
+    # --- THE PIN IS OWNERSHIP, and it is asked BEFORE any liveness question -
+    # An agent pinned to another host is not ours to restart, however dead it
+    # looks from here. This is checked before tmux because "is it mine?"
+    # precedes "is it alive?" — reading the local tmux for an agent that
+    # belongs elsewhere can only produce misleading evidence.
+    #
+    # WHY THIS EXISTS (measured 2026-08-15). The guard below keys off
+    # ``local_host``, which is where the agent was last OBSERVED. scitex-hub
+    # is pinned to scitex-nas-03 but has never managed to RUN there, so its
+    # instances row said compute-04 — the observed host MATCHED, the guard
+    # said "mine", and every pass restarted it on the wrong machine. Each
+    # restart rewrote the row with compute-04 and made the next pass more
+    # confident. A pin that has never been satisfied could never become
+    # satisfiable through this path.
+    #
+    # The operator's ruling on seeing it: 「NASで起動しているのに、フォール
+    # バックはないでしょう、あり得ないです」 — an agent running in the wrong
+    # place reads as healthy, which is worse than one plainly down.
+    if declared_host_is_local is False:
+        return Decision(
+            Verdict.SKIPPED,
+            "pinned-elsewhere",
+            f"{name}'s spec pins it to another host — this pass will NOT start "
+            f"it here. Its absence from our tmux is expected, not evidence of "
+            f"death, and starting it locally would silently defeat the pin",
         )
 
     # --- 2. TMUX IS THE FACT, and a non-observation is not a fact ---------

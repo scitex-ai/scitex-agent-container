@@ -117,3 +117,63 @@ def test_gh_ready_false_when_probe_reports_unauthenticated():
     ready = gh_ready(probe=probe)
     # Assert
     assert ready is False
+
+
+# --- failing_check_names (names the stuck check for the escalation) -----
+
+
+def test_failing_check_names_returns_only_failing_buckets():
+    # Arrange
+    from scitex_agent_container._lifecycle._github_ci import failing_check_names
+
+    payload = (
+        '[{"name":"CodeQL","bucket":"fail"},'
+        ' {"name":"pytest","bucket":"pass"},'
+        ' {"name":"lint","bucket":"cancel"}]'
+    )
+    # Act
+    names = failing_check_names("o/r", 1, run=lambda args: payload)
+    # Assert
+    assert names == ["CodeQL", "lint"]
+
+
+def test_failing_check_names_requests_the_name_field():
+    # Arrange — `--json bucket` alone discards the name, so the ring cannot
+    # tell "same check every time" from "a new one".
+    from scitex_agent_container._lifecycle._github_ci import failing_check_names
+
+    seen: list[list] = []
+
+    def spy(args):
+        seen.append(args)
+        return "[]"
+
+    # Act
+    failing_check_names("o/r", 1, run=spy)
+    # Assert
+    assert "name,bucket" in seen[0]
+
+
+def test_failing_check_names_is_empty_on_unparseable_output():
+    # Arrange — a caller must always be able to render the escalation.
+    from scitex_agent_container._lifecycle._github_ci import failing_check_names
+
+    # Act
+    names = failing_check_names("o/r", 1, run=lambda args: "not json")
+    # Assert
+    assert names == []
+
+
+def test_failing_check_names_dedupes_and_sorts():
+    # Arrange — a matrix leg can appear more than once.
+    from scitex_agent_container._lifecycle._github_ci import failing_check_names
+
+    payload = (
+        '[{"name":"zeta","bucket":"fail"},'
+        ' {"name":"alpha","bucket":"fail"},'
+        ' {"name":"alpha","bucket":"fail"}]'
+    )
+    # Act
+    names = failing_check_names("o/r", 1, run=lambda args: payload)
+    # Assert
+    assert names == ["alpha", "zeta"]

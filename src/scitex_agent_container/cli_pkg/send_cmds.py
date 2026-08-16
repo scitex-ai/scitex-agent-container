@@ -1,14 +1,18 @@
-"""``sac agent send`` — resume an agent's session for one more turn.
+"""``sac agent send`` — deliver one more turn to an agent's live session.
 
-Wraps ``claude --resume <session-id> -p "<prompt>"`` so the caller
-doesn't need to know the session id or the workdir. Reads the
-session id from ``~/.scitex/agent-container/runtime/<name>/session_id``
-(persisted by the SDK runner) and ``cd``s into the agent's workdir
-before shelling out so claude's per-project session lookup resolves.
+Delivery is ALWAYS over HTTP to the running agent: the host listen proxy
+when this CLI is itself inside a SIF, the peer's ``/v1/turn`` when the
+agent's active row lives on another host, else the agent's loopback
+``/v1/turn``. There is no fourth path.
 
-v1 scope: bare-CLI passthrough. The follow-up implementation order
-then exposes this through
-``sac listen`` + ``POST /agents/<name>/send``.
+In particular there is no host-side ``claude --resume`` shellout. That
+fallback existed for a "non-A2A, host-side runtime" which no longer
+exists — apptainer is the only container engine
+(:mod:`config._container_engine`) — and it was doubly wrong: it ran a
+full Claude agent turn OUTSIDE the container holding the host's own
+credentials, against a session that lives inside the container's
+``~/.claude/projects/`` store and is therefore invisible to it. When no
+A2A port is recorded the command now refuses and says so.
 
 For programmatic callers that need a structured ``{status,
 response_text, response_metadata}`` payload (e.g. the MCP
@@ -21,15 +25,12 @@ to stdout.
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
-import sys
+from typing import NoReturn
 
 import click
 
-from .._runners._session_state import read_session_id, state_dir_for
-from ..config import load_config
-from ..config._resolve import resolve_config
+from .._runners._session_state import state_dir_for
+from ..config._container_engine import CONTAINER_ENGINE
 from ._helpers import agent_name_complete
 
 
@@ -195,21 +196,34 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
     return True
 
 
-def _find_claude_binary() -> str:
-    """Locate the ``claude`` CLI binary, preferring the SDK's bundled
-    copy under ``/opt/venv-sac/...`` (when running inside the sac
-    apptainer image) and falling back to ``$PATH``."""
-    bundled = (
-        "/opt/venv-sac/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude"
-    )
-    if os.path.isfile(bundled) and os.access(bundled, os.X_OK):
-        return bundled
-    found = shutil.which("claude")
-    if found:
-        return found
+def _refuse_uncontained_send(name: str) -> NoReturn:
+    """Refuse the turn rather than run it outside the container.
+
+    Reached when every HTTP delivery path declined, which means no A2A
+    port is recorded for ``name``. The code this replaces reacted to
+    that by shelling out to ``claude --resume <sid> -p <prompt>`` in the
+    agent's workdir — an entire Claude agent TURN on the bare host, with
+    the host operator's ``~/.claude`` credentials, for an agent whose
+    whole point is that it is contained.
+
+    It could not have worked even setting containment aside: an
+    apptainer agent's session lives in the CONTAINER's
+    ``~/.claude/projects/`` store, so a host-side resume either finds
+    nothing or resumes some unrelated host session — which is worse than
+    an error, because it looks like it worked.
+    """
     raise click.ClickException(
-        "claude binary not found on PATH and no bundled SDK copy at "
-        f"{bundled}. Install claude-agent-sdk or put claude on PATH."
+        f"agent {name!r}: no A2A port is recorded, so this turn has no "
+        f"way to reach the agent's live session.\n"
+        f"  There is deliberately NO host-side fallback: every sac agent "
+        f"runs inside {CONTAINER_ENGINE}, and its Claude session lives in "
+        f"the container's ~/.claude/projects/ store. A host-side "
+        f"`claude --resume` would run OUTSIDE the container against a "
+        f"session it cannot see.\n"
+        f"  Fix: (re)start the agent so its A2A sidecar binds a port — "
+        f"`sac agents start {name} -y` — then re-send. Verify with "
+        f"`sac agents list {name} --json`: a2a_port must be non-null.\n"
+        f"  State dir: {state_dir_for(name)}"
     )
 
 
@@ -235,33 +249,29 @@ def _find_claude_binary() -> str:
         "``C-c``). Mutually exclusive with PROMPT."
     ),
 )
-@click.option(
-    "--no-stream",
-    is_flag=True,
-    default=False,
-    help="Buffer the response and print at the end instead of streaming.",
-)
-@click.argument("forward", nargs=-1, type=click.UNPROCESSED)
+# ``--no-stream`` and the trailing ``-- <forward>`` escape hatch were
+# REMOVED with the host-side shellout: both existed only to shape a
+# ``claude`` argv this command no longer builds. Keeping flags that
+# reach nothing is the same doubt the container-engine choice was
+# abolished for — an option a reader cannot tell does anything.
 def send(
     name: str,
     prompt: str | None,
     model: str | None,
     max_turns: int | None,
     key: str | None,
-    no_stream: bool,
-    forward: tuple[str, ...],
 ) -> None:
-    """Send a follow-up PROMPT (or control key) to an agent's existing
-    Claude session.
+    """Send a follow-up PROMPT (or control key) to an agent's live session.
 
     \b
     Examples:
       sac agent send coverage-runner "now bump the threshold to 95%"
       sac agent send coverage-runner --key ESC
-      sac agent send coverage-runner -- --model opus --max-turns 3 "..."
+      sac agent send coverage-runner --model opus --max-turns 3 "..."
 
-    Anything after a literal ``--`` is forwarded verbatim to ``claude``
-    (the raw escape hatch).
+    Delivery is always HTTP to the running (containerized) agent. If no
+    A2A port is recorded the command refuses — it will not run the turn
+    on the bare host.
     """
     if key and prompt:
         raise click.UsageError("--key is mutually exclusive with PROMPT.")
@@ -323,41 +333,11 @@ def send(
     # in-container SDK session handles it. A host-side `claude --resume`
     # cannot see a containerized agent's session (it lives inside the
     # container's ~/.claude/projects/ store), so the HTTP path is the
-    # only correct local delivery for an apptainer runtime. Falls
-    # through to claude --resume only when no a2a_port is recorded
-    # (non-A2A, host-side runtime).
+    # only correct local delivery — and since apptainer is the only
+    # container engine, it is the only local delivery there is.
     if _try_dispatch_local_send(name, prompt):
         return
 
-    spec_path = resolve_config(name)
-    cfg = load_config(spec_path)
-    state_dir = state_dir_for(name)
-    sid = read_session_id(state_dir)
-    if not sid:
-        raise click.ClickException(
-            f"No session_id recorded for agent {name!r} at "
-            f"{state_dir / 'session_id'}. Has the agent run at least once?"
-        )
-
-    workdir = cfg.expanded_workdir or os.getcwd()
-    claude_bin = _find_claude_binary()
-
-    argv = [claude_bin, "--resume", sid, "-p", prompt]
-    if model:
-        argv += ["--model", model]
-    if max_turns is not None:
-        argv += ["--max-turns", str(max_turns)]
-    if not no_stream:
-        argv += ["--output-format", "stream-json", "--include-partial-messages"]
-    if forward:
-        argv += list(forward)
-
-    click.echo(
-        f"# resume {name}: session={sid[:8]}… workdir={workdir}",
-        err=True,
-    )
-    try:
-        rc = subprocess.call(argv, cwd=workdir)
-    except FileNotFoundError as exc:
-        raise click.ClickException(str(exc)) from exc
-    sys.exit(rc)
+    # Every delivery path declined. Refuse — do NOT run the turn on the
+    # bare host. See _refuse_uncontained_send for what used to happen here.
+    _refuse_uncontained_send(name)

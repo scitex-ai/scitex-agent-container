@@ -310,16 +310,44 @@ def _rotate_among_credentials_files(
 
     from ..cli_pkg._helpers._console import system_msg
 
-    system_msg(headline, style="info")
-    # INFO, not "dim". ``"dim"`` maps to ``scitex_logging.DEBUG``
-    # (``cli_pkg._helpers._console._STYLE_TO_LEVEL``), which is BELOW the
-    # project logger's effective level (measured: 20 / INFO), so everything
-    # carrying the REASON — the active policy, the rationale sentence and the
-    # per-candidate ranking inputs — was dropped at the logger while the
-    # headline alone survived. That is precisely the "reasoned pick is
-    # indistinguishable from a lucky one" defect ``_creds._pick_audit`` was
-    # written to close, so it must not be emitted below the level anyone reads.
-    system_msg(detail, style="info")
+    # SUCCESS (31), NOT "info" (20). THE HANDLERS ARE THE THRESHOLD THAT
+    # DECIDES, AND THEY SIT AT 30.
+    #
+    # This line has now been raised twice for the same reason and stayed
+    # invisible both times:
+    #   - originally "dim"  -> DEBUG (10)
+    #   - 2026-08-11 "info" -> INFO  (20), chosen against the PROJECT LOGGER's
+    #     effective level, which was measured at 20 and looked sufficient.
+    #
+    # It is not sufficient, because the logger's level is not what filters:
+    #
+    #     logger level      0  NOTSET
+    #     effective level  30  WARN
+    #     handlers         LazyStderrStreamHandler(WARN), RotatingFileHandler(WARN)
+    #
+    # Anything below 30 is dropped at the HANDLER, so both fixes moved the
+    # number without crossing the line that matters. Measured 2026-08-15 on the
+    # live scitex-dev spec: a 4-entry pool, a real pick (scitex-01-scitex-ai),
+    # and NOTHING printed. The operator's words: 「this is really crazy that no
+    # info shown for which account selected」.
+    #
+    # SUCCESS is the right level rather than WARNING: binding an account is a
+    # normal, successful outcome, and dressing it as a warning would train
+    # people to ignore warnings. It renders green as "SUCC:".
+    system_msg(headline, style="success")
+
+    # THE RATIONALE IS PROPORTIONATE TO THE DECISION.
+    # A pick that CHANGED the binding is a rotation and deserves its full
+    # audit — which account, on what policy, against which candidates. A pick
+    # that merely re-confirmed the current binding is the common case (churn
+    # minimisation prefers the bound entry whenever it is still healthy), and
+    # printing six lines of ranking inputs on every restart to say "no change"
+    # is how a useful notice becomes scrollback nobody reads.
+    #
+    # The headline above is emitted either way, so "which account" is never
+    # silent — only the "why" is conditional.
+    rotated = str(picked_path) != prior
+    system_msg(detail, style="success" if rotated else "info")
 
 
 def _rotate_to_healthy_account(

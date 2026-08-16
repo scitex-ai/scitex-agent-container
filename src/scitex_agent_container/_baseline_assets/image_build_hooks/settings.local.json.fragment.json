@@ -1,0 +1,17 @@
+{
+  "_comment_deny_raw_apptainer_build_hook": "PreToolUse Bash-matcher wiring for deny_raw_apptainer_build.sh. APPEND the single hook entry below into the EXISTING `PreToolUse` `Bash` matcher's `hooks` list in the baseline <agents_dir>/_shared/to_home/.claude/settings.json (next to enforce_heavy_job_demotion.sh, whose gap this closes) -- do NOT add a second Bash matcher block. The script body lives next to this fragment (src/scitex_agent_container/_baseline_assets/image_build_hooks/) and must be deployed to $HOME/.claude/hooks/pre-tool-use/ via to_home materialization; it has no sibling python files and FAILS OPEN (allow) if python3 is unavailable, because a broken guard must not wedge the agent's Bash tool. This fragment is the LEGACY/manual wiring path and is kept so the bundle stays installable by hand; the sanctioned path is the `scitex_dev.hooks` entry-point declared in scitex_agent_container/_claude_hooks_plugin.py, which scitex-dev discovers and applies centrally. The hook refuses ONLY builds it can prove are sac's own -- a recipe declaring the `org.scitex.layer` label key, or a command naming sac's recipe/SIF directories; unrelated apptainer builds pass through untouched. Overrides: SAC_ALLOW_RAW_IMAGE_BUILD=1 or an inline `# hook-bypass: raw-apptainer-build` marker. Rationale is documented in the sibling README.md.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-tool-use/deny_raw_apptainer_build.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

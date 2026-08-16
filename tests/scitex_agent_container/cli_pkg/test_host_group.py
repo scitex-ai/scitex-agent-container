@@ -39,6 +39,44 @@ def cfg_path(tmp_path: Path, env_save_restore) -> Path:
     return p
 
 
+@pytest.fixture
+def empty_registry(tmp_path: Path, env_save_restore) -> Path:
+    """A real, EMPTY scitex-dev host registry at $SCITEX_DIR/dev/hosts.yaml.
+
+    ``sac host list`` now reports config peers UNION the registry's
+    routable hosts, so any test asserting on the peers block has to pin
+    the registry half. Without this the assertions read the OPERATOR's
+    real hosts.yaml and their outcome depends on which machine CI runs
+    on — the suite passed here only because the ambient registry happened
+    to be empty in the environment where these tests were written.
+    """
+    hosts_dir = tmp_path / "registry" / "dev"
+    hosts_dir.mkdir(parents=True)
+    (hosts_dir / "hosts.yaml").write_text("hosts: {}\n")
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "registry"))
+    return hosts_dir / "hosts.yaml"
+
+
+@pytest.fixture
+def registry_with_one_host(tmp_path: Path, env_save_restore) -> Path:
+    """A registry declaring exactly one routable host and one unroutable."""
+    hosts_dir = tmp_path / "registry" / "dev"
+    hosts_dir.mkdir(parents=True)
+    (hosts_dir / "hosts.yaml").write_text(
+        "hosts:\n"
+        "  mba:\n"
+        "    kind: workstation\n"
+        "    ssh_alias: mba\n"
+        '    scitex_root: "~/.scitex"\n'
+        "  ywata-note-win:\n"
+        "    kind: workstation\n"
+        "    ssh_alias: null\n"
+        '    scitex_root: "~/.scitex"\n'
+    )
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "registry"))
+    return hosts_dir / "hosts.yaml"
+
+
 # ---------------------------------------------------------------------------
 # `sac host list` — rich (non-JSON) renders.
 # ---------------------------------------------------------------------------
@@ -96,13 +134,63 @@ peers:
     assert "via=mba" in result.output
 
 
-def test_host_list_rich_states_no_peers_when_empty(cfg_path: Path):
+def test_host_list_rich_states_no_peers_when_nothing_is_routable(
+    cfg_path: Path, empty_registry: Path
+):
+    """"No peers" now means neither source offered a route.
+
+    Before the registry became a route source this only had to check
+    config.yaml. A host with an empty ``peers:`` block but a populated
+    registry is NOT peerless — it can reach every registry host — so the
+    registry has to be empty too for this message to be truthful.
+    """
     # Arrange
     cfg_path.write_text("peers: {}\n")
     # Act
     result = CliRunner().invoke(host_list, [])
     # Assert
     assert "no peers configured" in result.output
+
+
+def test_host_list_rich_lists_a_registry_host_as_a_peer(
+    cfg_path: Path, registry_with_one_host: Path
+):
+    """THE fix: a registry host is reachable without any config.yaml.
+
+    Measured on scitex-compute-04 (2026-08-12): this command printed six
+    registry rows above ``peers: []`` and ``sac host probe`` then refused
+    every one of them.
+    """
+    # Arrange
+    cfg_path.write_text("peers: {}\n")
+    # Act
+    result = CliRunner().invoke(host_list, [])
+    # Assert
+    assert "ssh=mba" in result.output
+
+
+def test_host_list_rich_labels_a_registry_sourced_route(
+    cfg_path: Path, registry_with_one_host: Path
+):
+    """The operator must be able to tell a filled-in route from their own."""
+    # Arrange
+    cfg_path.write_text("peers: {}\n")
+    # Act
+    result = CliRunner().invoke(host_list, [])
+    # Assert
+    assert "(registry)" in result.output
+
+
+def test_host_list_omits_a_registry_host_with_no_ssh_alias(
+    cfg_path: Path, registry_with_one_host: Path
+):
+    """``ssh_alias: null`` means no route — offering it would fail blankly."""
+    # Arrange
+    cfg_path.write_text("peers: {}\n")
+    # Act
+    result = CliRunner().invoke(host_list, ["--json"])
+    # Assert
+    assert "ywata-note-win" not in [p["name"] for p in json.loads(result.stdout)["peers"]]
 
 
 def test_host_list_rich_renders_alias_arrow_for_local(cfg_path: Path):
@@ -269,7 +357,7 @@ _RETIRED_ALIAS_WARNING = (
 
 
 @pytest.fixture
-def json_run_with_library_warning(cfg_path: Path):
+def json_run_with_library_warning(cfg_path: Path, empty_registry: Path):
     """Run sac's real ``host list --json`` while a library logs a WARNING.
 
     Reproduces the condition that took ``pytest-matrix`` red across 18 open
@@ -286,8 +374,10 @@ def json_run_with_library_warning(cfg_path: Path):
 
     Everything is real (PA-306, no mocks): a real ``logging`` logger, a real
     click command, and sac's real ``host list`` callback reached through
-    ``ctx.invoke``. ``cfg_path`` names a file that is never written, so the
-    payload's ``peers`` list is legitimately empty.
+    ``ctx.invoke``. ``cfg_path`` names a file that is never written and
+    ``empty_registry`` pins the OTHER route source, so the payload's
+    ``peers`` list is legitimately empty on any machine — this fixture
+    used to read whatever hosts.yaml the host it ran on happened to have.
     """
 
     @click.command("warn-then-list")
@@ -296,7 +386,23 @@ def json_run_with_library_warning(cfg_path: Path):
         logging.getLogger("scitex_dev.hosts._retired").warning(_RETIRED_ALIAS_WARNING)
         ctx.invoke(host_list, all_interfaces=False, as_json=True)
 
-    return CliRunner().invoke(warn_then_list, [])
+    # Capture the record at the LOGGER, not at a stream. From scitex-dev
+    # 0.48 `hosts._retired` installs a StreamHandler bound to the real
+    # sys.stderr at import time and sets propagate=False, so the line never
+    # reaches CliRunner's isolated streams and `result.output` no longer
+    # carries it. A handler on the logger sees the emission either way, so
+    # the "it was actually emitted" evidence survives both generations.
+    seen: list[str] = []
+    probe = logging.Handler()
+    probe.emit = lambda record: seen.append(record.getMessage())
+    logger = logging.getLogger("scitex_dev.hosts._retired")
+    logger.addHandler(probe)
+    try:
+        result = CliRunner().invoke(warn_then_list, [])
+    finally:
+        logger.removeHandler(probe)
+    result.emitted_warnings = seen
+    return result
 
 
 def test_json_payload_parses_from_stdout_despite_a_library_warning(
@@ -329,7 +435,10 @@ def test_library_warning_reaches_the_merged_cli_runner_output(
     """
     # Arrange
     result = json_run_with_library_warning
-    # Act
-    merged = result.output
+    # Act — up to scitex-dev 0.47 the warning interleaved into click's merged
+    # stream; from 0.48 it goes to the real stderr instead (see the fixture).
+    # Either destination proves the emission, which is all this test is for:
+    # without it the sibling stdout test could pass vacuously.
+    merged = result.output + "\n" + "\n".join(result.emitted_warnings)
     # Assert
     assert _RETIRED_ALIAS_WARNING in merged

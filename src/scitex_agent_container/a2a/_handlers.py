@@ -7,7 +7,7 @@ Five built-ins:
   official ``claude-agent-sdk`` (structured streaming, no ``--print``).
   **Recommended** for new agents — survives ``--print`` deprecation.
 * :func:`handle_openai_session` — drives an OpenAI model via the
-  ``openai-agents`` SDK (``spec.provider: openai`` family; optional
+  ``openai-agents`` SDK (``spec.harness: openai``; optional
   ``[openai]`` extra). Stateful: turns share the agent's
   ``SQLiteSession`` conversation state.
 * :func:`handle_claude_cli` — *(legacy)* runs ``claude --print`` with
@@ -215,8 +215,8 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
 
     Same sync wire contract as :func:`handle_claude_session`
     (``(name, text) -> str``), backed by
-    :class:`scitex_agent_container._runners.openai_session.OpenAISession`
-    (the concrete ``ProviderSession`` — see openai-compat-2). Unlike the
+    :class:`scitex_agent_container._runners.openai_session.OpenAIAgentsSession`
+    (the concrete ``HarnessSession`` — see openai-compat-2). Unlike the
     Claude handler this one is STATEFUL: the session persists turns in
     the agent's ``SQLiteSession`` db (see
     ``runtimes._openai_sdk_common.resolve_state_db_path``), so repeated
@@ -236,27 +236,49 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
     import asyncio
 
     try:
-        import agents  # noqa: F401 — availability probe only
+        import agents
     except ImportError as exc:  # stx-allow: fallback (reason: optional dep at runtime)
         raise HandlerError(
             "openai_session handler requires `openai-agents` "
             "(`pip install scitex-agent-container[openai]`)."
         ) from exc
 
-    from scitex_agent_container._runners._provider_session import Message
+    # The SDK asks for /v1/responses by default; a self-hosted gateway only
+    # routes /v1/chat/completions and answers 404, which reads like a dead
+    # endpoint. See _openai_api_surface for the measurement.
+    from scitex_agent_container._runners._openai_api_surface import (
+        select_api_surface,
+    )
+
+    select_api_surface(agents)
+
+    from scitex_agent_container._runners._harness_session import Message
     from scitex_agent_container._runners.openai_session import (
-        OpenAISession,
+        OpenAIAgentsSession,
         OpenAISessionError,
     )
     from scitex_agent_container.runtimes._openai_sdk_common import (
         OpenAISDKCommonError,
+        resolve_agent_workspace,
     )
 
     system = _sac_env("A2A_OPENAI_SYSTEM", "").strip() or None
     model = _sac_env("A2A_OPENAI_MODEL") or None
+    # Same workspace resolution the Claude handler uses — the agent's
+    # .mcp.json, written by sac at start time from spec.mcp_servers. Reusing
+    # it is the point of _openai_sdk_common re-exporting it: an agent declares
+    # its servers ONCE and gets them under either harness. Without this the
+    # session was conversational only, which is why a locally-served model
+    # could not do agent work even though the model tool-calls correctly.
+    mcp_servers, _workspace_cwd = resolve_agent_workspace(agent_name)
 
     async def _drive() -> str:
-        session = OpenAISession(agent_name, model=model, instructions=system)
+        session = OpenAIAgentsSession(
+            agent_name,
+            model=model,
+            instructions=system,
+            mcp_servers=mcp_servers,
+        )
         await session.start()
         try:
             reply = ""

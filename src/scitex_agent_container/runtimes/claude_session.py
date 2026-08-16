@@ -20,9 +20,9 @@ through ``sac --on <peer>`` (F-CS12) and ``spec.host`` pinning.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._skills_boot_log import log_effective_skills
 from ._to_home import deploy_to_home
@@ -122,12 +122,12 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
-    # The richer LOUD audit lives in ``_workdir_audit`` so the same code
+    # The richer LOUD audit lives in ``_workdir._audit`` so the same code
     # surface is reused by ``sac agents status --workdir-audit`` and the
     # ``sac agents prune-claude`` CLI. ``audit_workdir_claude`` walks once,
     # collects both byte size + file count, and reports per-subdir bloat
     # sources so the operator sees exactly which directory to prune.
-    from .._workdir_audit import audit_workdir_claude
+    from .._workdir import audit_workdir_claude
 
     audit = audit_workdir_claude(workdir)
     # Fire on EITHER:
@@ -197,12 +197,14 @@ def _warn_if_heavy_workdir_claude(config: AgentConfig) -> None:
         lines.append("  then reference other repos via absolute paths.")
     lines.append("=" * 72)
     lines.append("")
-    print("\n".join(lines), file=sys.stderr, flush=True)
+    get_logger(__name__).warning("\n".join(lines))
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — a one-member tuple of engines is the same abolished menu the
+# spec field was, kept alive as a module constant. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``. Empty / unset
+# ``spec.runtime`` is treated as the SDK launch mode below.
 
 
 def _container_runtime_for(config: AgentConfig):
@@ -210,16 +212,19 @@ def _container_runtime_for(config: AgentConfig):
     unrecognised ``spec.runtime``.
     """
     runtime = getattr(config, "runtime", "") or "apptainer"
-    # Both the legacy ``apptainer`` value and the current
-    # ``claude-agent-sdk`` selector dispatch the headless SDK runner via
-    # ``apptainer exec`` — the registry (_runtime_select) maps BOTH to
-    # ClaudeSessionRuntime, so both must resolve to a container runtime
+    # Every spelling the harness registry's SDK entry claims (the legacy
+    # ``apptainer`` value AND the current ``claude-agent-sdk`` selector —
+    # v4 step-4 derivation) dispatches the headless SDK runner via
+    # ``apptainer exec`` — ``_runtime_select`` maps ALL of them to
+    # ClaudeSessionRuntime, so all must resolve to a container runtime
     # here. Previously only ``apptainer`` did, so ``runtime:
     # claude-agent-sdk`` fell through to None and start() failed loud with
     # "requires docker|podman" — despite docker having been ripped out
     # (apptainer is the only engine). This made the recommended value
     # unusable while the deprecated alias worked; both now resolve.
-    if runtime in ("apptainer", "claude-agent-sdk"):
+    from ..config._harness_registry import CLAUDE_AGENT_SDK, runtime_spellings_for
+
+    if runtime in runtime_spellings_for(CLAUDE_AGENT_SDK):
         from ._apptainer_runtime import ApptainerContainerRuntime
 
         return ApptainerContainerRuntime()
@@ -314,18 +319,34 @@ class ClaudeSessionRuntime(RuntimeBase):
         # Operator directive 12870 (lead a2a b58dd5d3): emit the legacy
         # ``runtime: apptainer`` deprecation HERE (real start path), not
         # in ``_get_runtime`` (status / list / discovery walks).
-        from .._lifecycle._runtime_select import warn_if_legacy_apptainer_runtime
+        from .._lifecycle._runtime_select import (
+            warn_if_legacy_apptainer_runtime,
+            warn_if_legacy_harness_key,
+        )
 
         warn_if_legacy_apptainer_runtime(config)
+        warn_if_legacy_harness_key(config)
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
-            print(
-                f"error: ClaudeSessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
-                file=sys.stderr,
-                flush=True,
+            # FAIL CLOSED — never fall back to a bare-host launch. The
+            # engine is always apptainer; what failed to resolve is the
+            # spec.runtime LAUNCH MODE. (This message used to offer
+            # "docker | podman", engines ripped out 2026-05-13, which sent
+            # the reader looking for a knob that has not existed for
+            # months instead of at the spelling that is actually wrong.)
+            #
+            # This is a START FAILURE reported by a bare `return False`, so
+            # this line is the caller's only account of WHY. Logged as an
+            # ERROR rather than printed (#1049) so it names the emitting
+            # module and is durable in the scitex-logging runtime log
+            # instead of dying with whatever stderr happened to be attached.
+            get_logger(__name__).error(
+                f"ClaudeSessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer. Use "
+                f"runtime: claude-agent-sdk (headless) or tui."
             )
             return False
 

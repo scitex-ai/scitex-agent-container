@@ -215,11 +215,16 @@ def _beat_one(
         # No live ``tui-<name>`` session in the snapshot — nothing to beat.
         return False
     try:
+        # ``writer`` marks this as OBSERVER testimony (host-side proxy
+        # liveness), distinguishable from the runner's own beats. An
+        # observer beat carries no incarnation_id — it knows the process
+        # exists, not which incarnation it is (v4 step 5).
         write_fn(
             Path(state_dir),
             pid=0,
             state=_TUI_HEARTBEAT_STATE,
             ts=float(activity),
+            writer="listen-tui-observer",
         )
         return True
     except Exception as exc:  # stx-allow: fallback (per-agent best-effort: one failure must not abort the tick — logged, skipped)

@@ -157,6 +157,20 @@ def register_keepalive_command(group: click.Group) -> None:
         ),
     )
     @click.option(
+        "--optional-peer",
+        "optional_peers",
+        multiple=True,
+        metavar="PEER",
+        help=(
+            "Declare a peer as INTERMITTENT: it is still pushed to, and any "
+            "failure is still printed, but its failure does not fail the run. "
+            "For laptops and anything else that is legitimately off. Must "
+            "also appear in --to. Repeatable. Nothing is implicit here — a "
+            "peer is optional only because the command line says so, so the "
+            "unit file states exactly which hosts may be absent."
+        ),
+    )
+    @click.option(
         "--json",
         "as_json",
         is_flag=True,
@@ -171,6 +185,7 @@ def register_keepalive_command(group: click.Group) -> None:
         remote_path: str | None,
         force: bool,
         sweep: bool,
+        optional_peers: tuple[str, ...],
         as_json: bool,
     ) -> None:
         """Copy this host's CURRENT access token to peers, access-only.
@@ -230,10 +245,23 @@ def register_keepalive_command(group: click.Group) -> None:
                 err=True,
             )
 
+        # An optional peer must be one we are actually pushing to. Silently
+        # accepting a name that is not in --to would let a typo disarm
+        # nothing while looking like it disarmed something.
+        optional = set(optional_peers)
+        unknown_optional = sorted(optional - set(peers))
+        if unknown_optional:
+            raise click.UsageError(
+                "--optional-peer names host(s) absent from --to: "
+                f"{', '.join(unknown_optional)}. An optional peer must also "
+                "be a target, or the declaration applies to nothing."
+            )
+
         floor = MIN_VALIDITY_S if min_validity is None else min_validity
         records: list[dict[str, Any]] = []
         verified_peers: list[str] = []
         failed = False
+        tolerated: list[str] = []
 
         for account_label in accounts:
             for peer in peers:
@@ -256,17 +284,23 @@ def register_keepalive_command(group: click.Group) -> None:
                     KeepaliveError,
                     SnapshotPushError,
                 ) as exc:  # stx-allow: fallback (reason: see inline comment)
-                    failed = True
+                    is_optional = peer in optional
+                    if is_optional:
+                        tolerated.append(f"{peer}/{account_label}")
+                    else:
+                        failed = True
                     records.append(
                         {
                             "account": account_label,
                             "peer": peer,
                             "ok": False,
                             "error": str(exc),
+                            "optional": is_optional,
                         }
                     )
+                    label = "FAILED (optional peer)" if is_optional else "FAILED"
                     click.echo(
-                        f"  {peer:20s}  {account_label}: FAILED — {exc}", err=True
+                        f"  {peer:20s}  {account_label}: {label} — {exc}", err=True
                     )
                     continue
 
@@ -304,6 +338,18 @@ def register_keepalive_command(group: click.Group) -> None:
             records.append({"peer": peer, "ok": True, "sweep_output": output})
             for line in str(output).splitlines():
                 click.echo(f"    {line}", err=True)
+
+        # A tolerated failure must never be a silent one. The whole point of
+        # declaring a peer optional is to keep the RED meaningful for the
+        # always-on hosts; that only works if the run still says out loud
+        # what it forgave, and how many.
+        if tolerated:
+            click.echo(
+                f"  TOLERATED: {len(tolerated)} failure(s) on declared "
+                f"optional peer(s) — {', '.join(tolerated)}. Exit stays 0 for "
+                "these; they were declared intermittent with --optional-peer.",
+                err=True,
+            )
 
         if as_json:
             click.echo(  # stx-allow: STX-IO006

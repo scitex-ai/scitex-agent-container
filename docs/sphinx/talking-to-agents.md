@@ -207,7 +207,7 @@ fleet, a contracted vendor). Wrapping it in a `kind: AgentProxy`
 agent lets the rest of sac (`sac agents send`, `sac listen`, the
 AgentCard discovery surface) treat it the same as a local SDK agent.
 
-The proxy agent has no Claude SDK; it just forwards `POST /v1/turn`
+The proxy agent has no agent SDK; it just forwards `POST /v1/turn`
 to its configured `spec.proxy.upstream` and re-projects the
 upstream AgentCard at its own `/.well-known/agent-card.json` so
 peers see one consistent skill list.

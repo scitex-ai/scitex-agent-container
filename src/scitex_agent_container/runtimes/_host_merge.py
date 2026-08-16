@@ -62,7 +62,7 @@ from pathlib import Path
 
 # Directory basenames pruned from the host walk (git worktrees etc.) — shared
 # with the rest of SAC's heavy walkers.
-from .._walk_exclusions import is_excluded_walk_dir
+from .._workdir._walk_exclusions import is_excluded_walk_dir
 from ..config import AgentConfig
 
 logger = logging.getLogger(__name__)

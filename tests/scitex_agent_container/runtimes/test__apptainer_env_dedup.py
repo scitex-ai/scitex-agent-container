@@ -39,6 +39,7 @@ from scitex_agent_container.runtimes._apptainer_env_dedup import (
     ForbiddenScitexDsnError,
     assert_no_forbidden_scitex_dsn,
     collapse_duplicate_env,
+    env_pair_at,
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
@@ -455,3 +456,70 @@ def test_a_banned_dsn_overridden_by_raw_args_still_launches(
     argv = _build(tmp_path, spec)
     # Assert
     assert env_values(argv, "SCITEX_CARDS_DB") == [CANONICAL_DSN]
+
+
+# ---------------------------------------------------------------------------
+# ``env_pair_at`` is THE shared recogniser — public for that reason
+#
+# WHY THESE EXIST. This module and ``_apptainer_secret_env`` both walk the
+# same argv asking "is this an --env pair?". They used to answer it
+# separately, and answered it DIFFERENTLY: the secret sweep matched only the
+# SPLIT ``["--env", "K=V"]`` form, this module matched the GLUED
+# ``--env=K=V`` too. So a spec written in the glued spelling — the form live
+# across this fleet's ``spec.apptainer.raw_args`` — was deduplicated
+# correctly and then swept NOT AT ALL, putting its value into the
+# world-readable launcher argv with nothing reporting a problem.
+#
+# The sweep now calls this function. These tests pin the contract it depends
+# on, so the two can never re-acquire separate opinions.
+# ---------------------------------------------------------------------------
+
+
+def test_env_pair_at_recognises_the_split_spelling() -> None:
+    # Arrange
+    argv = ["apptainer", "--env", "K=v", "img.sif"]
+    # Act
+    found = env_pair_at(argv, 1)
+    # Assert
+    assert found == ("K", "v", 2)
+
+
+def test_env_pair_at_recognises_the_glued_spelling() -> None:
+    # Arrange
+    argv = ["apptainer", "--env=K=v", "img.sif"]
+    # Act
+    found = env_pair_at(argv, 1)
+    # Assert
+    assert found == ("K", "v", 1)
+
+
+def test_env_pair_at_reports_width_so_callers_can_drop_the_whole_pair() -> None:
+    """The width is what lets a caller remove a pair without knowing which
+    spelling it was — the detail the secret sweep needs to lift a glued flag
+    out as ONE token rather than leaving half of it behind."""
+    # Arrange
+    argv = ["--env=K=v", "--env", "J=w"]
+    # Act
+    widths = [env_pair_at(argv, 0)[2], env_pair_at(argv, 1)[2]]
+    # Assert
+    assert widths == [1, 2]
+
+
+def test_env_pair_at_does_not_match_env_file() -> None:
+    """``--env-file`` carries a PATH, not a pair, and must never be swept."""
+    # Arrange
+    argv = ["--env-file", "/x/secret.env"]
+    # Act
+    found = env_pair_at(argv, 0)
+    # Assert
+    assert found is None
+
+
+def test_env_pair_at_declines_a_value_without_an_equals() -> None:
+    """Left where it is for the malformed-flag guard to report."""
+    # Arrange
+    argv = ["--env", "NOEQUALS"]
+    # Act
+    found = env_pair_at(argv, 0)
+    # Assert
+    assert found is None

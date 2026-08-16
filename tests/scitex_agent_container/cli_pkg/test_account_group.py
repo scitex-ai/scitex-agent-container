@@ -324,7 +324,7 @@ def test_account_list_json_surfaces_active_email(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["active"]["email_address"] == "active@example.com"
 
@@ -335,7 +335,7 @@ def test_account_list_json_lists_stored_accounts(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert [a["name"] for a in payload["stored"]] == ["x"]
 
@@ -346,7 +346,7 @@ def test_account_list_json_tolerates_corrupt_credentials_active_email(sandbox_ho
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["active"]["email_address"] is None
 
@@ -357,7 +357,7 @@ def test_account_list_json_tolerates_corrupt_credentials_empty_stored(sandbox_ho
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["stored"] == []
 
@@ -826,7 +826,7 @@ def test_account_list_json_includes_plan_label(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["stored"][0]["plan_label"] == "Max 5x"
 
@@ -839,6 +839,6 @@ def test_account_list_json_usage_is_none_when_no_cache(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["stored"][0]["usage"] is None

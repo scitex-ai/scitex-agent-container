@@ -19,7 +19,7 @@ Three ways the naive grep is wrong, all of them live in this repo today:
    the runner-image FAMILY (``ubuntu-`` / ``macos-`` / ``windows-``), not
    one literal.
 2. It FALSE-FLAGS our own migrated files. Both the workflow FILENAMES
-   (``quality-audit-on-ubuntu-latest.yml``) and the job ``name:`` fields
+   (``rtd-sphinx-build-on-ubuntu-latest.yml``) and the job ``name:`` fields
    (``ruff-on-ubuntu-latest``) still carry the legacy string. Only a job's
    ``runs-on:`` decides where it executes, so we parse YAML and read
    ``runs-on`` — nothing else.

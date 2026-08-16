@@ -428,11 +428,6 @@ FULL_TERSE_SOURCE = {
     "timestamp": "2026-04-13T00:00:00Z",
     "tmux_alive": True,
     "last_post_ts": "2026-04-13T00:00:00Z",
-    "context_management": {
-        "percent": 42.0,
-        "strategy": "compact",
-        "trigger_at_percent": 85,
-    },
     "pids": {"claude_code": 1234, "container_daemon": 5678, "extra": 9},
     "health": {"ok": True, "details": "xyz"},
     "snapshot": {
@@ -465,7 +460,6 @@ def test_terse_keyset_matches_whitelist(terse_from_full: dict) -> None:
     "key,expected",
     [
         ("agent", "a1"),
-        ("context_management.percent", 42.0),
         ("pids.claude_code", 1234),
         ("health.ok", True),
         ("snapshot.has_diff", False),
@@ -509,8 +503,6 @@ def terse_from_minimal() -> dict:
 @pytest.mark.parametrize(
     "key",
     [
-        "context_management.percent",
-        "context_management.strategy",
         "pids.claude_code",
         "pids.container_daemon",
         "health.ok",
@@ -537,23 +529,6 @@ def test_terse_shape_is_stable_when_source_is_sparse(
     assert set(terse_from_minimal.keys()) == set(TERSE_STATUS_FIELDS)
 
 
-# --- context_management may be ``None`` (regression) ---
-
-
-@pytest.mark.parametrize(
-    "key", ["context_management.percent", "context_management.strategy"]
-)
-def test_terse_handles_context_management_set_to_none(key: str) -> None:
-    # Arrange
-    from scitex_agent_container.terse import TERSE_STATUS_FIELDS, project_terse
-
-    full = {"agent": "a2", "context_management": None}
-    # Act
-    terse = project_terse(full, TERSE_STATUS_FIELDS)
-    # Assert
-    assert terse[key] is None
-
-
 # --- Heartbeat invariants (lead msg#16005) ---
 
 
@@ -567,11 +542,6 @@ def realistic_terse() -> dict:
         "timestamp": "2026-04-20T01:23:45Z",
         "tmux_alive": True,
         "last_post_ts": "2026-04-20T01:23:30Z",
-        "context_management": {
-            "percent": 37.5,
-            "strategy": "compact",
-            "trigger_at_percent": 85,
-        },
         "pids": {"claude_code": 12345, "container_daemon": 23456},
         "health": {"ok": True, "details": "fresh"},
         "snapshot": {
@@ -627,15 +597,15 @@ def test_heartbeat_terse_payload_round_trips_under_4kb(
 # --- Whitelist composition ---
 
 
-ORIGINAL_13 = [
+# Was ORIGINAL_13 until 2026-08-15: the three context_management.* keys were
+# deleted with the block itself — the status surface hardcoded the source
+# field to None, so they projected null for every agent that ever ran.
+ORIGINAL_10 = [
     "agent",
     "state",
     "timestamp",
     "tmux_alive",
     "last_post_ts",
-    "context_management.percent",
-    "context_management.strategy",
-    "context_management.trigger_at_percent",
     "pids.claude_code",
     "pids.container_daemon",
     "health.ok",
@@ -667,7 +637,7 @@ EXTENDED_FIELDS = [
 ]
 
 
-@pytest.mark.parametrize("field", ORIGINAL_13)
+@pytest.mark.parametrize("field", ORIGINAL_10)
 def test_terse_whitelist_keeps_original_field(field: str) -> None:
     # Arrange
     from scitex_agent_container.terse import TERSE_STATUS_FIELDS
@@ -748,17 +718,12 @@ def test_terse_projection_does_not_leak_pii_marker_into_any_value(
 @pytest.fixture
 def representative_full_status() -> dict:
     return {
-        # Original 13 sources
+        # Original whitelist sources
         "agent": "head-mba",
         "state": "running",
         "timestamp": "2026-04-20T12:34:56Z",
         "tmux_alive": True,
         "last_post_ts": "2026-04-20T12:34:00Z",
-        "context_management": {
-            "percent": 42.5,
-            "strategy": "compact",
-            "trigger_at_percent": 85,
-        },
         "pids": {"claude_code": 12345, "container_daemon": 67890},
         "health": {"ok": True, "details": "everything nominal"},
         "snapshot": {
@@ -816,16 +781,19 @@ def test_terse_projected_size_stays_under_4kb(
     assert len(json.dumps(projected)) < 4096
 
 
-def test_terse_whitelist_pins_37_field_contract() -> None:
-    # Arrange — bumped from 34 → 37 when the operator-mandated
+def test_terse_whitelist_pins_34_field_contract() -> None:
+    # Arrange — history of this pin: 34 → 37 when the operator-mandated
     # MOVEMENT trio (session_jsonl_bytes / session_jsonl_last_write /
-    # heartbeat_at) joined the terse whitelist (lead a2a 1781e82a,
-    # 2026-06-14). Re-pin so a future schema drift is caught.
+    # heartbeat_at) joined (lead a2a 1781e82a, 2026-06-14); 37 → 34 on
+    # 2026-08-15 when the three context_management.* keys left with the
+    # deleted spec block — the status surface hardcoded their source to
+    # None, so they projected null for every agent that ever ran.
+    # Re-pin so a future schema drift is caught.
     from scitex_agent_container.terse import TERSE_STATUS_FIELDS
 
     # Act — import.
     # Assert
-    assert len(TERSE_STATUS_FIELDS) == 37
+    assert len(TERSE_STATUS_FIELDS) == 34
 
 
 def test_terse_projection_covers_whitelist_on_representative_snapshot(

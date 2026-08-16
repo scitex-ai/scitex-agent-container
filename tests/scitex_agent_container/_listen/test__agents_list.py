@@ -154,3 +154,45 @@ def test_agents_key_is_unchanged_for_consumers(client):
     body = _body(client)
     # Assert
     assert body["agents"] == []
+
+
+# --- the `fault` overlay is wired in, and cannot take the route down ------
+#
+# The classifier's own rules are proved in test__inbox_fault.py. What matters
+# HERE is that the route actually applies it, and that it stays ADVISORY: this
+# is the surface an agent consults before handing over work, and an overlay
+# that could fail it would be a worse bug than the ambiguity it resolves.
+
+
+def test_every_row_carries_the_fault_key(client, empty_store):
+    # Arrange: a row the classifier cannot convict (no resolvable spec in the
+    # isolated agents dir), so only the KEY's presence is under test.
+    from scitex_agent_container._listen._agents_list import _annotate_faults
+
+    rows = [{"name": "alpha", "inbox_subscribers": 0, "inbox_reachable": "unreachable"}]
+    # Act
+    out = _annotate_faults(rows)
+    # Assert
+    assert "fault" in out[0]
+
+
+def test_an_unresolvable_agent_is_not_convicted_by_the_route(client, empty_store):
+    # Arrange: same row — an unreadable spec must never render as "not running".
+    from scitex_agent_container._listen._agents_list import _annotate_faults
+
+    rows = [{"name": "alpha", "inbox_subscribers": 0, "inbox_reachable": "unreachable"}]
+    # Act
+    out = _annotate_faults(rows)
+    # Assert
+    assert out[0]["fault"] is None
+
+
+def test_a_row_with_no_name_does_not_break_the_route(client, empty_store):
+    # Arrange: the route must survive a malformed row rather than 500.
+    from scitex_agent_container._listen._agents_list import _annotate_faults
+
+    rows = [{"inbox_subscribers": 0, "inbox_reachable": "unreachable"}]
+    # Act
+    out = _annotate_faults(rows)
+    # Assert
+    assert out[0]["fault"] is None

@@ -14,8 +14,11 @@ ssh ``via:`` ProxyJump chains, ``env_preamble`` (Lmod on HPC), a2a
 ports, peer tokens, the ``lead:`` block. Those stay in
 ``~/.scitex/agent-container/config.yaml`` (:mod:`.host_config`).
 
-What sac now DEFERS to the registry: "where is host X, and where is
-its scitex root".
+What sac now DEFERS to the registry: "where is host X, where is its
+scitex root", and — since 2026-08-14 — "which of those rows is THIS
+machine" (:func:`registry_local_names`). The last one used to be answered
+by string-comparing ``hostname -s`` against a sac-local alias table, which
+left ``scitex-nas-03`` unable to start agents pinned to its own fleet name.
 
 The ``~`` trap — this is the whole point of the module
 --------------------------------------------------------
@@ -63,11 +66,13 @@ a fresh machine still resolves Spartan's declared root. That is why the
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 
 __all__ = [
     "HostView",
     "registry_hosts",
+    "registry_local_names",
     "registry_scitex_root",
     "registry_ssh_alias",
     "remote_state_root",
@@ -78,17 +83,26 @@ __all__ = [
 class HostView:
     """sac's read-only view of one registry row.
 
-    Deliberately mirrors ``scitex_dev.hosts.HostRecord``'s four fields
-    and deliberately OMITS ``scitex_root_path`` — the expanding property
-    is the footgun this module exists to keep out of sac (see the module
-    docstring). ``scitex_root`` is always the RAW registry string and may
-    contain a leading ``~`` meaning *that host's* home, not ours.
+    Deliberately mirrors ``scitex_dev.hosts.HostRecord``'s identity +
+    location fields and deliberately OMITS ``scitex_root_path`` — the
+    expanding property is the footgun this module exists to keep out of sac
+    (see the module docstring). ``scitex_root`` is always the RAW registry
+    string and may contain a leading ``~`` meaning *that host's* home, not
+    ours.
+
+    ``aliases`` are the registry's OTHER spellings of ``name`` — the field
+    the port's own ``resolve()`` falls back to, so a former or alternate
+    name keeps resolving to this record. sac reads them for two things:
+    resolving a row by any spelling (:func:`_find`) and answering "which
+    fleet name is THIS machine?" (:func:`registry_local_names`). Absent on
+    a pre-0.4x ``scitex_dev`` — the reader degrades to ``()``, never fails.
     """
 
     name: str
     kind: str
     ssh_alias: str | None
     scitex_root: str
+    aliases: tuple[str, ...] = ()
 
 
 def _hosts_from_port() -> list[HostView] | None:
@@ -104,6 +118,10 @@ def _hosts_from_port() -> list[HostView] | None:
                 kind=h.kind,
                 ssh_alias=h.ssh_alias,
                 scitex_root=h.scitex_root,
+                # ``aliases`` landed in scitex-dev 0.4x; getattr keeps an
+                # older port readable rather than making sac's identity
+                # resolution depend on the consumer's install date.
+                aliases=tuple(getattr(h, "aliases", ()) or ()),
             )
             for h in list_hosts()
         ]
@@ -138,12 +156,16 @@ def _hosts_from_yaml() -> list[HostView] | None:
             if not root:
                 continue
             alias = spec.get("ssh_alias")
+            raw_aliases = spec.get("aliases") or ()
+            if isinstance(raw_aliases, str):
+                raw_aliases = (raw_aliases,)
             out.append(
                 HostView(
                     name=str(name),
                     kind=str(spec.get("kind") or "workstation"),
                     ssh_alias=str(alias) if alias else None,
                     scitex_root=str(root),
+                    aliases=tuple(str(a) for a in raw_aliases if a),
                 )
             )
         return out or None
@@ -157,15 +179,75 @@ def registry_hosts() -> list[HostView]:
 
 
 def _find(host: str) -> HostView | None:
-    """Resolve one row by registry name, else by ssh_alias."""
+    """Resolve one row by registry name, then by alias, then by ssh_alias.
+
+    Canonical names are tried FIRST and exhaustively — the port's own
+    ``resolve()`` rule — so a name that is somebody's canonical key can never
+    be captured by another record's alias list. ``ssh_alias`` is tried last
+    because it is a ROUTE, not an identity (``hosts.yaml`` says so in as many
+    words); it stays in the chain only because sac has always resolved roots
+    through it.
+    """
     rows = registry_hosts()
     for row in rows:
         if row.name == host:
             return row
     for row in rows:
+        if host in row.aliases:
+            return row
+    for row in rows:
         if row.ssh_alias and row.ssh_alias == host:
             return row
     return None
+
+
+def registry_local_names(spellings: Collection[str]) -> set[str]:
+    """Fleet names the LEDGER records for the machine known by ``spellings``.
+
+    The identity question, asked of the registry: *given every name this
+    machine already answers to, what does the fleet call it?* Returns the
+    matched row's canonical name plus its aliases, or an EMPTY set when the
+    registry cannot answer.
+
+    Why this exists (measured on ``scitex-nas-03``, 2026-08-14)
+    ----------------------------------------------------------
+    That machine's ``hostname -s`` is ``DXP480TPLUS-994`` — the appliance's
+    factory name — while every spec pins ``host: scitex-nas-03``. sac decided
+    "is this me?" by STRING-COMPARING the pin against the resolved hostname
+    and the sac-local ``host.aliases``, so on the machine itself the pin
+    matched nothing and ``sac agents start scitex-hub`` refused with
+    *"spec.host 'scitex-nas-03' is neither this machine nor a registered
+    peer"*, needing ``--no-redispatch`` on every single start. The name is not
+    wrong and the machine is not misnamed; the comparison was missing the one
+    authority that already knows both spellings belong to one machine.
+
+    Identity, not route
+    -------------------
+    Only ``name`` and ``aliases`` are matched — the two fields the ledger
+    defines as spellings OF the host. ``ssh_alias`` is deliberately NOT
+    consulted here: it answers "how do I reach that machine", and a machine
+    that can reach a name is not thereby that name.
+
+    Ambiguity refuses rather than guesses
+    ------------------------------------
+    A machine is ONE host. If more than one row claims one of ``spellings``
+    the registry is inconsistent, and answering would mean picking a fleet
+    identity by coin-flip — so the answer is the empty set and the caller's
+    existing loud failure stands. Same stance as the port's ``resolve()``,
+    which raises on a doubly-claimed alias.
+    """
+    known = {s for s in spellings if s}
+    if not known:
+        return set()
+    claimants = [
+        row
+        for row in registry_hosts()
+        if row.name in known or any(alias in known for alias in row.aliases)
+    ]
+    if len(claimants) != 1:
+        return set()
+    row = claimants[0]
+    return {row.name, *row.aliases}
 
 
 def registry_scitex_root(host: str) -> str | None:

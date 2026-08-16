@@ -100,6 +100,7 @@ async def list_agents(request: Request) -> JSONResponse:
     _ports = port_claims_map()
     rows = [enrich_row(row, ports=_ports) for row in rows]
     rows = await _annotate_reachability(request, rows)
+    rows = _annotate_faults(rows)
 
     # AN EMPTY LIST IS NOT AN ANSWER ON ITS OWN.
     #
@@ -143,6 +144,35 @@ async def list_agents(request: Request) -> JSONResponse:
             _state_db.DEFAULT_DB_PATH,
         )
     return JSONResponse({"agents": rows, "sources": sources})
+
+
+def _annotate_faults(rows: list[dict]) -> list[dict]:
+    """Add ``fault`` / ``fault_detail`` — the CAUSE behind a zero.
+
+    ``inbox_subscribers: 0`` is confounded: it means a detached inbox adapter
+    OR an agent that is not running, and the broker cannot tell those apart.
+    Publishing the raw zero here and trusting every caller to remember the
+    caveat has failed repeatedly — most recently on 2026-08-12, when 9 of the
+    15 rows on this host reported ``unreachable`` and every one of them was a
+    STOPPED agent, read by a peer as a fleet going deaf.
+
+    So pair it with the host's tmux table, which is independent of the broker,
+    and name the result. See :mod:`._inbox_fault`.
+
+    Best-effort in the SAFE direction, like reachability above: a snapshot we
+    could not take yields NO faults, never a fleet-wide "not running".
+    """
+    from ._inbox_fault import annotate_faults, session_snapshot
+
+    try:
+        return annotate_faults(rows, snapshot=session_snapshot())
+    except Exception as exc:  # stx-allow: fallback (reason: fault classification is an ADVISORY overlay — it must never take down the peer-discovery route the fleet depends on)
+        log.warning(
+            "list_agents: fault classification failed (returning rows without "
+            "the `fault` overlay): %s",
+            exc,
+        )
+        return rows
 
 
 async def _annotate_reachability(request: Request, rows: list[dict]) -> list[dict]:
