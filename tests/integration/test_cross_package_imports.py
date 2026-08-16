@@ -37,9 +37,9 @@ CROSS_PACKAGE_IMPORTS = [
     "scitex_dev.store",
     "scitex_dev.system_deps",
     "scitex_dev.versioning",
+    "scitex_cards",
     "scitex_logging",
     "scitex_notification",
-    "scitex_todo",
 ]
 # ===== END AUTO-GENERATED =====
 

@@ -93,14 +93,19 @@ def test_probe_imports_scitex_cards() -> None:
     assert "scitex_cards" in imported
 
 
-def test_probe_imports_the_scitex_todo_shim() -> None:
-    # Arrange — scitex_todo must resolve to the scitex_cards shim inside the SIF;
-    # the probe imports it so it can prove the two are the same module tree.
+def test_probe_avoids_the_deleted_shim() -> None:
+    # Arrange — INVERTED 2026-08-16. This asserted the probe imported scitex_todo,
+    # which was right while that name was a shim onto scitex_cards. scitex-cards
+    # DELETES the name outright (operator ruling: not deprecated, not aliased), so
+    # the import it used to require now fails the BUILD — this probe runs inside
+    # the container definitions, where an ImportError is a bake failure, not a
+    # test failure. Asserting its ABSENCE keeps a gate that can still fail: if
+    # anyone reinstates the import, this goes red before a bake does.
     source = _probe_source()
     # Act
     imported = _imported_names(source)
     # Assert
-    assert "scitex_todo" in imported
+    assert "scitex_todo" not in imported
 
 
 def test_probe_checks_the_wip_statuses_symbol() -> None:
