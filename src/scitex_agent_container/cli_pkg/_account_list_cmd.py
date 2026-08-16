@@ -73,6 +73,7 @@ def account_list(
     hosts: tuple[str, ...],
     no_fanout: bool,
     host_timeout: float,
+    by_host: bool,
 ) -> None:
     """List stored accounts across the fleet, and show this host's active one.
 
@@ -230,6 +231,7 @@ def account_list(
             no_fanout=no_fanout,
             host_timeout=host_timeout,
             openai_accounts=openai_accounts,
+            by_host=by_host,
         )
         rows = build_stored_rows(accounts, passive=True)
         _print_usage_bars(rows)
