@@ -48,19 +48,31 @@ def _verdict_text(repo: str, pr: int, head_sha: str, conclusion: str) -> str:
     return head + tail
 
 
-def _escalation_text(repo: str, pr: int, head_sha: str, streak: int) -> str:
+def _escalation_text(
+    repo: str,
+    pr: int,
+    head_sha: str,
+    streak: int,
+    checks: list | None = None,
+) -> str:
     """The one message sent when a PR trips :data:`CONSECUTIVE_FAILURE_CAP`.
 
     Deliberately does NOT say "fix-and-push". That instruction is what kept
     the measured loop alive, and by this point it is the one thing already
     known not to work.
+
+    ``checks`` names the currently-failing checks when they could be
+    resolved. Naming them is the difference between advice the reader can
+    act on and advice they cannot: "check whether the failing check is
+    required" is unanswerable without knowing which check it is.
     """
     short = head_sha[:8] if head_sha else "?"
+    named = f" Failing now: {', '.join(checks)}." if checks else ""
     return (
         f"CI STUCK — {repo} PR #{pr} ({short}). This is red #{streak + 1} "
-        "with no green in between, so the ring is going SILENT for this PR "
-        "until a green verdict lands. Pushing has not cleared it; check "
-        "whether the failing check is a REQUIRED context (a non-required "
+        f"with no green in between, so the ring is going SILENT for this PR "
+        f"until a green verdict lands.{named} Pushing has not cleared it; "
+        "check whether that check is a REQUIRED context (a non-required "
         "check cannot block a merge), and whether this PR's head is moving "
         "for reasons unrelated to your changes — a standing sync PR's head "
         "tracks its source branch, so every merge there re-fires CI."
@@ -79,6 +91,7 @@ def deliver_verdict(
     already_delivered: Any = None,
     record: Any = None,
     failure_streak: Any = None,
+    failing_checks: Any = None,
     db_path: Any = None,
     agents_dir: Any = None,
     pr_body: str | None = None,
@@ -153,11 +166,21 @@ def deliver_verdict(
         return {"delivered": [], "skipped": True, "reason": "no-owner"}
 
     targets = [owner, *ancestors(name=owner, db_path=db_path)]
-    text = (
-        _escalation_text(repo, pr, head_sha, streak)
-        if escalating
-        else _verdict_text(repo, pr, head_sha, conclusion)
-    )
+    if escalating:
+        # One extra gh call, on the rare escalation tick only — never on the
+        # hot path. Fail-soft: an unnamed escalation still beats no escalation.
+        if failing_checks is None:
+            from ._github_ci import failing_check_names
+
+            failing_checks = failing_check_names
+        try:
+            checks = failing_checks(repo, pr)
+        except Exception as exc:  # stx-allow: fallback (naming is a nicety, not the message)
+            logger.warning("deliver_verdict: failing_check_names failed: %s", exc)
+            checks = []
+        text = _escalation_text(repo, pr, head_sha, streak, checks)
+    else:
+        text = _verdict_text(repo, pr, head_sha, conclusion)
     delivered: list[str] = []
     for target in targets:
         try:
