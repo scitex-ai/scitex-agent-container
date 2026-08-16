@@ -5,8 +5,9 @@ via stdin that contains context usage, rate-limits, model info, and session
 details. We tee the payload to a per-agent JSON file so ``sac agent status`` can
 report authoritative context data instead of the 1M-token JSONL approximation.
 
-If claude-hud is installed, display is delegated to it. Otherwise a minimal
-single-line fallback is printed.
+sac then renders the status line itself — one line naming the agent, host,
+workdir, model, context, 5h quota and active account. There is no delegation
+to any external renderer: what the pane shows is sac's decision on every host.
 
 Usage (written by setup_settings_json into .claude/settings.local.json):
     { "statusLine": { "type": "command", "command": "sac-statusline" } }
@@ -16,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -131,7 +131,7 @@ def _active_account() -> str:
         return ""
 
 
-def _fallback_display(raw: bytes) -> None:
+def _display(raw: bytes) -> None:
     # stx-allow: fallback (reason: statusLine display must never raise; corrupt
     # or unexpected payload shape silently outputs nothing rather than aborting)
     try:
@@ -170,51 +170,32 @@ def _fallback_display(raw: bytes) -> None:
         pass
 
 
-def main(stdin=None, runner=None) -> None:
+def main(stdin=None) -> None:
     """Entry point for the sac-statusline command.
 
-    ``stdin`` / ``runner`` are injection seams: default to ``sys.stdin``
-    / ``subprocess.run`` so production callers are unchanged. Tests
-    pass a real bytes-stream and a hand-rolled runner.
+    ``stdin`` is an injection seam: defaults to ``sys.stdin`` so production
+    callers are unchanged; tests pass a real bytes-stream.
     """
     if stdin is None:
         stdin = sys.stdin
-    if runner is None:
-        runner = subprocess.run
     raw = stdin.buffer.read() if hasattr(stdin, "buffer") else stdin.read()
     if isinstance(raw, str):
         raw = raw.encode()
     agent = _agent_name()
     _persist(raw, agent)
 
-    # sac RENDERS ITS OWN STATUS LINE. Operator ruling 2026-08-17:
-    # 「claude-hud は使わないで、scitex-agent-container 側で用意してもらえると
-    #   嬉しいです。自分たちでコントロールできるので。」
-    # (SUMMARY, translation mine: don't use claude-hud — provide it from sac,
-    # because then it is ours to control.)
+    # sac RENDERS ITS OWN STATUS LINE — there is no delegation seam, by
+    # operator ruling 2026-08-17: provide the status line from sac, because
+    # then it is ours to control, and delete the rest cleanly.
     #
-    # Previously this delegated to `claude-hud` whenever that binary happened
-    # to be on PATH, and only rendered sac's own line when it was absent. That
-    # made the pane's contents depend on what was installed rather than on what
-    # sac decided: the same agent showed different information on two hosts,
-    # and the fields sac wants to guarantee (host, workdir, account) could not
-    # be guaranteed at all. Measured the same day: claude-hud was installed on
-    # NEITHER compute-03 nor compute-04, so every agent was already rendering
-    # this function — the delegation was latent variance, not a live feature.
-    #
-    # Opt back in explicitly with SAC_STATUSLINE_DELEGATE=claude-hud if someone
-    # ever wants it; the default is ours.
-    delegate = os.environ.get("SAC_STATUSLINE_DELEGATE", "").strip()
-    if delegate:
-        # stx-allow: fallback (reason: an explicitly requested delegate that is
-        # not installed must degrade to sac's own line, never to a blank pane)
-        try:
-            result = runner([delegate], input=raw)
-            sys.exit(result.returncode)
-        except FileNotFoundError:
-            pass
-
-    _fallback_display(raw)
+    # This function used to shell out to an external renderer whenever that
+    # binary happened to be on PATH, which made the pane's contents depend on
+    # what was installed rather than on what sac decided: the same agent showed
+    # different information on two hosts, and the fields sac wants to guarantee
+    # (host, workdir, account) could not be guaranteed at all. It was installed
+    # on NEITHER compute-03 NOR compute-04 when measured, so every agent was
+    # already rendering the line below — latent variance, not a live feature.
+    _display(raw)
 
 
 def read_statusline_json(agent_name: str) -> dict | None:

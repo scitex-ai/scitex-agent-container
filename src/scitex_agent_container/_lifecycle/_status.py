@@ -254,7 +254,7 @@ def agent_status(
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         result["snapshot"] = None
 
-    # Enrich with claude-hud-style metadata. Canonical source for the
+    # Enrich with the rich metadata payload. Canonical source for the
     # Agents-tab dashboard; the MCP sidecar heartbeat shells out to this
     # command rather than duplicating the logic in TypeScript.
     # stx-allow: fallback (reason: agent_meta requires psutil and an active tmux session; metadata enrichment is optional and must never break status)
