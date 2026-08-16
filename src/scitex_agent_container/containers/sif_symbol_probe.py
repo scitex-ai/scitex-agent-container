@@ -2,6 +2,12 @@
 
 import sys
 
+# noqa placement is deliberate: this import LOOKS unused and is not. The
+# probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
+# whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
+# it as dead because nothing references the name, and removing it on that
+# advice blinded the gate and reddened test_probe_imports_scitex_cards.
+import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
 if "in_progress" not in WIP_STATUSES:

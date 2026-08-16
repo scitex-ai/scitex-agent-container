@@ -443,6 +443,12 @@ import sys
 # asserted the two aliased; that shim was DELETED 2026-08-16, so there is
 # no second module tree left to disagree with and the import below is the
 # whole check.
+# noqa placement is deliberate: this import LOOKS unused and is not. The
+# probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
+# whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
+# it as dead because nothing references the name, and removing it on that
+# advice blinded the gate and reddened test_probe_imports_scitex_cards.
+import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
 
