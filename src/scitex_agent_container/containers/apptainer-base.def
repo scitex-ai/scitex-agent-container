@@ -582,7 +582,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards>=0.32.0" \
+        "scitex-cards>=0.41.0" \
         "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -648,16 +648,19 @@ import sys
 # 2026-07-12 fleet-drift incident this gate exists to end.
 #
 # Package renamed scitex-cards (2026-07-16): the canonical module is
-# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
-# to the SAME module objects — un-cutover fleet code imports the old
-# name, so the shim working is itself a ship-gate for this image.
+# scitex_cards. The wheel USED to ship a scitex_todo shim and this gate
+# asserted the two aliased; that shim was DELETED 2026-08-16, so there is
+# no second module tree left to disagree with and the import below is the
+# whole check.
+# noqa placement is deliberate: this import LOOKS unused and is not. The
+# probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
+# whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
+# it as dead because nothing references the name, and removing it on that
+# advice blinded the gate and reddened test_probe_imports_scitex_cards.
+import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
-import scitex_cards  # was scitex_todo until 2026-08-16; that shim is now DELETED
 
-if scitex_todo is not scitex_cards:
-    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
-    sys.exit(1)
 
 # sac #633: auto-provisions a new agent's container overlay root; without
 # it every newly-created agent is stillborn on a raw apptainer FATAL.
@@ -693,7 +696,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.32.0``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.41.0``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -818,7 +821,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
+print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }

@@ -292,12 +292,14 @@ cat > "$PROBE" <<'PYEOF'
 
 import sys
 
-import scitex_cards  # was scitex_todo until 2026-08-16; that shim is now DELETED
+# noqa placement is deliberate: this import LOOKS unused and is not. The
+# probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
+# whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
+# it as dead because nothing references the name, and removing it on that
+# advice blinded the gate and reddened test_probe_imports_scitex_cards.
+import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
-if scitex_todo is not scitex_cards:
-    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
-    sys.exit(1)
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)
