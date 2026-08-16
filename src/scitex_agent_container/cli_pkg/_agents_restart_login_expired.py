@@ -198,15 +198,31 @@ def restart_login_expired(
             "  Each has a board card. A human needs to look — restarting is not "
             "fixing these (usually a real account problem)."
         )
-    if unseen:
+    # `unseen` is EVERY UNOBSERVED, but only some of them are this pass's own
+    # indeterminacy. `no-session` is a DETERMINATE reading handed to
+    # fleet-reconcile, and :meth:`PassOutcome.exit_code` already excludes it.
+    # Rendering both under one banner is how the summary came to contradict the
+    # verdict printed beside it: measured 2026-08-16, a pass exited 0 while
+    # announcing "this pass therefore CANNOT report a clean fleet" about 100
+    # sessionless agents. The verdict was fixed; the narration was not.
+    indeterminate = outcome.indeterminate()
+    no_session = tuple(r for r in unseen if r.reason == "no-session")
+    if indeterminate:
         console.print(
-            f"\n[magenta]{len(unseen)} agent(s) were NOT observed:[/magenta] "
-            f"{', '.join(r.name for r in unseen)}\n"
+            f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
+            f"{', '.join(r.name for r in indeterminate)}\n"
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
             "    sac agents auth-status\n"
             "    sac agents list"
+        )
+    if no_session:
+        console.print(
+            f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
+            "— fleet-reconcile's half of the fleet, not this pass's. A missing "
+            "session is a determinate reading, so it does NOT prevent a clean "
+            "report here."
         )
     if outcome.of(Verdict.BUDGET_UNKNOWN):
         console.print(
