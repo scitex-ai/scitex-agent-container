@@ -174,6 +174,39 @@ jobs:
             fi
           }
 
+          die() {
+            # alarm() + FAIL THE RUN. For refusals that NO FUTURE TICK CAN CLEAR:
+            # the sweep has detected a state only a human can resolve, so the run
+            # must be red or the detection reaches nobody.
+            #
+            # MEASURED 2026-08-16, and this is why the helper exists. From
+            # 2026-08-05 the repo sat at pyproject 0.25.0 with no v0.25.0 tag and
+            # no CHANGELOG [0.25.0] section. Every tick for ELEVEN DAYS took the
+            # INCONSISTENT branch, printed its ::error::, and `exit 0`. 229 commits
+            # shipped under one frozen, never-released label; PyPI stayed on
+            # 0.24.25; and three hosts ran a wheel reporting the same version as
+            # develop while missing a fix that had already merged. The run history
+            # was GREEN throughout, so the heartbeat that exists to make a stall
+            # visible is precisely what hid it.
+            #
+            # The constitution names this (§2, dotfiles#289 bd189677, 2026-08-16):
+            # "A check whose failure nothing reads is not a check. A gate can fail
+            #  correctly, on time, in writing, and change nothing, because no
+            #  caller branches on the verdict." Its checklist item is the test to
+            #  apply to every exit below — "does the caller branch on it, or only
+            #  on the presence of output?" Here the only caller is the run
+            #  conclusion, and it read 0.
+            #
+            # NOT every refusal belongs here. A tick that declines because develop
+            # is RED, because CI is still busy, or because a release is inside its
+            # grace window is the sweep working correctly and MUST stay green — its
+            # own health is a separate fact from the repo's, and reddening it there
+            # would put the alarm on the rail it is reporting about (see alarm()).
+            # Use die() only where waiting cannot help.
+            alarm "$1"
+            exit 1
+          }
+
           pypi_serves() {
             # version-specific JSON with real file count — same contract the
             # release pipeline's own verify uses. Never trust /simple/ or latest.
@@ -307,8 +340,7 @@ jobs:
           # between this read and the helper's parser goes red rather than ships.
           V=$(grep -m1 -E '^version[[:space:]]*=[[:space:]]*"' pyproject.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
           if ! printf '%s' "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            alarm "pyproject [project] version '$V' is not clean X.Y.Z — refusing to act."
-            exit 0
+            die "pyproject [project] version '$V' is not clean X.Y.Z — refusing to act."
           fi
           MAJ=${V%%.*}; REST=${V#*.}; MIN=${REST%%.*}; PAT=${REST#*.}
           NEXT="${MAJ}.${MIN}.$((PAT + 1))"
@@ -346,8 +378,7 @@ jobs:
             if run_autobump verify --version "$V"; then
               DECISION=TAG_ONLY
             else
-              alarm "INCONSISTENT: pyproject is $V, no tag v$V, and CHANGELOG has no released [$V] section. Refusing to guess."
-              exit 0
+              die "INCONSISTENT: pyproject is $V, no tag v$V, and CHANGELOG has no released [$V] section. Refusing to guess."
             fi
           fi
 
@@ -360,13 +391,11 @@ jobs:
             M=$(git log origin/develop --grep="autobump/release-v$V" --format=%H -1 2>/dev/null || echo "")
             [ -z "$M" ] && M=$(git log origin/develop --grep="chore(release): v$V" --format=%H -1 2>/dev/null || echo "")
             if [ -z "$M" ]; then
-              alarm "TAG_ONLY: pyproject is $V with no tag v$V, but the bump-merge commit could not be located. Manual tag needed."
-              exit 0
+              die "TAG_ONLY: pyproject is $V with no tag v$V, but the bump-merge commit could not be located. Manual tag needed."
             fi
             MV=$(git show "$M:pyproject.toml" 2>/dev/null | grep -m1 -E '^version[[:space:]]*=' | sed -E 's/.*"([^"]+)".*/\1/')
             if [ "$MV" != "$V" ]; then
-              alarm "TAG_ONLY: located commit $M has pyproject '$MV', expected '$V'. Refusing to tag the wrong tree."
-              exit 0
+              die "TAG_ONLY: located commit $M has pyproject '$MV', expected '$V'. Refusing to tag the wrong tree."
             fi
             log "TAG_ONLY: v$V landed but is untagged; will re-tag the bump-merge commit $M."
             if ! acting; then
