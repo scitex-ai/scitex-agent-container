@@ -150,9 +150,9 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
     return "unknown", ""
 
     # Note: "waiting" (freshly booted, never received work) is intentionally
-    # NOT detected here. The earlier draft relied on the claude-hud
-    # statusline `Context ░░░░░░░░░░ 0%` marker, but claude-hud is an
-    # external tool not present in every install. The dashboard derives
+    # NOT detected here. An earlier draft read a `Context ░░░░░░░░░░ 0%`
+    # marker off the pane's statusline, which made pane classification depend
+    # on how the status line happens to be rendered. The dashboard derives
     # "waiting" instead from the hub-side `last_tool_at` field — an agent
     # that is connected but has never recorded a tool call is waiting,
     # regardless of what its pane statusline looks like.
