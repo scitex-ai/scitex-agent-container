@@ -240,10 +240,15 @@ def account_list(
     rows = build_stored_rows(accounts, refresh=refresh, passive=passive)
     all_rows = rows + build_openai_rows(openai_accounts)
     if not all_rows:
-        click.echo(
-            "No accounts stored or active. Use: "
-            "scitex-agent-container account save <name>"
-        )
+        # WHICH empty is this? An unread store and an empty one produce the
+        # identical `[]` from list_accounts, and only one of them means "this
+        # host has no accounts". Advising `account save` on the other sends
+        # the operator to create something that already exists — measured
+        # 2026-08-17 from inside a container, where the store lives on the
+        # host and $HOME does not reach it.
+        from .._state.account_store_state import classify_store, no_accounts_message
+
+        click.echo(no_accounts_message(classify_store()))
         return
     console.print(
         "[dim]--refresh is LOCAL-ONLY: it refetches usage, and a refetch can "
