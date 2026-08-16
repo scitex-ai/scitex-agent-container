@@ -87,18 +87,70 @@ def resolve_owner(
     return None
 
 
-def tracked_repos(*, agents_dir: Path | None = None, org: str | None = None) -> list:
+#: Process-lifetime cache of constructed name → canonical ``owner/repo``.
+#: A transfer or rename is rare and the poller restarts often, so a
+#: per-process cache is enough; it keeps the poll tick from spending one
+#: ``gh`` call per repo per tick.
+_CANONICAL_CACHE: dict = {}
+
+
+def _canonical_name_with_owner(repo: str) -> str:
+    """Return GitHub's canonical ``owner/name`` for ``repo``.
+
+    A constructed ``<org>/<project>`` string is a GUESS about who owns the
+    repo today. GitHub redirects path-addressed REST GETs after a transfer,
+    so the guess keeps working and nothing ever reports that it is stale —
+    while every notification quotes an owner that may no longer exist.
+    Measured 2026-08-16: the ring named a repo by a pre-transfer owner for
+    long enough to cost a whole investigation into whether two repos
+    existed. Search endpoints do NOT follow the redirect, so the stale name
+    also silently returns zero results there.
+
+    Fail-soft: any failure returns ``repo`` unchanged, which is exactly the
+    previous behaviour, so a gh outage degrades to a guess rather than to
+    an empty poll list.
+    """
+    cached = _CANONICAL_CACHE.get(repo)
+    if cached is not None:
+        return cached
+    try:
+        from ._github_ci import _run_gh
+
+        raw = _run_gh(
+            ["repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"]
+        )
+    except Exception:  # stx-allow: fallback (gh missing → keep the constructed name)
+        raw = ""
+    resolved = (raw or "").strip()
+    out = resolved if "/" in resolved else repo
+    _CANONICAL_CACHE[repo] = out
+    return out
+
+
+def tracked_repos(
+    *,
+    agents_dir: Path | None = None,
+    org: str | None = None,
+    canonicalize=None,
+) -> list:
     """Return the ``owner/repo`` strings the CI poller should watch.
 
     Derived from sac's own agent specs (the repos that have an owning
     agent): each spec's ``metadata.labels.project`` becomes
-    ``<org>/<project>``. ``org`` defaults to ``$SAC_CI_POLL_ORG`` then
-    ``ywatanabe1989`` (the SciTeX GitHub org). Sorted + de-duped; a
-    project with no agent contributes nothing, so the poller only ever
-    watches repos sac can actually deliver a verdict for.
+    ``<org>/<project>``, which is then resolved to the name GitHub
+    actually reports. ``org`` seeds that lookup and defaults to
+    ``$SAC_CI_POLL_ORG``; the constructed string is a starting guess, not
+    the answer. Sorted + de-duped AFTER resolution, so two projects that
+    resolve to one repo collapse. A project with no agent contributes
+    nothing, so the poller only ever watches repos sac can deliver a
+    verdict for.
+
+    ``canonicalize`` is an injection seam; production callers leave it
+    ``None``.
     """
     agents_dir = agents_dir if agents_dir is not None else _default_agents_dir()
     resolved_org = org or os.environ.get("SAC_CI_POLL_ORG", "ywatanabe1989")
+    canonicalize = canonicalize or _canonical_name_with_owner
     if not agents_dir.is_dir():
         return []
     import yaml
@@ -112,7 +164,7 @@ def tracked_repos(*, agents_dir: Path | None = None, org: str | None = None) -> 
             continue
         if isinstance(project, str) and project.strip():
             projects.add(project.strip())
-    return [f"{resolved_org}/{p}" for p in sorted(projects)]
+    return sorted({canonicalize(f"{resolved_org}/{p}") for p in projects})
 
 
 __all__ = [

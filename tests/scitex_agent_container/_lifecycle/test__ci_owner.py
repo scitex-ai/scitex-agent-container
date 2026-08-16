@@ -95,13 +95,16 @@ def test_unknown_repo_resolves_to_none(tmp_path: Path):
 
 
 def test_tracked_repos_derives_owner_repo_from_spec_labels(tmp_path: Path):
-    # Arrange
+    # Arrange — canonicalize seamed to identity: this test is about the
+    # construction from spec labels, not about the GitHub lookup.
     agents = tmp_path / "agents"
     _write_spec(agents, "proj-scitex-dev", "scitex-dev")
     # Act
-    repos = tracked_repos(agents_dir=agents, org="ywatanabe1989")
+    repos = tracked_repos(
+        agents_dir=agents, org="an-org", canonicalize=lambda repo: repo
+    )
     # Assert
-    assert repos == ["ywatanabe1989/scitex-dev"]
+    assert repos == ["an-org/scitex-dev"]
 
 
 def test_tracked_repos_empty_when_no_specs(tmp_path: Path):
@@ -109,6 +112,94 @@ def test_tracked_repos_empty_when_no_specs(tmp_path: Path):
     agents = tmp_path / "agents"
     agents.mkdir()
     # Act
-    repos = tracked_repos(agents_dir=agents, org="ywatanabe1989")
+    repos = tracked_repos(
+        agents_dir=agents, org="an-org", canonicalize=lambda repo: repo
+    )
     # Assert
     assert repos == []
+
+
+# --- canonical owner/name resolution -----------------------------------
+# The constructed `<org>/<project>` is a GUESS about who owns the repo
+# today. GitHub redirects path-addressed REST GETs after a transfer, so a
+# stale guess keeps working and never reports itself — while every
+# notification quotes an owner that may no longer exist, and search
+# endpoints silently return nothing for it.
+
+
+def test_tracked_repos_reports_the_name_github_returns_not_the_guess():
+    # Arrange — the constructed guess and the canonical answer differ,
+    # which is exactly the transfer case that caused this.
+    from scitex_agent_container._lifecycle._ci_owner import tracked_repos as tr
+    from pathlib import Path as _P
+    import tempfile, textwrap
+
+    with tempfile.TemporaryDirectory() as td:
+        agents = _P(td) / "agents"
+        _write_spec(agents, "proj-hub", "scitex-hub")
+        # Act
+        repos = tr(
+            agents_dir=agents,
+            org="old-owner",
+            canonicalize=lambda repo: "new-org/scitex-hub",
+        )
+    # Assert
+    assert repos == ["new-org/scitex-hub"]
+
+
+def test_tracked_repos_collapses_two_projects_that_resolve_to_one_repo(
+    tmp_path: Path,
+):
+    # Arrange — de-dup must happen AFTER resolution, or a renamed repo is
+    # polled twice under two names.
+    agents = tmp_path / "agents"
+    _write_spec(agents, "proj-a", "old-name")
+    _write_spec(agents, "proj-b", "new-name")
+    # Act
+    repos = tracked_repos(
+        agents_dir=agents, org="an-org", canonicalize=lambda repo: "an-org/new-name"
+    )
+    # Assert
+    assert repos == ["an-org/new-name"]
+
+
+def test_canonical_lookup_falls_back_to_the_guess_when_gh_gives_nothing():
+    # Arrange — a gh outage must degrade to the previous behaviour (a
+    # guess), never to an empty poll list that silently watches nothing.
+    from scitex_agent_container._lifecycle import _ci_owner as mod
+
+    mod._CANONICAL_CACHE.clear()
+    saved = mod._run_gh if hasattr(mod, "_run_gh") else None
+    import scitex_agent_container._lifecycle._github_ci as ghmod
+
+    real = ghmod._run_gh
+    ghmod._run_gh = lambda args: ""
+    try:
+        # Act
+        out = mod._canonical_name_with_owner("an-org/a-repo")
+    finally:
+        ghmod._run_gh = real
+        mod._CANONICAL_CACHE.clear()
+    # Assert
+    assert out == "an-org/a-repo"
+
+
+def test_canonical_lookup_is_cached_so_a_tick_costs_one_call_per_repo():
+    # Arrange — without a cache the poll loop spends one gh call per repo
+    # per tick, forever.
+    from scitex_agent_container._lifecycle import _ci_owner as mod
+    import scitex_agent_container._lifecycle._github_ci as ghmod
+
+    mod._CANONICAL_CACHE.clear()
+    calls: list = []
+    real = ghmod._run_gh
+    ghmod._run_gh = lambda args: calls.append(args) or "an-org/canonical"
+    try:
+        # Act
+        mod._canonical_name_with_owner("an-org/a-repo")
+        mod._canonical_name_with_owner("an-org/a-repo")
+    finally:
+        ghmod._run_gh = real
+        mod._CANONICAL_CACHE.clear()
+    # Assert
+    assert len(calls) == 1
