@@ -15,6 +15,8 @@ failed when the account precedence was moved out of ``_agent_list``.
 
 from __future__ import annotations
 
+import os
+
 __all__ = ["_MOVEMENT_DEFAULTS", "_movement_fields", "build_agent_row"]
 
 # The always-present movement trio in its empty shape — the tolerant fallback
@@ -114,4 +116,25 @@ def build_agent_row(
         row["probe_error"] = probe_error
     if labels:
         row["labels"] = labels
+    # THE CALLER'S OWN ROW — one boolean that hands every consumer a free
+    # control. This listing is vantage-point dependent: read from inside a
+    # container it reports SPEC DEFINITIONS, and on 2026-08-16 it returned
+    # running=0 for a fleet where eight handymen and three maintainers were
+    # provably working, newest heartbeat eleven days stale. scitex-hpc hit the
+    # same thing from a DIFFERENT container and found the decisive detail —
+    # their OWN row read ``status: defined`` while they were executing the
+    # command that produced it.
+    #
+    # So: if the row describing YOU disagrees with the fact that you are
+    # running, the listing cannot be trusted about anyone else. Marking the
+    # self row turns "you must remember this instrument is vantage-dependent"
+    # into something the OUTPUT ITSELF reveals, which is the only version of
+    # that rule that survives being forgotten.
+    #
+    # Identity comes from SCITEX_TODO_AGENT_ID, the same variable every agent
+    # already stamps its card writes with — deliberately NOT the hostname or
+    # the spec, because those answer a different question. When it is unset
+    # (a human at a shell), no row is marked and nothing changes.
+    if name and name == os.environ.get("SCITEX_TODO_AGENT_ID", ""):
+        row["is_self"] = True
     return row
