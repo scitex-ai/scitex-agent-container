@@ -444,8 +444,7 @@ import sys
 # name, so the shim working is itself a ship-gate for this image.
 from scitex_cards._throughput import WIP_STATUSES
 
-import scitex_cards
-import scitex_todo  # the transition shim — its absence breaks the fleet
+import scitex_cards  # was scitex_todo until 2026-08-16; that shim is now DELETED
 
 if scitex_todo is not scitex_cards:
     print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
