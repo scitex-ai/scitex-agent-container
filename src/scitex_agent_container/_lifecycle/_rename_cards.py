@@ -89,7 +89,7 @@ def _store_module() -> Any:
     must acknowledge (``--no-cards``), never a shrug.
     """
     try:
-        from scitex_todo import _store
+        from scitex_cards import _store
     except ImportError as exc:
         raise CardMigrationError(
             "scitex-todo is not installed, so this rename cannot see the "
