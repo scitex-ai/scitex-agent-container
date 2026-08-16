@@ -6,6 +6,71 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-17
+
+Promotes 50 commits of accumulated `develop` work to `main`. Cut because
+the fleet had drifted into the state a frozen version number produces:
+**five installs all reporting `0.25.0` and running four different builds**
+(measured 2026-08-17 — compute-01/02/03 on `g42c71961`, compute-04 on
+`ga039898d`, the laptop on `g96820bd1`, an agent container on `ge3600683`).
+A version that does not move stops being an answer to "what is running
+here", and every propagation check downstream of it inherits the lie.
+
+It also unblocks the release pipeline itself. `sac freshness check` reported
+`release-run: last release run (main) ended in 'failure' — NOTHING SHIPPED`,
+and the three failures were all on `main` only:
+`test__env_snapshot.py::test_snapshot_is_not_written_under_world_writable_tmp`,
+plus two in `test__restart_verify_session.py`. All 26 tests in those files
+pass on `develop` (measured before cutting this), so `main` was failing on
+code `develop` had already fixed — the promotion IS the repair, not a
+change that needs one.
+
+### Added
+
+- **`accounts list` states each account once, not once per host.** The
+  fleet view rendered the cross product — four accounts times every host
+  that answered — so a healthy five-host fleet produced twenty rows
+  carrying four accounts' worth of information. Identity and usage belong
+  to the Anthropic account and are now stated once (freshest cache wins);
+  credential freshness belongs to one file on one machine and is NEVER
+  collapsed, so three VALID hosts cannot hide one EXPIRED one — divergence
+  renders as `VALID x2; EXPIRED on <host>`. `--by-host` keeps the exploded
+  view. (#1087)
+- **sac renders its own status line**, naming agent@host, workdir, model,
+  context, 5h quota and the active account. The account field exists
+  because nothing inside a running agent could answer "which account am I
+  actually using" — every check had to be made from outside the container.
+  (#1086)
+- `agents list` marks the caller's own row with `is_self` (#1074).
+- `image list` shows `built_at` and the resolved symlink target (#1073).
+- A drift warning when a spec's inert sibling copy is newer (#1083).
+- Codex Python SDK as a fourth harness (#1047), `resolve_harness_key` and
+  the HarnessDescriptor registry, and `spec.residency resident|one-shot`.
+- Fleet-wide `agents list` and `accounts list` with an honest reachability
+  header — a partial fleet never renders as a whole one (#1050).
+- `start` verifies the launch before reporting it, so a dead agent is never
+  reported as SUCCESS.
+
+### Changed
+
+- **BREAKING: apptainer is the only container engine.** `container.runtime`
+  is abolished rather than kept as a one-value field — a vocabulary word no
+  implementation stands behind is a promise the code will break.
+- **claude-hud is gone entirely, including the opt-in that kept it.** The
+  status line no longer delegates to any external renderer and
+  `statusline.py` imports no subprocess module at all; a test asserts that
+  against the production source so a future shell-out cannot creep back in
+  however it is spelled. (#1088)
+
+### Fixed
+
+- 26 fixes across the CI verdict ring (owner resolution, poll budgets,
+  consecutive-failure caps), auth healing, credential rotation, and the
+  account store. Notable: the auth-heal narrator no longer announces it
+  "CANNOT report a clean fleet" while reporting one (#1084), and `ci-owner`
+  reports the repo name GitHub returns rather than a constructed guess
+  (#1081).
+
 ## [0.25.0] - 2026-08-16
 
 ### Fixed
