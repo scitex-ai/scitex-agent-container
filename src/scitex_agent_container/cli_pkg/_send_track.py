@@ -70,13 +70,26 @@ def resolve_track_strategy(agent: str) -> str | None:
     is the whole reason routing can happen without blocking the caller's turn,
     which the MCP surface requires.
 
-    A BLIND READING STILL YIELDS "tui", AND THAT IS THE RIGHT ANSWER. From
-    inside a container the tmux enumeration is empty or fails, so the route
-    resolves to TUI with ``resolved=None``. Recommending ``deliver`` there is
-    correct rather than a fallback: ``deliver`` reports blindness as its own
-    verdict ("this is blindness, not absence — do not resend on this verdict"),
-    while ``send`` would return a cheerful success. When we cannot see, we want
-    the verb that says so.
+    ONLY A PROVEN ROUTE SWITCHES THE VERB — ``route.resolved is True``, not
+    merely ``route.strategy``. The distinction is load-bearing and I got it
+    wrong first: :func:`.._delivery.resolve_route` falls through to the TUI
+    strategy whenever no session id is READABLE, so a blind tmux enumeration
+    (every containerized caller sees an empty session list) and a transient
+    failure to read an SDK agent's session-id file both yield
+    ``strategy="tui"`` with ``resolved`` of ``None``/``False``. Keying on the
+    strategy alone would therefore route a perfectly healthy SDK agent onto
+    ``deliver`` because one file read hiccuped — trading a silent failure for a
+    louder one rather than removing it.
+
+    So the three cases are:
+
+        resolved is True,  strategy tui  -> "deliver"  (a tmux session was SEEN)
+        resolved is True,  strategy sdk  -> "send"     (a session id was READ)
+        anything else                    -> None       -> "send", today's verb
+
+    Unknown keeps the status quo. That is the conservative direction here
+    because ``send`` is what every existing caller already gets: an unproven
+    route must not silently move anyone onto a different transport.
     """
     # stx-allow: fallback (reason: this only chooses which command STRING to
     # suggest; an unreadable route must degrade to today's verb rather than
@@ -84,7 +97,11 @@ def resolve_track_strategy(agent: str) -> str | None:
     try:
         from .._delivery import resolve_route
 
-        return resolve_route(agent).strategy or None
+        route = resolve_route(agent)
+        # `resolved is True` ONLY — see the docstring. `False` (a capable
+        # enumeration that did not find the session) and `None` (a blind one)
+        # both mean the route is unproven, and unproven keeps today's verb.
+        return route.strategy if route.resolved is True else None
     except Exception:  # stx-allow: fallback (reason: catch-all — see above)
         return None
 
