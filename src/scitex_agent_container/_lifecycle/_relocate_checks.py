@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from ._relocate_bind_kind import classify_binds, group_by_action
 from ._relocate_preflight_facts import Check, SourceFacts, TargetFacts
 from ._relocate_session_choice import CODE_UNKNOWN as SESSION_UNKNOWN
 from ._relocate_session_choice import choose_session
@@ -118,18 +119,45 @@ def check_image(facts: TargetFacts, to_host: str) -> Check:
     return Check(name=CHECK_IMAGE, ok=True, detail="image present")
 
 
-def check_binds(facts: TargetFacts, to_host: str) -> Check:
+def check_binds(
+    facts: TargetFacts, to_host: str, *, workdir: str = "", from_host: str = ""
+) -> Check:
+    """Missing binds are never ONE problem, and the hint must not pretend they are.
+
+    The old hint said "remove or re-point these binds in the spec", which is the
+    right instruction for a Windows drive on a NAS and the wrong one for the
+    fifteen fleet specs measured on 2026-08-11: nine bind Spartan cluster storage
+    that a workstation cannot provide at all, and six bind a dataset and a
+    checkout that exist only on the laptop that made them. Printed as one list of
+    absent paths those look identical; the actions are provision, carry, and
+    (for anything under an account or key directory) provision-and-never-copy.
+
+    ``workdir`` and ``from_host`` are what make the split possible — see
+    :mod:`_relocate_bind_kind`. Without them every path falls to "unclassified",
+    which states both possibilities rather than guessing.
+    """
     if facts.missing_bind_sources is None:
         return _unobserved(CHECK_BINDS, "bind sources")
     if facts.missing_bind_sources:
         missing = ", ".join(facts.missing_bind_sources)
+        classified = classify_binds(
+            facts.missing_bind_sources, workdir=workdir, from_host=from_host
+        )
+        parts = [
+            f"{action}: " + ", ".join(b.path for b in members)
+            for action, members in group_by_action(classified)
+        ]
         return Check(
             name=CHECK_BINDS,
             ok=False,
             detail=f"bind sources absent on {to_host}: {missing}",
             hint=(
-                "remove or re-point these binds in the spec for the target host "
-                "(2026-08-07: /mnt/c is a Windows drive that does not exist on the nas)"
+                "these are not one problem — "
+                + "; ".join(parts)
+                + ". A path the host provides is provisioned on the target; a path the "
+                "agent made exists only where it ran and must travel with it (a "
+                "relocation carries the spec and the transcript and nothing else); a "
+                "credential path is provisioned there and NEVER copied between hosts"
             ),
         )
     return Check(

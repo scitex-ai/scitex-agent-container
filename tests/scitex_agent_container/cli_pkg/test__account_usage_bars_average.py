@@ -26,7 +26,15 @@ from scitex_agent_container.cli_pkg._account_usage_bars import (
 _NOW = datetime(2026, 7, 30, 2, 52, tzinfo=timezone.utc)
 
 
-def _row(name, pct_5h, pct_7d, *, in_5h=1.0, in_7d=100.0):
+def _row(name, pct_5h, pct_7d, *, in_5h=1.0, in_7d=100.0, usage_state="known"):
+    """An AccountRow-shaped reading the fleet average is entitled to count.
+
+    ``usage_state`` is explicit because the Average counts ONLY ``known``
+    readings (INCIDENT 2026-08-12: a stale figure and a figure belonging to
+    another account were both averaged in, and the fleet looked to have
+    headroom it did not have). These rows model measured readings, so they
+    have to say so — a row that omits the field is not counted.
+    """
     return SimpleNamespace(
         provider="claude-code",
         name=name,
@@ -34,6 +42,9 @@ def _row(name, pct_5h, pct_7d, *, in_5h=1.0, in_7d=100.0):
         used_pct_7d=pct_7d,
         reset_at_5h=_NOW + timedelta(hours=in_5h),
         reset_at_7d=_NOW + timedelta(hours=in_7d),
+        usage_state=usage_state,
+        usage_age_seconds=0,
+        usage_reason=None,
     )
 
 

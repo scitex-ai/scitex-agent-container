@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .._runners._tmux._target import exact_target
+
 __all__ = [
     "Specimen",
     "capture_specimen",
@@ -107,7 +109,14 @@ def _run(argv: list[str]) -> str:
 
 def _pane_pid(agent: str) -> str:
     return _run(
-        ["tmux", "list-panes", "-t", f"{_TUI_PREFIX}{agent}", "-F", "#{pane_pid}"]
+        [
+            "tmux",
+            "list-panes",
+            "-t",
+            exact_target(f"{_TUI_PREFIX}{agent}"),
+            "-F",
+            "#{pane_pid}",
+        ]
     ).strip()
 
 
@@ -168,7 +177,7 @@ def capture_specimen(
         f"--- auth-status (full) ---\n{_auth_status_table(sac_bin)}\n"
         f"--- pane pid ---\n{pid}\n{_ps_line(pid)}\n"
         f"--- pane capture (full scrollback tail {_SCROLLBACK_LINES}) ---\n"
-        f"{_run(['tmux', 'capture-pane', '-t', f'{_TUI_PREFIX}{agent}', '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
+        f"{_run(['tmux', 'capture-pane', '-t', exact_target(f'{_TUI_PREFIX}{agent}'), '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
         f"--- state.db row ---\n{_state_db_row(agent)}\n"
     )
     target = specimen_path(agent, now=now, root=root)

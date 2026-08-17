@@ -189,6 +189,101 @@ _SAC_CARDS_DB = _SAC_STATE_FLOOR / "cards" / "cards.db"
 os.environ["SCITEX_CARDS_DB"] = str(_SAC_CARDS_DB)
 os.environ["SCITEX_TODO_DB"] = str(_SAC_CARDS_DB)
 
+# --- NEVER let a test ssh into the operator's REAL fleet -------------------
+# `sac agents list` is FLEET-WIDE by default: with no flags it fans out over
+# every peer in `~/.scitex/agent-container/config.yaml` UNION the scitex-dev
+# host registry. On the operator's own machines that is ~12 live hosts, and
+# `scitex_dev.hosts.list_hosts()` SEEDS a default registry from its built-ins
+# on any box where the file is absent — so even a fresh CI runner resolves
+# mba / spartan / the NAS row set and would try to reach them.
+#
+# Six existing tests invoke the fleet view (`runner.invoke(status, ["--json"])`
+# and friends). Without this floor each of them would open real ssh
+# connections, take a per-host timeout to fail, and make its assertions a
+# function of the operator's network. Same reasoning, same shape, as the state
+# / event-log / card floors above: force-set, so it does not depend on any
+# fixture remembering to opt in.
+#
+# Tests that exercise the fan-out ITSELF clear this via `env_save_restore` (or
+# pass explicit `targets=` / `peer_probe=` seams), which is the intended way to
+# reach the peer leg deliberately rather than by accident.
+os.environ["SAC_AGENTS_LIST_NO_FANOUT"] = "1"
+
+# --- NEVER let a test run a BACKGROUND LOOP it did not ask for ------------
+# THE ASSERTION-CORRUPTION PATH, measured. `sac listen`'s lifespan launches
+# six background loops. `SAC_LISTEN_STARTUP_SYNC_DISABLED`,
+# `SAC_PERIODIC_DRIVE_DISABLED`, `SAC_LIVENESS_TICK_DISABLED` and friends
+# are honoured AT THE LAUNCH SITE, so setting them means the task is never
+# created. The CI poller, the TUI heartbeat writer and the SDK heartbeat
+# writer were the exceptions: they launched unconditionally and let the
+# coroutine "self-disable" — which still cost a task and STILL LOGGED A
+# LINE. They now honour their switch at the launch site too, which is what
+# makes this floor work at all.
+#
+# Why that line is not cosmetic. sac logs through scitex-logging, whose
+# `LazyStderrStreamHandler` deliberately re-resolves `sys.stderr` AT EVERY
+# EMIT so it follows click's isolated streams and pytest's capture. In a
+# test process that means a loop's line is written into whatever stream is
+# installed at that instant — including the buffer of a `CliRunner.invoke`
+# running elsewhere in the same worker. Measured: a background thread's log
+# line landed inside `result.output` on 30 invokes out of 30.
+#
+# Every test that boots the real listen app therefore paid for a CI poller
+# and a 30-second heartbeat writer it has no interest in. Measured across
+# tests/scitex_agent_container/{_lifecycle,_listen,a2a} alone: 1561 loop log
+# lines from 134 tests, none of which is about CI polling or tmux
+# heartbeats. An ACL test does not need a GitHub poller.
+#
+# WHY THE GROUP SWITCH AND NOT THE THREE PUBLISHED ONES. The obvious floor
+# is `SAC_GITHUB_CI_POLLER_DISABLED=1` + the two heartbeat twins. It is
+# wrong, and the by-name before/after diff on this very change caught it:
+# those three variables are read by the COROUTINES too, so setting them
+# suite-wide silently changed the behaviour of every test that calls a loop
+# function DIRECTLY — the loops' own unit tests. It failed
+#   _lifecycle/test__sdk_heartbeat_loop_unknown_is_not_dead.py and
+#   _lifecycle/test__tui_heartbeat_loop_unknown_is_not_dead.py,
+# two files a per-file opt-in list had missed, and any file added later
+# would have been missed the same way. A floor whose correctness depends on
+# maintaining a list of exceptions is not a floor.
+#
+# `SAC_LISTEN_POLLER_LOOPS_DISABLED` is read at the LIFESPAN LAUNCH SITE and
+# nowhere else, so it says exactly one thing — "this app boots without its
+# pollers" — and cannot reach a test that drives a loop itself. Force-set,
+# like every floor above.
+os.environ["SAC_LISTEN_POLLER_LOOPS_DISABLED"] = "1"
+
+# --- A `--json` ASSERTION READS result.stdout, NEVER result.output --------
+# Convention for every CliRunner test in this tree. It is one line to get
+# right and it has cost a red trunk.
+#
+# In click >= 8.2 `Result.output` is a THIRD buffer: stdout and stderr
+# mixed in write order, "as the user would see it in a terminal".
+# `Result.stdout` is stdout alone. So
+#
+#     json.loads(result.output[result.output.index("{"):])
+#
+# does not assert "the --json surface emitted valid JSON". It asserts
+# "and also nothing anywhere in this PROCESS wrote to stderr during the
+# invoke" — a condition no test controls, because under pytest-xdist the
+# whole worker's background threads share the process. develop 312975ec
+# died on exactly that: a request thread in
+# tests/integration/test_sac_listen_health_watchdog_decision.py appended a
+# BrokenPipeError traceback after the JSON, and two fleet tests in a
+# different directory failed with `JSONDecodeError: Extra data`
+# (run 31867365078, py3.11, gw7).
+#
+# The prefix-skip is the other half. It exists to tolerate LEADING noise,
+# and tolerating leading noise is precisely what kept TRAILING noise
+# invisible until it landed mid-document. It also hid a real product bug:
+# `sac image list --json` printed a human "scan root: ..." banner to
+# STDOUT before the payload, so `sac image list --json | jq` failed on the
+# first byte, and three tests asserted happily past it for as long as it
+# existed.
+#
+# So: `json.loads(result.stdout)`, whole and unsliced. It is simpler than
+# what it replaces, and it says the true thing — a `--json` surface
+# promises stdout is EXACTLY one JSON document.
+
 
 def _ensure_subprocess_coverage_shim() -> None:
     """Drop an idempotent ``.pth`` shim in site-packages so every child
@@ -219,8 +314,11 @@ def _ensure_subprocess_coverage_shim() -> None:
 _ensure_subprocess_coverage_shim()
 
 # Expose shared no-mocks helpers (subprocess_shim, env_save_restore,
-# ssh_exec_shim, ssh_http_shim) as session-wide fixtures so any test under
-# tests/ can use them by name.
+# ssh_exec_shim, ssh_http_shim, dead_port) as session-wide fixtures so any test
+# under tests/ can use them by name.
+from tests.scitex_agent_container._helpers.ports import (  # noqa: E402,F401
+    dead_port,
+)
 from tests.scitex_agent_container._helpers.ssh_exec_shim import (  # noqa: E402,F401
     ssh_exec_shim,
 )

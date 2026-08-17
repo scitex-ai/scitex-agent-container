@@ -1,0 +1,18 @@
+from pipeline import Pipeline, clean_lines, sorted_unique, uppercase_lines
+
+
+def test_pipeline_composition():
+    pipe = Pipeline(["strip", "upper"])
+    assert pipe.run(["  ab  "]) == ["AB"]
+
+
+def test_uppercase_lines():
+    assert uppercase_lines(["x"]) == ["X"]
+
+
+def test_clean_lines():
+    assert clean_lines([" a ", "", "a", "b"]) == ["a", "b"]
+
+
+def test_sorted_unique():
+    assert sorted_unique(["b", "a", "b"]) == ["a", "b"]

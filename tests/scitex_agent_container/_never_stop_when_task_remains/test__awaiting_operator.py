@@ -32,6 +32,7 @@ from scitex_agent_container._never_stop_when_task_remains._awaiting_operator imp
 from ._fake_detector import (
     DEAD_SIDECAR_JSON,
     LIVE_STORE_JSON,
+    PAIRED_STORE_JSON,
     SCOPE_ENV,
     awaiting_cards,
     isolate_runtime,
@@ -320,6 +321,60 @@ def test_the_line_carries_the_store_uuid(env_save_restore, tmp_path):
     line = notice("agent-x")
     # Assert
     assert "uuid 1d55dd6e" in line
+
+
+def test_a_uuid_without_the_engine_half_is_marked_fork_undetectable(
+    env_save_restore, tmp_path
+):
+    """A uuid stored INSIDE the database is copied by a fork of that database.
+
+    Measured 2026-08-11: two endpoints both answered store_uuid 1d55dd6e while
+    holding 404 and 146 cards the other lacked. Printing that uuid bare invites
+    the false inference that two agents quoting it share a store.
+    """
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, LIVE_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "fork undetectable" in line
+
+
+def test_the_engine_identifier_is_carried_when_the_store_reports_it(
+    env_save_restore, tmp_path
+):
+    """The engine half is the part a file copy cannot bring with it."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, PAIRED_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "sys 76711086" in line
+
+
+def test_a_paired_identity_is_not_marked_fork_undetectable(
+    env_save_restore, tmp_path
+):
+    """The caveat must disappear once the pair can actually detect a fork —
+    a warning that never clears is one readers learn to ignore."""
+    # Arrange
+    isolate_runtime(env_save_restore, tmp_path)
+    store_identity_cmd(env_save_restore, tmp_path, PAIRED_STORE_JSON)
+    awaiting_cards(
+        env_save_restore, tmp_path, [operator_card("q-1", blocked_days_ago=30)]
+    )
+    # Act
+    line = notice("agent-x")
+    # Assert
+    assert "fork undetectable" not in line
 
 
 def test_a_store_password_is_never_printed():

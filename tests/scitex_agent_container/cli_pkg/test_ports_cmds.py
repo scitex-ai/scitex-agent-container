@@ -61,21 +61,23 @@ def listening_port():
 
 
 @pytest.fixture
-def free_port():
-    """A port that was bound then released — almost certainly nothing
-    listens on it, so a probe reports it dead (orphan).
+def dead_claim_port(dead_port):
+    """A port with nothing listening on it, so a probe reports it dead (orphan).
 
-    The socket is acquired inside a ``with`` block, so the fd is closed
-    even if ``bind()`` raises, and the fixture ``yield``s (rather than
-    ``return``s) per STX-TQ005: a fixture that acquires an external
-    resource owns its teardown.
+    ``collect_ports_data``'s default probe is ``port_is_bound`` — a real
+    outbound TCP CONNECT — so a socket bound WITHOUT ``listen()`` answers the
+    SYN with RST and is correctly classified dead, exactly like the released
+    port this used to hand out.
+
+    Unlike that one, this port is HELD (see the shared ``dead_port`` fixture in
+    tests/scitex_agent_container/_helpers/ports.py). Releasing it put the
+    number back in the ephemeral pool before the probe ran, so any other test
+    or xdist worker could bind it and the "orphan" would report LIVE.
+
+    Renamed from ``free_port``: nothing here wants a port it can bind, and that
+    conflation is what the shared helper exists to keep apart.
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    # Closed on block exit — the point of the fixture is a port number
-    # with nothing listening behind it.
-    yield port
+    return dead_port()
 
 
 @pytest.fixture
@@ -145,9 +147,9 @@ def test_collect_listen_row_carries_pidfile_path(db: Path, tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_collect_lists_a2a_claim_owner(db: Path, free_port: int) -> None:
+def test_collect_lists_a2a_claim_owner(db: Path, dead_claim_port: int) -> None:
     # Arrange
-    pa.claim_port("alpha", explicit=free_port, db_path=db)
+    pa.claim_port("alpha", explicit=dead_claim_port, db_path=db)
     data = collect_ports_data(db_path=db, listen_port=7878)
     # Act
     owners = {row["owner"] for row in data["a2a_claims"]}
@@ -167,9 +169,9 @@ def test_collect_marks_live_listening_port_as_live(
     assert row["live"] is True
 
 
-def test_collect_marks_dead_claim_as_orphan(db: Path, free_port: int) -> None:
-    # Arrange — claim a released port; nothing listens on it.
-    pa.claim_port("gamma", explicit=free_port, db_path=db)
+def test_collect_marks_dead_claim_as_orphan(db: Path, dead_claim_port: int) -> None:
+    # Arrange — claim a HELD, never-listened port; nothing listens on it.
+    pa.claim_port("gamma", explicit=dead_claim_port, db_path=db)
     data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
     # Act
     row = next(r for r in data["a2a_claims"] if r["owner"] == "gamma")
@@ -177,9 +179,11 @@ def test_collect_marks_dead_claim_as_orphan(db: Path, free_port: int) -> None:
     assert row["orphan"] is True
 
 
-def test_collect_lists_dead_claim_in_orphans_section(db: Path, free_port: int) -> None:
+def test_collect_lists_dead_claim_in_orphans_section(
+    db: Path, dead_claim_port: int
+) -> None:
     # Arrange
-    pa.claim_port("gamma", explicit=free_port, db_path=db)
+    pa.claim_port("gamma", explicit=dead_claim_port, db_path=db)
     data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
     # Act
     orphan_agents = {o["agent"] for o in data["orphans"]}
@@ -193,20 +197,22 @@ def test_collect_lists_dead_claim_in_orphans_section(db: Path, free_port: int) -
 
 
 def test_collect_flags_conflict_when_agent_claims_listen_port(
-    db: Path, free_port: int
+    db: Path, dead_claim_port: int
 ) -> None:
     # Arrange — an agent claims the same port sac listen is told to use.
-    pa.claim_port("clash", explicit=free_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=free_port, probe_timeout=0.2)
+    pa.claim_port("clash", explicit=dead_claim_port, db_path=db)
+    data = collect_ports_data(
+        db_path=db, listen_port=dead_claim_port, probe_timeout=0.2
+    )
     # Act
     conflict_ports = {c["port"] for c in data["conflicts"]}
     # Assert
-    assert free_port in conflict_ports
+    assert dead_claim_port in conflict_ports
 
 
-def test_collect_no_conflict_for_disjoint_ports(db: Path, free_port: int) -> None:
+def test_collect_no_conflict_for_disjoint_ports(db: Path, dead_claim_port: int) -> None:
     # Arrange — claim differs from the listen port.
-    pa.claim_port("solo", explicit=free_port, db_path=db)
+    pa.claim_port("solo", explicit=dead_claim_port, db_path=db)
     data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
     # Act
     conflicts = data["conflicts"]
@@ -256,7 +262,7 @@ def test_cli_json_output_has_listen_key(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "listen" in payload
 
@@ -266,7 +272,7 @@ def test_cli_json_output_has_reference_section(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert isinstance(payload["reference"], list) and payload["reference"]
 
@@ -287,7 +293,7 @@ def test_cli_json_includes_seeded_a2a_claim(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    owners = {row["owner"] for row in json.loads(result.output)["a2a_claims"]}
+    owners = {row["owner"] for row in json.loads(result.stdout)["a2a_claims"]}
     # Assert
     assert "cli-agent" in owners
 

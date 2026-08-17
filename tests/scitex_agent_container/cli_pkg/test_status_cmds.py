@@ -356,7 +356,7 @@ def test_status_terse_without_name_emits_error_payload(tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["--terse"])
-    payload = json.loads(result.output.strip())
+    payload = json.loads(result.stdout)
     # Assert
     assert "error" in payload and "--terse" in payload["error"]
 
@@ -443,7 +443,7 @@ def test_status_per_agent_json_returns_agent_name(tmp_path, tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["myagent", "--json"])
-    info = json.loads(result.output)
+    info = json.loads(result.stdout)
     # Assert
     assert info["name"] == "myagent"
 
@@ -455,7 +455,7 @@ def test_status_per_agent_json_reports_stopped_when_no_runtime(tmp_path, tmp_reg
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["myagent", "--json"])
-    info = json.loads(result.output)
+    info = json.loads(result.stdout)
     # Assert
     assert info["status"] == "stopped"
 
@@ -543,7 +543,7 @@ def test_status_per_agent_not_in_registry_json_reports_error(tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["ghost", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "not found" in payload.get("error", "")
 
@@ -576,7 +576,7 @@ def test_status_per_agent_terse_drops_unwhitelisted_keys(tmp_path, tmp_registry)
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["terse-agent", "--terse"])
-    info = json.loads(result.output)
+    info = json.loads(result.stdout)
     # Assert -- ``config`` / ``screen`` are real status fields that the
     # terse whitelist deliberately excludes.
     assert "config" not in info and "screen" not in info
@@ -589,7 +589,7 @@ def test_status_per_agent_terse_keeps_whitelisted_keys(tmp_path, tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["terse-agent2", "--terse"])
-    info = json.loads(result.output)
+    info = json.loads(result.stdout)
     # Assert -- terse projects flat dotted keys from TERSE_STATUS_FIELDS;
     # ``agent`` is always present (value may be ``None`` if the source
     # status dict lacks that exact key).
@@ -633,7 +633,7 @@ def test_health_not_in_registry_json_emits_error_payload(tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(health, ["ghost", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "error" in payload
 
@@ -663,7 +663,7 @@ def test_health_load_config_failure_json_mentions_validation(tmp_path, tmp_regis
     runner = CliRunner()
     # Act
     result = runner.invoke(health, ["bad2", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert -- production catches the load_config exception and surfaces
     # its message in the ``error`` field.
     assert "validation failed" in payload["error"]
@@ -688,7 +688,7 @@ def test_health_unhealthy_json_reports_unhealthy(tmp_path, tmp_registry):
     runner = CliRunner()
     # Act
     result = runner.invoke(health, ["unhealthy2", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["healthy"] is False
 

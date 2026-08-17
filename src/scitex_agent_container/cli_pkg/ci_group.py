@@ -14,6 +14,8 @@ import json as _json
 
 import click
 
+from ._ci_blocked import audit_blocked as _audit_blocked
+from ._ci_blocked import render_text as _render_blocked
 from ._ci_runners import audit as _runner_audit
 from ._ci_runners import render_text as _render_runners
 from ._ci_why import CIWhyError, explain, render_text
@@ -157,6 +159,82 @@ def runners(
         )
     if problems:
         raise click.ClickException("; ".join(problems))
+
+
+@ci_group.command("blocked")
+@click.option(
+    "--repo",
+    default=None,
+    help="owner/name; defaults to the repo gh detects from the cwd.",
+)
+@click.option(
+    "--base",
+    default=None,
+    metavar="BRANCH",
+    help="Only judge PRs targeting BRANCH (e.g. develop).",
+)
+@click.option(
+    "--limit",
+    default=100,
+    show_default=True,
+    help="How many open PRs to read.",
+)
+@click.option(
+    "--exit-zero",
+    is_flag=True,
+    help="Report without failing, even when a silent block is found.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit structured JSON.")
+@click.pass_context
+def blocked(
+    ctx: click.Context,
+    repo: str,
+    base: str,
+    limit: int,
+    exit_zero: bool,
+    as_json: bool,
+) -> None:
+    """Find PRs that are BLOCKED with NOTHING red — a required check never ran.
+
+    A required status check is matched BY NAME, and one that never started is
+    absent from ``statusCheckRollup`` rather than pending. So the PR reports
+    ``mergeable=MERGEABLE  mergeStateStatus=BLOCKED  pass=7  fail=0`` — green
+    to every count, and unmergeable forever. Measured on this repo 2026-08-12:
+    three PRs sat in that state at once while the runner pool was saturated,
+    and nothing alarmed, because nothing was red.
+
+    This compares branch protection's REQUIRED-CONTEXTS LIST against the checks
+    that actually reported. The evidence is a name that is MISSING, which is
+    why a rollup count can never find it.
+
+    Exits non-zero when a silent block is found, so a monitor can gate on it.
+    Drafts are never flagged — a draft is meant to be unmergeable.
+
+    \b
+    Examples:
+      $ sac ci blocked                          # this repo, every open PR
+      $ sac ci blocked --base develop           # only PRs targeting develop
+      $ sac ci blocked --json                   # machine-readable
+      $ sac ci blocked --exit-zero              # report, never fail
+    """
+    try:
+        gates = _audit_blocked(repo=repo, base=base, limit=limit)
+    except CIWhyError as exc:
+        # UNKNOWN is not green: never degrade into "nothing blocked".
+        raise click.ClickException(str(exc)) from exc
+
+    if _json_flag(ctx, as_json):
+        click.echo(_json.dumps([g.to_dict() for g in gates], indent=2))
+    else:
+        click.echo(_render_blocked(gates))
+
+    silent = [g for g in gates if g.silently_blocked]
+    if silent and not exit_zero:
+        nums = ", ".join(f"#{g.number}" for g in silent)
+        raise click.ClickException(
+            f"{len(silent)} PR(s) blocked by a required check that never "
+            f"started: {nums}"
+        )
 
 
 __all__ = ["ci_group"]

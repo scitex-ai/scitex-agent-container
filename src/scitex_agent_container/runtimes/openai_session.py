@@ -20,9 +20,9 @@ recording — is identical to the Claude path.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._to_home import deploy_to_home
 from .base import RuntimeBase
@@ -63,9 +63,9 @@ def _materialize_home_layouts(config: AgentConfig, home_dir: str) -> None:
     deploy_to_home(config, home_dir)
 
 
-# 2026-05-13 docker/podman ripout: apptainer is the only accepted
-# runtime. Empty / unset ``spec.runtime`` is treated as ``apptainer``.
-_CONTAINER_ENGINES: tuple[str, ...] = ("apptainer",)
+# ``_CONTAINER_ENGINES = ("apptainer",)`` lived here and was read by
+# nothing — see the twin comment in ``claude_session``. The engine is
+# ``config._container_engine.CONTAINER_ENGINE``.
 
 
 def _container_runtime_for(config: AgentConfig):
@@ -78,11 +78,14 @@ def _container_runtime_for(config: AgentConfig):
     the apptainer argv builder (which branches on ``spec.provider``).
     """
     runtime = getattr(config, "runtime", "") or "apptainer"
-    # Both the legacy ``apptainer`` value and the current
-    # ``claude-agent-sdk`` selector dispatch the headless SDK runner via
+    # Every spelling the harness registry's SDK entry claims (the legacy
+    # ``apptainer`` value and the current ``claude-agent-sdk`` selector —
+    # v4 step-4 derivation) dispatches the headless SDK runner via
     # ``apptainer exec``. The OpenAI path uses the same container
     # runtime — only the inner module differs.
-    if runtime in ("apptainer", "claude-agent-sdk"):
+    from ..config._harness_registry import CLAUDE_AGENT_SDK, runtime_spellings_for
+
+    if runtime in runtime_spellings_for(CLAUDE_AGENT_SDK):
         from ._apptainer_runtime import ApptainerContainerRuntime
 
         return ApptainerContainerRuntime()
@@ -171,12 +174,17 @@ class OpenAISessionRuntime(RuntimeBase):
 
         container_rt = self._container_runtime_for(config)
         if container_rt is None:
-            print(
-                f"error: OpenAISessionRuntime requires a container engine "
-                f"(spec.runtime: docker | podman). Got: "
-                f"{getattr(config, 'runtime', '<unset>')!r}.",
-                file=sys.stderr,
-                flush=True,
+            # FAIL CLOSED — parity with the Claude path: no bare-host
+            # fallback exists, and the offered "docker | podman" this
+            # replaces named engines ripped out 2026-05-13. Same
+            # start-failure-reported-as-False shape as
+            # ClaudeSessionRuntime.start; see the note there for why this
+            # is logged rather than printed.
+            get_logger(__name__).error(
+                f"OpenAISessionRuntime cannot resolve an apptainer "
+                f"dispatch for spec.runtime="
+                f"{getattr(config, 'runtime', '<unset>')!r}. Refusing to "
+                f"start — sac never runs an agent outside apptainer."
             )
             return False
 

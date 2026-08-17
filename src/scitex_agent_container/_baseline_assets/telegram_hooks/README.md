@@ -33,19 +33,81 @@ was not enforced. **A guard whose trigger condition is narrower than its
 stated rule reads as enforcement while enforcing almost nothing.**
 
 The hook now refuses any `#NNN` that is not immediately followed by a
-parenthetical description, with three documented decisions: URLs are
+parenthetical description, with five documented decisions: URLs are
 blanked before scanning (a `…/pull/970` path segment and a `…#123`
 fragment are not references); a repeated `#NNN` inherits the description
-given EARLIER in the same message, left to right; and a repo name is not
-a description (`scitex-dev #578` still needs one). The rationale for
-each lives in the script header. Case table + mutation check:
+given EARLIER in the same message, left to right; a repo name is not
+a description (`scitex-dev #578` still needs one); a `#` glued to
+letters is a hex colour, not a reference (`#589abc` must never be
+refused); and code is data, not prose (a number inside a fenced block or
+an inline code span is being SHOWN, not cited). The rationale for each
+lives in `_telegram_rules.py`. Case table + mutation check:
 `tests/integration/telegram_hooks/test_telegram_no_bare_issue_rule.py`.
+
+The **parenthesis is the required form** — the operator's stipulation,
+2026-08-11: 「ナンバーの後に ( をつけて説明する、っていうのをルールに
+してください」. A dash (`#589 — auditd rules declared`) or a colon does
+**not** pass, and the refusal text says so, so the fix is never a guess.
+
+### Rule 2 lives in ONE place (2026-08-12)
+
+> 「mcp も同じですね。同じルールなので、ルールは一つの場所に、shell 用の
+>   hook と mcp のフィルタで同じルールを適用させて ssot に、が良いかと」
+
+The rule and its refusal wording live in **`_telegram_rules.py`**. Two
+consumers, one implementation, both thin adapters:
+
+| Consumer | Adapter | Contract |
+|---|---|---|
+| Claude Code PreToolUse | `enforce_telegram_no_bare_issue.sh` | hook JSON on stdin → rc 0 allow / rc 2 block, refusal on stderr |
+| claude-code-telegrammer MCP filter | `python3 _telegram_rules.py --text-stdin` | raw text on stdin → one JSON line `{"ok":true}` / `{"ok":false,"token","excerpt","message"}` |
+
+Neither adapter formats its own wording — the refusal text comes from
+the module, because the wording IS the fix instruction the operator
+reads on his phone, and two paths that compose their own will drift.
+A rule enforced on one path and absent on the other is exactly how a
+bare `scitex-dev #589` reaches him anyway.
+
+`_telegram_rules.py` is stdlib-only and ships **beside** the hook in
+`pre-tool-use/`, so the `to_home` cascade that materializes the hooks
+materializes the rule with them. The hook FAILS OPEN if the module is
+missing; the pytest pins that they travel together, so a packaging slip
+breaks CI rather than silently disarming the gate.
+
+Both adapters are driven over one shared case table in
+`tests/integration/telegram_hooks/test_telegram_rule_ssot.py`, which
+asserts they return the same verdict **and** the same wording — that
+they call the same function is an implementation detail, and an
+implementation detail is not the property.
 
 Each script supports `--self-test` and emits a `pass=N fail=M` summary
 plus rc=0 (all pass) / rc=1 (any fail). The companion pytest at
-`tests/scitex_agent_container/_baseline_assets/test_telegram_hooks.py`
+`tests/integration/telegram_hooks/test_telegram_hooks_self_tests.py`
 runs every script's self-test in CI so a regression to either the
 script logic or the test contract surfaces on PR.
+
+### How the self-tests decide "did the hook fire?"
+
+The four **BLOCK** hooks signal their verdict in the exit code (rc=2
+blocked / rc=0 allowed), so their self-tests assert on rc and are
+immune to whatever else writes to stderr.
+
+`encourage_telegram_terse_style.sh` is **nudge-only** — it always exits
+0, so the exit code carries no verdict and stderr is its only
+observable. It therefore asserts on a **sentinel** it emits
+(`TERSE_NUDGE_MARKER`, exported by the bash wrapper and read by the
+embedded python, so there is exactly one copy of the string).
+
+Do **not** regress that to "stderr is non-empty". stderr is a shared
+channel: a broken `.pth`, a DeprecationWarning or a locale complaint
+lands there too, and some of it prints before the hook's own code
+runs. Measured 2026-08 — a venv whose subprocess-coverage `.pth`
+raised `ModuleNotFoundError` at interpreter startup flipped the very
+same script from `pass=6 fail=0` under `/usr/bin/python3` to
+`pass=1 fail=5` under `/opt/venv-sac`. The self-test now carries
+NOISY-prefixed cases that inject synthetic stderr and pin that the
+verdict does not move, and the pytest re-runs the whole self-test
+behind a deliberately noisy `python3` shim.
 
 ## Deployment (operator)
 

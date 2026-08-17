@@ -248,7 +248,7 @@ def test_db_show_json_exposes_known_tables_set(db_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert set(body["known_tables"]) == set(KNOWN_TABLES)
 
@@ -263,7 +263,7 @@ def test_db_show_json_reports_zero_count_per_table_on_fresh_db(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["tables"][table] == 0
 
@@ -282,7 +282,7 @@ def test_db_migrate_via_cli_reports_one_imported_for_single_shard(
         db_migrate,
         ["--registry-dir", str(reg), "--host", "ywata-note-win", "--json"],
     )
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["imported"] == 1
 
@@ -297,7 +297,7 @@ def test_db_query_via_cli_returns_imported_row_name(db_path: Path, tmp_path: Pat
     runner = CliRunner()
     # Act
     result = runner.invoke(db_query, ["--table", "instances", "--limit", "5", "--json"])
-    rows = json.loads(result.output)
+    rows = json.loads(result.stdout)
     # Assert
     assert [r["name"] for r in rows] == ["diag-test"]
 
@@ -314,7 +314,7 @@ def test_db_query_via_cli_returns_imported_row_with_reboot_swept_exit_reason(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_query, ["--table", "instances", "--limit", "5", "--json"])
-    rows = json.loads(result.output)
+    rows = json.loads(result.stdout)
     # Assert
     assert rows[0]["exit_reason"] == "reboot-swept"
 
@@ -733,7 +733,68 @@ def test_gc_dead_instances_persists_exit_reason_crashed_on_instance_row(
             "SELECT exit_reason FROM instances WHERE id=?", (iid,)
         ).fetchone()
     # Assert
-    assert row["exit_reason"] == "crashed"
+    assert row["exit_reason"] == "pid_absent_at_sweep"
+
+
+def test_sweep_writes_a_reason_naming_the_check_not_a_cause(
+    db_path: Path, dead_pid_environment
+):
+    """The value must not assert a fate the check never established.
+
+    ``os.kill(pid, 0)`` raising ESRCH supports exactly one claim: the pid was
+    absent when we looked. The old value said ``crashed``, and three readers
+    believed it — reasoning about what could kill eleven processes in one
+    second when nothing had.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import (
+        gc_dead_instances,
+        open_db,
+        record_instance_start,
+    )
+
+    iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
+    # Act
+    gc_dead_instances()
+    with open_db() as conn:
+        row = conn.execute(
+            "SELECT exit_reason FROM instances WHERE id=?", (iid,)
+        ).fetchone()
+    # Assert
+    assert "crashed" not in row["exit_reason"]
+
+
+def test_one_sweep_stamps_every_reaped_row_with_the_same_ended_at(
+    db_path: Path, dead_pid_environment
+):
+    """THE TRAP, pinned: a shared second is the sweep's clock, not a co-death.
+
+    Measured 2026-08-12 — eleven rows shared ``17:54:26Z`` and were read as a
+    simultaneous kill. They had died 10h46m earlier, at different moments.
+    This test exists so nobody can "fix" the shared timestamp by accident and
+    so the behaviour is documented as intended rather than incidental.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import (
+        gc_dead_instances,
+        open_db,
+        record_instance_start,
+    )
+
+    for name in ("dead-a", "dead-b", "dead-c"):
+        record_instance_start(name, pid=999_999_999, host="test-host")
+    # Act
+    gc_dead_instances()
+    with open_db() as conn:
+        stamps = [
+            r["ended_at"]
+            for r in conn.execute(
+                "SELECT ended_at FROM instances WHERE exit_reason=?",
+                ("pid_absent_at_sweep",),
+            ).fetchall()
+        ]
+    # Assert
+    assert len(set(stamps)) == 1
 
 
 def test_db_clean_via_cli_reports_at_least_one_crashed_in_json_body(
@@ -747,7 +808,7 @@ def test_db_clean_via_cli_reports_at_least_one_crashed_in_json_body(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_clean, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["crashed"] >= 1
 
@@ -994,7 +1055,7 @@ def test_db_export_via_cli_emits_json_with_recorded_instance_for_host(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert len(payload["tables"]["instances"]) == 1
 
@@ -1008,7 +1069,7 @@ def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["host"] == "h"
 
@@ -1030,7 +1091,7 @@ def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["inserted"]["instances"] == 1
 
@@ -1052,6 +1113,6 @@ def test_db_import_via_cli_echoes_payload_host_back_in_json_body(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["host"] == "h"

@@ -394,7 +394,7 @@ def test_check_priority_emits_error_payload_in_json_on_failure(tmp_path):
     runner = CliRunner()
     # Act
     result = runner.invoke(priority_check, [str(bad_spec), "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "error" in payload
 
@@ -456,7 +456,7 @@ def test_check_priority_json_mode_emits_agent_name(tmp_path, pin_hostname):
     runner = CliRunner()
     # Act
     result = runner.invoke(priority_check, [str(spec), "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["agent"] == "json-agent"
 
@@ -471,7 +471,7 @@ def test_check_priority_honours_explicit_current_host_flag(
     runner = CliRunner()
     # Act
     result = runner.invoke(priority_check, [str(spec), "--current-host", "b", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["current_host"] == "b"
 
@@ -625,6 +625,6 @@ def test_reconcile_json_mode_emits_array_with_agent_entries(
     runner = CliRunner()
     # Act
     result = runner.invoke(singleton_reconcile, ["--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload[0]["agent"] == "x2"

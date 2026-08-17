@@ -169,3 +169,109 @@ def test_record_is_idempotent(db_path: Path):
     record_verdict_delivered(repo="r", pr=9, head_sha="s", conclusion="success")
     # Assert
     assert verdict_already_delivered(repo="r", pr=9, head_sha="s", conclusion="success")
+
+
+# ---------------------------------------------------------------------------
+# Failure streak — the consecutive-failure cap's counter
+#
+# `delivered_at` is passed explicitly throughout: the streak is defined by
+# comparison against the last green's timestamp, and two records written in
+# the same float tick would make the ordering ambiguous. Production ticks are
+# minutes apart, so this is a test-determinism concern, not a live one.
+# ---------------------------------------------------------------------------
+
+
+def test_failure_streak_counts_reds_for_this_pr(db_path: Path):
+    # Arrange
+    from scitex_agent_container._state.state_db_verdict_dedup import (
+        failures_since_last_success,
+        record_verdict_delivered,
+    )
+
+    for i, sha in enumerate(("a", "b", "c")):
+        record_verdict_delivered(
+            repo="o/r", pr=1, head_sha=sha, conclusion="failure", delivered_at=100.0 + i
+        )
+    # Act
+    streak = failures_since_last_success(repo="o/r", pr=1)
+    # Assert
+    assert streak == 3
+
+
+def test_failure_streak_resets_after_a_green(db_path: Path):
+    # Arrange — two reds, a green, then one more red.
+    from scitex_agent_container._state.state_db_verdict_dedup import (
+        failures_since_last_success,
+        record_verdict_delivered,
+    )
+
+    record_verdict_delivered(
+        repo="o/r", pr=1, head_sha="a", conclusion="failure", delivered_at=100.0
+    )
+    record_verdict_delivered(
+        repo="o/r", pr=1, head_sha="b", conclusion="failure", delivered_at=101.0
+    )
+    record_verdict_delivered(
+        repo="o/r", pr=1, head_sha="g", conclusion="success", delivered_at=102.0
+    )
+    record_verdict_delivered(
+        repo="o/r", pr=1, head_sha="d", conclusion="failure", delivered_at=103.0
+    )
+    # Act
+    streak = failures_since_last_success(repo="o/r", pr=1)
+    # Assert
+    assert streak == 1
+
+
+def test_failure_streak_ignores_another_prs_reds(db_path: Path):
+    # Arrange — a noisy neighbour must not cap this PR.
+    from scitex_agent_container._state.state_db_verdict_dedup import (
+        failures_since_last_success,
+        record_verdict_delivered,
+    )
+
+    for i, sha in enumerate(("a", "b", "c", "d", "e")):
+        record_verdict_delivered(
+            repo="o/r",
+            pr=999,
+            head_sha=sha,
+            conclusion="failure",
+            delivered_at=100.0 + i,
+        )
+    # Act
+    streak = failures_since_last_success(repo="o/r", pr=1)
+    # Assert
+    assert streak == 0
+
+
+def test_failure_streak_ignores_another_repos_reds(db_path: Path):
+    # Arrange — same PR number in a different repo is a different PR.
+    from scitex_agent_container._state.state_db_verdict_dedup import (
+        failures_since_last_success,
+        record_verdict_delivered,
+    )
+
+    for i, sha in enumerate(("a", "b", "c", "d")):
+        record_verdict_delivered(
+            repo="other/repo",
+            pr=1,
+            head_sha=sha,
+            conclusion="failure",
+            delivered_at=100.0 + i,
+        )
+    # Act
+    streak = failures_since_last_success(repo="o/r", pr=1)
+    # Assert
+    assert streak == 0
+
+
+def test_failure_streak_is_zero_on_a_fresh_db(db_path: Path):
+    # Arrange — never written; the table must be ensured lazily, not raise.
+    from scitex_agent_container._state.state_db_verdict_dedup import (
+        failures_since_last_success,
+    )
+
+    # Act
+    streak = failures_since_last_success(repo="o/r", pr=1)
+    # Assert
+    assert streak == 0

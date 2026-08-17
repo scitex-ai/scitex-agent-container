@@ -19,6 +19,14 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    CLAUDE_CODE_TUI,
+    HARNESS_DESCRIPTORS,
+    OPENAI_AGENTS,
+)
+from ..config._harness_types import ensure_harness_matches_claude_launch
+from ..config._residency_types import DEFAULT_AGENT_RESIDENCY
 from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
     _home_has_resumable_conversation,
     _tui_runner_argv,
@@ -30,15 +38,20 @@ from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
 if TYPE_CHECKING:
     from ..config import AgentConfig
 
-# Runner-module dispatch by ``config.kind`` and ``config.provider``.
-# Kept here so the parent orchestrator doesn't need to know either
-# runner's module path.
-RUNNER_MODULE_AGENT = "scitex_agent_container._runners.claude_session"
+# Runner-module names, DERIVED from the harness registry (v4 step 4,
+# ``config._harness_registry``) — the registry entry is the single
+# source for each module path; these constants remain because they are
+# imported by tests and sibling modules.
+RUNNER_MODULE_AGENT = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].runner_module
 
-# OpenAI provider runner module (scitex-todo card ``openai-compat-2``;
-# ``spec.provider: openai``). When the config's provider is ``"openai"``,
-# dispatches this module instead of ``RUNNER_MODULE_AGENT``.
-RUNNER_MODULE_OPENAI = "scitex_agent_container._runners.openai_session"
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED from here YET: the v4 step-2 refusal
+# (``ensure_harness_matches_claude_launch``) guards every branch below,
+# so a non-Anthropic harness raises instead of dispatching. The
+# registry's ``openai-agents`` entry carries the REAL argv builder;
+# key-based launch is migration step 7
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
+RUNNER_MODULE_OPENAI = HARNESS_DESCRIPTORS[OPENAI_AGENTS].runner_module
 
 RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
 
@@ -116,8 +129,7 @@ def build_inner_argv(
     tui_dev_channels: str | None = None,
     tui_settings: str | None = None,
 ) -> list[str]:
-    """Return the apptainer-inner argv. Dispatches on ``config.kind``
-    and ``config.provider``.
+    """Return the apptainer-inner argv. Dispatches on ``config.kind``.
 
     The argv is now ALWAYS wrapped in
     ``[/bin/bash, -lc, "<git-env-alias>; [set -e; <cmd1>; sleep N; <cmd2>;]
@@ -144,36 +156,52 @@ def build_inner_argv(
     is why the file MUST be ``settings.json``, not ``settings.local.json``:
     there is no ``.local.json`` at user scope).
 
-    Provider dispatch: when ``config.provider == "openai"``, the inner
-    runner is ``RUNNER_MODULE_OPENAI`` instead of ``RUNNER_MODULE_AGENT``.
-    The argv tail (mission, a2a flags, etc.) is identical — the OpenAI
-    runner accepts the same CLI flags as the Claude runner (with legacy
-    flags silently ignored).
+    Harness guard (v4 step 2, card ``sac-v4-layering-refactor-harness-
+    runtime-inference-20260813``): both the TUI and SDK branches launch
+    the CLAUDE harness, so a non-Anthropic ``config.harness`` REFUSES
+    loudly instead of dispatching. The old ``getattr(config, "provider",
+    None)`` selector here was DEAD (the harness rename removed the
+    field), so ``harness: openai`` specs silently got the Claude runner;
+    dispatching ``RUNNER_MODULE_OPENAI`` for real is step 4 (the
+    descriptor registry). ``kind: AgentProxy`` is exempt — the a2a proxy
+    runner is vendor-neutral.
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
-        runner_tail = _tui_runner_argv(
+        # Same v4 step-2 guard as the SDK branch below: the interactive
+        # claude TUI is just as wrong a vendor for a non-Anthropic
+        # harness (and this branch never had even the dead check).
+        ensure_harness_matches_claude_launch(
+            config, launching="the interactive claude TUI"
+        )
+        # v4 step 4: the registry entry owns the argv shape. The entry is
+        # keyed by the caller's already-decided launch mode (``tui=True``
+        # came from TuiSessionRuntime), never re-derived from the config —
+        # direct/dry-run callers pass configs whose ``runtime`` field this
+        # builder must not second-guess.
+        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
             config,
-            mcp_config=tui_mcp_config,
-            channel_mcp=tui_channel_mcp,
-            dev_channels=tui_dev_channels,
-            settings=tui_settings,
+            {
+                "tui_mcp_config": tui_mcp_config,
+                "tui_channel_mcp": tui_channel_mcp,
+                "tui_dev_channels": tui_dev_channels,
+                "tui_settings": tui_settings,
+            },
         )
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
-        # Provider dispatch: ``provider: openai`` → the OpenAI runner;
-        # everything else (default "anthropic") → the Claude runner.
-        provider = getattr(config, "provider", None)
-        runner_module = (
-            RUNNER_MODULE_OPENAI
-            if provider == "openai"
-            else RUNNER_MODULE_AGENT
+        # v4 step-2 loudness: refuse a wrong-vendor launch on the REAL
+        # field (the dead ``config.provider`` read used to sit here and
+        # silently fell through to the Claude runner). Post-guard the
+        # harness is Anthropic-family, so the SDK entry is the only
+        # runner-hosted candidate; key-based launch of other entries is
+        # migration step 7.
+        ensure_harness_matches_claude_launch(
+            config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
         )
-        runner_tail = (
-            _TINI_PREFIX
-            + [runner_module]
-            + _agent_runner_argv(config, one_shot=one_shot)
+        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
+            config, {"one_shot": one_shot}
         )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
@@ -283,6 +311,16 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         "--restart-backoff-s",
         str(_resolve_restart_backoff_s(config)),
     ]
+    # spec.residency (v4 step 6) → --residency. Emitted only when the
+    # compiled spec declares the NON-default ("one-shot"): an agent that
+    # declares nothing keeps a byte-identical argv, so a container whose
+    # installed runner predates the flag still boots — an opt-in one-shot
+    # agent needs the new runner anyway for the behaviour to exist, and
+    # the runner's argparse refuses the flag loudly on an old build
+    # instead of silently staying resident.
+    residency = str(getattr(config, "residency", "") or "").strip()
+    if residency and residency != DEFAULT_AGENT_RESIDENCY:
+        runner_argv += ["--residency", residency]
     # startup_prompts -> claude SDK mission via --mission. NO fallback
     # from startup_commands; that field is shell-exec only (see
     # build_inner_argv wrapper).

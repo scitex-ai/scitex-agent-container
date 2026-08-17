@@ -94,6 +94,34 @@ def pr_ci_conclusion(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
     return CONCLUSION_NONE
 
 
+def failing_check_names(repo: str, pr: int, *, run: GhRunner = _run_gh) -> list:
+    """Return the NAMES of the PR's checks currently in a failing bucket.
+
+    :func:`pr_ci_conclusion` asks only for ``bucket``, which is all a
+    pass/fail verdict needs — but it means the ring cannot tell "a
+    different check failed this time" from "the same check has been red
+    across every head sha", and those warrant different advice. Deliberately
+    a SEPARATE call rather than widening the hot path: this is only needed
+    on the rare escalation tick, not on every poll.
+
+    Sorted and de-duplicated. Unparseable / empty output → ``[]``, so a
+    caller can always render the escalation without a name.
+    """
+    raw = run(["pr", "checks", str(pr), "-R", repo, "--json", "name,bucket"])
+    try:
+        rows = json.loads(raw) if raw.strip() else []
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    names = {
+        str(r.get("name", "")).strip()
+        for r in rows
+        if isinstance(r, dict) and str(r.get("bucket", "")) in _FAILING_BUCKETS
+    }
+    return sorted(n for n in names if n)
+
+
 def pr_head_sha(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
     """Return the PR's current head sha (empty string if unresolvable)."""
     raw = run(["api", f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"])
@@ -172,6 +200,7 @@ __all__ = [
     "CONCLUSION_NONE",
     "CONCLUSION_PENDING",
     "CONCLUSION_SUCCESS",
+    "failing_check_names",
     "gh_ready",
     "list_open_prs",
     "pr_ci_conclusion",

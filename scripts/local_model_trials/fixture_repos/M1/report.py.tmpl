@@ -1,0 +1,14 @@
+"""Render room reports from geometry helpers."""
+
+from geometry import area, perimeter
+
+
+def room_summary(name, width, height):
+    return (
+        f"{name}: area={area(width, height)} "
+        f"perimeter={perimeter(width, height)}"
+    )
+
+
+def total_area(rooms):
+    return sum(area(w, h) for _, w, h in rooms)

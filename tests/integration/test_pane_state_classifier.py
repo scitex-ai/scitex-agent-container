@@ -3,11 +3,11 @@
 The classifier reads tmux pane tail and returns a ``(state, snippet)``
 pair where ``state`` is a string label and ``snippet`` is the matched
 context. We only assert on signals that come from **Claude Code itself** —
-banners, error messages, prompt glyphs — not from optional statusline
-tools like claude-hud (https://github.com/jarrodwatts/claude-hud) which
-wouldn't be present in every install.
+banners, error messages, prompt glyphs — not from whatever the pane's
+statusline happens to render, which is a separate concern and must not
+become an input to pane classification.
 
-For state that needs claude-hud-style context-pct / tool-history info,
+For state that needs context-pct / tool-history info,
 detection lives in the dashboard's ``_computeStateLocal`` (app.js) using
 hub-side hook event fields (``last_tool_at``), not pane text. That is
 the "use logic, not pattern matching" rule.

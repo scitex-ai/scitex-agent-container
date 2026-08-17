@@ -59,7 +59,6 @@ FULL_CONFIG = {
         },
         "screen": {"name": "full-agent"},
         "container": {
-            "runtime": "apptainer",
             "image": "my-image:latest",
             "volumes": ["/data:/data"],
             "network": "bridge",
@@ -218,13 +217,14 @@ class TestLoadFullConfig:
         # Assert
         assert value == "continue"
 
-    def test_full_loads_container_runtime(self, full_loaded_config):
+    def test_full_carries_no_container_engine_field(self, full_loaded_config):
+        """The engine is not a per-spec value — abolished 2026-08-14."""
         # Arrange
         config = full_loaded_config
         # Act
-        value = config.container.runtime
+        has_engine = hasattr(config.container, "runtime")
         # Assert
-        assert value == "apptainer"
+        assert not has_engine
 
     def test_full_loads_container_image(self, full_loaded_config):
         # Arrange

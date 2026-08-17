@@ -39,6 +39,25 @@ logger = logging.getLogger(__name__)
 # scale. Override via ``SAC_GITHUB_CI_POLL_INTERVAL_S`` at the wiring site.
 DEFAULT_CI_POLL_INTERVAL_S = 300.0
 
+#: Per-target budget for delivering ONE verdict.
+#:
+#: ``post_turn`` defaults to ``timeout_s=600.0``, which is longer than the
+#: tick bound below (``max(poll_interval_s, 30.0)``, i.e. 300s by default) —
+#: so a single unresponsive peer could outlive the tick that started it. And
+#: ``run_blocking_or`` ABANDONS a timed-out call rather than cancelling it,
+#: so the abandoned post keeps running while the loop sleeps and starts the
+#: next tick: two ticks alive at once, both able to post.
+#:
+#: Never observed in production, and it structurally cannot be: the
+#: delivered-set is keyed on ``(repo, pr, head_sha, conclusion)``, so a
+#: duplicate delivery from an overlapping tick is deduped away and leaves no
+#: row to find. An absent symptom here is not evidence of absence.
+#:
+#: A verdict notification is a short POST to a peer on the same fleet. It
+#: does not need a ten-minute budget, and bounding it well under the tick
+#: keeps the inversion impossible rather than merely unobserved.
+VERDICT_POST_TIMEOUT_S = 30.0
+
 
 def _default_ready_check() -> bool:
     from ._github_ci import gh_ready
@@ -96,7 +115,17 @@ async def github_ci_poll_loop(
     if conclusion_for is None:
         from ._github_ci import pr_ci_conclusion as conclusion_for
     if deliver is None:
-        from ._ci_deliver import deliver_verdict as deliver
+        from functools import partial
+
+        from .._network.peer import post_turn
+        from ._ci_deliver import deliver_verdict as _deliver_verdict
+
+        _bounded_post = partial(post_turn, timeout_s=VERDICT_POST_TIMEOUT_S)
+
+        def deliver(*args, **kwargs):
+            # Bind the bounded transport unless a caller supplied its own.
+            kwargs.setdefault("post", _bounded_post)
+            return _deliver_verdict(*args, **kwargs)
 
     def _tick_body() -> None:
         # Each of repos_source / list_prs / conclusion_for / deliver may
@@ -138,4 +167,8 @@ async def github_ci_poll_loop(
         raise
 
 
-__all__ = ["DEFAULT_CI_POLL_INTERVAL_S", "github_ci_poll_loop"]
+__all__ = [
+    "DEFAULT_CI_POLL_INTERVAL_S",
+    "VERDICT_POST_TIMEOUT_S",
+    "github_ci_poll_loop",
+]

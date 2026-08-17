@@ -88,23 +88,110 @@ def list_sessions_activity(
 
     Never raises.
     """
+    return list_sessions_activity_detailed(
+        timeout_s=timeout_s, socket_name=socket_name
+    )[0]
+
+
+def list_sessions_activity_detailed(
+    *, timeout_s: float = BATCH_PROBE_TIMEOUT_S, socket_name: str | None = None
+) -> tuple[dict[str, int] | None, bool | None]:
+    """:func:`list_sessions_activity`, plus WHETHER A SERVER IS THERE AT ALL.
+
+    Returns ``(sessions, server_present)``:
+
+      * ``({...}, True)``  — a server answered and these are its sessions.
+      * ``({}, True)``     — a server answered and it holds NO sessions.
+      * ``({}, False)``    — there is NO tmux server on this socket.
+      * ``(None, None)``   — the probe failed. Both facts are UNKNOWN.
+
+    THE TWO EMPTIES ARE NOT THE SAME EVENT, and collapsing them is a real
+    hazard rather than a nicety. ``list_sessions_activity`` returns ``{}`` for
+    both, which is right for its own question ("which sessions are live?") and
+    wrong for anyone asking WHY the answer is empty:
+
+      * ``({}, True)``  — the server is fine and every agent died. This is the
+        2026-06 OAuth rotation: 33 agents killed, tmux untouched. The fleet
+        reconciler MUST recover them; that incident is why it exists.
+      * ``({}, False)`` — the server itself went away and took every pane with
+        it. This is 2026-08-11: eleven agents in a two-second window. Mass
+        restarts here land on a host that just lost its tmux server (``tmux
+        new-session`` spawns a fresh one), so they succeed, and repeat on every
+        pass.
+
+    Those two demand OPPOSITE responses, and the information to tell them apart
+    was already in hand — ``rc != 0`` plus a no-server marker versus ``rc == 0``
+    with no rows — and was being discarded at this boundary. This function stops
+    discarding it; :func:`list_sessions_activity` keeps its exact contract by
+    dropping the second element.
+
+    Never raises.
+    """
+    return _list_sessions_field(
+        "#{session_activity}", timeout_s=timeout_s, socket_name=socket_name
+    )
+
+
+def list_sessions_created(
+    *, timeout_s: float = BATCH_PROBE_TIMEOUT_S, socket_name: str | None = None
+) -> dict[str, int] | None:
+    """Return ``{session_name: created_epoch}`` for EVERY session, in ONE probe.
+
+    The BIRTHDAY of each session, where :func:`list_sessions_activity`
+    returns its last heartbeat. Same one-subprocess shape, same
+    dict/``{}``/``None`` contract (see that function) — only the tmux
+    format field differs.
+
+    WHY A SECOND FIELD IS NEEDED, rather than reusing ``session_activity``:
+    the question "did this agent's session CYCLE?" needs a stamp that is
+    CONSTANT for the life of one session and DIFFERENT for the next one.
+    ``session_activity`` is neither — tmux advances it on any pane I/O, so
+    an untouched session's stamp moves anyway and would read as a cycle
+    (a false verification), while a freshly-created idle session can share
+    the previous one's stamp to the second. ``session_created`` is set once
+    at ``tmux new-session`` and never moves again, so comparing it across a
+    restart answers exactly the question asked: same birthday means the
+    SAME session survived, and sac never touched the process.
+
+    Never raises.
+    """
+    return _list_sessions_field(
+        "#{session_created}", timeout_s=timeout_s, socket_name=socket_name
+    )[0]
+
+
+def _list_sessions_field(
+    field: str,
+    *,
+    timeout_s: float = BATCH_PROBE_TIMEOUT_S,
+    socket_name: str | None = None,
+) -> tuple[dict[str, int] | None, bool | None]:
+    r"""One ``tmux list-sessions -F`` reading of ``#{session_name}\t<field>``.
+
+    The shared body behind :func:`list_sessions_activity_detailed` and
+    :func:`list_sessions_created`: ONE place that knows how to spawn the
+    probe, how to tell "no server" from "wedged", and how to parse the
+    rows — so the two callers can never drift into disagreeing about what
+    an empty answer means. ``field`` must be an integer-valued tmux format
+    (unparseable rows are dropped, exactly as before).
+    """
     argv = ["tmux"]
     if socket_name:
         argv += ["-L", socket_name]
-    argv += ["list-sessions", "-F", "#{session_name}\t#{session_activity}"]
+    argv += ["list-sessions", "-F", f"#{{session_name}}\t{field}"]
     try:
         result = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout_s
         )
     except (OSError, subprocess.SubprocessError):  # stx-allow: fallback (a wedged/missing tmux is UNKNOWN liveness, never "all agents dead" — the caller preserves the previous data)
-        return None
+        return None, None
     if result.returncode != 0:
         # Distinguish "no tmux server" (a definitive, EMPTY fleet) from any
         # other failure (UNKNOWN). Reading a wedged probe as an empty fleet
         # is exactly the bug this contract prevents.
         if _is_no_server(result.stderr or ""):
-            return {}
-        return None
+            return {}, False
+        return None, None
     out: dict[str, int] = {}
     for line in (result.stdout or "").splitlines():
         name, sep, raw = line.partition("\t")
@@ -114,7 +201,7 @@ def list_sessions_activity(
             out[name] = int(raw.strip())
         except ValueError:  # stx-allow: fallback (one unparseable activity stamp contributes nothing — the other sessions still beat)
             continue
-    return out
+    return out, True
 
 
 def _display_field(session_name: str, fmt: str) -> str | None:
@@ -124,12 +211,13 @@ def _display_field(session_name: str, fmt: str) -> str | None:
     Local import of :class:`TmuxManager` keeps the existence check on the
     one canonical implementation without a module-level import cycle.
     """
+    from ._target import exact_target
     from .tmux import TmuxManager
 
     if not TmuxManager.exists(session_name):
         return None
     result = subprocess.run(  # pragma: no cover  -- requires live tmux, not available on CI runner
-        ["tmux", "display", "-p", "-t", session_name, fmt],
+        ["tmux", "display", "-p", "-t", exact_target(session_name), fmt],
         capture_output=True,
         text=True,
     )

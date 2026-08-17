@@ -1,0 +1,13 @@
+"""Data model for the tiny inventory."""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Item:
+    name: str
+    price: float
+    quantity: int
+
+    def value(self):
+        return self.price * self.quantity

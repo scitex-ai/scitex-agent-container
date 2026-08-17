@@ -578,8 +578,10 @@ def test_remote_process_signal_argv_uses_no_login_shell(spartan_config):
 
 
 def test_remote_process_signal_argv_probes_tmux_has_session_directly(spartan_config):
-    # Arrange
-    expected_tail = ["tmux", "has-session", "-t", "tui-spartan-dev"]
+    # Arrange — the target is the EXACT-match form (=name:): a bare -t
+    # prefix-matches on the peer's tmux, so a sibling session would vouch
+    # this agent ALIVE (incident 2026-08-14).
+    expected_tail = ["tmux", "has-session", "-t", "=tui-spartan-dev:"]
     # Act
     argv = _captured_remote_probe_argv()
     # Assert — a DIRECT peer runs `tmux has-session -t <session>` directly.
@@ -630,9 +632,10 @@ def test_remote_process_signal_multihop_argv_wraps_cmd_in_bash_c(spartan_config)
     compute_node = "spartan-bm043"
     # Act
     argv = _captured_remote_probe_argv(peer=compute_node, name="proj-x")
-    # Assert — one collapsed element carrying the preamble + the tmux probe.
+    # Assert — one collapsed element carrying the preamble + the tmux probe
+    # (exact-match =name: target; see the direct-peer test above).
     assert any(
-        el.startswith("bash -c ") and "tmux has-session -t tui-proj-x" in el
+        el.startswith("bash -c ") and "tmux has-session -t =tui-proj-x:" in el
         for el in argv
     )
 

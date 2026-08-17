@@ -22,6 +22,7 @@ from scitex_agent_container._notify.login_relay import (
     extract_oauth_url,
     send_login_url_email,
 )
+from scitex_agent_container._runners._tmux._target import exact_target
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,16 @@ def _tmux_send(name: str, *keys: str) -> None:
     session = f"sac-{name}"
     for key in keys:
         subprocess.run(
-            ["tmux", "-L", _TMUX_SERVER, "send-keys", "-t", session, key, ""],
+            [
+                "tmux",
+                "-L",
+                _TMUX_SERVER,
+                "send-keys",
+                "-t",
+                exact_target(session),
+                key,
+                "",
+            ],
             check=False,
         )
         time.sleep(0.1)
