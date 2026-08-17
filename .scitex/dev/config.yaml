@@ -120,6 +120,58 @@ audit:
           scitex-ai/scitex-dev#588; this entry is removed by the change that
           adopts that release.
 
+    # PS-231 (workflow-duplication). TWO entries, both RULED ON by scitex-dev
+    # on 2026-08-17 rather than asserted by this repo — sac argued the rule
+    # fired wrongly on FIVE workflows and was granted exactly these two. The
+    # other three (auto-merge-to-develop, import-smoke, rtd-sphinx-build) were
+    # REFUSED and are deliberately absent from this file.
+    #
+    # Why the refusal matters more than the grant: sac's argument for those
+    # three was size ("auto-merge is 700 lines against the org's 220"), and
+    # 3.2x is evidence of DIFFERENCE, not evidence of NECESSITY. An exemption
+    # asserts "this leaf's version is genuinely unique"; for those three that
+    # assertion was UNMEASURED. Writing them anyway would have made this file
+    # a record of what was expensive to check rather than what is true, and
+    # then no row in it could be trusted — including the two below.
+    #
+    # ALSO NOT the reason for either entry, though sac offered it: that sac is
+    # immune to the specific `scitex-ci` label defect the rule's rationale
+    # cites. It is immune — `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || ...) }}`
+    # reads a repo VARIABLE, so the label was never frozen into the copy. But
+    # that immunises against ONE defect class, not against divergence: a
+    # step-ordering fix or a new security check made org-side still fails to
+    # reach a local copy. scitex-dev conceded their rationale cites a single
+    # anecdote and is being rewritten; that concession is not a licence here.
+    PS-231:
+      - path: .github/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
+        line: 0
+        reason: >-
+          DEFERRAL WITH A TESTABLE EXPIRY, not a standing claim: exempt until
+          the org `pytest-matrix` reusable accepts a SECOND runner pool;
+          re-evaluate then. This workflow runs two jobs on two different
+          pools — the matrix on `${{ fromJSON(vars.CI_RUNS_ON) }}` and a
+          second on `[self-hosted, Linux, X64, sac-control-plane]`, whose own
+          in-file comment calls it "THE LOAD-BEARING LINE". A caller passing
+          one `runs_on` input cannot produce two jobs on two pools, so
+          converting to `uses:` would require DELETING a job. That is a
+          capability the org reusable lacks, not a preference this leaf holds;
+          scitex-dev is raising the two-pool gap on the org's side, and this
+          entry is removed by the change that closes it.
+      - path: .github/workflows/cla.yml
+        line: 0
+        reason: >-
+          Deliberately divergent, with a guard rail already in the file. The
+          workflow pins `runs-on: ubuntu-latest` under a block comment that
+          explicitly warns against "FIXING" it — the same security argument
+          recorded in this file's PS-224 entry above: `issue_comment` and
+          `pull_request_target` are UNAUTHENTICATED triggers, the fork-PR
+          approval gate does not cover them, and self-hosted runners' $HOME
+          holds the live fleet credential. Converting to a caller does exactly
+          what that comment forbids. A decision with a stated reason and a
+          guard rail is the strongest form of exemption there is, and it is
+          closed by the same condition as PS-224: an ephemeral/isolated runner
+          for untrusted-trigger workflows.
+
   # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
   #
   # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
