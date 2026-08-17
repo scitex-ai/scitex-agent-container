@@ -26,6 +26,7 @@ supported CLI, so callers hand-rolled ssh instead.
 from __future__ import annotations
 
 import os
+import shlex
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
@@ -69,6 +70,25 @@ _HOSTS_YAML = textwrap.dedent(
 )
 
 _SPARTAN_PREAMBLE = ("module load Apptainer/1.3.3",)
+
+
+def _remote_command(argv: list[str]) -> str:
+    """The command line ssh actually puts on the REMOTE shell.
+
+    ssh word-joins everything after the host, so ``build_ssh_argv``
+    collapses the command into ONE trailing argv element that it quotes
+    itself — a bare ``shlex.join`` for a plain peer, or a
+    ``bash -c '<preamble> && <cmd>'`` wrapper for a peer carrying an
+    ``env_preamble``. Reading the tail back through this helper keeps the
+    assertions pinned to what the remote runs, which is the thing these
+    tests have always cared about, rather than to the local tokenisation
+    (which changed on 2026-08-17 when both branches were made to quote
+    exactly once).
+    """
+    tail = argv[-1]
+    if tail.startswith("bash -c "):
+        return shlex.split(tail)[2]
+    return tail
 
 
 def _set_scitex_dir(value: str) -> Iterator[None]:
@@ -134,13 +154,25 @@ def test_registry_peer_carries_the_declared_ssh_alias(registry: Path) -> None:
 
 
 def test_registry_peer_renders_a_real_ssh_argv(registry: Path) -> None:
-    """The resolved peer must be usable by the unmodified ssh renderer."""
+    """The resolved peer must be usable by the unmodified ssh renderer.
+
+    A peer that exists ONLY in the host registry — no config.yaml entry
+    at all, which is the outage this file was written for — must dispatch
+    the caller's command to the remote intact. ``mba``'s registry row
+    declares a home-relative ``~/.scitex`` root, so no ``SCITEX_DIR=``
+    pin is prepended and the remote line is the command verbatim.
+
+    Assertion shape changed 2026-08-17: the renderer now emits ONE
+    shlex-joined trailing element instead of N raw tokens, so the tail is
+    read back with :func:`_remote_command`. The property is untouched —
+    only the tail's local shape moved.
+    """
     # Arrange
     merged = peers_with_registry({})
     # Act
     argv = build_ssh_argv("mba", ["sac", "host", "list", "--json"], merged)
     # Assert
-    assert argv[argv.index("--") + 1 :] == ["sac", "host", "list", "--json"]
+    assert _remote_command(argv) == "sac host list --json"
 
 
 def test_registry_peer_ssh_argv_targets_the_alias(registry: Path) -> None:

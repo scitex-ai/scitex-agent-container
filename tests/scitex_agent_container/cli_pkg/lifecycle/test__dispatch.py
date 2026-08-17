@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,25 @@ def _ssh_invocations(bin_dir: Path) -> list[list[str]]:
 
 def _phase_count(bin_dir: Path, marker: str) -> int:
     return sum(1 for argv in _ssh_invocations(bin_dir) if marker in " ".join(argv))
+
+
+def _remote_argv(argv: list[str]) -> list[str]:
+    """Tokens of the command line the PEER runs, recovered from an ssh argv.
+
+    ssh word-joins everything after the host and hands the result to the
+    remote shell, so ``build_ssh_argv`` owns the quoting and emits the whole
+    remote command as ONE shlex-joined trailing element (a peer carrying an
+    ``env_preamble`` gets that wrapped in ``bash -c '<preamble> && <cmd>'``).
+    The command's tokens are therefore no longer separate members of the
+    local ssh argv, and an ``x in argv`` membership test — which was always
+    a proxy for "x is on the remote command line" — can no longer see them.
+    This recovers the real remote command line so assertions keep talking
+    about what the peer actually executes.
+    """
+    tail = argv[-1]
+    if tail.startswith("bash -c "):
+        return shlex.split(shlex.split(tail)[2])
+    return shlex.split(tail)
 
 
 # ---------------------------------------------------------------------------
@@ -965,11 +985,17 @@ class TestTryDispatchClassification:
             force=False,
             local_names={"ywata-note-win"},
         )
-        # Assert — dispatched, and the LAST ssh argv runs the peer-side start
-        # verb (the earlier calls are the manifest read, the transfer and the
-        # post-transfer verification).
+        # Assert — dispatched, and the LAST ssh call makes the PEER run the
+        # peer-side start verb (the earlier calls are the manifest read, the
+        # transfer and the post-transfer verification). Asserted against the
+        # recovered remote command line rather than the raw ssh argv: the
+        # command now travels as one shlex-joined element, so the tail-slice
+        # of the argv is ssh options, not the verb. Same property — the peer
+        # runs ``sac agents start alpha`` with ``--no-redispatch`` (no
+        # dispatch loop back) and ``--json`` (parseable envelope) — and the
+        # tail slice still tolerates a registry ``SCITEX_DIR=`` pin in front.
         ssh_calls = _ssh_invocations(shim_bin)
-        assert out is True and ssh_calls[-1][-6:] == [
+        assert out is True and _remote_argv(ssh_calls[-1])[-6:] == [
             "sac",
             "agents",
             "start",

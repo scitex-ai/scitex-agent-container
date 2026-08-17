@@ -11,14 +11,19 @@ Covers:
 - ``load`` parses the YAML scalar (``|`` literal block) form, the list
   form, and tolerates absence.
 - ``build_ssh_argv`` wraps the dispatched command in ``bash -c
-  '<preamble> && <cmd>'`` when the peer carries a preamble, and is
-  byte-identical to the pre-preamble shape when it doesn't.
+  '<preamble> && <cmd>'`` when the peer carries a preamble, and emits
+  the command unwrapped when it doesn't.
+- Both branches quote the command EXACTLY ONCE (2026-08-17): each
+  renders the whole remote command line into ONE trailing argv
+  element, so a whitespace-bearing argument survives as a single token
+  whichever branch a peer happens to take.
 - Backwards compat: a multi-hop peer without a preamble still emits
-  ``-J <chain>`` and the raw command tail.
+  ``-J <chain>`` and dispatches the command with no ``bash -c`` wrapper.
 """
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -28,6 +33,28 @@ from scitex_agent_container._state.host_config import (
     build_ssh_argv,
     load,
 )
+
+
+def _remote_command(argv: list[str]) -> str:
+    """The command line the REMOTE shell receives, from either branch.
+
+    ssh word-joins everything after the host and hands the result to the
+    remote user's shell, so ``build_ssh_argv`` puts the entire remote
+    command line into ONE trailing argv element: ``shlex.join(command)``
+    on the bare branch, and ``bash -c '<preamble> && <cmd>'`` on the
+    preamble branch.
+
+    Tests that care about WHAT RUNS REMOTELY assert on this string rather
+    than on token positions in the argv. The token count is an artifact of
+    the local rendering — it has already changed twice while the remote
+    command line stayed the thing that had to be right. Assertions about
+    ssh OPTIONS, the ``-J`` chain or the host target still read the argv
+    directly; those parts are unaffected.
+    """
+    tail = argv[-1]
+    if tail.startswith("bash -c "):
+        return shlex.split(tail)[2]
+    return tail
 
 
 @pytest.fixture
@@ -189,20 +216,25 @@ peers:
 # ---------------------------------------------------------------------------
 
 
-def test_build_ssh_argv_without_preamble_is_unchanged():
-    # Arrange — single-hop, no preamble: argv tail must be `[--, cmd...]`
-    # exactly as before this feature landed.
+def test_build_ssh_argv_without_preamble_dispatches_the_command_unwrapped():
+    """A peer with no preamble gets no ``bash -c`` wrapper interposed.
+
+    RESHAPED 2026-08-17 (was ``..._is_unchanged``, pinning the five raw
+    tail tokens ``[host, --, sac, agent, list]``). The quote-once fix
+    collapses the command into ONE trailing element, so the literal token
+    count is gone — but the property that test existed for is not: a peer
+    without a preamble is still dispatched to ITS ssh target, after the
+    ``--`` separator, with the command going straight to the remote login
+    shell and nothing wrapped around it. That is what is asserted now, and
+    it still fails loudly if the preamble branch ever leaks into a peer
+    that carries no preamble.
+    """
+    # Arrange
     peers = {"mba": PeerSpec(name="mba", ssh="ywatanabe@mba.local")}
     # Act
     argv = build_ssh_argv("mba", ["sac", "agent", "list"], peers)
-    # Assert — last 4 tokens are the ssh target + raw command tail.
-    assert argv[-5:] == [
-        "ywatanabe@mba.local",
-        "--",
-        "sac",
-        "agent",
-        "list",
-    ]
+    # Assert — ssh target, separator, then the bare remote command line.
+    assert argv[-3:] == ["ywatanabe@mba.local", "--", "sac agent list"]
 
 
 @pytest.fixture
@@ -258,42 +290,33 @@ def test_build_ssh_argv_inner_string_appends_user_command_after_preamble(
     assert final.endswith("which apptainer'")
 
 
-def test_build_ssh_argv_joins_the_command_the_same_way_both_branches_do():
-    """The preamble branch must treat ``command`` exactly as the bare one does.
+def test_build_ssh_argv_preamble_peer_keeps_whitespace_argument_as_one_token():
+    """A whitespace-bearing argument survives as ONE token on a preamble peer.
 
-    CHANGED 2026-08-17, and the previous assertion here was the reason a P1
-    outage existed. It pinned the preamble branch to ``shlex.join``, i.e. to
-    ``command`` being a REAL ARGV LIST — while the bare branch appends raw
-    tokens for ssh to word-join, i.e. ``command`` being ALREADY SHELL-QUOTED.
+    REWRITTEN 2026-08-17, twice-measured, and the earlier versions of this
+    test were each part of an outage rather than a guard against one.
 
-    Two incompatible meanings for one parameter, selected by a branch the
-    caller cannot see. NO CALLER COULD SATISFY BOTH: ``_spec_handoff``
-    pre-quoted its script to make the bare branch work, the preamble branch
-    quoted that a second time, and the remote bash looked for a FILE named
-    ``sh -c '...'`` — rc=127 on every preamble peer, which is what made
-    scitex-hub unstartable by any path (measured on compute-02 and -03, with
-    the bare peer nas-03 returning 0 as the control).
+    v1 pinned the preamble branch to ``shlex.join`` while the bare branch
+    appended raw already-quoted tokens. Two incompatible meanings for one
+    parameter, selected by a branch the caller cannot see: ``_spec_handoff``
+    pre-quoted its script to satisfy the bare branch, the preamble branch
+    quoted it a SECOND time, and the remote bash looked for a FILE named
+    ``sh -c '...'`` — rc=127 on every preamble peer, which took scitex-hub
+    down and unstartable by any path.
 
-    So the contract is now stateable in one sentence, and it is the bare
-    branch's: ``command`` is a token list that will be SPACE-JOINED, and a
-    caller wanting one remote token pre-quotes it. Every caller in the repo
-    already satisfies that.
+    v2 (mine) made the preamble branch SPACE-JOIN to match the bare one and
+    asserted here that ``echo 'hello world'`` reflows into two remote
+    arguments. Consistent, and consistently wrong: it exported the bare
+    branch's inability to carry a quoted argument onto the preamble peers
+    and broke a live caller passing ``["python3", "-c", "<one-liner>"]``
+    (A/B on scitex-compute-03: parent rc=0, that fix rc=2 syntax error).
 
-    THE COST, stated rather than hidden: an argument containing whitespace
-    reflows into two on a preamble peer, where it previously survived. That is
-    not a new hazard — it is what the bare branch has always done to the same
-    input — but it IS a behaviour change for preamble peers, and the property
-    this test used to guarantee is genuinely gone.
-
-    Preserving quoting on BOTH branches is strictly better and is the
-    follow-up: make the bare branch emit one ``shlex.join``ed element too.
-    That is not bundled here because it changes the rendered argv SHAPE and
-    breaks 13 tests that deliberately pin it (including
-    ``test_build_ssh_argv_without_preamble_is_unchanged`` and
-    ``test_home_rooted_peer_argv_is_byte_identical``, which exist to prove
-    registry pinning leaves an unpinned peer's argv untouched). Rewriting a
-    documented byte-identity invariant deserves its own review, not a hurried
-    edit while an agent is down.
+    THE DECIDING MEASUREMENT was the bare peer nas-03 in that same A/B: it
+    failed on BOTH renderings. The bare branch had never once carried a
+    whitespace-bearing argument — nothing exercised it, so a contract defect
+    read as a preamble-only problem. ``command`` now means one thing in both
+    branches (a real argv list whose quoting ``build_ssh_argv`` owns), and
+    THIS is the property that makes the contract worth having.
     """
     # Arrange
     peers = {
@@ -305,8 +328,31 @@ def test_build_ssh_argv_joins_the_command_the_same_way_both_branches_do():
     }
     # Act
     argv = build_ssh_argv("spartan-bm152", ["echo", "hello world"], peers)
-    # Assert
-    assert argv[-1] == "bash -c 'module load Apptainer/1.3.3 && echo hello world'"
+    # Assert — re-parse the remote command line the way the remote shell
+    # will; it must yield back the argv we handed in, not a reflowed one.
+    assert shlex.split(_remote_command(argv))[-2:] == ["echo", "hello world"]
+
+
+def test_build_ssh_argv_bare_peer_keeps_whitespace_argument_as_one_token():
+    """The same guarantee on a peer with no preamble — the branch that lacked it.
+
+    Companion to the preamble case above, and the one the fix actually
+    ADDED behaviour to. nas-03 (a bare peer) was the control in the
+    2026-08-17 A/B and failed on both candidate renderings, because this
+    branch used to append raw tokens for ssh to word-join: ``hello world``
+    arrived as two remote arguments. Nothing in the fleet had exercised
+    it, so the defect sat here silently.
+
+    Pinning it on BOTH peer kinds is deliberate — a peer's dispatch must
+    not depend on whether it happens to carry an ``env_preamble``.
+    """
+    # Arrange
+    peers = {"nas-03": PeerSpec(name="nas-03", ssh="nas-03")}
+    # Act
+    argv = build_ssh_argv("nas-03", ["echo", "hello world"], peers)
+    # Assert — re-parse the remote command line the way the remote shell
+    # will; it must yield back the argv we handed in, not a reflowed one.
+    assert shlex.split(_remote_command(argv))[-2:] == ["echo", "hello world"]
 
 
 @pytest.fixture
@@ -368,8 +414,8 @@ def empty_preamble_argv() -> list[str]:
     """Render the ssh argv for a peer with an explicit empty preamble.
 
     Shared by the pair of single-assert tests below that pin (a) no
-    bash wrapper is inserted, and (b) the command tail is byte-identical
-    to the pre-preamble argv shape.
+    bash wrapper is inserted, and (b) the command reaches the remote
+    directly, right after the ``--`` separator.
     """
     peers = {"mba": PeerSpec(name="mba", ssh="mba", env_preamble=())}
     return build_ssh_argv("mba", ["echo", "hi"], peers)
@@ -386,15 +432,25 @@ def test_build_ssh_argv_empty_preamble_does_not_insert_bash_wrapper(
     assert not has_bash
 
 
-def test_build_ssh_argv_empty_preamble_preserves_raw_command_tail(
+def test_build_ssh_argv_empty_preamble_sends_command_after_the_separator(
     empty_preamble_argv: list[str],
 ):
+    """An EMPTY preamble takes the bare branch, command intact after ``--``.
+
+    RESHAPED 2026-08-17 (was ``..._preserves_raw_command_tail``, pinning
+    ``["--", "echo", "hi"]``). The quote-once fix renders the command as one
+    joined element, so "raw tokens" is no longer the shape — but the property
+    is untouched and is the one this test was written for: an ``env_preamble``
+    that is present-but-empty must be treated as ABSENT, i.e. the command
+    goes straight to the remote shell after the separator with no wrapper
+    layer between. The sibling test above pins the no-``bash`` half.
+    """
     # Arrange: fixture builds the argv for a peer with an empty preamble.
     argv = empty_preamble_argv
-    # Act: read the last three tokens (separator + raw command).
-    tail = argv[-3:]
+    # Act: read the last two tokens (separator + remote command line).
+    tail = argv[-2:]
     # Assert
-    assert tail == ["--", "echo", "hi"]
+    assert tail == ["--", "echo hi"]
 
 
 # ---------------------------------------------------------------------------
