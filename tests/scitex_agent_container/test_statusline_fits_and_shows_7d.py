@@ -69,22 +69,34 @@ def named_agent(env_save_restore):
 # ---------------------------------------------------------------------------
 
 
-def test_the_budget_is_no_wider_than_a_standard_terminal():
+def test_the_budget_fits_the_narrowest_pane_in_the_fleet():
     """Asserted against a LITERAL, because every other width test is not.
 
     The rest of this file compares ``len(line) <= STATUSLINE_MAX_WIDTH``, which
     is the property we want but is also parameterised by the very constant
     under test — set the constant to 10000 and all of them stay green while the
-    operator's pane truncates exactly as before. This is the one assertion that
-    can fail in that scenario, so widening the budget to make a line "fit" has
-    to come through here and be argued for.
+    panes truncate exactly as before. This is the one assertion that can fail in
+    that scenario, so widening the budget to make a line "fit" has to come
+    through here and be argued for.
+
+    76 IS MEASURED, NOT CHOSEN, and the first version of this file got it wrong.
+    It asserted ``<= 80`` on the reasoning that 80 is the standard terminal
+    width. An adversarial pass measured the host's real tmux panes and found TWO
+    populations — 89 columns (the operator's, and 5 others) and 80 columns
+    (seven agents). Claude Code indents 2 columns and truncates, with a measured
+    content budget of pane_width - 3 (one sample at -4). So the 80 I shipped was
+    fine on the pane I could see and still truncated on seven I could not.
+
+    The literal here is therefore the NARROWEST pane's budget, not a convention:
+    80 - 4. And it must stay the narrowest, because host tmux runs
+    `window-size latest`, so a pane can shrink to 80 under a running agent.
     """
     # Arrange
-    standard_terminal = 80
+    narrowest_pane_budget = 76
     # Act
     budget = STATUSLINE_MAX_WIDTH
     # Assert
-    assert budget <= standard_terminal
+    assert budget <= narrowest_pane_budget
 
 
 def test_the_live_payload_renders_within_the_width_budget(named_agent):
@@ -97,20 +109,57 @@ def test_the_live_payload_renders_within_the_width_budget(named_agent):
     assert len(line) <= STATUSLINE_MAX_WIDTH
 
 
-def test_the_live_payload_keeps_every_field_including_the_model(named_agent):
-    """Fitting must not be achieved by quietly dropping fields.
+def test_an_ordinary_agent_keeps_every_field_including_the_model(env_save_restore):
+    """Fitting must not be achieved by quietly dropping fields for EVERYONE.
 
-    The operator asked for 全部見えるように — everything visible. A budget tight
-    enough to force the sacrifice path on the ORDINARY case would satisfy the
-    width assertion above while failing the actual request; at 78 this line lost
-    its model. This pins the common case as whole.
+    The operator asked for 全部見えるように. A budget so tight that the sacrifice
+    path fires on every agent would satisfy the width assertion while failing
+    the request.
+
+    "Ordinary" is doing real work in that name. At the measured 76-column budget
+    the whole line fits for a typical agent name, and does NOT fit for the
+    longest ones — `scitex-agent-container` (22 chars) is already over, and the
+    fleet's longest is 32. That is the sacrifice order behaving correctly under
+    a real constraint, not a regression, and the companion tests below pin the
+    losing side. Naming this test for the ordinary case rather than for "the
+    live payload" is the honest description of what it can promise.
     """
     # Arrange
-    data = dict(_LIVE)
+    env_save_restore.set("SAC_AGENT", "scitex-dev")
     # Act
-    line = _render(data)
+    line = _render(dict(_LIVE))
     # Assert
     assert "Opus 5 1M" in line
+
+
+def test_the_fleets_longest_agent_name_still_fits(env_save_restore):
+    """The real worst case, measured across 135 distinct fleet agent names.
+
+    `clew-cohort-a-scitex-capsule-001` is 32 characters and ties two siblings
+    for longest; with `@scitex-compute-04` the identity segment alone is 50,
+    which is most of the budget before a single number is reached.
+    """
+    # Arrange
+    env_save_restore.set("SAC_AGENT", "clew-cohort-a-scitex-capsule-001")
+    # Act
+    line = _render(dict(_LIVE))
+    # Assert
+    assert len(line) <= STATUSLINE_MAX_WIDTH
+
+
+def test_the_fleets_longest_agent_name_keeps_its_numbers(env_save_restore):
+    """Fitting is not enough — the data must be what survives the squeeze.
+
+    An identity that consumes most of the budget is exactly the case where a
+    naive implementation would spend the line on the name and truncate the
+    quota, which is the defect this whole change exists to remove.
+    """
+    # Arrange
+    env_save_restore.set("SAC_AGENT", "clew-cohort-a-scitex-capsule-001")
+    # Act
+    line = _render(dict(_LIVE))
+    # Assert
+    assert "7d:21%" in line
 
 
 def test_an_absurdly_long_agent_name_still_fits(env_save_restore):

@@ -146,11 +146,34 @@ def _active_account() -> str:
 #: every NUMBER — while keeping the identity, which is the one part a human
 #: already knows. The fix is to fit, not to reorder.
 #:
-#: 80 and not less: at 78 this agent's own line lost its MODEL, because the
-#: full line measures exactly 80. Trimming the budget below the standard
-#: terminal width buys nothing (nothing is 79 columns wide) and costs a field
-#: on every turn, so the floor IS the budget.
-STATUSLINE_MAX_WIDTH = 80
+#: 76, AND THIS NUMBER IS MEASURED RATHER THAN CHOSEN. The first version of
+#: this fix used 80 on the reasoning that 80 is the standard terminal width.
+#: That was an assumption, and an adversarial pass measured the host's actual
+#: tmux panes and refuted it:
+#:
+#:     89 cols  dotfiles, handyman-01..04, scitex-agent-container,
+#:              scitex-dev, scitex-hub
+#:     80 cols  handyman-03/05/06/07/08, scitex-cards, scitex-hpc
+#:
+#: TWO populations, not one. Claude Code indents the line 2 columns and then
+#: truncates, and the measured content budget is pane_width - 3 (one sample at
+#: -4). So an 80-char line is fine on an 89-column pane — the operator's — and
+#: STILL TRUNCATES on the seven agents sitting at 80. Conservative rule
+#: pane_width - 4 gives 76.
+#:
+#: And the population is not stable: host tmux runs `window-size latest` with
+#: `default-size 80x24`, and sac never pins a size (`_runners/_tmux/tmux.py`
+#: builds `new-session -d -s <name>` with no -x/-y). A pane is 89 only while
+#: the operator's client is attached, and can become 80 UNDER A RUNNING AGENT.
+#: So the budget must target the minimum, not the pane we happen to see.
+#:
+#: DO NOT try to measure the width at runtime — every probe available here
+#: lies. The payload carries no width field; COLUMNS/LINES are unset; `stty
+#: size` fails with ENOTTY; and `tput cols` returns 80 from the terminfo
+#: DEFAULT (`screen-256color` has cols#80), which is right by coincidence on
+#: an 80-column pane and silently wrong on an 89-column one, with the two
+#: cases indistinguishable from the return value.
+STATUSLINE_MAX_WIDTH = 76
 
 #: Marker for a clamp WE performed. A deliberate, visible ellipsis beats the
 #: terminal's invisible one: the reader can tell the difference between "this
