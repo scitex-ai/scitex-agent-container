@@ -329,13 +329,67 @@ def try_dispatch(
     )
     if dispatch_peer is None:
         return False
-    (dispatcher or _dispatch_remote_start)(
-        name=config.name,
-        peer=dispatch_peer,
-        dry_run=dry_run,
-        force=force,
-    )
+    try:
+        (dispatcher or _dispatch_remote_start)(
+            name=config.name,
+            peer=dispatch_peer,
+            dry_run=dry_run,
+            force=force,
+        )
+    except Exception:
+        # The failure is re-raised UNCHANGED — this only adds the sentence the
+        # operator needs to attribute it. See :func:`_explain_pinned_hop_failure`.
+        _explain_pinned_hop_failure(
+            config.name, config.hosts_spec.host, dispatch_peer
+        )
+        raise
     return True
+
+
+def _explain_pinned_hop_failure(
+    name: str,
+    spec_host: str | list[str] | None,
+    peer: str,
+) -> None:
+    """Name ``spec.host`` when a dispatch driven by it fails.
+
+    MEASURED 2026-08-09: specs across the fleet carried ``host: ywata-note-win``
+    after the laptop was retired. The lifecycle verbs dispatched there and TWELVE
+    agents died with ``Permission denied (publickey)`` — a message that names the
+    AGENT and never the field that chose the destination. Attributing it took
+    days, because nothing in the output connected "this agent will not start" to
+    "a line in its spec points at a machine that is gone".
+
+    Why this is a message and not a probe: ``_host_chain.resolve_host_chain``
+    deliberately never probes a STRING ``host:`` — only a LIST is probed, where
+    the verdict CHOOSES among alternatives. A pin has no alternatives, so a probe
+    there could only REFUSE, and refusing an explicit pin on a prober's say-so is
+    a worse failure than the one being fixed ("never a licence to reject a host
+    the operator asked for"). Probing pre-emptively would also add an ssh
+    round-trip to every remote start, to say something the imminent hop is about
+    to establish for free.
+
+    So the pin is still obeyed and the error still propagates untouched. What
+    changes is that the operator is no longer left to guess WHY this peer.
+    """
+    if not isinstance(spec_host, str) or not spec_host:
+        # A LIST was already walked and probed candidate-by-candidate, and its
+        # own error accounts for every entry; an empty pin never routes remote.
+        return
+    from .._helpers._console import system_msg
+
+    system_msg(
+        f"{name}: this hop was chosen by `host: {spec_host}` in the agent's "
+        f"spec — sac dispatched to peer {peer!r} because of that line, and the "
+        "hop failed (the error below is the peer's, unmodified). A plain "
+        "`host:` pin is never reachability-probed, so a pin at a machine that "
+        "is retired, asleep, or no longer accepting this key fails HERE, with "
+        "a message that names the agent rather than the spec. If "
+        f"{spec_host} is not where this agent should run, correct or remove "
+        "`host:` — an absent `host:` means 'start on whichever machine runs "
+        "the command'.",
+        style="warn",
+    )
 
 
 def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
