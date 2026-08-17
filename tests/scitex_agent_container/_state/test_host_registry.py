@@ -142,11 +142,20 @@ def _remote_command_line(argv: list[str]) -> str:
     thing every assertion below was ever a proxy for. Peers carrying an
     ``env_preamble`` wrap it in ``bash -c '<preamble> && <cmd>'``; unwrap
     that so both dispatch paths are compared on the same footing.
+
+    JOIN EVERYTHING PAST THE ``--``, not just the first element. ssh
+    word-joins the WHOLE tail, so reading only ``argv[i + 1]`` would be
+    blind to any extra trailing token — and extra trailing tokens DO
+    reach the remote shell. Caught by mutation testing: a build_ssh_argv
+    that emits the joined element AND THEN appends the raw tokens (so the
+    remote runs the command twice) left every assertion in this file
+    green while the helper read one element, and fails four of them once
+    the whole tail is joined.
     """
-    element = argv[argv.index("--") + 1]
-    if element.startswith("bash -c "):
-        return shlex.split(element)[2]
-    return element
+    line = " ".join(argv[argv.index("--") + 1 :])
+    if line.startswith("bash -c "):
+        return shlex.split(line)[2]
+    return line
 
 
 def test_registry_rows_are_read_through_the_ssot(registry: Path) -> None:
