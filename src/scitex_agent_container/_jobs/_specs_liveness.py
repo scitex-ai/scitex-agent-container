@@ -31,7 +31,18 @@ def liveness_jobs() -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-fleet-reconcile",
             schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents reconcile --apply",
+            # SELF-BOUNDING (300s) — the bound lives in the command because
+            # this job lands on CRON, where `timeout_sec` cannot follow it.
+            # A no-op pass takes ~seconds; this bounds the pathological one
+            # (`--limit` restarts, each a stop+settle+start). A pass killed at
+            # this timeout is SAFE: the restart history is persisted per
+            # restart, not at the end, so the next tick still honours the
+            # debounce for anything already bounced.
+            #
+            # This is the job whose UNBOUNDED cron line was measured piling
+            # up fourteen concurrent instances, the oldest 45 minutes old
+            # (2026-07-18) — the incident that motivated the guard.
+            command="/usr/bin/timeout 300 sac agents reconcile --apply",
             description=(
                 "The enforcer of 'should be running => is running'. Restarts "
                 "agents whose tmux session is GONE while their spec asks to be "
@@ -63,17 +74,18 @@ def liveness_jobs() -> "list[JobSpec]":
             # read each — cheap enough to run often.
             on_boot_sec="5min",
             on_unit_active_sec="5min",
-            # A no-op pass takes ~seconds; this bounds the pathological one
-            # (`--limit` restarts, each a stop+settle+start). A pass killed at
-            # this timeout is SAFE: the restart history is persisted per
-            # restart, not at the end, so the next tick still honours the
-            # debounce for anything already bounced.
-            timeout_sec=300,
         ),
         JobSpec(
             name="scitex-agent-container-restart-login-expired-agents",
             schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents restart-login-expired --apply",
+            # SELF-BOUNDING (300s), mirroring fleet-reconcile: bounds the
+            # pathological pass (`--limit` restarts, each a stop+settle+start)
+            # plus the ~4s capture interval. A pass killed here is SAFE —
+            # history is persisted per restart, so the next tick still honours
+            # the debounce for anything bounced.
+            command=(
+                "/usr/bin/timeout 300 sac agents restart-login-expired --apply"
+            ),
             description=(
                 "Restarts LIVE agents wedged behind a frozen 'Login expired' "
                 "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
@@ -99,10 +111,5 @@ def liveness_jobs() -> "list[JobSpec]":
             # plus two pane captures ~4s apart.
             on_boot_sec="5min",
             on_unit_active_sec="5min",
-            # Mirrors fleet-reconcile: bounds the pathological pass (`--limit`
-            # restarts, each a stop+settle+start) plus the ~4s capture interval.
-            # A pass killed here is SAFE — history is persisted per restart, so
-            # the next tick still honours the debounce for anything bounced.
-            timeout_sec=300,
         ),
     ]
