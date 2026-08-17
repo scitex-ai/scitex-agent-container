@@ -131,41 +131,191 @@ def _active_account() -> str:
         return ""
 
 
+#: Hard width budget for the rendered line.
+#:
+#: The payload carries NO terminal width — measured 2026-08-17 against a live
+#: capture: it has session, model, workspace, cost, context_window and
+#: rate_limits, and nothing describing the pane. So this is a FLOOR we choose,
+#: not a width we read: 80 columns is the classic minimum, and the line must
+#: still fit after the TUI's own left decoration.
+#:
+#: Why a budget at all (operator, 2026-08-17): 「途中でトランケーションされて
+#: しまってんですよ。なので情報が見えなくなってる…全部見えるように」. The line
+#: was 131 chars and his pane cut it at ~86, mid-model-name. Terminal
+#: truncation eats from the RIGHT, so it discarded ctx / 5h / account —
+#: every NUMBER — while keeping the identity, which is the one part a human
+#: already knows. The fix is to fit, not to reorder.
+#:
+#: 76, AND THIS NUMBER IS MEASURED RATHER THAN CHOSEN. The first version of
+#: this fix used 80 on the reasoning that 80 is the standard terminal width.
+#: That was an assumption, and an adversarial pass measured the host's actual
+#: tmux panes and refuted it:
+#:
+#:     89 cols  dotfiles, handyman-01..04, scitex-agent-container,
+#:              scitex-dev, scitex-hub
+#:     80 cols  handyman-03/05/06/07/08, scitex-cards, scitex-hpc
+#:
+#: TWO populations, not one. Claude Code indents the line 2 columns and then
+#: truncates, and the measured content budget is pane_width - 3 (one sample at
+#: -4). So an 80-char line is fine on an 89-column pane — the operator's — and
+#: STILL TRUNCATES on the seven agents sitting at 80. Conservative rule
+#: pane_width - 4 gives 76.
+#:
+#: And the population is not stable: host tmux runs `window-size latest` with
+#: `default-size 80x24`, and sac never pins a size (`_runners/_tmux/tmux.py`
+#: builds `new-session -d -s <name>` with no -x/-y). A pane is 89 only while
+#: the operator's client is attached, and can become 80 UNDER A RUNNING AGENT.
+#: So the budget must target the minimum, not the pane we happen to see.
+#:
+#: DO NOT try to measure the width at runtime — every probe available here
+#: lies. The payload carries no width field; COLUMNS/LINES are unset; `stty
+#: size` fails with ENOTTY; and `tput cols` returns 80 from the terminfo
+#: DEFAULT (`screen-256color` has cols#80), which is right by coincidence on
+#: an 80-column pane and silently wrong on an 89-column one, with the two
+#: cases indistinguishable from the return value.
+STATUSLINE_MAX_WIDTH = 76
+
+#: Marker for a clamp WE performed. A deliberate, visible ellipsis beats the
+#: terminal's invisible one: the reader can tell the difference between "this
+#: is the whole value" and "sac shortened this".
+_CLAMP = "…"
+
+
+def _short_host(host: str) -> str:
+    """Drop the fleet-wide ``scitex-`` prefix every host name carries.
+
+    ``scitex-compute-04`` -> ``compute-04``. Purely redundant: the prefix is
+    on every host, so it distinguishes nothing while costing 7 columns on the
+    one line where columns are scarce. What remains is still unique across the
+    peer table (compute-01..04, nas-01..03, mba, spartan, ywata-note-win), so
+    :func:`_hostname`'s stated purpose — noticing the same agent name alive on
+    two machines — survives intact.
+    """
+    return host[len("scitex-") :] if host.startswith("scitex-") else host
+
+
+def _short_model(model: str) -> str:
+    """``Opus 5 (1M context)`` -> ``Opus 5 1M``; leave un-parenthesised names alone.
+
+    The parenthetical is the payload's prose, not information: the only part
+    that varies between models an operator might be surprised by is the size
+    token itself. A name with no parenthetical (``claude-opus-4-7``) is passed
+    through byte-for-byte.
+    """
+    head, sep, tail = model.partition("(")
+    if not sep:
+        return model
+    head = head.strip()
+    size = tail.split()[0].rstrip(")") if tail.split() else ""
+    return f"{head} {size}".strip() if size else head
+
+
+def _short_account(acct: str) -> str:
+    """First dash-segment, which is the fleet's EXISTING key for an account.
+
+    ``wyusuuke-gmail-com`` -> ``wyusuuke``. Not an invention: the quota cache
+    already indexes accounts by exactly this segment under the name ``short``,
+    and the stored accounts are distinct in it (scitex, ywatanabe, wyusuuke,
+    ywata1989). So the pane and the quota cache name accounts the same way.
+    """
+    return acct.split("-", 1)[0] if "-" in acct else acct
+
+
+def _render(data: dict) -> str:
+    """Build the status line, guaranteed to fit :data:`STATUSLINE_MAX_WIDTH`.
+
+    Field order and the sacrifice order are the whole design:
+
+    * IDENTITY (``agent@host``) — who and where.
+    * MODEL — compacted.
+    * NUMBERS (``ctx`` / ``5h`` / ``7d``) — grouped into ONE segment separated
+      by spaces rather than ``|``, which buys back four columns.
+    * ACCOUNT — which credential is live.
+
+    ``7d`` IS NEW AND IS THE POINT. Measured 2026-08-17: scitex-hub ran pinned
+    to an account at 7d=100%, capped for days, and answered "You've hit your
+    weekly limit" on every turn — while 5h read LOW and every other signal
+    (SUCC, live tmux, rendered TUI) said healthy. The pane was displaying the
+    reassuring number and hiding the fatal one, and ``seven_day`` was in the
+    payload the whole time.
+
+    WORKDIR IS DROPPED WHEN IT REPEATS THE AGENT NAME. sac repos are named
+    after their agent, so the old line spent 24 columns printing
+    ``scitex-agent-container`` a second time.
+
+    When the line still does not fit, it is shortened in a stated order —
+    model first (least volatile, and recoverable from ``sac agents list``),
+    then the identity is clamped with a visible marker. The NUMBERS and the
+    ACCOUNT are never dropped: they are why the line exists.
+    """
+    ctx_pct = (data.get("context_window") or {}).get("used_percentage", 0)
+
+    host = _short_host(_hostname())
+    agent = _agent_name()
+    if agent and agent != "unknown":
+        identity = f"{agent}@{host}" if host else agent
+    else:
+        identity = host
+
+    model = _short_model((data.get("model") or {}).get("display_name", ""))
+
+    nums = [f"ctx:{ctx_pct:.0f}%"]
+    rl = data.get("rate_limits") or {}
+    fh_pct = (rl.get("five_hour") or {}).get("used_percentage")
+    if fh_pct is not None:
+        nums.append(f"5h:{fh_pct:.0f}%")
+    sd_pct = (rl.get("seven_day") or {}).get("used_percentage")
+    if sd_pct is not None:
+        nums.append(f"7d:{sd_pct:.0f}%")
+
+    tail: list[str] = [" ".join(nums)]
+    acct = _short_account(_active_account())
+    if acct:
+        tail.append(acct)
+
+    wd = _workdir(data)
+    if wd == agent:
+        # sac repos are named after their agent, so the old line spent 24
+        # columns printing the same string twice.
+        wd = ""
+
+    def _head(with_wd: bool, with_model: bool) -> list[str]:
+        out = [identity] if identity else []
+        if with_wd and wd:
+            out.append(wd)
+        if with_model and model:
+            out.append(model)
+        return out
+
+    # Sacrifice order, widest-first and stated rather than emergent:
+    #   1. WORKDIR — the weakest field. Normally the repo name, which is
+    #      derivable from the agent; it only differs at all inside a worktree.
+    #   2. MODEL — recoverable from `sac agents list`, and it changes rarely.
+    #   3. IDENTITY — clamped, never dropped, and clamped VISIBLY.
+    # The numbers and the account are never sacrificed: they are why the line
+    # exists, and they are precisely what the terminal was eating before.
+    for with_wd, with_model in ((True, True), (False, True), (False, False)):
+        head = _head(with_wd, with_model)
+        line = " | ".join(head + tail)
+        if len(line) <= STATUSLINE_MAX_WIDTH:
+            return line
+    if not head:
+        return line
+
+    # 2. Clamp the identity, visibly. The numbers keep their columns.
+    fixed = len(" | ".join(head[1:] + tail)) + len(" | ")
+    room = STATUSLINE_MAX_WIDTH - fixed
+    if room < len(_CLAMP) + 1:
+        return " | ".join(head[1:] + tail)
+    head[0] = head[0][: room - len(_CLAMP)] + _CLAMP
+    return " | ".join(head + tail)
+
+
 def _display(raw: bytes) -> None:
     # stx-allow: fallback (reason: statusLine display must never raise; corrupt
     # or unexpected payload shape silently outputs nothing rather than aborting)
     try:
-        data = json.loads(raw)
-        ctx_pct = (data.get("context_window") or {}).get("used_percentage", 0)
-        model = (data.get("model") or {}).get("display_name", "")
-        parts: list[str] = []
-
-        host = _hostname()
-        agent = _agent_name()
-        if agent and agent != "unknown":
-            parts.append(f"{agent}@{host}" if host else agent)
-        elif host:
-            parts.append(host)
-
-        wd = _workdir(data)
-        if wd:
-            parts.append(wd)
-
-        if model:
-            parts.append(model)
-        parts.append(f"ctx:{ctx_pct:.0f}%")
-
-        rl = data.get("rate_limits") or {}
-        fh = rl.get("five_hour") or {}
-        fh_pct = fh.get("used_percentage")
-        if fh_pct is not None:
-            parts.append(f"5h:{fh_pct:.0f}%")
-
-        acct = _active_account()
-        if acct:
-            parts.append(f"acct:{acct}")
-
-        print(" | ".join(parts), flush=True)
+        print(_render(json.loads(raw)), flush=True)
     except Exception:
         pass
 

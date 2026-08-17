@@ -66,6 +66,18 @@ from ._account_list_fleet import fleet_account_options, run_fleet_account_list
         "column always shows the snapshot age so a stale number is obvious."
     ),
 )
+@click.option(
+    "--no-refresh-quota",
+    "refresh_quota",
+    flag_value=False,
+    default=True,
+    help=(
+        "Skip the automatic quota-snapshot refresh this command performs "
+        "before rendering, and read whatever is cached. Faster and fully "
+        "offline; the bars may then be stale, and the renderer says so. "
+        "The refresh refetches USAGE ONLY — it never touches a credential."
+    ),
+)
 def account_list(
     as_json: bool,
     refresh: bool,
@@ -74,6 +86,7 @@ def account_list(
     no_fanout: bool,
     host_timeout: float,
     by_host: bool,
+    refresh_quota: bool,
 ) -> None:
     """List stored accounts across the fleet, and show this host's active one.
 
@@ -135,6 +148,43 @@ def account_list(
     from ._account_openai import format_openai_account_block
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
+
+    # REFRESH THE QUOTA SNAPSHOT BEFORE READING IT.
+    #
+    # Operator ruling 2026-08-17, second time of asking: "sac accounts list
+    # should automatically refresh the snapshot beforehand ... it is just
+    # time consuming for me to type it by myself." The first answer was a
+    # 5-minute timer (PR #1085), which fixes the host that RUNS the timer and
+    # leaves every other host rendering yesterday's numbers.
+    #
+    # WHY A STALE SNAPSHOT IS WORSE THAN NO SNAPSHOT HERE. Measured the same
+    # day, same account, two hosts:
+    #
+    #     ywata-note-win cache (1d old)   scitex-01-scitex-ai  7d = 15%
+    #     scitex-compute-03, refreshed    scitex-01-scitex-ai  7d = 100%
+    #
+    # The stale reading says the account has headroom while it is in fact
+    # capped until Aug 22 — the number is not merely old, it is INVERTED, and
+    # this is the command an operator reaches for to decide which account to
+    # use. The renderer already detects the condition and prints "! snapshot
+    # older than the refresh window"; narrating a fixable staleness instead of
+    # fixing it is what this change ends.
+    #
+    # SAFE BY CONSTRUCTION: this refetches USAGE ONLY. It does not touch a
+    # credential. A credential refresh rotates a single-use token and would
+    # revoke every other host still holding it — which is why the fleet path
+    # is passive and stays passive. `--no-refresh-quota` opts out for a fast,
+    # deliberately-offline read.
+    if refresh_quota:
+        # stx-allow: fallback (reason: a usage refetch is best-effort — no
+        # network, a 429, or an unreadable store must degrade to the cached
+        # view, never delete the operator's credential inventory mid-incident)
+        try:
+            from .._account.quota_cache_refresh import refresh_quota_cache
+
+            refresh_quota_cache()
+        except Exception:
+            pass
 
     accounts = list_accounts()
     # An UNREADABLE OpenAI store must not delete the Claude view. This command is

@@ -267,12 +267,21 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-host-sync-check",
             schedule="0 * * * *",  # hourly (cron form; timer cadence below)
-            command="sac host sync --check --all --alarm",
+            command="sac host sync --check --all --alarm --exit-zero",
             description=(
                 "Read-only drift check of every peer's sac checkout vs the "
                 "centre; records each verdict in sac's own event log so the "
                 "shout is DURABLE. Mutates nothing on any peer — never runs "
-                "the fast-forward remedy (Stage 1)."
+                "the fast-forward remedy (Stage 1). "
+                "--exit-zero because FINDING drift is not this unit being "
+                "unhealthy. MEASURED 2026-08-17: without it, drift exits 1 "
+                "and undetermined exits 2, systemd recorded the unit "
+                "`failed`, compute-04 went `degraded`, and the dotfiles sync "
+                "installer read `is-system-running: degraded` as 'systemd "
+                "absent' and silently refused to install its timer — so that "
+                "host stopped receiving dotfiles sync altogether. The verdict "
+                "still reaches its real readers: the printed report, the JSON "
+                "`exit_code`, and the --alarm event-log record."
             ),
             kind="timer",
             # First check 10min after boot/login (peers reachable, listen

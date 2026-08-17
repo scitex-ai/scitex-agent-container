@@ -6,6 +6,85 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-08-17
+
+Six commits, and the theme is the same defect in five different places: **a
+check that runs, computes the correct answer, and has no consumer.** A broken
+check gets contradicted eventually; these were right, and the information died
+in the field.
+
+### Fixed
+
+- **A STALE quota snapshot now triggers a re-measure instead of being trusted
+  (#1095).** Measured on scitex-hub, compute-03: its quota cache was present,
+  well-formed, and 23 HOURS OLD. The boot gate asked only "does a cache exist",
+  so the picker read the pinned account's previous-day percentages — 7d=15% —
+  as evidence the pin was fine. The account was at 7d=100%, capped until Aug 22.
+  hub answered "You've hit your weekly limit" on every turn while the restart
+  reported success. Refreshing that one cache revived it: the picker then chose
+  a 7d=8% account by itself. The selector was never wrong; it was fed a day-old
+  number and had no way to know.
+
+  PRESENCE and AGE now answer different questions and stay separate. Presence
+  means this host runs a quota system, so the gate is ARMED — always. Age means
+  the numbers may no longer be true, so the cache is re-measured before the
+  pick. The first attempt at this fix routed staleness into the ABSENT-cache
+  path, which DEGRADES when its refresh fails — that would have started booting
+  agents on a present-but-blind cache instead of refusing them, re-opening the
+  2026-07-20 incident while fixing hub's. Two existing tests caught it.
+
+- **The status line FITS, and shows the 7d quota (#1097, #1098).** Measured by
+  rendering a live payload through the production renderer: 131 characters,
+  truncated by the pane at ~86, mid `Opus 5 (1M conte…`. Truncation eats from
+  the RIGHT, so it discarded ctx, 5h and the account — every NUMBER — while
+  keeping the identity, which is the one part a human already knows.
+
+  Two redundancies were paying for it: the agent name appeared twice (once as
+  the name, once as the workdir basename, because sac repos are named after
+  their agent), and the model carried the payload's prose parenthetical.
+
+  `7d` is the substantive half. hub's incident was a 7d=100% account while 5h
+  read LOW; the pane displayed the reassuring number and hid the fatal one, and
+  `seven_day.used_percentage` was in the payload the whole time.
+
+  The width budget is 76 and it is MEASURED, not chosen. #1097 shipped 80 on
+  the reasoning that 80 is the standard terminal width; measuring the host's
+  real tmux panes found TWO populations — 89 columns and 80 — so an 80-char
+  line was fine on the pane whose truncation prompted the fix and still
+  truncated on seven agents. Host tmux runs `window-size latest`, so a pane can
+  shrink to 80 under a running agent; the budget targets the minimum. Do not
+  probe the width at runtime: `tput cols` returns 80 from the terminfo DEFAULT
+  with no tty, which is right by coincidence at 80 columns and silently wrong
+  at 89.
+
+- **`sac host sync --check` no longer reports a finding as ill health (#1093).**
+  `--exit-zero` for the timer: a check that finds drift has done its job, and
+  an exit code that conflates "I found something" with "I failed" turns the
+  unit red for working correctly.
+
+### Changed
+
+- **`accounts list` refreshes the quota snapshot before rendering it (#1094).**
+  Operator, asked twice: 「sac accounts list should automatically refresh the
+  snapshot beforehand … it is just time consuming for me to type it by
+  myself」. A stale snapshot here is worse than none — measured the same day,
+  same account, two hosts: one read 7d=15% while the account was capped at
+  100%. This is the command an operator reaches for to decide which account to
+  use. `--no-refresh-quota` opts out. The refresh is USAGE-ONLY and never
+  touches a credential.
+
+- **A failed dispatch now NAMES the `host:` line that chose the peer (#1096).**
+  2026-08-09: fleet specs carried `host: ywata-note-win`; the lifecycle verbs
+  dispatched there and twelve agents died with `Permission denied (publickey)`
+  — a message naming the AGENT and never the field that picked the destination.
+
+  Not a refusal and not a probe. `_host_chain.resolve_host_chain` deliberately
+  exempts a bare STRING pin from the reachability oracle: for a LIST the verdict
+  CHOOSES among alternatives, but a pin has no alternatives, so probing could
+  only REFUSE — and the module's invariant is "never a licence to reject a host
+  the operator asked for". The pin is still obeyed and the peer's error
+  propagates unchanged; only the silence is removed.
+
 ## [0.26.0] - 2026-08-17
 
 Promotes 50 commits of accumulated `develop` work to `main`. Cut because
