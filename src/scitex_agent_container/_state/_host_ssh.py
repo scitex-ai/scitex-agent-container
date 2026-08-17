@@ -234,10 +234,40 @@ def build_ssh_argv(
         # the contract every caller was already written against. Making the
         # two agree is the fix; quoting here and not there is what made a
         # peer's behaviour depend on whether it happened to carry a preamble.
-        inner = f"{preamble} && {' '.join(command)}"
+        inner = f"{preamble} && {shlex.join(list(command))}"
         argv.append(f"bash -c {shlex.quote(inner)}")
     else:
-        argv += list(command)
+        # ONE shlex-joined element, NOT raw tokens — measured 2026-08-17 with a
+        # live caller, twice.
+        #
+        # ``command`` MEANS THE SAME THING IN BOTH BRANCHES: a real argv list
+        # whose quoting this function owns. It did not always, and the two
+        # attempts it took to get here are worth recording because each failed
+        # in the other's direction.
+        #
+        #   1. preamble shlex.join + here raw tokens (the original)
+        #      A caller wanting one remote token had to pre-quote it for THIS
+        #      branch, and the preamble branch then quoted it a second time:
+        #      the remote bash looked for a FILE named ``sh -c '...'``, rc=127
+        #      on every preamble peer. That took scitex-hub down.
+        #
+        #   2. preamble space-join + here raw tokens (the first fix)
+        #      Consistent, and consistently WRONG. It exported this branch's
+        #      long-standing inability to carry a quoted argument onto the
+        #      preamble peers, breaking a live creds probe that passes
+        #      ``["python3", "-c", "<one-liner>"]``. Measured A/B on
+        #      scitex-compute-03: parent rc=0, that fix rc=2 syntax error.
+        #
+        # THE DECIDING MEASUREMENT was the BARE peer in that same A/B: nas-03
+        # failed on BOTH renderings. This branch never handled a
+        # whitespace-bearing argument at all — nothing had exercised it, so the
+        # defect sat here silently while looking like a preamble-only problem.
+        #
+        # ssh word-joins everything after the host and hands it to the remote
+        # shell, so emitting ONE shlex-joined element puts exactly the intended
+        # command line on the wire. Callers pass real argv lists and stop
+        # pre-quoting; both branches quote once, here.
+        argv.append(shlex.join(list(command)))
     return argv
 
 
