@@ -341,10 +341,22 @@ def test_host_sync_check_command_never_runs_the_mutating_remedy() -> None:
     # Arrange — belt-and-braces: the exact mutating form `sac host sync
     # <peer>` (no --check) must never be what this timer runs. The command
     # is the read-only detector, full stop.
+    #
+    # `--exit-zero` was added 2026-08-17 and does NOT weaken that intent: it
+    # touches only this process's exit status, never a peer. It is here
+    # because the tri-state verdict (1 = drift found, 2 = undetermined) was
+    # being read by systemd as unit failure, which put the host into
+    # `degraded`, which made the dotfiles sync installer conclude systemd
+    # was absent and silently stop installing its timer.
+    #
+    # Kept as EXACT EQUALITY on purpose. This assertion is the reason that
+    # change could not land unnoticed — a substring check would have let it
+    # through silently, and the next edit to this command deserves the same
+    # scrutiny. Update the literal deliberately; do not relax the operator.
     # Act
     job = _job("scitex-agent-container-host-sync-check")
     # Assert — the command is precisely the read-only check+alarm form.
-    assert job.command == "sac host sync --check --all --alarm"
+    assert job.command == "sac host sync --check --all --alarm --exit-zero"
 
 
 def test_host_sync_check_cadence_is_hourly() -> None:
