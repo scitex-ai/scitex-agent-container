@@ -16,6 +16,8 @@ in its source tree. Two outcomes:
   (which installs every peer) catches cross-package renames.
 """
 
+import importlib
+
 import pytest
 
 # ===== AUTO-GENERATED: cross-package imports =====
@@ -46,10 +48,28 @@ CROSS_PACKAGE_IMPORTS = [
 
 @pytest.mark.parametrize("module_name", CROSS_PACKAGE_IMPORTS)
 def test_cross_package_import_resolves_to_real_module(module_name):
-    """Importing scitex-agent-container's declared cross-package dependency must succeed."""
+    """Importing scitex-agent-container's declared cross-package dependency must succeed.
+
+    PS-140 §2. Skip on the ROOT distribution, then HARD-IMPORT the full path.
+
+    ``pytest.importorskip("scitex_dev.hooks")`` skips when ANY part of the
+    dotted path is missing, so a peer that IS installed but has renamed or
+    removed a submodule reports SKIPPED -- which is exactly the case the
+    module docstring above promises will "FAIL loudly". The two-step form is
+    what makes that promise true: an absent peer still skips (a lean install
+    is legitimate), while a present peer that lost the submodule now fails.
+
+    This is not hypothetical. On 2026-08-17 ``scitex_dev.hooks`` gained a
+    required ``HookRule`` field; the consumer-side break was invisible on
+    every developer machine because this test, and the plugin test beside it,
+    both SKIPPED rather than failed. CI -- which installs the peer -- failed,
+    and develop went red for every PR with no local run able to reproduce it.
+    A skip is not a pass.
+    """
     # Arrange
-    name = module_name
+    root = module_name.split(".")[0]
+    pytest.importorskip(root)
     # Act
-    mod = pytest.importorskip(name)
+    mod = importlib.import_module(module_name)
     # Assert
     assert mod is not None
