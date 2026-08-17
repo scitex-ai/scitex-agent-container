@@ -140,6 +140,19 @@ def _print_result(result: SyncResult) -> None:
         "Mutates no peer."
     ),
 )
+@click.option(
+    "--exit-zero",
+    "exit_zero",
+    is_flag=True,
+    default=False,
+    help=(
+        "Always exit 0. The verdict is unchanged and still printed, still in "
+        "the JSON `exit_code`, and still recorded by --alarm — only the "
+        "PROCESS status is neutralised. For unattended runners (systemd "
+        "timers) where a non-zero status means 'this job is unhealthy', not "
+        "'this job found something'."
+    ),
+)
 @click.pass_context
 def host_sync(
     ctx: click.Context,
@@ -152,6 +165,7 @@ def host_sync(
     timeout: int,
     as_json: bool,
     alarm: bool,
+    exit_zero: bool,
 ) -> None:
     """Reconcile a peer's sac checkout to the centre's code. One-way.
 
@@ -228,6 +242,26 @@ def host_sync(
             )
 
     code = exit_code_for([r.outcome for r in results])
+    # The VERDICT and the PROCESS STATUS are two different facts, and only one
+    # of them belongs to systemd. `code` stays the verdict everywhere it is
+    # read as one — printed below, and carried in the JSON `exit_code` — while
+    # `status` is what this process exits with.
+    #
+    # MEASURED 2026-08-17: this verb runs hourly as
+    # scitex-agent-container-host-sync-check.service. Finding drift exits 1
+    # and "could not determine" exits 2, so systemd recorded the unit as
+    # `failed` for doing its job correctly, which put compute-04 into
+    # `degraded`. The dotfiles sync installer then tested
+    # `systemctl --user is-system-running`, read `degraded` as "systemd is
+    # absent", and PERMANENTLY and SILENTLY refused to install its timer — so
+    # that host stopped receiving dotfiles sync entirely. A finding became a
+    # health signal became a missing service, across two packages, with every
+    # step reporting success.
+    #
+    # Hence --exit-zero rather than SuccessExitStatus=1 2 on the unit: that
+    # would also swallow a genuine crash, which is the shape that left a
+    # stale-lock monitor's detection rendering as success and nobody told.
+    status = 0 if exit_zero else code
 
     # Make the shout DURABLE: record each verdict in sac's own event log.
     # This runs in BOTH output modes — the record is independent of whatever
@@ -248,7 +282,7 @@ def host_sync(
                 "failed": list(alarm_outcome.failed),
             }
         click.echo(json.dumps(payload, indent=2))
-        raise SystemExit(code)
+        raise SystemExit(status)
 
     mode = "check (read-only)" if check_only else "sync"
     console.print(f"[bold]sac host {mode}[/bold]  centre -> {len(results)} peer(s)\n")
@@ -271,7 +305,7 @@ def host_sync(
         )
     if alarm_outcome is not None:
         console.print(f"[dim]{alarm_outcome.summary_line()}[/dim]")
-    raise SystemExit(code)
+    raise SystemExit(status)
 
 
 def register(host_group) -> None:
