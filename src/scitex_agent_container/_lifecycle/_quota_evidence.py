@@ -102,7 +102,31 @@ def pick_with_quota_evidence(
     """
     from .._account.quota_cache import quota_cache_present
 
-    if quota_cache_present(quota_cache_path):
+    # A cache that EXISTS is not the same as evidence that is USABLE, and this
+    # line used to conflate them.
+    #
+    # MEASURED 2026-08-17, scitex-hub on scitex-compute-03. Its quota cache was
+    # present, well-formed, and 23 HOURS OLD. `quota_cache_present` therefore
+    # said True, the armed path trusted it, and the picker read the pinned
+    # account's stale percentages — 7d=15% from the previous day — as evidence
+    # that the pin was fine. The account was actually at 7d=100%, capped until
+    # Aug 22. hub kept the pin and answered "You've hit your weekly limit" on
+    # every turn while the restart reported success. Refreshing that one cache
+    # was what revived it: the picker then chose a 7d=8% account by itself.
+    #
+    # So the selector was never wrong. It was fed a day-old number and had no
+    # way to know, because nothing in this decision looked at age. Note this is
+    # the SAME failure this module's own docstring records for scitex-02 on
+    # 2026-08-06 — an agent booting onto a d7=100% account while startup
+    # reported success. That fix armed the gate when the cache was ABSENT; a
+    # STALE cache walks straight past it, which is why the incident recurred.
+    #
+    # Treating stale as absent routes it into `_build_evidence_once` — the path
+    # that already exists for "we have no evidence, go and get some" — so a
+    # refresh happens before the pick rather than a day later. Constitution §2:
+    # unknown is not "OK", and a number nobody can vouch for is unknown however
+    # confidently it is formatted.
+    if _has_fresh_quota_evidence(quota_cache_path):
         return _pick_armed(
             pick,
             agent_name=agent_name,
@@ -293,3 +317,53 @@ def _refresh(
 
 def _as_int(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+# How old a quota snapshot may be and still count as EVIDENCE for a boot
+# decision. Deliberately generous relative to the 5-minute writer cadence
+# (`_account.claude_usage._CACHE_TTL_SECONDS`) — this is not "is the cache
+# warm", it is "could this number still be true". An hour of drift cannot turn
+# a healthy account into a capped one under any realistic burn rate; a day
+# demonstrably can, and did.
+QUOTA_EVIDENCE_MAX_AGE_S = 3600.0
+
+
+def _has_fresh_quota_evidence(
+    quota_cache_path: Path | str | None,
+    *,
+    max_age_s: float = QUOTA_EVIDENCE_MAX_AGE_S,
+    now: float | None = None,
+) -> bool:
+    """Is there a quota snapshot RECENT ENOUGH to decide a boot on?
+
+    Three outcomes collapse to two here on purpose, and the collapse is the
+    safe direction: absent, unreadable, undated and stale all return False,
+    which routes the caller into "go and build the evidence" rather than into
+    a silent launch. Only a present, parseable, dated and recent cache is
+    evidence.
+
+    ``now`` and ``max_age_s`` are injection seams so the tests can age a cache
+    deterministically instead of sleeping or patching the clock.
+    """
+    import json
+    import time
+
+    # `_resolve_cache_path` is the reader's OWN resolver (override -> env ->
+    # container bind -> host default). Re-implementing that cascade here is how
+    # a freshness check ends up dating a different file than the picker reads.
+    from .._account.quota_cache import _resolve_cache_path, quota_cache_present
+
+    if not quota_cache_present(quota_cache_path):
+        return False
+
+    # stx-allow: fallback (reason: an unreadable or undated cache is TREATED AS
+    # STALE, which is the conservative branch — it triggers a refresh rather
+    # than allowing a boot on evidence we cannot date)
+    try:
+        payload = json.loads(Path(_resolve_cache_path(quota_cache_path)).read_text())
+        written_at = float(payload["written_at"])
+    except Exception:
+        return False
+
+    current = time.time() if now is None else now
+    return (current - written_at) <= max_age_s
