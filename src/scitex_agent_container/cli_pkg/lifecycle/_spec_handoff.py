@@ -225,18 +225,26 @@ def plan_handoff(
 def ssh_runner(peer: str, peers: Mapping[str, PeerSpec]) -> PeerShell:
     """A :data:`PeerShell` that runs scripts on ``peer`` over ssh.
 
-    The script is collapsed into ONE pre-quoted argv element because ssh
-    word-joins everything after the host and hands the result to the remote
-    shell — the same reason :func:`build_ssh_argv` pre-quotes its
-    ``env_preamble`` wrapper. That remote shell is also what expands the
-    ``$HOME`` in a registry-unpinned destination.
+    A REAL ARGV LIST — ``["sh", "-c", script]`` — because
+    :func:`build_ssh_argv` owns the quoting for both its branches. The remote
+    shell is what expands the ``$HOME`` in a registry-unpinned destination.
+
+    THIS USED TO PRE-QUOTE THE SCRIPT INTO ONE ELEMENT, and that was the
+    2026-08-17 outage: the no-preamble branch appended raw tokens for ssh to
+    word-join, so a caller wanting one remote token had to quote it itself —
+    but the env_preamble branch ``shlex.join``ed the same argument, quoting it
+    a SECOND time. The remote bash then looked for a file named
+    ``sh -c '...'`` and returned 127 on every preamble peer, which is what
+    made scitex-hub unstartable by any path. Both branches now shlex-join, so
+    quoting belongs to the builder and pre-quoting here would re-create the
+    doubling from the other side.
     """
     from ..._state.host_config import build_ssh_argv
 
     def run(
         script: str, stdin: bytes | None = None
     ) -> subprocess.CompletedProcess[bytes]:
-        argv = build_ssh_argv(peer, [f"sh -c {shlex.quote(script)}"], dict(peers))
+        argv = build_ssh_argv(peer, ["sh", "-c", script], dict(peers))
         return subprocess.run(argv, input=stdin, capture_output=True, check=False)
 
     return run

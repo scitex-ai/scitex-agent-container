@@ -211,33 +211,32 @@ def build_ssh_argv(
         # compute-node bashrc kills (see docstring). The preamble is
         # responsible for sourcing Lmod (or any other env layer) on
         # its own.
-        # SPACE-JOIN, NOT shlex.join — measured 2026-08-17, rc=127 on every
-        # preamble peer, which took scitex-hub down and unstartable by ANY
-        # path (agent_start from a container and agent_spawn via the host
-        # broker both die here).
-        #
-        # THE BUG WAS TWO INDIVIDUALLY-CORRECT QUOTINGS COMPOSING WRONGLY.
-        # ssh word-joins everything after the host and hands it to the remote
-        # shell, so a caller that wants ONE remote token must pre-quote it —
-        # which `_spec_handoff.ssh_runner` correctly does, passing a single
-        # element like `sh -c 'echo REACHED'`. `shlex.join` then quoted that
-        # already-quoted element AGAIN, so the remote bash saw one word and
-        # looked for a FILE by that name:
-        #
-        #   bash: line 1: sh -c 'echo REACHED': command not found
-        #
-        # Each layer's docstring correctly explained why IT quoted; neither
-        # knew the other did too.
-        #
-        # The join must match the NON-PREAMBLE branch below (`argv +=
-        # list(command)`, which ssh then space-joins), because that branch is
-        # the contract every caller was already written against. Making the
-        # two agree is the fix; quoting here and not there is what made a
-        # peer's behaviour depend on whether it happened to carry a preamble.
-        inner = f"{preamble} && {' '.join(command)}"
+        inner = f"{preamble} && {shlex.join(list(command))}"
         argv.append(f"bash -c {shlex.quote(inner)}")
     else:
-        argv += list(command)
+        # ONE PRE-JOINED ELEMENT, not raw tokens — measured 2026-08-17.
+        #
+        # THE TWO BRANCHES USED TO DISAGREE ABOUT WHAT ``command`` MEANS, and
+        # that disagreement was the defect (rc=127 on every env_preamble peer,
+        # which took scitex-hub down and unstartable by ANY path):
+        #
+        #   preamble branch   shlex.join  -> command is a REAL ARGV LIST
+        #   here (before)     raw append  -> ssh space-joins, so command had to
+        #                                    arrive ALREADY SHELL-QUOTED
+        #
+        # No caller could satisfy both. ``_spec_handoff`` pre-quoted its script
+        # into one element to make THIS branch work, and the preamble branch
+        # then quoted that already-quoted element a second time, so the remote
+        # bash looked for a FILE named ``sh -c '...'``. Each layer's docstring
+        # correctly explained why IT quoted; neither knew the other did too.
+        #
+        # ssh word-joins everything after the host and hands the result to the
+        # remote shell, so emitting ONE shlex-joined element puts exactly the
+        # intended command line on the wire — and makes ``command`` mean a real
+        # argv list in BOTH branches, which is what every other caller here
+        # already passes (``["sac", "agents", "start", name, "--json"]`` and
+        # friends). For tokens needing no quoting the wire bytes are unchanged.
+        argv.append(shlex.join(list(command)))
     return argv
 
 
