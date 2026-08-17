@@ -172,6 +172,62 @@ audit:
           closed by the same condition as PS-224: an ephemeral/isolated runner
           for untrusted-trigger workflows.
 
+      # The remaining three, added 2026-08-18 after DIFFING each local file
+      # against the org reusable it is accused of duplicating. scitex-dev
+      # refused these three on 2026-08-17 because the argument offered was
+      # SIZE, and size is evidence of difference rather than of necessity.
+      # Their stated condition was "convert if a diff shows nothing
+      # load-bearing" — so each reason below names a capability, measured.
+      #
+      # The diff also reversed the expected direction twice: for
+      # auto-merge-to-develop the ORG copy is the one carrying defects this
+      # repo already fixed, so converting would REGRESS merge safety. Do not
+      # assume the shared version is the newer one.
+      - path: .github/workflows/import-smoke-on-ubuntu-py3-12.yml
+        line: 0
+        reason: >-
+          The local job asserts the CONSOLE SCRIPT resolves —
+          `.venv/bin/sac --version` — and the org reusable's entire test body
+          is one hardcoded step that stops at `import <pkg>`. That step is
+          what catches `[project.scripts]` entry-point drift, and it is the
+          same entry point the SIF and run-in-sif.sh exercise; nothing else in
+          this repo's CI runs it against a venv install. The org reusable
+          declares exactly ONE input (`runs_on`), no secrets and no matrix, so
+          a caller has no mechanism to append a step. CLOSED BY: an
+          `extra_check`/post-install input upstream, or splitting the CLI
+          smoke into its own job. NOTE, not a reason to keep this copy: the
+          org version has a FORK GUARD ahead of checkout that this file lacks
+          — that gap is real and is being ported separately rather than being
+          allowed to ride on this exemption.
+      - path: .github/workflows/rtd-sphinx-build-on-ubuntu-latest.yml
+        line: 0
+        reason: >-
+          The local job REFRESHES AND COMMITS `src/scitex_agent_container/
+          _sphinx_html/` back to the default branch (`permissions: contents:
+          write`, `fetch-depth: 0`, commit message "docs: refresh _sphinx_html/
+          from CI build [skip ci]"). Verified in history, not asserted:
+          commits 9460acb2 and 812d98a7 carry that message and 117 files are
+          tracked under that path. A reusable workflow's workspace dies with
+          its job and the org copy has no commit step, no upload-artifact and
+          no outputs, so the built HTML is unreachable from any follow-on job
+          in the caller. Independently: the local file passes `sphinx-build -W`
+          on pull requests only, and the org exposes no strictness input, so
+          converting would silently downgrade "a new Sphinx warning fails the
+          PR" to "warnings ignored". CLOSED BY: an artifact/outputs contract
+          upstream plus a strictness input.
+      - path: .github/workflows/auto-merge-to-develop.yaml
+        line: 0
+        reason: >-
+          CONVERTING WOULD REGRESS MERGE SAFETY. The org copy at
+          scitex-ai/.github@main still carries the pending-check defect this
+          repo fixed on 2026-08-12: it tests `if [ "$pending" = "0" ]` over a
+          jq that does `select(. != "")`, and a QUEUED check has
+          `conclusion == ""`, so it is discarded — a PR whose checks are all
+          still queued reads as zero pending and MERGES. The local copy is
+          ahead of the shared one here, which is the opposite of the direction
+          PS-231's rationale assumes. CLOSED BY: the org reusable adopting the
+          fix, after which this leaf should convert and this entry be removed.
+
   # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
   #
   # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
