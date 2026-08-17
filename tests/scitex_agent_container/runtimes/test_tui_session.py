@@ -117,7 +117,19 @@ class _MemoryMultiplexer:
         # (post-2026-06-14 lead a2a 278159b5) short-circuits in the
         # in-memory unit suite. The fake doesn't render first-launch
         # modals; the drain has no work to do and must not block.
-        return "\n".join(sess.pane) + "\n? for shortcuts"
+        #
+        # "bypass permissions" is the STATUS BAR a real idle pane carries, and
+        # it is what `prompts._detect_done` keys on. Without it this fake
+        # models a pane that is neither ready nor busy — a state no live agent
+        # is ever in — so every delivery test would exercise the refusal path
+        # rather than the path it means to test. Modelling an IDLE pane is the
+        # honest default here; tests that want a busy one say so explicitly by
+        # overriding capture_content (see the busy-pane tests below).
+        return (
+            "\n".join(sess.pane)
+            + "\n? for shortcuts"
+            + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+        )
 
     @classmethod
     def capture_logs(cls, session_name: str, lines: int = 50) -> str:

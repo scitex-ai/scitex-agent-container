@@ -346,17 +346,41 @@ def _build_on_turn(
                     config.name,
                     exc,
                 )
-        # ``wait_ready=False`` → the bare send_text_and_submit primitive
-        # (text + Enter). The full ``wait_until_input_ready`` drain blocks up
+        # ``wait_ready=False`` → skip the blocking modal DRAIN, which waits up
         # to 60s on a "? for shortcuts" marker an idle autonomous pane may
-        # never render — fatal for a wake POST; boot modals are already
-        # drained by ``start()._drain_at_boot`` and claude queues keystrokes
-        # typed mid-turn, so a live wake needs no drain and is never dropped.
+        # never render — fatal for a wake POST. Boot modals are already drained
+        # by ``start()._drain_at_boot``, so a live wake needs no drain.
+        #
+        # THE ACCEPTANCE CHECK STILL RUNS. It is a separate flag precisely
+        # because it must survive ``wait_ready=False``: this is the path
+        # dispatch actually takes, so gating acceptance on the drain flag would
+        # have left the real route unchecked. It costs one capture, not 60s.
+        #
+        # THE SENTENCE THAT USED TO END THIS COMMENT — "claude queues
+        # keystrokes typed mid-turn, so a live wake ... is never dropped" — IS
+        # FALSE and is why this bug survived. Measured 2026-08-18: four
+        # dispatches to live agents across four pane states produced zero
+        # completed tasks, one over a 35-minute window with no restart in it.
+        # Claude does queue them; the queue does not reliably drain.
         delivered = runtime.send_turn(config, text, wait_ready=False)
         if not delivered:
+            # Name the ACTUAL cause. This used to assert the session did not
+            # exist, which was true when absence was the only cause and became
+            # a misdiagnosis the moment a busy pane could also refuse — it sent
+            # the reader hunting a dead agent that was in fact working.
+            #
+            # getattr-guarded because the REASON is enrichment and the RAISE is
+            # the contract. A runtime seam that cannot explain itself must
+            # still fail loudly; making the failure depend on the explainer
+            # would let a missing method turn a refusal into a crash, or worse
+            # into a silent success in some future caller that catches it.
+            explain = getattr(runtime, "why_not_deliverable", None)
+            why = (explain(config) if callable(explain) else None) or (
+                "no reason available from this runtime — the session is absent, "
+                "or the pane would park the turn rather than run it"
+            )
             raise RuntimeError(
-                f"TUI session for agent {config.name!r} does not exist; "
-                "cannot deliver the pushed turn."
+                f"turn NOT delivered to agent {config.name!r}: {why}"
             )
 
     return on_turn

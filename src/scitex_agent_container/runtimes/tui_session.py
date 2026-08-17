@@ -502,3 +502,10 @@ class TuiSessionRuntime(
         return _tui_delivery.capture_pane_logs(
             self._mux, session_name_for(config), lines
         )
+
+    def why_not_deliverable(self, config: AgentConfig) -> str | None:
+        """Reason a turn would not be delivered now, or None if it would be.
+
+        So a caller's error can name the ACTUAL cause instead of guessing one.
+        """
+        return _tui_delivery.why_not_deliverable(self._mux, session_name_for(config))

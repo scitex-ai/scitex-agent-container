@@ -47,19 +47,34 @@ def send_turn_to_pane(
     text: str,
     *,
     wait_ready: bool = True,
+    require_accepting: bool = True,
     ensure_ready: Callable[[], None] | None = None,
 ) -> bool:
     """Deliver one turn to ``name``'s pane; False when it was NOT delivered.
+
+    THE DRAIN AND THE ACCEPTANCE CHECK ARE SEPARATE FLAGS ON PURPOSE, and
+    conflating them is how the first version of this fix missed the path that
+    matters. The turn bridge — the route ``sac peer post-turn`` actually takes
+    — passes ``wait_ready=False`` for a documented and still-valid reason: the
+    drain blocks up to 60s waiting on a marker an idle autonomous pane may
+    never render, which is fatal for a wake POST. If acceptance rode on the
+    same flag, every bridge dispatch would skip it and the fix would cover only
+    the paths that were not broken.
+
+    They are also different in cost, which is why one can be default-on: the
+    drain BLOCKS; the acceptance check is a single ``capture_content``.
 
     Args:
         mux: multiplexer exposing ``exists`` / ``capture_content`` /
             ``send_text_and_submit``.
         name: tmux session name.
         text: the turn.
-        wait_ready: drain modals and check acceptance first. False skips BOTH,
-            for the in-memory unit suite whose fake renders neither.
-        ensure_ready: callable that drains any first-launch / mid-session modal
-            before the pane is read.
+        wait_ready: run the blocking modal drain first.
+        require_accepting: refuse when the pane would PARK the turn. Default
+            on, including when ``wait_ready`` is False. Set False only for the
+            in-memory unit suite, whose fake renders no status bar and would
+            therefore always read as not-accepting.
+        ensure_ready: callable that drains any first-launch / mid-session modal.
 
     Returns:
         True only when the keystrokes were sent to a pane that will run them.
@@ -69,12 +84,12 @@ def send_turn_to_pane(
         # needs that distinction to tell a dead agent from a busy one.
         return False
 
-    if wait_ready:
-        if ensure_ready is not None:
-            ensure_ready()
-        # Read the pane AFTER draining: the drain is what makes readiness
-        # meaningful, and busy/queued state can only be judged once no modal
-        # covers it.
+    if wait_ready and ensure_ready is not None:
+        ensure_ready()
+
+    if require_accepting:
+        # Read the pane AFTER any drain: a modal on screen would otherwise be
+        # read as "not accepting" for the wrong reason.
         content = mux.capture_content(name)
         if not _pane_acceptance.is_accepting(content):
             logger.warning(
@@ -86,6 +101,24 @@ def send_turn_to_pane(
 
     mux.send_text_and_submit(name, text)
     return True
+
+
+def why_not_deliverable(mux: Any, name: str) -> str | None:
+    """Why a turn to ``name`` would not be delivered now, or None if it would.
+
+    Exists so a CALLER can put the specific reason in its own error. The turn
+    bridge previously raised "TUI session ... does not exist" for every False
+    from send_turn, which was accurate when absence was the only cause and
+    became a MISDIAGNOSIS the moment a second cause existed: a busy pane is
+    not a missing session, and telling an operator otherwise sends them to
+    look for a dead agent that is in fact working.
+
+    An error that names the wrong cause is worse than one that names none,
+    because it is actionable in the wrong direction.
+    """
+    if not mux.exists(name):
+        return "no tmux session for this agent — nothing to deliver to"
+    return _pane_acceptance.refusal_reason(mux.capture_content(name))
 
 
 def capture_pane_logs(mux: Any, name: str, lines: int = 50) -> str:
