@@ -102,36 +102,45 @@ def pick_with_quota_evidence(
     """
     from .._account.quota_cache import quota_cache_present
 
-    # A cache that EXISTS is not the same as evidence that is USABLE, and this
-    # line used to conflate them.
+    # PRESENCE decides whether this host runs a quota system at all, and that
+    # is the only question the never-block invariant turns on. AGE decides
+    # whether the numbers may still be true, and its only remedy is a refresh.
+    # Keeping those two separate is the whole correction here: staleness must
+    # never DISARM the gate, because "the cache is old" and "this host has no
+    # cache" call for opposite treatment.
     #
     # MEASURED 2026-08-17, scitex-hub on scitex-compute-03. Its quota cache was
-    # present, well-formed, and 23 HOURS OLD. `quota_cache_present` therefore
-    # said True, the armed path trusted it, and the picker read the pinned
+    # present, well-formed, and 23 HOURS OLD. Nothing in this decision looked
+    # at age, so the armed path trusted it and the picker read the pinned
     # account's stale percentages — 7d=15% from the previous day — as evidence
     # that the pin was fine. The account was actually at 7d=100%, capped until
     # Aug 22. hub kept the pin and answered "You've hit your weekly limit" on
     # every turn while the restart reported success. Refreshing that one cache
-    # was what revived it: the picker then chose a 7d=8% account by itself.
+    # was what revived it: the picker then chose a 7d=8% account by itself. The
+    # selector was never wrong; it was fed a day-old number and had no way to
+    # know.
     #
-    # So the selector was never wrong. It was fed a day-old number and had no
-    # way to know, because nothing in this decision looked at age. Note this is
-    # the SAME failure this module's own docstring records for scitex-02 on
-    # 2026-08-06 — an agent booting onto a d7=100% account while startup
-    # reported success. That fix armed the gate when the cache was ABSENT; a
-    # STALE cache walks straight past it, which is why the incident recurred.
-    #
-    # Treating stale as absent routes it into `_build_evidence_once` — the path
-    # that already exists for "we have no evidence, go and get some" — so a
-    # refresh happens before the pick rather than a day later. Constitution §2:
-    # unknown is not "OK", and a number nobody can vouch for is unknown however
-    # confidently it is formatted.
-    if _has_fresh_quota_evidence(quota_cache_path):
+    # The first attempt at this fix routed a stale cache into
+    # `_build_evidence_once` — the ABSENT-cache path — which looks equivalent
+    # and is not: that path DEGRADES when its refresh fails. So a cache that
+    # was present-but-blind and older than the window would have started
+    # booting agents instead of refusing them, re-opening the 2026-07-20
+    # incident (scitex-cards launched onto a 7d=100% account read as
+    # "5h=? 7d=?") in the act of fixing hub's. Two tests said so.
+    if quota_cache_present(quota_cache_path):
+        refreshed = False
+        if not _has_fresh_quota_evidence(quota_cache_path):
+            refreshed = _refresh_stale_evidence(
+                agent_name=agent_name,
+                quota_cache_path=quota_cache_path,
+                store_dir=store_dir,
+            )
         return _pick_armed(
             pick,
             agent_name=agent_name,
             quota_cache_path=quota_cache_path,
             store_dir=store_dir,
+            already_refreshed=refreshed,
         )
 
     blocker = _build_evidence_once(
@@ -158,12 +167,51 @@ def pick_with_quota_evidence(
     return picked
 
 
+def _refresh_stale_evidence(
+    *,
+    agent_name: str,
+    quota_cache_path: Path | str | None,
+    store_dir: Path | None,
+) -> bool:
+    """Re-measure a cache too OLD to decide a boot on. True if a refresh ran.
+
+    Best-effort by construction, and unlike :func:`_build_evidence_once` a
+    failure here changes NOTHING about the gate: the host demonstrably has a
+    quota cache, so the never-block invariant — which exists for hosts running
+    no quota system at all — does not apply to it. A stale cache that cannot be
+    refreshed is simply picked against with the gate ARMED, and the pick then
+    refuses or proceeds on its own merits.
+
+    The old cache is deliberately left in place when the refresh fails. It is
+    the only evidence this host has, and deleting it (as the absent-cache path
+    does for the empty file IT created) would silently convert a fail-loud host
+    into a degrading one.
+    """
+    logger.info(
+        "quota cache is too old to decide %r's boot — re-measuring before picking",
+        agent_name,
+    )
+    try:
+        _refresh(quota_cache_path=quota_cache_path, store_dir=store_dir)
+    except Exception as exc:  # stx-allow: fallback (reason: the staleness re-measure is BEST-EFFORT. A populator that raises must leave the boot exactly where it stood — picking against the old cache with the gate ARMED — never crash a start that would otherwise have succeeded.)
+        logger.warning(
+            "could not refresh %r's stale quota cache (%s: %s) — picking with the "
+            "gate armed against the cache as it stands",
+            agent_name,
+            exc.__class__.__name__,
+            exc,
+        )
+        return False
+    return True
+
+
 def _pick_armed(
     pick: Callable[[bool], str],
     *,
     agent_name: str,
     quota_cache_path: Path | str | None,
     store_dir: Path | None,
+    already_refreshed: bool = False,
 ) -> str:
     """Pick with the gate ARMED, self-repairing a blind cache once.
 
@@ -184,6 +232,12 @@ def _pick_armed(
     try:
         return pick(True)
     except BlindQuotaCacheError as blind:
+        if already_refreshed:
+            # A staleness re-measure just ran, seconds ago, against this same
+            # store. Running the populator again would measure exactly what it
+            # measured then, so the refusal is already the post-refresh one
+            # this path exists to produce.
+            raise
         logger.info(
             "quota cache blind for %r — refreshing it once before refusing",
             agent_name,
