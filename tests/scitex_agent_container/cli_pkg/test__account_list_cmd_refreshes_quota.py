@@ -27,7 +27,6 @@ holding it.
 
 from __future__ import annotations
 
-import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._account_list_cmd import account_list
