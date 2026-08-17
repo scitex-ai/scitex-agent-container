@@ -762,18 +762,6 @@ def test_busy_pane_still_satisfies_the_input_ready_predicate(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "send_turn reports delivery on the strength of having sent keystrokes. "
-        "Measured 2026-08-18: four dispatches to live handymen across four "
-        "agent states produced zero completed tasks, while each returned "
-        "200 {'delivered': true}. The fix is an acceptance check, not a "
-        "busy check — a non-spinning pane may still be queued or compacting, "
-        "so 'not busy' is not 'will run'. Flip to XPASS when send_turn "
-        "verifies the turn was ACCEPTED."
-    ),
-)
 def test_send_turn_refuses_when_the_pane_is_busy(
     mux: type[_MemoryMultiplexer],
 ) -> None:
