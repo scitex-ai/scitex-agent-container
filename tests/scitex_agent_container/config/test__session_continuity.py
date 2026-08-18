@@ -114,13 +114,16 @@ def test_default_session_for_coordinator_role_is_continue():
     assert result == "continue"
 
 
-def test_default_session_for_absent_role_is_fresh():
-    # Arrange
+def test_default_session_for_absent_role_is_continue():
+    # Arrange — operator ruling 2026-08-18: 「スペックは全てレジュームで」, so a
+    # spec that omits claude.session continues REGARDLESS of role. The old
+    # allowlist silently gave `fresh` to any role nobody had enumerated, which
+    # is how scitex-hub (role `product-lead-orchestrator`) lost a day.
     candidate = None
     # Act
     result = default_session_for_role(candidate)
     # Assert
-    assert result == "fresh"
+    assert result == "continue"
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +276,26 @@ def test_loader_coordinator_role_defaults_omitted_session_to_continue(tmp_path):
     assert cfg.claude.session == "continue"
 
 
-def test_loader_absent_role_keeps_omitted_session_fresh(tmp_path):
-    # Arrange
+def test_loader_absent_role_gets_continue_not_fresh(tmp_path):
+    # Arrange — a roleless spec is the case that used to fall through to
+    # `fresh`. 91 of 117 live specs omit claude.session, so this default
+    # decided the fleet's memory and nobody had chosen it.
     spec = _write_spec(tmp_path, _OMIT_SESSION_NO_ROLE)
     # Act
     cfg = load_config(str(spec))
     # Assert
-    assert cfg.claude.session == "fresh"
+    assert cfg.claude.session == "continue"
+
+
+def test_an_unenumerated_coordinator_role_still_continues(tmp_path):
+    # Arrange — the regression that motivated the change: `product-lead-
+    # orchestrator` matches neither _CONTINUITY_ROLES nor any prefix (it
+    # begins `product-`, not `lead-`), so under the allowlist it resolved to
+    # `fresh`. Pinned by ROLE STRING, not by the set, so re-adding an
+    # allowlist cannot make this pass again.
+    result = default_session_for_role("product-lead-orchestrator")
+    # Act / Assert
+    assert result == "continue"
 
 
 def test_loader_explicit_fresh_on_coordinator_is_not_overridden(tmp_path):
