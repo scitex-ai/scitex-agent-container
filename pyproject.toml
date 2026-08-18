@@ -103,6 +103,15 @@ dependencies = [
 mcp = [
     # F-CS15: sac MCP server. fastmcp 2.x and 3.x both supported via
     # the safe_mount shim (matches scitex-* package convention).
+    #
+    # 2.x SUPPORT IS SHIM-BACKED BUT UNTESTED, and saying so is the honest
+    # form of this claim. The suite installs [dev], which floors fastmcp at
+    # >=3.0 (see the note there and the measurement behind it), so nothing
+    # in CI ever exercises the 2.x branch of `mcp_group._list_tools`. The
+    # floor stays at 2.0 because the runtime shim really does handle both
+    # and narrowing it would break the scitex-* convention for consumers
+    # who only want the server — but a 2.x regression here would reach a
+    # user before it reached a test.
     "fastmcp>=2.0",
 ]
 telegram = [
@@ -346,7 +355,24 @@ dev = [
     # collection-skipped on dev boxes. Keeping fastmcp also as a [mcp]
     # extra so runtime installs that only need the MCP server can
     # opt-in without pulling the rest of [dev].
-    "fastmcp>=2.0",
+    #
+    # >=3.0 HERE, >=2.0 IN [mcp], AND THE ASYMMETRY IS THE POINT. The
+    # SOURCE tolerates both lines — `cli_pkg/mcp_group._list_tools`
+    # branches on `hasattr(server, "list_tools")`. The TESTS do not: they
+    # call `server.list_tools()` outright, so on a 2.x resolution 26 of
+    # them fail with `'Server' object has no attribute 'list_tools'` and
+    # `TypeError: 'types.UnionType' object is not callable`.
+    #
+    # There is no lockfile, so `uv pip install -e .[dev]` re-resolves on
+    # every CI run and an unbounded floor makes the RESULT NON-DETERMINISTIC.
+    # Measured 2026-08-18, same workflow, same py3.11, ~5 minutes apart:
+    #   run 32184153812  fastmcp==3.4.7  mcp==1.29.0  -> 17094 passed
+    #   run 32185071483  fastmcp==2.14.1               -> 29 failed
+    # Nothing in the repo changed between them; only the resolution did.
+    # A floor that admits an API the tests cannot run against turns a
+    # green suite into a coin flip, and the failure names an attribute
+    # rather than the version that removed it.
+    "fastmcp>=3.0",
 ]
 docs = [
     "sphinx>=7.0",
