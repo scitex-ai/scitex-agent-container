@@ -336,7 +336,7 @@ def test_bulk_enable_still_accepts_one_name() -> None:
             dj._make_group("timer"), ["enable", "accounts-refresh", "--yes"]
         )
     # Assert
-    assert recorder.names_for("enable") == ["sac.accounts-refresh"]
+    assert recorder.names_for("enable") == ["scitex-agent-container-accounts-refresh"]
 
 
 def test_disable_has_no_bulk_form() -> None:
