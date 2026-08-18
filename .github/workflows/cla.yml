@@ -29,11 +29,36 @@ name: cla
 # issue. That is why ubuntu-latest here is a deliberate exception (PS-224),
 # escalated to the operator rather than silently created.
 #
-# The org reusable defaults `runs_on` to '["ubuntu-latest"]' and carries the
-# same reasoning in its own comments. THIS CALLER DELIBERATELY DOES NOT PASS
-# `runs_on` — taking the default IS the security decision. If you are tempted to
-# pass a self-hosted pool here, read the paragraph above first; it is a security
-# regression, not a compliance win.
+# `runs_on` IS PASSED EXPLICITLY BELOW, and the explicitness is the point. The
+# org reusable's default is already '["ubuntu-latest"]' (org #29 inverted it so
+# self-hosted is opt-in), so passing nothing would land on the same runner —
+# this is not a behaviour change. It is a change in WHERE THE DECISION LIVES.
+#
+# Relying on the default made this repo's security posture a property of a file
+# in ANOTHER repository, readable only by someone who thinks to go and look.
+# Two things happened that argue against that:
+#
+#   * That remote default can be changed by a PR none of this repo's reviewers
+#     see. Inheriting safety silently is one edit away from inheriting danger
+#     silently — the same argument org #29 itself used to invert the default
+#     ("a default is not a decision anyone makes — it is one they never see").
+#   * The org file's `description:` for this input still says "Defaults to the
+#     Spartan pool" — stale prose from before the inversion, sitting directly
+#     above a comment saying the opposite and a literal `default:` saying the
+#     opposite again. On 2026-08-18 that stale line was read as authoritative
+#     and very nearly produced a false security-regression report against this
+#     very PR. Prose about a value is not the value.
+#
+# With the value written here, nobody has to consult a remote file at all to
+# know where this job runs. If you are tempted to change it to a self-hosted
+# pool, read the paragraph above first: that is a security regression, not a
+# compliance win.
+#
+# NOTE FOR THE no-hosted-runners GUARD (SAC-CI004): a caller has no local
+# `runs-on:`, so a guard that parses only local `runs-on:` keys cannot see where
+# this job runs and must NOT conclude the hosted-runner allowlist entry has
+# become unnecessary. That entry is the security argument, not bookkeeping.
+# Unresolvable is not unhosted.
 #
 # SECRET NAMING (PS-168 §1): per-package secrets in .github/workflows/ carry the
 # SCITEX_AGENT_CONTAINER_ prefix. The prefix belongs to THIS repo's secret store,
@@ -62,5 +87,11 @@ permissions:
 jobs:
   CLAssistant:
     uses: scitex-ai/.github/.github/workflows/cla.yml@main
+    with:
+      # MUST be a JSON ARRAY STRING — the reusable feeds it to fromJSON. A YAML
+      # list decodes to something fromJSON rejects, and the resulting label
+      # mismatch makes the job QUEUE FOREVER rather than fail, which is
+      # indistinguishable from "still waiting" in the run list.
+      runs_on: '["ubuntu-latest"]'
     secrets:
       GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_GH_PERSONAL_ACCESS_TOKEN }}

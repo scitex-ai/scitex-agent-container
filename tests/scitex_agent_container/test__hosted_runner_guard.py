@@ -19,6 +19,7 @@ exception, this file goes red.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -457,12 +458,25 @@ def test_the_cla_allowlist_entry_carries_a_real_reason() -> None:
 
 
 def test_the_cla_job_really_is_still_hosted() -> None:
-    # Arrange: the exception must be LOAD-BEARING, not decorative. If
-    # cla.yml ever stops being hosted, the entry is stale (SAC-CI004) and
-    # must be deleted rather than left lying around as a standing loophole.
+    # Arrange: the exception must be LOAD-BEARING, not decorative — if cla.yml
+    # ever stops being hosted, the entry is a standing loophole and must go.
+    #
+    # This used to assert `classify_runs_on(...) == HOSTED`, reading a local
+    # `runs-on:`. cla.yml is now a CALLER (PS-231), so there is no local
+    # `runs-on` and that verdict is UNRESOLVABLE — which is a statement about
+    # what the guard can SEE, not about where the job runs, and so cannot
+    # carry this assertion any more.
+    #
+    # The caller passes `runs_on` EXPLICITLY, which is what makes the property
+    # locally checkable again: we assert the value this repo actually sends,
+    # rather than a remote default we would have to go and look up. If someone
+    # points this at the self-hosted pool, this test goes red — which is the
+    # whole point, because that is the change the allowlist entry exists to
+    # prevent (unauthenticated triggers, third-party action, and a $HOME
+    # holding the fleet credential).
     cla = REPO_ROOT / ".github" / "workflows" / "cla.yml"
     doc = yaml.safe_load(cla.read_text(encoding="utf-8"))
     # Act
-    verdict = classify_runs_on(doc["jobs"]["CLAssistant"])
+    labels = json.loads(doc["jobs"]["CLAssistant"]["with"]["runs_on"])
     # Assert
-    assert verdict == HOSTED
+    assert labels == ["ubuntu-latest"]
