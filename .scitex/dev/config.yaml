@@ -180,6 +180,39 @@ audit:
         NAME. Tracked in card `sac-accounts-refresh-unit-migration`; this
         entry is removed by the change that performs the migration.
 
+  # PS-231 asks each leaf to CALL the org's reusable workflow rather than
+  # re-implement it, and it is right for four of sac's five copies. It is
+  # wrong for exactly one, and this is a per-SITE exemption (one rule, one
+  # path) rather than a skip-rule, so the other four still report and still
+  # get fixed.
+  exemptions:
+    PS-231:
+      - path: .github/workflows/cla.yml
+        line: 0
+        reason: >-
+          Adopting the org reusable `cla` workflow would re-open, WIDER, a
+          security hole the operator closed on 2026-07-14. This file is the
+          ONLY `ubuntu-latest` left in the repo and that is deliberate,
+          argued and escalated — see its own 30-line header. Four facts that
+          only bite in combination: (1) its triggers are UNAUTHENTICATED —
+          this is a PUBLIC repo, `issue_comment` fires when anyone comments
+          on any issue or PR and `pull_request_target` fires when anyone
+          opens a fork PR, so a GitHub account is the entire barrier to
+          entry; (2) the fork-PR approval gate set to
+          `all_external_contributors` gates `pull_request` from forks and
+          does NOT gate `pull_request_target`, which runs in the BASE repo's
+          context with secrets and a write token BY DESIGN; (3) our runners
+          are SELF-HOSTED on the operator's own machines, so moving this
+          workflow onto them puts unauthenticated, unreviewed triggers on
+          our hardware; (4) the org reusable workflow defaults `runs_on` to
+          '["ubuntu-latest"]', so a naive caller would ALSO silently violate
+          the no-hosted-runners rule everywhere else it is adopted. Keeping
+          the CLA check on GitHub's disposable hardware is the containment.
+          This entry is removed only by a change that makes the org
+          workflow safe to call from a public repo's unauthenticated
+          triggers; tracked in card
+          ps231-org-reusable-workflow-defaults-to-hosted-runner-20260818.
+
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
   #   - config/      declarative YAML schema + templates the CLI
