@@ -92,6 +92,14 @@ def check(name_or_path: str) -> None:
     # docs/adr/0001-isolation-hardening.md §D4.
     _warn_host_mirroring_bind_targets(config)
 
+    # raw_args as an APPTAINER ARGV, not merely as YAML. This check said
+    # "Ready to deploy" on a spec whose raw_args carried an env assignment
+    # with no `--env` before it, minutes before that agent failed to start
+    # (2026-08-18). Everything above validates shape and environment; this
+    # is the one that reads raw_args the way apptainer will.
+    if not _check_raw_args(config):
+        all_ok = False
+
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
     else:
@@ -99,6 +107,31 @@ def check(name_or_path: str) -> None:
             "[red]Preflight checks failed. Fix the issues above before deploying.[/red]"
         )
         sys.exit(1)
+
+
+def _check_raw_args(config) -> bool:
+    """Report whether ``spec.apptainer.raw_args`` is a well-formed argv.
+
+    FAILS the preflight rather than warning, because the failure it catches
+    is not a deviation the operator might have chosen — a positional in
+    raw_args cannot start the agent at all. Returns True when there is
+    nothing to say, so a spec with no raw_args is unaffected.
+    """
+    from ..runtimes._apptainer_argv_guard import ApptainerArgvError, validate_raw_args
+
+    ap = getattr(config, "apptainer", None)
+    raw = list(getattr(ap, "raw_args", None) or []) if ap is not None else []
+    if not raw:
+        console.print(f"  {'raw_args:':30s} [green]OK (none declared)[/green]")
+        return True
+    try:
+        validate_raw_args(raw, agent=getattr(config, "name", None))
+    except ApptainerArgvError as exc:
+        console.print(f"  {'raw_args:':30s} [red]FAIL[/red]")
+        console.print(f"[red]{exc}[/red]")
+        return False
+    console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
+    return True
 
 
 # Bind targets that start with these prefixes mirror host home / user
