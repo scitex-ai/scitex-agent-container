@@ -245,6 +245,7 @@ def register_migrate_command(dev_group: click.Group) -> None:
             present=present,
             dropin_dirs=dropins,
             install_argv=_install_argv_factory(),
+            include_held=include_held,
         )
 
         chosen = _migrate.selection(env=dict(__import__("os").environ), home=Path.home())
