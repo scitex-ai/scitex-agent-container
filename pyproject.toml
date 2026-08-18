@@ -457,18 +457,51 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 [project.entry-points."scitex_dev.store.plugins"]
 scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 
-# C10 — sac's consumer on scitex-todo's shared card-event bus. When
-# scitex-todo's board emits a card-event (commented / created /
-# reassigned / status_changed / completed / committed / pushed /
-# merged), this callable is invoked in the board's process; it resolves
-# the card's owner + collaborators + subscribers and delivers the
-# notification to each via the local ``sac listen`` daemon's
-# ``/v1/notify`` router endpoint — so a CONTAINERIZED owner-agent (whose
-# a2a port is unreachable inbound) still receives it. The consumer
-# filters for the card-event kinds and ignores everything else, incl.
-# sac's OWN liveness-tick anomaly events on the same bus. Bus-only
-# contract: no import of scitex_todo.
-[project.entry-points."scitex_todo.hooks"]
+# C10 — sac's consumer on scitex-cards' shared card-event bus. When
+# the board emits a card-event (commented / created / reassigned /
+# status_changed / completed / committed / pushed / merged), this
+# callable is invoked in the board's process; it resolves the card's
+# owner + collaborators + subscribers and delivers the notification to
+# each via the local ``sac listen`` daemon's ``/v1/notify`` router
+# endpoint — so a CONTAINERIZED owner-agent (whose a2a port is
+# unreachable inbound) still receives it. The consumer filters for the
+# card-event kinds and ignores everything else, incl. sac's OWN
+# liveness-tick anomaly events on the same bus. Bus-only contract: no
+# import of the board package.
+#
+# GROUP NAME (2026-08-18): moved from the DEAD ``scitex_todo.hooks`` to
+# ``scitex_cards.hooks``. The product was renamed; the entry-point group
+# followed. scitex-cards shipped a compatibility alias that read BOTH
+# groups, then removed it on the operator's ruling — 「そんなものすぐ壊せ
+# ばいい；ハードに todo から cards に行かないからずるずると壊れっぱなし」
+# — because an alias removes the PRESSURE to migrate while leaving the
+# old name load-bearing forever. Dispatch now reads this group ONLY.
+#
+# This is a straight MOVE, not a dual registration: the old group is not
+# read at all, so declaring both would register one live consumer and one
+# dead one, which is strictly worse than one live consumer — it looks like
+# belt-and-braces and is actually a decoy for the next reader.
+#
+# WHY THIS MATTERS MORE THAN A RENAME. The 2026-08-17 failure was not that
+# this consumer broke; it was that it broke SILENTLY — dispatch looked in
+# an empty group, called nobody, and every health check stayed green. If
+# this line is ever wrong again, card events stop being delivered to every
+# containerized agent on the fleet and nothing goes red. Verify by
+# RESOLVING the entry point, never by reading this file:
+#
+#     python -c "from importlib.metadata import entry_points; \
+#       print([e.value for e in entry_points(group='scitex_cards.hooks')])"
+#
+# An editable install does NOT pick up a pyproject entry-point change
+# until it is reinstalled — the line being correct here and the consumer
+# being registered are two different facts.
+#
+# NOTE for whoever drops LEGACY_BOARD_ID_ENV in runtimes/_board_identity_env.py:
+# that is a SEPARATE migration with its own ordering (dotfiles migrates the
+# specs, scitex-cards lands its identity-door ${...} guard, only then do we
+# stop injecting the legacy name). This entry-point move is independent of
+# it and does not satisfy any of its conditions.
+[project.entry-points."scitex_cards.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
 # Claude Code hook RULES sac declares about its own surfaces. sac owns the
