@@ -322,66 +322,6 @@ audit:
           PS-231's rationale assumes. CLOSED BY: the org reusable adopting the
           fix, after which this leaf should convert and this entry be removed.
 
-  # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
-  #
-  # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
-  # `JobSpec(name="sac.accounts-refresh")` is genuinely not hyphen-
-  # separated, and the rule exists for a real reason:
-  # `jobs/_systemd.py::systemd_unit_name` derives the unit FILENAME from
-  # the job name verbatim, with no sanitisation.
-  #
-  # What is deferred is the REMEDY, because the obvious one is more
-  # dangerous than the defect. Renaming does not re-label the running
-  # unit; it makes sac install a SECOND unit beside the live hand-written
-  # one. That unit is the fleet's SOLE OAuth refresher, and it refreshes a
-  # SINGLE-USE token — two refreshers racing revoke each other, taking
-  # every agent's authentication down with them. So the rename is a
-  # supervised systemd unit migration (stop-old -> remove-old ->
-  # install-new -> verify-exactly-one), never a drive-by edit, and
-  # never at an hour when nobody is watching.
-  #
-  # The supervised path already exists: `_jobs/_migrate/_renames.py`.
-  # This entry comes off in the same change that runs the migration.
-  #
-  # *** READ THIS BEFORE DELETING ANY UNIT. ***
-  # "verify-exactly-one" means EXACTLY ONE UNIT FOR THIS ONE JOB — old
-  # gone, new present. It does NOT mean "one accounts job on the host".
-  # There are TWO accounts jobs and BOTH MUST EXIST:
-  #
-  #   sac.accounts-refresh                        rotates the credential,
-  #                                               every 2h, on the host
-  #                                               holding refresh material
-  #   scitex-agent-container-accounts-keepalive   distributes the
-  #                                               ACCESS-ONLY copy,
-  #                                               every 15min
-  #
-  # They are DIFFERENT JOBS doing different work, not a rename pair and
-  # not duplicates of each other. Anyone who reads this rule as "collapse
-  # the accounts jobs to one" would remove a job the fleet depends on —
-  # which is a larger outage than the naming defect being deferred here.
-  # The only thing PS-226 asks for is the SHAPE OF ONE JobSpec NAME.
-  skip-rules:
-    - rule: PS-226
-      reason: >-
-        Correct finding, deferred to the supervised job-name migration —
-        not waived. `systemd_unit_name` uses `JobSpec.name` verbatim, so
-        renaming `sac.accounts-refresh` installs a SECOND unit beside the
-        live one instead of adopting it. That job is the fleet's sole
-        OAuth refresher against a SINGLE-USE refresh token, where two
-        racing refreshers revoke each other and take fleet-wide
-        authentication down. The migration must be ordered stop-old ->
-        remove-old -> install-new -> verify-exactly-one and run
-        supervised; the path exists in `_jobs/_migrate/_renames.py`.
-        "verify-exactly-one" means exactly one unit FOR THIS ONE JOB, NOT
-        one accounts job on the host: `sac.accounts-refresh` (rotates the
-        credential, every 2h) and
-        `scitex-agent-container-accounts-keepalive` (distributes the
-        access-only copy, every 15min) are DIFFERENT JOBS that must BOTH
-        continue to exist — they are not a rename pair and must never be
-        collapsed into one. PS-226 asks only for the SHAPE OF ONE JobSpec
-        NAME. Tracked in card `sac-accounts-refresh-unit-migration`; this
-        entry is removed by the change that performs the migration.
-
   # PS-103: legitimate top-level dirs that are not part of the wheel
   # but are operator-facing artefacts:
   #   - config/      declarative YAML schema + templates the CLI

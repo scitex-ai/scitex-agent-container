@@ -3,7 +3,7 @@
 Verifies the JobSpecs sac registers under the ``scitex_dev.jobs``
 entry-point group match the federated contract:
 
-* ``sac.accounts-refresh`` — a periodic systemd timer job that runs
+* ``scitex-agent-container-accounts-refresh`` — a periodic systemd timer job that runs
   ``--all --include-active --sync-active-login`` every 2h (the SOLE
   refresher; see the ``--skip-active`` note below).
 * ``sac.accounts-keepalive`` — the DISTRIBUTION half of that same
@@ -69,7 +69,7 @@ def test_provider_returns_every_expected_job() -> None:
     names = {job.name for job in provide_jobs()}
     # Assert
     assert names == {
-        "sac.accounts-refresh",
+        "scitex-agent-container-accounts-refresh",
         "scitex-agent-container-accounts-keepalive",
         # The usage-cache refresher. Nothing else reads usage: accounts-refresh
         # rotates tokens and accounts-keepalive copies them, so before this job
@@ -96,9 +96,9 @@ def test_provider_jobs_are_real_jobspecs() -> None:
 def test_provider_job_name_is_package_prefixed() -> None:
     # Arrange — call the registered provider.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
-    assert job.name == "sac.accounts-refresh"
+    assert job.name == "scitex-agent-container-accounts-refresh"
 
 
 def test_provider_job_command_includes_active_account() -> None:
@@ -113,7 +113,7 @@ def test_provider_job_command_includes_active_account() -> None:
     # Act — by NAME, not by index: this provider now returns two jobs, so
     # provide_jobs()[0] would silently start asserting against the wrong
     # JobSpec the day the list order changes.
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert job.command == (
         "sac accounts refresh --all --include-active --sync-active-login"
@@ -124,7 +124,7 @@ def test_provider_job_command_never_skips_active() -> None:
     # Arrange — a belt-and-braces guard: --skip-active must never
     # reappear in the sole-refresher timer, however the command is spelled.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert "--skip-active" not in job.command
 
@@ -132,11 +132,11 @@ def test_provider_job_command_never_skips_active() -> None:
 def test_provider_job_kind_is_timer() -> None:
     # Arrange — call the registered provider. The legacy ``kind=
     # "systemd"`` is no longer accepted by JobSpec.validate() since
-    # scitex-dev #153; ``sac.accounts-refresh`` is a periodic
+    # scitex-dev #153; ``scitex-agent-container-accounts-refresh`` is a periodic
     # systemd --user timer (token TTL ~7h, refresh every 2h) so the
     # canonical kind is ``"timer"`` (lead msg c5212862, 2026-06-11).
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert job.kind == "timer"
 
@@ -154,14 +154,14 @@ def test_every_provided_job_uses_an_allowed_kind() -> None:
 def test_provider_job_cadence_is_two_hours() -> None:
     # Arrange — call the registered provider.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert job.on_unit_active_sec == "2h"
 
 
 # ---------------------------------------------------------------------------
 # sac.accounts-keepalive — the DISTRIBUTION half of the single-refresher
-# model, and the SIBLING of sac.accounts-refresh above. That job rotates the
+# model, and the SIBLING of scitex-agent-container-accounts-refresh above. That job rotates the
 # token on the ONE host holding refresh material; this one copies the result
 # out to the access-only hosts and proves each of them accepts it. Refreshing
 # the master is not enough on its own: every other host holds a copy nothing
@@ -280,7 +280,7 @@ def test_accounts_keepalive_and_accounts_refresh_are_both_declared() -> None:
     # Act
     names = {job.name for job in provide_jobs()}
     # Assert
-    assert {"sac.accounts-refresh", "scitex-agent-container-accounts-keepalive"} <= names
+    assert {"scitex-agent-container-accounts-refresh", "scitex-agent-container-accounts-keepalive"} <= names
 
 
 def test_provider_does_not_federate_listen_it_would_duplicate_the_supervisor() -> None:

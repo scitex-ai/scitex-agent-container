@@ -163,23 +163,47 @@ def provide_jobs() -> "list[JobSpec]":
 
     return [
         JobSpec(
-            # THE ONE NAME STILL ON THE LEGACY PREFIX, AND IT IS ON PURPOSE.
-            # Every other job here was cut over to `scitex-agent-container-*`;
-            # this one is HELD, with the reason recorded in
-            # `_migrate._renames.RENAMES` (the SSoT for the cutover).
+            # THE LAST NAME OFF THE LEGACY PREFIX. It was held back for
+            # months on the rule "never rename a spec ahead of its unit", and
+            # that rule was right about the hazard and wrong about the order.
             #
-            # A spec renamed AHEAD of its unit is the one shape that must not
-            # ship. The live, enabled, actively-refreshing unit is
-            # `sac.accounts-refresh.timer`; if this said
-            # `scitex-agent-container-accounts-refresh` while that unit ran,
-            # `sac dev timer status accounts-refresh` would resolve to a name
-            # no unit carries and report the fleet's SOLE OAuth refresher as
-            # ABSENT while it refreshes. A name that does not match the
-            # convention yet is a PS-227 warning; a CLI that reports the
-            # credential machinery as missing when it is healthy is an
-            # incident. So the declared name tracks the DEPLOYED unit until
-            # the supervised cutover renames both together.
-            name="sac.accounts-refresh",
+            # WHAT THE HOLD ASSUMED: that the supervised cutover renames spec
+            # and unit TOGETHER. MEASURED 2026-08-19, that is unreachable —
+            # the migration's install step delegates to scitex-dev BY THE NEW
+            # CANONICAL NAME, and scitex-dev resolves a name only if a JobSpec
+            # DECLARES it:
+            #
+            #   $ sac dev timer install scitex-agent-container-accounts-refresh
+            #   no job named 'scitex-agent-container-accounts-refresh' here
+            #
+            # So install-new cannot run until this line moves. The spec moves
+            # FIRST or the cutover never happens at all; that is not a rule
+            # violation, it is the only order the tooling admits. (Attempted
+            # in the other order 2026-08-18: stop/remove succeeded, install
+            # failed on exactly that lookup, and the fleet's sole OAuth
+            # refresher was down ~2 minutes until the old units were restored.)
+            #
+            # WHAT THE WINDOW ACTUALLY COSTS, stated plainly rather than
+            # assumed: between this rename and the host cutover,
+            # `sac dev timer status accounts-refresh` resolves to a unit name
+            # the host does not carry and reports the refresher ABSENT while
+            # `sac.accounts-refresh.timer` keeps firing every 2h. That is a
+            # MISREPORT ON ONE MANUAL VERB, not an outage — and it cannot
+            # escalate on its own: nothing in this repo installs or enables a
+            # timer automatically (`_dev_jobs_backend` declines to run
+            # systemctl; `_dev_jobs_apply` only PRINTS the enable line), so
+            # the two-racing-refreshers catastrophe still requires a human to
+            # type the install command against a host that already has the
+            # old unit.
+            #
+            # CLOSING THE WINDOW is `sac dev migrate-job-names --only
+            # accounts-refresh --include-held --yes`, run supervised, then
+            # `sac accounts status` BEFORE walking away. Ordered
+            # stop-old -> remove-old -> install-new -> verify-exactly-one, and
+            # "exactly one" means one unit FOR THIS JOB:
+            # `scitex-agent-container-accounts-keepalive` is a DIFFERENT job
+            # that must keep existing.
+            name="scitex-agent-container-accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
             command=("sac accounts refresh --all --include-active --sync-active-login"),
             description=(
