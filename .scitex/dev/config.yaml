@@ -120,6 +120,208 @@ audit:
           scitex-ai/scitex-dev#588; this entry is removed by the change that
           adopts that release.
 
+    # PS-231 (workflow-duplication). FIVE entries.
+    #
+    # CORRECTED 2026-08-18. This comment used to say "TWO entries … the other
+    # three were REFUSED and are deliberately absent from this file" while the
+    # file listed all five — the header and the data disagreeing, with nothing
+    # failing. That is the same shape that cost real time twice this week: an
+    # input's `description:` still claiming a Spartan default above a literal
+    # `default: '["ubuntu-latest"]'`, and a branch NAME implying work that did
+    # not exist. Prose ABOUT a value is not the value, and stale prose is worse
+    # than none because it is read with the authority of documentation.
+    #
+    # WHAT ACTUALLY HAPPENED. scitex-dev granted two on 2026-08-17 and refused
+    # the other three, on the correct ground that sac's argument for them was
+    # SIZE and size is not necessity (see below). The three were then MEASURED
+    # field-by-field against the org reusables and added on that basis
+    # (873d8575, "exempt the last three PS-231 workflows, measured"). The
+    # refusal did the work it was supposed to do: it forced a measurement that
+    # produced better reasons than the ones first offered.
+    #
+    # EVERY ENTRY BELOW CARRIES A REMOVAL CONDITION, and that is binding, not
+    # decorative (scitex-dev ruling, 2026-08-18). An exemption with a reason
+    # and a condition is a DEFERRAL; one nobody removes is precisely the
+    # loophole this rule exists to prevent. Five permanent entries would mean
+    # the rule fired once, everyone routed around it, and the fleet ended up
+    # where it started with a green check on top. Each entry dies in the SAME
+    # PR as the conversion that closes it.
+    #
+    # STATE OF THE FIVE, 2026-08-18 — nearest to removal first:
+    #   cla.yml           conversion WRITTEN (#1115), needs #1116
+    #   import-smoke      needs org #40 (uv_version); org #39 already MERGED
+    #   auto-merge        needs upstream hold-label / dev_bad
+    #   pytest-matrix     needs a second-runner-pool input upstream
+    #   rtd-sphinx-build  UNSTARTED upstream — no implementation exists
+    #
+    # Why the refusal matters more than the grant: sac's argument for those
+    # three was size ("auto-merge is 700 lines against the org's 220"), and
+    # 3.2x is evidence of DIFFERENCE, not evidence of NECESSITY. An exemption
+    # asserts "this leaf's version is genuinely unique"; for those three that
+    # assertion was UNMEASURED. Writing them anyway would have made this file
+    # a record of what was expensive to check rather than what is true, and
+    # then no row in it could be trusted — including the two below.
+    #
+    # ALSO NOT the reason for either entry, though sac offered it: that sac is
+    # immune to the specific `scitex-ci` label defect the rule's rationale
+    # cites. It is immune — `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || ...) }}`
+    # reads a repo VARIABLE, so the label was never frozen into the copy. But
+    # that immunises against ONE defect class, not against divergence: a
+    # step-ordering fix or a new security check made org-side still fails to
+    # reach a local copy. scitex-dev conceded their rationale cites a single
+    # anecdote and is being rewritten; that concession is not a licence here.
+    PS-231:
+      - path: .github/workflows/pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
+        line: 0
+        reason: >-
+          DEFERRAL WITH A TESTABLE EXPIRY, not a standing claim: exempt until
+          the org `pytest-matrix` reusable accepts a SECOND runner pool;
+          re-evaluate then. This workflow runs two jobs on two different
+          pools — the matrix on `${{ fromJSON(vars.CI_RUNS_ON) }}` and a
+          second on `[self-hosted, Linux, X64, sac-control-plane]`, whose own
+          in-file comment calls it "THE LOAD-BEARING LINE". A caller passing
+          one `runs_on` input cannot produce two jobs on two pools, so
+          converting to `uses:` would require DELETING a job. That is a
+          capability the org reusable lacks, not a preference this leaf holds;
+          scitex-dev is raising the two-pool gap on the org's side.
+
+          CLOSED BY: the org `pytest-matrix` reusable accepting a second
+          runner pool, after which this leaf converts and this entry is
+          deleted in the SAME PR. (Phrasing normalised 2026-08-18 so every
+          entry states its condition in one greppable form — a rule that
+          "each exemption must name what removes it" is only enforceable if a
+          tool can find the naming.)
+      - path: .github/workflows/cla.yml
+        line: 0
+        reason: >-
+          Deliberately divergent, with a guard rail already in the file. The
+          workflow pins `runs-on: ubuntu-latest` under a block comment that
+          explicitly warns against "FIXING" it — the same security argument
+          recorded in this file's PS-224 entry above: `issue_comment` and
+          `pull_request_target` are UNAUTHENTICATED triggers, the fork-PR
+          approval gate does not cover them, and self-hosted runners' $HOME
+          holds the live fleet credential.
+
+          CORRECTED 2026-08-18 — THIS ENTRY'S ORIGINAL REASONING WAS WRONG AND
+          IT IS THE FIRST OF THE FIVE THAT SHOULD GO. It said "converting to a
+          caller does exactly what that comment forbids", which assumed the org
+          reusable would put this job on the Spartan pool. It does not: org #29
+          INVERTED that default and the literal value is
+          `default: '["ubuntu-latest"]'`, so a caller passing nothing already
+          lands on hosted hardware. (The input's `description:` still says
+          "Defaults to the Spartan pool" — stale prose from before the
+          inversion, which is what produced the wrong reasoning here. Read the
+          value, not the sentence above it.)
+
+          So the security property is preserved by conversion, and #1115 makes
+          it stronger than the status quo: it passes
+          `runs_on: '["ubuntu-latest"]'` EXPLICITLY, which moves the decision
+          out of a remote file that a PR none of this repo's reviewers see
+          could change, and lets a local test assert it
+          (`test_the_cla_job_really_is_still_hosted`). Point that value at a
+          self-hosted pool and the test goes red.
+
+          CLOSED BY: sac #1115 landing (which needs #1116, the SAC-CI004 guard
+          fix — a caller has no local `runs-on`, so the hosted-runner guard
+          reads the allowlist entry as stale and recommends deleting the very
+          security argument quoted above). Delete this entry in the same PR as
+          #1115.
+
+          NOT closed by the PS-224 condition (an ephemeral/isolated runner for
+          untrusted-trigger workflows). That remains desirable and is a
+          separate, larger piece of work; this entry must not wait for it.
+
+      # The remaining three, added 2026-08-18 after DIFFING each local file
+      # against the org reusable it is accused of duplicating. scitex-dev
+      # refused these three on 2026-08-17 because the argument offered was
+      # SIZE, and size is evidence of difference rather than of necessity.
+      # Their stated condition was "convert if a diff shows nothing
+      # load-bearing" — so each reason below names a capability, measured.
+      #
+      # The diff also reversed the expected direction twice: for
+      # auto-merge-to-develop the ORG copy is the one carrying defects this
+      # repo already fixed, so converting would REGRESS merge safety. Do not
+      # assume the shared version is the newer one.
+      - path: .github/workflows/import-smoke-on-ubuntu-py3-12.yml
+        line: 0
+        reason: >-
+          The local job asserts the CONSOLE SCRIPT resolves —
+          `.venv/bin/sac --version` — and the org reusable's entire test body
+          is one hardcoded step that stops at `import <pkg>`. That step is
+          what catches `[project.scripts]` entry-point drift, and it is the
+          same entry point the SIF and run-in-sif.sh exercise; nothing else in
+          this repo's CI runs it against a venv install.
+
+          UPDATED 2026-08-18 — THIS ENTRY IS NEARLY DEAD AND THE ORIGINAL
+          REASON NO LONGER HOLDS. It said the org reusable "declares exactly
+          ONE input (`runs_on`) … so a caller has no mechanism to append a
+          step". That was true when written and is now false: org #39 (MERGED
+          2026-08-18) added a `console_script` input which runs
+          `.venv/bin/<name> --version` as its own gated step — exactly the
+          assertion this local copy was kept for.
+
+          ONE BLOCKER REMAINS, found by diffing field-by-field rather than by
+          re-reading this entry: the local job PINS uv (`version: "0.11.29"`,
+          pinned deliberately after unpinned `latest` made CI a function of
+          wall-clock time and runner cache state — sac-ci-pin-uv-version-*).
+          The org reusable does not pin. Converting today would SILENTLY
+          UN-PIN uv: the diff is a deletion, the consolidation looks clean,
+          and the determinism leaves with it.
+
+          CLOSED BY: org #40 (`uv_version` input, OPEN as of 2026-08-18).
+          When it lands, convert this workflow to a caller passing
+          `console_script: sac` and `uv_version: "0.11.29"`, and DELETE THIS
+          ENTRY IN THE SAME PR.
+
+          NOTE, not a reason to keep this copy: the org version has a FORK
+          GUARD ahead of checkout that this file lacks — that gap is real and
+          is being ported separately rather than being allowed to ride on this
+          exemption.
+      - path: .github/workflows/rtd-sphinx-build-on-ubuntu-latest.yml
+        line: 0
+        reason: >-
+          The local job REFRESHES AND COMMITS `src/scitex_agent_container/
+          _sphinx_html/` back to the default branch (`permissions: contents:
+          write`, `fetch-depth: 0`, commit message "docs: refresh _sphinx_html/
+          from CI build [skip ci]"). Verified in history, not asserted:
+          commits 9460acb2 and 812d98a7 carry that message and 117 files are
+          tracked under that path. A reusable workflow's workspace dies with
+          its job and the org copy has no commit step, no upload-artifact and
+          no outputs, so the built HTML is unreachable from any follow-on job
+          in the caller. Independently: the local file passes `sphinx-build -W`
+          on pull requests only, and the org exposes no strictness input, so
+          converting would silently downgrade "a new Sphinx warning fails the
+          PR" to "warnings ignored". CLOSED BY: an artifact/outputs contract
+          upstream plus a strictness input.
+
+          NO IMPLEMENTATION EXISTS AS OF 2026-08-18, and this line is here so
+          the next reader does not infer otherwise. A branch named
+          `feat/rtd-sphinx-can-commit-the-built-html` exists in the org repo
+          and is EMPTY: 0 commits ahead of main, never pushed, touching no rtd
+          files. Its apparent diff is 177 deletions, which is main-lag from a
+          merge it predates rendering as change. The org reusable's inputs are
+          `runs_on`, `docs_dir`, `required` — no commit-back, no artifact
+          contract, no strictness.
+
+          I nearly recorded that branch as work-in-progress on the strength of
+          its NAME. A branch name is a statement of intent by whoever typed
+          it; it survives abandonment perfectly and is never revoked. So of
+          the five entries here this is the one furthest from removal, not the
+          one closest, and anyone sequencing this work should plan on starting
+          it from zero upstream.
+      - path: .github/workflows/auto-merge-to-develop.yaml
+        line: 0
+        reason: >-
+          CONVERTING WOULD REGRESS MERGE SAFETY. The org copy at
+          scitex-ai/.github@main still carries the pending-check defect this
+          repo fixed on 2026-08-12: it tests `if [ "$pending" = "0" ]` over a
+          jq that does `select(. != "")`, and a QUEUED check has
+          `conclusion == ""`, so it is discarded — a PR whose checks are all
+          still queued reads as zero pending and MERGES. The local copy is
+          ahead of the shared one here, which is the opposite of the direction
+          PS-231's rationale assumes. CLOSED BY: the org reusable adopting the
+          fix, after which this leaf should convert and this entry be removed.
+
   # PS-226 (job-name-not-hyphenated), introduced by scitex-dev 0.48.0.
   #
   # THIS IS A DEFERRAL, NOT A WAIVER, AND THE FINDING IS CORRECT.
