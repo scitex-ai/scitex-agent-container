@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.26.1"
+version = "0.26.2"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -103,7 +103,23 @@ dependencies = [
 mcp = [
     # F-CS15: sac MCP server. fastmcp 2.x and 3.x both supported via
     # the safe_mount shim (matches scitex-* package convention).
-    "fastmcp>=2.0",
+    #
+    # 2.x SUPPORT IS SHIM-BACKED BUT UNTESTED, and saying so is the honest
+    # form of this claim. The suite installs [dev], which floors fastmcp at
+    # >=3.0 (see the note there and the measurement behind it), so nothing
+    # in CI ever exercises the 2.x branch of `mcp_group._list_tools`. The
+    # floor stays at 2.0 because the runtime shim really does handle both
+    # and narrowing it would break the scitex-* convention for consumers
+    # who only want the server — but a 2.x regression here would reach a
+    # user before it reached a test.
+    #
+    # `mcp<2` is NOT an untested claim like the fastmcp floor above: mcp
+    # 2.0.0 removes `Server.list_tools`, which `mcp_group._list_tools`
+    # probes for and the whole `_mcp` suite calls. Until the 2.x API is
+    # supported, admitting it here would ship a server that cannot list
+    # its own tools.
+    "fastmcp>=2.0,<4",
+    "mcp>=1.29,<2",
 ]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
@@ -346,7 +362,32 @@ dev = [
     # collection-skipped on dev boxes. Keeping fastmcp also as a [mcp]
     # extra so runtime installs that only need the MCP server can
     # opt-in without pulling the rest of [dev].
-    "fastmcp>=2.0",
+    #
+    # PINNED, AND THE PIN THAT MATTERS IS `mcp`, NOT `fastmcp`.
+    #
+    # `Server.list_tools` is an API of the `mcp` python-sdk, which fastmcp
+    # pulls transitively. Neither was pinned, there is no lockfile, and
+    # `uv pip install -e .[dev]` re-resolves on every CI run — so the suite
+    # was running against whatever the index served that minute. Measured
+    # across three runs of the SAME workflow on the same py3.11:
+    #
+    #   run 32184153812  fastmcp==3.4.7    mcp==1.29.0  ->  17094 passed
+    #   run 32185071483  fastmcp==2.14.1   mcp==2.0.0   ->     29 failed
+    #   run 32185515... fastmcp==4.0.0b3  mcp==2.0.0   ->     26 failed
+    #
+    # `fastmcp` moves in both directions across those rows and the outcome
+    # does not follow it; `mcp` does. mcp 2.0.0 (2026-07-28) removed
+    # `Server.list_tools`, and every failure is that attribute. So the
+    # first version of this pin — a `fastmcp>=3.0` floor — named the wrong
+    # package: it let 4.0.0b3 in and changed nothing about the failure.
+    #
+    # `<2` on mcp is the bound the code is actually written against. `<4`
+    # on fastmcp keeps the pre-release out of a resolution that has already
+    # been observed reaching for one; the floor stays at 3.0 because the
+    # TESTS call `server.list_tools()` outright while the SOURCE tolerates
+    # more (`cli_pkg/mcp_group._list_tools` branches on hasattr).
+    "fastmcp>=3.0,<4",
+    "mcp>=1.29,<2",
 ]
 docs = [
     "sphinx>=7.0",
