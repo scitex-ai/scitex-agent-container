@@ -25,31 +25,18 @@ the peer probe path is testable without an actual ssh subprocess.
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 from ._send_diagnosis import diagnose_send_failure
 from ._send_preflight import SshRunner, preflight_send_creds
 
+from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
+    build_track_command,
+    build_track_command_argv,
+    resolve_track_strategy,
+)
+
 __all__ = ["send_to_agent", "build_track_command"]
-
-
-def build_track_command(name: str, prompt: str) -> str:
-    """Return the backgroundable ``sac`` CLI that delivers + awaits a reply.
-
-    The non-blocking dispatch path validates reachability and hands the
-    caller this command instead of POSTing the turn itself. Running it in
-    a backgrounded shell delivers the prompt to the agent's live session
-    and streams the reply — so the lead's MCP turn never blocks on the
-    agent's processing, yet the reply is still trackable.
-
-    The ``sac agents send`` codepath is the SAME library helper this
-    module backs (it routes prompt-style sends through /v1/turn for the
-    running session), so the backgrounded command and the in-process
-    ``wait=True`` path are behaviourally identical — there is no second,
-    drifting delivery implementation.
-    """
-    return f"sac agents send {shlex.quote(name)} {shlex.quote(prompt)}"
 
 
 def _post_turn(url: str, text: str, *, timeout_s: float) -> tuple[str, dict[str, Any]]:
@@ -469,7 +456,14 @@ def _dispatch_nonblocking(
             "diagnosis": diagnosis,
         }
 
-    track_command = build_track_command(name, prompt)
+    # WHICH VERB ACTUALLY REACHES THIS AGENT. Resolving the route here is what
+    # stops the caller having to know whether the target runs TUI or SDK — the
+    # detail that used to leak, and used to fail silently in the "delivered"
+    # direction. Only the ROUTE is resolved (cheap); the paste/arrival/submit
+    # half of delivery is deliberately not run, so this path stays non-blocking.
+    # See :mod:`._send_track`.
+    strategy = resolve_track_strategy(name)
+    track_command = build_track_command(name, prompt, strategy=strategy)
     payload: dict[str, Any] = {
         "status": "dispatched",
         "agent": name,
@@ -483,7 +477,12 @@ def _dispatch_nonblocking(
         # Backgroundable CLI: run this in a background shell to deliver
         # the prompt + stream the reply without blocking this turn.
         "track_command": track_command,
-        "track_command_argv": ["sac", "agents", "send", name, prompt],
+        # Derived from the same builder as ``track_command`` above, so the two
+        # renderings cannot disagree about the verb. They used to be two
+        # independent literals.
+        "track_command_argv": build_track_command_argv(
+            name, prompt, strategy=strategy
+        ),
         "note": (
             "non-blocking dispatch: the prompt was NOT yet delivered. Run "
             "`track_command` in a backgrounded shell to deliver it and "

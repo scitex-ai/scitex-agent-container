@@ -71,6 +71,10 @@ def test_provider_returns_every_expected_job() -> None:
     assert names == {
         "sac.accounts-refresh",
         "scitex-agent-container-accounts-keepalive",
+        # The usage-cache refresher. Nothing else reads usage: accounts-refresh
+        # rotates tokens and accounts-keepalive copies them, so before this job
+        # every quota number the fleet showed was as old as the last manual run.
+        "scitex-agent-container-accounts-quota-cache",
         "scitex-agent-container-host-sync-check",
         "scitex-agent-container-worktree-gc",
         "scitex-agent-container-spartan-sif-bake",

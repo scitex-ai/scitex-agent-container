@@ -265,6 +265,59 @@ def provide_jobs() -> "list[JobSpec]":
             timeout_sec=300,
         ),
         JobSpec(
+            name="scitex-agent-container-accounts-quota-cache",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer below)
+            command="sac accounts refresh-quota-cache",
+            description=(
+                "Keeps the per-account usage cache FRESH. Nothing else did: "
+                "sac.accounts-refresh rotates TOKENS and accounts-keepalive "
+                "COPIES tokens, so before this job every quota number the "
+                "fleet showed was as old as the last time a human happened to "
+                "run the verb by hand. Reads usage only — it neither mints nor "
+                "rotates, so it cannot revoke a credential a running agent "
+                "holds (the hazard that makes `accounts refresh` dangerous to "
+                "schedule aggressively). "
+                "MEASURED COST OF NOT HAVING IT, 2026-08-17: `sac accounts "
+                "list` rendered every bar with `! snapshot older than the "
+                "refresh window` and `(stale 1d)` — it detected its own "
+                "staleness and did not fix it. On that day-old snapshot "
+                "scitex-01 read 7d=23% and wyusuuke read 7d=100%; the truth "
+                "after a manual refresh was scitex-01 94% and wyusuuke 0% — "
+                "INVERTED. An agent was repointed at the nearly-exhausted "
+                "account on the strength of it, and the operator's own "
+                "diagnosis was that an account reaches 94% precisely because "
+                "no one is refreshing the numbers that would have shown it "
+                "climbing. A cache that reports its own staleness without "
+                "repairing it is a record, not a gate."
+            ),
+            kind="timer",
+            # 5min, at the operator's instruction — he proposed 1min and
+            # offered 5min "if that is overdoing it". Taking the 5.
+            #
+            # The cadence is chosen against the 5h window, which is the fast
+            # one: a busy account can cross from comfortable to exhausted
+            # inside a single hour, so an hourly cadence would still permit a
+            # placement decision on numbers that predate the exhaustion. The
+            # 7d window moves far too slowly to drive this.
+            #
+            # WHY NOT 1min. Staleness at 5min is already far inside any
+            # decision window — no account crosses a threshold that matters in
+            # five minutes, so 1min buys freshness nobody can act on while
+            # costing 5x the calls (4 accounts x 1440 = 5760/day against a
+            # third-party usage endpoint whose rate limits we do not control
+            # and have not measured). If a case ever appears where a 5min-old
+            # number caused a wrong decision, that is the evidence to go to
+            # 1min — and it would be evidence, not a guess.
+            on_boot_sec="2min",
+            on_unit_active_sec="5min",
+            # One usage read per stored account (4 today), each a single
+            # HTTPS call. 120s covers all of them with a slow network and
+            # never hangs. A pass killed here leaves the previous cache in
+            # place — stale, which is the status quo this job improves on,
+            # never wrong.
+            timeout_sec=120,
+        ),
+        JobSpec(
             name="scitex-agent-container-host-sync-check",
             schedule="0 * * * *",  # hourly (cron form; timer cadence below)
             command="sac host sync --check --all --alarm --exit-zero",

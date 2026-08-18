@@ -43,9 +43,42 @@ _HAS_PORT_DISCOVERY = bool(
     shutil.which("lsof") or shutil.which("ss") or shutil.which("fuser")
 )
 
-# A realistic resolved a2a port + a fake PID for the bridge tests
+def _free_a2a_port() -> int:
+    """An OS-assigned port that is free RIGHT NOW, for the tests that really bind.
+
+    `start_turn_bridge` calls `port_is_free()`, which performs a genuine
+    SO_REUSEADDR bind probe — so these tests need a port nothing holds, not a
+    representative-looking number.
+
+    This used to be the literal 19007, chosen (per the old comment) to be "a
+    realistic resolved a2a port". That realism WAS the defect: 19007 is inside
+    the live a2a range [19000, 19999] and is really held by the `figrecipe`
+    agent on the self-hosted `scitex-ci` runner, whose tmux session sits on the
+    same machine the job runs on. So the four `start_turn_bridge` tests passed
+    on GitHub-hosted runners and failed DETERMINISTICALLY on the self-hosted
+    one, with `TurnBridgePortBusyError` naming a real fleet agent:
+
+        Holder PID(s): unknown ...; tmux session: tui-figrecipe.
+        Free it, then restart: `fuser -k 19007/tcp; ...`
+
+    Which runner picks up a job is not something a PR controls, so the outcome
+    was decided by scheduling rather than by the change under test — a red that
+    tells you nothing and blocks a merge. It stalled PR #1117 twice, and #1117
+    is itself the fix for the audit gate blocking two other PRs.
+
+    Binding port 0 and reading back the assignment is the standard way to ask
+    the OS for something free. The socket is closed before the test runs, so a
+    later bind of the same port succeeds (SO_REUSEADDR over TIME_WAIT is
+    exactly the case `port_is_free` is documented to treat as free).
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+# A FREE a2a port + a fake PID for the bridge tests
 # (PEP 515 separators satisfy STX-NL001).
-_PORT = 19_007
+_PORT = _free_a2a_port()
 _PID = 4_242
 
 
@@ -288,7 +321,7 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
     # Act
     bridge.start_turn_bridge(config, spawn=fake_spawn)
     # Assert
-    assert "19007" in recorded["argv"]
+    assert str(_PORT) in recorded["argv"]
 
 
 def test_start_turn_bridge_returns_spawned_pid(
