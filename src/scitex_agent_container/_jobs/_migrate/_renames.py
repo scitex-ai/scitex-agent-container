@@ -134,6 +134,11 @@ RENAMES: tuple[Rename, ...] = (
         kind="timer",
     ),
     Rename(
+        old="sac.accounts-quota-cache",
+        new="scitex-agent-container-accounts-quota-cache",
+        kind="timer",
+    ),
+    Rename(
         old="sac.fleet-reconcile",
         new="scitex-agent-container-fleet-reconcile",
         kind="timer",
