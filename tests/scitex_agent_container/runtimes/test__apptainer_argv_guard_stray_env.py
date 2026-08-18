@@ -154,11 +154,21 @@ def test_a_none_raw_args_is_silent():
 
 
 def test_validate_raises_on_the_incident_shape():
-    # Arrange — the callable the CLI and the launch path use.
+    # Arrange — the callable the CLI and the launch path use. Bound as a
+    # closure so Act and Assert stay separable: STX-TQ002 wants each marker
+    # on its own line, and a raises-block wrapped directly around the call
+    # fuses the two. Same shape the repo already uses in
+    # tests/_jobs/test__names.py.
     raw_args = INCIDENT
-    # Act / Assert
+
+    def _call():
+        return validate_raw_args(raw_args)
+
+    # Act
+    call = _call
+    # Assert
     with pytest.raises(ApptainerArgvError):
-        validate_raw_args(raw_args)
+        call()
 
 
 def test_validate_is_a_no_op_on_the_repaired_shape():
