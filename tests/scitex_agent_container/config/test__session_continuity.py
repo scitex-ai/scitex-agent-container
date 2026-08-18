@@ -293,8 +293,10 @@ def test_an_unenumerated_coordinator_role_still_continues(tmp_path):
     # begins `product-`, not `lead-`), so under the allowlist it resolved to
     # `fresh`. Pinned by ROLE STRING, not by the set, so re-adding an
     # allowlist cannot make this pass again.
-    result = default_session_for_role("product-lead-orchestrator")
-    # Act / Assert
+    role = "product-lead-orchestrator"
+    # Act
+    result = default_session_for_role(role)
+    # Assert
     assert result == "continue"
 
 
