@@ -66,6 +66,18 @@ REPAIRED = [
 ]
 
 
+def _message_for(raw_args, **kw) -> str:
+    """The refusal text for ``raw_args``. Fails loudly if it does NOT refuse.
+
+    Exists because STX-TQ007 counts a ``pytest.raises`` block as an assertion,
+    so a test that raises and then inspects the message would carry two. The
+    raise belongs here; what the message SAYS is what each test asserts.
+    """
+    with pytest.raises(ApptainerArgvError) as excinfo:
+        validate_raw_args(raw_args, **kw)
+    return str(excinfo.value)
+
+
 def test_the_incident_shape_is_detected():
     # Arrange — THE REGRESSION.
     raw_args = INCIDENT
@@ -163,9 +175,7 @@ def test_the_message_shows_the_exact_two_yaml_lines_to_write():
     # lines, not a rule to apply.
     raw_args = INCIDENT
     # Act
-    with pytest.raises(ApptainerArgvError) as excinfo:
-        validate_raw_args(raw_args)
-    message = str(excinfo.value)
+    message = _message_for(raw_args)
     # Assert
     assert "- --env\n    - SCITEX_CARDS_AGENT_ID=business" in message
 
@@ -175,9 +185,7 @@ def test_the_message_explains_what_apptainer_does_with_it():
     # wrote. Say what actually happens, or the reader chases the path.
     raw_args = INCIDENT
     # Act
-    with pytest.raises(ApptainerArgvError) as excinfo:
-        validate_raw_args(raw_args)
-    message = str(excinfo.value)
+    message = _message_for(raw_args)
     # Assert
     assert "IMAGE PATH" in message
 
@@ -187,8 +195,6 @@ def test_the_message_names_the_agent_when_it_is_known():
     # opened the wrong spec because the message never named the file.
     raw_args = INCIDENT
     # Act
-    with pytest.raises(ApptainerArgvError) as excinfo:
-        validate_raw_args(raw_args, agent="business")
-    message = str(excinfo.value)
+    message = _message_for(raw_args, agent="business")
     # Assert
     assert "'business'" in message
