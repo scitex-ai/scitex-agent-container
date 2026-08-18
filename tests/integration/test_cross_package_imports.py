@@ -16,6 +16,8 @@ in its source tree. Two outcomes:
   (which installs every peer) catches cross-package renames.
 """
 
+import importlib
+
 import pytest
 
 # ===== AUTO-GENERATED: cross-package imports =====
@@ -46,10 +48,43 @@ CROSS_PACKAGE_IMPORTS = [
 
 @pytest.mark.parametrize("module_name", CROSS_PACKAGE_IMPORTS)
 def test_cross_package_import_resolves_to_real_module(module_name):
-    """Importing scitex-agent-container's declared cross-package dependency must succeed."""
+    """Importing scitex-agent-container's declared cross-package dependency must succeed.
+
+    SKIP ON THE ROOT, HARD-IMPORT THE FULL PATH (PS-140 §2). These are two
+    different questions and `importorskip(full_path)` collapses them into one:
+
+        pytest.importorskip("scitex_dev.linter._rules._lookup")
+
+    skips when ANY segment is missing — including the LEAF. So the exact
+    failure this file exists to catch, an internal rename like
+    ``_lookup`` -> ``_lookups``, is reported as a SKIP and the suite stays
+    green. The test could not fail for the reason it was written.
+
+    The distinction that has to be preserved:
+
+        peer package absent   -> legitimately SKIP (lean install, optional
+                                 extra, marker-gated dependency; the umbrella
+                                 CI installs every peer and catches renames)
+        peer present, path gone -> must FAIL LOUDLY (that is a real break)
+
+    Hence: `importorskip` on the ROOT only, then a hard `import_module` of the
+    full dotted path. Do NOT "simplify" this to a bare hard import — that
+    breaks every lean install where the peer is legitimately not there.
+
+    Worked example: scitex-ai/scitex-hpc#88.
+
+    NOTE FOR REGENERATION: this file is written by
+    ``scitex-dev ecosystem write-integration-tests``. This function sits
+    BELOW the END sentinel, which the header declares hand-editable, so a
+    regeneration should preserve it. If a future regeneration does clobber
+    this body, the fix belongs in the generator rather than here — otherwise
+    PS-140 re-fires on every leaf that regenerates.
+    """
     # Arrange
     name = module_name
+    root = name.split(".")[0]
     # Act
-    mod = pytest.importorskip(name)
+    pytest.importorskip(root)
+    mod = importlib.import_module(name)
     # Assert
     assert mod is not None
