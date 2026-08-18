@@ -76,6 +76,19 @@ def _mcp_specs(extra: str) -> list[str]:
     return _specs(extra, "mcp")
 
 
+def _sole_mcp_spec(extra: str) -> str:
+    """The ONE mcp requirement in ``extra``.
+
+    The exactly-once check lives here rather than in the test body because
+    STX-TQ007 allows a test one assertion, and because a second mcp
+    requirement would make the bound below ambiguous for EVERY caller — a
+    gate that reads whichever spec it happened to see first is not a gate.
+    """
+    specs = _mcp_specs(extra)
+    assert len(specs) == 1, f"[{extra}] must pin mcp exactly once, got {specs}"
+    return specs[0]
+
+
 def _ceiling_major(spec: str) -> int:
     """The major version from a ``pkg<X`` upper bound."""
     _, _, rest = spec.partition("<")
@@ -137,10 +150,9 @@ def test_the_mcp_bound_excludes_the_release_that_removed_list_tools(extra: str):
     # Arrange — THE GATE, and the one the first version of this file
     # missed. mcp 2.0.0 removed `Server.list_tools`; every red run above
     # carried it and the one green run did not.
-    specs = _mcp_specs(extra)
-    assert len(specs) == 1, f"[{extra}] must pin mcp exactly once, got {specs}"
+    spec = _sole_mcp_spec(extra)
     # Act
-    ceiling = _ceiling_major(specs[0])
+    ceiling = _ceiling_major(spec)
     # Assert
     assert ceiling <= FIRST_BREAKING_MCP_MAJOR
 
