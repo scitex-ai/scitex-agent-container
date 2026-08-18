@@ -131,15 +131,34 @@ NO_SUBSCRIBER_REMEDY: tuple[str, ...] = (
 # to re-send — so they didn't. The messages went to a queue no adapter will
 # ever attach to. They only found out by checking the registry for an
 # unrelated reason.
+#
+# The scope limit that cost a second incident. The lookup behind this error
+# reads ONLY this host's listen registry — each host keeps its own — so the
+# old wording "no agent named X is registered … no adapter that will ever
+# attach" asserted a FLEET-WIDE non-existence from a host-local instrument.
+# Measured 2026-08-18: scitex-scholar (compute-03) hit exactly that message,
+# concluded the assignee was dead, and re-homed its work — while the real
+# agent sat live on compute-04, with pid, port and a healthy inbox measured
+# from the other side minutes later. A miss here is UNKNOWN fleet-wide, not
+# proof of absence: the message must state the population it observed, and
+# the advice must forbid the ownership decision (declare dead, reassign
+# work) the false death produced.
 UNKNOWN_TARGET_REMEDY: tuple[str, ...] = (
-    "FIX THE NAME AND RE-SEND. This is the opposite of the no_live_subscriber "
-    "case: nothing is queued for a name that was never registered, no adapter "
-    "will ever attach to drain it, and waiting will never deliver it.",
-    "Call a2a_peers to list the registered names. `agent_status` on a name "
-    "that 404s is the same signal from the other side.",
-    "Do NOT treat this as the target being down. An unregistered name is not "
-    "a dead agent — the agent you meant may be perfectly healthy under its "
-    "real name.",
+    "FIX THE NAME AND RE-SEND — for a name that was never registered on THIS "
+    "host. The lookup above was made against this host's listen registry, "
+    "the only registry this host can see: a name never registered here has "
+    "no local inbox stream to reconnect and no adapter here that could drain "
+    "it, so waiting on this host will not deliver it. Call a2a_peers to list "
+    "the names registered here; `agent_status` on a name that 404s is the "
+    "same signal from the other side.",
+    "DO NOT READ THIS AS A FLEET-WIDE VERDICT. Other hosts each keep their "
+    "own registry, and none of them is visible from this one, so a name that "
+    "lives on another host is indistinguishable here from a name that exists "
+    "nowhere. This error is UNKNOWN fleet-wide, not proof the target is "
+    "dead: do not conclude the agent is down, and do not reassign or re-home "
+    "work on the strength of this signal — route the work durably (a "
+    "scitex-cards card assigned to the target) or escalate to an agent that "
+    "can see the other host's registry.",
 )
 
 
@@ -255,32 +274,53 @@ def suggest_names(target: str, known: list[str]) -> list[str]:
 
 
 def unknown_target_error(target: str, known: list[str]) -> SendError:
-    """Build the loud error for a send to a name that is NOT REGISTERED.
+    """Build the loud error for a send to a name NOT REGISTERED HERE.
 
     Separate from :func:`no_subscriber_error` because the two demand
     opposite responses. A detached adapter is a WAIT — the row is in
-    ``channel_events`` and replays on the next connect. An unregistered
-    name is a FIX — there is no inbox stream to reconnect, no adapter
-    that will ever attach, and no next connect, so the row is written to
-    a queue nobody will ever read.
+    ``channel_events`` and replays on the next connect. A name never
+    registered on this host is a FIX — there is no local inbox stream to
+    reconnect and no adapter on this host that could drain it, so the row
+    is written to a queue nobody will ever read.
 
-    ``known`` is the registered-name list (as ``a2a_peers`` reports it);
-    the closest matches are named in the message so a typo is a
-    five-second correction instead of an indefinite wait.
+    The verdict is HOST-LOCAL, and the message says so. The lookup reads
+    this host's listen registry only; every other host keeps a registry
+    this host cannot see, and a name living on one of them produces the
+    exact same miss. ``delivered=False`` and ``durably_queued=False`` are
+    definitive FOR THIS HOST — an explicit 0 from the local publish.
+    Fleet-wide, the answer to "does that agent exist?" is UNKNOWN, and
+    ``detail["observation_scope"]`` pins that for machine readers so no
+    caller has to parse prose to learn what population
+    ``registered: false`` was measured against. Measured 2026-08-18:
+    scitex-scholar read the old fleet-sounding wording as a death verdict
+    and re-homed a live agent's work.
+
+    ``known`` is the name list registered on THIS host's listen (as
+    ``a2a_peers`` reports it); the closest matches are named in the
+    message so a typo is a five-second correction instead of an
+    indefinite wait.
     """
     suggestions = suggest_names(target, known)
     if suggestions:
         hint = " Did you mean: " + ", ".join(repr(s) for s in suggestions) + "?"
     elif known:
-        hint = f" {len(known)} agent(s) are registered; call a2a_peers to list them."
+        hint = (
+            f" {len(known)} agent(s) are registered on this host; "
+            "call a2a_peers to list them."
+        )
     else:
-        hint = " No agents are currently registered."
+        hint = " No agents are registered on this host."
     return SendError(
-        f"NOT DELIVERED — no agent named {target!r} is registered, so this "
-        "message was not sent. NOTHING IS QUEUED FOR IT: unlike a detached "
-        "inbox adapter, an unregistered name has no inbox stream to "
-        "reconnect and no adapter that will ever attach, so waiting will "
-        "never deliver it." + hint,
+        f"NOT DELIVERED FROM THIS HOST — no agent named {target!r} is "
+        "registered on this host's listen, so this message was not sent "
+        "here. NOTHING IS QUEUED HERE: a name never registered on this "
+        "host has no local inbox stream to reconnect and no adapter here "
+        "that could drain it, so waiting on this host will not deliver "
+        "it. SCOPE OF THAT VERDICT: this host cannot see other hosts' "
+        "registries, so a name that lives on another host is "
+        "indistinguishable here from a name that exists nowhere — do not "
+        "conclude the target is dead or reassign its work from this "
+        "signal." + hint,
         code=ERR_UNKNOWN_TARGET,
         target=target,
         detail={
@@ -290,6 +330,10 @@ def unknown_target_error(target: str, known: list[str]) -> SendError:
             # True here is what made a real message wait forever.
             "durably_queued": False,
             "registered": False,
+            # Every fact above was measured against THIS host's listen. Say
+            # so where it matters most: fleet-wide, a miss is UNKNOWN, not
+            # absence.
+            "observation_scope": "host-local",
             "suggestions": suggestions,
             "what_to_do": list(UNKNOWN_TARGET_REMEDY),
         },

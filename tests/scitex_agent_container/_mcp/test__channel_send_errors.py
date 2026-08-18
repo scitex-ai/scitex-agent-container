@@ -493,3 +493,54 @@ def test_both_failure_modes_report_not_delivered(code):
     delivered = err.detail["delivered"]
     # Assert — they differ on recoverability, never on delivery.
     assert delivered is False
+
+
+# ---------------------------------------------------------------------------
+# The 2026-08-18 incident: the miss was fleet-wide UNKNOWN, but the old
+# message read as fleet-wide ABSENCE — and a caller acted on it as a death
+# verdict. The typo case (same host) is unchanged; these pin the SCOPE.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_target_says_the_verdict_is_host_local():
+    # Arrange — a name registered on ANOTHER host, unregistered here.
+    err = unknown_target_error("scitex-agent-container", _KNOWN)
+    # Act
+    text = str(err).lower()
+    # Assert — the message must state the population it observed.
+    assert "this host" in text
+    assert "other hosts" in text
+
+
+def test_unknown_target_does_not_assert_fleet_wide_absence():
+    # Arrange
+    err = unknown_target_error("scitex-agent-container", _KNOWN)
+    # Act
+    text = str(err)
+    # Assert — "will ever attach" claimed a fact about all future time from
+    # one host's registry. That is the sentence that cost a live agent its
+    # work on 2026-08-18.
+    assert "will ever attach" not in text
+    assert "will never" not in text.lower()
+
+
+def test_unknown_target_detail_carries_its_observation_scope():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    scope = err.detail["observation_scope"]
+    # Assert — machine readers must not parse prose to learn what population
+    # `registered: false` was measured against.
+    assert scope == "host-local"
+
+
+def test_unknown_target_advice_forbids_the_death_conclusion():
+    # Arrange — the advice is where the ownership decision happened.
+    err = unknown_target_error("scitex-agent-container", _KNOWN)
+    # Act
+    advice = " ".join(err.detail["what_to_do"]).lower()
+    # Assert — a miss here is UNKNOWN fleet-wide: no death verdict, no
+    # reassignment on its strength.
+    assert "another host" in advice
+    assert "dead" in advice
+    assert "reassign" in advice
