@@ -43,20 +43,102 @@ def _write_config_yaml(path: Path, mapping: dict) -> Path:
 # ----------------------------------------------------------------------
 
 
-def test_sac_declares_no_fleet_defaults_of_its_own() -> None:
-    """Replaces test_fleet_defaults_seeded_with_the_cards_sqlite_read_backend.
+def test_sac_declares_the_store_dsn_and_nothing_else() -> None:
+    """Replaces test_sac_declares_no_fleet_defaults_of_its_own.
 
-    sac used to seed SCITEX_CARDS_READ_BACKEND=sqlite. Dropped 2026-07-29 on the
-    store owner's ruling — nothing reads it, and it actively misled a diagnosis
-    by stating a read policy that was never enforced. sac now declares nothing;
-    the cascade exists purely for operator overrides.
+    sac declared NOTHING between 2026-07-29 and 2026-08-19, after two store
+    variables were retired for stating a routing policy nothing enforced.
+    SCITEX_STORE_DSN is the third store variable declared here, and the
+    similarity is the reason this test pins the whole mapping rather than
+    just asserting the new key is present: an EXACT match is what makes a
+    fourth key someone adds casually show up as a failing test instead of as
+    another line in a container's environment that nobody chose.
     """
     # Arrange
     absent = Path("/nonexistent/config.yaml")
     # Act
     defaults = declared_fleet_defaults(absent)
     # Assert
-    assert defaults == {}
+    assert defaults == {
+        "SCITEX_STORE_DSN": "postgresql://scitex_cards@127.0.0.1:55432/scitex",
+    }
+
+
+def _resolved_store_locator(dsn: str | None) -> str:
+    """The locator scitex-dev resolves for sac, with SCITEX_STORE_DSN set or not.
+
+    Real ``os.environ`` with save/restore, the idiom this repo already uses
+    (``test__provider_common.py``, ``test_tui_session_settings_delivery.py``)
+    — NOT ``monkeypatch``. PA-306 forbids mocks here, and the point of these
+    two tests is that the REAL consumer reads the REAL variable, so a patched
+    environment would test the patch.
+
+    Resolution is PURE — it computes a target, it does not connect — so this
+    needs no Postgres. That is deliberate: a test that required a live
+    database would SKIP in CI, and a skip that reads as a pass is the defect
+    fixed in #1108.
+    """
+    import os
+
+    from scitex_dev.store import host_store  # HARD import; see the note below.
+
+    key = "SCITEX_STORE_DSN"
+    saved = os.environ.get(key)
+    try:
+        if dsn is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = dsn
+        return str(host_store(pkg="scitex_agent_container", name="state").locator)
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
+def test_the_injected_store_dsn_reaches_scitex_devs_resolver() -> None:
+    """Half of the guard the two RETIRED store variables never had.
+
+    SCITEX_CARDS_READ_BACKEND was injected into every container for months
+    while nothing read it. It was not merely useless: it STATED a read policy,
+    so an operator diagnosing an outage read that line, concluded the read
+    target was configured, and looked elsewhere. Nothing caught it, because no
+    test ever asked whether the consumer honoured the variable.
+
+    This asks. The import of ``scitex_dev.store`` is HARD rather than
+    ``importorskip`` for the same reason — scitex-dev is a [dev] dependency,
+    so an ImportError is a real breakage sac must see, and importorskip on a
+    dotted path is exactly the bug fixed in #1108.
+    """
+    # Arrange
+    dsn = FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"]
+    # Act
+    locator = _resolved_store_locator(dsn)
+    # Assert
+    assert "55432" in locator
+
+
+def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
+    """The other half: the two arms must DIFFER, or the variable is inert.
+
+    A test that only checked the "set" arm could pass even if scitex-dev
+    resolved to 55432 for its own reasons and ignored the variable entirely —
+    which is precisely the inert-but-plausible state that cost the live
+    diagnosis above. Requiring the UNSET arm to land elsewhere is what makes
+    "read for behaviour" an observation rather than an assumption.
+
+    The unset arm resolves to a UNIX socket that does not exist in a
+    container, and opening a Store against it raises StoreTargetError naming
+    the missing path. That loud refusal — with no SQLite to slip into — is
+    scitex-dev's stated design and the behaviour the operator asked for.
+    """
+    # Arrange
+    expected_absent = "55432"
+    # Act
+    locator = _resolved_store_locator(None)
+    # Assert
+    assert expected_absent not in locator
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:
