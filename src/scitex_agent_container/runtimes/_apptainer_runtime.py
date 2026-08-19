@@ -204,6 +204,21 @@ class ApptainerContainerRuntime(RuntimeBase):
             _write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
+        # FREE-SPACE GUARANTEE — fail loud before starting a container onto a
+        # host that cannot hold its scratch, rather than letting the agent
+        # discover the shortfall mid-run as an opaque ENOSPC.
+        #
+        # HERE, past the dry_run return, for the same reason the overlay
+        # reconcile below is here: `build_run_argv` is also called by
+        # `sac agents explain` and by the dry-run path, and a read-only
+        # command must not fail on a launch-time resource condition. It used
+        # to live inside `tmpfs_workdir_flags`, which made `explain` unusable
+        # on exactly the full host it would have helped diagnose, and wired
+        # ~21 argv-building test files to ambient free disk.
+        from ._apptainer_tmpfs import verify_tmpfs_headroom
+
+        verify_tmpfs_headroom(config, state_dir)
+
         # OVERLAY VENV INVALIDATION CONTRACT — an image rebuild must invalidate
         # the `venv-sac` slice of this agent's overlay, or the overlay's stale
         # site-packages shadow the new image forever. Contract, measurement and

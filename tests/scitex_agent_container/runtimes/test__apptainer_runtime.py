@@ -38,6 +38,7 @@ from scitex_agent_container.config._types import (
 )
 from scitex_agent_container.runtimes import _apptainer_runtime as mod
 from scitex_agent_container.runtimes._apptainer_creds import PinnedAccountError
+from scitex_agent_container.runtimes._apptainer_tmpfs import TmpfsSpaceError
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     RUNNER_MODULE_AGENT,
     RUNNER_MODULE_PROXY,
@@ -1481,6 +1482,55 @@ def test_start_returns_false_when_sif_cannot_be_resolved(
     started = rt.start(cfg)
     # Assert
     assert started is False
+
+
+def test_start_dry_run_succeeds_on_a_host_too_full_to_launch(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — an impossible headroom request (10 EiB), which NO host can
+    # satisfy. A dry run starts nothing, so it must not consult the disk.
+    # While the free-space check lived inside ``tmpfs_workdir_flags`` this
+    # raised TmpfsSpaceError, making ``sac agents start --dry-run`` and
+    # ``sac agents explain`` fail on exactly the full host they would have
+    # been most useful for diagnosing.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(image=str(sif), tmpfs_size="10737418240G"),
+    )
+
+    # Act
+    ok = rt.start(cfg, dry_run=True)
+
+    # Assert
+    assert ok is True
+
+
+def test_start_refuses_a_real_launch_when_headroom_is_insufficient(
+    state_root: Path, tmp_path: Path, apptainer_on_path: Path
+) -> None:
+    # Arrange — SABOTAGE CONTROL. This is the one test of the pair that must
+    # never be deleted or weakened. Moving the free-space check off the argv
+    # path is only correct if it STILL FIRES on a real launch; a guard that
+    # was silently dropped instead of moved passes every other test in this
+    # suite, including the dry-run case directly above. Same impossible size,
+    # so the only difference between the two tests is dry_run.
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(
+        tmp_path / "wd",
+        apptainer=ApptainerSpec(image=str(sif), tmpfs_size="10737418240G"),
+    )
+
+    # Act
+    ctx = pytest.raises(TmpfsSpaceError)
+
+    # Assert
+    with ctx:
+        rt.start(cfg)
 
 
 def test_start_dry_run_returns_true(
