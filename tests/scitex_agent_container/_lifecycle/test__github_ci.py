@@ -22,44 +22,81 @@ from scitex_agent_container._lifecycle._github_ci import (
 )
 
 
+
+
+def _rest(check_runs=None, statuses=None, sha="deadbeef"):
+    """A ``run`` double speaking the REST shapes ``pr_ci_conclusion`` now reads.
+
+    The function used to make ONE call (`gh pr checks --json bucket`) and the
+    tests could answer with a single string. It now makes up to three REST
+    calls — head sha, check-runs, commit statuses — because `gh pr checks`
+    merged check-runs AND commit statuses and dropping the second would have
+    made a green verdict green by stopping looking (measured 2026-08-19:
+    scitex-dev had check_runs=16 statuses=1 on a live PR).
+
+    So the double DISPATCHES ON THE URL rather than returning one blob. Each
+    test below still asserts exactly the property it asserted before; only
+    the wire shape moved.
+    """
+    import json as _json
+
+    def run(args):
+        url = args[1] if len(args) > 1 else ""
+        if "/check-runs" in url:
+            return _json.dumps({"check_runs": check_runs or []})
+        if url.endswith("/status"):
+            return _json.dumps({"statuses": statuses or []})
+        return sha
+
+    return run
+
+
+def _completed(conclusion):
+    return {"status": "completed", "conclusion": conclusion}
+
+
 def test_all_pass_buckets_yield_success_conclusion():
-    # Arrange
-    out = json.dumps([{"bucket": "pass"}, {"bucket": "skipping"}])
+    # Arrange — every check completed green or skipped.
+    run = _rest(check_runs=[_completed("success"), _completed("skipped")])
     # Act
-    conclusion = pr_ci_conclusion("o/r", 1, run=lambda args: out)
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
     # Assert
     assert conclusion == "success"
 
 
 def test_any_fail_bucket_yields_failure_conclusion():
-    # Arrange
-    out = json.dumps([{"bucket": "pass"}, {"bucket": "fail"}])
+    # Arrange — one red among greens must dominate.
+    run = _rest(check_runs=[_completed("success"), _completed("failure")])
     # Act
-    conclusion = pr_ci_conclusion("o/r", 1, run=lambda args: out)
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
     # Assert
     assert conclusion == "failure"
 
 
 def test_cancel_bucket_yields_failure_conclusion():
-    # Arrange
-    out = json.dumps([{"bucket": "pass"}, {"bucket": "cancel"}])
+    # Arrange — a cancelled run is NOT a pass; it is unfinished work whose
+    # verdict nobody has. It counted as failure before and must still.
+    run = _rest(check_runs=[_completed("success"), _completed("cancelled")])
     # Act
-    conclusion = pr_ci_conclusion("o/r", 1, run=lambda args: out)
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
     # Assert
     assert conclusion == "failure"
 
 
 def test_pending_without_fail_yields_pending_conclusion():
-    # Arrange
-    out = json.dumps([{"bucket": "pass"}, {"bucket": "pending"}])
+    # Arrange — an in-flight run (status != completed) with no red.
+    run = _rest(
+        check_runs=[_completed("success"), {"status": "in_progress"}]
+    )
     # Act
-    conclusion = pr_ci_conclusion("o/r", 1, run=lambda args: out)
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
     # Assert
     assert conclusion == "pending"
 
 
 def test_empty_checks_list_yields_none_conclusion():
-    # Arrange
+    # Arrange — no check-runs AND no statuses: nothing to report, and the
+    # poller must deliver nothing rather than invent a verdict.
     out = json.dumps([])
     # Act
     conclusion = pr_ci_conclusion("o/r", 1, run=lambda args: out)
@@ -177,3 +214,62 @@ def test_failing_check_names_dedupes_and_sorts():
     names = failing_check_names("o/r", 1, run=lambda args: payload)
     # Assert
     assert names == ["alpha", "zeta"]
+
+def test_a_commit_status_is_not_dropped():
+    """`gh pr checks` merged check-runs AND commit statuses; REST does not.
+
+    Substituting only /check-runs would silently ignore external CI that
+    reports through the older Status API — a green verdict produced by
+    looking at less. scitex-dev had exactly one such status on a live PR
+    when this was measured, so it is not hypothetical.
+    """
+    # Arrange — all check-runs green, one commit status red.
+    run = _rest(
+        check_runs=[_completed("success")],
+        statuses=[{"state": "failure"}],
+    )
+    # Act
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
+    # Assert
+    assert conclusion == "failure"
+
+
+def test_an_unknown_conclusion_is_pending_not_success():
+    """A conclusion GitHub adds later must never read as green.
+
+    The mapping is explicit and closed; anything outside it falls to
+    pending. Defaulting the other way would make a future GitHub release
+    turn unknown states into passes, silently, everywhere.
+    """
+    # Arrange
+    run = _rest(check_runs=[_completed("some_new_state_github_added")])
+    # Act
+    conclusion = pr_ci_conclusion("o/r", 1, run=run)
+    # Assert
+    assert conclusion == "pending"
+
+
+def test_the_caller_can_supply_the_head_sha_and_save_a_call():
+    """The poll loop already has the sha from `list_open_prs`.
+
+    Passing it removes one REST call per PR per tick — the whole point of
+    this change being about call VOLUME, not just which pool it spends.
+    """
+    # Arrange
+    seen: list = []
+
+    def run(args):
+        seen.append(args[1] if len(args) > 1 else "")
+        if "/check-runs" in (args[1] if len(args) > 1 else ""):
+            return json.dumps({"check_runs": [_completed("success")]})
+        return json.dumps({"statuses": []})
+
+    # Act
+    conclusion = pr_ci_conclusion("o/r", 1, head_sha="cafe1234", run=run)
+    # Assert
+    assert conclusion == "success" and not any(
+        u.endswith("/pulls/1") for u in seen
+    )
+
+
+# EOF
