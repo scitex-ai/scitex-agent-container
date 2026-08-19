@@ -75,7 +75,12 @@ FROZEN_SQLITE = frozenset(
         "_state/state_db_heartbeats.py",
         "_state/state_db_migrations.py",
         "_state/state_db_relocation.py",
-        "_state/state_db_verdict_dedup.py",
+        # _state/state_db_verdict_dedup.py LEFT THIS SET 2026-08-19 — the
+        # first table to move to PostgreSQL, by adopting
+        # scitex_dev.store rather than by sac growing its own psycopg
+        # layer. The ratchet is the point: this file FAILS if a module
+        # is listed here but no longer imports sqlite3, so a port that
+        # forgets to shrink the set is caught, not merely uncelebrated.
     }
 )
 
