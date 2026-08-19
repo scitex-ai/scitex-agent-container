@@ -38,7 +38,6 @@ from scitex_agent_container.config._types import (
 )
 from scitex_agent_container.runtimes import _apptainer_runtime as mod
 from scitex_agent_container.runtimes._apptainer_creds import PinnedAccountError
-from scitex_agent_container.runtimes._apptainer_tmpfs import TmpfsSpaceError
 from scitex_agent_container.runtimes._apptainer_inner_argv import (
     RUNNER_MODULE_AGENT,
     RUNNER_MODULE_PROXY,
@@ -49,6 +48,7 @@ from scitex_agent_container.runtimes._apptainer_runtime import (
     ApptainerContainerRuntime,
     _safe_image_tag,
 )
+from scitex_agent_container.runtimes._apptainer_tmpfs import TmpfsSpaceError
 
 # ---------------------------------------------------------------------------
 # Fixtures
