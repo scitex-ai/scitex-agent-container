@@ -38,7 +38,11 @@ entry) and growing is a conversation. That asymmetry is the point.
 
 WHAT THIS GATE DOES NOT CLAIM
 =============================
-It does not say the 13 modules below are correct, or that they should stay.
+It does not say the modules listed below are correct, or that they should
+stay. The prose deliberately carries NO COUNT: the lists shrink as the
+migration lands, and a number written here is a fact no test checks, so it
+would go stale silently — which is the exact failure this file exists to
+prevent, one level up. Count the sets if you want a number.
 They are the measured footprint on 2026-08-19, recorded so the migration has
 a definite scope instead of an estimate. Every one of them is per-host state
 under ~/.scitex/agent-container/runtime/state.db; the fleet-shared store
