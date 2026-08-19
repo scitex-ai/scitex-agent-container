@@ -38,7 +38,11 @@ entry) and growing is a conversation. That asymmetry is the point.
 
 WHAT THIS GATE DOES NOT CLAIM
 =============================
-It does not say the 13 modules below are correct, or that they should stay.
+It does not say the modules listed below are correct, or that they should
+stay. The prose deliberately carries NO COUNT: the lists shrink as the
+migration lands, and a number written here is a fact no test checks, so it
+would go stale silently — which is the exact failure this file exists to
+prevent, one level up. Count the sets if you want a number.
 They are the measured footprint on 2026-08-19, recorded so the migration has
 a definite scope instead of an estimate. Every one of them is per-host state
 under ~/.scitex/agent-container/runtime/state.db; the fleet-shared store
@@ -47,6 +51,37 @@ under ~/.scitex/agent-container/runtime/state.db; the fleet-shared store
 It also does not police test code or third-party reads. A test using
 `:memory:` creates nothing durable, and reading someone else's .db file is
 not sac choosing a storage engine.
+
+THE IMPORT CHECK HAD A HOLE, AND THE HOLE IS THE ONE THE OPERATOR ASKED ABOUT
+============================================================================
+`import sqlite3` is a good proxy for "somebody OPENED a database". It is not
+a proxy for "somebody DEFINED a table". Measured 2026-08-19: SIX modules
+under src/ carry `CREATE TABLE` DDL and import no sqlite3 at all, because
+they hand their DDL to `state_db.open_db` to execute —
+
+    _state/state_db_schema.py            15 CREATE TABLE statements, and it
+                                         owns seven of the twelve tables that
+                                         currently hold rows
+    _state/state_db_incarnations.py      _state/state_db_blocks.py
+    _state/state_db_acl_policy.py        _state/state_db_acl_deny_notify.py
+    _state/state_db_pending_approval.py
+
+So the shape "add a new SQLite table without appearing in FROZEN_SQLITE" is
+not hypothetical — it is the IDIOMATIC way tables are added in this package,
+with five existing examples. A new `state_db_<thing>.py` written that way
+grows SQLite back and the gate stays green, which is exactly the six-months-
+later outcome the instruction above is meant to prevent.
+
+FROZEN_SQLITE_DDL closes it, with the same two-directional asymmetry: a new
+DDL-bearing module fails, and an entry that stops carrying DDL also fails.
+
+WHY TWO SETS RATHER THAN ONE MERGED LIST: they answer different questions and
+a single number would answer neither honestly. FROZEN_SQLITE counts modules
+that OPEN SQLite; FROZEN_SQLITE_DDL counts modules that DEFINE SQLite tables.
+The migration shrinks the second faster than the first, and a reader watching
+only the first would conclude SQLite was gone from sac while fifteen table
+definitions remained. Keeping them separate is what stops one number being
+read as an answer to the other question.
 """
 
 from __future__ import annotations
@@ -89,6 +124,38 @@ FROZEN_SQLITE = frozenset(
 _IMPORTS_SQLITE = re.compile(
     r"^\s*(?:import\s+sqlite3\b|from\s+sqlite3\s+import\b)", re.M
 )
+
+
+#: Modules that DEFINE SQLite tables without opening a connection themselves —
+#: they hand their DDL to ``state_db.open_db``. Invisible to FROZEN_SQLITE by
+#: construction; see the module docstring. THIS LIST MAY ONLY SHRINK.
+FROZEN_SQLITE_DDL = frozenset(
+    {
+        "_state/state_db_acl_deny_notify.py",
+        "_state/state_db_acl_policy.py",
+        "_state/state_db_blocks.py",
+        "_state/state_db_incarnations.py",
+        "_state/state_db_pending_approval.py",
+        "_state/state_db_schema.py",
+    }
+)
+
+# `CREATE TABLE` / `CREATE TABLE IF NOT EXISTS`, any case, any indentation.
+_DEFINES_A_TABLE = re.compile(r"\bCREATE\s+TABLE\b", re.I)
+
+
+def _modules_defining_tables() -> set[str]:
+    """Every module under src/ carrying CREATE TABLE DDL, as relative paths.
+
+    Deliberately NOT excluding modules that also import sqlite3 — a module can
+    legitimately be in both sets, and subtracting one from the other would
+    make each list depend on the other's accuracy.
+    """
+    found: set[str] = set()
+    for path in SRC.rglob("*.py"):
+        if _DEFINES_A_TABLE.search(path.read_text(encoding="utf-8", errors="replace")):
+            found.add(path.relative_to(SRC).as_posix())
+    return found
 
 
 def _modules_importing_sqlite() -> set[str]:
@@ -151,4 +218,62 @@ def test_the_frozen_list_has_no_stale_entries() -> None:
         f"{stale}. Good news — the footprint shrank. Delete these entries so "
         "the list keeps describing reality; a stale allowlist re-opens the "
         "door it was written to close."
+    )
+
+
+# ----------------------------------------------------------------------
+# The DDL footprint — the hole the import check could not see.
+# ----------------------------------------------------------------------
+
+
+def test_the_ddl_scan_actually_finds_something() -> None:
+    """POSITIVE CONTROL — a zero here would make both DDL gates vacuous.
+
+    Same reasoning as the import scan's control: an empty result and a
+    SQLite-free codebase produce the same PASS below, so without this the
+    whole section could go green because the glob broke.
+    """
+    # Arrange
+    scanned_root = SRC
+    # Act
+    found = _modules_defining_tables()
+    # Assert
+    assert found, f"no CREATE TABLE found anywhere under {scanned_root}"
+
+
+def test_no_module_defines_a_new_sqlite_table() -> None:
+    """A module may not DEFINE a SQLite table without being frozen.
+
+    This is the case `import sqlite3` cannot see, and it is the idiomatic way
+    tables are added here — five existing modules do exactly this. Without
+    this gate, `state_db_<newthing>.py` grows SQLite back on a green build.
+    """
+    # Arrange
+    frozen = FROZEN_SQLITE_DDL | FROZEN_SQLITE
+    # Act
+    new = sorted(_modules_defining_tables() - frozen)
+    # Assert
+    assert not new, (
+        "these modules define SQLite tables and are not frozen: "
+        f"{new}. sac is migrating state to PostgreSQL via scitex_dev.store; "
+        "a new SQLite table is a decision to raise, not a line to add to "
+        "FROZEN_SQLITE_DDL."
+    )
+
+
+def test_the_ddl_freeze_list_has_no_stale_entries() -> None:
+    """An entry that no longer defines a table must leave the list.
+
+    Same asymmetry as the import list: shrinking is two lines, and a stale
+    allowlist rots into blessed filenames that a future module inherits.
+    """
+    # Arrange
+    defining = _modules_defining_tables()
+    # Act
+    stale = sorted(FROZEN_SQLITE_DDL - defining)
+    # Assert
+    assert not stale, (
+        "FROZEN_SQLITE_DDL lists modules that no longer define a table: "
+        f"{stale}. Delete the entries — the list is an inventory, not a "
+        "set of blessed filenames."
     )
