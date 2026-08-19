@@ -335,7 +335,12 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-accounts-quota-cache",
             schedule="*/5 * * * *",  # every 5min (cron form; timer below)
-            command="sac accounts refresh-quota-cache",
+            # SELF-BOUNDING (120s). One usage read per stored account (4
+            # today), each a single HTTPS call; 120s covers all of them on a
+            # slow network and never hangs. A pass killed here leaves the
+            # PREVIOUS cache in place — stale, which is the status quo this
+            # job improves on, never wrong.
+            command="/usr/bin/timeout 120 sac accounts refresh-quota-cache",
             description=(
                 "Keeps the per-account usage cache FRESH. Nothing else did: "
                 "sac.accounts-refresh rotates TOKENS and accounts-keepalive "
@@ -378,12 +383,6 @@ def provide_jobs() -> "list[JobSpec]":
             # 1min — and it would be evidence, not a guess.
             on_boot_sec="2min",
             on_unit_active_sec="5min",
-            # One usage read per stored account (4 today), each a single
-            # HTTPS call. 120s covers all of them with a slow network and
-            # never hangs. A pass killed here leaves the previous cache in
-            # place — stale, which is the status quo this job improves on,
-            # never wrong.
-            timeout_sec=120,
         ),
         JobSpec(
             name="scitex-agent-container-host-sync-check",
