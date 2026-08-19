@@ -74,10 +74,39 @@ Each host's ``.env-sac`` resolves sac through an EDITABLE install pointing at
 ``~/proj/scitex-agent-container/src``, so step 1 really is a ``git pull`` and
 not a ``pip install``.
 
+RUN IT TWICE — THE TABLE IS LIVE AND A SNAPSHOT IS ALWAYS SLIGHTLY STALE
+========================================================================
+The delivered-set accrues while you work. Measured 2026-08-19, forty minutes
+apart, with nothing of mine touching it:
+
+    compute-04   722 -> 724      compute-02   114 -> 116
+    compute-03   358 -> 359      compute-01   104 -> 106
+
+So the old daemon keeps writing SQLite rows between step 2 and step 3, and
+those rows would be absent from PostgreSQL when the new daemon takes over —
+each one a verdict re-delivered once. At this rate that is zero or one row
+per host, which is small but not nothing, and it is silent.
+
+The script is IDEMPOTENT, so the fix is free: run it again AFTER the
+restart. The second pass sees whatever the old daemon wrote in the gap and
+copies it; from the restart onward nothing writes SQLite at all, so a third
+pass would find nothing.
+
+    1. git -C ~/proj/scitex-agent-container pull      new code on disk
+    2. migrate ... --commit                            bulk
+    3. restart `sac listen`                            new code in effect
+    4. migrate ... --commit                            the stragglers
+
 USAGE (per host, after step 1 above)
 
     python3 scripts/migrate_verdict_delivered_to_postgres.py            # dry run
     python3 scripts/migrate_verdict_delivered_to_postgres.py --commit   # do it
+
+The columns are IDENTICAL on all four hosts — repo, pr, head_sha,
+conclusion, dispatch_id, delivered_at — verified before relying on one
+SELECT everywhere, because the table COUNT differs per host (26/22/21/21;
+tables are created lazily by whichever module ran there) and a uniform
+schema could not be assumed from that.
 
 Exits non-zero on any failure. There is no partial-success-reported-as-
 success path: a row that cannot be written raises.
