@@ -52,7 +52,29 @@ run from inside a container reports "nothing to migrate", exits 0, and
 leaves every real row behind. The script PRINTS the source path it resolved
 for exactly this reason: check that line before trusting the result.
 
-USAGE (per host, before deploying the port)
+WHERE THIS SITS IN THE DEPLOYMENT, AND WHY THAT ORDER IS SAFE
+=============================================================
+This script IMPORTS the ported module, so it cannot run before the code is
+on the host. An earlier draft of the PR said "migrate, then deploy"; that
+order is not merely risky, it is impossible, and a dry run piped to three
+peer hosts proved it with an identical
+``ImportError: cannot import name 'verdict_store_target'`` on each.
+
+    1. git -C ~/proj/scitex-agent-container pull      (new code on disk)
+    2. python3 scripts/migrate_verdict_delivered_to_postgres.py --commit
+    3. restart `sac listen`                            (new code in effect)
+
+Step 1 does NOT change the running daemon — it holds the modules it imported
+at boot and keeps reading SQLite through step 2. That is what makes the
+window safe by construction rather than merely short: the migration finishes
+while the only live reader is still the old one. Step 3 switches the reader
+over, and by then the rows are there.
+
+Each host's ``.env-sac`` resolves sac through an EDITABLE install pointing at
+``~/proj/scitex-agent-container/src``, so step 1 really is a ``git pull`` and
+not a ``pip install``.
+
+USAGE (per host, after step 1 above)
 
     python3 scripts/migrate_verdict_delivered_to_postgres.py            # dry run
     python3 scripts/migrate_verdict_delivered_to_postgres.py --commit   # do it
