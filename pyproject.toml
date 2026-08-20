@@ -842,7 +842,7 @@ required_plugins = ["pytest-asyncio", "pytest-xdist"]
 
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
+addopts = "-v --tb=short -p tests._store_isolation -m 'not integration and not docker_smoke'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
