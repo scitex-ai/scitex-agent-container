@@ -23,8 +23,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["liveness_jobs"]
 
 
-def liveness_jobs() -> "list[JobSpec]":
-    """The fleet-liveness JobSpecs, in their historical order."""
+def liveness_jobs(*, executable: str | None = None) -> "list[JobSpec]":
+    """The fleet-liveness JobSpecs, in their historical order.
+
+    ``executable`` is the same test seam :func:`._sac_bin.sac_bin` exposes,
+    threaded through so a test can resolve the payload against a venv-shaped
+    tree it built on disk. Without it the rendered command depends on whether
+    the RUNNING environment happens to have a ``sac`` console script beside
+    its interpreter — true in production, false under a PYTHONPATH-only CI
+    run — and a population guard over these specs would then assert an
+    environmental fact rather than a property of the specs.
+    """
     from scitex_dev.jobs import JobSpec
 
     from ._sac_bin import sac_bin
@@ -33,7 +42,7 @@ def liveness_jobs() -> "list[JobSpec]":
     # after the absolute `timeout` head is invisible to resolve_execstart
     # and is looked up on the supervisor's PATH, which is how every sac
     # job on scitex-compute-01 sat at exit 127 (measured 2026-08-20).
-    sac = sac_bin()
+    sac = sac_bin(executable=executable)
 
     return [
         JobSpec(

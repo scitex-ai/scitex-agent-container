@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.jobs import JobSpec
 
 
-def provide_jobs() -> "list[JobSpec]":
+def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
     Nine jobs today:
@@ -199,339 +199,35 @@ def provide_jobs() -> "list[JobSpec]":
     healthy only because their supervisor inherited a PATH that happened to
     contain the venv.
 
+    ``executable`` is a TEST SEAM, forwarded to each group and on to
+    :func:`._sac_bin.sac_bin`. The fleet calls this with no argument and gets
+    the console script beside the interpreter that imported the plugin, which
+    is the whole point of the resolution above. A test passes a venv-shaped
+    tree it built on disk, because otherwise the rendered payload depends on
+    whether the RUNNING environment happens to have that console script — true
+    in production, false under a PYTHONPATH-only CI run — and a guard over
+    these specs would be asserting an environmental fact rather than a property
+    of the specs. MEASURED 2026-08-20: that is exactly how the population guard
+    went red in CI on three unrelated PRs while every host was behaving
+    correctly.
+
     """
-    from scitex_dev.jobs import JobSpec
-
-    from ._sac_bin import sac_bin
+    from ._specs_accounts import accounts_jobs
     from ._specs_liveness import liveness_jobs
+    from ._specs_maintenance import maintenance_jobs
 
-    # ABSOLUTE, resolved per host -- see :mod:`._sac_bin` for the measurement.
-    sac = sac_bin()
-
+    # Each group is one operational concern a reader checks as a unit, and
+    # each resolves its own absolute `sac` through :mod:`._sac_bin`. Spliced
+    # in THIS order to preserve the historical order of the nine specs, which
+    # `collect_cron_jobs` and every existing test still read positionally.
     return [
-        JobSpec(
-            # THE LAST NAME OFF THE LEGACY PREFIX. It was held back for
-            # months on the rule "never rename a spec ahead of its unit", and
-            # that rule was right about the hazard and wrong about the order.
-            #
-            # WHAT THE HOLD ASSUMED: that the supervised cutover renames spec
-            # and unit TOGETHER. MEASURED 2026-08-19, that is unreachable —
-            # the migration's install step delegates to scitex-dev BY THE NEW
-            # CANONICAL NAME, and scitex-dev resolves a name only if a JobSpec
-            # DECLARES it:
-            #
-            #   $ sac dev timer install scitex-agent-container-accounts-refresh
-            #   no job named 'scitex-agent-container-accounts-refresh' here
-            #
-            # So install-new cannot run until this line moves. The spec moves
-            # FIRST or the cutover never happens at all; that is not a rule
-            # violation, it is the only order the tooling admits. (Attempted
-            # in the other order 2026-08-18: stop/remove succeeded, install
-            # failed on exactly that lookup, and the fleet's sole OAuth
-            # refresher was down ~2 minutes until the old units were restored.)
-            #
-            # WHAT THE WINDOW ACTUALLY COSTS, stated plainly rather than
-            # assumed: between this rename and the host cutover,
-            # `sac dev timer status accounts-refresh` resolves to a unit name
-            # the host does not carry and reports the refresher ABSENT while
-            # `sac.accounts-refresh.timer` keeps firing every 2h. That is a
-            # MISREPORT ON ONE MANUAL VERB, not an outage — and it cannot
-            # escalate on its own: nothing in this repo installs or enables a
-            # timer automatically (`_dev_jobs_backend` declines to run
-            # systemctl; `_dev_jobs_apply` only PRINTS the enable line), so
-            # the two-racing-refreshers catastrophe still requires a human to
-            # type the install command against a host that already has the
-            # old unit.
-            #
-            # CLOSING THE WINDOW is `sac dev migrate-job-names --only
-            # accounts-refresh --include-held --yes`, run supervised, then
-            # `sac accounts status` BEFORE walking away. Ordered
-            # stop-old -> remove-old -> install-new -> verify-exactly-one, and
-            # "exactly one" means one unit FOR THIS JOB:
-            # `scitex-agent-container-accounts-keepalive` is a DIFFERENT job
-            # that must keep existing.
-            name="scitex-agent-container-accounts-refresh",
-            schedule="0 */2 * * *",  # every 2h
-            # SELF-BOUNDING (120s) — see the convention note above. The
-            # bound has to live in the command because this job lands on
-            # CRON, where `timeout_sec` cannot follow it.
-            command=(
-                "/usr/bin/timeout 120 "
-                f"{sac} accounts refresh --all --include-active --sync-active-login"
-            ),
-            description=(
-                "Headless OAuth access-token refresh for all stored Claude "
-                "accounts including the active one (sole-refresher model), "
-                "mirroring the rotation into the live ~/.claude login."
-            ),
-            # 2026-06-11 (lead msg c5212862): scitex_dev.jobs.JobSpec kind
-            # taxonomy is {"service","timer","cron"} since scitex-dev #153.
-            # ``sac.accounts-refresh`` is a periodic systemd --user timer
-            # (token TTL ~7h, refresh every 2h) → ``kind="timer"`` with the
-            # cadence carried by ``on_unit_active_sec`` below. The legacy
-            # ``kind="systemd"`` is no longer accepted; it raises
-            # ``ValueError`` at construction time and ``scitex-dev
-            # ecosystem up`` silently drops sac's whole provider
-            # (provider-isolated, WARN-only), leaving the OAuth refresh
-            # unmanaged.
-            kind="timer",
-            on_boot_sec="15min",
-            on_unit_active_sec="2h",
-        ),
-        JobSpec(
-            name="scitex-agent-container-accounts-keepalive",
-            schedule="*/15 * * * *",  # every 15min (cron form; timer below)
-            # SELF-BOUNDING (300s). Per peer: a handful of coreutils ssh ops
-            # plus ONE outbound HTTPS verification from the peer (15s cap
-            # inside the probe). 300s covers three peers including a slow one
-            # without ever hanging forever. A pass killed here leaves the
-            # peer's previous credential intact — nothing is published
-            # unverified.
-            command=(
-                "/usr/bin/timeout 300 "
-                f"{sac} accounts keepalive --all "
-                "--to ywata-note-win "
-                "--to scitex-compute-03 "
-                "--to scitex-compute-04"
-            ),
-            description=(
-                "The DISTRIBUTION half of the single-refresher model, and "
-                "the only thing keeping the access-only hosts alive. "
-                "sac.accounts-refresh rotates the token on the ONE host that "
-                "holds refresh material (scitex-nas-03 as of 2026-08-10); "
-                "every other host holds an ACCESS-ONLY copy that nothing on "
-                "that box can renew, so without this job those hosts simply "
-                "expire and 401 within one access-token lifetime. COPIES the "
-                "current token (never mints — minting rotates, which revokes "
-                "the token running agents hold), refuses a payload carrying "
-                "refresh material, refuses under 300s of validity, refuses "
-                "to overwrite a valid remote credential with a dead one, "
-                "backs up what it replaces, publishes 0600, and PROVES the "
-                "far side answers HTTP 200. CONVERGENT: it compares "
-                "fingerprints and rewrites a peer only when the master's "
-                "token actually changed, so most runs are cheap verified "
-                "no-ops. WORST-CASE FOLLOWER OUTAGE THE OPERATOR IS "
-                "ACCEPTING AT THIS CADENCE: 15 minutes — the moment the "
-                "master refreshes, every follower's copy is revoked, and "
-                "they stay dead until the next tick converges them. Exits "
-                "non-zero on any peer's failure. NOT armed by this "
-                "declaration."
-            ),
-            kind="timer",
-            # HOST PINNING IS NOT EXPRESSIBLE HERE. JobSpec has no host
-            # field (name/kind/schedule/command/description/on_boot_sec/
-            # on_unit_active_sec/timeout_sec/restart_policy/watchdog_sec/
-            # venv), so WHERE this runs is decided by where the operator
-            # installs it. It must run ONLY on the refresh holder. sac's
-            # own mitigation is inside the verb: `--all` resolves to the
-            # accounts THIS host holds refresh material for, and exits
-            # non-zero when that set is empty — so a keepalive installed on
-            # the wrong host fails loudly instead of pretending to work.
-            #
-            # 15min is a BOUND, not a guess. Measured 2026-08-10: Claude
-            # Code refreshes only when the token is genuinely near expiry,
-            # so the master's token changes ONCE in ~7h at an unpredictable
-            # moment — and the instant it does, every follower's copy is
-            # revoked and its agents 401. The tick therefore does not decide
-            # when work happens (the fingerprint comparison does); it decides
-            # only how long that revoked window lasts. 15min bounds the
-            # follower outage to 15min; hourly would bound it to an hour.
-            # The cost of the extra ticks is near zero because a converged
-            # peer is verified, not rewritten.
-            on_boot_sec="10min",
-            on_unit_active_sec="15min",
-        ),
-        JobSpec(
-            name="scitex-agent-container-accounts-quota-cache",
-            schedule="*/5 * * * *",  # every 5min (cron form; timer below)
-            # SELF-BOUNDING (120s). One usage read per stored account (4
-            # today), each a single HTTPS call; 120s covers all of them on a
-            # slow network and never hangs. A pass killed here leaves the
-            # PREVIOUS cache in place — stale, which is the status quo this
-            # job improves on, never wrong.
-            command=f"/usr/bin/timeout 120 {sac} accounts refresh-quota-cache",
-            description=(
-                "Keeps the per-account usage cache FRESH. Nothing else did: "
-                "sac.accounts-refresh rotates TOKENS and accounts-keepalive "
-                "COPIES tokens, so before this job every quota number the "
-                "fleet showed was as old as the last time a human happened to "
-                "run the verb by hand. Reads usage only — it neither mints nor "
-                "rotates, so it cannot revoke a credential a running agent "
-                "holds (the hazard that makes `accounts refresh` dangerous to "
-                "schedule aggressively). "
-                "MEASURED COST OF NOT HAVING IT, 2026-08-17: `sac accounts "
-                "list` rendered every bar with `! snapshot older than the "
-                "refresh window` and `(stale 1d)` — it detected its own "
-                "staleness and did not fix it. On that day-old snapshot "
-                "scitex-01 read 7d=23% and wyusuuke read 7d=100%; the truth "
-                "after a manual refresh was scitex-01 94% and wyusuuke 0% — "
-                "INVERTED. An agent was repointed at the nearly-exhausted "
-                "account on the strength of it, and the operator's own "
-                "diagnosis was that an account reaches 94% precisely because "
-                "no one is refreshing the numbers that would have shown it "
-                "climbing. A cache that reports its own staleness without "
-                "repairing it is a record, not a gate."
-            ),
-            kind="timer",
-            # 5min, at the operator's instruction — he proposed 1min and
-            # offered 5min "if that is overdoing it". Taking the 5.
-            #
-            # The cadence is chosen against the 5h window, which is the fast
-            # one: a busy account can cross from comfortable to exhausted
-            # inside a single hour, so an hourly cadence would still permit a
-            # placement decision on numbers that predate the exhaustion. The
-            # 7d window moves far too slowly to drive this.
-            #
-            # WHY NOT 1min. Staleness at 5min is already far inside any
-            # decision window — no account crosses a threshold that matters in
-            # five minutes, so 1min buys freshness nobody can act on while
-            # costing 5x the calls (4 accounts x 1440 = 5760/day against a
-            # third-party usage endpoint whose rate limits we do not control
-            # and have not measured). If a case ever appears where a 5min-old
-            # number caused a wrong decision, that is the evidence to go to
-            # 1min — and it would be evidence, not a guess.
-            on_boot_sec="2min",
-            on_unit_active_sec="5min",
-        ),
-        JobSpec(
-            name="scitex-agent-container-host-sync-check",
-            schedule="0 * * * *",  # hourly (cron form; timer cadence below)
-            # SELF-BOUNDING (600s). Sequential per-ssh probe over every peer,
-            # each capped at the verb's 120s default (an unreachable peer
-            # waits its ssh connect-timeout). 600s comfortably covers a
-            # handful of peers including a slow/unreachable one without ever
-            # hanging forever.
-            command=(
-                "/usr/bin/timeout 600 "
-                f"{sac} host sync --check --all --alarm --exit-zero"
-            ),
-            description=(
-                "Read-only drift check of every peer's sac checkout vs the "
-                "centre; records each verdict in sac's own event log so the "
-                "shout is DURABLE. Mutates nothing on any peer — never runs "
-                "the fast-forward remedy (Stage 1). "
-                "--exit-zero because FINDING drift is not this unit being "
-                "unhealthy. MEASURED 2026-08-17: without it, drift exits 1 "
-                "and undetermined exits 2, systemd recorded the unit "
-                "`failed`, compute-04 went `degraded`, and the dotfiles sync "
-                "installer read `is-system-running: degraded` as 'systemd "
-                "absent' and silently refused to install its timer — so that "
-                "host stopped receiving dotfiles sync altogether. The verdict "
-                "still reaches its real readers: the printed report, the JSON "
-                "`exit_code`, and the --alarm event-log record."
-            ),
-            kind="timer",
-            # First check 10min after boot/login (peers reachable, listen
-            # settled), then hourly. Drift is slow-moving relative to the
-            # 2h token refresh, so hourly is ample and gentle on ssh.
-            on_boot_sec="10min",
-            on_unit_active_sec="1h",
-        ),
-        JobSpec(
-            name="scitex-agent-container-worktree-gc",
-            schedule="30 4 * * *",  # daily 04:30 (cron form; timer cadence below)
-            # SELF-BOUNDING (900s). A pass is a handful of local `git` calls
-            # per worktree plus one `gh pr list` per unmerged branch (the
-            # squash-merge leg). A repo deep in sprawl with a slow/
-            # rate-limited gh is the worst case; 900s covers the whole
-            # fleet's repos without ever hanging forever. Every gh failure
-            # already degrades to KEEP, so a timeout costs a skipped reap,
-            # never a wrong one.
-            command=f"/usr/bin/timeout 900 {sac} worktree gc --apply --all --exit-zero",
-            description=(
-                "Daily git-worktree GC: removes only worktrees PROVEN safe "
-                "(clean AND merged AND older than 24h AND not in use — never "
-                "--force), prunes admin refs whose directory is already gone, "
-                "and records any repo still over its worktree cap in sac's "
-                "own event log (recorded as recovered when it drops back under). "
-                "The permanent countermeasure to worktree sprawl."
-            ),
-            kind="timer",
-            # Sprawl accumulates over days, not minutes, and the age gate is
-            # 24h — so a daily pass is the natural cadence and a faster one
-            # could not remove anything a daily one would miss. 20min after
-            # boot keeps it clear of the login/auth settling window.
-            on_boot_sec="20min",
-            on_unit_active_sec="1d",
-        ),
-        JobSpec(
-            name="scitex-agent-container-spartan-sif-bake",
-            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
-            # SELF-BOUNDING (14400s = 4h), and the one where the bound
-            # matters most: at a */10 cadence an UNBOUNDED bake outlives its
-            # own tick by design, so a wedged run would pile up against every
-            # later one. Two full bakes (base ~15-25min + scitex ~10-20min)
-            # plus a multi-GB pull on a slow link fit comfortably; the
-            # per-leg ssh timeout inside the command is 7200s, so 4h bounds
-            # the whole chain without ever killing a legitimate run.
-            command=f"/usr/bin/timeout 14400 {sac} image bake-remote --yes",
-            description=(
-                "10-minute SIF refresh with zero master CPU: bake sac-base + "
-                "sac-scitex on the standing Spartan CPU lease (srun "
-                "--overlap into the job resolved BY NAME, never sbatch), "
-                "gate at build time (.def %post symbol gate) AND on the "
-                "artifact (apptainer-exec symbol probe), keep-3 rotate the "
-                "Spartan store, then PULL via rsync-over-ssh, re-verify "
-                "here (sha256 + the same symbol probe on the received "
-                "file) and only then atomically swap both live "
-                "sac-<layer>.sif symlinks + keep-3 rotate locally. A "
-                "failed leg leaves the live image untouched and exits "
-                "non-zero; a source-unchanged run is a loud SKIPPED, not "
-                "a transfer."
-            ),
-            kind="timer",
-            # 10min: the image is a point-in-time snapshot of @develop, and at
-            # our release rate a DAY-old SIF is mostly wrong. 30min was read
-            # off the operator's 「最低でも30分に1回」 — but that was his FLOOR,
-            # not his target (「なんで三十分に一回だけなの？」; 「例えば1分に1回焼いても
-            # 全く問題ないです」), so the cadence is set to what he wants, not to
-            # the minimum he would tolerate.
-            #
-            # Cheap by construction, which is what makes a 10min tick sane: a
-            # source-unchanged run is a SKIPPED verdict (check a git ref, one
-            # ssh round-trip, no transfer), so only a real @develop change ever
-            # costs a bake. A bake takes 8-30min, so at */10 most ticks land
-            # while one is still running — the script's `flock -n` makes those
-            # exit "already-running" immediately instead of piling up, which is
-            # exactly what that lock is for. The operator has separately
-            # accepted overlap outright (the swap is an atomic symlink flip at
-            # the end). Steady state: skip, skip, skip, … one real bake when
-            # something changed, the rest of that window bouncing off the lock.
-            on_boot_sec="30min",
-            on_unit_active_sec="10min",
-        ),
-        JobSpec(
-            name="scitex-agent-container-freshness-refresh",
-            schedule="7 * * * *",  # hourly (cron form; timer cadence below)
-            # SELF-BOUNDING (300s). Generous on purpose, matching the
-            # primitive's own 30s per-source timeouts: a busy host must not
-            # be mistaken for a broken one, and a manufactured UNKNOWN is
-            # exactly the failure mode. Nothing is waiting on this run.
-            command=f"/usr/bin/timeout 300 {sac} freshness refresh",
-            description=(
-                "Publishes the version-currency verdict to the cache that "
-                "every `sac` invocation reads. Runs the real checks (PyPI, "
-                "git tags, gh release runs, systemd running-vs-installed, "
-                "symbol probes) via scitex-dev's `versioning` primitive and "
-                "writes the result atomically. This is the half that pays "
-                "the network cost, so the CLI hot path never does — without "
-                "it the startup banner has nothing to read and stays "
-                "permanently silent."
-            ),
-            kind="timer",
-            # Hourly against the primitive's 24h cache TTL: 24 consecutive
-            # misses before the banner falls silent, so a laptop that is shut
-            # most of the day still has a trustworthy answer. Faster buys
-            # nothing — releases are not more frequent than hourly — and each
-            # pass makes real network calls.
-            on_boot_sec="25min",
-            on_unit_active_sec="1h",
-        ),
+        *accounts_jobs(executable=executable),
+        *maintenance_jobs(executable=executable),
         # The two AGENT-LIVENESS enforcers live together in
         # :mod:`._specs_liveness` — each one's scope is defined by what the
         # other covers (corpses vs live-but-wedged), so they are unreadable
-        # apart. Spliced in HERE to preserve the historical order.
-        *liveness_jobs(),
+        # apart.
+        *liveness_jobs(executable=executable),
     ]
 
 
