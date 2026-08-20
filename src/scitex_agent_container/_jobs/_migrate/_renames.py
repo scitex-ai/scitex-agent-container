@@ -157,11 +157,6 @@ RENAMES: tuple[Rename, ...] = (
         kind="timer",
     ),
     Rename(
-        old="sac.heal-agent-auth",
-        new="scitex-agent-container-heal-agent-auth",
-        kind="timer",
-    ),
-    Rename(
         old="sac.host-sync-check",
         new="scitex-agent-container-host-sync-check",
         kind="timer",
