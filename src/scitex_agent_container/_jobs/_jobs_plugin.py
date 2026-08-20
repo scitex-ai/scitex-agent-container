@@ -72,24 +72,25 @@ def provide_jobs() -> "list[JobSpec]":
       PR cannot edit, so the cron retirement is an operator/dotfiles step that
       must land WITH the enable.
 
-    * ``sac.heal-agent-auth`` (``kind="timer"``) — the INCUMBENT auth healer
-      (``~/.scitex/agent-container/bin/auth-heal.py``, every 10min), declared
-      here so it stops living as a hand-written crontab line that a sweep
-      deletes. ``~/.dotfiles/src/.cron/copy_crontab`` installs the tracked
-      manifest WHOLESALE (``git show HEAD:.crontab_list | crontab -``), so
-      anything absent from ``.crontab_list`` is erased on its next run — and
-      auth-heal has NO line in that manifest, which is why the wrapper that
-      exports ``SAC_SECRETS_ENVRC`` kept reverting. A hand-added crontab line
-      is temporary BY CONSTRUCTION; a JobSpec is not. scitex-cards and
-      dotfiles moved their own schedules to systemd ``--user`` timers for the
-      same reason, and scitex-dev's ruling makes the JobSpec plugin the SSoT.
+    * ``sac.heal-agent-auth`` — RETIRED 2026-08-20, and the succession is the
+      reason. This spec declared the INCUMBENT healer
+      (``~/.scitex/agent-container/bin/auth-heal.py``) alongside its own
+      successor, with the note "MUTUALLY EXCLUSIVE WITH
+      ``restart-login-expired-agents`` — enable exactly ONE". On the hosts the
+      succession had already completed: the successor runs on all four
+      (55 / 329 / 343 / 337 starts, exit 0 on three of them), while
+      ``auth-heal.py`` and the interpreter it named are ABSENT from every host
+      and from this repo, and its log file is gone.
 
-      MUTUALLY EXCLUSIVE WITH ``sac.restart-login-expired-agents`` — enable
-      exactly ONE. This job's ``scan_tui`` is precisely what that timer
-      reimplements natively, so the deploy gate documented below is not
-      lifted by declaring this one; it is made explicit. Declaring both is
-      safe (a JobSpec is inert until ``ecosystem up`` installs it); ENABLING
-      both puts two restarters with INDEPENDENT debounce state on one fleet.
+      What was left was a declaration of a predecessor nobody has, which the
+      supervisor faithfully tried to spawn every ten minutes and which
+      faithfully failed — 535 times across the fleet by the morning it was
+      measured (c01 28 x exit 127, c02 166, c03 172, c04 169 spawn failures).
+
+      Repairing the path would have been the wrong repair: it would ENABLE the
+      double-supervisor hazard this very bullet warned about, two restarters
+      with independent debounce state on one fleet. The missing script was the
+      only thing preventing that, and an accident should not be load-bearing.
 
     * ``sac.accounts-refresh`` (``kind="timer"``) — a headless OAuth
       access-token refresh for EVERY stored Claude account, including the
@@ -176,28 +177,36 @@ def provide_jobs() -> "list[JobSpec]":
     ``fleet-reconcile`` piled up fourteen concurrent instances, the oldest
     45 minutes old (2026-07-18).
 
-    Two spelling choices, both load-bearing. ``/usr/bin/timeout`` is
-    ABSOLUTE (GNU coreutils 9.4, verified on scitex-compute-04): cron's and
-    systemd's minimal PATHs both carry ``/usr/bin`` so a bare ``timeout``
-    would resolve too, but the absolute form keeps ``heal-agent-auth``'s
-    "depends on no PATH at all" property true. The INNER command stays
-    PATH-relative (``sac …``) because sac's install path VARIES BY HOST
-    (``~/.env-sac/bin/sac`` on scitex-compute-04, ``~/.env-3.11/bin/sac``
-    elsewhere), so pinning one absolute ``sac`` would break the others —
-    and the cron line has always run ``sac`` off cron's PATH anyway.
+    Both tokens are ABSOLUTE, and the second one only became so after it
+    cost a host. ``/usr/bin/timeout`` (GNU coreutils 9.4) is absolute so the
+    bound depends on no PATH at all. The PAYLOAD used to stay PATH-relative
+    (``sac …``) on the reasoning that sac's install path varies by host, so
+    pinning one absolute ``sac`` would break the others — correct about the
+    hazard, and answered rather than overridden by :mod:`._sac_bin`, which
+    derives the path from ``sys.executable`` and is therefore per-host by
+    construction with nothing hardcoded.
 
-    KNOWN CONSEQUENCE, stated rather than papered over: a wrapper prefix
-    means ``resolve_execstart`` (which absolutises only the FIRST token)
-    no longer absolutises the inner ``sac`` should these specs ever be
-    rendered as systemd units instead — the same hazard scitex-dev's own
-    lowering module documents. Not live today (``up`` writes cron, not
-    units); a future move back to a timer surface must pin the inner path
-    or declare ``venv`` at that time.
+    THE CONSEQUENCE WAS DOCUMENTED HERE AND SCOPED TOO NARROWLY. This
+    docstring used to say that a wrapper prefix stops ``resolve_execstart``
+    absolutising the inner ``sac`` "should these specs ever be rendered as
+    systemd units instead", and called it "not live today (``up`` writes cron,
+    not units)". The hazard was real and the scope was wrong: the ecosystem
+    supervisor spawns periodic jobs DIRECTLY through the same
+    ``resolve_execstart``, so the payload was already unresolved on the live
+    path. MEASURED 2026-08-20 on scitex-compute-01 — supervisor PATH without
+    the venv, ALL TEN sac jobs at exit 127, zero successes, including the
+    self-pull that would have delivered any fix. The other three hosts were
+    healthy only because their supervisor inherited a PATH that happened to
+    contain the venv.
 
     """
     from scitex_dev.jobs import JobSpec
 
+    from ._sac_bin import sac_bin
     from ._specs_liveness import liveness_jobs
+
+    # ABSOLUTE, resolved per host -- see :mod:`._sac_bin` for the measurement.
+    sac = sac_bin()
 
     return [
         JobSpec(
@@ -248,7 +257,7 @@ def provide_jobs() -> "list[JobSpec]":
             # CRON, where `timeout_sec` cannot follow it.
             command=(
                 "/usr/bin/timeout 120 "
-                "sac accounts refresh --all --include-active --sync-active-login"
+                f"{sac} accounts refresh --all --include-active --sync-active-login"
             ),
             description=(
                 "Headless OAuth access-token refresh for all stored Claude "
@@ -280,7 +289,7 @@ def provide_jobs() -> "list[JobSpec]":
             # unverified.
             command=(
                 "/usr/bin/timeout 300 "
-                "sac accounts keepalive --all "
+                f"{sac} accounts keepalive --all "
                 "--to ywata-note-win "
                 "--to scitex-compute-03 "
                 "--to scitex-compute-04"
@@ -340,7 +349,7 @@ def provide_jobs() -> "list[JobSpec]":
             # slow network and never hangs. A pass killed here leaves the
             # PREVIOUS cache in place — stale, which is the status quo this
             # job improves on, never wrong.
-            command="/usr/bin/timeout 120 sac accounts refresh-quota-cache",
+            command=f"/usr/bin/timeout 120 {sac} accounts refresh-quota-cache",
             description=(
                 "Keeps the per-account usage cache FRESH. Nothing else did: "
                 "sac.accounts-refresh rotates TOKENS and accounts-keepalive "
@@ -394,7 +403,7 @@ def provide_jobs() -> "list[JobSpec]":
             # hanging forever.
             command=(
                 "/usr/bin/timeout 600 "
-                "sac host sync --check --all --alarm --exit-zero"
+                f"{sac} host sync --check --all --alarm --exit-zero"
             ),
             description=(
                 "Read-only drift check of every peer's sac checkout vs the "
@@ -428,7 +437,7 @@ def provide_jobs() -> "list[JobSpec]":
             # fleet's repos without ever hanging forever. Every gh failure
             # already degrades to KEEP, so a timeout costs a skipped reap,
             # never a wrong one.
-            command="/usr/bin/timeout 900 sac worktree gc --apply --all",
+            command=f"/usr/bin/timeout 900 {sac} worktree gc --apply --all --exit-zero",
             description=(
                 "Daily git-worktree GC: removes only worktrees PROVEN safe "
                 "(clean AND merged AND older than 24h AND not in use — never "
@@ -455,7 +464,7 @@ def provide_jobs() -> "list[JobSpec]":
             # plus a multi-GB pull on a slow link fit comfortably; the
             # per-leg ssh timeout inside the command is 7200s, so 4h bounds
             # the whole chain without ever killing a legitimate run.
-            command="/usr/bin/timeout 14400 sac image bake-remote --yes",
+            command=f"/usr/bin/timeout 14400 {sac} image bake-remote --yes",
             description=(
                 "10-minute SIF refresh with zero master CPU: bake sac-base + "
                 "sac-scitex on the standing Spartan CPU lease (srun "
@@ -498,7 +507,7 @@ def provide_jobs() -> "list[JobSpec]":
             # primitive's own 30s per-source timeouts: a busy host must not
             # be mistaken for a broken one, and a manufactured UNKNOWN is
             # exactly the failure mode. Nothing is waiting on this run.
-            command="/usr/bin/timeout 300 sac freshness refresh",
+            command=f"/usr/bin/timeout 300 {sac} freshness refresh",
             description=(
                 "Publishes the version-currency verdict to the cache that "
                 "every `sac` invocation reads. Runs the real checks (PyPI, "
@@ -523,62 +532,6 @@ def provide_jobs() -> "list[JobSpec]":
         # other covers (corpses vs live-but-wedged), so they are unreadable
         # apart. Spliced in HERE to preserve the historical order.
         *liveness_jobs(),
-        JobSpec(
-            name="scitex-agent-container-heal-agent-auth",
-            schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
-            # ABSOLUTE by design, EVERY token. `resolve_execstart` passes a
-            # command whose head starts with "/" through VERBATIM, so this is
-            # the only form that depends on neither the ambient PATH nor which
-            # interpreter ran `ecosystem up`. A systemd --user unit gets a
-            # MINIMAL PATH, so the venv python must be named outright: the
-            # script's own `#!/usr/bin/env python3` would resolve to the SYSTEM
-            # python under systemd, not the 3.11 venv the fleet runs on.
-            #
-            # The `timeout` head is spelled ABSOLUTELY for the same reason —
-            # it keeps this command's "depends on no PATH at all" property
-            # intact, which a bare `timeout` would have quietly given up.
-            #
-            # SELF-BOUNDING (300s). A no-op tick takes ~2-8s, and the worst
-            # observed pass (a TUI restart at 15:30:04 settling by 15:32:08)
-            # ~2min. A pass killed here is SAFE — state is persisted per
-            # restart, so the next tick still honours the debounce for
-            # anything already bounced.
-            command=(
-                "/usr/bin/timeout 300 "
-                "/home/ywatanabe/.env-3.11/bin/python "
-                "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
-            ),
-            description=(
-                "Auth auto-heal for the fleet: scans each agent's session.jsonl "
-                "TAIL for a CURRENT 401/authentication_error and restarts the "
-                "agent so a fresh credential is re-mounted, plus the sibling "
-                "TUI-pane scan (2-run-corroborated) for tmux agents whose "
-                "transcript lives in the container overlay and is invisible to "
-                "the session.jsonl glob. Rate-limited (per-agent debounce, boot "
-                "grace, global cap/hour) and phones the operator instead of "
-                "looping when a restart provably did not fix it. Declared as a "
-                "JobSpec because its crontab line was swept by copy_crontab's "
-                "full-manifest install. MUTUALLY EXCLUSIVE with "
-                "sac.restart-login-expired-agents — enable exactly one."
-            ),
-            kind="timer",
-            # Same taxonomy note as the jobs above: kind must be one of
-            # {"service","timer","cron"} (scitex-dev #153); a wrong kind raises
-            # at construction and `ecosystem up` then silently drops sac's WHOLE
-            # provider.
-            #
-            # 10min preserves the incumbent cadence EXACTLY — not a guess: the
-            # live `runtime/auth-heal.log` ticks 15:20 → 15:30 → 15:40 → 15:50
-            # → 16:00 (2026-07-18), matching the `*/10` cron line. Migrating a
-            # schedule is the wrong moment to also retune it; a cadence change
-            # belongs in its own PR with its own argument.
-            on_boot_sec="5min",
-            on_unit_active_sec="10min",
-            # `Persistent=true` is emitted by scitex-dev's timer renderer for
-            # every kind="timer", so a window missed while the host was asleep
-            # fires on resume — the property a crontab line does NOT have and a
-            # laptop fleet needs most.
-        ),
     ]
 
 
