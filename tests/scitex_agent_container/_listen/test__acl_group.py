@@ -104,7 +104,7 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_send_allowed_within_same_named_group(db_path: Path) -> None:
+def test_send_allowed_within_same_named_group(db_path: Path, pg_schema: str) -> None:
     """Same named group, no lineage edge, no grant → allow (full mesh)."""
     # Arrange
     record_comms_policy(name="alice", group_name="developer", db_path=db_path)
@@ -120,7 +120,7 @@ def test_send_allowed_within_same_named_group(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_send_allowed_cross_group_by_default(db_path: Path) -> None:
+def test_send_allowed_cross_group_by_default(db_path: Path, pg_schema: str) -> None:
     """Messaging default-allow (operator 2026-07-03): different named
     groups, no lineage, no grant → ALLOW. Cross-group messaging is
     collaboration, not a security boundary."""
@@ -138,13 +138,13 @@ def test_send_allowed_cross_group_by_default(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_send_blocked_sender_still_denied_cross_group(db_path: Path) -> None:
+def test_send_blocked_sender_still_denied_cross_group(db_path: Path, pg_schema: str) -> None:
     """Override preserved: an explicit block still denies even though the
     cross-group default is now allow."""
     # Arrange
     record_comms_policy(name="alice", group_name="developer", db_path=db_path)
     record_comms_policy(name="carol", group_name="analysts", db_path=db_path)
-    block_send(sender="alice", target="carol", db_path=db_path)
+    block_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="alice",
@@ -156,7 +156,7 @@ def test_send_blocked_sender_still_denied_cross_group(db_path: Path) -> None:
     assert decision == "block"
 
 
-def test_send_allowed_cross_group_with_explicit_grant(db_path: Path) -> None:
+def test_send_allowed_cross_group_with_explicit_grant(db_path: Path, pg_schema: str) -> None:
     """An explicit grant still flips a cross-group deny to allow."""
     # Arrange
     record_comms_policy(name="alice", group_name="developer", db_path=db_path)
@@ -173,7 +173,7 @@ def test_send_allowed_cross_group_with_explicit_grant(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_ungrouped_pair_allowed_by_default(db_path: Path) -> None:
+def test_ungrouped_pair_allowed_by_default(db_path: Path, pg_schema: str) -> None:
     """Messaging default-allow: two ungrouped agents in unrelated lineage
     families may now message each other with no grant."""
     # Arrange — no group_name on either; unrelated lineage families.
@@ -196,7 +196,7 @@ def test_ungrouped_pair_allowed_by_default(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_allowed_developer_to_researcher(db_path: Path) -> None:
+def test_send_allowed_developer_to_researcher(db_path: Path, pg_schema: str) -> None:
     """Cross-group mesh: developer → researcher, no grant → allow."""
     # Arrange
     record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
@@ -212,7 +212,7 @@ def test_send_allowed_developer_to_researcher(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_send_allowed_researcher_to_generalist(db_path: Path) -> None:
+def test_send_allowed_researcher_to_generalist(db_path: Path, pg_schema: str) -> None:
     """Cross-group mesh: researcher → generalist, no grant → allow."""
     # Arrange
     record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
@@ -228,7 +228,7 @@ def test_send_allowed_researcher_to_generalist(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_send_allowed_generalist_to_developer_all_directions(db_path: Path) -> None:
+def test_send_allowed_generalist_to_developer_all_directions(db_path: Path, pg_schema: str) -> None:
     """Mesh is bidirectional: generalist → developer, no grant → allow."""
     # Arrange
     record_comms_policy(name="gen-1", group_name="generalist", db_path=db_path)
@@ -244,7 +244,7 @@ def test_send_allowed_generalist_to_developer_all_directions(db_path: Path) -> N
     assert decision == "allow"
 
 
-def test_send_allowed_mesh_group_to_non_mesh_group(db_path: Path) -> None:
+def test_send_allowed_mesh_group_to_non_mesh_group(db_path: Path, pg_schema: str) -> None:
     """Messaging default-allow: a non-mesh group is no longer a MESSAGING
     boundary — developer → solver-group now ALLOWS. (Group-based isolation
     still gates PRIVILEGED actions via check_lineage_acl; a solver that must
@@ -263,7 +263,7 @@ def test_send_allowed_mesh_group_to_non_mesh_group(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_send_allowed_non_mesh_group_to_mesh_group(db_path: Path) -> None:
+def test_send_allowed_non_mesh_group_to_mesh_group(db_path: Path, pg_schema: str) -> None:
     """Messaging default-allow, both directions: solver-group → researcher
     now ALLOWS (the exact cross-group case PR #12/#524's mesh could not
     cover for paper-group agents a2a-ing developer agents)."""

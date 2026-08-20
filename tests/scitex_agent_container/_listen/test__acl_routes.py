@@ -116,7 +116,7 @@ def test_block_route_writes_comms_blocks_row(isolated_state: Path, pg_schema: st
             headers=_auth(),
         )
     # Assert
-    assert has_block(sender="alice", target="lead", db_path=isolated_state)
+    assert has_block(sender="alice", target="lead")
 
 
 # ---------------------------------------------------------------------------
