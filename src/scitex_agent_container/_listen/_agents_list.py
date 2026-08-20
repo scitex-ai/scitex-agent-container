@@ -188,12 +188,16 @@ async def _annotate_reachability(request: Request, rows: list[dict]) -> list[dic
     healthy agents of being deaf, and the remedy a caller reaches for on a
     false death verdict is destructive.
     """
-    from ._reachability import UNKNOWN, annotate_rows
+    from ._reachability import UNKNOWN, annotate_rows, resolve_annotation_host
 
     try:
         broker = request.app.state.inbox
         counts = await broker.subscriber_counts()
-        local_host = getattr(request.app.state, "local_host", None)
+        # NOT a bare ``app.state.local_host`` read. That is ``None`` in
+        # production (see ``resolve_annotation_host``), and reading it alone is
+        # what kept every row on THIS host annotated ``unknown`` on the very
+        # endpoint the reachability reports come from.
+        local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict against healthy agents)
         log.warning(
             "list_agents: could not read inbox broker (reporting reachability "
