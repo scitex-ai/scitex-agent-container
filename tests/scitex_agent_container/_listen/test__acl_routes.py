@@ -55,7 +55,7 @@ def _auth() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_unblock_route_writes_comms_grants_row(isolated_state: Path) -> None:
+def test_unblock_route_writes_comms_grants_row(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -69,7 +69,7 @@ def test_unblock_route_writes_comms_grants_row(isolated_state: Path) -> None:
     assert has_grant(sender="alice", target="lead", db_path=isolated_state)
 
 
-def test_unblock_route_returns_200(isolated_state: Path) -> None:
+def test_unblock_route_returns_200(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -84,7 +84,7 @@ def test_unblock_route_returns_200(isolated_state: Path) -> None:
 
 
 def test_unblock_route_response_envelope_carries_decision_fields(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
@@ -105,7 +105,7 @@ def test_unblock_route_response_envelope_carries_decision_fields(
 # ---------------------------------------------------------------------------
 
 
-def test_block_route_writes_comms_blocks_row(isolated_state: Path) -> None:
+def test_block_route_writes_comms_blocks_row(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -125,7 +125,7 @@ def test_block_route_writes_comms_blocks_row(isolated_state: Path) -> None:
 
 
 def test_grant_route_writes_comms_grants_like_unblock(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
@@ -145,7 +145,7 @@ def test_grant_route_writes_comms_grants_like_unblock(
 # ---------------------------------------------------------------------------
 
 
-def test_missing_sender_returns_400(isolated_state: Path) -> None:
+def test_missing_sender_returns_400(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -159,7 +159,7 @@ def test_missing_sender_returns_400(isolated_state: Path) -> None:
     assert r.status_code == 400
 
 
-def test_missing_target_returns_400(isolated_state: Path) -> None:
+def test_missing_target_returns_400(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -173,7 +173,7 @@ def test_missing_target_returns_400(isolated_state: Path) -> None:
     assert r.status_code == 400
 
 
-def test_malformed_body_returns_400(isolated_state: Path) -> None:
+def test_malformed_body_returns_400(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
     # Act
@@ -187,7 +187,7 @@ def test_malformed_body_returns_400(isolated_state: Path) -> None:
     assert r.status_code == 400
 
 
-def test_missing_bearer_returns_401_or_403(isolated_state: Path) -> None:
+def test_missing_bearer_returns_401_or_403(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — no Authorization header.
     app = create_app(token=_TOKEN)
     # Act

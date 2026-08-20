@@ -92,6 +92,21 @@ PG_BASE_DSN = os.environ.get(
     "SAC_TEST_PG_DSN", "postgresql://scitex_cards@127.0.0.1:55432/scitex"
 )
 
+#: The password file, resolved AT IMPORT and pinned for the fixture below.
+#:
+#: MEASURED 2026-08-20. `tests/.../_listen/test__acl_approve_flow.py` sandboxes
+#: `HOME` to a tmp_path — correctly, it is testing host-file behaviour. libpq
+#: finds its password file via `~/.pgpass`, so under that sandbox the lookup
+#: lands in an empty directory and the fixture's own CREATE SCHEMA fails with
+#: `fe_sendauth: no password supplied`. The same fixture works everywhere else,
+#: which is what made it look like a fixture bug rather than an interaction.
+#:
+#: Resolving here — while HOME is still the real one, before any test can move
+#: it — and passing it explicitly makes the fixture independent of a variable
+#: tests are entitled to change. `PGPASSFILE` is libpq's own override and takes
+#: precedence over the HOME lookup.
+_PGPASS_AT_IMPORT = os.environ.get("PGPASSFILE") or os.path.expanduser("~/.pgpass")
+
 #: A DSN that cannot reach anything, on purpose. Port 1 refuses instantly, and
 #: the database name is written to be legible in the error a stray write
 #: produces — the message itself states the rule it just enforced.
@@ -197,6 +212,12 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
 
     import psycopg
 
+    # Pin PGPASSFILE for the whole fixture: a test that sandboxes HOME (several
+    # legitimately do) would otherwise strand libpq's ~/.pgpass lookup.
+    pgpass_key = "PGPASSFILE"
+    saved_pgpass = os.environ.get(pgpass_key)
+    os.environ[pgpass_key] = _PGPASS_AT_IMPORT
+
     schema = "sac_test_" + uuid.uuid4().hex[:12]
     with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
         conn.execute(f'CREATE SCHEMA "{schema}"')
@@ -213,3 +234,7 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
             os.environ[key] = saved
         with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        if saved_pgpass is None:
+            os.environ.pop(pgpass_key, None)
+        else:
+            os.environ[pgpass_key] = saved_pgpass

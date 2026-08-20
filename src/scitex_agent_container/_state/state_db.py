@@ -199,9 +199,11 @@ def init_schema(db_path: Path | None = None) -> Path:
         # ``init_schema`` stays atomic.
         from . import state_db_acl_deny_notify as _adn
         from . import state_db_blocks as _blocks
-        from . import state_db_pending_approval as _pp
 
-        conn.executescript(_pp._SCHEMA)
+        # ``pending_prompts`` was created here until 2026-08-20. It moved
+        # to per-host PostgreSQL; its schema is created on first open by
+        # ``state_db_pending_approval.open_pending_prompt_store``, so there
+        # is nothing to run here.
         conn.executescript(_blocks._SCHEMA)
         # The ``incarnations`` birth-certificate table used to be created
         # here. It moved to per-host PostgreSQL on 2026-08-19; the promise

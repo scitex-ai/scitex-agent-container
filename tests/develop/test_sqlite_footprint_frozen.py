@@ -141,7 +141,12 @@ FROZEN_SQLITE_DDL = frozenset(
         "_state/state_db_acl_deny_notify.py",
         "_state/state_db_acl_policy.py",
         "_state/state_db_blocks.py",
-        "_state/state_db_pending_approval.py",
+        # _state/state_db_pending_approval.py LEFT THIS SET 2026-08-20 — the
+        # THIRD table to move to PostgreSQL, and the first whose SQLite verb
+        # had no store equivalent: it DELETEd, and the store only hides. That
+        # turned out to be the better primitive (the decision stays in the
+        # oplog with its actor) but it introduced a lifecycle the SQLite
+        # version did not have, and the module documents it.
         "_state/state_db_schema.py",
         # _state/state_db_incarnations.py LEFT THIS SET 2026-08-19 — the
         # SECOND table to move to PostgreSQL, and the first to leave via
