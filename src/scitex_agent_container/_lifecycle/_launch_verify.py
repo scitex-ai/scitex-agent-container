@@ -224,18 +224,50 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
 
 
-def _runtime_reports_running(runtime: Any, config: Any) -> bool:
-    """The runtime's own liveness probe — a RAISING probe is UNKNOWN.
+#: Tri-state liveness readings from a runtime's own probe. ``UNKNOWN`` is
+#: the value the boolean form could not express, and its absence was a
+#: live defect: see :func:`_runtime_liveness`.
+PROBE_RUNNING = "running"
+PROBE_DEAD = "dead"
+PROBE_UNKNOWN = "unknown"
+
+
+def _runtime_liveness(runtime: Any, config: Any) -> str:
+    """The runtime's own liveness probe as THREE values, not two.
 
     A probe that could not run must not convict (the false-RED lesson of
-    :mod:`._start_verdict`): treat it as "still possibly alive" so the
-    wait continues and the window expiry reports UNVERIFIED, never a
-    fabricated death.
+    :mod:`._start_verdict`) — but it must not ACQUIT either, and the
+    boolean this replaces could only do one of those. It answered
+    ``True`` both when the runtime reported alive and when the probe
+    raised, so the two callers inherited opposite bugs from one value:
+
+    * the DEAD arm read only ``False``, so ``True`` meaning "unknown"
+      correctly declined to convict. That use was right, and is
+      unchanged.
+    * the TUI arm read ``True`` as PROOF and returned VERIFIED_UP with
+      the words "the tmux pane process is alive" — a claim about an
+      observation that never happened whenever the probe raised. That is
+      the success value doubling as the didn't-check value, on the path
+      109 of 122 fleet specs take (measured 2026-08-20: runtime tui 109,
+      claude-agent-sdk 11, apptainer 2).
+
+    Returning the third value lets each caller say what it actually saw.
     """
     try:
-        return bool(runtime.is_running(config))
-    except Exception:  # stx-allow: fallback (reason: a probe that cannot run is UNKNOWN liveness, not evidence of death — see _start_verdict's false-RED rationale)
-        return True
+        return PROBE_RUNNING if bool(runtime.is_running(config)) else PROBE_DEAD
+    except Exception:  # stx-allow: fallback (reason: a probe that cannot run is UNKNOWN liveness — neither death nor life; the tri-state is precisely so this need not masquerade as either)
+        return PROBE_UNKNOWN
+
+
+def _runtime_reports_running(runtime: Any, config: Any) -> bool:
+    """Back-compat boolean: True unless the probe positively reported DEAD.
+
+    Preserved verbatim in MEANING for the negative arm — only a definite
+    ``PROBE_DEAD`` is falsey — so the caller that convicts on ``False``
+    behaves identically. New code wanting positive evidence must call
+    :func:`_runtime_liveness` and check for ``PROBE_RUNNING``.
+    """
+    return _runtime_liveness(runtime, config) != PROBE_DEAD
 
 
 def verify_launch(
@@ -307,11 +339,29 @@ def _verify_tui(
     """
     waited = max(0.0, now_fn() - launched_at)
     log_path = _first_existing(state_dir, ("boot.stderr.log", "stdout.log"))
-    if _runtime_reports_running(runtime, config):
+    liveness = _runtime_liveness(runtime, config)
+    if liveness == PROBE_RUNNING:
         return LaunchVerdict(
             VERIFIED_UP,
             "ready: boot drain passed and the tmux pane process is alive "
             f"(probed {waited:.1f}s after launch)",
+            str(log_path) if log_path else None,
+            "",
+            waited,
+            None,
+        )
+    if liveness == PROBE_UNKNOWN:
+        # The probe RAISED. Previously this returned VERIFIED_UP with the
+        # words "the tmux pane process is alive" — asserting an
+        # observation that never happened. Report the absence of evidence
+        # instead of inventing evidence of presence; the agent may well be
+        # up, and this says exactly that.
+        return LaunchVerdict(
+            UNVERIFIED,
+            "CANNOT VERIFY: the runtime's own liveness probe could not run "
+            f"({waited:.1f}s after launch), so sac has no reading either "
+            "way. The agent may be up — confirm with `tmux ls` or "
+            "`sac agents list <name>`",
             str(log_path) if log_path else None,
             "",
             waited,
