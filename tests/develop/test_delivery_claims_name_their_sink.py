@@ -140,7 +140,14 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # sac-listen.service is StandardOutput=journal, and per-agent logs
         # live under runtime/logs/<agent>/ — asserted rather than assumed,
         # because a NAMED sink that is wrong is worse than an unnamed one.
-        "scitex_agent_container/_lifecycle/_github_ci_poll_loop.py:160",
+        # _github_ci_poll_loop.py:160 LEFT THIS LIST 2026-08-20. Its sink is now
+        # named in the reason itself (journald via sac-listen.service). It came
+        # off the list the hard way: this change shifted the claim from line 160
+        # to 170, which rotted the entry AND made the same claim reappear as a
+        # NEW unnamed one — two failures from one insertion, and green locally
+        # because the frozen list is keyed on a line number that only moves when
+        # the file is edited. That is the guard working, not misfiring: an entry
+        # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
         "scitex_agent_container/_lifecycle/_instances.py:263",
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
